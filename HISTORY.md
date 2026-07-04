@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView Leader action details
+
+- 扩展 `agentdeck status` 的 ProjectView，`leader_actions.items[]` 现在包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`。
+- GUI 或自然语言入口只读取 `agentdeck status` 时，也能直接展示 safe apply 按钮、显式命令和 runtime action 阻塞原因。
+- 抽出 `StateStore._leader_action_detail_fields()`，让 `leader action --action-id` 与 ProjectView 使用同一套可执行性判断，避免逻辑漂移。
+- 保持 `agentdeck status` 只读，不修改 state、不创建 event、不发送 tmux 输入。
+- 扩展 `tests/test_agent_cli.py`，覆盖 status leader_actions 的可执行性字段；复跑 leader action detail 测试确认单 action 详情不回退。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 ProjectView 中 leader action detail 的 GUI 契约。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_includes_project_state_summaries -q` 看到 `leader_actions.items` 缺少可执行性字段；实现后同一测试与 leader action detail 测试 3 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 56 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `agentdeck status` 的 `leader_actions.items[0]` 包含 `can_apply=True`、apply_command 和 `apply_blocker=None`。
+
 ### Current - Add safe Leader chat action apply
 
 - 新增对话式显式确认入口：`agentdeck leader chat --message "apply action <action_id>"`，也支持 `/apply-action <action_id>` 和中文 `应用 action <action_id>`。

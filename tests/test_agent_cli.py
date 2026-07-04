@@ -267,6 +267,10 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
                 "message_id": None,
                 "command": "agentdeck approval create-from-plan --plan-id pln_demo",
                 "reason": "plan has no approval records",
+                "can_apply": True,
+                "apply_command": "agentdeck leader apply-action --action-id act_demo",
+                "explicit_command": "agentdeck approval create-from-plan --plan-id pln_demo",
+                "apply_blocker": None,
                 "created_at": "2026-07-04T00:00:00+00:00",
             }
         ],

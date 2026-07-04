@@ -216,6 +216,8 @@ agentdeck trace --id inb_xxx
 
 `status.inbox.heads` 会按 agent 暴露最早的 `pending` inbox item；没有待处理 item 的 agent 会返回 `null`。GUI 和 Leader chat loop 可以用它直接显示每个 agent 当前必须先处理或 ack 的 mailbox head。
 
+`status.leader_actions.items` 会包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，GUI 可以直接根据 ProjectView 渲染 action 按钮和阻塞提示。
+
 这些摘要只用于观察和恢复，不修改 state、不发送 tmux 输入，也不包含完整长 prompt。GUI 或 Leader chat loop 应优先读取 `agentdeck status`，再按需调用 `plan show`、`plan status` 或 `trace` 获取细节。
 
 ## Leader Planning

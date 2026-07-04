@@ -356,6 +356,11 @@ class StateStore:
         action = next((item for item in self.load().get("leader_actions", []) if item.get("action_id") == action_id), None)
         if action is None:
             raise KeyError(action_id)
+        return {**action, **self._leader_action_detail_fields(action)}
+
+    @staticmethod
+    def _leader_action_detail_fields(action: dict[str, Any]) -> dict[str, Any]:
+        action_id = str(action.get("action_id"))
         can_apply = action.get("status") == "pending" and action.get("kind") == "create_approvals"
         apply_blocker = None
         if action.get("status") != "pending":
@@ -363,7 +368,6 @@ class StateStore:
         elif action.get("kind") != "create_approvals":
             apply_blocker = "leader action requires explicit command"
         return {
-            **action,
             "can_apply": can_apply,
             "apply_command": f"agentdeck leader apply-action --action-id {action_id}" if can_apply else None,
             "explicit_command": action.get("command"),
@@ -797,6 +801,7 @@ class StateStore:
                     "message_id": action.get("message_id"),
                     "command": action.get("command"),
                     "reason": action.get("reason"),
+                    **StateStore._leader_action_detail_fields(action),
                     "created_at": action.get("created_at"),
                 }
             )

@@ -105,6 +105,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - 每次开发内容都要同步更新 `HISTORY.md`，并和对应代码/文档改动放在同一次 commit 中。
 - 每次开发前先对照 `docs/roadmap/ultimate-goal-roadmap.md`，确认功能服务 Leader Agent、多 Agent 通信、可见 runtime、审批、恢复或 GUI 主线。
 - GUI、自然语言入口和 Leader chat loop 应优先消费 `agentdeck status` 的 ProjectView 摘要；不要直接散读 state 文件作为主入口。
+- `agentdeck status` 的 `leader_actions.items` 必须保留 can_apply/apply_command/explicit_command/apply_blocker，供 GUI 和对话层展示安全动作。
 - `agentdeck status` 的 `inbox.heads` 是 mailbox head-only 语义的只读入口；显示或 ack inbox 前优先读取它。
 - `agentdeck leader chat --message <text>` 是当前自然语言入口 MVP：无 plan 时创建 plan-only 记录，有 plan 时 review 最新 plan，并持久化或复用一条 `leader_actions[]` 建议；review 输出的 `leader_action` 必须带 can_apply/apply_command/apply_blocker；每轮会写入 `chat_turns[]`，可用 `agentdeck leader chat-history` 查看。
 - `agentdeck leader chat --message "apply action <id>"` 只能复用 safe apply-action 白名单；不得通过 chat 自动应用 dispatch/capture 类 action。
