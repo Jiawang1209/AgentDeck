@@ -313,7 +313,13 @@ def project_view_example() -> dict[str, object]:
                 "source": "leader_action",
                 "target_id": "act_example",
             },
-            "pending": {"leader_actions": 1, "approvals": 0, "approved_approvals": 0, "inbox_items": 0},
+            "pending": {
+                "leader_actions": 1,
+                "approvals": 0,
+                "approved_approvals": 0,
+                "inbox_items": 0,
+                "leader_errors": 0,
+            },
             "leader_action": {
                 "action_id": "act_example",
                 "kind": "create_approvals",

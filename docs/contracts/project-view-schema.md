@@ -261,7 +261,8 @@ Only the earliest pending item is the actionable mailbox head for an agent. Use 
     "leader_actions": 1,
     "approvals": 0,
     "approved_approvals": 0,
-    "inbox_items": 0
+    "inbox_items": 0,
+    "leader_errors": 0
   },
   "leader_action": {
     "action_id": "act_xxx",
@@ -293,6 +294,8 @@ Only the earliest pending item is the actionable mailbox head for an agent. Use 
 | `idle` | `null` | none | none |
 
 `recommended_action` is descriptive metadata. It never executes by itself. GUI clients must still call explicit AgentDeck commands and preserve approval boundaries.
+
+`pending.leader_errors` counts stored Leader errors. It does not make an error executable; it helps GUI clients show unresolved Leader diagnostics alongside approvals, inbox items, and action queue work.
 
 ## Event Timeline
 

@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Count Leader errors in ProjectView recovery pending
+
+- `status.recovery.pending` 现在包含 `leader_errors` 计数，让 GUI 可以在统一恢复面展示还有多少 Leader 错误待检查。
+- `project_view_example()` 的 recovery fixture 同步包含 `pending.leader_errors=0`，保持 contract example 与真实 status 输出一致。
+- 扩展 recovery 相关红灯测试，确认普通 action recovery 输出 `leader_errors=0`，只有 leader error 时输出 `leader_errors=1`。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 `pending.leader_errors` 的展示语义。
+- 保持安全边界：本轮只扩展只读 ProjectView recovery pending 计数，不应用 action、不创建 approval、不 dispatch、不发送 tmux 输入。
+- 本地验证：先运行 recovery 两条目标测试看到缺少 `pending.leader_errors` 的红灯；实现后同一测试 2 项通过，ProjectView example 相关测试 2 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 88 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认只有 leader error 时 `recovery.pending.leader_errors=1`、`recommended_action.source=leader_error`。
+
 ### Current - Surface Leader errors in ProjectView recovery
 
 - `status.recovery` 现在会在没有 pending leader action、approval 或 inbox item，但存在 `leader_errors[]` 时返回 `status=leader_error`。

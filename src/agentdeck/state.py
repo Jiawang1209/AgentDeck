@@ -878,6 +878,7 @@ class StateStore:
                 "approvals": len(pending_approvals),
                 "approved_approvals": len(approved_approvals),
                 "inbox_items": len(pending_inbox_items),
+                "leader_errors": len(leader_errors),
             },
             "leader_action": None,
             "latest_event": recent_events[-1] if recent_events else None,

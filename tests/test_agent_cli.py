@@ -537,6 +537,7 @@ def test_status_recovery_surfaces_leader_errors_when_no_work_is_pending(tmp_path
         "source": "leader_error",
         "target_id": "err_contract",
     }
+    assert payload["recovery"]["pending"]["leader_errors"] == 1
     assert validate_project_view_contract(payload) == {"ok": True, "errors": []}
 
 
@@ -613,6 +614,7 @@ def test_status_includes_recovery_summary(tmp_path, monkeypatch, capsys) -> None
             "approvals": 1,
             "approved_approvals": 1,
             "inbox_items": 1,
+            "leader_errors": 0,
         },
         "leader_action": {
             "action_id": "act_demo",
