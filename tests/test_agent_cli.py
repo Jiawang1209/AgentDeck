@@ -54,6 +54,20 @@ def test_agent_list_outputs_configured_agents(tmp_path, monkeypatch, capsys) -> 
     assert payload["agents"][0]["runtime"]["status"] == "configured"
 
 
+def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("AGENTDECK_LEADER_API_KEY", raising=False)
+
+    exit_code = cli.main(["doctor"])
+
+    assert exit_code in {0, 1}
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["openai_compatible"] == {
+        "ok": False,
+        "detail": "AGENTDECK_LEADER_API_KEY is not set; provider calls are disabled",
+    }
+
+
 def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

@@ -22,7 +22,7 @@ AgentDeck 是一个正在搭建中的本地多智能体终端工作台。它的�
 - tmux 作为第一 runtime backend
 - TOML 配置
 - JSON/JSONL 初始状态存储，后续迁移到 SQLite
-- API-backed LLM provider adapter 骨架，首个目标兼容 DeepSeek/OpenAI-compatible 接口
+- API-backed LLM provider adapter，支持本地 `fake` 和 OpenAI-compatible plan provider
 
 未来可扩展：
 
@@ -225,7 +225,7 @@ agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
 ```
 
-当前默认且仅支持本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。这个命令不会 dispatch、不会发送 tmux 输入、不会调用外部 LLM。未实现的真实 provider 会明确失败，而不是静默退回 fake。
+当前默认使用本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。也可以显式使用 `--provider openai-compatible` 调用 OpenAI-compatible `/chat/completions` API。两种模式都不会 dispatch、不会发送 tmux 输入。
 
 `leader chat` 是自然语言入口 MVP。它会先读取 `agentdeck status` 的 ProjectView：如果当前还没有 plan，就把 message 当作目标创建 plan-only 记录；如果已有 plan，就 review 最新 plan 并返回下一条建议命令。每次 chat turn 都会写入 `.agentdeck/state/state.json` 的 `chat_turns[]`，并可通过 `leader chat-history` 查看。它不会创建 approval、不会 dispatch、不会发送 tmux 输入。
 
@@ -255,15 +255,24 @@ agentdeck approval dispatch --approval-id apv_xxx
 - `plan.goal`
 - `plan.steps[]`
 
-后续接入 DeepSeek/OpenAI-compatible 或其他 API-backed provider 时，应复用同一个 provider 抽象和 plan schema。
+OpenAI-compatible provider 使用同一个 provider 抽象和 plan schema，并要求模型返回 JSON object plan。
 
-Provider API key 后续会通过环境变量读取。以 DeepSeek 为例：
+配置环境变量：
 
 ```bash
-export DEEPSEEK_API_KEY="..."
+export AGENTDECK_LEADER_API_KEY="..."
+export AGENTDECK_LEADER_BASE_URL="https://api.deepseek.com/v1"
+export AGENTDECK_LEADER_MODEL="deepseek-chat"
 ```
 
-当前版本只使用本地 `fake` provider 做 plan dry-run，不会主动调用外部 LLM。
+示例：
+
+```bash
+agentdeck leader plan --provider openai-compatible --model "$AGENTDECK_LEADER_MODEL" --task "规划下一步开发"
+agentdeck leader chat --provider openai-compatible --model "$AGENTDECK_LEADER_MODEL" --message "帮我规划下一步"
+```
+
+真实 provider 仍然只生成 plan 或 chat turn，不会自动创建 approval 或派发任务。
 
 ## 设计原则
 

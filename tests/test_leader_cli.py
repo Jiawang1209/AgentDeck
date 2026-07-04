@@ -5,6 +5,7 @@ from pathlib import Path
 
 from agentdeck import cli
 from agentdeck.config import write_default_config
+from agentdeck.providers.fake import FakeLeaderProvider
 from agentdeck.state import StateStore
 
 
@@ -76,6 +77,41 @@ def test_leader_plan_rejects_unsupported_provider(tmp_path, monkeypatch, capsys)
     assert "unsupported leader provider: deepseek" in capsys.readouterr().err
     state = StateStore(root).load()
     assert state.get("plans", []) == []
+
+
+def test_leader_plan_uses_openai_compatible_provider_without_dispatching(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    class StubProvider(FakeLeaderProvider):
+        name = "openai-compatible"
+
+    monkeypatch.setattr(cli, "leader_provider", lambda name: StubProvider())
+
+    exit_code = cli.main(
+        [
+            "leader",
+            "plan",
+            "--provider",
+            "openai-compatible",
+            "--model",
+            "leader-model",
+            "--task",
+            "真实 API 计划",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["provider"] == "openai-compatible"
+    assert payload["model"] == "leader-model"
+    assert payload["dispatch_ready"] is False
+
+    state = StateStore(root).load()
+    assert state["plans"][0]["provider"] == "openai-compatible"
+    assert state["plans"][0]["model"] == "leader-model"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state.get("inbox", {}) == {}
 
 
 def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_path, monkeypatch, capsys) -> None:

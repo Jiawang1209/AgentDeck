@@ -8,7 +8,7 @@ import sys
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
 from .models import AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
 from .orchestration.leader import LeaderOrchestrator
-from .providers import DeepSeekProvider, leader_provider
+from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .runtime import TmuxBackend
 from .state import StateStore, agentdeck_dir
 
@@ -21,7 +21,8 @@ def doctor_command(_args: argparse.Namespace) -> int:
     root = project_root()
     tmux = TmuxBackend().doctor()
     config_exists = config_path(root).exists()
-    provider = DeepSeekProvider().doctor()
+    deepseek = DeepSeekProvider().doctor()
+    openai_compatible = OpenAICompatibleProvider().doctor()
     ok = tmux.ok and config_exists
     _print_json(
         {
@@ -30,7 +31,8 @@ def doctor_command(_args: argparse.Namespace) -> int:
             "config_exists": config_exists,
             "config_path": str(config_path(root)),
             "tmux": asdict(tmux),
-            "deepseek": {"ok": provider[0], "detail": provider[1]},
+            "deepseek": {"ok": deepseek[0], "detail": deepseek[1]},
+            "openai_compatible": {"ok": openai_compatible[0], "detail": openai_compatible[1]},
         }
     )
     return 0 if ok else 1

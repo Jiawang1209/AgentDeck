@@ -4,6 +4,19 @@
 
 ## 2026-07-04
 
+### Current - Add OpenAI-compatible Leader provider
+
+- 新增 `OpenAICompatibleProvider`，通过标准库 `urllib` 调用 OpenAI-compatible `/chat/completions`，不引入第三方依赖。
+- 新增 provider 环境变量：`AGENTDECK_LEADER_API_KEY`、`AGENTDECK_LEADER_BASE_URL`、`AGENTDECK_LEADER_MODEL`。
+- 扩展 `leader_provider("openai-compatible")`，`agentdeck leader plan/chat --provider openai-compatible` 可使用真实 API-backed Leader 生成 plan。
+- Provider 要求模型返回 JSON object plan，并校验 steps 存在且每个 step 必须 `requires_approval: true`。
+- 扩展 `agentdeck doctor`，输出 `openai_compatible` provider 配置状态。
+- 保持安全边界：真实 provider 仍然只写入 plan/chat_turn，不创建 approval、不 dispatch、不发送 tmux 输入。
+- 新增 `tests/test_provider_openai_compatible.py`，覆盖缺 API key、请求构造、响应解析和 plan schema；扩展 CLI 测试覆盖 openai-compatible plan 不派发。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 OpenAI-compatible provider 用法和审批边界。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py tests/test_leader_cli.py::test_leader_plan_uses_openai_compatible_provider_without_dispatching -q` 看到 `OpenAICompatibleProvider` 不存在；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 39 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `agentdeck doctor` 输出 `openai_compatible` 状态且 `agentdeck leader --help` 仍包含 chat/plan。
+
 ### Current - Persist Leader chat turns
 
 - 新增 `chat_turns[]` 状态账本，`agentdeck leader chat --message <text>` 每轮都会记录 turn_id、mode、message、plan_id、next_command、provider/model、review 和 created_at。
