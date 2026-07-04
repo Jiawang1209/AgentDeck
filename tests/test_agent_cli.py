@@ -68,6 +68,33 @@ def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, 
     }
 
 
+def test_events_lists_recent_event_tail(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    store.append_event(cli.EventRecord.create("first_event", {"index": 1}))
+    store.append_event(cli.EventRecord.create("second_event", {"index": 2}))
+    store.append_event(cli.EventRecord.create("third_event", {"index": 3}))
+
+    exit_code = cli.main(["events", "--limit", "2"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 2
+    assert payload["limit"] == 2
+    assert [item["event_type"] for item in payload["events"]] == ["second_event", "third_event"]
+    assert [item["payload"]["index"] for item in payload["events"]] == [2, 3]
+
+
+def test_events_returns_empty_list_when_log_is_missing(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["events"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"count": 0, "limit": 20, "events": []}
+
+
 def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

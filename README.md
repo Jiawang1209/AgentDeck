@@ -69,6 +69,7 @@ agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
 agentdeck capture-reply --agent planner --message-id msg_xxx
 agentdeck ack --agent planner --inbox-id inb_xxx
 agentdeck trace --id msg_xxx
+agentdeck events --limit 20
 ```
 
 `project init` 会创建：
@@ -220,7 +221,9 @@ agentdeck trace --id inb_xxx
 
 `status.chat_turns.items` 会包含 review/apply turn 关联的 `action_id` 和 `action_kind`，GUI 可以从自然语言对话历史直接跳转到对应 action。
 
-这些摘要只用于观察和恢复，不修改 state、不发送 tmux 输入，也不包含完整长 prompt。GUI 或 Leader chat loop 应优先读取 `agentdeck status`，再按需调用 `plan show`、`plan status` 或 `trace` 获取细节。
+`agentdeck events --limit 20` 会读取 `.agentdeck/state/events.jsonl` 的最近事件，用于 GUI 审计时间线和调试恢复。
+
+这些摘要和事件读取只用于观察和恢复，不修改 state、不发送 tmux 输入，也不包含完整长 prompt。GUI 或 Leader chat loop 应优先读取 `agentdeck status`，再按需调用 `plan show`、`plan status`、`trace` 或 `events` 获取细节。
 
 ## Leader Planning
 

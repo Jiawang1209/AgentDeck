@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add audit events tail command
+
+- 新增只读命令 `agentdeck events [--limit <n>]`，读取 `.agentdeck/state/events.jsonl` 的最近事件，默认返回最近 20 条。
+- 输出包含 `count`、`limit` 和 `events[]`，保持 JSONL 原始事件字段，适合 GUI 审计时间线、调试和恢复。
+- `StateStore.list_events()` 支持事件文件不存在时返回空列表，`limit <= 0` 返回空列表。
+- 保持安全边界：events 命令不修改 state、不创建 event、不发送 tmux 输入。
+- 扩展 `tests/test_agent_cli.py`，覆盖事件 tail、limit 参数和缺失事件文件的空结果。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 events 作为只读审计入口。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_events_lists_recent_event_tail tests/test_agent_cli.py::test_events_returns_empty_list_when_log_is_missing -q` 看到 `events` 子命令不存在；实现后同一测试 2 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 58 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `agentdeck events --limit 2` 返回 `project_initialized` 和 `leader_plan_created`。
+
 ### Current - Add ProjectView chat turn action links
 
 - 扩展 `agentdeck status` 的 ProjectView，`chat_turns.items[]` 现在包含 `action_id` 和 `action_kind`。

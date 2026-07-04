@@ -69,6 +69,15 @@ def status_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+def events_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    events = store.list_events(args.limit)
+    _print_json({"count": len(events), "limit": args.limit, "events": events})
+    return 0
+
+
 def _load_project_or_error() -> tuple[ProjectConfig | None, StateStore | None, int]:
     root = project_root()
     try:
@@ -1003,6 +1012,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="Show project configuration and runtime state")
     status.set_defaults(func=status_command)
+
+    events = subparsers.add_parser("events", help="Show recent audit events")
+    events.add_argument("--limit", type=int, default=20, help="Number of recent events to show")
+    events.set_defaults(func=events_command)
 
     project = subparsers.add_parser("project", help="Project management commands")
     project_subparsers = project.add_subparsers(dest="project_command")

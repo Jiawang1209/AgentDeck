@@ -41,6 +41,18 @@ class StateStore:
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
 
+    def list_events(self, limit: int = 20) -> list[dict[str, Any]]:
+        if not self.events_path.exists():
+            return []
+        events = [
+            json.loads(line)
+            for line in self.events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if limit <= 0:
+            return []
+        return events[-limit:]
+
     def bind_agent(self, binding: AgentRuntimeBinding) -> None:
         state = self.load()
         agents = state.setdefault("agents", {})
