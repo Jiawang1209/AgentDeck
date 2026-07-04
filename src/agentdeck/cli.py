@@ -970,20 +970,23 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         model=record["model"],
         review=None,
     )
+    refreshed_project_view = _project_view_payload_or_error(config, store)
+    if refreshed_project_view is None:
+        return 1
     payload = {
         "ok": True,
         "turn_id": turn["turn_id"],
         "mode": "plan",
         "message": args.message,
-        "project_view": project_view,
-        "leader_actions": project_view.get("leader_actions"),
+        "project_view": refreshed_project_view,
+        "leader_actions": refreshed_project_view.get("leader_actions"),
         "leader_explanation": _leader_chat_explanation(
             "plan",
             next_command=next_command,
-            project_view=project_view,
+            project_view=refreshed_project_view,
         ),
         "plan_id": record["plan_id"],
-        "recovery": project_view.get("recovery"),
+        "recovery": refreshed_project_view.get("recovery"),
         "leader_action": None,
         "status": record["status"],
         "provider": record["provider"],

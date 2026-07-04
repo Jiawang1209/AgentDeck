@@ -165,7 +165,11 @@ def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_
     assert payload["ok"] is True
     assert payload["mode"] == "plan"
     assert payload["message"] == "帮我实现自动回复回收"
-    assert payload["project_view"]["plans"]["count"] == 0
+    assert payload["project_view"]["plans"]["count"] == 1
+    assert payload["project_view"]["plans"]["items"][0]["plan_id"] == payload["plan_id"]
+    assert payload["project_view"]["plans"]["items"][0]["task"] == "帮我实现自动回复回收"
+    assert payload["project_view"]["chat_turns"]["count"] == 1
+    assert payload["project_view"]["chat_turns"]["items"][0]["turn_id"] == payload["turn_id"]
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
     assert payload["leader_actions"]["count"] == 0
     assert payload["leader_explanation"]["mode"] == "plan"

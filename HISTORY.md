@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Refresh Leader chat plan ProjectView
+
+- `agentdeck leader chat --message <text>` 在无 plan 时创建 plan-only 记录后，现在会重新读取并校验 ProjectView，再组装 chat 响应。
+- plan-mode chat 响应里的 `project_view.plans` 会包含刚创建的 plan，`project_view.chat_turns` 也会包含同次写入的 chat turn，方便 GUI/自然语言层无需额外 status 调用即可渲染最新状态。
+- 顶层 `leader_actions` 继续保持等于同次响应的 `project_view.leader_actions`，plan mode 仍不创建 approval、不 dispatch、不发送 tmux 输入。
+- 扩展 leader chat 红灯测试，先确认 plan-mode 响应仍返回旧 ProjectView（`plans.count=0`），再实现刷新后断言 `plans.count=1` 且包含当前 `plan_id/turn_id`。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 plan-mode chat 响应必须返回刷新后的 ProjectView。
+- 保持安全边界：本轮只刷新只读响应快照，不扩大 safe apply 白名单、不应用 action、不创建 approval、不 dispatch、不发送 tmux 输入。
+- 本地验证：先运行 `test_leader_chat_creates_plan_from_natural_language_without_dispatching` 看到 `project_view.plans.count` 仍为 0 的红灯；实现后同一测试通过，`tests/test_leader_cli.py tests/test_contracts.py` 59 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 96 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 plan-mode chat 响应 `plans.count=1`、`plan_id/turn_id` 对齐，且 `messages/jobs` 仍为 0。
+
 ### Current - Discover Trace communication contract
 
 - 新增 `agentdeck contract trace` 只读 discovery 入口，返回通信 lineage 的 top-level、message、attempt、job、reply 和 inbox item 字段列表。
