@@ -196,6 +196,8 @@ agentdeck capture-reply --agent planner --message-id msg_xxx
 agentdeck ack --agent planner --inbox-id inb_xxx
 ```
 
+`ack` 使用 head-only mailbox 语义：只能确认该 agent inbox 中最早的 `pending` item。若试图越过 head 确认后面的 item，CLI 会返回当前 head id，避免多 Agent 回复和任务请求被乱序消费。
+
 可以用任意通信 ID 还原整条链路：
 
 ```bash
@@ -206,7 +208,7 @@ agentdeck trace --id rep_xxx
 agentdeck trace --id inb_xxx
 ```
 
-`trace` 会返回同一条 message lineage 下的 message、attempts、jobs、replies 和 inbox_items。后续会继续补自动 reply extraction 和更严格的 mailbox head-only ack。
+`trace` 会返回同一条 message lineage 下的 message、attempts、jobs、replies 和 inbox_items。后续会继续补更严格的 reply block 标记。
 
 ## ProjectView and Status
 

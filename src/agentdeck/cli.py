@@ -409,6 +409,9 @@ def ack_command(args: argparse.Namespace) -> int:
     except KeyError:
         print(f"unknown inbox item: {args.inbox_id}", file=sys.stderr)
         return 1
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     store.append_event(
         EventRecord.create(
             "inbox_item_acked",

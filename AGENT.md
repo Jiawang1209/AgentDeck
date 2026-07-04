@@ -87,10 +87,10 @@ Worker 不应该：
 - `agentdeck inbox --agent <id>` 可查看某个 agent 收到的 task request。
 - `agentdeck reply --agent <id> --message-id <id> --text <text>` 可把 agent 结果记录为 reply。
 - `agentdeck capture-reply --agent <id> --message-id <id>` 可从 pane 最近输出捕获最后一个 `status:` 结构化回复块。
-- `agentdeck ack --agent <id> --inbox-id <id>` 可确认 inbox item。
+- `agentdeck ack --agent <id> --inbox-id <id>` 只能确认该 agent 最早的 pending inbox item，不得越过 head。
 - `agentdeck trace --id <id>` 可用 message/attempt/job/reply/inbox 任意 ID 还原通信链路。
 - `agentdeck status` 返回 ProjectView 只读摘要，包含 agents、plans、approvals、messages、jobs、replies、chat_turns、leader_actions 和 inbox，适合作为 GUI 与 Leader chat loop 的默认状态入口。
-- 后续升级为更严格的 reply block 标记和 head-only ack。
+- 后续升级为更严格的 reply block 标记。
 
 ## Leader Planning
 

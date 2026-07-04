@@ -116,6 +116,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - 审批、dispatch 或恢复任务前优先用 `agentdeck plan list`、`agentdeck plan show --plan-id <id>` 和 `agentdeck plan status --plan-id <id>` 检查计划。
 - 使用 `agentdeck approval create-from-plan --plan-id <id>` 创建审批项，使用 `approval approve/reject` 更新状态；只有 approved approval 才能通过 `agentdeck approval dispatch --approval-id <id>` 派发。
 - Worker 输出结构化结果后，优先使用 `agentdeck capture-reply --agent <id> --message-id <id>` 从 pane 回收入账；手动 `reply` 作为兜底。
+- 使用 `agentdeck ack --agent <id> --inbox-id <id>` 时只能确认该 agent 最早的 pending inbox item；非 head item 必须等待前序 item ack 后再处理。
 - 先更新架构/README/agent 文档，再扩展行为。
 - 所有开发命令默认先激活 `agentdeck` conda 环境。
 - `References/` 只读学习，不纳入 git，不直接复制大段源码。

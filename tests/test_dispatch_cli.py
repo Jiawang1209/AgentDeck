@@ -204,6 +204,42 @@ def test_ack_marks_inbox_item_acked(tmp_path, monkeypatch, capsys) -> None:
     assert '"event_type": "inbox_item_acked"' in events
 
 
+def test_ack_rejects_non_head_pending_inbox_item(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "planner", "--task", "第一项"])
+    capsys.readouterr()
+    cli.main(["dispatch", "--agent", "planner", "--task", "第二项"])
+    capsys.readouterr()
+    inbox_items = StateStore(root).load()["inbox"]["planner"]
+    first_id = inbox_items[0]["inbox_id"]
+    second_id = inbox_items[1]["inbox_id"]
+
+    exit_code = cli.main(["ack", "--agent", "planner", "--inbox-id", second_id])
+
+    assert exit_code == 1
+    assert f"inbox item is not head: {second_id}; head is {first_id}" in capsys.readouterr().err
+    state = StateStore(root).load()
+    assert [item["status"] for item in state["inbox"]["planner"]] == ["pending", "pending"]
+
+    exit_code = cli.main(["ack", "--agent", "planner", "--inbox-id", first_id])
+
+    assert exit_code == 0
+    capsys.readouterr()
+    state = StateStore(root).load()
+    assert [item["status"] for item in state["inbox"]["planner"]] == ["acked", "pending"]
+
+    exit_code = cli.main(["ack", "--agent", "planner", "--inbox-id", second_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"ok": True, "agent_id": "planner", "inbox_id": second_id, "status": "acked"}
+    state = StateStore(root).load()
+    assert [item["status"] for item in state["inbox"]["planner"]] == ["acked", "acked"]
+
+
 def test_trace_reconstructs_communication_lineage_from_reply_id(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_planner(root)

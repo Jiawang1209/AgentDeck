@@ -568,6 +568,9 @@ class StateStore:
         item = next((entry for entry in items if entry.get("inbox_id") == inbox_id), None)
         if item is None:
             raise KeyError(inbox_id)
+        head = next((entry for entry in items if entry.get("status") == "pending"), None)
+        if head is not None and head.get("inbox_id") != inbox_id:
+            raise ValueError(f"inbox item is not head: {inbox_id}; head is {head['inbox_id']}")
         item["status"] = "acked"
         item["acked_at"] = utc_now()
         self.save(state)

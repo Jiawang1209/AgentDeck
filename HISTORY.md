@@ -4,6 +4,16 @@
 
 ## 2026-07-04
 
+### Current - Enforce head-only inbox ack
+
+- 将 `agentdeck ack --agent <id> --inbox-id <id>` 收紧为 head-only mailbox 语义：只能确认该 agent 最早的 `pending` inbox item。
+- 非 head item 会明确失败，返回 `inbox item is not head: <id>; head is <head_id>`，并保持 inbox 状态不变。
+- 已 ack 的历史 item 会保留在 inbox 账本中；后续 ack 会自动寻找下一条 pending item 作为 head。
+- 扩展 `tests/test_dispatch_cli.py`，覆盖非 head ack 被拒绝、head ack 后下一条 item 才能继续 ack。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 head-only ack 规则，并移除“后续补 head-only ack”的旧表述。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_dispatch_cli.py::test_ack_rejects_non_head_pending_inbox_item -q` 看到第二条 inbox item 被错误 ack；实现后同一测试与原有 ack 测试均通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 51 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认越序 ack 返回 1 且提示 head id，按顺序 ack 后两条 inbox item 均为 `acked`。
+
 ### Current - Add Leader action detail view
 
 - 新增 `agentdeck leader action --action-id <id>`，用于查看单个 persisted Leader action 的完整只读详情。
