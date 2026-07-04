@@ -795,7 +795,7 @@ def _leader_chat_explanation(
             "mode": mode,
             "summary": f"Leader applied safe action {action_kind} and created {result_count} approval records.",
             "reason": reason,
-            "next_command": None,
+            "next_command": next_command,
             "recommended_action_id": None,
             "action_kind": action_kind,
             "action_status": action_status,
@@ -838,11 +838,16 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         action = applied["action"]
         result = applied["result"]
         action_detail = store.leader_action_detail(str(action["action_id"]))
+        preview_project_view = _project_view_payload_or_error(config, store)
+        if preview_project_view is None:
+            return 1
+        preview_recovery = preview_project_view.get("recovery", {})
+        next_command = preview_recovery.get("next_command") if isinstance(preview_recovery, dict) else None
         turn = store.record_chat_turn(
             mode="apply_action",
             message=args.message,
             plan_id=str(action.get("plan_id")),
-            next_command=None,
+            next_command=next_command,
             review=None,
             action_id=str(action["action_id"]),
             action_kind=str(action["kind"]),
@@ -881,7 +886,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "leader_actions": refreshed_project_view.get("leader_actions"),
             "leader_explanation": _leader_chat_explanation(
                 "apply_action",
-                next_command=None,
+                next_command=next_command,
                 project_view=refreshed_project_view,
                 leader_action=action_detail,
                 result=result,
@@ -889,7 +894,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "plan_id": action.get("plan_id"),
             "review": None,
             "recovery": refreshed_project_view.get("recovery"),
-            "next_command": None,
+            "next_command": next_command,
             "leader_action": action_detail,
             "result": result,
         }

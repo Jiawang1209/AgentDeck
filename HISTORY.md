@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Continue after Leader chat safe apply
+
+- `agentdeck leader chat --message "apply action <id>"` 应用 safe `create_approvals` action 后，现在会从刷新后的 ProjectView recovery 读取下一步命令。
+- apply-action chat 响应的顶层 `next_command` 和 `leader_explanation.next_command` 现在会等于 `recovery.next_command`，创建审批队列后会指向 `agentdeck approval list`。
+- 同次写入的 `chat_turns[]` 会记录 apply 后的 next_command，方便自然语言历史和 GUI 从 safe apply 继续进入审批检查。
+- 扩展 leader chat 红灯测试，先确认 apply-action 响应顶层 `next_command` 仍为 `None`，再实现与 recovery 对齐。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 safe apply 完成后必须从 recovery 继续给出下一步。
+- 保持安全边界：本轮只补齐 apply 后的只读恢复入口，不自动 approve、不 dispatch、不发送 tmux 输入。
+- 本地验证：先运行 `test_leader_chat_applies_create_approvals_action_when_explicitly_requested` 看到 `next_command=None` 的红灯；实现后同一测试通过，`tests/test_leader_cli.py tests/test_contracts.py` 59 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 96 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `apply_action` 响应进入 `approval_required`，顶层/解释层/chat_turn 的 next_command 均为 `agentdeck approval list`，且 `messages/jobs` 仍为 0。
+
 ### Current - Queue safe action after Leader chat plan
 
 - `agentdeck leader chat --message <text>` 在无 plan 时创建 plan-only 记录后，现在会立即持久化或复用一条 safe `create_approvals` Leader action。

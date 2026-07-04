@@ -694,13 +694,17 @@ def test_leader_chat_applies_create_approvals_action_when_explicitly_requested(t
     assert payload["leader_actions"]["items"][0]["action_id"] == action_id
     assert payload["leader_actions"]["items"][0]["status"] == "applied"
     assert payload["leader_actions"]["items"][0]["is_recommended"] is False
+    assert payload["recovery"]["status"] == "approval_required"
+    assert payload["recovery"]["recommended_action"]["command"] == "agentdeck approval list"
+    assert payload["next_command"] == payload["recovery"]["next_command"]
+    assert payload["next_command"] == "agentdeck approval list"
     assert payload["leader_explanation"]["mode"] == "apply_action"
     assert payload["leader_explanation"]["recommended_action_id"] is None
     assert payload["leader_explanation"]["action_kind"] == "create_approvals"
     assert payload["leader_explanation"]["action_status"] == "applied"
     assert payload["leader_explanation"]["safety"] == "safe_apply_completed"
     assert payload["leader_explanation"]["requires_explicit_user"] is False
-    assert payload["leader_explanation"]["next_command"] is None
+    assert payload["leader_explanation"]["next_command"] == payload["next_command"]
     assert payload["leader_explanation"]["result_count"] == 3
     assert payload["result"]["count"] == 3
 
@@ -708,6 +712,7 @@ def test_leader_chat_applies_create_approvals_action_when_explicitly_requested(t
     assert len(state["approvals"]) == 3
     assert state["leader_actions"][0]["status"] == "applied"
     assert state["chat_turns"][0]["mode"] == "apply_action"
+    assert state["chat_turns"][0]["next_command"] == payload["next_command"]
     assert state["chat_turns"][0]["action_id"] == action_id
     assert state["chat_turns"][0]["action_kind"] == "create_approvals"
     assert state["messages"] == []

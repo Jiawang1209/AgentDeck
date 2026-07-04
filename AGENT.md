@@ -115,7 +115,7 @@ Worker 不应该：
 ## Leader Planning
 
 - `agentdeck leader chat --message <text>` 是自然语言 Leader 入口 MVP；它读取 ProjectView 前必须通过 `validate_project_view_contract()` 守门，无 plan 时创建 plan-only 记录、持久化一条 safe `create_approvals` Leader action，并在响应前重新读取 ProjectView，使同次响应包含刚创建的 plan、chat turn 和 action queue；有 plan 时 review 最新 plan，并持久化或复用一条 `leader_actions[]` 建议；chat 输出包含顶层 `leader_actions`，且它等于同次响应的 `project_view.leader_actions`；chat 输出还包含 `leader_explanation`，用于解释当前推荐动作、safety 和是否需要人类显式确认；plan/review 输出包含 `recovery`，且 `next_command` 来自 `recovery.next_command`。
-- `agentdeck leader chat --message "apply action <id>"` 会复用 safe apply-action 白名单；当前只允许应用 `create_approvals`，runtime action 必须继续显式命令执行。
+- `agentdeck leader chat --message "apply action <id>"` 会复用 safe apply-action 白名单；当前只允许应用 `create_approvals`，runtime action 必须继续显式命令执行；safe apply 完成后的 `next_command` 必须来自刷新后 `recovery.next_command`。
 - `agentdeck leader chat-history` 返回已持久化的 chat turns 摘要，用于恢复自然语言调度上下文；review turn 会包含 action_id/action_kind。
 - `agentdeck leader plan --task <text>` 会写入 `.agentdeck/state/state.json` 的 `plans[]`。
 - `agentdeck leader review --plan-id <id>` 会先通过 ProjectView contract 守门，再基于 plan status 和 replies 输出下一步建议。
