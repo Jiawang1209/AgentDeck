@@ -48,6 +48,7 @@ agentdeck agent send --agent planner --text "继续"
 agentdeck agent stop --agent planner
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
 agentdeck leader plan --task "设计自动 reply extraction"
+agentdeck leader review --plan-id pln_xxx
 agentdeck plan list
 agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
@@ -98,6 +99,7 @@ agentdeck status
 agentdeck agent list
 agentdeck agent stop --agent planner
 agentdeck leader plan --task "设计自动 reply extraction"
+agentdeck leader review --plan-id pln_xxx
 agentdeck plan list
 agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
@@ -204,6 +206,7 @@ AgentDeck 已提供第一版 plan-only Leader 能力：
 
 ```bash
 agentdeck leader plan --task "设计自动 reply extraction"
+agentdeck leader review --plan-id pln_xxx
 agentdeck plan list
 agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
@@ -212,6 +215,8 @@ agentdeck plan status --plan-id pln_xxx
 当前默认且仅支持本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。这个命令不会 dispatch、不会发送 tmux 输入、不会调用外部 LLM。未实现的真实 provider 会明确失败，而不是静默退回 fake。
 
 `plan list` 返回计划摘要，适合给自然语言入口或 GUI 做列表视图；`plan show` 返回完整计划，适合审批前人工检查；`plan status` 汇总每个 step 的 approval 状态、message_id、attempt_id 和 job_id，适合恢复任务进度。
+
+`leader review` 使用本地 deterministic 规则读取 plan status 和 replies，输出下一步建议：`dispatch_approved`、`wait_for_reply`、`summarize` 或 `wait_for_approval`。后续接入真实 Leader LLM 时应复用该输出结构。
 
 计划确认后，可以创建审批项：
 

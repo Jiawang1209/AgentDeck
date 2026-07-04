@@ -156,6 +156,63 @@ class StateStore:
             "steps": status_steps,
         }
 
+    def leader_review(self, plan_id: str) -> dict[str, Any]:
+        status = self.plan_status(plan_id)
+        state = self.load()
+        replies = state.get("replies", [])
+        replies_by_message = {reply.get("message_id"): reply for reply in replies}
+        for step in status["steps"]:
+            if step.get("approval_status") == "approved":
+                return {
+                    "plan_id": plan_id,
+                    "next_action": "dispatch_approved",
+                    "reason": "approved step is waiting for dispatch",
+                    "approval_id": step.get("approval_id"),
+                    "agent_id": step.get("agent_id"),
+                    "counts": status["counts"],
+                }
+        dispatched_without_reply = []
+        completed_replies = []
+        for step in status["steps"]:
+            message_id = step.get("message_id")
+            if step.get("approval_status") != "dispatched" or not message_id:
+                continue
+            reply = replies_by_message.get(message_id)
+            if reply is None:
+                dispatched_without_reply.append(step)
+            else:
+                completed_replies.append(
+                    {
+                        "agent_id": step.get("agent_id"),
+                        "message_id": message_id,
+                        "reply_id": reply.get("reply_id"),
+                    }
+                )
+        if dispatched_without_reply:
+            step = dispatched_without_reply[0]
+            return {
+                "plan_id": plan_id,
+                "next_action": "wait_for_reply",
+                "reason": "dispatched step has no reply yet",
+                "agent_id": step.get("agent_id"),
+                "message_id": step.get("message_id"),
+                "counts": status["counts"],
+            }
+        if completed_replies:
+            return {
+                "plan_id": plan_id,
+                "next_action": "summarize",
+                "reason": "all dispatched steps have replies",
+                "replies": completed_replies,
+                "counts": status["counts"],
+            }
+        return {
+            "plan_id": plan_id,
+            "next_action": "wait_for_approval",
+            "reason": "no approved or dispatched steps are ready",
+            "counts": status["counts"],
+        }
+
     def create_approvals_from_plan(self, plan_id: str) -> list[dict[str, Any]]:
         state = self.load()
         plan_record = next((plan for plan in state.get("plans", []) if plan.get("plan_id") == plan_id), None)

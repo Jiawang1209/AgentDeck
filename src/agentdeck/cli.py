@@ -471,6 +471,19 @@ def leader_plan_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def leader_review_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    try:
+        review = store.leader_review(args.plan_id)
+    except KeyError:
+        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    _print_json(review)
+    return 0
+
+
 def _plan_summary(plan: dict[str, object]) -> dict[str, object]:
     body = plan.get("plan", {})
     steps = body.get("steps", []) if isinstance(body, dict) else []
@@ -704,6 +717,9 @@ def build_parser() -> argparse.ArgumentParser:
     leader_plan.add_argument("--provider", default="fake", help="Leader provider to use; defaults to local fake")
     leader_plan.add_argument("--model", default="fake-plan", help="Provider model label recorded with the plan")
     leader_plan.set_defaults(func=leader_plan_command)
+    leader_review = leader_subparsers.add_parser("review", help="Review plan progress and recommend next action")
+    leader_review.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
+    leader_review.set_defaults(func=leader_review_command)
 
     plan = subparsers.add_parser("plan", help="Inspect Leader plans")
     plan_subparsers = plan.add_subparsers(dest="plan_command")

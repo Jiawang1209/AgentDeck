@@ -173,6 +173,89 @@ def test_plan_status_rejects_unknown_plan_id(tmp_path, monkeypatch, capsys) -> N
     assert "unknown plan: pln_missing" in capsys.readouterr().err
 
 
+def test_leader_review_recommends_next_dispatch_when_pending_approved_step_exists(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "review loop"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+
+    exit_code = cli.main(["leader", "review", "--plan-id", plan_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["plan_id"] == plan_id
+    assert payload["next_action"] == "dispatch_approved"
+    assert payload["approval_id"] == approval_id
+    assert payload["agent_id"] == "planner"
+    assert payload["reason"] == "approved step is waiting for dispatch"
+    assert payload["counts"]["approved"] == 1
+
+
+def test_leader_review_recommends_waiting_for_dispatched_reply(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--task", "review waiting"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+
+    exit_code = cli.main(["leader", "review", "--plan-id", plan_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["next_action"] == "wait_for_reply"
+    assert payload["message_id"] == message_id
+    assert payload["agent_id"] == "planner"
+    assert payload["reason"] == "dispatched step has no reply yet"
+
+
+def test_leader_review_summarizes_when_all_dispatched_steps_have_replies(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--task", "review completed"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    cli.main(["reply", "--agent", "planner", "--message-id", message_id, "--text", "status: completed\nsummary: done"])
+    reply_id = json.loads(capsys.readouterr().out)["reply_id"]
+
+    exit_code = cli.main(["leader", "review", "--plan-id", plan_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["next_action"] == "summarize"
+    assert payload["reason"] == "all dispatched steps have replies"
+    assert payload["replies"] == [{"agent_id": "planner", "message_id": message_id, "reply_id": reply_id}]
+
+
+def test_leader_review_rejects_unknown_plan_id(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "review", "--plan-id", "pln_missing"])
+
+    assert exit_code == 1
+    assert "unknown plan: pln_missing" in capsys.readouterr().err
+
+
 def test_approval_create_from_plan_generates_step_approvals(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "审批后再派发"])

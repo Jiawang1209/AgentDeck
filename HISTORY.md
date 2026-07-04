@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add Leader review loop MVP
+
+- 新增 `agentdeck leader review --plan-id <id>`，基于 plan status、approval 状态和 replies 输出下一步建议。
+- 扩展 `StateStore.leader_review()`，当前使用本地 deterministic 规则，不调用外部 LLM。
+- review 支持 `dispatch_approved`、`wait_for_reply`、`summarize` 和 `wait_for_approval` 四种 next_action。
+- `dispatch_approved` 返回待派发 approval_id 和 agent_id；`wait_for_reply` 返回待回收 message_id；`summarize` 返回已完成 replies 摘要。
+- 扩展 `tests/test_leader_cli.py`，覆盖 approved 待派发、dispatched 待回复、已回复可总结和 unknown plan 错误。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 Leader review loop 用法。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_review_recommends_next_dispatch_when_pending_approved_step_exists tests/test_leader_cli.py::test_leader_review_recommends_waiting_for_dispatched_reply tests/test_leader_cli.py::test_leader_review_summarizes_when_all_dispatched_steps_have_replies tests/test_leader_cli.py::test_leader_review_rejects_unknown_plan_id -q` 看到 `leader review` 子命令不存在；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 31 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，`agentdeck leader --help` 显示 review 子命令，临时 git 项目 smoke 确认无审批时返回 `wait_for_approval`。
+
 ### Current - Add reply capture MVP
 
 - 新增 `agentdeck capture-reply --agent <id> --message-id <id>`，从已绑定 agent pane 捕获最近输出并提取最后一个 `status:` 开头的结构化回复块。

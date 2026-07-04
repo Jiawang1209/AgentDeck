@@ -93,6 +93,7 @@ Worker 不应该：
 ## Leader Planning
 
 - `agentdeck leader plan --task <text>` 会写入 `.agentdeck/state/state.json` 的 `plans[]`。
+- `agentdeck leader review --plan-id <id>` 会基于 plan status 和 replies 输出下一步建议。
 - `agentdeck plan list` 返回 plan 摘要，不包含完整 `plan` body。
 - `agentdeck plan show --plan-id <id>` 返回完整 plan，用于审批前检查。
 - `agentdeck plan status --plan-id <id>` 返回 plan step、approval 状态和 dispatch lineage 汇总。
