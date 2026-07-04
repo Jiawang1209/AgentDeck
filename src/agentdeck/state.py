@@ -204,6 +204,45 @@ class StateStore:
         self.save(state)
         return item
 
+    def trace(self, query_id: str) -> dict[str, Any]:
+        state = self.load()
+        message_id = self._resolve_message_id(state, query_id)
+        if message_id is None:
+            raise KeyError(query_id)
+        message = next(item for item in state.get("messages", []) if item.get("message_id") == message_id)
+        attempts = [item for item in state.get("attempts", []) if item.get("message_id") == message_id]
+        jobs = [item for item in state.get("jobs", []) if item.get("message_id") == message_id]
+        replies = [item for item in state.get("replies", []) if item.get("message_id") == message_id]
+        inbox_items = []
+        for items in state.get("inbox", {}).values():
+            inbox_items.extend(item for item in items if item.get("message_id") == message_id)
+        return {
+            "query_id": query_id,
+            "message": message,
+            "attempts": attempts,
+            "jobs": jobs,
+            "replies": replies,
+            "inbox_items": inbox_items,
+        }
+
+    def _resolve_message_id(self, state: dict[str, Any], query_id: str) -> str | None:
+        for item in state.get("messages", []):
+            if item.get("message_id") == query_id:
+                return str(item["message_id"])
+        for collection in ("attempts", "jobs", "replies"):
+            for item in state.get(collection, []):
+                if query_id in {
+                    item.get("attempt_id"),
+                    item.get("job_id"),
+                    item.get("reply_id"),
+                }:
+                    return str(item["message_id"])
+        for items in state.get("inbox", {}).values():
+            for item in items:
+                if item.get("inbox_id") == query_id:
+                    return str(item["message_id"])
+        return None
+
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
         bindings = state.get("agents", {})

@@ -198,3 +198,28 @@ def test_ack_marks_inbox_item_acked(tmp_path, monkeypatch, capsys) -> None:
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "inbox_item_acked"' in events
+
+
+def test_trace_reconstructs_communication_lineage_from_reply_id(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--from-agent", "coder", "--agent", "planner", "--task", "审查实现方案"])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    cli.main(["reply", "--agent", "planner", "--message-id", message_id, "--text", "status: completed"])
+    reply_id = json.loads(capsys.readouterr().out)["reply_id"]
+
+    exit_code = cli.main(["trace", "--id", reply_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["query_id"] == reply_id
+    assert payload["message"]["message_id"] == message_id
+    assert payload["message"]["from_actor"] == "coder"
+    assert payload["message"]["to_agent"] == "planner"
+    assert payload["attempts"][0]["message_id"] == message_id
+    assert payload["jobs"][0]["message_id"] == message_id
+    assert payload["replies"][0]["reply_id"] == reply_id
+    event_types = {item["event_type"] for item in payload["inbox_items"]}
+    assert event_types == {"task_request", "task_reply"}

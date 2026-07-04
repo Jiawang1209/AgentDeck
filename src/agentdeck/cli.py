@@ -363,6 +363,19 @@ def ack_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def trace_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    try:
+        trace = store.trace(args.id)
+    except KeyError:
+        print(f"unknown trace id: {args.id}", file=sys.stderr)
+        return 1
+    _print_json(trace)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentdeck")
     subparsers = parser.add_subparsers(dest="command")
@@ -431,6 +444,10 @@ def build_parser() -> argparse.ArgumentParser:
     ack.add_argument("--agent", required=True, help="Agent id that owns the inbox")
     ack.add_argument("--inbox-id", required=True, help="Inbox item id")
     ack.set_defaults(func=ack_command)
+
+    trace = subparsers.add_parser("trace", help="Trace message, attempt, job, reply, or inbox lineage")
+    trace.add_argument("--id", required=True, help="message_id, attempt_id, job_id, reply_id, or inbox_id")
+    trace.set_defaults(func=trace_command)
 
     return parser
 

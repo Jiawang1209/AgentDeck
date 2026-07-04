@@ -49,6 +49,7 @@ agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
 agentdeck ack --agent planner --inbox-id inb_xxx
+agentdeck trace --id msg_xxx
 ```
 
 `project init` 会创建：
@@ -88,6 +89,7 @@ agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
 agentdeck ack --agent planner --inbox-id inb_xxx
+agentdeck trace --id msg_xxx
 python -m compileall src
 ```
 
@@ -157,7 +159,17 @@ agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
 agentdeck ack --agent planner --inbox-id inb_xxx
 ```
 
-后续会继续补 `trace`、自动 reply extraction 和更严格的 mailbox head-only ack。
+可以用任意通信 ID 还原整条链路：
+
+```bash
+agentdeck trace --id msg_xxx
+agentdeck trace --id att_xxx
+agentdeck trace --id job_xxx
+agentdeck trace --id rep_xxx
+agentdeck trace --id inb_xxx
+```
+
+`trace` 会返回同一条 message lineage 下的 message、attempts、jobs、replies 和 inbox_items。后续会继续补自动 reply extraction 和更严格的 mailbox head-only ack。
 
 DeepSeek API key 后续会通过环境变量读取：
 

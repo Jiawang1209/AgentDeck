@@ -83,7 +83,8 @@ Worker 不应该：
 - `agentdeck inbox --agent <id>` 可查看某个 agent 收到的 task request。
 - `agentdeck reply --agent <id> --message-id <id> --text <text>` 可把 agent 结果记录为 reply。
 - `agentdeck ack --agent <id> --inbox-id <id>` 可确认 inbox item。
-- 后续升级为完整 `trace`、自动 reply extraction 和 head-only ack。
+- `agentdeck trace --id <id>` 可用 message/attempt/job/reply/inbox 任意 ID 还原通信链路。
+- 后续升级为自动 reply extraction 和 head-only ack。
 
 ## 审批规则
 

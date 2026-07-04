@@ -49,6 +49,7 @@ agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
 agentdeck ack --agent planner --inbox-id inb_xxx
+agentdeck trace --id msg_xxx
 pytest tests/test_agent_cli.py -q
 pytest tests/test_dispatch_cli.py -q
 python -m compileall src
