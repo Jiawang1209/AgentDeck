@@ -778,14 +778,16 @@ def _leader_chat_explanation(
     if mode == "plan":
         return {
             "mode": mode,
-            "summary": "Leader created a plan-only record; run the next approval command before any dispatch.",
+            "summary": f"Leader created a plan-only record and recommends {action_kind} as the safe next step.",
             "reason": "no existing plan was available for review",
             "next_command": next_command,
-            "recommended_action_id": None,
-            "action_kind": None,
-            "action_status": None,
-            "safety": "plan_only",
-            "requires_explicit_user": True,
+            "recommended_action_id": recovery_action.get("target_id") if isinstance(recovery_action, dict) else None,
+            "action_kind": action_kind,
+            "action_status": action_status,
+            "safety": recovery_action.get("safety") if isinstance(recovery_action, dict) else "plan_only",
+            "requires_explicit_user": recovery_action.get("requires_explicit_user")
+            if isinstance(recovery_action, dict)
+            else True,
         }
     if mode == "apply_action":
         result_count = result.get("count") if isinstance(result, dict) else None
@@ -960,7 +962,17 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         print(f"leader provider failed: {exc}", file=sys.stderr)
         return 1
     record = store.record_plan(args.message, provider.name, args.model, plan)
-    next_command = f"agentdeck approval create-from-plan --plan-id {record['plan_id']}"
+    action = store.suggest_leader_action(str(record["plan_id"]))
+    action_detail = store.leader_action_detail(str(action["action_id"]))
+    project_view_with_action = _project_view_payload_or_error(config, store)
+    if project_view_with_action is None:
+        return 1
+    recovery = project_view_with_action.get("recovery", {})
+    next_command = (
+        recovery.get("next_command")
+        if isinstance(recovery, dict)
+        else f"agentdeck approval create-from-plan --plan-id {record['plan_id']}"
+    )
     turn = store.record_chat_turn(
         mode="plan",
         message=args.message,
@@ -969,6 +981,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         provider=record["provider"],
         model=record["model"],
         review=None,
+        action_id=str(action["action_id"]),
+        action_kind=str(action["kind"]),
     )
     refreshed_project_view = _project_view_payload_or_error(config, store)
     if refreshed_project_view is None:
@@ -984,10 +998,11 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "plan",
             next_command=next_command,
             project_view=refreshed_project_view,
+            leader_action=action_detail,
         ),
         "plan_id": record["plan_id"],
         "recovery": refreshed_project_view.get("recovery"),
-        "leader_action": None,
+        "leader_action": action_detail,
         "status": record["status"],
         "provider": record["provider"],
         "model": record["model"],

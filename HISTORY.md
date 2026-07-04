@@ -4,6 +4,18 @@
 
 ## 2026-07-05
 
+### Current - Queue safe action after Leader chat plan
+
+- `agentdeck leader chat --message <text>` 在无 plan 时创建 plan-only 记录后，现在会立即持久化或复用一条 safe `create_approvals` Leader action。
+- plan-mode chat 响应现在会返回 `leader_action`、`leader_actions.recommended_action_id`、`recovery.status=action_required`，且 `next_command` 来自 `recovery.next_command` 的 safe `agentdeck leader apply-action --action-id <id>`。
+- 同次写入的 `chat_turns[]` 会记录 action_id/action_kind，让 GUI 或自然语言历史可以从首次 plan turn 直接跳到 action queue。
+- `leader_explanation` 在 plan mode 下会说明推荐的 `create_approvals` action，`safety=safe_apply`，`requires_explicit_user=false`；这只表示可安全创建审批队列，不表示自动 dispatch。
+- 扩展 leader chat 红灯测试，先确认 plan-mode `leader_action` 仍为 `None`，再实现 action queue 推荐和 recovery 对齐。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录首次 chat plan 会持久化 safe action，但不会创建 approval、不会 dispatch、不会发送 tmux 输入。
+- 保持安全边界：本轮只写入 Leader action 建议，不应用 action、不创建 approval、不 dispatch、不发送 tmux 输入。
+- 本地验证：先运行 `test_leader_chat_creates_plan_from_natural_language_without_dispatching` 看到 `leader_action` 为 `None` 的红灯；实现后同一测试通过，`tests/test_leader_cli.py tests/test_contracts.py` 59 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 96 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认首次 chat 返回 `create_approvals` safe action、`recovery.status=action_required`、`next_command` 等于 `apply_command`，且 `approvals/messages/jobs` 仍为 0。
+
 ### Current - Refresh Leader chat plan ProjectView
 
 - `agentdeck leader chat --message <text>` 在无 plan 时创建 plan-only 记录后，现在会重新读取并校验 ProjectView，再组装 chat 响应。

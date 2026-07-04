@@ -170,17 +170,32 @@ def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_
     assert payload["project_view"]["plans"]["items"][0]["task"] == "帮我实现自动回复回收"
     assert payload["project_view"]["chat_turns"]["count"] == 1
     assert payload["project_view"]["chat_turns"]["items"][0]["turn_id"] == payload["turn_id"]
+    assert payload["project_view"]["chat_turns"]["items"][0]["action_id"] == payload["leader_action"]["action_id"]
+    assert payload["project_view"]["chat_turns"]["items"][0]["action_kind"] == "create_approvals"
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
-    assert payload["leader_actions"]["count"] == 0
+    assert payload["leader_actions"]["count"] == 1
+    assert payload["leader_actions"]["recommended_action_id"] == payload["leader_action"]["action_id"]
+    assert payload["leader_actions"]["items"][0]["kind"] == "create_approvals"
+    assert payload["leader_actions"]["items"][0]["can_apply"] is True
+    assert payload["leader_actions"]["items"][0]["is_recommended"] is True
+    assert payload["leader_action"]["kind"] == "create_approvals"
+    assert payload["leader_action"]["plan_id"] == payload["plan_id"]
+    assert payload["leader_action"]["can_apply"] is True
+    assert payload["leader_action"]["apply_blocker"] is None
+    assert payload["recovery"]["status"] == "action_required"
+    assert payload["recovery"]["leader_action"]["action_id"] == payload["leader_action"]["action_id"]
+    assert payload["recovery"]["next_command"] == payload["leader_action"]["apply_command"]
     assert payload["leader_explanation"]["mode"] == "plan"
-    assert payload["leader_explanation"]["safety"] == "plan_only"
-    assert payload["leader_explanation"]["requires_explicit_user"] is True
-    assert payload["leader_explanation"]["recommended_action_id"] is None
+    assert payload["leader_explanation"]["safety"] == "safe_apply"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["leader_explanation"]["recommended_action_id"] == payload["leader_action"]["action_id"]
+    assert payload["leader_explanation"]["action_kind"] == "create_approvals"
+    assert payload["leader_explanation"]["action_status"] == "pending"
     assert payload["leader_explanation"]["next_command"] == payload["next_command"]
     assert "approval" in payload["leader_explanation"]["summary"]
     assert payload["turn_id"].startswith("cht_")
     assert payload["plan_id"].startswith("pln_")
-    assert payload["next_command"] == f"agentdeck approval create-from-plan --plan-id {payload['plan_id']}"
+    assert payload["next_command"] == payload["recovery"]["next_command"]
     assert payload["review"] is None
 
     state = StateStore(root).load()
@@ -189,8 +204,14 @@ def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_
     assert state["chat_turns"][0]["message"] == "帮我实现自动回复回收"
     assert state["chat_turns"][0]["plan_id"] == payload["plan_id"]
     assert state["chat_turns"][0]["next_command"] == payload["next_command"]
+    assert state["chat_turns"][0]["action_id"] == payload["leader_action"]["action_id"]
+    assert state["chat_turns"][0]["action_kind"] == "create_approvals"
     assert len(state["plans"]) == 1
     assert state["plans"][0]["task"] == "帮我实现自动回复回收"
+    assert len(state["leader_actions"]) == 1
+    assert state["leader_actions"][0]["action_id"] == payload["leader_action"]["action_id"]
+    assert state["leader_actions"][0]["kind"] == "create_approvals"
+    assert state["approvals"] == []
     assert state["messages"] == []
     assert state["jobs"] == []
     assert state.get("inbox", {}) == {}
