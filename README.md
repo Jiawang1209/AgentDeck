@@ -59,6 +59,7 @@ agentdeck approval dispatch --approval-id apv_xxx
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
+agentdeck capture-reply --agent planner --message-id msg_xxx
 agentdeck ack --agent planner --inbox-id inb_xxx
 agentdeck trace --id msg_xxx
 ```
@@ -107,6 +108,7 @@ agentdeck approval dispatch --approval-id apv_xxx
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
+agentdeck capture-reply --agent planner --message-id msg_xxx
 agentdeck ack --agent planner --inbox-id inb_xxx
 agentdeck trace --id msg_xxx
 python -m compileall src
@@ -170,6 +172,12 @@ Agent 完成任务后，可以先用手动命令把回复写入账本：
 
 ```bash
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
+```
+
+也可以从 agent pane 最近输出中捕获最后一个 `status:` 开头的结构化回复块：
+
+```bash
+agentdeck capture-reply --agent planner --message-id msg_xxx
 ```
 
 如果任务由另一个 agent 发起，reply 会作为 `task_reply` 投递到发起方 inbox。处理完 inbox item 后可以确认：

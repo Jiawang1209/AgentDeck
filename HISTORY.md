@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add reply capture MVP
+
+- 新增 `agentdeck capture-reply --agent <id> --message-id <id>`，从已绑定 agent pane 捕获最近输出并提取最后一个 `status:` 开头的结构化回复块。
+- capture-reply 复用 `StateStore.record_reply()`，因此会更新 message、attempt、job 状态，并在 agent-to-agent 场景回流 sender inbox。
+- 新增 `reply_captured` 事件，记录 reply_id、message_id、from_agent、pane_id 和 captured_lines。
+- 当 pane 输出中没有结构化 `status:` 回复块时，命令明确失败且不写入 `replies[]`。
+- 扩展 `tests/test_dispatch_cli.py`，覆盖成功捕获最新结构化回复和无结构化回复失败。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 capture-reply 用法。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_dispatch_cli.py::test_capture_reply_extracts_latest_structured_reply_from_agent_output tests/test_dispatch_cli.py::test_capture_reply_rejects_output_without_structured_status -q` 看到 `capture-reply` 子命令不存在；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 27 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，`agentdeck --help` 显示 capture-reply 子命令。
+
 ### Current - Add plan status view
 
 - 新增 `agentdeck plan status --plan-id <id>`，汇总 plan、approval 状态和 dispatch lineage。

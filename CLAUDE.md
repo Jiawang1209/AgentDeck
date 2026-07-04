@@ -57,6 +57,7 @@ agentdeck approval dispatch --approval-id apv_xxx
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
+agentdeck capture-reply --agent planner --message-id msg_xxx
 agentdeck ack --agent planner --inbox-id inb_xxx
 agentdeck trace --id msg_xxx
 pytest tests/test_agent_cli.py -q
@@ -99,6 +100,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - 自然语言任务调度优先从 `agentdeck leader plan --task <text>` 生成 plan-only 记录开始；不要跳过 plan 直接自动 dispatch。
 - 审批、dispatch 或恢复任务前优先用 `agentdeck plan list`、`agentdeck plan show --plan-id <id>` 和 `agentdeck plan status --plan-id <id>` 检查计划。
 - 使用 `agentdeck approval create-from-plan --plan-id <id>` 创建审批项，使用 `approval approve/reject` 更新状态；只有 approved approval 才能通过 `agentdeck approval dispatch --approval-id <id>` 派发。
+- Worker 输出结构化结果后，优先使用 `agentdeck capture-reply --agent <id> --message-id <id>` 从 pane 回收入账；手动 `reply` 作为兜底。
 - 先更新架构/README/agent 文档，再扩展行为。
 - 所有开发命令默认先激活 `agentdeck` conda 环境。
 - `References/` 只读学习，不纳入 git，不直接复制大段源码。

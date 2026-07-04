@@ -338,6 +338,63 @@ def reply_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _extract_structured_reply(output: str) -> str | None:
+    lines = output.splitlines()
+    start_index = None
+    for index, line in enumerate(lines):
+        if line.strip().startswith("status:"):
+            start_index = index
+    if start_index is None:
+        return None
+    return "\n".join(lines[start_index:]).strip()
+
+
+def capture_reply_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if _agent_by_id(config, args.agent) is None:
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    binding, exit_code = _running_binding_or_error(store, args.agent)
+    if binding is None:
+        return exit_code
+    pane_id = str(binding["pane_id"])
+    output = TmuxBackend().capture_output(config.runtime, pane_id, args.lines)
+    text = _extract_structured_reply(output)
+    if text is None:
+        print(f"no structured reply found for agent: {args.agent}", file=sys.stderr)
+        return 1
+    try:
+        reply = store.record_reply(args.agent, args.message_id, text)
+    except KeyError:
+        print(f"unknown message: {args.message_id}", file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "reply_captured",
+            {
+                "reply_id": reply["reply_id"],
+                "message_id": reply["message_id"],
+                "from_agent": args.agent,
+                "pane_id": pane_id,
+                "captured_lines": len(text.splitlines()),
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "reply_id": reply["reply_id"],
+            "message_id": reply["message_id"],
+            "from_agent": args.agent,
+            "pane_id": pane_id,
+            "captured_lines": len(text.splitlines()),
+        }
+    )
+    return 0
+
+
 def ack_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -695,6 +752,12 @@ def build_parser() -> argparse.ArgumentParser:
     reply.add_argument("--message-id", required=True, help="Message id being replied to")
     reply.add_argument("--text", required=True, help="Reply text")
     reply.set_defaults(func=reply_command)
+
+    capture_reply = subparsers.add_parser("capture-reply", help="Capture structured reply from an agent pane")
+    capture_reply.add_argument("--agent", required=True, help="Agent id that produced the reply")
+    capture_reply.add_argument("--message-id", required=True, help="Message id being replied to")
+    capture_reply.add_argument("--lines", type=int, default=200, help="Number of recent pane lines to inspect")
+    capture_reply.set_defaults(func=capture_reply_command)
 
     ack = subparsers.add_parser("ack", help="Acknowledge an inbox item")
     ack.add_argument("--agent", required=True, help="Agent id that owns the inbox")

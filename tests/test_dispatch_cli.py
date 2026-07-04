@@ -11,9 +11,13 @@ from agentdeck.state import StateStore
 class FakeTmuxBackend:
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []
+        self.output = ""
 
     def send_input(self, _config, pane_id: str, text: str) -> None:
         self.sent.append((pane_id, text))
+
+    def capture_output(self, _config, pane_id: str, lines: int = 200) -> str:
+        return self.output
 
 
 def prepare_project(tmp_path: Path, monkeypatch) -> Path:
@@ -223,3 +227,63 @@ def test_trace_reconstructs_communication_lineage_from_reply_id(tmp_path, monkey
     assert payload["replies"][0]["reply_id"] == reply_id
     event_types = {item["event_type"] for item in payload["inbox_items"]}
     assert event_types == {"task_request", "task_reply"}
+
+
+def test_capture_reply_extracts_latest_structured_reply_from_agent_output(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--from-agent", "coder", "--agent", "planner", "--task", "审查实现方案"])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    fake.output = """random shell output
+status: blocked
+summary: first draft was incomplete
+
+more output
+status: completed
+summary: 方案可行
+files_read:
+  - src/agentdeck/cli.py
+verification:
+  - command: pytest
+    result: passed
+"""
+
+    exit_code = cli.main(["capture-reply", "--agent", "planner", "--message-id", message_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["reply_id"].startswith("rep_")
+    assert payload["message_id"] == message_id
+    assert payload["from_agent"] == "planner"
+    assert payload["captured_lines"] == 7
+
+    state = StateStore(root).load()
+    reply = state["replies"][0]
+    assert reply["reply_id"] == payload["reply_id"]
+    assert reply["text"].startswith("status: completed")
+    assert "summary: 方案可行" in reply["text"]
+    assert state["messages"][0]["status"] == "replied"
+    assert state["jobs"][0]["status"] == "completed"
+    assert state["inbox"]["coder"][0]["event_type"] == "task_reply"
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "reply_captured"' in events
+
+
+def test_capture_reply_rejects_output_without_structured_status(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    fake.output = "plain output without a structured reply"
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "planner", "--task", "设计消息账本"])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+
+    exit_code = cli.main(["capture-reply", "--agent", "planner", "--message-id", message_id])
+
+    assert exit_code == 1
+    assert "no structured reply found for agent: planner" in capsys.readouterr().err
+    assert StateStore(root).load().get("replies", []) == []
