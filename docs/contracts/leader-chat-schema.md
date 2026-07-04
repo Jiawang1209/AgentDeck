@@ -21,7 +21,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
 
 Use `agentdeck contract leader-chat --example` to include a stable GUI-ready response fixture.
 
-Live `agentdeck leader chat` responses are validated against this contract before JSON is printed. If validation fails, the command exits non-zero, writes the contract errors to stderr, and does not print a partial chat response.
+Live `agentdeck leader chat` responses are validated against this contract before JSON is printed. If validation fails, the command exits non-zero, writes the contract errors to stderr, records the failure in `leader_errors[]`, appends a `leader_chat_contract_failed` event, and does not print a partial chat response.
 
 ## Response Shape
 
@@ -71,5 +71,6 @@ The review-mode response shape is:
 - The contract command is read-only.
 - Chat responses must not auto-dispatch runtime work.
 - Chat responses must pass `validate_leader_chat_contract()` before printing JSON.
+- Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Runtime actions still require explicit commands or approval flow.
 - GUI clients should treat `project_view` and `leader_actions` as state, and `leader_explanation` as explanation.

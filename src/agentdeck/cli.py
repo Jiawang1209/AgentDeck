@@ -35,9 +35,28 @@ def _project_view_payload_or_error(config: ProjectConfig, store: StateStore) -> 
     return payload
 
 
-def _print_leader_chat_payload_or_error(payload: dict[str, object]) -> int:
+def _print_leader_chat_payload_or_error(
+    payload: dict[str, object],
+    store: StateStore,
+    *,
+    task: str,
+) -> int:
     validation = validate_leader_chat_contract(payload)
     if not validation["ok"]:
+        error = "; ".join(str(item) for item in validation["errors"])
+        mode = str(payload.get("mode", "chat"))
+        record = store.record_leader_error(mode, "agentdeck-contract", None, task, error)
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_contract_failed",
+                {
+                    "error_id": record["error_id"],
+                    "mode": mode,
+                    "message_length": len(task),
+                    "error_count": len(validation["errors"]),
+                },
+            )
+        )
         print("Leader chat contract validation failed", file=sys.stderr)
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
@@ -857,7 +876,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "leader_action": action_detail,
             "result": result,
         }
-        return _print_leader_chat_payload_or_error(payload)
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
     plans = store.list_plans()
     if plans:
@@ -911,7 +930,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 },
             )
         )
-        return _print_leader_chat_payload_or_error(payload)
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
     try:
         provider = leader_provider(args.provider)
@@ -972,7 +991,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             },
         )
     )
-    return _print_leader_chat_payload_or_error(payload)
+    return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
 
 def _chat_turn_summary(turn: dict[str, object]) -> dict[str, object]:

@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Record Leader chat contract failures
+
+- `agentdeck leader chat` 的 response contract 校验失败现在会写入 `.agentdeck/state/state.json` 的 `leader_errors[]`，`provider` 标记为 `agentdeck-contract`，`mode` 使用失败响应的 chat mode。
+- 同一失败会追加 `leader_chat_contract_failed` 事件，记录 error_id、mode、message_length 和 error_count，方便 GUI/恢复工具从事件时间线解释为什么没有 chat JSON。
+- 扩展 CLI 红灯测试：monkeypatch 生成缺少 `leader_explanation.safety` 的响应时，命令必须拒绝输出、写入 leader error、追加事件。
+- 更新 `README.md`、`docs/contracts/leader-chat-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 chat response contract failure 的可审计边界。
+- 保持安全边界：本轮只增强错误入账和审计事件，不扩大 safe apply 白名单、不自动 dispatch、不发送 tmux 输入。
+- 本地验证：先运行 `test_leader_chat_refuses_invalid_chat_response_before_printing` 看到 `leader_errors` 为空的红灯；实现后同一测试通过，`tests/test_contracts.py tests/test_leader_cli.py` 54 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 87 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认坏 chat response 返回 1，写入 `leader_errors[0].provider=agentdeck-contract`，事件类型为 `leader_chat_contract_failed`。
+
 ### Current - Self-validate Leader chat responses
 
 - 新增 `validate_leader_chat_contract()`，校验 `agentdeck leader chat` 响应字段、`leader_explanation` 字段、内嵌 `project_view` v1 契约，以及顶层 `leader_actions` 与 `project_view.leader_actions` 是否一致。

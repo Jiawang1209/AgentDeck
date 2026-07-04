@@ -196,7 +196,7 @@ def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_
 
 
 def test_leader_chat_refuses_invalid_chat_response_before_printing(tmp_path, monkeypatch, capsys) -> None:
-    prepare_project(tmp_path, monkeypatch)
+    root = prepare_project(tmp_path, monkeypatch)
     original_explanation = cli._leader_chat_explanation
 
     def broken_explanation(*args, **kwargs):
@@ -213,6 +213,13 @@ def test_leader_chat_refuses_invalid_chat_response_before_printing(tmp_path, mon
     assert captured.out == ""
     assert "Leader chat contract validation failed" in captured.err
     assert "missing leader_explanation field: safety" in captured.err
+    state = StateStore(root).load()
+    assert state["leader_errors"][0]["mode"] == "plan"
+    assert state["leader_errors"][0]["provider"] == "agentdeck-contract"
+    assert state["leader_errors"][0]["task"] == "帮我实现自动回复回收"
+    assert state["leader_errors"][0]["error"] == "missing leader_explanation field: safety"
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "leader_chat_contract_failed"' in events
 
 
 def test_leader_chat_refuses_invalid_project_view_before_planning(tmp_path, monkeypatch, capsys) -> None:
