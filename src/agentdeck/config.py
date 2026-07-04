@@ -25,6 +25,7 @@ role = "planning"
 provider = "codex"
 command = "codex"
 workspace_mode = "shared"
+role_prompt = "你是 AgentDeck 的规划 Agent，负责需求澄清、任务拆解、架构方案和风险识别。"
 
 [[agents]]
 agent_id = "coder"
@@ -32,6 +33,7 @@ role = "implementation"
 provider = "codex"
 command = "codex"
 workspace_mode = "worktree"
+role_prompt = "你是 AgentDeck 的实现 Agent，负责代码修改、测试执行、验证证据和实现总结。"
 
 [[agents]]
 agent_id = "reviewer"
@@ -39,6 +41,7 @@ role = "review"
 provider = "claude"
 command = "claude"
 workspace_mode = "shared"
+role_prompt = "你是 AgentDeck 的审查 Agent，负责发现 bug、风险、遗漏测试和架构问题。"
 
 [runtime]
 backend = "tmux"
@@ -119,6 +122,7 @@ def load_config(root: Path | None = None) -> ProjectConfig:
             provider=item.get("provider", "codex"),
             command=item.get("command", item.get("provider", "codex")),
             workspace_mode=item.get("workspace_mode", "shared"),
+            role_prompt=item.get("role_prompt", ""),
         )
         for item in agents_raw
     )
@@ -130,3 +134,79 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         agents=agents,
         runtime=runtime,
     )
+
+
+def update_agent_role(root: Path, agent_id: str, role: str, role_prompt: str) -> AgentSpec:
+    path = config_path(root)
+    if not path.exists():
+        raise FileNotFoundError(f"missing config: {path}")
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    updated: AgentSpec | None = None
+    for item in raw.get("agents", []):
+        if item.get("agent_id") == agent_id:
+            item["role"] = role
+            item["role_prompt"] = role_prompt
+            updated = AgentSpec(
+                agent_id=item["agent_id"],
+                role=role,
+                provider=item.get("provider", "codex"),
+                command=item.get("command", item.get("provider", "codex")),
+                workspace_mode=item.get("workspace_mode", "shared"),
+                role_prompt=role_prompt,
+            )
+            break
+    if updated is None:
+        raise KeyError(agent_id)
+    path.write_text(_dump_config(raw), encoding="utf-8")
+    return updated
+
+
+def _quote_toml(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _dump_config(raw: dict[str, object]) -> str:
+    project = raw.get("project", {})
+    leader = raw.get("leader", {})
+    agents = raw.get("agents", [])
+    runtime = raw.get("runtime", {})
+    lines: list[str] = []
+    if isinstance(project, dict):
+        lines.extend(["[project]", f"name = {_quote_toml(str(project.get('name', 'agentdeck')))}", ""])
+    if isinstance(leader, dict):
+        lines.extend(
+            [
+                "[leader]",
+                f"agent_id = {_quote_toml(str(leader.get('agent_id', 'leader')))}",
+                f"provider = {_quote_toml(str(leader.get('provider', 'deepseek')))}",
+                f"model = {_quote_toml(str(leader.get('model', 'deepseek-chat')))}",
+                f"approval_mode = {_quote_toml(str(leader.get('approval_mode', 'confirm')))}",
+                "",
+            ]
+        )
+    if isinstance(agents, list):
+        for item in agents:
+            if not isinstance(item, dict):
+                continue
+            lines.extend(
+                [
+                    "[[agents]]",
+                    f"agent_id = {_quote_toml(str(item.get('agent_id', 'agent')))}",
+                    f"role = {_quote_toml(str(item.get('role', item.get('agent_id', 'agent'))))}",
+                    f"provider = {_quote_toml(str(item.get('provider', 'codex')))}",
+                    f"command = {_quote_toml(str(item.get('command', item.get('provider', 'codex'))))}",
+                    f"workspace_mode = {_quote_toml(str(item.get('workspace_mode', 'shared')))}",
+                    f"role_prompt = {_quote_toml(str(item.get('role_prompt', '')))}",
+                    "",
+                ]
+            )
+    if isinstance(runtime, dict):
+        lines.extend(
+            [
+                "[runtime]",
+                f"backend = {_quote_toml(str(runtime.get('backend', 'tmux')))}",
+                f"session_name = {_quote_toml(str(runtime.get('session_name', 'agentdeck')))}",
+                f"socket_name = {_quote_toml(str(runtime.get('socket_name', 'agentdeck-local')))}",
+            ]
+        )
+    return "\n".join(lines) + "\n"

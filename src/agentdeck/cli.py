@@ -5,7 +5,7 @@ import argparse
 import json
 import sys
 
-from .config import config_path, load_config, project_root, write_default_config
+from .config import config_path, load_config, project_root, update_agent_role, write_default_config
 from .models import AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
 from .providers import DeepSeekProvider
 from .runtime import TmuxBackend
@@ -198,6 +198,99 @@ def agent_stop_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def agent_assign_role_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if _agent_by_id(config, args.agent) is None:
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    updated = update_agent_role(project_root(), args.agent, args.role, args.role_prompt)
+    store.append_event(
+        EventRecord.create(
+            "agent_role_assigned",
+            {
+                "agent_id": updated.agent_id,
+                "role": updated.role,
+                "role_prompt": updated.role_prompt,
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "agent_id": updated.agent_id,
+            "role": updated.role,
+            "role_prompt": updated.role_prompt,
+        }
+    )
+    return 0
+
+
+def build_dispatch_prompt(agent: AgentSpec, task: str) -> str:
+    return "\n".join(
+        [
+            "# AgentDeck dispatch",
+            "",
+            f"Agent: {agent.agent_id}",
+            f"Provider: {agent.provider}",
+            f"角色: {agent.role}",
+            "",
+            "角色说明:",
+            agent.role_prompt or "请按该 agent 的配置角色完成任务。",
+            "",
+            "当前任务:",
+            task,
+            "",
+            "请按以下格式返回:",
+            "status: completed | blocked | failed",
+            "summary:",
+            "files_read:",
+            "files_written:",
+            "verification:",
+            "risks:",
+            "next_steps:",
+        ]
+    )
+
+
+def dispatch_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    agent = _agent_by_id(config, args.agent)
+    if agent is None:
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    binding, exit_code = _running_binding_or_error(store, args.agent)
+    if binding is None:
+        return exit_code
+    pane_id = str(binding["pane_id"])
+    prompt = build_dispatch_prompt(agent, args.task)
+    message = store.append_message("user", agent.agent_id, args.task, prompt)
+    TmuxBackend().send_input(config.runtime, pane_id, prompt)
+    store.append_event(
+        EventRecord.create(
+            "task_dispatched",
+            {
+                "message_id": message["message_id"],
+                "to_agent": agent.agent_id,
+                "pane_id": pane_id,
+                "task_length": len(args.task),
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "message_id": message["message_id"],
+            "agent_id": agent.agent_id,
+            "pane_id": pane_id,
+        }
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentdeck")
     subparsers = parser.add_subparsers(dest="command")
@@ -236,6 +329,20 @@ def build_parser() -> argparse.ArgumentParser:
     agent_stop = agent_subparsers.add_parser("stop", help="Kill a spawned agent pane and mark it stopped")
     agent_stop.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
     agent_stop.set_defaults(func=agent_stop_command)
+
+    agent_assign_role = agent_subparsers.add_parser(
+        "assign-role",
+        help="Assign an agent role and role prompt in .agentdeck/config.toml",
+    )
+    agent_assign_role.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
+    agent_assign_role.add_argument("--role", required=True, help="Human-readable role name")
+    agent_assign_role.add_argument("--role-prompt", required=True, help="Role instruction injected during dispatch")
+    agent_assign_role.set_defaults(func=agent_assign_role_command)
+
+    dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
+    dispatch.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
+    dispatch.add_argument("--task", required=True, help="Task text to send with the agent role prompt")
+    dispatch.set_defaults(func=dispatch_command)
 
     return parser
 

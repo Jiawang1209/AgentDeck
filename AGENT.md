@@ -74,9 +74,12 @@ Worker 不应该：
 ## 消息规则
 
 - 面向用户展示 agent name，不展示 provider 细节。
+- 每个 agent 应配置 `role` 和 `role_prompt`，dispatch 时会把角色说明注入任务 prompt。
+- 角色可以通过 `.agentdeck/config.toml` 编辑，也可以通过 `agentdeck agent assign-role` 写回配置。
 - task request 和 task reply 都进入 mailbox。
 - 每个 agent 同时只消费一个 active task。
 - 所有 job/reply/event 都要可 trace。
+- 当前 MVP 通信路径是 `dispatch -> message record -> tmux pane`；后续升级为 `message -> attempt -> job -> reply -> inbox`。
 
 ## 审批规则
 

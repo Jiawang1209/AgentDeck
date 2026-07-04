@@ -44,6 +44,8 @@ agentdeck agent spawn --agent planner
 agentdeck agent capture --agent planner --lines 200
 agentdeck agent send --agent planner --text "继续"
 agentdeck agent stop --agent planner
+agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
+agentdeck dispatch --agent planner --task "设计消息账本"
 ```
 
 `project init` 会创建：
@@ -79,6 +81,7 @@ agentdeck project init
 agentdeck status
 agentdeck agent list
 agentdeck agent stop --agent planner
+agentdeck dispatch --agent planner --task "设计消息账本"
 python -m compileall src
 ```
 
@@ -103,6 +106,34 @@ agentdeck agent stop --agent planner
 - `stop` 会 kill 对应 tmux pane，并把该 agent 标记为 `stopped`。
 - `send` 是人工执行的显式命令，后续自动调度前还会加入审批队列。
 - runtime binding 与事件会写入 `.agentdeck/state/`。
+
+## Role Assignment and Dispatch
+
+AgentDeck 支持两种角色指派方式：
+
+1. 直接编辑 `.agentdeck/config.toml` 中每个 `[[agents]]` 的 `role` 与 `role_prompt`。
+2. 使用 CLI 写回配置：
+
+```bash
+agentdeck agent assign-role \
+  --agent planner \
+  --role "architecture planning" \
+  --role-prompt "你负责架构规划、任务拆解和风险识别。"
+```
+
+`dispatch` 会把 agent 的 `role`、`role_prompt`、当前任务和结构化输出格式组合成一段 prompt，发送到对应的 tmux pane：
+
+```bash
+agentdeck dispatch --agent planner --task "设计消息账本"
+```
+
+当前通信路径是 MVP 形态：
+
+```text
+Human/Leader -> dispatch -> message record -> tmux pane
+```
+
+每次 dispatch 会写入 `.agentdeck/state/state.json` 的 `messages`，并追加 `task_dispatched` 事件。后续会把它升级成 CCB 式 `message -> attempt -> job -> reply -> inbox` 账本。
 
 DeepSeek API key 后续会通过环境变量读取：
 

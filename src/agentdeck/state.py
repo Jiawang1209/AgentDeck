@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import CONFIG_DIR, ensure_project_layout, project_root
-from .models import AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView
+from .models import AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
 
 
 class StateStore:
@@ -58,6 +58,22 @@ class StateStore:
     def agent_binding(self, agent_id: str) -> dict[str, Any] | None:
         return self.load().get("agents", {}).get(agent_id)
 
+    def append_message(self, from_actor: str, to_agent: str, task: str, prompt: str) -> dict[str, Any]:
+        state = self.load()
+        messages = state.setdefault("messages", [])
+        message = {
+            "message_id": new_id("msg"),
+            "from_actor": from_actor,
+            "to_agent": to_agent,
+            "task": task,
+            "prompt": prompt,
+            "status": "dispatched",
+            "created_at": utc_now(),
+        }
+        messages.append(message)
+        self.save(state)
+        return message
+
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
         bindings = state.get("agents", {})
@@ -80,6 +96,7 @@ class StateStore:
                     "provider": agent.provider,
                     "command": agent.command,
                     "workspace_mode": agent.workspace_mode,
+                    "role_prompt": agent.role_prompt,
                     "runtime": binding,
                 }
             )

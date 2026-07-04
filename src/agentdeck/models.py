@@ -21,6 +21,7 @@ class AgentSpec:
     provider: str
     command: str
     workspace_mode: str = "shared"
+    role_prompt: str = ""
 
 
 @dataclass(frozen=True)
