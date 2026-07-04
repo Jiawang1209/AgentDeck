@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Split ProjectView contract module
+
+- 新增 `src/agentdeck/contracts.py`，把 ProjectView contract discovery payload 和 GUI-ready example fixture 从 `cli.py` 拆成可复用模块。
+- `agentdeck contract project-view` 继续保持原有输出，CLI 只负责定位文档路径、处理 `--example` 和打印 JSON。
+- 新增 `tests/test_contracts.py`，直接测试 `project_view_contract_payload()` 和 `project_view_example()` 可在不经过 CLI 的情况下复用。
+- 保留 `tests/test_agent_cli.py` 的 CLI discovery/example 测试，确保命令行为不回退。
+- 更新 `docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 contract payload 和 example fixture 的源码入口。
+- 保持安全边界：本轮是模块拆分，不改变契约字段、不读取 live state、不修改 `.agentdeck/state`、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_contracts.py -q` 看到 `agentdeck.contracts` 模块不存在；实现后 `tests/test_contracts.py` 和 contract CLI 测试 4 项通过，`tests/test_agent_cli.py tests/test_leader_cli.py` 50 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 65 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，非项目临时目录 smoke 确认 CLI `--example` 与 `agentdeck.contracts.project_view_example()` 的 schema version 一致。
+
 ### Current - Add ProjectView schema version guard
 
 - 新增 `src/agentdeck/models.py::PROJECT_VIEW_SCHEMA_VERSION`，作为 ProjectView schema version 的源码单一来源。
