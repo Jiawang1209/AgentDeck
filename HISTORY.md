@@ -4,6 +4,16 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView contract discovery command
+
+- 新增只读命令 `agentdeck contract project-view`，用于 GUI 或外部集成发现 ProjectView 契约。
+- 输出包含 `schema_version`、`status_command`、`contract_path`、`contract_exists`、`top_level_fields`、`recovery_fields` 和 `recommended_action_fields`。
+- 命令不要求项目已初始化，不读取或修改 `.agentdeck/state`，只返回仓库内契约文档和字段摘要。
+- 扩展 `tests/test_agent_cli.py`，先验证 `contract` 子命令不存在的红灯，再实现 discovery 输出。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录契约 discovery 入口。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_project_view_discovers_schema_for_gui_clients -q` 看到 `contract` 无效；实现后同一测试 1 项通过，`tests/test_agent_cli.py tests/test_leader_cli.py` 49 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 62 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，非项目临时目录 smoke 确认 `agentdeck contract project-view` 返回 `schema_version=project-view/v1`、`contract_exists=true` 和完整 `recommended_action_fields`。
+
 ### Current - Add ProjectView contract smoke test
 
 - 扩展 ProjectView 顶层输出，新增 `schema_version: "project-view/v1"`，为未来 GUI 和自然语言入口提供明确契约版本。

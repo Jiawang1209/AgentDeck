@@ -95,6 +95,54 @@ def test_events_returns_empty_list_when_log_is_missing(tmp_path, monkeypatch, ca
     assert payload == {"count": 0, "limit": 20, "events": []}
 
 
+def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "project-view"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == "project-view/v1"
+    assert payload["status_command"] == "agentdeck status"
+    assert payload["contract_path"].endswith("docs/contracts/project-view-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["top_level_fields"] == [
+        "schema_version",
+        "project",
+        "root",
+        "runtime_backend",
+        "leader",
+        "agents",
+        "state_path",
+        "plans",
+        "approvals",
+        "messages",
+        "jobs",
+        "replies",
+        "chat_turns",
+        "leader_errors",
+        "leader_actions",
+        "inbox",
+        "recovery",
+    ]
+    assert payload["recovery_fields"] == [
+        "status",
+        "reason",
+        "next_command",
+        "recommended_action",
+        "pending",
+        "leader_action",
+        "latest_event",
+        "recent_events",
+    ]
+    assert payload["recommended_action_fields"] == [
+        "label",
+        "command",
+        "safety",
+        "requires_explicit_user",
+        "source",
+        "target_id",
+    ]
+
+
 def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

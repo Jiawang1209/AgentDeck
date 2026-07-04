@@ -30,6 +30,24 @@ GUI clients should consume ProjectView first. They should not scan `.agentdeck/s
 
 All ProjectView fields are read-only summaries. Commands that mutate state, send tmux input, dispatch work, or apply approvals must remain explicit commands with approval semantics.
 
+## Discovery Command
+
+Use `agentdeck contract project-view` to discover this contract from tools or GUI clients:
+
+```json
+{
+  "schema_version": "project-view/v1",
+  "status_command": "agentdeck status",
+  "contract_path": "/absolute/repo/docs/contracts/project-view-schema.md",
+  "contract_exists": true,
+  "top_level_fields": [],
+  "recovery_fields": [],
+  "recommended_action_fields": []
+}
+```
+
+The discovery command is read-only. It does not require a project to be initialized and does not read or mutate `.agentdeck/state`.
+
 ## Agents
 
 `agents[]` combines static role configuration with runtime binding:

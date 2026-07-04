@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import argparse
 import json
+from pathlib import Path
 import sys
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
@@ -75,6 +76,56 @@ def events_command(args: argparse.Namespace) -> int:
         return exit_code
     events = store.list_events(args.limit)
     _print_json({"count": len(events), "limit": args.limit, "events": events})
+    return 0
+
+
+def contract_project_view_command(_args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "project-view-schema.md"
+    _print_json(
+        {
+            "schema_version": "project-view/v1",
+            "status_command": "agentdeck status",
+            "contract_path": str(contract_path),
+            "contract_exists": contract_path.exists(),
+            "top_level_fields": [
+                "schema_version",
+                "project",
+                "root",
+                "runtime_backend",
+                "leader",
+                "agents",
+                "state_path",
+                "plans",
+                "approvals",
+                "messages",
+                "jobs",
+                "replies",
+                "chat_turns",
+                "leader_errors",
+                "leader_actions",
+                "inbox",
+                "recovery",
+            ],
+            "recovery_fields": [
+                "status",
+                "reason",
+                "next_command",
+                "recommended_action",
+                "pending",
+                "leader_action",
+                "latest_event",
+                "recent_events",
+            ],
+            "recommended_action_fields": [
+                "label",
+                "command",
+                "safety",
+                "requires_explicit_user",
+                "source",
+                "target_id",
+            ],
+        }
+    )
     return 0
 
 
@@ -1019,6 +1070,14 @@ def build_parser() -> argparse.ArgumentParser:
     events = subparsers.add_parser("events", help="Show recent audit events")
     events.add_argument("--limit", type=int, default=20, help="Number of recent events to show")
     events.set_defaults(func=events_command)
+
+    contract = subparsers.add_parser("contract", help="Discover machine-readable AgentDeck contracts")
+    contract_subparsers = contract.add_subparsers(dest="contract_command")
+    contract_project_view = contract_subparsers.add_parser(
+        "project-view",
+        help="Show ProjectView contract discovery metadata",
+    )
+    contract_project_view.set_defaults(func=contract_project_view_command)
 
     project = subparsers.add_parser("project", help="Project management commands")
     project_subparsers = project.add_subparsers(dest="project_command")
