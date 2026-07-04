@@ -135,6 +135,75 @@ class StateStore:
     def inbox_items(self, agent_id: str) -> list[dict[str, Any]]:
         return list(self.load().get("inbox", {}).get(agent_id, []))
 
+    def record_reply(self, from_agent: str, message_id: str, text: str) -> dict[str, Any]:
+        state = self.load()
+        messages = state.setdefault("messages", [])
+        message = next((item for item in messages if item.get("message_id") == message_id), None)
+        if message is None:
+            raise KeyError(message_id)
+        attempt = next(
+            (
+                item
+                for item in state.setdefault("attempts", [])
+                if item.get("message_id") == message_id and item.get("agent_id") == from_agent
+            ),
+            None,
+        )
+        job = next(
+            (
+                item
+                for item in state.setdefault("jobs", [])
+                if item.get("message_id") == message_id and item.get("agent_id") == from_agent
+            ),
+            None,
+        )
+        reply = {
+            "reply_id": new_id("rep"),
+            "message_id": message_id,
+            "attempt_id": attempt.get("attempt_id") if attempt else None,
+            "job_id": job.get("job_id") if job else None,
+            "from_agent": from_agent,
+            "to_actor": message.get("from_actor", "user"),
+            "text": text,
+            "created_at": utc_now(),
+        }
+        state.setdefault("replies", []).append(reply)
+        message["status"] = "replied"
+        if attempt:
+            attempt["status"] = "completed"
+        if job:
+            job["status"] = "completed"
+        to_actor = str(message.get("from_actor", "user"))
+        if to_actor != "user":
+            state.setdefault("inbox", {}).setdefault(to_actor, []).append(
+                {
+                    "inbox_id": new_id("inb"),
+                    "event_type": "task_reply",
+                    "message_id": message_id,
+                    "attempt_id": reply["attempt_id"],
+                    "job_id": reply["job_id"],
+                    "reply_id": reply["reply_id"],
+                    "from_agent": from_agent,
+                    "to_agent": to_actor,
+                    "task": message.get("task", ""),
+                    "status": "pending",
+                    "created_at": utc_now(),
+                }
+            )
+        self.save(state)
+        return reply
+
+    def ack_inbox_item(self, agent_id: str, inbox_id: str) -> dict[str, Any]:
+        state = self.load()
+        items = state.setdefault("inbox", {}).setdefault(agent_id, [])
+        item = next((entry for entry in items if entry.get("inbox_id") == inbox_id), None)
+        if item is None:
+            raise KeyError(inbox_id)
+        item["status"] = "acked"
+        item["acked_at"] = utc_now()
+        self.save(state)
+        return item
+
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
         bindings = state.get("agents", {})

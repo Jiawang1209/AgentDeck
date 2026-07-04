@@ -136,3 +136,65 @@ def test_inbox_lists_task_requests_for_agent(tmp_path, monkeypatch, capsys) -> N
     assert payload["items"][0]["event_type"] == "task_request"
     assert payload["items"][0]["task"] == "设计消息账本"
     assert payload["items"][0]["status"] == "pending"
+
+
+def test_reply_records_result_and_delivers_task_reply_to_sender_inbox(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--from-agent", "coder", "--agent", "planner", "--task", "审查实现方案"])
+    dispatch_payload = json.loads(capsys.readouterr().out)
+
+    exit_code = cli.main(
+        [
+            "reply",
+            "--agent",
+            "planner",
+            "--message-id",
+            dispatch_payload["message_id"],
+            "--text",
+            "status: completed\nsummary: 方案可行",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["reply_id"].startswith("rep_")
+    assert payload["message_id"] == dispatch_payload["message_id"]
+
+    state = StateStore(root).load()
+    assert state["messages"][0]["status"] == "replied"
+    assert state["attempts"][0]["status"] == "completed"
+    assert state["jobs"][0]["status"] == "completed"
+    assert state["replies"][0]["reply_id"] == payload["reply_id"]
+    assert state["replies"][0]["from_agent"] == "planner"
+    assert state["inbox"]["coder"][0]["event_type"] == "task_reply"
+    assert state["inbox"]["coder"][0]["reply_id"] == payload["reply_id"]
+    assert state["inbox"]["coder"][0]["status"] == "pending"
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "task_replied"' in events
+
+
+def test_ack_marks_inbox_item_acked(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "planner", "--task", "设计消息账本"])
+    message_payload = json.loads(capsys.readouterr().out)
+    inbox_id = StateStore(root).load()["inbox"]["planner"][0]["inbox_id"]
+
+    exit_code = cli.main(["ack", "--agent", "planner", "--inbox-id", inbox_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"ok": True, "agent_id": "planner", "inbox_id": inbox_id, "status": "acked"}
+    item = StateStore(root).load()["inbox"]["planner"][0]
+    assert item["message_id"] == message_payload["message_id"]
+    assert item["status"] == "acked"
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "inbox_item_acked"' in events

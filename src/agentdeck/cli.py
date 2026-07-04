@@ -267,7 +267,7 @@ def dispatch_command(args: argparse.Namespace) -> int:
         return exit_code
     pane_id = str(binding["pane_id"])
     prompt = build_dispatch_prompt(agent, args.task)
-    records = store.create_dispatch_records("user", agent.agent_id, args.task, prompt, pane_id)
+    records = store.create_dispatch_records(args.from_agent, agent.agent_id, args.task, prompt, pane_id)
     message = records["message"]
     TmuxBackend().send_input(config.runtime, pane_id, prompt)
     store.append_event(
@@ -301,6 +301,65 @@ def inbox_command(args: argparse.Namespace) -> int:
         return 1
     items = store.inbox_items(args.agent)
     _print_json({"agent_id": args.agent, "count": len(items), "items": items})
+    return 0
+
+
+def reply_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if _agent_by_id(config, args.agent) is None:
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    try:
+        reply = store.record_reply(args.agent, args.message_id, args.text)
+    except KeyError:
+        print(f"unknown message: {args.message_id}", file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "task_replied",
+            {
+                "reply_id": reply["reply_id"],
+                "message_id": reply["message_id"],
+                "from_agent": args.agent,
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "reply_id": reply["reply_id"],
+            "message_id": reply["message_id"],
+            "from_agent": args.agent,
+        }
+    )
+    return 0
+
+
+def ack_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if _agent_by_id(config, args.agent) is None:
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    try:
+        item = store.ack_inbox_item(args.agent, args.inbox_id)
+    except KeyError:
+        print(f"unknown inbox item: {args.inbox_id}", file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "inbox_item_acked",
+            {
+                "agent_id": args.agent,
+                "inbox_id": args.inbox_id,
+                "event_type": item.get("event_type"),
+            },
+        )
+    )
+    _print_json({"ok": True, "agent_id": args.agent, "inbox_id": args.inbox_id, "status": "acked"})
     return 0
 
 
@@ -353,6 +412,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_assign_role.set_defaults(func=agent_assign_role_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
+    dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")
     dispatch.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
     dispatch.add_argument("--task", required=True, help="Task text to send with the agent role prompt")
     dispatch.set_defaults(func=dispatch_command)
@@ -360,6 +420,17 @@ def build_parser() -> argparse.ArgumentParser:
     inbox = subparsers.add_parser("inbox", help="Show pending inbox items for an agent")
     inbox.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
     inbox.set_defaults(func=inbox_command)
+
+    reply = subparsers.add_parser("reply", help="Record an agent reply for a dispatched message")
+    reply.add_argument("--agent", required=True, help="Agent id that produced the reply")
+    reply.add_argument("--message-id", required=True, help="Message id being replied to")
+    reply.add_argument("--text", required=True, help="Reply text")
+    reply.set_defaults(func=reply_command)
+
+    ack = subparsers.add_parser("ack", help="Acknowledge an inbox item")
+    ack.add_argument("--agent", required=True, help="Agent id that owns the inbox")
+    ack.add_argument("--inbox-id", required=True, help="Inbox item id")
+    ack.set_defaults(func=ack_command)
 
     return parser
 
