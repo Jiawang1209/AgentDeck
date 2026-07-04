@@ -121,6 +121,9 @@ def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["recommended_action_fields"] == expected["recommended_action_fields"]
     assert payload["leader_actions_fields"] == expected["leader_actions_fields"]
     assert payload["leader_action_item_fields"] == expected["leader_action_item_fields"]
+    assert payload["message_item_fields"] == expected["message_item_fields"]
+    assert payload["job_item_fields"] == expected["job_item_fields"]
+    assert payload["reply_item_fields"] == expected["reply_item_fields"]
 
 
 def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
@@ -428,8 +431,11 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
     assert payload["approvals"]["count"] == 1
     assert payload["approvals"]["pending"] == 1
     assert payload["messages"]["by_status"] == {"replied": 1}
+    assert payload["messages"]["items"][0]["trace_command"] == "agentdeck trace --id msg_demo"
     assert payload["jobs"]["by_status"] == {"completed": 1}
+    assert payload["jobs"]["items"][0]["trace_command"] == "agentdeck trace --id job_demo"
     assert payload["replies"]["items"][0]["reply_id"] == "rep_demo"
+    assert payload["replies"]["items"][0]["trace_command"] == "agentdeck trace --id rep_demo"
     assert payload["chat_turns"] == {
         "count": 1,
         "by_mode": {"review": 1},

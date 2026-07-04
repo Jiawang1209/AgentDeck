@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Surface ProjectView summary trace commands
+
+- `agentdeck status` 的 `messages.items[]`、`jobs.items[]` 和 `replies.items[]` 现在都会包含 `trace_command`，让 GUI、人类和 Leader chat loop 可以从 ProjectView 摘要直接跳到通信 lineage。
+- `agentdeck contract project-view` 现在公开 `message_item_fields`、`job_item_fields` 和 `reply_item_fields`，`--example` 同步公开对应 `example_*_item_fields`，方便 GUI 做 discovery 和字段兼容检查。
+- `project_view_example()` 现在包含稳定的 message/job/reply 示例，避免契约发现只覆盖空 summary。
+- `validate_project_view_contract()` 现在会拒绝缺失 `trace_command` 的 message/job/reply summary item，防止 GUI-facing ProjectView 悄悄丢失追踪入口。
+- 更新 `docs/contracts/project-view-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 ProjectView summary trace command 是稳定契约。
+- 保持安全边界：本轮只扩展只读 status/contract/example/validator 字段，不改变 dispatch、reply、trace、审批或 tmux 执行语义。
+- 本地验证：先运行目标测试看到 `PROJECT_VIEW_*_ITEM_FIELDS` 缺失的红灯；实现后目标测试 6 项通过，`tests/test_contracts.py tests/test_agent_cli.py` 43 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 97 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `agentdeck status` 的 message/job/reply summary 都返回 `trace_command`。
+
 ### Current - Return trace commands from communication outputs
 
 - `dispatch`、`approval dispatch`、`reply` 和 `capture-reply` 的成功 JSON 输出现在都会包含 `trace_command`。

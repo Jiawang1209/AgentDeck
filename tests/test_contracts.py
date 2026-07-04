@@ -7,8 +7,11 @@ from agentdeck.contracts import (
     LEADER_CHAT_RESPONSE_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
     PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS,
+    PROJECT_VIEW_JOB_ITEM_FIELDS,
+    PROJECT_VIEW_MESSAGE_ITEM_FIELDS,
     PROJECT_VIEW_RECOVERY_PENDING_FIELDS,
     PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS,
+    PROJECT_VIEW_REPLY_ITEM_FIELDS,
     PROJECT_VIEW_RECOVERY_FIELDS,
     PROJECT_VIEW_TOP_LEVEL_FIELDS,
     TRACE_ATTEMPT_FIELDS,
@@ -49,6 +52,9 @@ def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -
     assert payload["recommended_action_fields"] == list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS)
     assert payload["leader_actions_fields"] == list(PROJECT_VIEW_LEADER_ACTIONS_FIELDS)
     assert payload["leader_action_item_fields"] == list(PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS)
+    assert payload["message_item_fields"] == list(PROJECT_VIEW_MESSAGE_ITEM_FIELDS)
+    assert payload["job_item_fields"] == list(PROJECT_VIEW_JOB_ITEM_FIELDS)
+    assert payload["reply_item_fields"] == list(PROJECT_VIEW_REPLY_ITEM_FIELDS)
 
 
 def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> None:
@@ -63,6 +69,9 @@ def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> No
     assert set(payload["recommended_action_fields"]) == set(example["recovery"]["recommended_action"])
     assert set(payload["leader_actions_fields"]) == set(example["leader_actions"])
     assert set(payload["leader_action_item_fields"]) == set(example["leader_actions"]["items"][0])
+    assert set(payload["message_item_fields"]) == set(example["messages"]["items"][0])
+    assert set(payload["job_item_fields"]) == set(example["jobs"]["items"][0])
+    assert set(payload["reply_item_fields"]) == set(example["replies"]["items"][0])
     assert example["leader_actions"]["recommended_action_id"] == "act_example"
     assert example["leader_actions"]["items"][0]["is_recommended"] is True
     assert example["recovery"]["recommended_action"]["target_id"] == "act_example"
@@ -98,6 +107,12 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
     assert set(payload["example_leader_actions_fields"]) == set(example["leader_actions"])
     assert payload["example_leader_action_item_fields"] == payload["leader_action_item_fields"]
     assert set(payload["example_leader_action_item_fields"]) == set(example["leader_actions"]["items"][0])
+    assert payload["example_message_item_fields"] == payload["message_item_fields"]
+    assert set(payload["example_message_item_fields"]) == set(example["messages"]["items"][0])
+    assert payload["example_job_item_fields"] == payload["job_item_fields"]
+    assert set(payload["example_job_item_fields"]) == set(example["jobs"]["items"][0])
+    assert payload["example_reply_item_fields"] == payload["reply_item_fields"]
+    assert set(payload["example_reply_item_fields"]) == set(example["replies"]["items"][0])
 
 
 def test_validate_project_view_contract_accepts_example() -> None:
@@ -152,6 +167,24 @@ def test_validate_project_view_contract_reports_missing_recovery_pending_field()
     assert result == {
         "ok": False,
         "errors": ["missing recovery pending field: leader_errors"],
+    }
+
+
+def test_validate_project_view_contract_reports_missing_trace_commands() -> None:
+    payload = project_view_example()
+    del payload["messages"]["items"][0]["trace_command"]
+    del payload["jobs"]["items"][0]["trace_command"]
+    del payload["replies"]["items"][0]["trace_command"]
+
+    result = validate_project_view_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "missing message item field: trace_command",
+            "missing job item field: trace_command",
+            "missing reply item field: trace_command",
+        ],
     }
 
 

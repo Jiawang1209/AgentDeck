@@ -779,6 +779,7 @@ class StateStore:
                     "task": message.get("task"),
                     "status": message.get("status"),
                     "created_at": message.get("created_at"),
+                    "trace_command": self._trace_command(message.get("message_id")),
                 }
                 for message in messages
             ],
@@ -795,13 +796,13 @@ class StateStore:
                     "agent_id": job.get("agent_id"),
                     "status": job.get("status"),
                     "created_at": job.get("created_at"),
+                    "trace_command": self._trace_command(job.get("job_id")),
                 }
                 for job in jobs
             ],
         }
 
-    @staticmethod
-    def _reply_summaries(replies: list[dict[str, Any]]) -> dict[str, Any]:
+    def _reply_summaries(self, replies: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "count": len(replies),
             "items": [
@@ -812,10 +813,17 @@ class StateStore:
                     "from_agent": reply.get("from_agent"),
                     "to_actor": reply.get("to_actor"),
                     "created_at": reply.get("created_at"),
+                    "trace_command": self._trace_command(reply.get("reply_id")),
                 }
                 for reply in replies
             ],
         }
+
+    @staticmethod
+    def _trace_command(trace_id: Any) -> str | None:
+        if trace_id is None:
+            return None
+        return f"agentdeck trace --id {trace_id}"
 
     @staticmethod
     def _chat_turn_summaries(chat_turns: list[dict[str, Any]]) -> dict[str, Any]:

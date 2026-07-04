@@ -110,6 +110,7 @@ Worker 不应该：
 - `agentdeck contract project-view` 通过 `recovery_pending_fields` 暴露 `recovery.pending` 必备字段；缺字段的 ProjectView 应被 validator 拒绝。
 - `status.chat_turns.items` 包含 action_id/action_kind，可把自然语言 turn 关联回 leader_actions。
 - `status.leader_actions` 包含 recommended_action_id，`items[]` 包含 can_apply/apply_command/explicit_command/apply_blocker/is_recommended，可直接驱动 GUI action 按钮、阻塞提示和当前推荐项高亮。
+- `status.messages.items[]`、`status.jobs.items[]` 和 `status.replies.items[]` 包含 `trace_command`；ProjectView contract discovery 会公开对应 item field lists，缺少 trace 入口的 summary item 应被 validator 拒绝。
 - `status.inbox.heads` 按 agent 暴露最早 pending inbox item；GUI/Leader 应优先用它判断当前可处理或可 ack 的 mailbox head。
 - 后续升级为更严格的 reply block 标记。
 

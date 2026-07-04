@@ -80,6 +80,35 @@ PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS = (
     "created_at",
 )
 
+PROJECT_VIEW_MESSAGE_ITEM_FIELDS = (
+    "message_id",
+    "from_actor",
+    "to_agent",
+    "task",
+    "status",
+    "created_at",
+    "trace_command",
+)
+
+PROJECT_VIEW_JOB_ITEM_FIELDS = (
+    "job_id",
+    "message_id",
+    "agent_id",
+    "status",
+    "created_at",
+    "trace_command",
+)
+
+PROJECT_VIEW_REPLY_ITEM_FIELDS = (
+    "reply_id",
+    "message_id",
+    "job_id",
+    "from_agent",
+    "to_actor",
+    "created_at",
+    "trace_command",
+)
+
 LEADER_CHAT_RESPONSE_FIELDS = (
     "ok",
     "turn_id",
@@ -184,6 +213,9 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "recommended_action_fields": list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS),
         "leader_actions_fields": list(PROJECT_VIEW_LEADER_ACTIONS_FIELDS),
         "leader_action_item_fields": list(PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS),
+        "message_item_fields": list(PROJECT_VIEW_MESSAGE_ITEM_FIELDS),
+        "job_item_fields": list(PROJECT_VIEW_JOB_ITEM_FIELDS),
+        "reply_item_fields": list(PROJECT_VIEW_REPLY_ITEM_FIELDS),
     }
 
 
@@ -198,6 +230,9 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_recommended_action_fields"] = list(example["recovery"]["recommended_action"])
         payload["example_leader_actions_fields"] = list(example["leader_actions"])
         payload["example_leader_action_item_fields"] = list(example["leader_actions"]["items"][0])
+        payload["example_message_item_fields"] = list(example["messages"]["items"][0])
+        payload["example_job_item_fields"] = list(example["jobs"]["items"][0])
+        payload["example_reply_item_fields"] = list(example["replies"]["items"][0])
         payload["example_project_view"] = example
     return payload
 
@@ -297,7 +332,38 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
                         errors.append(f"missing leader_actions item field: {field}")
     elif "leader_actions" in payload:
         errors.append("leader_actions must be an object")
+    _validate_project_view_summary_items(errors, payload, "messages", PROJECT_VIEW_MESSAGE_ITEM_FIELDS, "message")
+    _validate_project_view_summary_items(errors, payload, "jobs", PROJECT_VIEW_JOB_ITEM_FIELDS, "job")
+    _validate_project_view_summary_items(errors, payload, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
     return {"ok": not errors, "errors": errors}
+
+
+def _validate_project_view_summary_items(
+    errors: list[str],
+    payload: dict[str, object],
+    summary_name: str,
+    fields: tuple[str, ...],
+    label: str,
+) -> None:
+    summary = payload.get(summary_name)
+    if not isinstance(summary, dict):
+        if summary_name in payload:
+            errors.append(f"{summary_name} must be an object")
+        return
+    items = summary.get("items")
+    if not isinstance(items, list):
+        if "items" in summary:
+            errors.append(f"{summary_name}.items must be a list")
+        return
+    if not items:
+        return
+    first_item = items[0]
+    if not isinstance(first_item, dict):
+        errors.append(f"{summary_name}.items must contain objects")
+        return
+    for field in fields:
+        if field not in first_item:
+            errors.append(f"missing {label} item field: {field}")
 
 
 def validate_trace_contract(payload: dict[str, object]) -> dict[str, object]:
@@ -410,9 +476,49 @@ def project_view_example() -> dict[str, object]:
             ],
         },
         "approvals": {"count": 0, "pending": 0, "approved": 0, "rejected": 0, "dispatched": 0, "items": []},
-        "messages": {"count": 0, "by_status": {}, "items": []},
-        "jobs": {"count": 0, "by_status": {}, "items": []},
-        "replies": {"count": 0, "items": []},
+        "messages": {
+            "count": 1,
+            "by_status": {"replied": 1},
+            "items": [
+                {
+                    "message_id": "msg_example",
+                    "from_actor": "leader",
+                    "to_agent": "planner",
+                    "task": "Build a GUI-ready recovery panel",
+                    "status": "replied",
+                    "created_at": "2026-07-04T00:00:00+00:00",
+                    "trace_command": "agentdeck trace --id msg_example",
+                }
+            ],
+        },
+        "jobs": {
+            "count": 1,
+            "by_status": {"completed": 1},
+            "items": [
+                {
+                    "job_id": "job_example",
+                    "message_id": "msg_example",
+                    "agent_id": "planner",
+                    "status": "completed",
+                    "created_at": "2026-07-04T00:00:00+00:00",
+                    "trace_command": "agentdeck trace --id job_example",
+                }
+            ],
+        },
+        "replies": {
+            "count": 1,
+            "items": [
+                {
+                    "reply_id": "rep_example",
+                    "message_id": "msg_example",
+                    "job_id": "job_example",
+                    "from_agent": "planner",
+                    "to_actor": "leader",
+                    "created_at": "2026-07-04T00:00:01+00:00",
+                    "trace_command": "agentdeck trace --id rep_example",
+                }
+            ],
+        },
         "chat_turns": {
             "count": 1,
             "by_mode": {"review": 1},

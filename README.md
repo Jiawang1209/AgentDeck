@@ -223,6 +223,8 @@ agentdeck trace --id inb_xxx
 
 详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，`--example` 会附带包含 `leader_explanation` 的稳定响应示例。`agentdeck contract trace` 会发现通信 lineage 的 message/attempt/job/reply/inbox 字段，`--example` 会附带稳定 trace 示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck status`、`agentdeck leader chat` 和 `agentdeck trace`，不要把 tmux pane 或 state 文件当成第二套状态源。
 
+`status.messages.items[]`、`status.jobs.items[]` 和 `status.replies.items[]` 会包含 `trace_command`，GUI 可以直接把摘要行链接到 `agentdeck trace --id <id>`，不用散读 state 或拼接命令。
+
 `status.inbox.heads` 会按 agent 暴露最早的 `pending` inbox item；没有待处理 item 的 agent 会返回 `null`。GUI 和 Leader chat loop 可以用它直接显示每个 agent 当前必须先处理或 ack 的 mailbox head。
 
 `status.leader_actions` 会包含 `recommended_action_id`，每个 `items[]` 会包含 `can_apply`、`apply_command`、`explicit_command`、`apply_blocker` 和 `is_recommended`，GUI 可以直接根据 ProjectView 渲染 action 按钮、阻塞提示和当前推荐项高亮。
