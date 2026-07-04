@@ -521,6 +521,64 @@ def approval_reject_command(args: argparse.Namespace) -> int:
     return _approval_decision_command(args.approval_id, "rejected", args.reason)
 
 
+def approval_dispatch_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        approval = store.approval_by_id(args.approval_id)
+    except KeyError:
+        print(f"unknown approval: {args.approval_id}", file=sys.stderr)
+        return 1
+    if approval.get("status") != "approved":
+        print(f"approval is not approved: {args.approval_id}", file=sys.stderr)
+        return 1
+    agent_id = str(approval.get("agent_id", ""))
+    agent = _agent_by_id(config, agent_id)
+    if agent is None:
+        print(f"unknown agent: {agent_id}", file=sys.stderr)
+        return 1
+    binding, exit_code = _running_binding_or_error(store, agent_id)
+    if binding is None:
+        return exit_code
+    pane_id = str(binding["pane_id"])
+    task = str(approval.get("task", ""))
+    prompt = build_dispatch_prompt(agent, task)
+    records = store.create_dispatch_records("leader", agent.agent_id, task, prompt, pane_id)
+    message = records["message"]
+    attempt = records["attempt"]
+    job = records["job"]
+    TmuxBackend().send_input(config.runtime, pane_id, prompt)
+    store.mark_approval_dispatched(
+        args.approval_id,
+        str(message["message_id"]),
+        str(attempt["attempt_id"]),
+        str(job["job_id"]),
+    )
+    store.append_event(
+        EventRecord.create(
+            "approval_dispatched",
+            {
+                "approval_id": args.approval_id,
+                "plan_id": approval.get("plan_id"),
+                "message_id": message["message_id"],
+                "agent_id": agent.agent_id,
+                "pane_id": pane_id,
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "approval_id": args.approval_id,
+            "message_id": message["message_id"],
+            "agent_id": agent.agent_id,
+            "pane_id": pane_id,
+        }
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentdeck")
     subparsers = parser.add_subparsers(dest="command")
@@ -602,6 +660,9 @@ def build_parser() -> argparse.ArgumentParser:
     approval_reject.add_argument("--approval-id", required=True, help="Approval id")
     approval_reject.add_argument("--reason", default="", help="Reason for rejection")
     approval_reject.set_defaults(func=approval_reject_command)
+    approval_dispatch = approval_subparsers.add_parser("dispatch", help="Dispatch an approved item")
+    approval_dispatch.add_argument("--approval-id", required=True, help="Approved approval id")
+    approval_dispatch.set_defaults(func=approval_dispatch_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")

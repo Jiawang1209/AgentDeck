@@ -8,6 +8,14 @@ from agentdeck.config import write_default_config
 from agentdeck.state import StateStore
 
 
+class FakeTmuxBackend:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    def send_input(self, _config, pane_id: str, text: str) -> None:
+        self.sent.append((pane_id, text))
+
+
 def prepare_project(tmp_path: Path, monkeypatch) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
@@ -15,6 +23,19 @@ def prepare_project(tmp_path: Path, monkeypatch) -> Path:
     write_default_config(root)
     monkeypatch.chdir(root)
     return root
+
+
+def bind_agent(root: Path, agent_id: str, pane_id: str = "%42") -> None:
+    store = StateStore(root)
+    state = store.load()
+    state["agents"][agent_id] = {
+        "agent_id": agent_id,
+        "pane_id": pane_id,
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
 
 
 def test_leader_plan_creates_structured_plan_without_dispatching(tmp_path, monkeypatch, capsys) -> None:
@@ -185,3 +206,55 @@ def test_approval_commands_reject_unknown_ids(tmp_path, monkeypatch, capsys) -> 
 
     assert exit_code == 1
     assert "unknown approval: apv_missing" in capsys.readouterr().err
+
+
+def test_approval_dispatch_rejects_unapproved_item(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "必须审批后派发"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+
+    exit_code = cli.main(["approval", "dispatch", "--approval-id", approval_id])
+
+    assert exit_code == 1
+    assert f"approval is not approved: {approval_id}" in capsys.readouterr().err
+
+
+def test_approval_dispatch_sends_approved_step_to_agent_and_records_lineage(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--task", "审批后派发 planner step"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+
+    exit_code = cli.main(["approval", "dispatch", "--approval-id", approval_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["approval_id"] == approval_id
+    assert payload["agent_id"] == "planner"
+    assert payload["pane_id"] == "%77"
+    assert payload["message_id"].startswith("msg_")
+    assert fake.sent and fake.sent[0][0] == "%77"
+    assert "AgentDeck dispatch" in fake.sent[0][1]
+    assert "Break down the goal" in fake.sent[0][1]
+
+    state = StateStore(root).load()
+    approval = state["approvals"][0]
+    assert approval["status"] == "dispatched"
+    assert approval["message_id"] == payload["message_id"]
+    assert state["messages"][0]["message_id"] == payload["message_id"]
+    assert state["messages"][0]["from_actor"] == "leader"
+    assert state["messages"][0]["to_agent"] == "planner"
+    assert state["jobs"][0]["pane_id"] == "%77"
+    assert state["inbox"]["planner"][0]["event_type"] == "task_request"
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "approval_dispatched"' in events

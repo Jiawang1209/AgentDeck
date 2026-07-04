@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add approved approval dispatch
+
+- 新增 `agentdeck approval dispatch --approval-id <id>`，将已批准的 approval step 转成现有 `dispatch -> message/attempt/job/inbox` 链路。
+- dispatch 前会检查 approval 必须为 `approved`，目标 agent 必须存在且已绑定 running pane。
+- 派发后会把 approval 标记为 `dispatched`，并记录 message_id、attempt_id、job_id 和 dispatched_at。
+- 复用现有 `build_dispatch_prompt()` 与 `StateStore.create_dispatch_records()`，不引入第二套消息模型。
+- 扩展 `tests/test_leader_cli.py`，覆盖 pending approval 不能 dispatch，以及 approved approval 会写入 lineage 并发送到目标 pane。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 approved approval dispatch 工作流。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_approval_dispatch_rejects_unapproved_item tests/test_leader_cli.py::test_approval_dispatch_sends_approved_step_to_agent_and_records_lineage -q` 看到 `approval dispatch` 子命令不存在；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 23 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，`agentdeck approval --help` 显示 dispatch 子命令，临时 git 项目 smoke 确认 pending approval dispatch 被拒绝且 `messages/jobs` 仍为 0。
+
 ### Current - Add approval gate MVP
 
 - 新增 `agentdeck approval create-from-plan --plan-id <id>`，从 Leader plan 的 requires_approval steps 创建 `approvals[]`。

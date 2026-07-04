@@ -104,7 +104,8 @@ Worker 不应该：
 - `agentdeck approval list` 可查看审批项。
 - `agentdeck approval approve --approval-id <id>` 将审批项标记为 `approved`。
 - `agentdeck approval reject --approval-id <id> --reason <text>` 将审批项标记为 `rejected`。
-- 当前 Approval Gate MVP 不会自动 dispatch；dispatch 必须在审批状态可检查后单独触发。
+- `agentdeck approval dispatch --approval-id <id>` 只接受 `approved` 审批项，并把对应 plan step 派发到目标 agent。
+- approval dispatch 是单步显式命令，不会自动连续派发整个 plan。
 
 以下动作必须进入审批：
 

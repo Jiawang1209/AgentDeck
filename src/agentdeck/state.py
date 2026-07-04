@@ -138,6 +138,12 @@ class StateStore:
     def list_approvals(self) -> list[dict[str, Any]]:
         return list(self.load().get("approvals", []))
 
+    def approval_by_id(self, approval_id: str) -> dict[str, Any]:
+        for approval in self.load().get("approvals", []):
+            if approval.get("approval_id") == approval_id:
+                return approval
+        raise KeyError(approval_id)
+
     def decide_approval(self, approval_id: str, status: str, reason: str | None = None) -> dict[str, Any]:
         state = self.load()
         approval = next((item for item in state.setdefault("approvals", []) if item.get("approval_id") == approval_id), None)
@@ -147,6 +153,19 @@ class StateStore:
         approval["decided_at"] = utc_now()
         if reason:
             approval["reason"] = reason
+        self.save(state)
+        return approval
+
+    def mark_approval_dispatched(self, approval_id: str, message_id: str, attempt_id: str, job_id: str) -> dict[str, Any]:
+        state = self.load()
+        approval = next((item for item in state.setdefault("approvals", []) if item.get("approval_id") == approval_id), None)
+        if approval is None:
+            raise KeyError(approval_id)
+        approval["status"] = "dispatched"
+        approval["message_id"] = message_id
+        approval["attempt_id"] = attempt_id
+        approval["job_id"] = job_id
+        approval["dispatched_at"] = utc_now()
         self.save(state)
         return approval
 
