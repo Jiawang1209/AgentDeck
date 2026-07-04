@@ -4,6 +4,16 @@
 
 ## 2026-07-04
 
+### Current - Expand ProjectView status summaries
+
+- 扩展 `agentdeck status` 的 ProjectView 输出，新增 plans、approvals、messages、jobs、replies 和 inbox 摘要。
+- ProjectView 现在包含 count、by_status、by_agent 和轻量 items，可作为未来 GUI 与自然语言 Leader chat loop 的统一只读状态入口。
+- 扩展 `StateStore.project_view()`，只聚合 state，不修改 state、不发送 tmux 输入、不读取 pane 输出。
+- 扩展 `tests/test_agent_cli.py`，覆盖 status 会返回 plan、approval、message、job、reply 和 inbox 摘要。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 ProjectView/Status 契约。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_includes_project_state_summaries -q` 看到 `plans` 字段缺失；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 32 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `agentdeck status` 输出 plans、approvals、messages、jobs、replies 和 inbox 摘要。
+
 ### Current - Add Leader review loop MVP
 
 - 新增 `agentdeck leader review --plan-id <id>`，基于 plan status、approval 状态和 replies 输出下一步建议。

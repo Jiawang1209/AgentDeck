@@ -54,6 +54,108 @@ def test_agent_list_outputs_configured_agents(tmp_path, monkeypatch, capsys) -> 
     assert payload["agents"][0]["runtime"]["status"] == "configured"
 
 
+def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["plans"].append(
+        {
+            "plan_id": "pln_demo",
+            "task": "构建 ProjectView",
+            "provider": "fake",
+            "model": "local-plan",
+            "status": "planned",
+            "dispatch_ready": False,
+            "created_at": "2026-07-04T00:00:00+00:00",
+            "plan": {
+                "steps": [
+                    {"agent_id": "planner", "task": "拆解状态快照"},
+                    {"agent_id": "coder", "task": "实现聚合"},
+                ]
+            },
+        }
+    )
+    state["approvals"].append(
+        {
+            "approval_id": "apv_demo",
+            "plan_id": "pln_demo",
+            "step_index": 0,
+            "agent_id": "planner",
+            "task": "拆解状态快照",
+            "status": "pending",
+            "message_id": None,
+            "job_id": None,
+        }
+    )
+    state["messages"].append(
+        {
+            "message_id": "msg_demo",
+            "from_actor": "leader",
+            "to_agent": "planner",
+            "task": "拆解状态快照",
+            "status": "replied",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    )
+    state["jobs"].append(
+        {
+            "job_id": "job_demo",
+            "message_id": "msg_demo",
+            "agent_id": "planner",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    )
+    state["replies"].append(
+        {
+            "reply_id": "rep_demo",
+            "message_id": "msg_demo",
+            "job_id": "job_demo",
+            "from_agent": "planner",
+            "to_actor": "leader",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    )
+    state["inbox"] = {
+        "planner": [
+            {
+                "inbox_id": "inb_demo",
+                "message_id": "msg_demo",
+                "from_agent": "leader",
+                "to_agent": "planner",
+                "status": "pending",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["plans"]["count"] == 1
+    assert payload["plans"]["items"][0] == {
+        "plan_id": "pln_demo",
+        "task": "构建 ProjectView",
+        "status": "planned",
+        "provider": "fake",
+        "model": "local-plan",
+        "dispatch_ready": False,
+        "step_count": 2,
+        "created_at": "2026-07-04T00:00:00+00:00",
+    }
+    assert payload["approvals"]["count"] == 1
+    assert payload["approvals"]["pending"] == 1
+    assert payload["messages"]["by_status"] == {"replied": 1}
+    assert payload["jobs"]["by_status"] == {"completed": 1}
+    assert payload["replies"]["items"][0]["reply_id"] == "rep_demo"
+    assert payload["inbox"] == {
+        "total": 1,
+        "by_agent": {"planner": 1},
+        "by_status": {"pending": 1},
+    }
+
+
 def test_agent_spawn_records_pane_binding_and_event(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     fake = FakeTmuxBackend()

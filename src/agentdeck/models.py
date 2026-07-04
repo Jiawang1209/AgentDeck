@@ -82,3 +82,9 @@ class ProjectView:
     leader: dict[str, Any]
     agents: list[dict[str, Any]]
     state_path: str
+    plans: dict[str, Any] = field(default_factory=dict)
+    approvals: dict[str, Any] = field(default_factory=dict)
+    messages: dict[str, Any] = field(default_factory=dict)
+    jobs: dict[str, Any] = field(default_factory=dict)
+    replies: dict[str, Any] = field(default_factory=dict)
+    inbox: dict[str, Any] = field(default_factory=dict)

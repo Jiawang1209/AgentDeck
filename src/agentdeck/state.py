@@ -446,6 +446,118 @@ class StateStore:
                     return str(item["message_id"])
         return None
 
+    @staticmethod
+    def _status_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in items:
+            status = str(item.get("status", "unknown"))
+            counts[status] = counts.get(status, 0) + 1
+        return counts
+
+    @staticmethod
+    def _plan_summaries(plans: list[dict[str, Any]]) -> dict[str, Any]:
+        items = []
+        for plan in plans:
+            body = plan.get("plan", {})
+            steps = body.get("steps", []) if isinstance(body, dict) else []
+            items.append(
+                {
+                    "plan_id": plan.get("plan_id"),
+                    "task": plan.get("task"),
+                    "status": plan.get("status"),
+                    "provider": plan.get("provider"),
+                    "model": plan.get("model"),
+                    "dispatch_ready": plan.get("dispatch_ready"),
+                    "step_count": len(steps) if isinstance(steps, list) else 0,
+                    "created_at": plan.get("created_at"),
+                }
+            )
+        return {"count": len(items), "items": items}
+
+    def _approval_summaries(self, approvals: list[dict[str, Any]]) -> dict[str, Any]:
+        counts = self._status_counts(approvals)
+        items = [
+            {
+                "approval_id": approval.get("approval_id"),
+                "plan_id": approval.get("plan_id"),
+                "step_index": approval.get("step_index"),
+                "agent_id": approval.get("agent_id"),
+                "task": approval.get("task"),
+                "status": approval.get("status"),
+                "message_id": approval.get("message_id"),
+                "job_id": approval.get("job_id"),
+            }
+            for approval in approvals
+        ]
+        return {
+            "count": len(items),
+            "pending": counts.get("pending", 0),
+            "approved": counts.get("approved", 0),
+            "rejected": counts.get("rejected", 0),
+            "dispatched": counts.get("dispatched", 0),
+            "by_status": counts,
+            "items": items,
+        }
+
+    def _message_summaries(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "count": len(messages),
+            "by_status": self._status_counts(messages),
+            "items": [
+                {
+                    "message_id": message.get("message_id"),
+                    "from_actor": message.get("from_actor"),
+                    "to_agent": message.get("to_agent"),
+                    "task": message.get("task"),
+                    "status": message.get("status"),
+                    "created_at": message.get("created_at"),
+                }
+                for message in messages
+            ],
+        }
+
+    def _job_summaries(self, jobs: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "count": len(jobs),
+            "by_status": self._status_counts(jobs),
+            "items": [
+                {
+                    "job_id": job.get("job_id"),
+                    "message_id": job.get("message_id"),
+                    "agent_id": job.get("agent_id"),
+                    "status": job.get("status"),
+                    "created_at": job.get("created_at"),
+                }
+                for job in jobs
+            ],
+        }
+
+    @staticmethod
+    def _reply_summaries(replies: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "count": len(replies),
+            "items": [
+                {
+                    "reply_id": reply.get("reply_id"),
+                    "message_id": reply.get("message_id"),
+                    "job_id": reply.get("job_id"),
+                    "from_agent": reply.get("from_agent"),
+                    "to_actor": reply.get("to_actor"),
+                    "created_at": reply.get("created_at"),
+                }
+                for reply in replies
+            ],
+        }
+
+    def _inbox_summary(self, inbox: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+        by_agent = {agent_id: len(items) for agent_id, items in inbox.items()}
+        all_items = [item for items in inbox.values() for item in items]
+        return {
+            "total": len(all_items),
+            "by_agent": by_agent,
+            "by_status": self._status_counts(all_items),
+        }
+
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
         bindings = state.get("agents", {})
@@ -479,6 +591,12 @@ class StateStore:
             leader=asdict(config.leader),
             agents=agents,
             state_path=str(self.state_path),
+            plans=self._plan_summaries(state.get("plans", [])),
+            approvals=self._approval_summaries(state.get("approvals", [])),
+            messages=self._message_summaries(state.get("messages", [])),
+            jobs=self._job_summaries(state.get("jobs", [])),
+            replies=self._reply_summaries(state.get("replies", [])),
+            inbox=self._inbox_summary(state.get("inbox", {})),
         )
 
 

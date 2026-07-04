@@ -200,6 +200,12 @@ agentdeck trace --id inb_xxx
 
 `trace` 会返回同一条 message lineage 下的 message、attempts、jobs、replies 和 inbox_items。后续会继续补自动 reply extraction 和更严格的 mailbox head-only ack。
 
+## ProjectView and Status
+
+`agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、inbox 的轻量摘要。
+
+这些摘要只用于观察和恢复，不修改 state、不发送 tmux 输入，也不包含完整长 prompt。GUI 或 Leader chat loop 应优先读取 `agentdeck status`，再按需调用 `plan show`、`plan status` 或 `trace` 获取细节。
+
 ## Leader Planning
 
 AgentDeck 已提供第一版 plan-only Leader 能力：
