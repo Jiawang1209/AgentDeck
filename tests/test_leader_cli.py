@@ -114,6 +114,35 @@ def test_leader_plan_uses_openai_compatible_provider_without_dispatching(tmp_pat
     assert state.get("inbox", {}) == {}
 
 
+def test_leader_plan_records_provider_error_without_dispatching(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    class BrokenProvider:
+        name = "openai-compatible"
+
+        def plan(self, _request):
+            raise RuntimeError("provider plan content is not valid JSON")
+
+    monkeypatch.setattr(cli, "leader_provider", lambda name: BrokenProvider())
+
+    exit_code = cli.main(["leader", "plan", "--provider", "openai-compatible", "--task", "坏响应"])
+
+    assert exit_code == 1
+    assert "leader provider failed: provider plan content is not valid JSON" in capsys.readouterr().err
+    state = StateStore(root).load()
+    assert state["plans"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state.get("inbox", {}) == {}
+    assert state["leader_errors"][0]["mode"] == "plan"
+    assert state["leader_errors"][0]["provider"] == "openai-compatible"
+    assert state["leader_errors"][0]["task"] == "坏响应"
+    assert state["leader_errors"][0]["error"] == "provider plan content is not valid JSON"
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "leader_provider_failed"' in events
+
+
 def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
 

@@ -103,6 +103,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - GUI、自然语言入口和 Leader chat loop 应优先消费 `agentdeck status` 的 ProjectView 摘要；不要直接散读 state 文件作为主入口。
 - `agentdeck leader chat --message <text>` 是当前自然语言入口 MVP：无 plan 时创建 plan-only 记录，有 plan 时 review 最新 plan 并返回下一条建议命令；每轮会写入 `chat_turns[]`，可用 `agentdeck leader chat-history` 查看。
 - 真实 Leader API 使用 `agentdeck leader plan/chat --provider openai-compatible`，环境变量为 `AGENTDECK_LEADER_API_KEY`、`AGENTDECK_LEADER_BASE_URL` 和 `AGENTDECK_LEADER_MODEL`；真实 provider 也只能生成 plan，不得绕过审批。
+- 真实 provider 失败必须记录到 `leader_errors[]` 和 `leader_provider_failed` 事件；不要让异常崩溃 CLI，也不要半写入 plan。
 - 自然语言任务调度优先从 `agentdeck leader plan --task <text>` 生成 plan-only 记录开始；不要跳过 plan 直接自动 dispatch。
 - `agentdeck leader review --plan-id <id>` 是当前本地 Leader review loop，用于基于 approval/dispatch/reply 状态建议下一步。
 - 审批、dispatch 或恢复任务前优先用 `agentdeck plan list`、`agentdeck plan show --plan-id <id>` 和 `agentdeck plan status --plan-id <id>` 检查计划。

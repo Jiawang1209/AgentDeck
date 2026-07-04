@@ -206,7 +206,7 @@ agentdeck trace --id inb_xxx
 
 ## ProjectView and Status
 
-`agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、inbox 的轻量摘要。
+`agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、leader_errors、inbox 的轻量摘要。
 
 这些摘要只用于观察和恢复，不修改 state、不发送 tmux 输入，也不包含完整长 prompt。GUI 或 Leader chat loop 应优先读取 `agentdeck status`，再按需调用 `plan show`、`plan status` 或 `trace` 获取细节。
 
@@ -256,6 +256,8 @@ agentdeck approval dispatch --approval-id apv_xxx
 - `plan.steps[]`
 
 OpenAI-compatible provider 使用同一个 provider 抽象和 plan schema，并要求模型返回 JSON object plan。
+
+如果真实 provider 返回非法 JSON、缺少 steps 或某个 step 没有 `requires_approval: true`，CLI 会明确失败并把错误写入 `.agentdeck/state/state.json` 的 `leader_errors[]`。失败不会创建 plan、approval、message、job 或 inbox。
 
 配置环境变量：
 

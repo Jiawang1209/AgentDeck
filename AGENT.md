@@ -101,6 +101,7 @@ Worker 不应该：
 - `agentdeck plan list` 返回 plan 摘要，不包含完整 `plan` body。
 - `agentdeck plan show --plan-id <id>` 返回完整 plan，用于审批前检查。
 - `agentdeck plan status --plan-id <id>` 返回 plan step、approval 状态和 dispatch lineage 汇总。
+- Provider 失败会写入 `leader_errors[]`，并通过 `agentdeck status` 暴露摘要；失败不能创建 plan、approval、message、job 或 inbox。
 - 默认 `fake` provider 是本地 dry-run provider，不调用外部 LLM。
 - `openai-compatible` provider 通过 `AGENTDECK_LEADER_API_KEY`、`AGENTDECK_LEADER_BASE_URL` 和 `AGENTDECK_LEADER_MODEL` 调用 `/chat/completions`，但仍然只生成 plan。
 - chat/plan-only 阶段不会写入 `messages`、`jobs` 或 `inbox`，也不会发送 tmux 输入。

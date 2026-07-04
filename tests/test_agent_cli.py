@@ -140,6 +140,17 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
             "created_at": "2026-07-04T00:00:00+00:00",
         }
     ]
+    state["leader_errors"] = [
+        {
+            "error_id": "err_demo",
+            "mode": "plan",
+            "provider": "openai-compatible",
+            "model": "leader-model",
+            "task": "坏响应",
+            "error": "provider plan content is not valid JSON",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
     state["inbox"] = {
         "planner": [
             {
@@ -183,6 +194,21 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
                 "message": "继续",
                 "plan_id": "pln_demo",
                 "next_command": "agentdeck approval create-from-plan --plan-id pln_demo",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ],
+    }
+    assert payload["leader_errors"] == {
+        "count": 1,
+        "by_mode": {"plan": 1},
+        "items": [
+            {
+                "error_id": "err_demo",
+                "mode": "plan",
+                "provider": "openai-compatible",
+                "model": "leader-model",
+                "task": "坏响应",
+                "error": "provider plan content is not valid JSON",
                 "created_at": "2026-07-04T00:00:00+00:00",
             }
         ],

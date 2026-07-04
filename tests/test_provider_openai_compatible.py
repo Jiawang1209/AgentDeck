@@ -44,6 +44,27 @@ class FakeResponse:
         ).encode("utf-8")
 
 
+class InvalidJsonPlanResponse:
+    def __enter__(self) -> "InvalidJsonPlanResponse":
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "not-json"
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+
 def test_openai_compatible_provider_requires_api_key(monkeypatch) -> None:
     monkeypatch.delenv("AGENTDECK_LEADER_API_KEY", raising=False)
 
@@ -86,3 +107,24 @@ def test_openai_compatible_provider_posts_chat_completion_and_parses_json_plan(t
     assert plan["goal"] == "构建 provider"
     assert plan["steps"][0]["agent_id"] == "planner"
     assert plan["dispatch_ready"] is False
+
+
+def test_openai_compatible_provider_reports_invalid_json_plan(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen",
+        lambda _request, timeout: InvalidJsonPlanResponse(),
+    )
+
+    provider = OpenAICompatibleProvider()
+
+    try:
+        provider.plan(LeaderPlanRequest(task="构建 provider", config=config))
+    except RuntimeError as exc:
+        assert str(exc) == "provider plan content is not valid JSON"
+    else:
+        raise AssertionError("provider should reject invalid JSON plan content")

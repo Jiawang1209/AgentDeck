@@ -4,6 +4,18 @@
 
 ## 2026-07-04
 
+### Current - Add Leader provider failure diagnostics
+
+- 新增 `leader_errors[]` 状态账本，用于记录 Leader provider 失败的 error_id、mode、provider、model、task、error 和 created_at。
+- 扩展 `agentdeck leader plan/chat`，捕获 provider `RuntimeError`，明确输出 `leader provider failed: ...`，并追加 `leader_provider_failed` 事件。
+- 扩展 ProjectView，`agentdeck status` 现在包含 `leader_errors` 的 count、by_mode 和 items 摘要。
+- 扩展 OpenAI-compatible provider 诊断，把模型返回的非法 JSON plan 转成稳定错误 `provider plan content is not valid JSON`。
+- Provider 失败保持安全边界：不创建 plan、approval、message、job 或 inbox。
+- 扩展 `tests/test_provider_openai_compatible.py`、`tests/test_leader_cli.py` 和 `tests/test_agent_cli.py`，覆盖非法 JSON 诊断、CLI 失败恢复和 status 摘要。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 provider failure diagnostics 与 `leader_errors[]`。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_openai_compatible_provider_reports_invalid_json_plan tests/test_leader_cli.py::test_leader_plan_records_provider_error_without_dispatching tests/test_agent_cli.py::test_status_includes_project_state_summaries -q` 看到 JSONDecodeError 泄漏、CLI 崩溃和 `leader_errors` 缺失；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 41 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认缺少 API key 时 openai-compatible plan 退出 1、`leader_errors.count` 为 1，plans/messages/jobs 均为 0。
+
 ### Current - Add OpenAI-compatible Leader provider
 
 - 新增 `OpenAICompatibleProvider`，通过标准库 `urllib` 调用 OpenAI-compatible `/chat/completions`，不引入第三方依赖。

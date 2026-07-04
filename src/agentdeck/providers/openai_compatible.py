@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from json import JSONDecodeError
 from urllib import request
 
 from .base import LeaderPlanRequest
@@ -93,7 +94,10 @@ class OpenAICompatibleProvider:
         content = message.get("content")
         if not isinstance(content, str):
             raise RuntimeError("provider response missing message content")
-        parsed = json.loads(content)
+        try:
+            parsed = json.loads(content)
+        except JSONDecodeError as exc:
+            raise RuntimeError("provider plan content is not valid JSON") from exc
         if not isinstance(parsed, dict):
             raise RuntimeError("provider plan content is not a JSON object")
         return parsed

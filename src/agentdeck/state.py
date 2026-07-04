@@ -26,6 +26,7 @@ class StateStore:
                 "plans": [],
                 "approvals": [],
                 "chat_turns": [],
+                "leader_errors": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -249,6 +250,28 @@ class StateStore:
 
     def list_chat_turns(self) -> list[dict[str, Any]]:
         return list(self.load().get("chat_turns", []))
+
+    def record_leader_error(
+        self,
+        mode: str,
+        provider: str,
+        model: str | None,
+        task: str,
+        error: str,
+    ) -> dict[str, Any]:
+        state = self.load()
+        record = {
+            "error_id": new_id("err"),
+            "mode": mode,
+            "provider": provider,
+            "model": model,
+            "task": task,
+            "error": error,
+            "created_at": utc_now(),
+        }
+        state.setdefault("leader_errors", []).append(record)
+        self.save(state)
+        return record
 
     def create_approvals_from_plan(self, plan_id: str) -> list[dict[str, Any]]:
         state = self.load()
@@ -605,6 +628,26 @@ class StateStore:
             )
         return {"count": len(items), "by_mode": by_mode, "items": items}
 
+    @staticmethod
+    def _leader_error_summaries(leader_errors: list[dict[str, Any]]) -> dict[str, Any]:
+        by_mode: dict[str, int] = {}
+        items = []
+        for error in leader_errors:
+            mode = str(error.get("mode", "unknown"))
+            by_mode[mode] = by_mode.get(mode, 0) + 1
+            items.append(
+                {
+                    "error_id": error.get("error_id"),
+                    "mode": error.get("mode"),
+                    "provider": error.get("provider"),
+                    "model": error.get("model"),
+                    "task": error.get("task"),
+                    "error": error.get("error"),
+                    "created_at": error.get("created_at"),
+                }
+            )
+        return {"count": len(items), "by_mode": by_mode, "items": items}
+
     def _inbox_summary(self, inbox: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         by_agent = {agent_id: len(items) for agent_id, items in inbox.items()}
         all_items = [item for items in inbox.values() for item in items]
@@ -653,6 +696,7 @@ class StateStore:
             jobs=self._job_summaries(state.get("jobs", [])),
             replies=self._reply_summaries(state.get("replies", [])),
             chat_turns=self._chat_turn_summaries(state.get("chat_turns", [])),
+            leader_errors=self._leader_error_summaries(state.get("leader_errors", [])),
             inbox=self._inbox_summary(state.get("inbox", {})),
         )
 

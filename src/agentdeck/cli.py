@@ -436,6 +436,30 @@ def trace_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _record_leader_provider_failure(
+    store: StateStore,
+    mode: str,
+    provider: str,
+    model: str | None,
+    task: str,
+    error: Exception,
+) -> None:
+    record = store.record_leader_error(mode, provider, model, task, str(error))
+    store.append_event(
+        EventRecord.create(
+            "leader_provider_failed",
+            {
+                "error_id": record["error_id"],
+                "mode": mode,
+                "provider": provider,
+                "model": model,
+                "task_length": len(task),
+                "error": str(error),
+            },
+        )
+    )
+
+
 def leader_plan_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -446,7 +470,12 @@ def leader_plan_command(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     orchestrator = LeaderOrchestrator(config, provider)
-    plan = orchestrator.plan(args.task)
+    try:
+        plan = orchestrator.plan(args.task)
+    except RuntimeError as exc:
+        _record_leader_provider_failure(store, "plan", provider.name, args.model, args.task, exc)
+        print(f"leader provider failed: {exc}", file=sys.stderr)
+        return 1
     record = store.record_plan(args.task, provider.name, args.model, plan)
     store.append_event(
         EventRecord.create(
@@ -547,7 +576,12 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     orchestrator = LeaderOrchestrator(config, provider)
-    plan = orchestrator.plan(args.message)
+    try:
+        plan = orchestrator.plan(args.message)
+    except RuntimeError as exc:
+        _record_leader_provider_failure(store, "chat", provider.name, args.model, args.message, exc)
+        print(f"leader provider failed: {exc}", file=sys.stderr)
+        return 1
     record = store.record_plan(args.message, provider.name, args.model, plan)
     next_command = f"agentdeck approval create-from-plan --plan-id {record['plan_id']}"
     turn = store.record_chat_turn(
