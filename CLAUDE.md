@@ -75,6 +75,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 ## 开发规则
 
 - 每次新增功能或用户可见行为变化都要 commit。
+- 每次开发内容都要同步更新 `HISTORY.md`，并和对应代码/文档改动放在同一次 commit 中。
 - 先更新架构/README/agent 文档，再扩展行为。
 - 所有开发命令默认先激活 `agentdeck` conda 环境。
 - `References/` 只读学习，不纳入 git，不直接复制大段源码。

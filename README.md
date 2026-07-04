@@ -104,6 +104,7 @@ export DEEPSEEK_API_KEY="..."
 ## 开发约束
 
 - 每次新增功能或用户可见行为变化都要 commit。
+- 每次开发内容都要同步写入 [HISTORY.md](/Users/liuyue/Desktop/Github_repos/multi-agent-explore/HISTORY.md)，并和对应改动放在同一次 commit 中。
 - `References/` 是本地研究材料，不纳入 git。
 - README、CLAUDE.md、AGENT.md 和架构文档要跟代码同步。
 - 所有开发命令默认先执行 `conda activate agentdeck`。
