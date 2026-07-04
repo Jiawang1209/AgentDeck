@@ -215,6 +215,8 @@ agentdeck trace --id inb_xxx
 
 `agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、leader_errors、leader_actions、inbox、recovery 的轻量摘要。
 
+详细字段契约见 `docs/contracts/project-view-schema.md`。GUI、自然语言入口和恢复工具应优先按该契约消费 `agentdeck status`，不要把 tmux pane 或 state 文件当成第二套状态源。
+
 `status.inbox.heads` 会按 agent 暴露最早的 `pending` inbox item；没有待处理 item 的 agent 会返回 `null`。GUI 和 Leader chat loop 可以用它直接显示每个 agent 当前必须先处理或 ack 的 mailbox head。
 
 `status.leader_actions.items` 会包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，GUI 可以直接根据 ProjectView 渲染 action 按钮和阻塞提示。

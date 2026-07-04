@@ -4,6 +4,15 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView contract document
+
+- 新增 `docs/contracts/project-view-schema.md`，把 `agentdeck status` 的 ProjectView 作为 CLI、自然语言 Leader、恢复工具和未来 GUI 的统一只读状态契约沉淀下来。
+- 文档覆盖 top-level shape、agents runtime binding、summary blocks、leader_actions、chat_turns、inbox、recovery、事件时间线和 GUI consumer rules。
+- 明确 `recovery.recommended_action` 的状态矩阵、safety、requires_explicit_user、source 和 target_id 语义，避免未来 GUI 自行解析命令或散读 state。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，将 ProjectView 契约文档列为 GUI/recovery/自然语言入口改动的同步对象。
+- 保持安全边界：本轮只新增文档契约，不改变 runtime 行为、不修改 state、不发送 tmux 输入。
+- 完整验证：`conda run -n agentdeck pytest -q` 60 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 contract smoke 确认 ProjectView 顶层字段、`recovery` 字段和 `recommended_action` 字段均存在。
+
 ### Current - Add recovery state matrix target IDs
 
 - 扩展 `status.recovery.recommended_action`，新增 `target_id` 字段，用于把 GUI 推荐动作关联回具体的 leader action、approval 或 inbox item。
