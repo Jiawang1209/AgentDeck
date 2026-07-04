@@ -145,9 +145,12 @@ Summary items intentionally omit long prompts and pane output. Use detail comman
   "apply_command": "agentdeck leader apply-action --action-id act_xxx",
   "explicit_command": "agentdeck approval create-from-plan --plan-id pln_xxx",
   "apply_blocker": null,
+  "is_recommended": true,
   "created_at": "2026-07-04T00:00:00+00:00"
 }
 ```
+
+`agentdeck leader actions` also returns a top-level `recommended_action_id`, derived from `recovery.recommended_action.target_id`, so GUI queues can highlight the active recovery affordance without opening every detail view.
 
 `can_apply=true` is currently limited to safe `create_approvals` actions. Runtime actions such as dispatch or capture stay explicit and should be shown with their blocker text.
 

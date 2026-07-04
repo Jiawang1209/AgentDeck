@@ -123,7 +123,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - 真实 provider 失败必须记录到 `leader_errors[]` 和 `leader_provider_failed` 事件；不要让异常崩溃 CLI，也不要半写入 plan。
 - 自然语言任务调度优先从 `agentdeck leader plan --task <text>` 生成 plan-only 记录开始；不要跳过 plan 直接自动 dispatch。
 - `agentdeck leader review --plan-id <id>` 是当前本地 Leader review loop，进入 review 前必须通过 ProjectView contract 守门，用于基于 approval/dispatch/reply 状态建议下一步。
-- `agentdeck leader next` 进入 action queue 前必须通过 ProjectView contract 守门；它只把下一步建议写入 `leader_actions[]`，不得直接执行 action；相同 pending action 已存在时会复用原 action_id；执行仍需人类显式运行对应 approval/dispatch/capture 命令。
+- `agentdeck leader next` 进入 action queue 前必须通过 ProjectView contract 守门；它只把下一步建议写入 `leader_actions[]`，不得直接执行 action；相同 pending action 已存在时会复用原 action_id；执行仍需人类显式运行对应 approval/dispatch/capture 命令；`agentdeck leader actions` 必须暴露 `recommended_action_id` 和每项 `is_recommended`。
 - `agentdeck leader action --action-id <id>` 是 action 执行前的只读详情入口；输出必须包含当前 `recovery`、`recommended_action` 和 `matches_recommended_action`，apply 前必须检查 `can_apply`、`explicit_command` 和 `apply_blocker`。
 - `agentdeck leader apply-action --action-id <id>` 执行 safe apply 前必须通过 ProjectView contract 守门；当前只允许应用 `create_approvals`，不得自动应用 dispatch/capture 类 action。
 - 审批、dispatch 或恢复任务前优先用 `agentdeck plan list`、`agentdeck plan show --plan-id <id>` 和 `agentdeck plan status --plan-id <id>` 检查计划。

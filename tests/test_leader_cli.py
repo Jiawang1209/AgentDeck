@@ -440,9 +440,11 @@ def test_leader_actions_lists_persisted_actions(tmp_path, monkeypatch, capsys) -
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["count"] == 1
+    assert payload["recommended_action_id"] == first["action_id"]
     assert payload["actions"][0]["action_id"] == first["action_id"]
     assert payload["actions"][0]["kind"] == "create_approvals"
     assert payload["actions"][0]["status"] == "pending"
+    assert payload["actions"][0]["is_recommended"] is True
 
 
 def test_leader_action_show_outputs_full_action_with_applyability(tmp_path, monkeypatch, capsys) -> None:

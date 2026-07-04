@@ -578,7 +578,7 @@ def leader_next_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def _leader_action_summary(action: dict[str, object]) -> dict[str, object]:
+def _leader_action_summary(action: dict[str, object], recommended_action_id: object = None) -> dict[str, object]:
     return {
         "action_id": action.get("action_id"),
         "kind": action.get("kind"),
@@ -591,15 +591,28 @@ def _leader_action_summary(action: dict[str, object]) -> dict[str, object]:
         "command": action.get("command"),
         "reason": action.get("reason"),
         "created_at": action.get("created_at"),
+        "is_recommended": action.get("action_id") == recommended_action_id,
     }
 
 
 def leader_actions_command(_args: argparse.Namespace) -> int:
-    _config, store, exit_code = _load_project_or_error()
-    if store is None:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
         return exit_code
-    actions = [_leader_action_summary(action) for action in store.list_leader_actions()]
-    _print_json({"count": len(actions), "actions": actions})
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    recovery = project_view.get("recovery", {})
+    recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+    recommended_action_id = recommended_action.get("target_id") if isinstance(recommended_action, dict) else None
+    actions = [_leader_action_summary(action, recommended_action_id) for action in store.list_leader_actions()]
+    _print_json(
+        {
+            "count": len(actions),
+            "recommended_action_id": recommended_action_id,
+            "actions": actions,
+        }
+    )
     return 0
 
 

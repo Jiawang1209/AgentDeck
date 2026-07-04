@@ -111,7 +111,7 @@ Worker 不应该：
 - `agentdeck leader plan --task <text>` 会写入 `.agentdeck/state/state.json` 的 `plans[]`。
 - `agentdeck leader review --plan-id <id>` 会先通过 ProjectView contract 守门，再基于 plan status 和 replies 输出下一步建议。
 - `agentdeck leader next` 会先通过 ProjectView contract 守门，再把下一步建议写入 `leader_actions[]`，但不会执行命令；相同 pending action 已存在时会复用原 action_id。
-- `agentdeck leader actions` 返回已持久化的 action queue 摘要。
+- `agentdeck leader actions` 返回已持久化的 action queue 摘要，包含顶层 `recommended_action_id` 和每项 `is_recommended`。
 - `agentdeck leader action --action-id <id>` 返回单个 action 的只读详情，包含 `can_apply`、`apply_command`、`explicit_command`、`apply_blocker`、当前 `recovery`、`recommended_action` 和 `matches_recommended_action`。
 - `agentdeck leader apply-action --action-id <id>` 执行 safe apply 前必须通过 ProjectView contract 守门；当前只允许应用 `create_approvals`，dispatch/capture 类 action 必须继续由人类显式命令执行。
 - `agentdeck plan list` 返回 plan 摘要，不包含完整 `plan` body。
