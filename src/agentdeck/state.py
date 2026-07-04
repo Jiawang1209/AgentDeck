@@ -18,7 +18,15 @@ class StateStore:
 
     def load(self) -> dict[str, Any]:
         if not self.state_path.exists():
-            return {"agents": {}, "messages": [], "jobs": [], "replies": [], "plans": [], "approvals": []}
+            return {
+                "agents": {},
+                "messages": [],
+                "jobs": [],
+                "replies": [],
+                "plans": [],
+                "approvals": [],
+                "chat_turns": [],
+            }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
     def save(self, state: dict[str, Any]) -> None:
@@ -212,6 +220,35 @@ class StateStore:
             "reason": "no approved or dispatched steps are ready",
             "counts": status["counts"],
         }
+
+    def record_chat_turn(
+        self,
+        mode: str,
+        message: str,
+        plan_id: str | None,
+        next_command: str | None,
+        provider: str | None = None,
+        model: str | None = None,
+        review: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        state = self.load()
+        turn = {
+            "turn_id": new_id("cht"),
+            "mode": mode,
+            "message": message,
+            "plan_id": plan_id,
+            "next_command": next_command,
+            "provider": provider,
+            "model": model,
+            "review": review,
+            "created_at": utc_now(),
+        }
+        state.setdefault("chat_turns", []).append(turn)
+        self.save(state)
+        return turn
+
+    def list_chat_turns(self) -> list[dict[str, Any]]:
+        return list(self.load().get("chat_turns", []))
 
     def create_approvals_from_plan(self, plan_id: str) -> list[dict[str, Any]]:
         state = self.load()
@@ -549,6 +586,25 @@ class StateStore:
             ],
         }
 
+    @staticmethod
+    def _chat_turn_summaries(chat_turns: list[dict[str, Any]]) -> dict[str, Any]:
+        by_mode: dict[str, int] = {}
+        items = []
+        for turn in chat_turns:
+            mode = str(turn.get("mode", "unknown"))
+            by_mode[mode] = by_mode.get(mode, 0) + 1
+            items.append(
+                {
+                    "turn_id": turn.get("turn_id"),
+                    "mode": turn.get("mode"),
+                    "message": turn.get("message"),
+                    "plan_id": turn.get("plan_id"),
+                    "next_command": turn.get("next_command"),
+                    "created_at": turn.get("created_at"),
+                }
+            )
+        return {"count": len(items), "by_mode": by_mode, "items": items}
+
     def _inbox_summary(self, inbox: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         by_agent = {agent_id: len(items) for agent_id, items in inbox.items()}
         all_items = [item for items in inbox.values() for item in items]
@@ -596,6 +652,7 @@ class StateStore:
             messages=self._message_summaries(state.get("messages", [])),
             jobs=self._job_summaries(state.get("jobs", [])),
             replies=self._reply_summaries(state.get("replies", [])),
+            chat_turns=self._chat_turn_summaries(state.get("chat_turns", [])),
             inbox=self._inbox_summary(state.get("inbox", {})),
         )
 

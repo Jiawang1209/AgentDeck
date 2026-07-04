@@ -89,12 +89,13 @@ Worker 不应该：
 - `agentdeck capture-reply --agent <id> --message-id <id>` 可从 pane 最近输出捕获最后一个 `status:` 结构化回复块。
 - `agentdeck ack --agent <id> --inbox-id <id>` 可确认 inbox item。
 - `agentdeck trace --id <id>` 可用 message/attempt/job/reply/inbox 任意 ID 还原通信链路。
-- `agentdeck status` 返回 ProjectView 只读摘要，包含 agents、plans、approvals、messages、jobs、replies 和 inbox，适合作为 GUI 与 Leader chat loop 的默认状态入口。
+- `agentdeck status` 返回 ProjectView 只读摘要，包含 agents、plans、approvals、messages、jobs、replies、chat_turns 和 inbox，适合作为 GUI 与 Leader chat loop 的默认状态入口。
 - 后续升级为更严格的 reply block 标记和 head-only ack。
 
 ## Leader Planning
 
 - `agentdeck leader chat --message <text>` 是自然语言 Leader 入口 MVP；它会读取 ProjectView，无 plan 时创建 plan-only 记录，有 plan 时 review 最新 plan 并返回建议命令。
+- `agentdeck leader chat-history` 返回已持久化的 chat turns 摘要，用于恢复自然语言调度上下文。
 - `agentdeck leader plan --task <text>` 会写入 `.agentdeck/state/state.json` 的 `plans[]`。
 - `agentdeck leader review --plan-id <id>` 会基于 plan status 和 replies 输出下一步建议。
 - `agentdeck plan list` 返回 plan 摘要，不包含完整 `plan` body。

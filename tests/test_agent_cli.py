@@ -116,6 +116,16 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
             "created_at": "2026-07-04T00:00:00+00:00",
         }
     )
+    state["chat_turns"] = [
+        {
+            "turn_id": "cht_demo",
+            "mode": "review",
+            "message": "继续",
+            "plan_id": "pln_demo",
+            "next_command": "agentdeck approval create-from-plan --plan-id pln_demo",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
     state["inbox"] = {
         "planner": [
             {
@@ -149,6 +159,20 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
     assert payload["messages"]["by_status"] == {"replied": 1}
     assert payload["jobs"]["by_status"] == {"completed": 1}
     assert payload["replies"]["items"][0]["reply_id"] == "rep_demo"
+    assert payload["chat_turns"] == {
+        "count": 1,
+        "by_mode": {"review": 1},
+        "items": [
+            {
+                "turn_id": "cht_demo",
+                "mode": "review",
+                "message": "继续",
+                "plan_id": "pln_demo",
+                "next_command": "agentdeck approval create-from-plan --plan-id pln_demo",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ],
+    }
     assert payload["inbox"] == {
         "total": 1,
         "by_agent": {"planner": 1},

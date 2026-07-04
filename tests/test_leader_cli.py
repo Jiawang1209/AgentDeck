@@ -89,11 +89,17 @@ def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_
     assert payload["mode"] == "plan"
     assert payload["message"] == "帮我实现自动回复回收"
     assert payload["project_view"]["plans"]["count"] == 0
+    assert payload["turn_id"].startswith("cht_")
     assert payload["plan_id"].startswith("pln_")
     assert payload["next_command"] == f"agentdeck approval create-from-plan --plan-id {payload['plan_id']}"
     assert payload["review"] is None
 
     state = StateStore(root).load()
+    assert state["chat_turns"][0]["turn_id"] == payload["turn_id"]
+    assert state["chat_turns"][0]["mode"] == "plan"
+    assert state["chat_turns"][0]["message"] == "帮我实现自动回复回收"
+    assert state["chat_turns"][0]["plan_id"] == payload["plan_id"]
+    assert state["chat_turns"][0]["next_command"] == payload["next_command"]
     assert len(state["plans"]) == 1
     assert state["plans"][0]["task"] == "帮我实现自动回复回收"
     assert state["messages"] == []
@@ -119,18 +125,43 @@ def test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan(tmp_pa
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "review"
     assert payload["message"] == "继续"
+    assert payload["turn_id"].startswith("cht_")
     assert payload["plan_id"] == plan_id
     assert payload["project_view"]["plans"]["count"] == 1
     assert payload["review"]["next_action"] == "dispatch_approved"
     assert payload["next_command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
 
     state = StateStore(root).load()
+    assert state["chat_turns"][0]["turn_id"] == payload["turn_id"]
+    assert state["chat_turns"][0]["mode"] == "review"
+    assert state["chat_turns"][0]["plan_id"] == plan_id
+    assert state["chat_turns"][0]["review"]["next_action"] == "dispatch_approved"
     assert len(state["plans"]) == 1
     assert state["messages"] == []
     assert state["jobs"] == []
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "leader_chat_turn"' in events
+
+
+def test_leader_chat_history_lists_persisted_turns(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "chat", "--message", "第一轮"])
+    first = json.loads(capsys.readouterr().out)
+    cli.main(["leader", "chat", "--message", "继续"])
+    second = json.loads(capsys.readouterr().out)
+
+    exit_code = cli.main(["leader", "chat-history"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 2
+    assert [item["turn_id"] for item in payload["turns"]] == [first["turn_id"], second["turn_id"]]
+    assert [item["mode"] for item in payload["turns"]] == ["plan", "review"]
+    assert [item["message"] for item in payload["turns"]] == ["第一轮", "继续"]
+    assert payload["turns"][0]["next_command"] == first["next_command"]
+    assert payload["turns"][1]["next_command"] == second["next_command"]
+    assert "project_view" not in payload["turns"][0]
 
 
 def test_plan_list_outputs_plan_summaries(tmp_path, monkeypatch, capsys) -> None:

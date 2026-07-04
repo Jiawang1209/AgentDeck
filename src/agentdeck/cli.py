@@ -507,19 +507,29 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         latest_plan = plans[-1]
         plan_id = str(latest_plan["plan_id"])
         review = store.leader_review(plan_id)
+        next_command = _next_command_for_review(review)
+        turn = store.record_chat_turn(
+            mode="review",
+            message=args.message,
+            plan_id=plan_id,
+            next_command=next_command,
+            review=review,
+        )
         payload = {
             "ok": True,
+            "turn_id": turn["turn_id"],
             "mode": "review",
             "message": args.message,
             "project_view": project_view,
             "plan_id": plan_id,
             "review": review,
-            "next_command": _next_command_for_review(review),
+            "next_command": next_command,
         }
         store.append_event(
             EventRecord.create(
                 "leader_chat_turn",
                 {
+                    "turn_id": turn["turn_id"],
                     "mode": "review",
                     "plan_id": plan_id,
                     "message_length": len(args.message),
@@ -537,8 +547,19 @@ def leader_chat_command(args: argparse.Namespace) -> int:
     orchestrator = LeaderOrchestrator(config, provider)
     plan = orchestrator.plan(args.message)
     record = store.record_plan(args.message, provider.name, args.model, plan)
+    next_command = f"agentdeck approval create-from-plan --plan-id {record['plan_id']}"
+    turn = store.record_chat_turn(
+        mode="plan",
+        message=args.message,
+        plan_id=str(record["plan_id"]),
+        next_command=next_command,
+        provider=record["provider"],
+        model=record["model"],
+        review=None,
+    )
     payload = {
         "ok": True,
+        "turn_id": turn["turn_id"],
         "mode": "plan",
         "message": args.message,
         "project_view": project_view,
@@ -549,12 +570,13 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         "dispatch_ready": record["dispatch_ready"],
         "plan": record["plan"],
         "review": None,
-        "next_command": f"agentdeck approval create-from-plan --plan-id {record['plan_id']}",
+        "next_command": next_command,
     }
     store.append_event(
         EventRecord.create(
             "leader_chat_turn",
             {
+                "turn_id": turn["turn_id"],
                 "mode": "plan",
                 "plan_id": record["plan_id"],
                 "provider": record["provider"],
@@ -564,6 +586,26 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         )
     )
     _print_json(payload)
+    return 0
+
+
+def _chat_turn_summary(turn: dict[str, object]) -> dict[str, object]:
+    return {
+        "turn_id": turn.get("turn_id"),
+        "mode": turn.get("mode"),
+        "message": turn.get("message"),
+        "plan_id": turn.get("plan_id"),
+        "next_command": turn.get("next_command"),
+        "created_at": turn.get("created_at"),
+    }
+
+
+def leader_chat_history_command(_args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    turns = [_chat_turn_summary(turn) for turn in store.list_chat_turns()]
+    _print_json({"count": len(turns), "turns": turns})
     return 0
 
 
@@ -808,6 +850,8 @@ def build_parser() -> argparse.ArgumentParser:
     leader_chat.add_argument("--provider", default="fake", help="Leader provider to use when a new plan is needed")
     leader_chat.add_argument("--model", default="fake-plan", help="Provider model label recorded with new plans")
     leader_chat.set_defaults(func=leader_chat_command)
+    leader_chat_history = leader_subparsers.add_parser("chat-history", help="List persisted Leader chat turns")
+    leader_chat_history.set_defaults(func=leader_chat_history_command)
 
     plan = subparsers.add_parser("plan", help="Inspect Leader plans")
     plan_subparsers = plan.add_subparsers(dest="plan_command")

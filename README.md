@@ -48,6 +48,7 @@ agentdeck agent send --agent planner --text "继续"
 agentdeck agent stop --agent planner
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
 agentdeck leader chat --message "帮我设计自动 reply extraction"
+agentdeck leader chat-history
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
 agentdeck plan list
@@ -100,6 +101,7 @@ agentdeck status
 agentdeck agent list
 agentdeck agent stop --agent planner
 agentdeck leader chat --message "帮我设计自动 reply extraction"
+agentdeck leader chat-history
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
 agentdeck plan list
@@ -204,7 +206,7 @@ agentdeck trace --id inb_xxx
 
 ## ProjectView and Status
 
-`agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、inbox 的轻量摘要。
+`agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、inbox 的轻量摘要。
 
 这些摘要只用于观察和恢复，不修改 state、不发送 tmux 输入，也不包含完整长 prompt。GUI 或 Leader chat loop 应优先读取 `agentdeck status`，再按需调用 `plan show`、`plan status` 或 `trace` 获取细节。
 
@@ -215,6 +217,7 @@ AgentDeck 已提供第一版 plan-only Leader 能力：
 ```bash
 agentdeck leader chat --message "帮我设计自动 reply extraction"
 agentdeck leader chat --message "继续"
+agentdeck leader chat-history
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
 agentdeck plan list
@@ -224,7 +227,7 @@ agentdeck plan status --plan-id pln_xxx
 
 当前默认且仅支持本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。这个命令不会 dispatch、不会发送 tmux 输入、不会调用外部 LLM。未实现的真实 provider 会明确失败，而不是静默退回 fake。
 
-`leader chat` 是自然语言入口 MVP。它会先读取 `agentdeck status` 的 ProjectView：如果当前还没有 plan，就把 message 当作目标创建 plan-only 记录；如果已有 plan，就 review 最新 plan 并返回下一条建议命令。它不会创建 approval、不会 dispatch、不会发送 tmux 输入。
+`leader chat` 是自然语言入口 MVP。它会先读取 `agentdeck status` 的 ProjectView：如果当前还没有 plan，就把 message 当作目标创建 plan-only 记录；如果已有 plan，就 review 最新 plan 并返回下一条建议命令。每次 chat turn 都会写入 `.agentdeck/state/state.json` 的 `chat_turns[]`，并可通过 `leader chat-history` 查看。它不会创建 approval、不会 dispatch、不会发送 tmux 输入。
 
 `plan list` 返回计划摘要，适合给自然语言入口或 GUI 做列表视图；`plan show` 返回完整计划，适合审批前人工检查；`plan status` 汇总每个 step 的 approval 状态、message_id、attempt_id 和 job_id，适合恢复任务进度。
 

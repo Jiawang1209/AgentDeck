@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Persist Leader chat turns
+
+- 新增 `chat_turns[]` 状态账本，`agentdeck leader chat --message <text>` 每轮都会记录 turn_id、mode、message、plan_id、next_command、provider/model、review 和 created_at。
+- 新增 `agentdeck leader chat-history`，返回已持久化 chat turns 的轻量摘要，方便恢复自然语言调度上下文。
+- 扩展 ProjectView，`agentdeck status` 现在包含 chat_turns 的 count、by_mode 和 items 摘要。
+- 扩展 `StateStore.record_chat_turn()`、`StateStore.list_chat_turns()` 与 ProjectView 聚合，保持 chat history 只读查看，不触发 dispatch。
+- 扩展 `tests/test_leader_cli.py` 和 `tests/test_agent_cli.py`，覆盖 chat turn 持久化、chat-history 列表和 status 摘要。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 chat history 和 ProjectView 契约。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_creates_plan_from_natural_language_without_dispatching tests/test_leader_cli.py::test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan tests/test_leader_cli.py::test_leader_chat_history_lists_persisted_turns tests/test_agent_cli.py::test_status_includes_project_state_summaries -q` 看到 turn_id、chat-history 和 chat_turns 摘要缺失；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 35 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader chat-history` 返回 2 个 turns 且 `agentdeck status` 的 `chat_turns.count` 为 2。
+
 ### Current - Add Leader chat loop MVP
 
 - 新增 `agentdeck leader chat --message <text>`，作为自然语言 Leader 入口 MVP。

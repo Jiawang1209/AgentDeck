@@ -87,4 +87,5 @@ class ProjectView:
     messages: dict[str, Any] = field(default_factory=dict)
     jobs: dict[str, Any] = field(default_factory=dict)
     replies: dict[str, Any] = field(default_factory=dict)
+    chat_turns: dict[str, Any] = field(default_factory=dict)
     inbox: dict[str, Any] = field(default_factory=dict)
