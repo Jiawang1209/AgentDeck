@@ -239,7 +239,7 @@ agentdeck plan status --plan-id pln_xxx
 
 当前默认使用本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。也可以显式使用 `--provider openai-compatible` 调用 OpenAI-compatible `/chat/completions` API。两种模式都不会 dispatch、不会发送 tmux 输入。
 
-`leader chat` 是自然语言入口 MVP。它会先读取 `agentdeck status` 的 ProjectView：如果当前还没有 plan，就把 message 当作目标创建 plan-only 记录；如果已有 plan，就 review 最新 plan 并返回下一条建议命令。每次 chat turn 都会写入 `.agentdeck/state/state.json` 的 `chat_turns[]`，并可通过 `leader chat-history` 查看。它不会创建 approval、不会 dispatch、不会发送 tmux 输入。
+`leader chat` 是自然语言入口 MVP。它会先读取 `agentdeck status` 的 ProjectView：如果当前还没有 plan，就把 message 当作目标创建 plan-only 记录；如果已有 plan，就 review 最新 plan、持久化或复用一条 `leader_actions[]` 建议，并返回 `leader_action` 与下一条建议命令。每次 chat turn 都会写入 `.agentdeck/state/state.json` 的 `chat_turns[]`，并可通过 `leader chat-history` 查看；review turn 会记录 action_id/action_kind。它不会创建 approval、不会 dispatch、不会发送 tmux 输入。
 
 `plan list` 返回计划摘要，适合给自然语言入口或 GUI 做列表视图；`plan show` 返回完整计划，适合审批前人工检查；`plan status` 汇总每个 step 的 approval 状态、message_id、attempt_id 和 job_id，适合恢复任务进度。
 

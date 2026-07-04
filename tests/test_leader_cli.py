@@ -195,18 +195,51 @@ def test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan(tmp_pa
     assert payload["project_view"]["plans"]["count"] == 1
     assert payload["review"]["next_action"] == "dispatch_approved"
     assert payload["next_command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
+    assert payload["leader_action"]["kind"] == "dispatch_approved"
+    assert payload["leader_action"]["approval_id"] == approval_id
+    assert payload["leader_action"]["command"] == payload["next_command"]
 
     state = StateStore(root).load()
     assert state["chat_turns"][0]["turn_id"] == payload["turn_id"]
     assert state["chat_turns"][0]["mode"] == "review"
     assert state["chat_turns"][0]["plan_id"] == plan_id
     assert state["chat_turns"][0]["review"]["next_action"] == "dispatch_approved"
+    assert state["chat_turns"][0]["action_id"] == payload["leader_action"]["action_id"]
+    assert state["chat_turns"][0]["action_kind"] == "dispatch_approved"
+    assert len(state["leader_actions"]) == 1
+    assert state["leader_actions"][0]["action_id"] == payload["leader_action"]["action_id"]
     assert len(state["plans"]) == 1
     assert state["messages"] == []
     assert state["jobs"] == []
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "leader_chat_turn"' in events
+
+
+def test_leader_chat_persists_create_approvals_action_for_existing_plan(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "已有计划但未审批"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+
+    exit_code = cli.main(["leader", "chat", "--message", "下一步"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "review"
+    assert payload["plan_id"] == plan_id
+    assert payload["leader_action"]["kind"] == "create_approvals"
+    assert payload["leader_action"]["plan_id"] == plan_id
+    assert payload["leader_action"]["command"] == f"agentdeck approval create-from-plan --plan-id {plan_id}"
+    assert payload["next_command"] == payload["leader_action"]["command"]
+
+    state = StateStore(root).load()
+    assert state["chat_turns"][0]["action_id"] == payload["leader_action"]["action_id"]
+    assert state["chat_turns"][0]["action_kind"] == "create_approvals"
+    assert len(state["leader_actions"]) == 1
+    assert state["leader_actions"][0]["kind"] == "create_approvals"
+    assert state["approvals"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
 
 
 def test_leader_chat_history_lists_persisted_turns(tmp_path, monkeypatch, capsys) -> None:

@@ -106,7 +106,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - 每次开发前先对照 `docs/roadmap/ultimate-goal-roadmap.md`，确认功能服务 Leader Agent、多 Agent 通信、可见 runtime、审批、恢复或 GUI 主线。
 - GUI、自然语言入口和 Leader chat loop 应优先消费 `agentdeck status` 的 ProjectView 摘要；不要直接散读 state 文件作为主入口。
 - `agentdeck status` 的 `inbox.heads` 是 mailbox head-only 语义的只读入口；显示或 ack inbox 前优先读取它。
-- `agentdeck leader chat --message <text>` 是当前自然语言入口 MVP：无 plan 时创建 plan-only 记录，有 plan 时 review 最新 plan 并返回下一条建议命令；每轮会写入 `chat_turns[]`，可用 `agentdeck leader chat-history` 查看。
+- `agentdeck leader chat --message <text>` 是当前自然语言入口 MVP：无 plan 时创建 plan-only 记录，有 plan 时 review 最新 plan，并持久化或复用一条 `leader_actions[]` 建议；每轮会写入 `chat_turns[]`，可用 `agentdeck leader chat-history` 查看。
 - 真实 Leader API 使用 `agentdeck leader plan/chat --provider openai-compatible`，环境变量为 `AGENTDECK_LEADER_API_KEY`、`AGENTDECK_LEADER_BASE_URL` 和 `AGENTDECK_LEADER_MODEL`；真实 provider 也只能生成 plan，不得绕过审批。
 - 真实 provider 失败必须记录到 `leader_errors[]` 和 `leader_provider_failed` 事件；不要让异常崩溃 CLI，也不要半写入 plan。
 - 自然语言任务调度优先从 `agentdeck leader plan --task <text>` 生成 plan-only 记录开始；不要跳过 plan 直接自动 dispatch。

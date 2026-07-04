@@ -232,6 +232,8 @@ class StateStore:
         provider: str | None = None,
         model: str | None = None,
         review: dict[str, Any] | None = None,
+        action_id: str | None = None,
+        action_kind: str | None = None,
     ) -> dict[str, Any]:
         state = self.load()
         turn = {
@@ -243,6 +245,8 @@ class StateStore:
             "provider": provider,
             "model": model,
             "review": review,
+            "action_id": action_id,
+            "action_kind": action_kind,
             "created_at": utc_now(),
         }
         state.setdefault("chat_turns", []).append(turn)

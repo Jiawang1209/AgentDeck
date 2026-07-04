@@ -632,13 +632,16 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         latest_plan = plans[-1]
         plan_id = str(latest_plan["plan_id"])
         review = store.leader_review(plan_id)
-        next_command = _next_command_for_review(review)
+        action = store.suggest_leader_action(plan_id)
+        next_command = action.get("command")
         turn = store.record_chat_turn(
             mode="review",
             message=args.message,
             plan_id=plan_id,
             next_command=next_command,
             review=review,
+            action_id=str(action["action_id"]),
+            action_kind=str(action["kind"]),
         )
         payload = {
             "ok": True,
@@ -649,6 +652,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "plan_id": plan_id,
             "review": review,
             "next_command": next_command,
+            "leader_action": _leader_action_summary(action),
         }
         store.append_event(
             EventRecord.create(
@@ -726,6 +730,8 @@ def _chat_turn_summary(turn: dict[str, object]) -> dict[str, object]:
         "message": turn.get("message"),
         "plan_id": turn.get("plan_id"),
         "next_command": turn.get("next_command"),
+        "action_id": turn.get("action_id"),
+        "action_kind": turn.get("action_kind"),
         "created_at": turn.get("created_at"),
     }
 

@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Link Leader chat to action queue
+
+- `agentdeck leader chat --message <text>` 在已有 plan 的 review 模式下，现在会调用 `suggest_leader_action()`，持久化或复用一条 `leader_actions[]` 建议。
+- chat review 输出新增 `leader_action` 摘要，并继续保留 `next_command`，让自然语言入口、CLI 和未来 GUI 共享同一条可恢复 action queue。
+- `chat_turns[]` 的 review turn 现在记录 `action_id` 和 `action_kind`，`agentdeck leader chat-history` 摘要也会返回这两个字段。
+- 覆盖无 approvals 时的 `create_approvals` action，以及已有 approved approval 时的 `dispatch_approved` action；两者都不创建 approval、不 dispatch、不发送 tmux 输入。
+- 扩展 `tests/test_leader_cli.py`，覆盖 chat review 返回 leader_action、chat_turn 记录 action_id/action_kind，以及已有 plan 但未审批时创建 create_approvals action。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录自然语言 chat review 与 action queue 的连接关系。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan tests/test_leader_cli.py::test_leader_chat_persists_create_approvals_action_for_existing_plan -q` 看到 payload 缺少 `leader_action`；实现后同一测试与 chat-history 测试 3 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 54 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader chat --message "下一步"` 输出 `leader_action.kind=create_approvals`，chat_turn action_id 与 leader_action 匹配，leader_actions 为 1，approvals/messages/jobs 仍为 0。
+
 ### Current - Deduplicate pending Leader next actions
 
 - 将 `agentdeck leader next` 收紧为幂等 action suggestion：相同 pending action 已存在时复用原 action_id，不重复追加到 `leader_actions[]`。
