@@ -4,6 +4,18 @@
 
 ## 2026-07-05
 
+### Current - Self-validate Leader chat responses
+
+- 新增 `validate_leader_chat_contract()`，校验 `agentdeck leader chat` 响应字段、`leader_explanation` 字段、内嵌 `project_view` v1 契约，以及顶层 `leader_actions` 与 `project_view.leader_actions` 是否一致。
+- `agentdeck leader chat` 现在会在输出 JSON 前调用 leader-chat contract validator；校验失败时返回非 0、stderr 输出错误，并且不打印半坏 chat response。
+- plan/apply_action 响应补齐 `recovery`、`leader_action`、`review`、`next_command` 等稳定字段，让三种 chat mode 更符合 `leader-chat` discovery contract。
+- 新增 validator 单元测试：example 可通过、缺失 `leader_explanation.safety` 会报错、内嵌 ProjectView 漂移会带 `project_view:` 前缀报错。
+- 新增 CLI 红灯测试：monkeypatch 生成缺少 `safety` 的解释块时，`leader chat` 必须拒绝输出并报告 `Leader chat contract validation failed`。
+- 更新 `README.md`、`docs/contracts/leader-chat-schema.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 chat response 自校验边界。
+- 保持安全边界：本轮只新增输出契约校验，不扩大 safe apply 白名单、不自动 dispatch、不发送 tmux 输入。
+- 本地验证：先运行 leader-chat validator/CLI 目标测试看到缺少 `validate_leader_chat_contract` 的 import 红灯；实现后目标测试 4 项通过，`tests/test_contracts.py tests/test_leader_cli.py` 54 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 87 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader chat` plan 响应可被 `validate_leader_chat_contract()` 校验为 ok，且包含 `recovery`、`leader_action`、对齐的 `leader_actions`。
+
 ### Current - Discover Leader chat response contract
 
 - 新增 `agentdeck contract leader-chat` 只读 discovery 入口，返回自然语言 Leader chat 响应字段、`leader_explanation` 字段、契约文档路径和 ProjectView contract 关联。

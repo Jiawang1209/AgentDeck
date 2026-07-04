@@ -195,6 +195,26 @@ def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_
     assert '"event_type": "leader_chat_turn"' in events
 
 
+def test_leader_chat_refuses_invalid_chat_response_before_printing(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    original_explanation = cli._leader_chat_explanation
+
+    def broken_explanation(*args, **kwargs):
+        payload = original_explanation(*args, **kwargs)
+        payload.pop("safety", None)
+        return payload
+
+    monkeypatch.setattr(cli, "_leader_chat_explanation", broken_explanation)
+
+    exit_code = cli.main(["leader", "chat", "--message", "帮我实现自动回复回收"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "Leader chat contract validation failed" in captured.err
+    assert "missing leader_explanation field: safety" in captured.err
+
+
 def test_leader_chat_refuses_invalid_project_view_before_planning(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     break_project_view_recovery(monkeypatch)

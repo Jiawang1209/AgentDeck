@@ -189,6 +189,30 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     return {"ok": not errors, "errors": errors}
 
 
+def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in LEADER_CHAT_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing response field: {field}")
+    project_view = payload.get("project_view")
+    if isinstance(project_view, dict):
+        project_view_validation = validate_project_view_contract(project_view)
+        for error in project_view_validation["errors"]:
+            errors.append(f"project_view: {error}")
+        if payload.get("leader_actions") != project_view.get("leader_actions"):
+            errors.append("leader_actions must match project_view.leader_actions")
+    elif "project_view" in payload:
+        errors.append("project_view must be an object")
+    explanation = payload.get("leader_explanation")
+    if isinstance(explanation, dict):
+        for field in LEADER_CHAT_EXPLANATION_FIELDS:
+            if field not in explanation:
+                errors.append(f"missing leader_explanation field: {field}")
+    elif "leader_explanation" in payload:
+        errors.append("leader_explanation must be an object")
+    return {"ok": not errors, "errors": errors}
+
+
 def project_view_example() -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,

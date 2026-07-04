@@ -20,6 +20,8 @@ Leader decision commands use the same validation gate before they plan from chat
 
 They also expose a top-level `leader_explanation` block. This is not a second state source; it is a GUI-ready explanation derived from the same ProjectView, review, action, and result payloads.
 
+Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and self-validate before JSON is printed.
+
 ## Top-Level Shape
 
 ```json

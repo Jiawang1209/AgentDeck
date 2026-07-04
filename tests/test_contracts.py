@@ -16,6 +16,7 @@ from agentdeck.contracts import (
     project_view_contract_payload,
     project_view_contract_response,
     project_view_example,
+    validate_leader_chat_contract,
     validate_project_view_contract,
 )
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
@@ -157,3 +158,30 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert example["leader_explanation"]["recommended_action_id"] == "act_example"
     assert example["leader_explanation"]["safety"] == "safe_apply"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
+
+
+def test_validate_leader_chat_contract_accepts_example() -> None:
+    result = validate_leader_chat_contract(leader_chat_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_leader_chat_contract_reports_missing_explanation_field() -> None:
+    payload = leader_chat_example()
+    del payload["leader_explanation"]["safety"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing leader_explanation field: safety"]}
+
+
+def test_validate_leader_chat_contract_requires_embedded_project_view_contract() -> None:
+    payload = leader_chat_example()
+    del payload["project_view"]["leader_actions"]["recommended_action_id"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["project_view: missing leader_actions field: recommended_action_id"],
+    }

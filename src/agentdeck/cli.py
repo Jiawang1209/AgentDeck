@@ -7,7 +7,12 @@ from pathlib import Path
 import sys
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
-from .contracts import leader_chat_contract_response, project_view_contract_response, validate_project_view_contract
+from .contracts import (
+    leader_chat_contract_response,
+    project_view_contract_response,
+    validate_leader_chat_contract,
+    validate_project_view_contract,
+)
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
@@ -28,6 +33,17 @@ def _project_view_payload_or_error(config: ProjectConfig, store: StateStore) -> 
             print(f"- {error}", file=sys.stderr)
         return None
     return payload
+
+
+def _print_leader_chat_payload_or_error(payload: dict[str, object]) -> int:
+    validation = validate_leader_chat_contract(payload)
+    if not validation["ok"]:
+        print("Leader chat contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
 
 
 def doctor_command(_args: argparse.Namespace) -> int:
@@ -820,27 +836,28 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         refreshed_project_view = _project_view_payload_or_error(config, store)
         if refreshed_project_view is None:
             return 1
-        _print_json(
-            {
-                "ok": True,
-                "turn_id": turn["turn_id"],
-                "mode": "apply_action",
-                "message": args.message,
-                "project_view": refreshed_project_view,
-                "leader_actions": refreshed_project_view.get("leader_actions"),
-                "leader_explanation": _leader_chat_explanation(
-                    "apply_action",
-                    next_command=None,
-                    project_view=refreshed_project_view,
-                    leader_action=action_detail,
-                    result=result,
-                ),
-                "plan_id": action.get("plan_id"),
-                "leader_action": action_detail,
-                "result": result,
-            }
-        )
-        return 0
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "apply_action",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "apply_action",
+                next_command=None,
+                project_view=refreshed_project_view,
+                leader_action=action_detail,
+                result=result,
+            ),
+            "plan_id": action.get("plan_id"),
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": None,
+            "leader_action": action_detail,
+            "result": result,
+        }
+        return _print_leader_chat_payload_or_error(payload)
 
     plans = store.list_plans()
     if plans:
@@ -894,8 +911,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 },
             )
         )
-        _print_json(payload)
-        return 0
+        return _print_leader_chat_payload_or_error(payload)
 
     try:
         provider = leader_provider(args.provider)
@@ -933,6 +949,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             project_view=project_view,
         ),
         "plan_id": record["plan_id"],
+        "recovery": project_view.get("recovery"),
+        "leader_action": None,
         "status": record["status"],
         "provider": record["provider"],
         "model": record["model"],
@@ -954,8 +972,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             },
         )
     )
-    _print_json(payload)
-    return 0
+    return _print_leader_chat_payload_or_error(payload)
 
 
 def _chat_turn_summary(turn: dict[str, object]) -> dict[str, object]:
