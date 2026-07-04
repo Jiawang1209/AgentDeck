@@ -289,6 +289,7 @@ Only the earliest pending item is the actionable mailbox head for an agent. Use 
 | `dispatch_ready` | `agentdeck approval dispatch --approval-id <id>` | `explicit_runtime` | `approval_id` |
 | `approval_required` | `agentdeck approval list` | `inspect` | first pending `approval_id` |
 | `inbox_pending` | `agentdeck status` | `inspect` | first pending `inbox_id` |
+| `leader_error` | `agentdeck status` | `inspect` | latest `error_id` |
 | `idle` | `null` | none | none |
 
 `recommended_action` is descriptive metadata. It never executes by itself. GUI clients must still call explicit AgentDeck commands and preserve approval boundaries.

@@ -861,6 +861,7 @@ class StateStore:
     def _recovery_summary(self, state: dict[str, Any]) -> dict[str, Any]:
         approvals = state.get("approvals", [])
         leader_actions = state.get("leader_actions", [])
+        leader_errors = state.get("leader_errors", [])
         inbox_items = [item for items in state.get("inbox", {}).values() for item in items]
         pending_leader_actions = [item for item in leader_actions if item.get("status") == "pending"]
         pending_approvals = [item for item in approvals if item.get("status") == "pending"]
@@ -956,6 +957,23 @@ class StateStore:
                         requires_explicit_user=False,
                         source="inbox",
                         target_id=pending_inbox_items[0].get("inbox_id"),
+                    ),
+                }
+            )
+        elif leader_errors:
+            error = leader_errors[-1]
+            summary.update(
+                {
+                    "status": "leader_error",
+                    "reason": "leader error requires inspection",
+                    "next_command": "agentdeck status",
+                    "recommended_action": self._recommended_action(
+                        label="Inspect Leader error",
+                        command="agentdeck status",
+                        safety="inspect",
+                        requires_explicit_user=False,
+                        source="leader_error",
+                        target_id=error.get("error_id"),
                     ),
                 }
             )

@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Surface Leader errors in ProjectView recovery
+
+- `status.recovery` 现在会在没有 pending leader action、approval 或 inbox item，但存在 `leader_errors[]` 时返回 `status=leader_error`。
+- `leader_error` recovery 会推荐 `agentdeck status`，`recommended_action.source=leader_error`，`target_id` 指向最新 leader error id，方便 GUI/人类从统一恢复入口检查 Leader 错误。
+- 新增 status 红灯测试，确认只有 leader error 时 recovery 不再停留在 `idle`。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 leader error recovery 语义和优先级。
+- 保持安全边界：本轮只扩展只读 ProjectView recovery，不应用 action、不创建 approval、不 dispatch、不发送 tmux 输入。
+- 本地验证：先运行 `test_status_recovery_surfaces_leader_errors_when_no_work_is_pending` 看到 recovery 仍为 `idle` 的红灯；实现后同一测试通过，ProjectView/contract 相关测试 15 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 88 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认只有 leader error 时 `recovery.status=leader_error`、`recommended_action.source=leader_error`、`target_id=err_smoke`。
+
 ### Current - Record Leader chat contract failures
 
 - `agentdeck leader chat` 的 response contract 校验失败现在会写入 `.agentdeck/state/state.json` 的 `leader_errors[]`，`provider` 标记为 `agentdeck-contract`，`mode` 使用失败响应的 chat mode。

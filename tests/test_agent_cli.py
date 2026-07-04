@@ -504,6 +504,42 @@ def test_status_matches_project_view_contract_for_gui_clients(tmp_path, monkeypa
     assert validate_project_view_contract(payload) == {"ok": True, "errors": []}
 
 
+def test_status_recovery_surfaces_leader_errors_when_no_work_is_pending(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["leader_errors"] = [
+        {
+            "error_id": "err_contract",
+            "mode": "plan",
+            "provider": "agentdeck-contract",
+            "model": None,
+            "task": "坏响应",
+            "error": "missing leader_explanation field: safety",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    store.save(state)
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["leader_errors"]["count"] == 1
+    assert payload["recovery"]["status"] == "leader_error"
+    assert payload["recovery"]["reason"] == "leader error requires inspection"
+    assert payload["recovery"]["next_command"] == "agentdeck status"
+    assert payload["recovery"]["recommended_action"] == {
+        "label": "Inspect Leader error",
+        "command": "agentdeck status",
+        "safety": "inspect",
+        "requires_explicit_user": False,
+        "source": "leader_error",
+        "target_id": "err_contract",
+    }
+    assert validate_project_view_contract(payload) == {"ok": True, "errors": []}
+
+
 def test_status_refuses_project_view_contract_violation(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
     original_asdict = cli.asdict
