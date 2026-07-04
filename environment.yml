@@ -1,0 +1,9 @@
+name: agentdeck
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - setuptools>=68
+  - tmux
+  - pytest

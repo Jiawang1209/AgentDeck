@@ -15,7 +15,7 @@ AgentDeck 是一个正在搭建中的本地多智能体终端工作台。它的�
 
 当前骨架选择：
 
-- Python 3.11+
+- Python 3.12，使用 Miniforge/conda 环境 `agentdeck`
 - 标准库 CLI，无强制第三方依赖
 - tmux 作为第一 runtime backend
 - TOML 配置
@@ -35,9 +35,10 @@ AgentDeck 是一个正在搭建中的本地多智能体终端工作台。它的�
 已提供最小可运行骨架：
 
 ```bash
-python -m agentdeck doctor
-python -m agentdeck project init
-python -m agentdeck status
+conda activate agentdeck
+agentdeck doctor
+agentdeck project init
+agentdeck status
 ```
 
 `project init` 会创建：
@@ -57,21 +58,21 @@ python -m agentdeck status
 
 ## 快速开始
 
-在项目根目录运行：
+在项目根目录创建并激活开发环境：
 
 ```bash
-python -m agentdeck doctor
-python -m agentdeck project init
-python -m agentdeck status
+conda env create -f environment.yml
+conda activate agentdeck
+python -m pip install -e .
 ```
 
-如果希望安装成命令：
+之后所有开发命令默认都在 `agentdeck` 环境中运行：
 
 ```bash
-python -m pip install -e .
 agentdeck doctor
 agentdeck project init
 agentdeck status
+python -m compileall src
 ```
 
 DeepSeek API key 后续会通过环境变量读取：
@@ -105,5 +106,6 @@ export DEEPSEEK_API_KEY="..."
 - 每次新增功能或用户可见行为变化都要 commit。
 - `References/` 是本地研究材料，不纳入 git。
 - README、CLAUDE.md、AGENT.md 和架构文档要跟代码同步。
+- 所有开发命令默认先执行 `conda activate agentdeck`。
 - 不在 MVP 阶段重写终端模拟器。
 - 不在没有审批模型前实现自动写文件、kill pane、push、remote relay。
