@@ -129,7 +129,9 @@ def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
     assert validate_project_view_contract(example) == {"ok": True, "errors": []}
     assert example["runtime_backend"] == "tmux"
     assert example["agents"][0]["runtime"]["pane_id"] == "%1"
+    assert example["leader_actions"]["recommended_action_id"] == "act_example"
     assert example["leader_actions"]["items"][0]["can_apply"] is True
+    assert example["leader_actions"]["items"][0]["is_recommended"] is True
     assert example["chat_turns"]["items"][0]["action_id"] == "act_example"
     assert example["recovery"]["status"] == "action_required"
     assert example["recovery"]["recommended_action"] == {

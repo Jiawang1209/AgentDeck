@@ -158,6 +158,7 @@ def project_view_example() -> dict[str, object]:
             "count": 1,
             "by_kind": {"create_approvals": 1},
             "by_status": {"pending": 1},
+            "recommended_action_id": "act_example",
             "items": [
                 {
                     "action_id": "act_example",
@@ -174,6 +175,7 @@ def project_view_example() -> dict[str, object]:
                     "apply_command": "agentdeck leader apply-action --action-id act_example",
                     "explicit_command": "agentdeck approval create-from-plan --plan-id pln_example",
                     "apply_blocker": None,
+                    "is_recommended": True,
                     "created_at": "2026-07-04T00:00:00+00:00",
                 }
             ],

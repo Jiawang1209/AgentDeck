@@ -38,6 +38,8 @@ def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> No
     assert set(payload["top_level_fields"]) == set(example)
     assert set(payload["recovery_fields"]) == set(example["recovery"])
     assert set(payload["recommended_action_fields"]) == set(example["recovery"]["recommended_action"])
+    assert example["leader_actions"]["recommended_action_id"] == "act_example"
+    assert example["leader_actions"]["items"][0]["is_recommended"] is True
     assert example["recovery"]["recommended_action"]["target_id"] == "act_example"
 
 

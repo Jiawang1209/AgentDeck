@@ -71,6 +71,15 @@ Use `agentdeck contract project-view --example` to include a stable GUI-ready Pr
   "example_recommended_action_fields": [],
   "example_project_view": {
     "schema_version": "project-view/v1",
+    "leader_actions": {
+      "recommended_action_id": "act_example",
+      "items": [
+        {
+          "action_id": "act_example",
+          "is_recommended": true
+        }
+      ]
+    },
     "recovery": {
       "status": "action_required",
       "recommended_action": {

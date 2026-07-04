@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Sync ProjectView example leader action recommendation fields
+
+- `agentdeck contract project-view --example` 的 `example_project_view.leader_actions` 现在包含 `recommended_action_id`，示例 action item 也包含 `is_recommended=true`。
+- `project_view_example()` fixture 与真实 `agentdeck status` 的 ProjectView leader action 推荐字段保持一致，方便 GUI 原型直接使用 example。
+- 扩展 `test_contract_project_view_example_exports_gui_ready_status` 与 `test_project_view_example_matches_contract_field_lists`，先验证 example 缺少推荐字段的红灯，再实现 fixture 更新。
+- 更新 `docs/contracts/project-view-schema.md`，在 example 片段中展示 leader action 推荐字段。
+- 保持安全边界：本轮只更新只读 contract example fixture，不读取 live state、不修改 `.agentdeck/state`、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_project_view_example_exports_gui_ready_status tests/test_contracts.py::test_project_view_example_matches_contract_field_lists -q` 看到缺少 `recommended_action_id`；实现后同一测试 2 项通过，contract/example 相关测试 10 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 77 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，非项目临时目录 smoke 确认 contract example 输出 `recommended_action_id=act_example`、`is_recommended=True`、`recovery.recommended_action.target_id=act_example`。
+
 ### Current - Mark recommended action in ProjectView leader actions
 
 - `agentdeck status` 的 ProjectView `leader_actions` 摘要现在会从 pending leader actions 中派生顶层 `recommended_action_id`，与 `status.recovery` 的 pending leader action 优先级保持一致。
