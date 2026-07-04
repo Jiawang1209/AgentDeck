@@ -19,13 +19,14 @@
 - 触发验证。
 - 输出最终结论。
 
-默认 provider：DeepSeek/OpenAI-compatible。
+默认 provider 边界：Leader 使用 API-backed LLM provider 抽象。DeepSeek/OpenAI-compatible 可以作为初始候选，但 Leader 逻辑不能绑定到单一 provider。
 
 Leader 不应该：
 
 - 把 Worker 的完整长输出全部塞进上下文。
 - 在没有审批的情况下执行破坏性命令。
 - 在 Worker 修改文件后不重新读取就直接汇总。
+- 把 provider 特定字段泄漏到 orchestration 核心。
 
 ### Worker Agent
 

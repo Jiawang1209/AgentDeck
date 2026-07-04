@@ -4,6 +4,15 @@
 
 ## 2026-07-04
 
+### Current - Add ultimate goal roadmap
+
+- 新增 `docs/roadmap/ultimate-goal-roadmap.md`，明确 AgentDeck 的终极目标是任意 API-backed Leader LLM 调度多角色 Codex/Claude/其他 CLI Agent，并通过可见 runtime、通信账本、审批和恢复能力形成本地多智能体工作台。
+- 明确 DeepSeek 只是首个默认 provider 候选，不是架构绑定点；后续 Leader provider 必须通过抽象边界接入。
+- 将已实现能力映射回终极目标，说明 `agent runtime`、`role_prompt`、`dispatch`、`reply/ack`、`trace` 为什么是底座而不是偏离。
+- 定义后续 Phase A-E：Leader Agent MVP、Approval Gate、Reply Extraction、Multi-Agent Run Loop、ProjectView/GUI。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，要求每轮开发前对照 roadmap 做防跑偏检查，并保持 provider-agnostic Leader 边界。
+- 本地验证：检查 roadmap、README、CLAUDE、AGENT、HISTORY 更新，并运行 `git diff --check`、`conda run -n agentdeck pytest -q`、`conda run -n agentdeck python -m compileall src tests`。
+
 ### Current - Add communication trace command
 
 - 新增 `agentdeck trace --id <id>`，支持用 `message_id`、`attempt_id`、`job_id`、`reply_id` 或 `inbox_id` 还原同一条通信链路。

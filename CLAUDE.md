@@ -4,11 +4,12 @@
 
 ## 项目定位
 
-AgentDeck 是一个 local-first 多智能体终端工作台。目标是用 DeepSeek 等 LLM 做 Leader Agent，调度多个 Worker Agent，在 tmux 可见终端里执行任务，并通过消息账本、审批、状态存储和 ProjectView 保持可审计、可恢复。
+AgentDeck 是一个 local-first 多智能体终端工作台。目标是用任意可通过 API 调用的 LLM 做 Leader Agent，调度多个 Worker Agent，在 tmux 可见终端里执行任务，并通过消息账本、审批、状态存储和 ProjectView 保持可审计、可恢复。DeepSeek 可以作为首个默认 provider，但不是架构绑定点。
 
 核心设计文档：
 
 - `docs/architecture/multi-agent-terminal-design.md`
+- `docs/roadmap/ultimate-goal-roadmap.md`
 - `docs/reference-analysis/*.md`
 
 ## 当前技术栈
@@ -86,6 +87,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 
 - 每次新增功能或用户可见行为变化都要 commit。
 - 每次开发内容都要同步更新 `HISTORY.md`，并和对应代码/文档改动放在同一次 commit 中。
+- 每次开发前先对照 `docs/roadmap/ultimate-goal-roadmap.md`，确认功能服务 Leader Agent、多 Agent 通信、可见 runtime、审批、恢复或 GUI 主线。
 - 先更新架构/README/agent 文档，再扩展行为。
 - 所有开发命令默认先激活 `agentdeck` conda 环境。
 - `References/` 只读学习，不纳入 git，不直接复制大段源码。

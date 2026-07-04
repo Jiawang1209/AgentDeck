@@ -1,6 +1,6 @@
 # AgentDeck: Local Multi-Agent Terminal Workbench
 
-AgentDeck 是一个正在搭建中的本地多智能体终端工作台。它的目标是让 DeepSeek 等 LLM 作为 Leader Agent，把任务分发给多个 Worker Agent，并在 tmux 可见终端中执行、观察、审批、恢复和审计。
+AgentDeck 是一个正在搭建中的本地多智能体终端工作台。它的目标是让任意可通过 API 调用的 LLM 作为 Leader Agent，把任务分发给多个 Worker Agent，并在 tmux 可见终端中执行、观察、审批、恢复和审计。DeepSeek 可以作为首个默认 provider，但不是架构绑定点。
 
 本项目不是要从零重写终端模拟器，而是先把四类能力融合起来：
 
@@ -11,6 +11,8 @@ AgentDeck 是一个正在搭建中的本地多智能体终端工作台。它的�
 
 详细架构见：[docs/architecture/multi-agent-terminal-design.md](/Users/liuyue/Desktop/Github_repos/multi-agent-explore/docs/architecture/multi-agent-terminal-design.md)。
 
+终极目标路线图见：[docs/roadmap/ultimate-goal-roadmap.md](/Users/liuyue/Desktop/Github_repos/multi-agent-explore/docs/roadmap/ultimate-goal-roadmap.md)。
+
 ## 技术栈
 
 当前骨架选择：
@@ -20,7 +22,7 @@ AgentDeck 是一个正在搭建中的本地多智能体终端工作台。它的�
 - tmux 作为第一 runtime backend
 - TOML 配置
 - JSON/JSONL 初始状态存储，后续迁移到 SQLite
-- DeepSeek/OpenAI-compatible provider adapter 骨架
+- API-backed LLM provider adapter 骨架，首个目标兼容 DeepSeek/OpenAI-compatible 接口
 
 未来可扩展：
 
@@ -171,7 +173,7 @@ agentdeck trace --id inb_xxx
 
 `trace` 会返回同一条 message lineage 下的 message、attempts、jobs、replies 和 inbox_items。后续会继续补自动 reply extraction 和更严格的 mailbox head-only ack。
 
-DeepSeek API key 后续会通过环境变量读取：
+Provider API key 后续会通过环境变量读取。以 DeepSeek 为例：
 
 ```bash
 export DEEPSEEK_API_KEY="..."
@@ -201,6 +203,7 @@ export DEEPSEEK_API_KEY="..."
 
 - 每次新增功能或用户可见行为变化都要 commit。
 - 每次开发内容都要同步写入 [HISTORY.md](/Users/liuyue/Desktop/Github_repos/multi-agent-explore/HISTORY.md)，并和对应改动放在同一次 commit 中。
+- 每次开发前要对照 [终极目标路线图](/Users/liuyue/Desktop/Github_repos/multi-agent-explore/docs/roadmap/ultimate-goal-roadmap.md)，确认功能没有偏离 Leader Agent 调度、多 Agent 通信、可见 runtime、审批或恢复这几条主线。
 - `References/` 是本地研究材料，不纳入 git。
 - README、CLAUDE.md、AGENT.md 和架构文档要跟代码同步。
 - 所有开发命令默认先执行 `conda activate agentdeck`。
