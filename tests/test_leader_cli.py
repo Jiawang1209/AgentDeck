@@ -300,6 +300,71 @@ def test_leader_actions_lists_persisted_actions(tmp_path, monkeypatch, capsys) -
     assert payload["actions"][0]["status"] == "pending"
 
 
+def test_leader_action_show_outputs_full_action_with_applyability(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "查看 action 详情"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["leader", "next", "--plan-id", plan_id])
+    action_id = json.loads(capsys.readouterr().out)["action_id"]
+
+    exit_code = cli.main(["leader", "action", "--action-id", action_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action_id"] == action_id
+    assert payload["kind"] == "create_approvals"
+    assert payload["status"] == "pending"
+    assert payload["can_apply"] is True
+    assert payload["apply_command"] == f"agentdeck leader apply-action --action-id {action_id}"
+    assert payload["explicit_command"] == f"agentdeck approval create-from-plan --plan-id {plan_id}"
+    assert payload["apply_blocker"] is None
+    assert payload["reason"] == "plan has no approval records"
+
+    state = StateStore(root).load()
+    assert state["leader_actions"][0]["status"] == "pending"
+    assert state["approvals"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
+def test_leader_action_show_marks_dispatch_action_as_not_applyable(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "查看 dispatch action"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    cli.main(["leader", "next", "--plan-id", plan_id])
+    action_id = json.loads(capsys.readouterr().out)["action_id"]
+
+    exit_code = cli.main(["leader", "action", "--action-id", action_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action_id"] == action_id
+    assert payload["kind"] == "dispatch_approved"
+    assert payload["status"] == "pending"
+    assert payload["can_apply"] is False
+    assert payload["apply_command"] is None
+    assert payload["explicit_command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
+    assert payload["apply_blocker"] == "leader action requires explicit command"
+
+    state = StateStore(root).load()
+    assert state["leader_actions"][0]["status"] == "pending"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
+def test_leader_action_show_rejects_unknown_action_id(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "action", "--action-id", "act_missing"])
+
+    assert exit_code == 1
+    assert "unknown leader action: act_missing" in capsys.readouterr().err
+
+
 def test_leader_apply_action_creates_approvals_and_marks_action_applied(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "应用审批 action"])

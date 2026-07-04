@@ -334,6 +334,24 @@ class StateStore:
     def list_leader_actions(self) -> list[dict[str, Any]]:
         return list(self.load().get("leader_actions", []))
 
+    def leader_action_detail(self, action_id: str) -> dict[str, Any]:
+        action = next((item for item in self.load().get("leader_actions", []) if item.get("action_id") == action_id), None)
+        if action is None:
+            raise KeyError(action_id)
+        can_apply = action.get("status") == "pending" and action.get("kind") == "create_approvals"
+        apply_blocker = None
+        if action.get("status") != "pending":
+            apply_blocker = f"leader action is not pending: {action_id}"
+        elif action.get("kind") != "create_approvals":
+            apply_blocker = "leader action requires explicit command"
+        return {
+            **action,
+            "can_apply": can_apply,
+            "apply_command": f"agentdeck leader apply-action --action-id {action_id}" if can_apply else None,
+            "explicit_command": action.get("command"),
+            "apply_blocker": apply_blocker,
+        }
+
     def apply_leader_action(self, action_id: str) -> dict[str, Any]:
         state = self.load()
         action = next((item for item in state.get("leader_actions", []) if item.get("action_id") == action_id), None)

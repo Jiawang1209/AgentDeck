@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add Leader action detail view
+
+- 新增 `agentdeck leader action --action-id <id>`，用于查看单个 persisted Leader action 的完整只读详情。
+- action detail 现在返回 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，让 CLI、自然语言 Leader 与未来 GUI 能明确展示下一步为什么能或不能安全应用。
+- `create_approvals` pending action 会暴露安全 apply 命令；`dispatch_approved`、`wait_for_reply` 等 runtime action 会标记为不可 apply，并保留人类必须显式执行的命令。
+- 未知 action id 会明确返回 `unknown leader action: <id>`。
+- 扩展 `tests/test_leader_cli.py`，覆盖可 apply 的 create_approvals 详情、不可 apply 的 dispatch 详情，以及未知 action id。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 `leader action` 查看入口和 apply 前检查规则。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_action_show_outputs_full_action_with_applyability tests/test_leader_cli.py::test_leader_action_show_marks_dispatch_action_as_not_applyable tests/test_leader_cli.py::test_leader_action_show_rejects_unknown_action_id -q` 看到 `leader action` 子命令不存在；实现后同一测试 3 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 50 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader action` 返回 `create_approvals`、`can_apply=True`、`apply_command`，且 approvals/messages/jobs 仍为 0。
+
 ### Current - Add safe Leader action apply
 
 - 新增 `agentdeck leader apply-action --action-id <id>`，作为 action queue 的显式确认入口。

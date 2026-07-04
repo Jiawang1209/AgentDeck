@@ -564,6 +564,19 @@ def leader_actions_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+def leader_action_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    try:
+        action = store.leader_action_detail(args.action_id)
+    except KeyError:
+        print(f"unknown leader action: {args.action_id}", file=sys.stderr)
+        return 1
+    _print_json(action)
+    return 0
+
+
 def leader_apply_action_command(args: argparse.Namespace) -> int:
     _config, store, exit_code = _load_project_or_error()
     if store is None:
@@ -964,6 +977,9 @@ def build_parser() -> argparse.ArgumentParser:
     leader_next.set_defaults(func=leader_next_command)
     leader_actions = leader_subparsers.add_parser("actions", help="List persisted Leader action suggestions")
     leader_actions.set_defaults(func=leader_actions_command)
+    leader_action = leader_subparsers.add_parser("action", help="Show one persisted Leader action")
+    leader_action.add_argument("--action-id", required=True, help="Leader action id from agentdeck leader next")
+    leader_action.set_defaults(func=leader_action_command)
     leader_apply_action = leader_subparsers.add_parser(
         "apply-action",
         help="Apply a safe pending Leader action with explicit confirmation",

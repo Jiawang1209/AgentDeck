@@ -52,6 +52,7 @@ agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
 agentdeck leader next
 agentdeck leader actions
+agentdeck leader action --action-id act_xxx
 agentdeck leader apply-action --action-id act_xxx
 agentdeck plan list
 agentdeck plan show --plan-id pln_xxx
@@ -110,6 +111,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - 自然语言任务调度优先从 `agentdeck leader plan --task <text>` 生成 plan-only 记录开始；不要跳过 plan 直接自动 dispatch。
 - `agentdeck leader review --plan-id <id>` 是当前本地 Leader review loop，用于基于 approval/dispatch/reply 状态建议下一步。
 - `agentdeck leader next` 只把下一步建议写入 `leader_actions[]`，不得直接执行 action；执行仍需人类显式运行对应 approval/dispatch/capture 命令。
+- `agentdeck leader action --action-id <id>` 是 action 执行前的只读详情入口；apply 前必须检查 `can_apply`、`explicit_command` 和 `apply_blocker`。
 - `agentdeck leader apply-action --action-id <id>` 当前只允许应用 `create_approvals`，不得自动应用 dispatch/capture 类 action。
 - 审批、dispatch 或恢复任务前优先用 `agentdeck plan list`、`agentdeck plan show --plan-id <id>` 和 `agentdeck plan status --plan-id <id>` 检查计划。
 - 使用 `agentdeck approval create-from-plan --plan-id <id>` 创建审批项，使用 `approval approve/reject` 更新状态；只有 approved approval 才能通过 `agentdeck approval dispatch --approval-id <id>` 派发。
