@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import CONFIG_DIR, ensure_project_layout, project_root
-from .models import AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
+from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
 
 
 class StateStore:
@@ -1007,7 +1007,7 @@ class StateStore:
                 }
             )
         return ProjectView(
-            schema_version="project-view/v1",
+            schema_version=PROJECT_VIEW_SCHEMA_VERSION,
             project=config.name,
             root=config.root,
             runtime_backend=config.runtime.backend,

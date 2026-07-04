@@ -6,6 +6,9 @@ from typing import Any, Literal
 from uuid import uuid4
 
 
+PROJECT_VIEW_SCHEMA_VERSION = "project-view/v1"
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 

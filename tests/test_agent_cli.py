@@ -100,7 +100,7 @@ def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["schema_version"] == "project-view/v1"
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
     assert payload["status_command"] == "agentdeck status"
     assert payload["contract_path"].endswith("docs/contracts/project-view-schema.md")
     assert payload["contract_exists"] is True
@@ -148,7 +148,7 @@ def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["schema_version"] == "project-view/v1"
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
     assert payload["example"] is True
     example = payload["example_project_view"]
     assert payload["example_top_level_fields"] == payload["top_level_fields"]
@@ -157,7 +157,7 @@ def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
     assert set(payload["example_recovery_fields"]) == set(example["recovery"])
     assert payload["example_recommended_action_fields"] == payload["recommended_action_fields"]
     assert set(payload["example_recommended_action_fields"]) == set(example["recovery"]["recommended_action"])
-    assert example["schema_version"] == "project-view/v1"
+    assert example["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
     assert example["runtime_backend"] == "tmux"
     assert example["agents"][0]["runtime"]["pane_id"] == "%1"
     assert example["leader_actions"]["items"][0]["can_apply"] is True
@@ -481,7 +481,7 @@ def test_status_matches_project_view_contract_for_gui_clients(tmp_path, monkeypa
         "recovery",
     }
     assert expected_top_level <= set(payload)
-    assert payload["schema_version"] == "project-view/v1"
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
     expected_recovery = {
         "status",
         "reason",

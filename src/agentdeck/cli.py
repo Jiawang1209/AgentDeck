@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
-from .models import AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
+from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .runtime import TmuxBackend
@@ -95,7 +95,7 @@ def contract_project_view_command(args: argparse.Namespace) -> int:
 
 def _project_view_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
-        "schema_version": "project-view/v1",
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "status_command": "agentdeck status",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
@@ -141,7 +141,7 @@ def _project_view_contract_payload(contract_path: Path) -> dict[str, object]:
 
 def _example_project_view() -> dict[str, object]:
     return {
-        "schema_version": "project-view/v1",
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project": "agentdeck-example",
         "root": "/workspace/agentdeck-example",
         "runtime_backend": "tmux",

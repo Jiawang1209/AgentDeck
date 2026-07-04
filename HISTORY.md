@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView schema version guard
+
+- 新增 `src/agentdeck/models.py::PROJECT_VIEW_SCHEMA_VERSION`，作为 ProjectView schema version 的源码单一来源。
+- `agentdeck status`、`agentdeck contract project-view` 和 `agentdeck contract project-view --example` 均改为引用同一常量，避免 Python 源码中重复手写 `project-view/v1`。
+- 扩展 `tests/test_agent_cli.py`，先让 contract/status 测试引用 `cli.PROJECT_VIEW_SCHEMA_VERSION` 看到常量缺失红灯，再实现常量与源码替换。
+- 使用 `rg "project-view/v1" src tests -n` 验证源码与测试中只剩 `src/agentdeck/models.py` 的单一常量定义。
+- 更新 `docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 schema version 的源码单一来源。
+- 保持安全边界：本轮只收敛契约版本常量，不改变 ProjectView 字段、不修改 state、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_project_view_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_project_view_example_exports_gui_ready_status tests/test_agent_cli.py::test_status_matches_project_view_contract_for_gui_clients -q` 看到 `PROJECT_VIEW_SCHEMA_VERSION` 缺失；实现后同一测试 3 项通过，`tests/test_agent_cli.py tests/test_leader_cli.py` 50 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 63 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，`rg "project-view/v1" src tests -n` 确认源码/测试只剩 `PROJECT_VIEW_SCHEMA_VERSION` 常量定义，非项目临时目录 smoke 确认 discovery 与 example schema version 一致。
+
 ### Current - Add ProjectView example drift guard
 
 - 扩展 `agentdeck contract project-view --example` 输出，新增 `example_top_level_fields`、`example_recovery_fields` 和 `example_recommended_action_fields`。
