@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Return actionable Leader chat action detail
+
+- `agentdeck leader chat --message <text>` 在 review 模式下返回的 `leader_action` 从轻量摘要升级为 action detail。
+- `leader_action` 现在包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，自然语言入口和未来 GUI 可以直接展示安全 apply 按钮或显式命令/阻塞原因。
+- `create_approvals` action 会在 chat 输出中标记 `can_apply=True` 并给出 `agentdeck leader apply-action ...`；`dispatch_approved` 等 runtime action 会标记 `can_apply=False` 并保留人类显式命令。
+- 保持安全边界：chat 仍然只 review 和持久化/复用 action，不创建 approval、不 dispatch、不发送 tmux 输入。
+- 扩展 `tests/test_leader_cli.py`，覆盖 chat review 的 create_approvals 和 dispatch_approved action detail 字段。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 chat 输出的 `leader_action` 已可直接用于 GUI/对话层执行提示。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan tests/test_leader_cli.py::test_leader_chat_persists_create_approvals_action_for_existing_plan -q` 看到 `leader_action` 缺少 `can_apply`；实现后同一测试与 action detail 测试 4 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 54 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader chat --message "下一步"` 输出 `leader_action.kind=create_approvals`、`can_apply=True`、有 apply_command，且 approvals/messages/jobs 仍为 0。
+
 ### Current - Link Leader chat to action queue
 
 - `agentdeck leader chat --message <text>` 在已有 plan 的 review 模式下，现在会调用 `suggest_leader_action()`，持久化或复用一条 `leader_actions[]` 建议。

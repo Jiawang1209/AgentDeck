@@ -198,6 +198,10 @@ def test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan(tmp_pa
     assert payload["leader_action"]["kind"] == "dispatch_approved"
     assert payload["leader_action"]["approval_id"] == approval_id
     assert payload["leader_action"]["command"] == payload["next_command"]
+    assert payload["leader_action"]["can_apply"] is False
+    assert payload["leader_action"]["apply_command"] is None
+    assert payload["leader_action"]["explicit_command"] == payload["next_command"]
+    assert payload["leader_action"]["apply_blocker"] == "leader action requires explicit command"
 
     state = StateStore(root).load()
     assert state["chat_turns"][0]["turn_id"] == payload["turn_id"]
@@ -230,6 +234,13 @@ def test_leader_chat_persists_create_approvals_action_for_existing_plan(tmp_path
     assert payload["leader_action"]["kind"] == "create_approvals"
     assert payload["leader_action"]["plan_id"] == plan_id
     assert payload["leader_action"]["command"] == f"agentdeck approval create-from-plan --plan-id {plan_id}"
+    assert payload["leader_action"]["can_apply"] is True
+    assert (
+        payload["leader_action"]["apply_command"]
+        == f"agentdeck leader apply-action --action-id {payload['leader_action']['action_id']}"
+    )
+    assert payload["leader_action"]["explicit_command"] == payload["leader_action"]["command"]
+    assert payload["leader_action"]["apply_blocker"] is None
     assert payload["next_command"] == payload["leader_action"]["command"]
 
     state = StateStore(root).load()

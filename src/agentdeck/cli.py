@@ -633,6 +633,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         plan_id = str(latest_plan["plan_id"])
         review = store.leader_review(plan_id)
         action = store.suggest_leader_action(plan_id)
+        action_detail = store.leader_action_detail(str(action["action_id"]))
         next_command = action.get("command")
         turn = store.record_chat_turn(
             mode="review",
@@ -652,7 +653,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "plan_id": plan_id,
             "review": review,
             "next_command": next_command,
-            "leader_action": _leader_action_summary(action),
+            "leader_action": action_detail,
         }
         store.append_event(
             EventRecord.create(
