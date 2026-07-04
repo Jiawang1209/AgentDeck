@@ -92,6 +92,8 @@ Worker 不应该：
 ## Leader Planning
 
 - `agentdeck leader plan --task <text>` 会写入 `.agentdeck/state/state.json` 的 `plans[]`。
+- `agentdeck plan list` 返回 plan 摘要，不包含完整 `plan` body。
+- `agentdeck plan show --plan-id <id>` 返回完整 plan，用于审批前检查。
 - 默认 `fake` provider 是本地 dry-run provider，不调用外部 LLM。
 - plan-only 阶段不会写入 `messages`、`jobs` 或 `inbox`，也不会发送 tmux 输入。
 - 后续 DeepSeek/OpenAI-compatible 或其他 API-backed provider 必须复用同一 plan schema。

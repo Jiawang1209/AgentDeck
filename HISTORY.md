@@ -4,6 +4,16 @@
 
 ## 2026-07-04
 
+### Current - Add plan inspection CLI
+
+- 新增 `agentdeck plan list`，返回 `.agentdeck/state/state.json` 中已保存 plan 的摘要列表，包括 `plan_id`、task、provider、model、status、dispatch_ready、step_count 和 created_at。
+- 新增 `agentdeck plan show --plan-id <id>`，按 plan_id 返回完整 plan，作为审批和 dispatch 前的人工检查入口。
+- 扩展 `StateStore.list_plans()` 与 `StateStore.plan_by_id()`，保持 plan inspection 为只读行为，不修改 state、不触发 tmux runtime。
+- 扩展 `tests/test_leader_cli.py`，覆盖 plan list、plan show 和 unknown plan 错误。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 plan inspection 工作流。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_plan_list_outputs_plan_summaries tests/test_leader_cli.py::test_plan_show_outputs_full_plan_by_id tests/test_leader_cli.py::test_plan_show_rejects_unknown_plan_id -q` 看到 `plan` 子命令不存在；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 18 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `plan list` 返回摘要且 `plan show` 返回完整 planner/coder/reviewer steps。
+
 ### Current - Add Leader plan MVP
 
 - 新增 `agentdeck leader plan --task <text>`，让 Leader 先生成 plan-only 结构化计划，并写入 `.agentdeck/state/state.json` 的 `plans[]`。

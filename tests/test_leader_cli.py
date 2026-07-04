@@ -55,3 +55,48 @@ def test_leader_plan_rejects_unsupported_provider(tmp_path, monkeypatch, capsys)
     assert "unsupported leader provider: deepseek" in capsys.readouterr().err
     state = StateStore(root).load()
     assert state.get("plans", []) == []
+
+
+def test_plan_list_outputs_plan_summaries(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "第一项任务"])
+    first = json.loads(capsys.readouterr().out)
+    cli.main(["leader", "plan", "--task", "第二项任务"])
+    second = json.loads(capsys.readouterr().out)
+
+    exit_code = cli.main(["plan", "list"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 2
+    assert [item["plan_id"] for item in payload["plans"]] == [first["plan_id"], second["plan_id"]]
+    assert [item["task"] for item in payload["plans"]] == ["第一项任务", "第二项任务"]
+    assert all("plan" not in item for item in payload["plans"])
+    assert payload["plans"][0]["status"] == "planned"
+    assert payload["plans"][0]["provider"] == "fake"
+    assert payload["plans"][0]["step_count"] == 3
+
+
+def test_plan_show_outputs_full_plan_by_id(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "查看计划详情"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+
+    exit_code = cli.main(["plan", "show", "--plan-id", plan_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["plan_id"] == plan_id
+    assert payload["task"] == "查看计划详情"
+    assert payload["status"] == "planned"
+    assert payload["plan"]["goal"] == "查看计划详情"
+    assert [step["agent_id"] for step in payload["plan"]["steps"]] == ["planner", "coder", "reviewer"]
+
+
+def test_plan_show_rejects_unknown_plan_id(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["plan", "show", "--plan-id", "pln_missing"])
+
+    assert exit_code == 1
+    assert "unknown plan: pln_missing" in capsys.readouterr().err

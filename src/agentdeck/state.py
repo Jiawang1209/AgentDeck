@@ -96,6 +96,15 @@ class StateStore:
         self.save(state)
         return record
 
+    def list_plans(self) -> list[dict[str, Any]]:
+        return list(self.load().get("plans", []))
+
+    def plan_by_id(self, plan_id: str) -> dict[str, Any]:
+        for plan in self.load().get("plans", []):
+            if plan.get("plan_id") == plan_id:
+                return plan
+        raise KeyError(plan_id)
+
     def create_dispatch_records(
         self,
         from_actor: str,

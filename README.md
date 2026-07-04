@@ -48,6 +48,8 @@ agentdeck agent send --agent planner --text "继续"
 agentdeck agent stop --agent planner
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
 agentdeck leader plan --task "设计自动 reply extraction"
+agentdeck plan list
+agentdeck plan show --plan-id pln_xxx
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
@@ -89,6 +91,8 @@ agentdeck status
 agentdeck agent list
 agentdeck agent stop --agent planner
 agentdeck leader plan --task "设计自动 reply extraction"
+agentdeck plan list
+agentdeck plan show --plan-id pln_xxx
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
@@ -181,9 +185,13 @@ AgentDeck 已提供第一版 plan-only Leader 能力：
 
 ```bash
 agentdeck leader plan --task "设计自动 reply extraction"
+agentdeck plan list
+agentdeck plan show --plan-id pln_xxx
 ```
 
 当前默认且仅支持本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。这个命令不会 dispatch、不会发送 tmux 输入、不会调用外部 LLM。未实现的真实 provider 会明确失败，而不是静默退回 fake。
+
+`plan list` 返回计划摘要，适合给自然语言入口或 GUI 做列表视图；`plan show` 返回完整计划，适合审批前人工检查。
 
 返回结果包含：
 

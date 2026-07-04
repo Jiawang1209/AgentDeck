@@ -414,6 +414,43 @@ def leader_plan_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _plan_summary(plan: dict[str, object]) -> dict[str, object]:
+    body = plan.get("plan", {})
+    steps = body.get("steps", []) if isinstance(body, dict) else []
+    return {
+        "plan_id": plan.get("plan_id"),
+        "task": plan.get("task"),
+        "provider": plan.get("provider"),
+        "model": plan.get("model"),
+        "status": plan.get("status"),
+        "dispatch_ready": plan.get("dispatch_ready"),
+        "step_count": len(steps) if isinstance(steps, list) else 0,
+        "created_at": plan.get("created_at"),
+    }
+
+
+def plan_list_command(_args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    plans = [_plan_summary(plan) for plan in store.list_plans()]
+    _print_json({"count": len(plans), "plans": plans})
+    return 0
+
+
+def plan_show_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    try:
+        plan = store.plan_by_id(args.plan_id)
+    except KeyError:
+        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    _print_json(plan)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentdeck")
     subparsers = parser.add_subparsers(dest="command")
@@ -469,6 +506,14 @@ def build_parser() -> argparse.ArgumentParser:
     leader_plan.add_argument("--provider", default="fake", help="Leader provider to use; defaults to local fake")
     leader_plan.add_argument("--model", default="fake-plan", help="Provider model label recorded with the plan")
     leader_plan.set_defaults(func=leader_plan_command)
+
+    plan = subparsers.add_parser("plan", help="Inspect Leader plans")
+    plan_subparsers = plan.add_subparsers(dest="plan_command")
+    plan_list = plan_subparsers.add_parser("list", help="List saved Leader plans")
+    plan_list.set_defaults(func=plan_list_command)
+    plan_show = plan_subparsers.add_parser("show", help="Show a saved Leader plan")
+    plan_show.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
+    plan_show.set_defaults(func=plan_show_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")
