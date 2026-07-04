@@ -248,7 +248,7 @@ agentdeck plan status --plan-id pln_xxx
 
 当前默认使用本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。也可以显式使用 `--provider openai-compatible` 调用 OpenAI-compatible `/chat/completions` API。两种模式都不会 dispatch、不会发送 tmux 输入。
 
-`leader chat` 是自然语言入口 MVP。它会先读取 `agentdeck status` 的 ProjectView：如果当前还没有 plan，就把 message 当作目标创建 plan-only 记录；如果已有 plan，就 review 最新 plan、持久化或复用一条 `leader_actions[]` 建议，并返回 `leader_action` 详情与下一条建议命令。`leader_action` 包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，方便 GUI 或对话层直接展示执行按钮与阻塞原因。每次 chat turn 都会写入 `.agentdeck/state/state.json` 的 `chat_turns[]`，并可通过 `leader chat-history` 查看；review turn 会记录 action_id/action_kind。它不会创建 approval、不会 dispatch、不会发送 tmux 输入。
+`leader chat` 是自然语言入口 MVP。它会先读取 `agentdeck status` 的 ProjectView：如果当前还没有 plan，就把 message 当作目标创建 plan-only 记录；如果已有 plan，就 review 最新 plan、持久化或复用一条 `leader_actions[]` 建议，然后重新读取 ProjectView 的 `status.recovery` 作为恢复决策源。review 输出会返回 `recovery`，并让 `next_command` 等于 `recovery.next_command`；`leader_action` 包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，方便 GUI 或对话层直接展示执行按钮与阻塞原因。每次 chat turn 都会写入 `.agentdeck/state/state.json` 的 `chat_turns[]`，并可通过 `leader chat-history` 查看；review turn 会记录 action_id/action_kind。它不会创建 approval、不会 dispatch、不会发送 tmux 输入。
 
 当人类明确输入 `agentdeck leader chat --message "apply action act_xxx"` 或 `--message "/apply-action act_xxx"` 时，chat 会复用 `leader apply-action` 的安全白名单。当前只会应用 `create_approvals`，并会拒绝 dispatch/capture 等 runtime action。
 

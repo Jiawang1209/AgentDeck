@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Route Leader chat through recovery summary
+
+- 调整 `agentdeck leader chat --message <text>` 的 review 分支：持久化或复用 `leader_actions[]` 后重新读取 ProjectView，并把 `status.recovery` 作为自然语言继续的恢复决策源。
+- review 输出新增 `recovery` 字段，`next_command` 改为来自 `recovery.next_command`；对于可安全应用的 `create_approvals` action，会推荐 `agentdeck leader apply-action --action-id <id>`。
+- 持久化的 `chat_turns[].next_command` 同步记录 recovery 推荐命令，方便 `leader chat-history` 和 GUI 复原自然语言上下文。
+- 保持安全边界：chat review 不创建 approval、不 dispatch、不发送 tmux 输入；runtime action 仍必须显式命令执行。
+- 扩展 `tests/test_leader_cli.py`，先验证 chat review 缺少 `recovery` 的红灯，再实现 recovery 驱动的 next_command。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录自然语言入口必须以 `status.recovery` 为恢复决策源。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_persists_create_approvals_action_for_existing_plan -q` 看到 `KeyError: 'recovery'`；实现后同一测试 1 项通过，`tests/test_leader_cli.py` 35 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 59 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 chat review 的 `next_command == recovery.next_command`、`chat-history` 记录同一命令、`recovery_status=action_required`。
+
 ### Current - Add ProjectView recovery summary
 
 - 扩展 `agentdeck status` 的 ProjectView，新增只读 `recovery` 区块，集中暴露当前恢复状态、原因、建议下一条命令、pending 计数、可应用 leader action 和最近审计事件摘要。

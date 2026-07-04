@@ -241,11 +241,15 @@ def test_leader_chat_persists_create_approvals_action_for_existing_plan(tmp_path
     )
     assert payload["leader_action"]["explicit_command"] == payload["leader_action"]["command"]
     assert payload["leader_action"]["apply_blocker"] is None
-    assert payload["next_command"] == payload["leader_action"]["command"]
+    assert payload["recovery"]["status"] == "action_required"
+    assert payload["recovery"]["leader_action"]["action_id"] == payload["leader_action"]["action_id"]
+    assert payload["recovery"]["next_command"] == payload["leader_action"]["apply_command"]
+    assert payload["next_command"] == payload["recovery"]["next_command"]
 
     state = StateStore(root).load()
     assert state["chat_turns"][0]["action_id"] == payload["leader_action"]["action_id"]
     assert state["chat_turns"][0]["action_kind"] == "create_approvals"
+    assert state["chat_turns"][0]["next_command"] == payload["recovery"]["next_command"]
     assert len(state["leader_actions"]) == 1
     assert state["leader_actions"][0]["kind"] == "create_approvals"
     assert state["approvals"] == []
