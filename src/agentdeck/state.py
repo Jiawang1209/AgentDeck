@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import CONFIG_DIR, ensure_project_layout, project_root
-from .models import EventRecord, ProjectConfig, ProjectView
+from .models import AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView
 
 
 class StateStore:
@@ -31,12 +31,30 @@ class StateStore:
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
 
+    def bind_agent(self, binding: AgentRuntimeBinding) -> None:
+        state = self.load()
+        agents = state.setdefault("agents", {})
+        agents[binding.agent_id] = asdict(binding)
+        self.save(state)
+
+    def agent_binding(self, agent_id: str) -> dict[str, Any] | None:
+        return self.load().get("agents", {}).get(agent_id)
+
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
         bindings = state.get("agents", {})
         agents = []
         for agent in config.agents:
-            binding = bindings.get(agent.agent_id, {})
+            binding = bindings.get(
+                agent.agent_id,
+                {
+                    "agent_id": agent.agent_id,
+                    "pane_id": None,
+                    "session_name": None,
+                    "cwd": None,
+                    "status": "configured",
+                },
+            )
             agents.append(
                 {
                     "agent_id": agent.agent_id,

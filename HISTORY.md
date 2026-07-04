@@ -4,7 +4,20 @@
 
 ## 2026-07-04
 
-### Current - Add persistent development history
+### Current - Add tmux agent runtime CLI MVP
+
+- 新增 `agentdeck agent list`，展示配置中的 agent 及其 runtime binding。
+- 新增 `agentdeck agent spawn --agent <id>`，通过 tmux backend 创建项目 session、spawn agent pane，并记录 `agent_id -> pane_id`。
+- 新增 `agentdeck agent capture --agent <id> --lines <n>`，从已绑定 pane 读取最近输出。
+- 新增 `agentdeck agent send --agent <id> --text <text>`，向已绑定 pane 发送人工指定输入，并记录事件。
+- 新增 `tests/test_agent_cli.py`，使用 fake tmux backend 覆盖 list/spawn/capture/send。
+- 新增 `pytest.ini`，把 pytest 默认扫描范围限制到 `tests/`，避免误扫本地 `References/` 参考仓库。
+- 更新 `.gitignore`，忽略 pytest 缓存目录。
+- 更新 `README.md`，补充 agent runtime MVP 命令和约束。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 看到 4 个测试因缺少 `agent` 子命令失败；实现后运行 `conda run -n agentdeck pytest -q`，4 项通过。
+- 真实 tmux smoke：在临时项目中把 planner 命令改为 `sh -lc 'printf agentdeck-smoke; sleep 5'`，运行 `agentdeck agent spawn --agent planner` 后得到 pane `%1`，`agentdeck agent capture --agent planner --lines 20` 读到 `agentdeck-smoke`，随后清理 tmux session。
+
+### 477c1da - Add persistent development history
 
 - 新增 `HISTORY.md`，作为每次开发内容的持久记录。
 - 回填前三次 commit 的开发内容、涉及文件和验证证据。

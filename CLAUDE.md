@@ -42,6 +42,8 @@ conda activate agentdeck
 agentdeck doctor
 agentdeck project init
 agentdeck status
+agentdeck agent list
+pytest tests/test_agent_cli.py -q
 python -m compileall src
 ```
 

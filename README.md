@@ -39,6 +39,10 @@ conda activate agentdeck
 agentdeck doctor
 agentdeck project init
 agentdeck status
+agentdeck agent list
+agentdeck agent spawn --agent planner
+agentdeck agent capture --agent planner --lines 200
+agentdeck agent send --agent planner --text "继续"
 ```
 
 `project init` 会创建：
@@ -72,8 +76,28 @@ python -m pip install -e .
 agentdeck doctor
 agentdeck project init
 agentdeck status
+agentdeck agent list
 python -m compileall src
 ```
+
+## Agent Runtime Commands
+
+当前 tmux runtime MVP 已支持四个 agent 操作命令：
+
+```bash
+agentdeck agent list
+agentdeck agent spawn --agent planner
+agentdeck agent capture --agent planner --lines 200
+agentdeck agent send --agent planner --text "继续"
+```
+
+这些命令的约束：
+
+- `agent_id` 来自 `.agentdeck/config.toml`。
+- `spawn` 会创建项目 tmux session，并记录 `agent_id -> pane_id` 绑定。
+- `capture` 和 `send` 只面向已经 spawn 的 agent。
+- `send` 是人工执行的显式命令，后续自动调度前还会加入审批队列。
+- runtime binding 与事件会写入 `.agentdeck/state/`。
 
 DeepSeek API key 后续会通过环境变量读取：
 
