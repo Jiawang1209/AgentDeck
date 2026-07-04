@@ -50,6 +50,10 @@ agentdeck agent assign-role --agent planner --role "architecture planning" --rol
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck plan list
 agentdeck plan show --plan-id pln_xxx
+agentdeck approval create-from-plan --plan-id pln_xxx
+agentdeck approval list
+agentdeck approval approve --approval-id apv_xxx
+agentdeck approval reject --approval-id apv_xxx --reason "范围过大"
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
@@ -93,6 +97,9 @@ agentdeck agent stop --agent planner
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck plan list
 agentdeck plan show --plan-id pln_xxx
+agentdeck approval create-from-plan --plan-id pln_xxx
+agentdeck approval list
+agentdeck approval approve --approval-id apv_xxx
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
@@ -192,6 +199,17 @@ agentdeck plan show --plan-id pln_xxx
 当前默认且仅支持本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。这个命令不会 dispatch、不会发送 tmux 输入、不会调用外部 LLM。未实现的真实 provider 会明确失败，而不是静默退回 fake。
 
 `plan list` 返回计划摘要，适合给自然语言入口或 GUI 做列表视图；`plan show` 返回完整计划，适合审批前人工检查。
+
+计划确认后，可以创建审批项：
+
+```bash
+agentdeck approval create-from-plan --plan-id pln_xxx
+agentdeck approval list
+agentdeck approval approve --approval-id apv_xxx
+agentdeck approval reject --approval-id apv_xxx --reason "范围过大"
+```
+
+当前 Approval Gate MVP 只管理审批状态，不会自动 dispatch。下一阶段会在审批通过后把 plan step 转成受控 dispatch。
 
 返回结果包含：
 

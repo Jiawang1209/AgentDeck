@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add approval gate MVP
+
+- 新增 `agentdeck approval create-from-plan --plan-id <id>`，从 Leader plan 的 requires_approval steps 创建 `approvals[]`。
+- 新增 `agentdeck approval list`、`agentdeck approval approve --approval-id <id>`、`agentdeck approval reject --approval-id <id> --reason <text>`，支持审批项状态流转。
+- 扩展 `StateStore.create_approvals_from_plan()`、`StateStore.list_approvals()` 与 `StateStore.decide_approval()`，记录 approval_id、plan_id、step、agent、task、risk、status、reason 和 decided_at。
+- Approval Gate MVP 只管理审批状态，不自动 dispatch、不发送 tmux 输入、不创建 message/job。
+- 扩展 `tests/test_leader_cli.py`，覆盖从 plan 创建审批项、审批列表、approve/reject 和 unknown id 错误。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录审批工作流。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_approval_create_from_plan_generates_step_approvals tests/test_leader_cli.py::test_approval_list_and_decisions_update_status tests/test_leader_cli.py::test_approval_commands_reject_unknown_ids -q` 看到 `approval` 子命令不存在；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 21 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 approval 状态可从 pending 流转到 approved/rejected，且 `messages/jobs` 仍为 0。
+
 ### Current - Add plan inspection CLI
 
 - 新增 `agentdeck plan list`，返回 `.agentdeck/state/state.json` 中已保存 plan 的摘要列表，包括 `plan_id`、task、provider、model、status、dispatch_ready、step_count 和 created_at。

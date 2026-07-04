@@ -18,7 +18,7 @@ class StateStore:
 
     def load(self) -> dict[str, Any]:
         if not self.state_path.exists():
-            return {"agents": {}, "messages": [], "jobs": [], "replies": [], "plans": []}
+            return {"agents": {}, "messages": [], "jobs": [], "replies": [], "plans": [], "approvals": []}
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
     def save(self, state: dict[str, Any]) -> None:
@@ -104,6 +104,51 @@ class StateStore:
             if plan.get("plan_id") == plan_id:
                 return plan
         raise KeyError(plan_id)
+
+    def create_approvals_from_plan(self, plan_id: str) -> list[dict[str, Any]]:
+        state = self.load()
+        plan_record = next((plan for plan in state.get("plans", []) if plan.get("plan_id") == plan_id), None)
+        if plan_record is None:
+            raise KeyError(plan_id)
+        existing = [item for item in state.setdefault("approvals", []) if item.get("plan_id") == plan_id]
+        if existing:
+            return existing
+        plan_body = plan_record.get("plan", {})
+        steps = plan_body.get("steps", []) if isinstance(plan_body, dict) else []
+        approvals = []
+        for step in steps:
+            if not isinstance(step, dict) or not step.get("requires_approval", False):
+                continue
+            approval = {
+                "approval_id": new_id("apv"),
+                "plan_id": plan_id,
+                "step": step.get("step"),
+                "agent_id": step.get("agent_id"),
+                "role": step.get("role"),
+                "task": step.get("task"),
+                "risk": step.get("risk"),
+                "status": "pending",
+                "created_at": utc_now(),
+            }
+            approvals.append(approval)
+        state.setdefault("approvals", []).extend(approvals)
+        self.save(state)
+        return approvals
+
+    def list_approvals(self) -> list[dict[str, Any]]:
+        return list(self.load().get("approvals", []))
+
+    def decide_approval(self, approval_id: str, status: str, reason: str | None = None) -> dict[str, Any]:
+        state = self.load()
+        approval = next((item for item in state.setdefault("approvals", []) if item.get("approval_id") == approval_id), None)
+        if approval is None:
+            raise KeyError(approval_id)
+        approval["status"] = status
+        approval["decided_at"] = utc_now()
+        if reason:
+            approval["reason"] = reason
+        self.save(state)
+        return approval
 
     def create_dispatch_records(
         self,

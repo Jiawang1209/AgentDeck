@@ -451,6 +451,76 @@ def plan_show_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def approval_create_from_plan_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    try:
+        approvals = store.create_approvals_from_plan(args.plan_id)
+    except KeyError:
+        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "approvals_created_from_plan",
+            {
+                "plan_id": args.plan_id,
+                "count": len(approvals),
+            },
+        )
+    )
+    _print_json({"ok": True, "plan_id": args.plan_id, "count": len(approvals), "approvals": approvals})
+    return 0
+
+
+def approval_list_command(_args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    approvals = store.list_approvals()
+    _print_json({"count": len(approvals), "approvals": approvals})
+    return 0
+
+
+def _approval_decision_command(approval_id: str, status: str, reason: str | None = None) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    try:
+        approval = store.decide_approval(approval_id, status, reason)
+    except KeyError:
+        print(f"unknown approval: {approval_id}", file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "approval_decided",
+            {
+                "approval_id": approval_id,
+                "plan_id": approval.get("plan_id"),
+                "status": status,
+            },
+        )
+    )
+    payload = {
+        "ok": True,
+        "approval_id": approval_id,
+        "plan_id": approval.get("plan_id"),
+        "status": approval.get("status"),
+    }
+    if approval.get("reason"):
+        payload["reason"] = approval.get("reason")
+    _print_json(payload)
+    return 0
+
+
+def approval_approve_command(args: argparse.Namespace) -> int:
+    return _approval_decision_command(args.approval_id, "approved")
+
+
+def approval_reject_command(args: argparse.Namespace) -> int:
+    return _approval_decision_command(args.approval_id, "rejected", args.reason)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentdeck")
     subparsers = parser.add_subparsers(dest="command")
@@ -514,6 +584,24 @@ def build_parser() -> argparse.ArgumentParser:
     plan_show = plan_subparsers.add_parser("show", help="Show a saved Leader plan")
     plan_show.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
     plan_show.set_defaults(func=plan_show_command)
+
+    approval = subparsers.add_parser("approval", help="Approval gate commands")
+    approval_subparsers = approval.add_subparsers(dest="approval_command")
+    approval_create = approval_subparsers.add_parser(
+        "create-from-plan",
+        help="Create pending approvals from a saved Leader plan",
+    )
+    approval_create.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
+    approval_create.set_defaults(func=approval_create_from_plan_command)
+    approval_list = approval_subparsers.add_parser("list", help="List approval items")
+    approval_list.set_defaults(func=approval_list_command)
+    approval_approve = approval_subparsers.add_parser("approve", help="Approve an approval item")
+    approval_approve.add_argument("--approval-id", required=True, help="Approval id")
+    approval_approve.set_defaults(func=approval_approve_command)
+    approval_reject = approval_subparsers.add_parser("reject", help="Reject an approval item")
+    approval_reject.add_argument("--approval-id", required=True, help="Approval id")
+    approval_reject.add_argument("--reason", default="", help="Reason for rejection")
+    approval_reject.set_defaults(func=approval_reject_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")
