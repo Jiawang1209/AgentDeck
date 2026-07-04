@@ -10,8 +10,10 @@ from .config import config_path, load_config, project_root, update_agent_role, w
 from .contracts import (
     leader_chat_contract_response,
     project_view_contract_response,
+    trace_contract_response,
     validate_leader_chat_contract,
     validate_project_view_contract,
+    validate_trace_contract,
 )
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
 from .orchestration.leader import LeaderOrchestrator
@@ -139,6 +141,13 @@ def contract_project_view_command(args: argparse.Namespace) -> int:
 def contract_leader_chat_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-chat-schema.md"
     payload = leader_chat_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_trace_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "trace-schema.md"
+    payload = trace_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -508,6 +517,12 @@ def trace_command(args: argparse.Namespace) -> int:
         trace = store.trace(args.id)
     except KeyError:
         print(f"unknown trace id: {args.id}", file=sys.stderr)
+        return 1
+    validation = validate_trace_contract(trace)
+    if not validation["ok"]:
+        print("Trace contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
         return 1
     _print_json(trace)
     return 0
@@ -1222,6 +1237,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_leader_chat.add_argument("--example", action="store_true", help="Include a GUI-ready Leader chat example")
     contract_leader_chat.set_defaults(func=contract_leader_chat_command)
+    contract_trace = contract_subparsers.add_parser(
+        "trace",
+        help="Show communication trace contract discovery metadata",
+    )
+    contract_trace.add_argument("--example", action="store_true", help="Include a GUI-ready trace example")
+    contract_trace.set_defaults(func=contract_trace_command)
 
     project = subparsers.add_parser("project", help="Project management commands")
     project_subparsers = project.add_subparsers(dest="project_command")

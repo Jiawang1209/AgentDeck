@@ -45,6 +45,8 @@ agentdeck contract project-view
 agentdeck contract project-view --example
 agentdeck contract leader-chat
 agentdeck contract leader-chat --example
+agentdeck contract trace
+agentdeck contract trace --example
 agentdeck agent list
 agentdeck agent spawn --agent planner
 agentdeck agent capture --agent planner --lines 200
@@ -213,13 +215,13 @@ agentdeck trace --id rep_xxx
 agentdeck trace --id inb_xxx
 ```
 
-`trace` 会返回同一条 message lineage 下的 message、attempts、jobs、replies 和 inbox_items。后续会继续补更严格的 reply block 标记。
+`trace` 会返回同一条 message lineage 下的 schema_version、message、attempts、jobs、replies 和 inbox_items。输出前会通过 `validate_trace_contract()` 自校验，失败时不会打印半坏 trace。后续会继续补更严格的 reply block 标记。
 
 ## ProjectView and Status
 
 `agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、leader_errors、leader_actions、inbox、recovery 的轻量摘要。
 
-详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，`--example` 会附带包含 `leader_explanation` 的稳定响应示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck status` 和 `agentdeck leader chat`，不要把 tmux pane 或 state 文件当成第二套状态源。
+详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，`--example` 会附带包含 `leader_explanation` 的稳定响应示例。`agentdeck contract trace` 会发现通信 lineage 的 message/attempt/job/reply/inbox 字段，`--example` 会附带稳定 trace 示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck status`、`agentdeck leader chat` 和 `agentdeck trace`，不要把 tmux pane 或 state 文件当成第二套状态源。
 
 `status.inbox.heads` 会按 agent 暴露最早的 `pending` inbox item；没有待处理 item 的 agent 会返回 `null`。GUI 和 Leader chat loop 可以用它直接显示每个 agent 当前必须先处理或 ack 的 mailbox head。
 

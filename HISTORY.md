@@ -4,6 +4,18 @@
 
 ## 2026-07-05
 
+### Current - Discover Trace communication contract
+
+- 新增 `agentdeck contract trace` 只读 discovery 入口，返回通信 lineage 的 top-level、message、attempt、job、reply 和 inbox item 字段列表。
+- 新增 `agentdeck contract trace --example`，输出稳定 GUI-ready trace fixture，展示 `task_request` 与 `task_reply` 如何归入同一条 message lineage。
+- 在 `src/agentdeck/contracts.py` 中新增 trace 字段常量、`trace_contract_payload()`、`trace_contract_response()`、`trace_example()` 和 `validate_trace_contract()`。
+- `agentdeck trace --id <id>` 现在会输出 `schema_version`，并在打印 JSON 前通过 `validate_trace_contract()` 自校验；失败时返回非 0 且不输出半坏 trace。
+- `StateStore.trace()` 现在会归一化 message/attempt/job/reply/inbox item 字段，缺失方向字段以 `null` 呈现，方便 GUI 稳定渲染通信账本。
+- 新增 `docs/contracts/trace-schema.md`，并更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 trace contract discovery、自校验和只读边界。
+- 保持安全边界：本轮只扩展只读 contract discovery、trace 输出字段和 validator，不应用 action、不创建 approval、不 dispatch、不发送 tmux 输入。
+- 本地验证：先运行 trace contract 目标测试看到缺少 `TRACE_*` 常量和 `trace_contract_payload()` 的 import 红灯；实现后目标测试 7 项通过，真实 dispatch/reply trace validator 测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 96 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `agentdeck contract trace --example` 输出 `contract_exists=true`、`trace_command` 正确、example schema 对齐且包含 `task_request/task_reply`。
+
 ### Current - Discover ProjectView recovery pending fields
 
 - 新增 `PROJECT_VIEW_RECOVERY_PENDING_FIELDS`，把 `recovery.pending` 的必备字段纳入机器可发现契约。

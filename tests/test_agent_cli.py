@@ -10,6 +10,9 @@ from agentdeck.contracts import (
     leader_chat_contract_response,
     project_view_contract_payload,
     project_view_contract_response,
+    trace_contract_payload,
+    trace_contract_response,
+    validate_trace_contract,
     validate_project_view_contract,
 )
 from agentdeck.state import StateStore
@@ -199,6 +202,60 @@ def test_contract_leader_chat_cli_matches_contract_module(capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     expected = leader_chat_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+
+
+def test_contract_trace_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "trace"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = trace_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["trace_command"] == "agentdeck trace --id <id>"
+    assert payload["contract_path"].endswith("docs/contracts/trace-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["top_level_fields"] == expected["top_level_fields"]
+    assert payload["message_fields"] == expected["message_fields"]
+    assert payload["attempt_fields"] == expected["attempt_fields"]
+    assert payload["job_fields"] == expected["job_fields"]
+    assert payload["reply_fields"] == expected["reply_fields"]
+    assert payload["inbox_item_fields"] == expected["inbox_item_fields"]
+
+
+def test_contract_trace_example_exports_gui_ready_lineage(capsys) -> None:
+    exit_code = cli.main(["contract", "trace", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["example"] is True
+    example = payload["example_trace"]
+    assert payload["example_top_level_fields"] == payload["top_level_fields"]
+    assert set(payload["example_top_level_fields"]) == set(example)
+    assert payload["example_message_fields"] == payload["message_fields"]
+    assert set(payload["example_message_fields"]) == set(example["message"])
+    assert payload["example_attempt_fields"] == payload["attempt_fields"]
+    assert set(payload["example_attempt_fields"]) == set(example["attempts"][0])
+    assert payload["example_job_fields"] == payload["job_fields"]
+    assert set(payload["example_job_fields"]) == set(example["jobs"][0])
+    assert payload["example_reply_fields"] == payload["reply_fields"]
+    assert set(payload["example_reply_fields"]) == set(example["replies"][0])
+    assert payload["example_inbox_item_fields"] == payload["inbox_item_fields"]
+    assert set(payload["example_inbox_item_fields"]) == set(example["inbox_items"][0])
+    assert validate_trace_contract(example) == {"ok": True, "errors": []}
+    assert example["message"]["message_id"] == "msg_example"
+    assert example["attempts"][0]["attempt_id"] == "att_example"
+    assert example["jobs"][0]["job_id"] == "job_example"
+    assert example["replies"][0]["reply_id"] == "rep_example"
+    assert {item["event_type"] for item in example["inbox_items"]} == {"task_request", "task_reply"}
+
+
+def test_contract_trace_cli_matches_contract_module(capsys) -> None:
+    cli.main(["contract", "trace", "--example"])
+
+    payload = json.loads(capsys.readouterr().out)
+    expected = trace_contract_response(Path(payload["contract_path"]), include_example=True)
     assert payload == expected
 
 

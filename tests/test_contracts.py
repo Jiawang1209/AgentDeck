@@ -11,14 +11,24 @@ from agentdeck.contracts import (
     PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS,
     PROJECT_VIEW_RECOVERY_FIELDS,
     PROJECT_VIEW_TOP_LEVEL_FIELDS,
+    TRACE_ATTEMPT_FIELDS,
+    TRACE_INBOX_ITEM_FIELDS,
+    TRACE_JOB_FIELDS,
+    TRACE_MESSAGE_FIELDS,
+    TRACE_REPLY_FIELDS,
+    TRACE_TOP_LEVEL_FIELDS,
     leader_chat_contract_payload,
     leader_chat_contract_response,
     leader_chat_example,
     project_view_contract_payload,
     project_view_contract_response,
     project_view_example,
+    trace_contract_payload,
+    trace_contract_response,
+    trace_example,
     validate_leader_chat_contract,
     validate_project_view_contract,
+    validate_trace_contract,
 )
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
 
@@ -202,3 +212,59 @@ def test_validate_leader_chat_contract_requires_embedded_project_view_contract()
         "ok": False,
         "errors": ["project_view: missing leader_actions field: recommended_action_id"],
     }
+
+
+def test_trace_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "trace-schema.md"
+    contract_path.write_text("# Trace Contract\n", encoding="utf-8")
+
+    payload = trace_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["trace_command"] == "agentdeck trace --id <id>"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["top_level_fields"] == list(TRACE_TOP_LEVEL_FIELDS)
+    assert payload["message_fields"] == list(TRACE_MESSAGE_FIELDS)
+    assert payload["attempt_fields"] == list(TRACE_ATTEMPT_FIELDS)
+    assert payload["job_fields"] == list(TRACE_JOB_FIELDS)
+    assert payload["reply_fields"] == list(TRACE_REPLY_FIELDS)
+    assert payload["inbox_item_fields"] == list(TRACE_INBOX_ITEM_FIELDS)
+
+
+def test_trace_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "trace-schema.md"
+    contract_path.write_text("# Trace Contract\n", encoding="utf-8")
+
+    payload = trace_contract_response(contract_path, include_example=True)
+    example = trace_example()
+
+    assert payload["example"] is True
+    assert payload["example_trace"] == example
+    assert payload["example_top_level_fields"] == payload["top_level_fields"]
+    assert set(payload["example_top_level_fields"]) == set(example)
+    assert payload["example_message_fields"] == payload["message_fields"]
+    assert set(payload["example_message_fields"]) == set(example["message"])
+    assert payload["example_attempt_fields"] == payload["attempt_fields"]
+    assert set(payload["example_attempt_fields"]) == set(example["attempts"][0])
+    assert payload["example_job_fields"] == payload["job_fields"]
+    assert set(payload["example_job_fields"]) == set(example["jobs"][0])
+    assert payload["example_reply_fields"] == payload["reply_fields"]
+    assert set(payload["example_reply_fields"]) == set(example["replies"][0])
+    assert payload["example_inbox_item_fields"] == payload["inbox_item_fields"]
+    assert set(payload["example_inbox_item_fields"]) == set(example["inbox_items"][0])
+
+
+def test_validate_trace_contract_accepts_example() -> None:
+    result = validate_trace_contract(trace_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_trace_contract_reports_missing_reply_field() -> None:
+    payload = trace_example()
+    del payload["replies"][0]["reply_id"]
+
+    result = validate_trace_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing reply field: reply_id"]}

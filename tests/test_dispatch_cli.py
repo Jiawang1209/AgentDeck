@@ -5,6 +5,7 @@ from pathlib import Path
 
 from agentdeck import cli
 from agentdeck.config import load_config, write_default_config
+from agentdeck.contracts import validate_trace_contract
 from agentdeck.state import StateStore
 
 
@@ -255,9 +256,12 @@ def test_trace_reconstructs_communication_lineage_from_reply_id(tmp_path, monkey
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["query_id"] == reply_id
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert validate_trace_contract(payload) == {"ok": True, "errors": []}
     assert payload["message"]["message_id"] == message_id
     assert payload["message"]["from_actor"] == "coder"
     assert payload["message"]["to_agent"] == "planner"
+    assert payload["message"]["prompt"].startswith("# AgentDeck dispatch")
     assert payload["attempts"][0]["message_id"] == message_id
     assert payload["jobs"][0]["message_id"] == message_id
     assert payload["replies"][0]["reply_id"] == reply_id

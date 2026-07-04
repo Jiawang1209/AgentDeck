@@ -623,12 +623,77 @@ class StateStore:
         for items in state.get("inbox", {}).values():
             inbox_items.extend(item for item in items if item.get("message_id") == message_id)
         return {
+            "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
             "query_id": query_id,
-            "message": message,
-            "attempts": attempts,
-            "jobs": jobs,
-            "replies": replies,
-            "inbox_items": inbox_items,
+            "message": self._trace_message(message),
+            "attempts": [self._trace_attempt(item) for item in attempts],
+            "jobs": [self._trace_job(item) for item in jobs],
+            "replies": [self._trace_reply(item) for item in replies],
+            "inbox_items": [self._trace_inbox_item(item) for item in inbox_items],
+        }
+
+    @staticmethod
+    def _trace_message(message: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "message_id": message.get("message_id"),
+            "from_actor": message.get("from_actor"),
+            "to_agent": message.get("to_agent"),
+            "task": message.get("task"),
+            "prompt": message.get("prompt"),
+            "status": message.get("status"),
+            "created_at": message.get("created_at"),
+        }
+
+    @staticmethod
+    def _trace_attempt(attempt: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "attempt_id": attempt.get("attempt_id"),
+            "message_id": attempt.get("message_id"),
+            "agent_id": attempt.get("agent_id"),
+            "status": attempt.get("status"),
+            "created_at": attempt.get("created_at"),
+        }
+
+    @staticmethod
+    def _trace_job(job: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "job_id": job.get("job_id"),
+            "message_id": job.get("message_id"),
+            "attempt_id": job.get("attempt_id"),
+            "agent_id": job.get("agent_id"),
+            "pane_id": job.get("pane_id"),
+            "status": job.get("status"),
+            "created_at": job.get("created_at"),
+        }
+
+    @staticmethod
+    def _trace_reply(reply: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "reply_id": reply.get("reply_id"),
+            "message_id": reply.get("message_id"),
+            "attempt_id": reply.get("attempt_id"),
+            "job_id": reply.get("job_id"),
+            "from_agent": reply.get("from_agent"),
+            "to_actor": reply.get("to_actor"),
+            "text": reply.get("text"),
+            "created_at": reply.get("created_at"),
+        }
+
+    @staticmethod
+    def _trace_inbox_item(item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "inbox_id": item.get("inbox_id"),
+            "event_type": item.get("event_type"),
+            "message_id": item.get("message_id"),
+            "attempt_id": item.get("attempt_id"),
+            "job_id": item.get("job_id"),
+            "reply_id": item.get("reply_id"),
+            "from_actor": item.get("from_actor"),
+            "from_agent": item.get("from_agent"),
+            "to_agent": item.get("to_agent"),
+            "task": item.get("task"),
+            "status": item.get("status"),
+            "created_at": item.get("created_at"),
         }
 
     def _resolve_message_id(self, state: dict[str, Any], query_id: str) -> str | None:
