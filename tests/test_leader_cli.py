@@ -1104,6 +1104,7 @@ def test_approval_dispatch_sends_approved_step_to_agent_and_records_lineage(tmp_
     assert payload["agent_id"] == "planner"
     assert payload["pane_id"] == "%77"
     assert payload["message_id"].startswith("msg_")
+    assert payload["trace_command"] == f"agentdeck trace --id {payload['message_id']}"
     assert fake.sent and fake.sent[0][0] == "%77"
     assert "AgentDeck dispatch" in fake.sent[0][1]
     assert "Break down the goal" in fake.sent[0][1]

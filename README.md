@@ -179,7 +179,7 @@ agentdeck dispatch --agent planner --task "设计消息账本"
 Human/Leader -> dispatch -> message/attempt/job/inbox -> tmux pane -> reply -> sender inbox -> ack
 ```
 
-每次 dispatch 会写入 `.agentdeck/state/state.json` 的 `messages`、`attempts`、`jobs` 和目标 agent 的 `inbox`，并追加 `task_dispatched` 事件。可以查看某个 agent 的 inbox：
+每次 dispatch 会写入 `.agentdeck/state/state.json` 的 `messages`、`attempts`、`jobs` 和目标 agent 的 `inbox`，并追加 `task_dispatched` 事件。`dispatch` 和 `approval dispatch` 的 JSON 输出会包含 `trace_command`，指向同一条 message lineage。可以查看某个 agent 的 inbox：
 
 ```bash
 agentdeck inbox --agent planner
@@ -197,7 +197,7 @@ agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
 agentdeck capture-reply --agent planner --message-id msg_xxx
 ```
 
-如果任务由另一个 agent 发起，reply 会作为 `task_reply` 投递到发起方 inbox。处理完 inbox item 后可以确认：
+如果任务由另一个 agent 发起，reply 会作为 `task_reply` 投递到发起方 inbox。`reply` 和 `capture-reply` 的 JSON 输出也会包含 `trace_command`，指向刚记录的 reply lineage。处理完 inbox item 后可以确认：
 
 ```bash
 agentdeck ack --agent planner --inbox-id inb_xxx

@@ -26,6 +26,10 @@ def _print_json(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
 
 
+def _trace_command(trace_id: object) -> str:
+    return f"agentdeck trace --id {trace_id}"
+
+
 def _project_view_payload_or_error(config: ProjectConfig, store: StateStore) -> dict[str, object] | None:
     payload = asdict(store.project_view(config))
     validation = validate_project_view_contract(payload)
@@ -373,6 +377,7 @@ def dispatch_command(args: argparse.Namespace) -> int:
             "message_id": message["message_id"],
             "agent_id": agent.agent_id,
             "pane_id": pane_id,
+            "trace_command": _trace_command(message["message_id"]),
         }
     )
     return 0
@@ -418,6 +423,7 @@ def reply_command(args: argparse.Namespace) -> int:
             "reply_id": reply["reply_id"],
             "message_id": reply["message_id"],
             "from_agent": args.agent,
+            "trace_command": _trace_command(reply["reply_id"]),
         }
     )
     return 0
@@ -475,6 +481,7 @@ def capture_reply_command(args: argparse.Namespace) -> int:
             "from_agent": args.agent,
             "pane_id": pane_id,
             "captured_lines": len(text.splitlines()),
+            "trace_command": _trace_command(reply["reply_id"]),
         }
     )
     return 0
@@ -1227,6 +1234,7 @@ def approval_dispatch_command(args: argparse.Namespace) -> int:
             "message_id": message["message_id"],
             "agent_id": agent.agent_id,
             "pane_id": pane_id,
+            "trace_command": _trace_command(message["message_id"]),
         }
     )
     return 0

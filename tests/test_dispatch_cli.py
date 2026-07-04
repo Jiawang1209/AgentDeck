@@ -97,6 +97,7 @@ def test_dispatch_sends_role_prompt_task_and_records_event(tmp_path, monkeypatch
     assert payload["agent_id"] == "planner"
     assert payload["pane_id"] == "%42"
     assert payload["message_id"].startswith("msg_")
+    assert payload["trace_command"] == f"agentdeck trace --id {payload['message_id']}"
     assert len(fake.sent) == 1
     pane_id, prompt = fake.sent[0]
     assert pane_id == "%42"
@@ -168,6 +169,7 @@ def test_reply_records_result_and_delivers_task_reply_to_sender_inbox(tmp_path, 
     assert payload["ok"] is True
     assert payload["reply_id"].startswith("rep_")
     assert payload["message_id"] == dispatch_payload["message_id"]
+    assert payload["trace_command"] == f"agentdeck trace --id {payload['reply_id']}"
 
     state = StateStore(root).load()
     assert state["messages"][0]["status"] == "replied"
@@ -299,6 +301,7 @@ verification:
     assert payload["message_id"] == message_id
     assert payload["from_agent"] == "planner"
     assert payload["captured_lines"] == 7
+    assert payload["trace_command"] == f"agentdeck trace --id {payload['reply_id']}"
 
     state = StateStore(root).load()
     reply = state["replies"][0]

@@ -137,6 +137,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck leader apply-action --action-id <id>` 执行 safe apply 前必须通过 ProjectView contract 守门；当前只允许应用 `create_approvals`，不得自动应用 dispatch/capture 类 action。
 - 审批、dispatch 或恢复任务前优先用 `agentdeck plan list`、`agentdeck plan show --plan-id <id>` 和 `agentdeck plan status --plan-id <id>` 检查计划。
 - 使用 `agentdeck approval create-from-plan --plan-id <id>` 创建审批项，使用 `approval approve/reject` 更新状态；只有 approved approval 才能通过 `agentdeck approval dispatch --approval-id <id>` 派发。
+- `dispatch`、`approval dispatch`、`reply` 和 `capture-reply` 的成功 JSON 输出必须包含 `trace_command`，指向对应 message/reply lineage，供 GUI 和人类直接追踪。
 - Worker 输出结构化结果后，优先使用 `agentdeck capture-reply --agent <id> --message-id <id>` 从 pane 回收入账；手动 `reply` 作为兜底。
 - 使用 `agentdeck ack --agent <id> --inbox-id <id>` 时只能确认该 agent 最早的 pending inbox item；非 head item 必须等待前序 item ack 后再处理。
 - 先更新架构/README/agent 文档，再扩展行为。

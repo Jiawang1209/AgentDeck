@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Return trace commands from communication outputs
+
+- `dispatch`、`approval dispatch`、`reply` 和 `capture-reply` 的成功 JSON 输出现在都会包含 `trace_command`。
+- dispatch 类输出的 `trace_command` 指向对应 `message_id`，reply 类输出的 `trace_command` 指向对应 `reply_id`，方便 GUI、人类和 Leader 直接打开 lineage。
+- 新增 `_trace_command()` helper，统一生成 `agentdeck trace --id <id>`，避免多个命令手写漂移。
+- 扩展 dispatch/reply/capture-reply/approval dispatch 红灯测试，先确认成功输出缺少 `trace_command`，再实现统一输出。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录通信命令输出必须携带 trace 入口。
+- 保持安全边界：本轮只扩展成功响应字段，不改变 dispatch/reply/capture 的执行语义，不新增自动审批或自动派发。
+- 本地验证：目标测试 4 项通过，`tests/test_dispatch_cli.py tests/test_leader_cli.py` 51 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 96 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `agentdeck reply` 输出的 `trace_command` 指向新建 `reply_id`。
+
 ### Current - Continue after Leader chat safe apply
 
 - `agentdeck leader chat --message "apply action <id>"` 应用 safe `create_approvals` action 后，现在会从刷新后的 ProjectView recovery 读取下一步命令。
