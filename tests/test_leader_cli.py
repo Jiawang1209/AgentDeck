@@ -39,6 +39,18 @@ def bind_agent(root: Path, agent_id: str, pane_id: str = "%42") -> None:
     store.save(state)
 
 
+def break_project_view_recovery(monkeypatch) -> None:
+    original_asdict = cli.asdict
+
+    def broken_project_view_asdict(obj):
+        payload = original_asdict(obj)
+        if obj.__class__.__name__ == "ProjectView":
+            payload.pop("recovery", None)
+        return payload
+
+    monkeypatch.setattr(cli, "asdict", broken_project_view_asdict)
+
+
 def test_leader_plan_creates_structured_plan_without_dispatching(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
 
@@ -177,15 +189,7 @@ def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_
 
 def test_leader_chat_refuses_invalid_project_view_before_planning(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
-    original_asdict = cli.asdict
-
-    def broken_project_view_asdict(obj):
-        payload = original_asdict(obj)
-        if obj.__class__.__name__ == "ProjectView":
-            payload.pop("recovery", None)
-        return payload
-
-    monkeypatch.setattr(cli, "asdict", broken_project_view_asdict)
+    break_project_view_recovery(monkeypatch)
 
     exit_code = cli.main(["leader", "chat", "--message", "帮我实现自动回复回收"])
 
@@ -331,6 +335,26 @@ def test_leader_next_records_create_approvals_action_without_executing(tmp_path,
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "leader_action_suggested"' in events
+
+
+def test_leader_next_refuses_invalid_project_view_before_recording_action(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "坏状态不能建议下一步"])
+    capsys.readouterr()
+    break_project_view_recovery(monkeypatch)
+
+    exit_code = cli.main(["leader", "next"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "ProjectView contract validation failed" in captured.err
+    assert "missing top-level field: recovery" in captured.err
+    state = StateStore(root).load()
+    assert state["leader_actions"] == []
+    assert state["approvals"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
 
 
 def test_leader_next_reuses_existing_pending_create_approvals_action(tmp_path, monkeypatch, capsys) -> None:
@@ -725,6 +749,31 @@ def test_leader_review_recommends_next_dispatch_when_pending_approved_step_exist
     assert payload["agent_id"] == "planner"
     assert payload["reason"] == "approved step is waiting for dispatch"
     assert payload["counts"]["approved"] == 1
+
+
+def test_leader_review_refuses_invalid_project_view_before_recommending_next_step(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "坏状态不能 review"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    capsys.readouterr()
+    break_project_view_recovery(monkeypatch)
+
+    exit_code = cli.main(["leader", "review", "--plan-id", plan_id])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "ProjectView contract validation failed" in captured.err
+    assert "missing top-level field: recovery" in captured.err
+    state = StateStore(root).load()
+    assert state["leader_actions"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
 
 
 def test_leader_review_recommends_waiting_for_dispatched_reply(tmp_path, monkeypatch, capsys) -> None:

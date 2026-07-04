@@ -538,9 +538,11 @@ def leader_plan_command(args: argparse.Namespace) -> int:
 
 
 def leader_review_command(args: argparse.Namespace) -> int:
-    _config, store, exit_code = _load_project_or_error()
-    if store is None:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
         return exit_code
+    if _project_view_payload_or_error(config, store) is None:
+        return 1
     try:
         review = store.leader_review(args.plan_id)
     except KeyError:
@@ -551,9 +553,11 @@ def leader_review_command(args: argparse.Namespace) -> int:
 
 
 def leader_next_command(args: argparse.Namespace) -> int:
-    _config, store, exit_code = _load_project_or_error()
-    if store is None:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
         return exit_code
+    if _project_view_payload_or_error(config, store) is None:
+        return 1
     try:
         action = store.suggest_leader_action(args.plan_id)
     except KeyError as exc:

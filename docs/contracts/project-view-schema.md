@@ -14,7 +14,7 @@ Use `validate_project_view_contract(payload)` from `src/agentdeck/contracts.py` 
 
 `agentdeck status` self-validates its generated ProjectView with `validate_project_view_contract()` before printing JSON. If validation fails, it exits non-zero, writes the contract errors to stderr, and does not print a partial ProjectView.
 
-Natural-language Leader chat uses the same validation gate before it plans, reviews, applies a safe action, or embeds ProjectView in a response. If the ProjectView contract is invalid, chat exits non-zero before creating plans or chat turns.
+Leader decision commands use the same validation gate before they plan from chat, review a plan, persist a next action, apply a safe action, or embed ProjectView in a response. If the ProjectView contract is invalid, these commands exit non-zero before creating plans, chat turns, or leader actions.
 
 ## Top-Level Shape
 

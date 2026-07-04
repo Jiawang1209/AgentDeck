@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Gate Leader review and next on ProjectView validation
+
+- `agentdeck leader review --plan-id <id>` 和 `agentdeck leader next [--plan-id <id>]` 现在会在读取项目后先复用 `_project_view_payload_or_error()`，只有 ProjectView 满足 `project-view/v1` 契约后才继续做 review 或写入 `leader_actions[]`。
+- 新增 `break_project_view_recovery()` 测试辅助，并复用到 chat/review/next 的坏 ProjectView 场景，减少测试漂移。
+- 新增 `test_leader_next_refuses_invalid_project_view_before_recording_action`，锁定状态面无效时不得写入 leader action、approval、message 或 job。
+- 新增 `test_leader_review_refuses_invalid_project_view_before_recommending_next_step`，锁定状态面无效时 review 不输出下一步建议。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 Leader review/next 也必须通过 ProjectView contract 守门。
+- 保持安全边界：本轮只收紧 Leader 决策入口，不新增自动 dispatch、不创建 approval、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_next_refuses_invalid_project_view_before_recording_action tests/test_leader_cli.py::test_leader_review_refuses_invalid_project_view_before_recommending_next_step -q` 看到两条测试均因命令返回 0 失败；实现后同一测试 2 项通过，Leader next/review/chat 相关测试 7 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 75 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader next` 返回 `kind=create_approvals/status=pending` 且 `leader review` 返回 `next_action=wait_for_approval`。
+
 ### Current - Gate Leader chat on ProjectView validation
 
 - `agentdeck leader chat --message <text>` 现在会在读取 ProjectView 后先复用 `validate_project_view_contract()` 守门，再进入 plan/review/apply-action 分支。

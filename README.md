@@ -258,9 +258,9 @@ agentdeck plan status --plan-id pln_xxx
 
 `plan list` 返回计划摘要，适合给自然语言入口或 GUI 做列表视图；`plan show` 返回完整计划，适合审批前人工检查；`plan status` 汇总每个 step 的 approval 状态、message_id、attempt_id 和 job_id，适合恢复任务进度。
 
-`leader review` 使用本地 deterministic 规则读取 plan status 和 replies，输出下一步建议：`dispatch_approved`、`wait_for_reply`、`summarize` 或 `wait_for_approval`。后续接入真实 Leader LLM 时应复用该输出结构。
+`leader review` 会先校验 ProjectView，再使用本地 deterministic 规则读取 plan status 和 replies，输出下一步建议：`dispatch_approved`、`wait_for_reply`、`summarize` 或 `wait_for_approval`。后续接入真实 Leader LLM 时应复用该输出结构。
 
-`leader next` 会把下一步建议持久化到 `leader_actions[]`，例如创建 approvals 或派发 approved step 的命令。它只记录 pending action，不执行命令；如果相同 pending action 已存在，会复用原 action_id，不重复污染 queue。`leader actions` 可查看已记录的 action queue。
+`leader next` 会先校验 ProjectView，再把下一步建议持久化到 `leader_actions[]`，例如创建 approvals 或派发 approved step 的命令。它只记录 pending action，不执行命令；如果相同 pending action 已存在，会复用原 action_id，不重复污染 queue。`leader actions` 可查看已记录的 action queue。
 
 `leader action --action-id <id>` 返回单个 action 的详情，包括 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`。它是只读入口，适合 GUI、自然语言 Leader 或人类在执行前确认当前 action 为什么能或不能安全应用。
 
