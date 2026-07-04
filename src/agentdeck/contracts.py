@@ -45,6 +45,33 @@ PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS = (
     "target_id",
 )
 
+PROJECT_VIEW_LEADER_ACTIONS_FIELDS = (
+    "count",
+    "by_kind",
+    "by_status",
+    "recommended_action_id",
+    "items",
+)
+
+PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS = (
+    "action_id",
+    "kind",
+    "status",
+    "requires_confirmation",
+    "plan_id",
+    "approval_id",
+    "agent_id",
+    "message_id",
+    "command",
+    "reason",
+    "can_apply",
+    "apply_command",
+    "explicit_command",
+    "apply_blocker",
+    "is_recommended",
+    "created_at",
+)
+
 
 def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
@@ -55,6 +82,8 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "top_level_fields": list(PROJECT_VIEW_TOP_LEVEL_FIELDS),
         "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
         "recommended_action_fields": list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS),
+        "leader_actions_fields": list(PROJECT_VIEW_LEADER_ACTIONS_FIELDS),
+        "leader_action_item_fields": list(PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS),
     }
 
 
@@ -66,6 +95,8 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_top_level_fields"] = list(example)
         payload["example_recovery_fields"] = list(example["recovery"])
         payload["example_recommended_action_fields"] = list(example["recovery"]["recommended_action"])
+        payload["example_leader_actions_fields"] = list(example["leader_actions"])
+        payload["example_leader_action_item_fields"] = list(example["leader_actions"]["items"][0])
         payload["example_project_view"] = example
     return payload
 
@@ -90,6 +121,20 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
                     errors.append(f"missing recommended_action field: {field}")
     elif "recovery" in payload:
         errors.append("recovery must be an object")
+    leader_actions = payload.get("leader_actions")
+    if isinstance(leader_actions, dict):
+        for field in PROJECT_VIEW_LEADER_ACTIONS_FIELDS:
+            if field not in leader_actions:
+                errors.append(f"missing leader_actions field: {field}")
+        items = leader_actions.get("items")
+        if isinstance(items, list) and items:
+            first_item = items[0]
+            if isinstance(first_item, dict):
+                for field in PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS:
+                    if field not in first_item:
+                        errors.append(f"missing leader_actions item field: {field}")
+    elif "leader_actions" in payload:
+        errors.append("leader_actions must be an object")
     return {"ok": not errors, "errors": errors}
 
 

@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Validate ProjectView leader action recommendation fields
+
+- 新增 `PROJECT_VIEW_LEADER_ACTIONS_FIELDS` 和 `PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS`，把 ProjectView leader action 队列字段纳入可复用契约定义。
+- `agentdeck contract project-view` 现在会发现 `leader_actions_fields` 和 `leader_action_item_fields`；`--example` 也会输出对应 example 字段列表。
+- `validate_project_view_contract()` 现在会校验 `leader_actions.recommended_action_id` 和 `leader_actions.items[].is_recommended` 等 GUI 依赖字段。
+- 新增 validator 红灯测试，删除 `recommended_action_id/is_recommended` 时必须返回明确错误。
+- 更新 `docs/contracts/project-view-schema.md` 和 CLI/module contract 测试，记录新的 discovery 字段。
+- 保持安全边界：本轮只扩展只读 contract metadata 和 validator，不读取 live state、不修改 `.agentdeck/state`、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_project_view_contract_reports_missing_leader_action_recommendation_fields -q` 看到 validator 放过坏 payload；实现后同一测试通过，contracts 相关测试 4 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 78 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，非项目临时目录 smoke 确认 discovery 输出 leader action 字段列表、example 校验通过、删除 `recommended_action_id` 后 validator 报错。
+
 ### Current - Sync ProjectView example leader action recommendation fields
 
 - `agentdeck contract project-view --example` 的 `example_project_view.leader_actions` 现在包含 `recommended_action_id`，示例 action item 也包含 `is_recommended=true`。

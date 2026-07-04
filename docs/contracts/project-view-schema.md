@@ -54,7 +54,9 @@ Use `agentdeck contract project-view` to discover this contract from tools or GU
   "contract_exists": true,
   "top_level_fields": [],
   "recovery_fields": [],
-  "recommended_action_fields": []
+  "recommended_action_fields": [],
+  "leader_actions_fields": [],
+  "leader_action_item_fields": []
 }
 ```
 

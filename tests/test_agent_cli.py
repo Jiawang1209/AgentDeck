@@ -109,6 +109,8 @@ def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["top_level_fields"] == expected["top_level_fields"]
     assert payload["recovery_fields"] == expected["recovery_fields"]
     assert payload["recommended_action_fields"] == expected["recommended_action_fields"]
+    assert payload["leader_actions_fields"] == expected["leader_actions_fields"]
+    assert payload["leader_action_item_fields"] == expected["leader_action_item_fields"]
 
 
 def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
