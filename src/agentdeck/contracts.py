@@ -5,49 +5,56 @@ from pathlib import Path
 from .models import PROJECT_VIEW_SCHEMA_VERSION
 
 
+PROJECT_VIEW_TOP_LEVEL_FIELDS = (
+    "schema_version",
+    "project",
+    "root",
+    "runtime_backend",
+    "leader",
+    "agents",
+    "state_path",
+    "plans",
+    "approvals",
+    "messages",
+    "jobs",
+    "replies",
+    "chat_turns",
+    "leader_errors",
+    "leader_actions",
+    "inbox",
+    "recovery",
+)
+
+PROJECT_VIEW_RECOVERY_FIELDS = (
+    "status",
+    "reason",
+    "next_command",
+    "recommended_action",
+    "pending",
+    "leader_action",
+    "latest_event",
+    "recent_events",
+)
+
+PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS = (
+    "label",
+    "command",
+    "safety",
+    "requires_explicit_user",
+    "source",
+    "target_id",
+)
+
+
 def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "status_command": "agentdeck status",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
-        "top_level_fields": [
-            "schema_version",
-            "project",
-            "root",
-            "runtime_backend",
-            "leader",
-            "agents",
-            "state_path",
-            "plans",
-            "approvals",
-            "messages",
-            "jobs",
-            "replies",
-            "chat_turns",
-            "leader_errors",
-            "leader_actions",
-            "inbox",
-            "recovery",
-        ],
-        "recovery_fields": [
-            "status",
-            "reason",
-            "next_command",
-            "recommended_action",
-            "pending",
-            "leader_action",
-            "latest_event",
-            "recent_events",
-        ],
-        "recommended_action_fields": [
-            "label",
-            "command",
-            "safety",
-            "requires_explicit_user",
-            "source",
-            "target_id",
-        ],
+        "top_level_fields": list(PROJECT_VIEW_TOP_LEVEL_FIELDS),
+        "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
+        "recommended_action_fields": list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS),
     }
 
 

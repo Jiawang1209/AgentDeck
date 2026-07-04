@@ -4,6 +4,16 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView field constants
+
+- 新增 `PROJECT_VIEW_TOP_LEVEL_FIELDS`、`PROJECT_VIEW_RECOVERY_FIELDS` 和 `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`，作为 ProjectView contract 字段列表的模块级不可变定义。
+- `project_view_contract_payload()` 改为从这些常量生成 JSON list，保持 CLI 输出兼容，同时减少内联列表重复。
+- 扩展 `tests/test_contracts.py`，先验证字段常量缺失的红灯，再确认 discovery payload 复用这些常量。
+- 更新 `docs/contracts/project-view-schema.md`，记录字段常量的源码入口。
+- 保持安全边界：本轮只收敛契约字段定义，不改变 ProjectView 输出、不读取 live state、不修改 `.agentdeck/state`、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_contracts.py -q` 看到字段常量缺失；实现后同一测试 4 项通过，`tests/test_contracts.py tests/test_agent_cli.py tests/test_leader_cli.py` 55 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 68 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，模块 smoke 确认 contract payload 的三组字段列表均来自对应字段常量。
+
 ### Current - Reuse ProjectView contract fields in status tests
 
 - 调整 `tests/test_agent_cli.py` 的 ProjectView contract/status 测试，改为从 `agentdeck.contracts.project_view_contract_payload()` 读取 top-level、recovery 和 recommended_action 字段列表。

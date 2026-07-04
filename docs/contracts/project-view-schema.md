@@ -8,6 +8,8 @@ The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in 
 
 Reusable contract response, payload, and example fixture helpers live in `src/agentdeck/contracts.py`. The CLI discovery command uses `project_view_contract_response()` directly so command output and reusable module output stay identical.
 
+Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, and `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`.
+
 ## Top-Level Shape
 
 ```json

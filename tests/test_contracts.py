@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agentdeck.contracts import project_view_contract_payload, project_view_contract_response, project_view_example
+from agentdeck.contracts import (
+    PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS,
+    PROJECT_VIEW_RECOVERY_FIELDS,
+    PROJECT_VIEW_TOP_LEVEL_FIELDS,
+    project_view_contract_payload,
+    project_view_contract_response,
+    project_view_example,
+)
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
 
 
@@ -16,16 +23,9 @@ def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -
     assert payload["status_command"] == "agentdeck status"
     assert payload["contract_path"] == str(contract_path)
     assert payload["contract_exists"] is True
-    assert "recovery" in payload["top_level_fields"]
-    assert "recommended_action" in payload["recovery_fields"]
-    assert payload["recommended_action_fields"] == [
-        "label",
-        "command",
-        "safety",
-        "requires_explicit_user",
-        "source",
-        "target_id",
-    ]
+    assert payload["top_level_fields"] == list(PROJECT_VIEW_TOP_LEVEL_FIELDS)
+    assert payload["recovery_fields"] == list(PROJECT_VIEW_RECOVERY_FIELDS)
+    assert payload["recommended_action_fields"] == list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS)
 
 
 def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> None:
