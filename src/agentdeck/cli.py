@@ -604,15 +604,30 @@ def leader_actions_command(_args: argparse.Namespace) -> int:
 
 
 def leader_action_command(args: argparse.Namespace) -> int:
-    _config, store, exit_code = _load_project_or_error()
-    if store is None:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
         return exit_code
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
     try:
         action = store.leader_action_detail(args.action_id)
     except KeyError:
         print(f"unknown leader action: {args.action_id}", file=sys.stderr)
         return 1
-    _print_json(action)
+    recovery = project_view.get("recovery", {})
+    recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+    matches_recommended_action = (
+        isinstance(recommended_action, dict) and recommended_action.get("target_id") == args.action_id
+    )
+    _print_json(
+        {
+            **action,
+            "recovery": recovery,
+            "recommended_action": recommended_action,
+            "matches_recommended_action": matches_recommended_action,
+        }
+    )
     return 0
 
 

@@ -472,6 +472,31 @@ def test_leader_action_show_outputs_full_action_with_applyability(tmp_path, monk
     assert state["jobs"] == []
 
 
+def test_leader_action_show_includes_recovery_recommended_action_match(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "查看 action recovery 对照"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["leader", "next", "--plan-id", plan_id])
+    action_id = json.loads(capsys.readouterr().out)["action_id"]
+
+    exit_code = cli.main(["leader", "action", "--action-id", action_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action_id"] == action_id
+    assert payload["recovery"]["status"] == "action_required"
+    assert payload["recovery"]["recommended_action"]["target_id"] == action_id
+    assert payload["recovery"]["leader_action"]["action_id"] == action_id
+    assert payload["matches_recommended_action"] is True
+    assert payload["recommended_action"] == payload["recovery"]["recommended_action"]
+
+    state = StateStore(root).load()
+    assert state["leader_actions"][0]["status"] == "pending"
+    assert state["approvals"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
 def test_leader_action_show_marks_dispatch_action_as_not_applyable(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "查看 dispatch action"])

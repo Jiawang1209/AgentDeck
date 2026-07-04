@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add recovery context to Leader action detail
+
+- `agentdeck leader action --action-id <id>` 现在会先读取并校验 ProjectView，然后在 action 详情中附带当前 `recovery`、`recommended_action` 和 `matches_recommended_action`。
+- 当当前 recovery 推荐的 `target_id` 等于该 action_id 时，`matches_recommended_action=true`，方便 GUI 判断详情页按钮是否就是当前恢复入口推荐动作。
+- 新增 `test_leader_action_show_includes_recovery_recommended_action_match`，锁定 pending `create_approvals` action 详情与 recovery 推荐动作的对齐关系。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 action detail 的 recovery 对照输出。
+- 保持安全边界：本轮只扩展只读详情输出，不应用 action、不创建 approval、不 dispatch、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_action_show_includes_recovery_recommended_action_match -q` 看到缺少 `recovery`；实现后同一测试 1 项通过，action detail/recovery 相关测试 6 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 77 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader action` 输出 `matches_recommended_action=True`、`recommended_action.target_id=<action_id>`、`recovery.status=action_required`。
+
 ### Current - Gate Leader apply-action on ProjectView validation
 
 - `agentdeck leader apply-action --action-id <id>` 现在会在应用 safe action 前复用 `_project_view_payload_or_error()`，只有 ProjectView 满足 `project-view/v1` 契约后才会调用 `store.apply_leader_action()`。

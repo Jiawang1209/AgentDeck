@@ -151,6 +151,8 @@ Summary items intentionally omit long prompts and pane output. Use detail comman
 
 `can_apply=true` is currently limited to safe `create_approvals` actions. Runtime actions such as dispatch or capture stay explicit and should be shown with their blocker text.
 
+`agentdeck leader action --action-id <id>` returns the same action detail plus the current `recovery`, the current `recommended_action`, and `matches_recommended_action`. GUI clients can use this to tell whether a selected action is the active recovery affordance before rendering an apply button.
+
 ## Chat Turns
 
 `chat_turns.items[]` connects natural-language Leader conversation to action queue items:
