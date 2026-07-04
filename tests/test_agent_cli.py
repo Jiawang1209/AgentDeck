@@ -151,6 +151,21 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
             "created_at": "2026-07-04T00:00:00+00:00",
         }
     ]
+    state["leader_actions"] = [
+        {
+            "action_id": "act_demo",
+            "kind": "create_approvals",
+            "status": "pending",
+            "requires_confirmation": True,
+            "plan_id": "pln_demo",
+            "approval_id": None,
+            "agent_id": None,
+            "message_id": None,
+            "command": "agentdeck approval create-from-plan --plan-id pln_demo",
+            "reason": "plan has no approval records",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
     state["inbox"] = {
         "planner": [
             {
@@ -194,6 +209,26 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
                 "message": "继续",
                 "plan_id": "pln_demo",
                 "next_command": "agentdeck approval create-from-plan --plan-id pln_demo",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ],
+    }
+    assert payload["leader_actions"] == {
+        "count": 1,
+        "by_kind": {"create_approvals": 1},
+        "by_status": {"pending": 1},
+        "items": [
+            {
+                "action_id": "act_demo",
+                "kind": "create_approvals",
+                "status": "pending",
+                "requires_confirmation": True,
+                "plan_id": "pln_demo",
+                "approval_id": None,
+                "agent_id": None,
+                "message_id": None,
+                "command": "agentdeck approval create-from-plan --plan-id pln_demo",
+                "reason": "plan has no approval records",
                 "created_at": "2026-07-04T00:00:00+00:00",
             }
         ],

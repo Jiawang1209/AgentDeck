@@ -515,6 +515,55 @@ def leader_review_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def leader_next_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    try:
+        action = store.suggest_leader_action(args.plan_id)
+    except KeyError as exc:
+        print(f"unknown plan: {exc.args[0]}", file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "leader_action_suggested",
+            {
+                "action_id": action["action_id"],
+                "kind": action["kind"],
+                "plan_id": action["plan_id"],
+                "command": action["command"],
+            },
+        )
+    )
+    _print_json({"ok": True, **action})
+    return 0
+
+
+def _leader_action_summary(action: dict[str, object]) -> dict[str, object]:
+    return {
+        "action_id": action.get("action_id"),
+        "kind": action.get("kind"),
+        "status": action.get("status"),
+        "requires_confirmation": action.get("requires_confirmation"),
+        "plan_id": action.get("plan_id"),
+        "approval_id": action.get("approval_id"),
+        "agent_id": action.get("agent_id"),
+        "message_id": action.get("message_id"),
+        "command": action.get("command"),
+        "reason": action.get("reason"),
+        "created_at": action.get("created_at"),
+    }
+
+
+def leader_actions_command(_args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    actions = [_leader_action_summary(action) for action in store.list_leader_actions()]
+    _print_json({"count": len(actions), "actions": actions})
+    return 0
+
+
 def _next_command_for_review(review: dict[str, object]) -> str | None:
     action = review.get("next_action")
     if action == "dispatch_approved" and review.get("approval_id"):
@@ -881,6 +930,11 @@ def build_parser() -> argparse.ArgumentParser:
     leader_review = leader_subparsers.add_parser("review", help="Review plan progress and recommend next action")
     leader_review.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
     leader_review.set_defaults(func=leader_review_command)
+    leader_next = leader_subparsers.add_parser("next", help="Suggest and persist the next approval-gated action")
+    leader_next.add_argument("--plan-id", help="Plan id to inspect; defaults to latest saved plan")
+    leader_next.set_defaults(func=leader_next_command)
+    leader_actions = leader_subparsers.add_parser("actions", help="List persisted Leader action suggestions")
+    leader_actions.set_defaults(func=leader_actions_command)
     leader_chat = leader_subparsers.add_parser("chat", help="Natural-language Leader entrypoint")
     leader_chat.add_argument("--message", required=True, help="Natural-language message for the Leader")
     leader_chat.add_argument("--provider", default="fake", help="Leader provider to use when a new plan is needed")

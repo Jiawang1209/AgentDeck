@@ -4,6 +4,19 @@
 
 ## 2026-07-04
 
+### Current - Add Leader next action queue
+
+- 新增 `agentdeck leader next [--plan-id <id>]`，基于最新 plan 或指定 plan 计算下一步，并持久化为 `leader_actions[]`。
+- 新增 `agentdeck leader actions`，列出已持久化的 action queue。
+- `leader next` 支持无 approval 时建议 `create_approvals`，以及 approved step 时建议 `dispatch_approved`。
+- 每个 action 记录 action_id、kind、status、requires_confirmation、plan_id、approval_id、agent_id、message_id、command、reason 和 created_at。
+- 扩展 ProjectView，`agentdeck status` 现在包含 `leader_actions` 的 count、by_kind、by_status 和 items 摘要。
+- 保持人类审批边界：`leader next` 只记录 pending action，不执行 approval create、dispatch、capture 或其他命令。
+- 扩展 `tests/test_leader_cli.py` 和 `tests/test_agent_cli.py`，覆盖 action 生成、actions 列表、未派发安全边界和 status 摘要。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 Leader next action queue 用法与边界。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_next_records_create_approvals_action_without_executing tests/test_leader_cli.py::test_leader_next_records_dispatch_action_without_dispatching tests/test_leader_cli.py::test_leader_actions_lists_persisted_actions -q` 看到 `leader next` 子命令不存在；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 44 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader next` 生成 `create_approvals` action，`leader actions` 和 `status.leader_actions` 均可见，approvals/messages/jobs 仍为 0。
+
 ### Current - Add Leader provider failure diagnostics
 
 - 新增 `leader_errors[]` 状态账本，用于记录 Leader provider 失败的 error_id、mode、provider、model、task、error 和 created_at。

@@ -51,6 +51,8 @@ agentdeck leader chat --message "帮我设计自动 reply extraction"
 agentdeck leader chat-history
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
+agentdeck leader next
+agentdeck leader actions
 agentdeck plan list
 agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
@@ -206,7 +208,7 @@ agentdeck trace --id inb_xxx
 
 ## ProjectView and Status
 
-`agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、leader_errors、inbox 的轻量摘要。
+`agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、leader_errors、leader_actions、inbox 的轻量摘要。
 
 这些摘要只用于观察和恢复，不修改 state、不发送 tmux 输入，也不包含完整长 prompt。GUI 或 Leader chat loop 应优先读取 `agentdeck status`，再按需调用 `plan show`、`plan status` 或 `trace` 获取细节。
 
@@ -220,6 +222,8 @@ agentdeck leader chat --message "继续"
 agentdeck leader chat-history
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
+agentdeck leader next
+agentdeck leader actions
 agentdeck plan list
 agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
@@ -232,6 +236,8 @@ agentdeck plan status --plan-id pln_xxx
 `plan list` 返回计划摘要，适合给自然语言入口或 GUI 做列表视图；`plan show` 返回完整计划，适合审批前人工检查；`plan status` 汇总每个 step 的 approval 状态、message_id、attempt_id 和 job_id，适合恢复任务进度。
 
 `leader review` 使用本地 deterministic 规则读取 plan status 和 replies，输出下一步建议：`dispatch_approved`、`wait_for_reply`、`summarize` 或 `wait_for_approval`。后续接入真实 Leader LLM 时应复用该输出结构。
+
+`leader next` 会把下一步建议持久化到 `leader_actions[]`，例如创建 approvals 或派发 approved step 的命令。它只记录 pending action，不执行命令；`leader actions` 可查看已记录的 action queue。真正创建审批项或 dispatch 仍然要人类显式运行对应命令。
 
 计划确认后，可以创建审批项：
 

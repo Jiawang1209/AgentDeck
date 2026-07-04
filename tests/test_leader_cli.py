@@ -229,6 +229,77 @@ def test_leader_chat_history_lists_persisted_turns(tmp_path, monkeypatch, capsys
     assert "project_view" not in payload["turns"][0]
 
 
+def test_leader_next_records_create_approvals_action_without_executing(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "需要审批队列"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+
+    exit_code = cli.main(["leader", "next"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["action_id"].startswith("act_")
+    assert payload["status"] == "pending"
+    assert payload["requires_confirmation"] is True
+    assert payload["kind"] == "create_approvals"
+    assert payload["plan_id"] == plan_id
+    assert payload["command"] == f"agentdeck approval create-from-plan --plan-id {plan_id}"
+
+    state = StateStore(root).load()
+    assert state["leader_actions"][0]["action_id"] == payload["action_id"]
+    assert state["leader_actions"][0]["kind"] == "create_approvals"
+    assert state["leader_actions"][0]["status"] == "pending"
+    assert state["approvals"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "leader_action_suggested"' in events
+
+
+def test_leader_next_records_dispatch_action_without_dispatching(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "需要派发"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+
+    exit_code = cli.main(["leader", "next", "--plan-id", plan_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["kind"] == "dispatch_approved"
+    assert payload["approval_id"] == approval_id
+    assert payload["command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
+
+    state = StateStore(root).load()
+    assert len(state["leader_actions"]) == 1
+    assert state["leader_actions"][0]["approval_id"] == approval_id
+    assert state["approvals"][0]["status"] == "approved"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
+def test_leader_actions_lists_persisted_actions(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "需要 action history"])
+    capsys.readouterr()
+    cli.main(["leader", "next"])
+    first = json.loads(capsys.readouterr().out)
+
+    exit_code = cli.main(["leader", "actions"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 1
+    assert payload["actions"][0]["action_id"] == first["action_id"]
+    assert payload["actions"][0]["kind"] == "create_approvals"
+    assert payload["actions"][0]["status"] == "pending"
+
+
 def test_plan_list_outputs_plan_summaries(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "第一项任务"])

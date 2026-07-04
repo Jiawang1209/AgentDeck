@@ -27,6 +27,7 @@ class StateStore:
                 "approvals": [],
                 "chat_turns": [],
                 "leader_errors": [],
+                "leader_actions": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -272,6 +273,66 @@ class StateStore:
         state.setdefault("leader_errors", []).append(record)
         self.save(state)
         return record
+
+    def suggest_leader_action(self, plan_id: str | None = None) -> dict[str, Any]:
+        state = self.load()
+        plans = state.get("plans", [])
+        if plan_id is None:
+            if not plans:
+                raise KeyError("no plans")
+            plan_id = str(plans[-1]["plan_id"])
+        status = self.plan_status(plan_id)
+        if status["counts"]["approvals"] == 0:
+            action = {
+                "action_id": new_id("act"),
+                "kind": "create_approvals",
+                "status": "pending",
+                "requires_confirmation": True,
+                "plan_id": plan_id,
+                "approval_id": None,
+                "agent_id": None,
+                "message_id": None,
+                "command": f"agentdeck approval create-from-plan --plan-id {plan_id}",
+                "reason": "plan has no approval records",
+                "created_at": utc_now(),
+            }
+            state.setdefault("leader_actions", []).append(action)
+            self.save(state)
+            return action
+        review = self.leader_review(plan_id)
+        action = self._action_from_review(review)
+        state = self.load()
+        state.setdefault("leader_actions", []).append(action)
+        self.save(state)
+        return action
+
+    def _action_from_review(self, review: dict[str, Any]) -> dict[str, Any]:
+        next_action = review.get("next_action")
+        command = None
+        if next_action == "dispatch_approved" and review.get("approval_id"):
+            command = f"agentdeck approval dispatch --approval-id {review['approval_id']}"
+        elif next_action == "wait_for_reply" and review.get("agent_id") and review.get("message_id"):
+            command = f"agentdeck capture-reply --agent {review['agent_id']} --message-id {review['message_id']}"
+        elif next_action == "summarize" and review.get("plan_id"):
+            command = f"agentdeck plan status --plan-id {review['plan_id']}"
+        elif next_action == "wait_for_approval" and review.get("plan_id"):
+            command = f"agentdeck approval list"
+        return {
+            "action_id": new_id("act"),
+            "kind": next_action,
+            "status": "pending",
+            "requires_confirmation": True,
+            "plan_id": review.get("plan_id"),
+            "approval_id": review.get("approval_id"),
+            "agent_id": review.get("agent_id"),
+            "message_id": review.get("message_id"),
+            "command": command,
+            "reason": review.get("reason"),
+            "created_at": utc_now(),
+        }
+
+    def list_leader_actions(self) -> list[dict[str, Any]]:
+        return list(self.load().get("leader_actions", []))
 
     def create_approvals_from_plan(self, plan_id: str) -> list[dict[str, Any]]:
         state = self.load()
@@ -648,6 +709,33 @@ class StateStore:
             )
         return {"count": len(items), "by_mode": by_mode, "items": items}
 
+    @staticmethod
+    def _leader_action_summaries(leader_actions: list[dict[str, Any]]) -> dict[str, Any]:
+        by_kind: dict[str, int] = {}
+        by_status: dict[str, int] = {}
+        items = []
+        for action in leader_actions:
+            kind = str(action.get("kind", "unknown"))
+            status = str(action.get("status", "unknown"))
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            by_status[status] = by_status.get(status, 0) + 1
+            items.append(
+                {
+                    "action_id": action.get("action_id"),
+                    "kind": action.get("kind"),
+                    "status": action.get("status"),
+                    "requires_confirmation": action.get("requires_confirmation"),
+                    "plan_id": action.get("plan_id"),
+                    "approval_id": action.get("approval_id"),
+                    "agent_id": action.get("agent_id"),
+                    "message_id": action.get("message_id"),
+                    "command": action.get("command"),
+                    "reason": action.get("reason"),
+                    "created_at": action.get("created_at"),
+                }
+            )
+        return {"count": len(items), "by_kind": by_kind, "by_status": by_status, "items": items}
+
     def _inbox_summary(self, inbox: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         by_agent = {agent_id: len(items) for agent_id, items in inbox.items()}
         all_items = [item for items in inbox.values() for item in items]
@@ -697,6 +785,7 @@ class StateStore:
             replies=self._reply_summaries(state.get("replies", [])),
             chat_turns=self._chat_turn_summaries(state.get("chat_turns", [])),
             leader_errors=self._leader_error_summaries(state.get("leader_errors", [])),
+            leader_actions=self._leader_action_summaries(state.get("leader_actions", [])),
             inbox=self._inbox_summary(state.get("inbox", {})),
         )
 
