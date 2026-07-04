@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Explain Leader chat recommendations
+
+- `agentdeck leader chat` 的 plan/review/apply_action 响应现在都会返回 `leader_explanation`，面向自然语言 shell 和未来 GUI 解释当前模式、推荐 action、reason、next_command、safety 和是否需要人类显式确认。
+- review 解释会从 ProjectView recovery 的 `recommended_action` 派生 `recommended_action_id/safety/requires_explicit_user`，让 GUI 可以在同一响应中展示“为什么推荐这个 action”。
+- apply_action 解释会标记 `safe_apply_completed` 并返回 `result_count`，说明 safe apply 已经创建多少 approval 记录。
+- 扩展 chat 相关测试，先验证 plan/review/apply_action 响应缺少 `leader_explanation` 的红灯，再实现只读解释 helper。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 `leader_explanation` 字段和边界。
+- 保持安全边界：本轮只扩展 chat 响应解释层，不新增自动 dispatch、不发送 tmux 输入、不扩大 safe apply 白名单。
+- 本地验证：先运行 chat 四条目标测试看到 `KeyError: 'leader_explanation'` 红灯；实现后同一测试 4 项通过，`tests/test_leader_cli.py` 40 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 78 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 review 响应的 `leader_explanation.recommended_action_id` 等于 `leader_action.action_id`，`safety=safe_apply`，`next_command` 与响应顶层一致。
+
 ### Current - Surface leader action queue in Leader chat responses
 
 - `agentdeck leader chat` 的 plan/review/apply_action 三种响应现在都会在顶层返回 `leader_actions`，并保持它与同次响应的 `project_view.leader_actions` 一致。

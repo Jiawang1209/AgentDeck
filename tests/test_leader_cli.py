@@ -168,6 +168,12 @@ def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_
     assert payload["project_view"]["plans"]["count"] == 0
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
     assert payload["leader_actions"]["count"] == 0
+    assert payload["leader_explanation"]["mode"] == "plan"
+    assert payload["leader_explanation"]["safety"] == "plan_only"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert payload["leader_explanation"]["recommended_action_id"] is None
+    assert payload["leader_explanation"]["next_command"] == payload["next_command"]
+    assert "approval" in payload["leader_explanation"]["summary"]
     assert payload["turn_id"].startswith("cht_")
     assert payload["plan_id"].startswith("pln_")
     assert payload["next_command"] == f"agentdeck approval create-from-plan --plan-id {payload['plan_id']}"
@@ -239,6 +245,14 @@ def test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan(tmp_pa
     assert payload["leader_actions"]["recommended_action_id"] == payload["leader_action"]["action_id"]
     assert payload["leader_actions"]["items"][0]["action_id"] == payload["leader_action"]["action_id"]
     assert payload["leader_actions"]["items"][0]["is_recommended"] is True
+    assert payload["leader_explanation"]["mode"] == "review"
+    assert payload["leader_explanation"]["recommended_action_id"] == payload["leader_action"]["action_id"]
+    assert payload["leader_explanation"]["action_kind"] == "dispatch_approved"
+    assert payload["leader_explanation"]["action_status"] == "pending"
+    assert payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert payload["leader_explanation"]["next_command"] == payload["next_command"]
+    assert payload["leader_explanation"]["reason"] == payload["review"]["reason"]
 
     state = StateStore(root).load()
     assert state["chat_turns"][0]["turn_id"] == payload["turn_id"]
@@ -286,6 +300,14 @@ def test_leader_chat_persists_create_approvals_action_for_existing_plan(tmp_path
     assert payload["leader_actions"]["recommended_action_id"] == payload["leader_action"]["action_id"]
     assert payload["leader_actions"]["items"][0]["action_id"] == payload["leader_action"]["action_id"]
     assert payload["leader_actions"]["items"][0]["is_recommended"] is True
+    assert payload["leader_explanation"]["mode"] == "review"
+    assert payload["leader_explanation"]["recommended_action_id"] == payload["leader_action"]["action_id"]
+    assert payload["leader_explanation"]["action_kind"] == "create_approvals"
+    assert payload["leader_explanation"]["action_status"] == "pending"
+    assert payload["leader_explanation"]["safety"] == "safe_apply"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["leader_explanation"]["next_command"] == payload["next_command"]
+    assert payload["leader_explanation"]["reason"] == payload["review"]["reason"]
 
     state = StateStore(root).load()
     assert state["chat_turns"][0]["action_id"] == payload["leader_action"]["action_id"]
@@ -620,6 +642,14 @@ def test_leader_chat_applies_create_approvals_action_when_explicitly_requested(t
     assert payload["leader_actions"]["items"][0]["action_id"] == action_id
     assert payload["leader_actions"]["items"][0]["status"] == "applied"
     assert payload["leader_actions"]["items"][0]["is_recommended"] is False
+    assert payload["leader_explanation"]["mode"] == "apply_action"
+    assert payload["leader_explanation"]["recommended_action_id"] is None
+    assert payload["leader_explanation"]["action_kind"] == "create_approvals"
+    assert payload["leader_explanation"]["action_status"] == "applied"
+    assert payload["leader_explanation"]["safety"] == "safe_apply_completed"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["leader_explanation"]["next_command"] is None
+    assert payload["leader_explanation"]["result_count"] == 3
     assert payload["result"]["count"] == 3
 
     state = StateStore(root).load()

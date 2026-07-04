@@ -18,6 +18,8 @@ Leader decision commands use the same validation gate before they plan from chat
 
 `agentdeck leader chat` responses expose top-level `leader_actions` as a convenience copy of the embedded `project_view.leader_actions`. Natural-language shells and GUI clients can render the action queue from one chat response while still treating ProjectView as the source of truth.
 
+They also expose a top-level `leader_explanation` block. This is not a second state source; it is a GUI-ready explanation derived from the same ProjectView, review, action, and result payloads.
+
 ## Top-Level Shape
 
 ```json
@@ -189,6 +191,24 @@ ProjectView `leader_actions` and `agentdeck leader actions` both return a top-le
 GUI clients can use `action_id` and `action_kind` to deep-link from a chat turn to `leader_actions.items[]`.
 
 Live `agentdeck leader chat` responses also include top-level `leader_actions`, identical to `project_view.leader_actions`, so a chat surface can render the current action queue without issuing a separate status call.
+
+Live chat responses include `leader_explanation`:
+
+```json
+{
+  "mode": "review",
+  "summary": "Leader recommends create_approvals because plan has no approval records.",
+  "reason": "plan has no approval records",
+  "next_command": "agentdeck leader apply-action --action-id act_xxx",
+  "recommended_action_id": "act_xxx",
+  "action_kind": "create_approvals",
+  "action_status": "pending",
+  "safety": "safe_apply",
+  "requires_explicit_user": false
+}
+```
+
+For plan creation, `safety` is `plan_only` and `recommended_action_id` is `null`. For explicit safe apply, `safety` is `safe_apply_completed` and `result_count` records the number of approval records created.
 
 ## Inbox
 

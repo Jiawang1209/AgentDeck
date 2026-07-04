@@ -700,6 +700,65 @@ def _chat_apply_action_id(message: str) -> str | None:
     return None
 
 
+def _leader_chat_explanation(
+    mode: str,
+    *,
+    next_command: object,
+    project_view: dict[str, object],
+    leader_action: dict[str, object] | None = None,
+    review: dict[str, object] | None = None,
+    result: dict[str, object] | None = None,
+) -> dict[str, object]:
+    recovery = project_view.get("recovery")
+    recovery_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+    action_kind = leader_action.get("kind") if isinstance(leader_action, dict) else None
+    action_status = leader_action.get("status") if isinstance(leader_action, dict) else None
+    reason = None
+    if isinstance(review, dict):
+        reason = review.get("reason")
+    if reason is None and isinstance(leader_action, dict):
+        reason = leader_action.get("reason")
+    if mode == "plan":
+        return {
+            "mode": mode,
+            "summary": "Leader created a plan-only record; run the next approval command before any dispatch.",
+            "reason": "no existing plan was available for review",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": None,
+            "action_status": None,
+            "safety": "plan_only",
+            "requires_explicit_user": True,
+        }
+    if mode == "apply_action":
+        result_count = result.get("count") if isinstance(result, dict) else None
+        return {
+            "mode": mode,
+            "summary": f"Leader applied safe action {action_kind} and created {result_count} approval records.",
+            "reason": reason,
+            "next_command": None,
+            "recommended_action_id": None,
+            "action_kind": action_kind,
+            "action_status": action_status,
+            "safety": "safe_apply_completed",
+            "requires_explicit_user": False,
+            "result_count": result_count,
+        }
+    return {
+        "mode": mode,
+        "summary": f"Leader recommends {action_kind} because {reason}.",
+        "reason": reason,
+        "next_command": next_command,
+        "recommended_action_id": recovery_action.get("target_id") if isinstance(recovery_action, dict) else None,
+        "action_kind": action_kind,
+        "action_status": action_status,
+        "safety": recovery_action.get("safety") if isinstance(recovery_action, dict) else None,
+        "requires_explicit_user": recovery_action.get("requires_explicit_user")
+        if isinstance(recovery_action, dict)
+        else None,
+    }
+
+
 def leader_chat_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -762,6 +821,13 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 "message": args.message,
                 "project_view": refreshed_project_view,
                 "leader_actions": refreshed_project_view.get("leader_actions"),
+                "leader_explanation": _leader_chat_explanation(
+                    "apply_action",
+                    next_command=None,
+                    project_view=refreshed_project_view,
+                    leader_action=action_detail,
+                    result=result,
+                ),
                 "plan_id": action.get("plan_id"),
                 "leader_action": action_detail,
                 "result": result,
@@ -797,6 +863,13 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "message": args.message,
             "project_view": project_view,
             "leader_actions": project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "review",
+                next_command=next_command,
+                project_view=project_view,
+                leader_action=action_detail,
+                review=review,
+            ),
             "plan_id": plan_id,
             "review": review,
             "recovery": recovery,
@@ -847,6 +920,11 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         "message": args.message,
         "project_view": project_view,
         "leader_actions": project_view.get("leader_actions"),
+        "leader_explanation": _leader_chat_explanation(
+            "plan",
+            next_command=next_command,
+            project_view=project_view,
+        ),
         "plan_id": record["plan_id"],
         "status": record["status"],
         "provider": record["provider"],
