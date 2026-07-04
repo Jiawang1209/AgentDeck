@@ -405,6 +405,35 @@ def _validate_project_view_summary_items(
             errors.append(f"missing {label} item field: {field}")
 
 
+def validate_continue_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in CONTINUE_CARD_FIELDS:
+        if field not in payload:
+            errors.append(f"missing continue_card field: {field}")
+    if payload.get("mode") != "continue":
+        errors.append(f"continue_card mode must be continue, got {payload.get('mode')}")
+    if payload.get("project_view_schema_version") != PROJECT_VIEW_SCHEMA_VERSION:
+        errors.append(
+            "project_view_schema_version mismatch: "
+            f"expected {PROJECT_VIEW_SCHEMA_VERSION}, got {payload.get('project_view_schema_version')}"
+        )
+    recommended_action = payload.get("recommended_action")
+    if isinstance(recommended_action, dict):
+        for field in PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS:
+            if field not in recommended_action:
+                errors.append(f"missing recommended_action field: {field}")
+    elif "recommended_action" in payload and recommended_action is not None:
+        errors.append("recommended_action must be an object")
+    pending = payload.get("pending")
+    if isinstance(pending, dict):
+        for field in PROJECT_VIEW_RECOVERY_PENDING_FIELDS:
+            if field not in pending:
+                errors.append(f"missing pending field: {field}")
+    elif "pending" in payload and pending is not None:
+        errors.append("pending must be an object")
+    return {"ok": not errors, "errors": errors}
+
+
 def validate_trace_contract(payload: dict[str, object]) -> dict[str, object]:
     errors: list[str] = []
     schema_version = payload.get("schema_version")

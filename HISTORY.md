@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Validate continue recovery card output
+
+- 新增 `validate_continue_contract()`，用于校验 `agentdeck continue` 输出是否满足 `CONTINUE_CARD_FIELDS`、`mode=continue`、ProjectView schema version、recommended_action 和 pending 字段契约。
+- `agentdeck continue` 现在在输出 JSON 前先通过 ProjectView contract 守门，再通过 continue card contract 自校验；校验失败时返回非 0 且不输出半坏恢复卡片。
+- 新增 CLI 测试，模拟 `_continue_card_payload()` 丢失 `next_command`，确认命令报错 `Continue card contract validation failed` 且 stdout 为空。
+- 更新 `docs/contracts/continue-card-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 continue card 输出前必须自校验。
+- 保持安全边界：本轮只增加恢复卡片自校验，不改变 `agentdeck continue` 的只读语义，不创建 action、不 apply、不 dispatch、不发送 tmux 输入。
+- 本地验证：先运行目标测试看到 `validate_continue_contract` 缺失的红灯；实现后目标测试 3 项通过，continue/contract 相关测试 27 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 106 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `agentdeck continue` 输出 `mode=continue/status=action_required`，且 `validate_continue_contract()` 返回 ok。
+
 ### Current - Discover continue recovery card contract
 
 - 新增 `agentdeck contract continue`，用于只读发现顶层 `agentdeck continue` 的恢复卡片契约。

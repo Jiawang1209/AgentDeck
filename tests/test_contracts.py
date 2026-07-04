@@ -33,6 +33,7 @@ from agentdeck.contracts import (
     trace_contract_payload,
     trace_contract_response,
     trace_example,
+    validate_continue_contract,
     validate_leader_chat_contract,
     validate_project_view_contract,
     validate_trace_contract,
@@ -236,6 +237,21 @@ def test_continue_contract_response_includes_example_without_drift(tmp_path: Pat
     assert example["mode"] == "continue"
     assert example["project_view_command"] == "agentdeck status"
     assert example["action_detail_command"] == "agentdeck leader action --action-id act_example"
+
+
+def test_validate_continue_contract_accepts_example() -> None:
+    result = validate_continue_contract(continue_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_continue_contract_reports_missing_field() -> None:
+    payload = continue_example()
+    del payload["next_command"]
+
+    result = validate_continue_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing continue_card field: next_command"]}
 
 
 def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: Path) -> None:

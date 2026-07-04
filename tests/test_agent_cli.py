@@ -157,6 +157,26 @@ def test_continue_refuses_invalid_project_view_before_printing(tmp_path, monkeyp
     assert "missing top-level field: recovery" in captured.err
 
 
+def test_continue_refuses_invalid_continue_card_before_printing(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    original_continue_card = cli._continue_card_payload
+
+    def broken_continue_card(project_view, store):
+        payload = original_continue_card(project_view, store)
+        payload.pop("next_command", None)
+        return payload
+
+    monkeypatch.setattr(cli, "_continue_card_payload", broken_continue_card)
+
+    exit_code = cli.main(["continue"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "Continue card contract validation failed" in captured.err
+    assert "missing continue_card field: next_command" in captured.err
+
+
 def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
     exit_code = cli.main(["contract", "project-view"])
 

@@ -2,7 +2,7 @@
 
 `agentdeck continue` is the read-only recovery card entrypoint for CLI users, natural-language shells, and future GUI clients.
 
-It does not replace ProjectView. It validates `agentdeck status` ProjectView first, then projects `status.recovery` into a smaller next-step card.
+It does not replace ProjectView. It validates `agentdeck status` ProjectView first, projects `status.recovery` into a smaller next-step card, then validates that card before printing JSON.
 
 Use `agentdeck contract continue` to discover this contract:
 
@@ -45,5 +45,6 @@ Use `agentdeck contract continue --example` to include a stable GUI-ready contin
 - The contract command is read-only.
 - `agentdeck continue` is read-only.
 - `agentdeck continue` must pass ProjectView validation before printing JSON.
+- `agentdeck continue` must pass `validate_continue_contract()` before printing JSON.
 - It must not create plans, create leader actions, apply actions, dispatch work, capture replies, ack inbox items, or send tmux input.
 - GUI clients should use `next_command` and `recommended_action.safety` to render an affordance, not to auto-run runtime work.

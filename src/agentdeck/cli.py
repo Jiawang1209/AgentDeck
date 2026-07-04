@@ -12,6 +12,7 @@ from .contracts import (
     leader_chat_contract_response,
     project_view_contract_response,
     trace_contract_response,
+    validate_continue_contract,
     validate_leader_chat_contract,
     validate_project_view_contract,
     validate_trace_contract,
@@ -171,7 +172,14 @@ def continue_command(_args: argparse.Namespace) -> int:
     project_view = _project_view_payload_or_error(config, store)
     if project_view is None:
         return 1
-    _print_json(_continue_card_payload(project_view, store))
+    payload = _continue_card_payload(project_view, store)
+    validation = validate_continue_contract(payload)
+    if not validation["ok"]:
+        print("Continue card contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
 
 
