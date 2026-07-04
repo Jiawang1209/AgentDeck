@@ -241,6 +241,8 @@ agentdeck plan status --plan-id pln_xxx
 
 `leader chat` 是自然语言入口 MVP。它会先读取 `agentdeck status` 的 ProjectView：如果当前还没有 plan，就把 message 当作目标创建 plan-only 记录；如果已有 plan，就 review 最新 plan、持久化或复用一条 `leader_actions[]` 建议，并返回 `leader_action` 详情与下一条建议命令。`leader_action` 包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，方便 GUI 或对话层直接展示执行按钮与阻塞原因。每次 chat turn 都会写入 `.agentdeck/state/state.json` 的 `chat_turns[]`，并可通过 `leader chat-history` 查看；review turn 会记录 action_id/action_kind。它不会创建 approval、不会 dispatch、不会发送 tmux 输入。
 
+当人类明确输入 `agentdeck leader chat --message "apply action act_xxx"` 或 `--message "/apply-action act_xxx"` 时，chat 会复用 `leader apply-action` 的安全白名单。当前只会应用 `create_approvals`，并会拒绝 dispatch/capture 等 runtime action。
+
 `plan list` 返回计划摘要，适合给自然语言入口或 GUI 做列表视图；`plan show` 返回完整计划，适合审批前人工检查；`plan status` 汇总每个 step 的 approval 状态、message_id、attempt_id 和 job_id，适合恢复任务进度。
 
 `leader review` 使用本地 deterministic 规则读取 plan status 和 replies，输出下一步建议：`dispatch_approved`、`wait_for_reply`、`summarize` 或 `wait_for_approval`。后续接入真实 Leader LLM 时应复用该输出结构。

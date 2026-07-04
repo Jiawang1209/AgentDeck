@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add safe Leader chat action apply
+
+- 新增对话式显式确认入口：`agentdeck leader chat --message "apply action <action_id>"`，也支持 `/apply-action <action_id>` 和中文 `应用 action <action_id>`。
+- chat apply 复用现有 `StateStore.apply_leader_action()` 安全白名单，当前只允许应用 `create_approvals`，会创建 approvals 并把 action 标记为 `applied`。
+- dispatch/capture 等 runtime action 仍会被拒绝，并返回 `leader action requires explicit command: <action_id>`；不会发送 tmux 输入、不会创建 message/job。
+- 成功 apply 会写入 `chat_turns[]` 的 `apply_action` turn，并追加 `leader_action_applied` 与 `leader_chat_turn` 事件。
+- 扩展 `tests/test_leader_cli.py`，覆盖 chat apply create_approvals 成功，以及 chat apply dispatch_approved 被拒绝。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 chat apply 的明确格式和安全边界。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_applies_create_approvals_action_when_explicitly_requested tests/test_leader_cli.py::test_leader_chat_refuses_runtime_action_apply_request -q` 看到 chat 把 apply 文本当普通 review；实现后同一测试与原有 apply-action 安全边界测试 4 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 56 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader chat --message "apply action <id>"` 输出 `mode=apply_action`、action 标记 applied、创建 3 个 approvals，messages/jobs 仍为 0。
+
 ### Current - Return actionable Leader chat action detail
 
 - `agentdeck leader chat --message <text>` 在 review 模式下返回的 `leader_action` 从轻量摘要升级为 action detail。

@@ -622,11 +622,81 @@ def _next_command_for_review(review: dict[str, object]) -> str | None:
     return None
 
 
+def _chat_apply_action_id(message: str) -> str | None:
+    stripped = message.strip()
+    lowered = stripped.lower()
+    for prefix in ["/apply-action ", "apply action "]:
+        if lowered.startswith(prefix):
+            return stripped[len(prefix) :].strip()
+    for prefix in ["应用 action ", "应用action "]:
+        if stripped.startswith(prefix):
+            return stripped[len(prefix) :].strip()
+    return None
+
+
 def leader_chat_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
     project_view = asdict(store.project_view(config))
+    apply_action_id = _chat_apply_action_id(args.message)
+    if apply_action_id:
+        try:
+            applied = store.apply_leader_action(apply_action_id)
+        except KeyError:
+            print(f"unknown leader action: {apply_action_id}", file=sys.stderr)
+            return 1
+        except (PermissionError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        action = applied["action"]
+        result = applied["result"]
+        action_detail = store.leader_action_detail(str(action["action_id"]))
+        turn = store.record_chat_turn(
+            mode="apply_action",
+            message=args.message,
+            plan_id=str(action.get("plan_id")),
+            next_command=None,
+            review=None,
+            action_id=str(action["action_id"]),
+            action_kind=str(action["kind"]),
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_action_applied",
+                {
+                    "action_id": action["action_id"],
+                    "kind": action["kind"],
+                    "plan_id": action["plan_id"],
+                    "result_count": result.get("count"),
+                },
+            )
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "apply_action",
+                    "plan_id": action.get("plan_id"),
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        _print_json(
+            {
+                "ok": True,
+                "turn_id": turn["turn_id"],
+                "mode": "apply_action",
+                "message": args.message,
+                "project_view": asdict(store.project_view(config)),
+                "plan_id": action.get("plan_id"),
+                "leader_action": action_detail,
+                "result": result,
+            }
+        )
+        return 0
+
     plans = store.list_plans()
     if plans:
         latest_plan = plans[-1]

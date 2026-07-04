@@ -484,6 +484,39 @@ def test_leader_apply_action_creates_approvals_and_marks_action_applied(tmp_path
     assert '"event_type": "leader_action_applied"' in events
 
 
+def test_leader_chat_applies_create_approvals_action_when_explicitly_requested(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "对话应用 action"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["leader", "next", "--plan-id", plan_id])
+    action_id = json.loads(capsys.readouterr().out)["action_id"]
+
+    exit_code = cli.main(["leader", "chat", "--message", f"apply action {action_id}"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "apply_action"
+    assert payload["message"] == f"apply action {action_id}"
+    assert payload["leader_action"]["action_id"] == action_id
+    assert payload["leader_action"]["status"] == "applied"
+    assert payload["leader_action"]["can_apply"] is False
+    assert payload["leader_action"]["apply_blocker"] == f"leader action is not pending: {action_id}"
+    assert payload["result"]["count"] == 3
+
+    state = StateStore(root).load()
+    assert len(state["approvals"]) == 3
+    assert state["leader_actions"][0]["status"] == "applied"
+    assert state["chat_turns"][0]["mode"] == "apply_action"
+    assert state["chat_turns"][0]["action_id"] == action_id
+    assert state["chat_turns"][0]["action_kind"] == "create_approvals"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "leader_action_applied"' in events
+    assert '"event_type": "leader_chat_turn"' in events
+
+
 def test_leader_apply_action_rejects_already_applied_action(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "重复应用"])
@@ -511,6 +544,28 @@ def test_leader_apply_action_refuses_dispatch_action(tmp_path, monkeypatch, caps
     action_id = json.loads(capsys.readouterr().out)["action_id"]
 
     exit_code = cli.main(["leader", "apply-action", "--action-id", action_id])
+
+    assert exit_code == 1
+    assert f"leader action requires explicit command: {action_id}" in capsys.readouterr().err
+    state = StateStore(root).load()
+    assert state["leader_actions"][0]["status"] == "pending"
+    assert state["approvals"][0]["status"] == "approved"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
+def test_leader_chat_refuses_runtime_action_apply_request(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "对话不能自动 dispatch"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    cli.main(["leader", "next", "--plan-id", plan_id])
+    action_id = json.loads(capsys.readouterr().out)["action_id"]
+
+    exit_code = cli.main(["leader", "chat", "--message", f"apply action {action_id}"])
 
     assert exit_code == 1
     assert f"leader action requires explicit command: {action_id}" in capsys.readouterr().err
