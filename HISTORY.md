@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Surface leader action queue in Leader chat responses
+
+- `agentdeck leader chat` 的 plan/review/apply_action 三种响应现在都会在顶层返回 `leader_actions`，并保持它与同次响应的 `project_view.leader_actions` 一致。
+- 自然语言入口和未来 GUI 可以从一次 chat 响应直接渲染 action queue、推荐 action、apply 按钮和 blocker，不需要额外调用 `agentdeck status` 或重新解析 state。
+- 扩展 chat 相关测试，先验证 plan/review/apply_action 响应缺少顶层 `leader_actions` 的红灯，再实现最小 payload 映射。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 chat 响应里的 action queue 契约。
+- 保持安全边界：本轮只扩展只读 chat payload，不应用新的 action 类型、不自动 dispatch、不发送 tmux 输入。
+- 本地验证：先运行 chat 四条目标测试看到 `KeyError: 'leader_actions'` 红灯；实现后同一测试 4 项通过，`tests/test_leader_cli.py` 40 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 78 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 review 响应 `leader_actions == project_view.leader_actions`、推荐 action id 存在、`items[0].is_recommended=True`。
+
 ### Current - Validate ProjectView leader action recommendation fields
 
 - 新增 `PROJECT_VIEW_LEADER_ACTIONS_FIELDS` 和 `PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS`，把 ProjectView leader action 队列字段纳入可复用契约定义。

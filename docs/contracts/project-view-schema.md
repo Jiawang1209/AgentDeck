@@ -16,6 +16,8 @@ Use `validate_project_view_contract(payload)` from `src/agentdeck/contracts.py` 
 
 Leader decision commands use the same validation gate before they plan from chat, review a plan, persist a next action, apply a safe action, or embed ProjectView in a response. If the ProjectView contract is invalid, these commands exit non-zero before creating plans, chat turns, or leader actions.
 
+`agentdeck leader chat` responses expose top-level `leader_actions` as a convenience copy of the embedded `project_view.leader_actions`. Natural-language shells and GUI clients can render the action queue from one chat response while still treating ProjectView as the source of truth.
+
 ## Top-Level Shape
 
 ```json
@@ -185,6 +187,8 @@ ProjectView `leader_actions` and `agentdeck leader actions` both return a top-le
 ```
 
 GUI clients can use `action_id` and `action_kind` to deep-link from a chat turn to `leader_actions.items[]`.
+
+Live `agentdeck leader chat` responses also include top-level `leader_actions`, identical to `project_view.leader_actions`, so a chat surface can render the current action queue without issuing a separate status call.
 
 ## Inbox
 
