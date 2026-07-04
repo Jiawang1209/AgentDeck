@@ -54,6 +54,9 @@ Use `agentdeck contract project-view --example` to include a stable GUI-ready Pr
 {
   "schema_version": "project-view/v1",
   "example": true,
+  "example_top_level_fields": [],
+  "example_recovery_fields": [],
+  "example_recommended_action_fields": [],
   "example_project_view": {
     "schema_version": "project-view/v1",
     "recovery": {
@@ -69,7 +72,7 @@ Use `agentdeck contract project-view --example` to include a stable GUI-ready Pr
 }
 ```
 
-The example fixture is deterministic and does not represent live project state.
+The example fixture is deterministic and does not represent live project state. The `example_*_fields` arrays are derived from the fixture and should match the discovery field lists; they exist to catch drift between discovery metadata, documentation, and the example payload.
 
 ## Agents
 

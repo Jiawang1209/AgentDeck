@@ -151,6 +151,12 @@ def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
     assert payload["schema_version"] == "project-view/v1"
     assert payload["example"] is True
     example = payload["example_project_view"]
+    assert payload["example_top_level_fields"] == payload["top_level_fields"]
+    assert set(payload["example_top_level_fields"]) == set(example)
+    assert payload["example_recovery_fields"] == payload["recovery_fields"]
+    assert set(payload["example_recovery_fields"]) == set(example["recovery"])
+    assert payload["example_recommended_action_fields"] == payload["recommended_action_fields"]
+    assert set(payload["example_recommended_action_fields"]) == set(example["recovery"]["recommended_action"])
     assert example["schema_version"] == "project-view/v1"
     assert example["runtime_backend"] == "tmux"
     assert example["agents"][0]["runtime"]["pane_id"] == "%1"

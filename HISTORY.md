@@ -4,6 +4,16 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView example drift guard
+
+- 扩展 `agentdeck contract project-view --example` 输出，新增 `example_top_level_fields`、`example_recovery_fields` 和 `example_recommended_action_fields`。
+- 这些字段从 `example_project_view` fixture 自身派生，并在测试中与 discovery 元数据字段列表比对，防止文档、discovery 和 example 三者漂移。
+- 扩展 `tests/test_agent_cli.py::test_contract_project_view_example_exports_gui_ready_status`，先验证缺少 `example_top_level_fields` 的红灯，再实现字段摘要；测试使用集合比较避免 JSON key 排序影响。
+- 更新 `docs/contracts/project-view-schema.md`，记录 `example_*_fields` 的 drift guard 语义。
+- 保持安全边界：本轮只增加只读契约元数据和测试护栏，不读取 live state、不修改 `.agentdeck/state`、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_project_view_example_exports_gui_ready_status -q` 看到缺少 `example_top_level_fields`；实现并修正 JSON key 顺序断言后同一测试 1 项通过，contract/status/leader 相关测试 38 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 63 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，非项目临时目录 smoke 确认 `example_top_level_fields`、`example_recovery_fields`、`example_recommended_action_fields` 分别与 discovery 字段列表一致。
+
 ### Current - Add ProjectView contract example fixture
 
 - 扩展只读命令 `agentdeck contract project-view --example`，在契约 discovery 输出中附带稳定的 GUI-ready ProjectView 示例。

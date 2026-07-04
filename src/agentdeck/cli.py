@@ -83,8 +83,12 @@ def contract_project_view_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "project-view-schema.md"
     payload = _project_view_contract_payload(contract_path)
     if args.example:
+        example = _example_project_view()
         payload["example"] = True
-        payload["example_project_view"] = _example_project_view()
+        payload["example_top_level_fields"] = list(example)
+        payload["example_recovery_fields"] = list(example["recovery"])
+        payload["example_recommended_action_fields"] = list(example["recovery"]["recommended_action"])
+        payload["example_project_view"] = example
     _print_json(payload)
     return 0
 
