@@ -5,7 +5,7 @@ from pathlib import Path
 
 from agentdeck import cli
 from agentdeck.config import write_default_config
-from agentdeck.contracts import project_view_contract_payload, project_view_contract_response
+from agentdeck.contracts import project_view_contract_payload, project_view_contract_response, validate_project_view_contract
 from agentdeck.state import StateStore
 
 
@@ -126,6 +126,7 @@ def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
     assert payload["example_recommended_action_fields"] == payload["recommended_action_fields"]
     assert set(payload["example_recommended_action_fields"]) == set(example["recovery"]["recommended_action"])
     assert example["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert validate_project_view_contract(example) == {"ok": True, "errors": []}
     assert example["runtime_backend"] == "tmux"
     assert example["agents"][0]["runtime"]["pane_id"] == "%1"
     assert example["leader_actions"]["items"][0]["can_apply"] is True
@@ -449,6 +450,7 @@ def test_status_matches_project_view_contract_for_gui_clients(tmp_path, monkeypa
     expected_action = {*project_view_contract_payload(contract_path)["recommended_action_fields"]}
     assert expected_action <= set(payload["recovery"]["recommended_action"])
     assert payload["recovery"]["recommended_action"]["target_id"] == "act_contract"
+    assert validate_project_view_contract(payload) == {"ok": True, "errors": []}
 
 
 def test_status_includes_recovery_summary(tmp_path, monkeypatch, capsys) -> None:

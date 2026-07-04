@@ -2,6 +2,19 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-05
+
+### Current - Add ProjectView contract validator
+
+- 新增 `agentdeck.contracts.validate_project_view_contract(payload)`，用于校验任意 ProjectView-like payload 是否满足 `project-view/v1` 基础契约。
+- validator 返回 `{"ok": bool, "errors": [...]}`，覆盖 schema_version、top-level fields、recovery fields 和非空 recommended_action fields。
+- 扩展 `tests/test_contracts.py`，先验证 validator 缺失的红灯，再覆盖 example 通过、缺少 top-level field、schema version mismatch 三类场景。
+- 扩展 `tests/test_agent_cli.py`，让 contract example 和真实 `agentdeck status` contract smoke 都复用 validator。
+- 更新 `docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 validator 作为 GUI、测试和外部集成的 v1 基础校验入口。
+- 保持安全边界：validator 只检查传入 payload，不读取 live state、不修改 `.agentdeck/state`、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_contracts.py -q` 看到 `validate_project_view_contract` 缺失；实现后 `tests/test_contracts.py` 7 项通过，validator 复用相关测试 9 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 71 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，模块 smoke 确认 example payload 校验通过、删除 recovery 后返回 `missing top-level field: recovery`。
+
 ## 2026-07-04
 
 ### Current - Add ProjectView field constants

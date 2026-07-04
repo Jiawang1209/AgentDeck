@@ -10,6 +10,8 @@ Reusable contract response, payload, and example fixture helpers live in `src/ag
 
 Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, and `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`.
 
+Use `validate_project_view_contract(payload)` from `src/agentdeck/contracts.py` to check any ProjectView-like payload against the v1 baseline contract.
+
 ## Top-Level Shape
 
 ```json

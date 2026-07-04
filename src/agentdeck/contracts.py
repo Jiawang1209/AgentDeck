@@ -70,6 +70,29 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
     return payload
 
 
+def validate_project_view_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    schema_version = payload.get("schema_version")
+    if schema_version != PROJECT_VIEW_SCHEMA_VERSION:
+        errors.append(f"schema_version mismatch: expected {PROJECT_VIEW_SCHEMA_VERSION}, got {schema_version}")
+    for field in PROJECT_VIEW_TOP_LEVEL_FIELDS:
+        if field not in payload:
+            errors.append(f"missing top-level field: {field}")
+    recovery = payload.get("recovery")
+    if isinstance(recovery, dict):
+        for field in PROJECT_VIEW_RECOVERY_FIELDS:
+            if field not in recovery:
+                errors.append(f"missing recovery field: {field}")
+        recommended_action = recovery.get("recommended_action")
+        if isinstance(recommended_action, dict):
+            for field in PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS:
+                if field not in recommended_action:
+                    errors.append(f"missing recommended_action field: {field}")
+    elif "recovery" in payload:
+        errors.append("recovery must be an object")
+    return {"ok": not errors, "errors": errors}
+
+
 def project_view_example() -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,

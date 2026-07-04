@@ -9,6 +9,7 @@ from agentdeck.contracts import (
     project_view_contract_payload,
     project_view_contract_response,
     project_view_example,
+    validate_project_view_contract,
 )
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
 
@@ -64,3 +65,30 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
     assert set(payload["example_recovery_fields"]) == set(example["recovery"])
     assert payload["example_recommended_action_fields"] == payload["recommended_action_fields"]
     assert set(payload["example_recommended_action_fields"]) == set(example["recovery"]["recommended_action"])
+
+
+def test_validate_project_view_contract_accepts_example() -> None:
+    result = validate_project_view_contract(project_view_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_project_view_contract_reports_missing_top_level_field() -> None:
+    payload = project_view_example()
+    del payload["recovery"]
+
+    result = validate_project_view_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing top-level field: recovery"]}
+
+
+def test_validate_project_view_contract_reports_schema_version_mismatch() -> None:
+    payload = project_view_example()
+    payload["schema_version"] = "project-view/v0"
+
+    result = validate_project_view_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["schema_version mismatch: expected project-view/v1, got project-view/v0"],
+    }
