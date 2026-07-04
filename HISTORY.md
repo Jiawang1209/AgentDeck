@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView contract example fixture
+
+- 扩展只读命令 `agentdeck contract project-view --example`，在契约 discovery 输出中附带稳定的 GUI-ready ProjectView 示例。
+- 示例包含 `schema_version`、tmux runtime agent、leader action、chat turn、recovery 和 `recommended_action`，使用固定 ID 方便 GUI 原型和自动化测试引用。
+- 默认 `agentdeck contract project-view` 输出保持 discovery 元数据，不附带示例。
+- 保持安全边界：example fixture 是确定性静态示例，不读取 live project state、不修改 `.agentdeck/state`、不发送 tmux 输入。
+- 扩展 `tests/test_agent_cli.py`，先验证 `--example` 未识别的红灯，再实现示例输出；同时确认默认 discovery 输出仍通过。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 `--example` 的 GUI 原型用途。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_project_view_example_exports_gui_ready_status -q` 看到 `--example` 未识别；实现后 contract 相关测试 2 项通过，`tests/test_agent_cli.py tests/test_leader_cli.py` 50 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 63 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，非项目临时目录 smoke 确认 `agentdeck contract project-view --example` 返回 `example=true`、`example_project_view.schema_version=project-view/v1` 和 `recommended_action.target_id=act_example`。
+
 ### Current - Add ProjectView contract discovery command
 
 - 新增只读命令 `agentdeck contract project-view`，用于 GUI 或外部集成发现 ProjectView 契约。

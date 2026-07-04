@@ -143,6 +143,30 @@ def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
     ]
 
 
+def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
+    exit_code = cli.main(["contract", "project-view", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == "project-view/v1"
+    assert payload["example"] is True
+    example = payload["example_project_view"]
+    assert example["schema_version"] == "project-view/v1"
+    assert example["runtime_backend"] == "tmux"
+    assert example["agents"][0]["runtime"]["pane_id"] == "%1"
+    assert example["leader_actions"]["items"][0]["can_apply"] is True
+    assert example["chat_turns"]["items"][0]["action_id"] == "act_example"
+    assert example["recovery"]["status"] == "action_required"
+    assert example["recovery"]["recommended_action"] == {
+        "label": "Apply safe Leader action",
+        "command": "agentdeck leader apply-action --action-id act_example",
+        "safety": "safe_apply",
+        "requires_explicit_user": False,
+        "source": "leader_action",
+        "target_id": "act_example",
+    }
+
+
 def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

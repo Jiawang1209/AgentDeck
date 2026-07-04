@@ -48,6 +48,29 @@ Use `agentdeck contract project-view` to discover this contract from tools or GU
 
 The discovery command is read-only. It does not require a project to be initialized and does not read or mutate `.agentdeck/state`.
 
+Use `agentdeck contract project-view --example` to include a stable GUI-ready ProjectView fixture:
+
+```json
+{
+  "schema_version": "project-view/v1",
+  "example": true,
+  "example_project_view": {
+    "schema_version": "project-view/v1",
+    "recovery": {
+      "status": "action_required",
+      "recommended_action": {
+        "label": "Apply safe Leader action",
+        "safety": "safe_apply",
+        "source": "leader_action",
+        "target_id": "act_example"
+      }
+    }
+  }
+}
+```
+
+The example fixture is deterministic and does not represent live project state.
+
 ## Agents
 
 `agents[]` combines static role configuration with runtime binding:
