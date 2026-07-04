@@ -213,13 +213,15 @@ agentdeck trace --id inb_xxx
 
 ## ProjectView and Status
 
-`agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、leader_errors、leader_actions、inbox 的轻量摘要。
+`agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、leader_errors、leader_actions、inbox、recovery 的轻量摘要。
 
 `status.inbox.heads` 会按 agent 暴露最早的 `pending` inbox item；没有待处理 item 的 agent 会返回 `null`。GUI 和 Leader chat loop 可以用它直接显示每个 agent 当前必须先处理或 ack 的 mailbox head。
 
 `status.leader_actions.items` 会包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，GUI 可以直接根据 ProjectView 渲染 action 按钮和阻塞提示。
 
 `status.chat_turns.items` 会包含 review/apply turn 关联的 `action_id` 和 `action_kind`，GUI 可以从自然语言对话历史直接跳转到对应 action。
+
+`status.recovery` 会汇总当前恢复入口：`status`、`reason`、`next_command`、pending 计数、可应用的 `leader_action`，以及最近审计事件摘要。GUI 和 Leader chat loop 可以优先用它判断“现在该继续什么”，而不需要散读 state 或自行推断。
 
 `agentdeck events --limit 20` 会读取 `.agentdeck/state/events.jsonl` 的最近事件，用于 GUI 审计时间线和调试恢复。
 

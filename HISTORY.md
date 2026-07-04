@@ -4,6 +4,16 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView recovery summary
+
+- 扩展 `agentdeck status` 的 ProjectView，新增只读 `recovery` 区块，集中暴露当前恢复状态、原因、建议下一条命令、pending 计数、可应用 leader action 和最近审计事件摘要。
+- `status.recovery` 优先使用 pending leader action 作为下一步，其次识别已批准待 dispatch、待审批和 pending inbox，最后返回 idle。
+- 保持安全边界：recovery 只从 state/events 派生，不修改 state、不创建 event、不发送 tmux 输入。
+- 扩展 `tests/test_agent_cli.py`，先验证缺少 `recovery` 的红灯，再实现 ProjectView recovery 契约。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，要求 GUI 和 Leader chat loop 优先用 `status.recovery` 判断“现在该继续什么”。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_includes_recovery_summary -q` 看到 `KeyError: 'recovery'`；实现后同一测试 1 项通过。
+- 完整验证：`conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_includes_project_state_summaries tests/test_agent_cli.py::test_status_includes_recovery_summary -q` 2 项通过，`conda run -n agentdeck pytest -q` 59 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `status.recovery.status=action_required`、`leader_action_kind=create_approvals`、`latest_event=leader_chat_turn`。
+
 ### Current - Add audit events tail command
 
 - 新增只读命令 `agentdeck events [--limit <n>]`，读取 `.agentdeck/state/events.jsonl` 的最近事件，默认返回最近 20 条。

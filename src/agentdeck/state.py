@@ -849,6 +849,82 @@ class StateStore:
             "created_at": head.get("created_at"),
         }
 
+    def _recovery_summary(self, state: dict[str, Any]) -> dict[str, Any]:
+        approvals = state.get("approvals", [])
+        leader_actions = state.get("leader_actions", [])
+        inbox_items = [item for items in state.get("inbox", {}).values() for item in items]
+        pending_leader_actions = [item for item in leader_actions if item.get("status") == "pending"]
+        pending_approvals = [item for item in approvals if item.get("status") == "pending"]
+        approved_approvals = [item for item in approvals if item.get("status") == "approved"]
+        pending_inbox_items = [item for item in inbox_items if item.get("status") == "pending"]
+        recent_events = [self._event_summary(event) for event in self.list_events(5)]
+        summary = {
+            "status": "idle",
+            "reason": "no pending recovery action",
+            "next_command": None,
+            "pending": {
+                "leader_actions": len(pending_leader_actions),
+                "approvals": len(pending_approvals),
+                "approved_approvals": len(approved_approvals),
+                "inbox_items": len(pending_inbox_items),
+            },
+            "leader_action": None,
+            "latest_event": recent_events[-1] if recent_events else None,
+            "recent_events": recent_events,
+        }
+        if pending_leader_actions:
+            action = pending_leader_actions[-1]
+            detail = self._leader_action_detail_fields(action)
+            summary.update(
+                {
+                    "status": "action_required",
+                    "reason": f"pending leader action: {action.get('kind')}",
+                    "next_command": detail.get("apply_command") or action.get("command"),
+                    "leader_action": {
+                        "action_id": action.get("action_id"),
+                        "kind": action.get("kind"),
+                        "command": action.get("command"),
+                        "can_apply": detail.get("can_apply"),
+                        "apply_command": detail.get("apply_command"),
+                        "apply_blocker": detail.get("apply_blocker"),
+                    },
+                }
+            )
+        elif approved_approvals:
+            approval_id = approved_approvals[0].get("approval_id")
+            summary.update(
+                {
+                    "status": "dispatch_ready",
+                    "reason": "approved approval is waiting for dispatch",
+                    "next_command": f"agentdeck approval dispatch --approval-id {approval_id}",
+                }
+            )
+        elif pending_approvals:
+            summary.update(
+                {
+                    "status": "approval_required",
+                    "reason": "pending approvals require human decision",
+                    "next_command": "agentdeck approval list",
+                }
+            )
+        elif pending_inbox_items:
+            summary.update(
+                {
+                    "status": "inbox_pending",
+                    "reason": "agent inbox has pending items",
+                    "next_command": "agentdeck status",
+                }
+            )
+        return summary
+
+    @staticmethod
+    def _event_summary(event: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "event_id": event.get("event_id"),
+            "event_type": event.get("event_type"),
+            "created_at": event.get("created_at"),
+        }
+
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
         bindings = state.get("agents", {})
@@ -891,6 +967,7 @@ class StateStore:
             leader_errors=self._leader_error_summaries(state.get("leader_errors", [])),
             leader_actions=self._leader_action_summaries(state.get("leader_actions", [])),
             inbox=self._inbox_summary(state.get("inbox", {})),
+            recovery=self._recovery_summary(state),
         )
 
 

@@ -355,6 +355,79 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
     }
 
 
+def test_status_includes_recovery_summary(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["approvals"] = [
+        {"approval_id": "apv_pending", "status": "pending"},
+        {"approval_id": "apv_approved", "status": "approved"},
+    ]
+    state["inbox"] = {
+        "planner": [{"inbox_id": "inb_pending", "status": "pending"}],
+        "coder": [{"inbox_id": "inb_acked", "status": "acked"}],
+    }
+    state["leader_actions"] = [
+        {
+            "action_id": "act_demo",
+            "kind": "create_approvals",
+            "status": "pending",
+            "requires_confirmation": True,
+            "plan_id": "pln_demo",
+            "approval_id": None,
+            "agent_id": None,
+            "message_id": None,
+            "command": "agentdeck approval create-from-plan --plan-id pln_demo",
+            "reason": "plan has no approval records",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    store.save(state)
+    store.append_event(cli.EventRecord.create("first_event", {"index": 1}))
+    store.append_event(cli.EventRecord.create("second_event", {"index": 2}))
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["recovery"] == {
+        "status": "action_required",
+        "reason": "pending leader action: create_approvals",
+        "next_command": "agentdeck leader apply-action --action-id act_demo",
+        "pending": {
+            "leader_actions": 1,
+            "approvals": 1,
+            "approved_approvals": 1,
+            "inbox_items": 1,
+        },
+        "leader_action": {
+            "action_id": "act_demo",
+            "kind": "create_approvals",
+            "command": "agentdeck approval create-from-plan --plan-id pln_demo",
+            "can_apply": True,
+            "apply_command": "agentdeck leader apply-action --action-id act_demo",
+            "apply_blocker": None,
+        },
+        "latest_event": {
+            "event_id": payload["recovery"]["latest_event"]["event_id"],
+            "event_type": "second_event",
+            "created_at": payload["recovery"]["latest_event"]["created_at"],
+        },
+        "recent_events": [
+            {
+                "event_id": payload["recovery"]["recent_events"][0]["event_id"],
+                "event_type": "first_event",
+                "created_at": payload["recovery"]["recent_events"][0]["created_at"],
+            },
+            {
+                "event_id": payload["recovery"]["recent_events"][1]["event_id"],
+                "event_type": "second_event",
+                "created_at": payload["recovery"]["recent_events"][1]["created_at"],
+            },
+        ],
+    }
+
+
 def test_agent_spawn_records_pane_binding_and_event(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     fake = FakeTmuxBackend()
