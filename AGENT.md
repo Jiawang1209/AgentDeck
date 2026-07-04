@@ -103,6 +103,7 @@ Worker 不应该：
 - `status.recovery` 是当前恢复入口，包含 status/reason/next_command/recommended_action/pending/leader_action/latest_event/recent_events，用来判断下一步该继续什么；`recommended_action` 可直接驱动 GUI 的下一步按钮或检查入口，并通过 target_id 关联 action、approval 或 inbox item。
 - 当没有 pending action、approval 或 inbox item 但存在 `leader_errors[]` 时，`status.recovery` 会返回 `status=leader_error`，并推荐 inspect 型 `agentdeck status`。
 - `status.recovery.pending` 包含 `leader_errors` 计数，供 GUI 统一展示 Leader 错误数量。
+- `agentdeck contract project-view` 通过 `recovery_pending_fields` 暴露 `recovery.pending` 必备字段；缺字段的 ProjectView 应被 validator 拒绝。
 - `status.chat_turns.items` 包含 action_id/action_kind，可把自然语言 turn 关联回 leader_actions。
 - `status.leader_actions` 包含 recommended_action_id，`items[]` 包含 can_apply/apply_command/explicit_command/apply_blocker/is_recommended，可直接驱动 GUI action 按钮、阻塞提示和当前推荐项高亮。
 - `status.inbox.heads` 按 agent 暴露最早 pending inbox item；GUI/Leader 应优先用它判断当前可处理或可 ack 的 mailbox head。

@@ -60,6 +60,7 @@ Use `agentdeck contract project-view` to discover this contract from tools or GU
   "contract_exists": true,
   "top_level_fields": [],
   "recovery_fields": [],
+  "recovery_pending_fields": [],
   "recommended_action_fields": [],
   "leader_actions_fields": [],
   "leader_action_item_fields": []
@@ -296,6 +297,8 @@ Only the earliest pending item is the actionable mailbox head for an agent. Use 
 `recommended_action` is descriptive metadata. It never executes by itself. GUI clients must still call explicit AgentDeck commands and preserve approval boundaries.
 
 `pending.leader_errors` counts stored Leader errors. It does not make an error executable; it helps GUI clients show unresolved Leader diagnostics alongside approvals, inbox items, and action queue work.
+
+`agentdeck contract project-view` exposes the required pending keys as `recovery_pending_fields`, and `validate_project_view_contract()` rejects ProjectView payloads missing any of them.
 
 ## Event Timeline
 

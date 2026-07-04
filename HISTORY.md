@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Discover ProjectView recovery pending fields
+
+- 新增 `PROJECT_VIEW_RECOVERY_PENDING_FIELDS`，把 `recovery.pending` 的必备字段纳入机器可发现契约。
+- `agentdeck contract project-view` 现在返回 `recovery_pending_fields`；`--example` 也会返回 `example_recovery_pending_fields`。
+- `validate_project_view_contract()` 现在会校验 `recovery.pending.leader_actions/approvals/approved_approvals/inbox_items/leader_errors`，缺字段会返回明确错误。
+- 扩展 contract 红灯测试，先验证缺少 `PROJECT_VIEW_RECOVERY_PENDING_FIELDS` 和删除 `pending.leader_errors` 未被 validator 保护，再实现 discovery/validator。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 `recovery_pending_fields`。
+- 保持安全边界：本轮只扩展只读 contract discovery 和 validator，不读取 live state、不修改 `.agentdeck/state`、不发送 tmux 输入。
+- 本地验证：先运行 ProjectView contract 目标测试看到缺少 `PROJECT_VIEW_RECOVERY_PENDING_FIELDS` 的 import 红灯；实现后目标测试 6 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 89 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时目录 smoke 确认 contract 输出 `recovery_pending_fields`、example 含 `pending.leader_errors`、删除该字段会被 validator 拒绝。
+
 ### Current - Count Leader errors in ProjectView recovery pending
 
 - `status.recovery.pending` 现在包含 `leader_errors` 计数，让 GUI 可以在统一恢复面展示还有多少 Leader 错误待检查。

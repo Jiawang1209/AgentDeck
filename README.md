@@ -233,6 +233,8 @@ agentdeck trace --id inb_xxx
 
 `status.recovery.pending` 也会包含 `leader_errors` 计数，让 GUI 可以在统一恢复面显示还有多少 Leader 错误待检查。
 
+`agentdeck contract project-view` 会通过 `recovery_pending_fields` 公开 `recovery.pending` 的必备字段，GUI 可以据此做字段兼容检查。
+
 `agentdeck events --limit 20` 会读取 `.agentdeck/state/events.jsonl` 的最近事件，用于 GUI 审计时间线和调试恢复。
 
 这些摘要和事件读取只用于观察和恢复，不修改 state、不发送 tmux 输入，也不包含完整长 prompt。GUI 或 Leader chat loop 应优先读取 `agentdeck status`，再按需调用 `plan show`、`plan status`、`trace` 或 `events` 获取细节。

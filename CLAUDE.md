@@ -119,6 +119,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck status` 的 `recovery` 是默认恢复入口，必须保持只读，并暴露 status/reason/next_command/recommended_action/pending/leader_action/latest_event/recent_events；`recommended_action` 必须说明 label/command/safety/requires_explicit_user/source/target_id。
 - 当没有 pending action、approval 或 inbox item 但存在 `leader_errors[]` 时，`agentdeck status.recovery` 必须返回 `status=leader_error` 和 inspect 型 recommended_action。
 - `agentdeck status.recovery.pending` 必须包含 `leader_errors` 计数，供 GUI 统一展示 Leader 错误数量。
+- `agentdeck contract project-view` 必须通过 `recovery_pending_fields` 暴露 `recovery.pending` 必备字段；validator 必须拒绝缺失字段的 ProjectView。
 - `agentdeck status` 的 `chat_turns.items` 必须保留 action_id/action_kind，供 GUI 从自然语言 turn 跳转到 action。
 - `agentdeck status` 的 `leader_actions` 必须保留 recommended_action_id，`items[]` 必须保留 can_apply/apply_command/explicit_command/apply_blocker/is_recommended，供 GUI 和对话层展示安全动作与当前推荐项。
 - `agentdeck status` 的 `inbox.heads` 是 mailbox head-only 语义的只读入口；显示或 ack inbox 前优先读取它。

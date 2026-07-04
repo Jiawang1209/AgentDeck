@@ -36,6 +36,14 @@ PROJECT_VIEW_RECOVERY_FIELDS = (
     "recent_events",
 )
 
+PROJECT_VIEW_RECOVERY_PENDING_FIELDS = (
+    "leader_actions",
+    "approvals",
+    "approved_approvals",
+    "inbox_items",
+    "leader_errors",
+)
+
 PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS = (
     "label",
     "command",
@@ -108,6 +116,7 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "top_level_fields": list(PROJECT_VIEW_TOP_LEVEL_FIELDS),
         "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
+        "recovery_pending_fields": list(PROJECT_VIEW_RECOVERY_PENDING_FIELDS),
         "recommended_action_fields": list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS),
         "leader_actions_fields": list(PROJECT_VIEW_LEADER_ACTIONS_FIELDS),
         "leader_action_item_fields": list(PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS),
@@ -121,6 +130,7 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example"] = True
         payload["example_top_level_fields"] = list(example)
         payload["example_recovery_fields"] = list(example["recovery"])
+        payload["example_recovery_pending_fields"] = list(example["recovery"]["pending"])
         payload["example_recommended_action_fields"] = list(example["recovery"]["recommended_action"])
         payload["example_leader_actions_fields"] = list(example["leader_actions"])
         payload["example_leader_action_item_fields"] = list(example["leader_actions"]["items"][0])
@@ -165,6 +175,13 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
         for field in PROJECT_VIEW_RECOVERY_FIELDS:
             if field not in recovery:
                 errors.append(f"missing recovery field: {field}")
+        pending = recovery.get("pending")
+        if isinstance(pending, dict):
+            for field in PROJECT_VIEW_RECOVERY_PENDING_FIELDS:
+                if field not in pending:
+                    errors.append(f"missing recovery pending field: {field}")
+        elif "pending" in recovery:
+            errors.append("recovery pending must be an object")
         recommended_action = recovery.get("recommended_action")
         if isinstance(recommended_action, dict):
             for field in PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS:

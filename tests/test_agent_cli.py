@@ -114,6 +114,7 @@ def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["contract_exists"] is True
     assert payload["top_level_fields"] == expected["top_level_fields"]
     assert payload["recovery_fields"] == expected["recovery_fields"]
+    assert payload["recovery_pending_fields"] == expected["recovery_pending_fields"]
     assert payload["recommended_action_fields"] == expected["recommended_action_fields"]
     assert payload["leader_actions_fields"] == expected["leader_actions_fields"]
     assert payload["leader_action_item_fields"] == expected["leader_action_item_fields"]
@@ -131,6 +132,8 @@ def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
     assert set(payload["example_top_level_fields"]) == set(example)
     assert payload["example_recovery_fields"] == payload["recovery_fields"]
     assert set(payload["example_recovery_fields"]) == set(example["recovery"])
+    assert payload["example_recovery_pending_fields"] == payload["recovery_pending_fields"]
+    assert set(payload["example_recovery_pending_fields"]) == set(example["recovery"]["pending"])
     assert payload["example_recommended_action_fields"] == payload["recommended_action_fields"]
     assert set(payload["example_recommended_action_fields"]) == set(example["recovery"]["recommended_action"])
     assert example["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION

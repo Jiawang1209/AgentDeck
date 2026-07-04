@@ -7,6 +7,7 @@ from agentdeck.contracts import (
     LEADER_CHAT_RESPONSE_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
     PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS,
+    PROJECT_VIEW_RECOVERY_PENDING_FIELDS,
     PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS,
     PROJECT_VIEW_RECOVERY_FIELDS,
     PROJECT_VIEW_TOP_LEVEL_FIELDS,
@@ -34,6 +35,7 @@ def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -
     assert payload["contract_exists"] is True
     assert payload["top_level_fields"] == list(PROJECT_VIEW_TOP_LEVEL_FIELDS)
     assert payload["recovery_fields"] == list(PROJECT_VIEW_RECOVERY_FIELDS)
+    assert payload["recovery_pending_fields"] == list(PROJECT_VIEW_RECOVERY_PENDING_FIELDS)
     assert payload["recommended_action_fields"] == list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS)
     assert payload["leader_actions_fields"] == list(PROJECT_VIEW_LEADER_ACTIONS_FIELDS)
     assert payload["leader_action_item_fields"] == list(PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS)
@@ -47,6 +49,7 @@ def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> No
     assert payload["schema_version"] == example["schema_version"]
     assert set(payload["top_level_fields"]) == set(example)
     assert set(payload["recovery_fields"]) == set(example["recovery"])
+    assert set(payload["recovery_pending_fields"]) == set(example["recovery"]["pending"])
     assert set(payload["recommended_action_fields"]) == set(example["recovery"]["recommended_action"])
     assert set(payload["leader_actions_fields"]) == set(example["leader_actions"])
     assert set(payload["leader_action_item_fields"]) == set(example["leader_actions"]["items"][0])
@@ -77,6 +80,8 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
     assert set(payload["example_top_level_fields"]) == set(example)
     assert payload["example_recovery_fields"] == payload["recovery_fields"]
     assert set(payload["example_recovery_fields"]) == set(example["recovery"])
+    assert payload["example_recovery_pending_fields"] == payload["recovery_pending_fields"]
+    assert set(payload["example_recovery_pending_fields"]) == set(example["recovery"]["pending"])
     assert payload["example_recommended_action_fields"] == payload["recommended_action_fields"]
     assert set(payload["example_recommended_action_fields"]) == set(example["recovery"]["recommended_action"])
     assert payload["example_leader_actions_fields"] == payload["leader_actions_fields"]
@@ -125,6 +130,18 @@ def test_validate_project_view_contract_reports_missing_leader_action_recommenda
             "missing leader_actions field: recommended_action_id",
             "missing leader_actions item field: is_recommended",
         ],
+    }
+
+
+def test_validate_project_view_contract_reports_missing_recovery_pending_field() -> None:
+    payload = project_view_example()
+    del payload["recovery"]["pending"]["leader_errors"]
+
+    result = validate_project_view_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing recovery pending field: leader_errors"],
     }
 
 
