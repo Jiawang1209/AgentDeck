@@ -4,6 +4,16 @@
 
 ## 2026-07-04
 
+### Current - Add recovery state matrix target IDs
+
+- 扩展 `status.recovery.recommended_action`，新增 `target_id` 字段，用于把 GUI 推荐动作关联回具体的 leader action、approval 或 inbox item。
+- 补齐 recovery 状态矩阵测试，覆盖 `action_required`、`dispatch_ready`、`approval_required`、`inbox_pending` 和 `idle`。
+- `dispatch_ready` 会指向 approved approval，`approval_required` 会指向 pending approval，`inbox_pending` 会指向 pending inbox head，`idle` 保持 `recommended_action=null`。
+- 保持安全边界：target_id 只是只读关联元数据，不执行动作、不修改 state、不发送 tmux 输入。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 `recommended_action.target_id` 的 GUI 契约。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_includes_recovery_summary tests/test_agent_cli.py::test_status_recovery_matrix_for_gui_actions -q` 看到 `target_id` 缺失；实现后同一测试 2 项通过，ProjectView/Leader 相关测试 38 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 60 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `recommended_action.target_id` 与 `leader_action.action_id` 匹配且 `safety=safe_apply`。
+
 ### Current - Add recovery recommended action metadata
 
 - 扩展 `agentdeck status` 的 `status.recovery`，新增 `recommended_action` 字段，为未来 GUI 提供可直接渲染的下一步动作元数据。

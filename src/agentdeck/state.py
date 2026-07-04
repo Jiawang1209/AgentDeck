@@ -888,6 +888,7 @@ class StateStore:
                         safety="safe_apply" if detail.get("can_apply") else "explicit_runtime",
                         requires_explicit_user=not bool(detail.get("can_apply")),
                         source="leader_action",
+                        target_id=action.get("action_id"),
                     ),
                     "leader_action": {
                         "action_id": action.get("action_id"),
@@ -913,6 +914,7 @@ class StateStore:
                         safety="explicit_runtime",
                         requires_explicit_user=True,
                         source="approval",
+                        target_id=approval_id,
                     ),
                 }
             )
@@ -928,6 +930,7 @@ class StateStore:
                         safety="inspect",
                         requires_explicit_user=False,
                         source="approval",
+                        target_id=pending_approvals[0].get("approval_id"),
                     ),
                 }
             )
@@ -943,6 +946,7 @@ class StateStore:
                         safety="inspect",
                         requires_explicit_user=False,
                         source="inbox",
+                        target_id=pending_inbox_items[0].get("inbox_id"),
                     ),
                 }
             )
@@ -955,6 +959,7 @@ class StateStore:
         safety: str,
         requires_explicit_user: bool,
         source: str,
+        target_id: object,
     ) -> dict[str, Any] | None:
         if not command:
             return None
@@ -964,6 +969,7 @@ class StateStore:
             "safety": safety,
             "requires_explicit_user": requires_explicit_user,
             "source": source,
+            "target_id": target_id,
         }
 
     @staticmethod

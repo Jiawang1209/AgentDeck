@@ -400,6 +400,7 @@ def test_status_includes_recovery_summary(tmp_path, monkeypatch, capsys) -> None
             "safety": "safe_apply",
             "requires_explicit_user": False,
             "source": "leader_action",
+            "target_id": "act_demo",
         },
         "pending": {
             "leader_actions": 1,
@@ -433,6 +434,74 @@ def test_status_includes_recovery_summary(tmp_path, monkeypatch, capsys) -> None
             },
         ],
     }
+
+
+def recovery_for_state(root: Path, state_patch: dict[str, object], capsys) -> dict[str, object]:
+    store = StateStore(root)
+    state = store.load()
+    state.update(state_patch)
+    store.save(state)
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    return json.loads(capsys.readouterr().out)["recovery"]
+
+
+def test_status_recovery_matrix_for_gui_actions(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    dispatch_recovery = recovery_for_state(
+        root,
+        {"approvals": [{"approval_id": "apv_ready", "status": "approved"}]},
+        capsys,
+    )
+    assert dispatch_recovery["status"] == "dispatch_ready"
+    assert dispatch_recovery["recommended_action"] == {
+        "label": "Dispatch approved task",
+        "command": "agentdeck approval dispatch --approval-id apv_ready",
+        "safety": "explicit_runtime",
+        "requires_explicit_user": True,
+        "source": "approval",
+        "target_id": "apv_ready",
+    }
+
+    approval_recovery = recovery_for_state(
+        root,
+        {"approvals": [{"approval_id": "apv_review", "status": "pending"}]},
+        capsys,
+    )
+    assert approval_recovery["status"] == "approval_required"
+    assert approval_recovery["recommended_action"] == {
+        "label": "Review approvals",
+        "command": "agentdeck approval list",
+        "safety": "inspect",
+        "requires_explicit_user": False,
+        "source": "approval",
+        "target_id": "apv_review",
+    }
+
+    inbox_recovery = recovery_for_state(
+        root,
+        {
+            "approvals": [],
+            "inbox": {"planner": [{"inbox_id": "inb_head", "status": "pending"}]},
+        },
+        capsys,
+    )
+    assert inbox_recovery["status"] == "inbox_pending"
+    assert inbox_recovery["recommended_action"] == {
+        "label": "Inspect pending inbox",
+        "command": "agentdeck status",
+        "safety": "inspect",
+        "requires_explicit_user": False,
+        "source": "inbox",
+        "target_id": "inb_head",
+    }
+
+    idle_recovery = recovery_for_state(root, {"inbox": {}}, capsys)
+    assert idle_recovery["status"] == "idle"
+    assert idle_recovery["recommended_action"] is None
 
 
 def test_agent_spawn_records_pane_binding_and_event(tmp_path, monkeypatch, capsys) -> None:
