@@ -266,7 +266,7 @@ def test_leader_chat_refuses_invalid_project_view_before_planning(tmp_path, monk
     assert state.get("inbox", {}) == {}
 
 
-def test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan(tmp_path, monkeypatch, capsys) -> None:
+def test_leader_chat_continue_returns_recovery_card_without_creating_action(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "已有计划"])
     plan_id = json.loads(capsys.readouterr().out)["plan_id"]
@@ -279,42 +279,43 @@ def test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan(tmp_pa
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["mode"] == "review"
+    assert payload["mode"] == "continue"
     assert payload["message"] == "继续"
     assert payload["turn_id"].startswith("cht_")
     assert payload["plan_id"] == plan_id
     assert payload["project_view"]["plans"]["count"] == 1
-    assert payload["review"]["next_action"] == "dispatch_approved"
+    assert payload["project_view"]["chat_turns"]["count"] == 1
+    assert payload["project_view"]["chat_turns"]["items"][0]["turn_id"] == payload["turn_id"]
+    assert payload["project_view"]["chat_turns"]["items"][0]["mode"] == "continue"
+    assert payload["review"] is None
+    assert payload["recovery"]["status"] == "dispatch_ready"
     assert payload["next_command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
-    assert payload["leader_action"]["kind"] == "dispatch_approved"
-    assert payload["leader_action"]["approval_id"] == approval_id
-    assert payload["leader_action"]["command"] == payload["next_command"]
-    assert payload["leader_action"]["can_apply"] is False
-    assert payload["leader_action"]["apply_command"] is None
-    assert payload["leader_action"]["explicit_command"] == payload["next_command"]
-    assert payload["leader_action"]["apply_blocker"] == "leader action requires explicit command"
+    assert payload["continue_card"]["status"] == "dispatch_ready"
+    assert payload["continue_card"]["next_command"] == payload["next_command"]
+    assert payload["continue_card"]["recommended_action"]["target_id"] == approval_id
+    assert payload["continue_card"]["recommended_action"]["safety"] == "explicit_runtime"
+    assert payload["continue_card"]["project_view_command"] == "agentdeck status"
+    assert payload["continue_card"]["leader_action"] is None
+    assert payload["leader_action"] is None
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
-    assert payload["leader_actions"]["recommended_action_id"] == payload["leader_action"]["action_id"]
-    assert payload["leader_actions"]["items"][0]["action_id"] == payload["leader_action"]["action_id"]
-    assert payload["leader_actions"]["items"][0]["is_recommended"] is True
-    assert payload["leader_explanation"]["mode"] == "review"
-    assert payload["leader_explanation"]["recommended_action_id"] == payload["leader_action"]["action_id"]
-    assert payload["leader_explanation"]["action_kind"] == "dispatch_approved"
-    assert payload["leader_explanation"]["action_status"] == "pending"
+    assert payload["leader_actions"]["count"] == 0
+    assert payload["leader_explanation"]["mode"] == "continue"
+    assert payload["leader_explanation"]["recommended_action_id"] == approval_id
+    assert payload["leader_explanation"]["action_kind"] == "approval"
+    assert payload["leader_explanation"]["action_status"] == "dispatch_ready"
     assert payload["leader_explanation"]["safety"] == "explicit_runtime"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
     assert payload["leader_explanation"]["next_command"] == payload["next_command"]
-    assert payload["leader_explanation"]["reason"] == payload["review"]["reason"]
+    assert payload["leader_explanation"]["reason"] == payload["recovery"]["reason"]
 
     state = StateStore(root).load()
     assert state["chat_turns"][0]["turn_id"] == payload["turn_id"]
-    assert state["chat_turns"][0]["mode"] == "review"
+    assert state["chat_turns"][0]["mode"] == "continue"
     assert state["chat_turns"][0]["plan_id"] == plan_id
-    assert state["chat_turns"][0]["review"]["next_action"] == "dispatch_approved"
-    assert state["chat_turns"][0]["action_id"] == payload["leader_action"]["action_id"]
-    assert state["chat_turns"][0]["action_kind"] == "dispatch_approved"
-    assert len(state["leader_actions"]) == 1
-    assert state["leader_actions"][0]["action_id"] == payload["leader_action"]["action_id"]
+    assert state["chat_turns"][0]["review"] is None
+    assert state["chat_turns"][0]["action_id"] is None
+    assert state["chat_turns"][0]["action_kind"] is None
+    assert state["leader_actions"] == []
     assert len(state["plans"]) == 1
     assert state["messages"] == []
     assert state["jobs"] == []
@@ -385,7 +386,7 @@ def test_leader_chat_history_lists_persisted_turns(tmp_path, monkeypatch, capsys
     payload = json.loads(capsys.readouterr().out)
     assert payload["count"] == 2
     assert [item["turn_id"] for item in payload["turns"]] == [first["turn_id"], second["turn_id"]]
-    assert [item["mode"] for item in payload["turns"]] == ["plan", "review"]
+    assert [item["mode"] for item in payload["turns"]] == ["plan", "continue"]
     assert [item["message"] for item in payload["turns"]] == ["第一轮", "继续"]
     assert payload["turns"][0]["next_command"] == first["next_command"]
     assert payload["turns"][1]["next_command"] == second["next_command"]

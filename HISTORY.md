@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Route Leader chat continue through recovery card
+
+- `agentdeck leader chat --message "继续"`、`"继续吧"` 和 `"/continue"` 现在进入 recovery-first 的 `mode=continue`。
+- continue-mode chat 会复用 `agentdeck continue` 的下一步卡片，返回 `continue_card`、`recovery`、`next_command` 和 `leader_explanation`，方便自然语言壳和 GUI 直接展示当前恢复入口。
+- continue-mode 只记录一条 `chat_turns[]`，不会调用 `leader_review()` 创建新的 `leader_actions[]`，不会 apply action、dispatch 或发送 tmux 输入。
+- 抽出 `_continue_card_payload()`，让顶层 `agentdeck continue` 和自然语言 continue 共用同一张 recovery card，避免两套字段漂移。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录自然语言“继续”的 recovery-first 边界。
+- 保持安全边界：本轮只调整自然语言 continue 的只读恢复解释，不改变普通 plan/review、显式 apply-action、审批、dispatch、trace 或 tmux 执行语义。
+- 本地验证：先运行目标测试看到 `"继续"` 仍返回 `mode=review` 的红灯；实现后目标测试 2 项通过，`tests/test_leader_cli.py tests/test_agent_cli.py` 67 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 99 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader chat --message "继续"` 返回 `mode=continue`、`continue_card.status=dispatch_ready`、`project_view.leader_actions.count=0`，且当前 chat turn 的 action_id 为 `null`。
+
 ### Current - Add read-only continue recovery card
 
 - 新增顶层命令 `agentdeck continue`，把 ProjectView `status.recovery` 整理成一张下一步卡片，返回 status、reason、next_command、recommended_action、pending、project_view_command，以及可选的 `leader_action` 详情和 `action_detail_command`。

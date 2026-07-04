@@ -135,13 +135,7 @@ def events_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def continue_command(_args: argparse.Namespace) -> int:
-    config, store, exit_code = _load_project_or_error()
-    if config is None or store is None:
-        return exit_code
-    project_view = _project_view_payload_or_error(config, store)
-    if project_view is None:
-        return 1
+def _continue_card_payload(project_view: dict[str, object], store: StateStore) -> dict[str, object]:
     recovery = project_view.get("recovery", {})
     recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
     target_id = recommended_action.get("target_id") if isinstance(recommended_action, dict) else None
@@ -154,21 +148,29 @@ def continue_command(_args: argparse.Namespace) -> int:
             action_detail_command = f"agentdeck leader action --action-id {target_id}"
         except KeyError:
             leader_action = None
-    _print_json(
-        {
-            "ok": True,
-            "mode": "continue",
-            "project_view_schema_version": project_view.get("schema_version"),
-            "project_view_command": "agentdeck status",
-            "status": recovery.get("status") if isinstance(recovery, dict) else None,
-            "reason": recovery.get("reason") if isinstance(recovery, dict) else None,
-            "next_command": recovery.get("next_command") if isinstance(recovery, dict) else None,
-            "recommended_action": recommended_action,
-            "pending": recovery.get("pending") if isinstance(recovery, dict) else None,
-            "leader_action": leader_action,
-            "action_detail_command": action_detail_command,
-        }
-    )
+    return {
+        "ok": True,
+        "mode": "continue",
+        "project_view_schema_version": project_view.get("schema_version"),
+        "project_view_command": "agentdeck status",
+        "status": recovery.get("status") if isinstance(recovery, dict) else None,
+        "reason": recovery.get("reason") if isinstance(recovery, dict) else None,
+        "next_command": recovery.get("next_command") if isinstance(recovery, dict) else None,
+        "recommended_action": recommended_action,
+        "pending": recovery.get("pending") if isinstance(recovery, dict) else None,
+        "leader_action": leader_action,
+        "action_detail_command": action_detail_command,
+    }
+
+
+def continue_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    _print_json(_continue_card_payload(project_view, store))
     return 0
 
 
@@ -801,6 +803,11 @@ def _chat_apply_action_id(message: str) -> str | None:
     return None
 
 
+def _is_continue_chat_message(message: str) -> bool:
+    normalized = message.strip().lower()
+    return normalized in {"继续", "继续吧", "/continue", "continue"}
+
+
 def _leader_chat_explanation(
     mode: str,
     *,
@@ -846,6 +853,20 @@ def _leader_chat_explanation(
             "safety": "safe_apply_completed",
             "requires_explicit_user": False,
             "result_count": result_count,
+        }
+    if mode == "continue":
+        return {
+            "mode": mode,
+            "summary": f"Leader is continuing from ProjectView recovery status {recovery.get('status') if isinstance(recovery, dict) else None}.",
+            "reason": recovery.get("reason") if isinstance(recovery, dict) else None,
+            "next_command": next_command,
+            "recommended_action_id": recovery_action.get("target_id") if isinstance(recovery_action, dict) else None,
+            "action_kind": recovery_action.get("source") if isinstance(recovery_action, dict) else None,
+            "action_status": recovery.get("status") if isinstance(recovery, dict) else None,
+            "safety": recovery_action.get("safety") if isinstance(recovery_action, dict) else None,
+            "requires_explicit_user": recovery_action.get("requires_explicit_user")
+            if isinstance(recovery_action, dict)
+            else None,
         }
     return {
         "mode": mode,
@@ -941,6 +962,60 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "next_command": next_command,
             "leader_action": action_detail,
             "result": result,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _is_continue_chat_message(args.message):
+        plans = store.list_plans()
+        plan_id = str(plans[-1]["plan_id"]) if plans else None
+        initial_recovery = project_view.get("recovery", {})
+        next_command = initial_recovery.get("next_command") if isinstance(initial_recovery, dict) else None
+        turn = store.record_chat_turn(
+            mode="continue",
+            message=args.message,
+            plan_id=plan_id,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind=None,
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "continue",
+                    "plan_id": plan_id,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        recovery = refreshed_project_view.get("recovery", {})
+        next_command = recovery.get("next_command") if isinstance(recovery, dict) else next_command
+        continue_card = _continue_card_payload(refreshed_project_view, store)
+        leader_action = continue_card.get("leader_action")
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "continue",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "continue",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                leader_action=leader_action if isinstance(leader_action, dict) else None,
+            ),
+            "plan_id": plan_id,
+            "review": None,
+            "recovery": recovery,
+            "next_command": next_command,
+            "leader_action": leader_action,
+            "continue_card": continue_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
