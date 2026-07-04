@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Discover Leader chat response contract
+
+- 新增 `agentdeck contract leader-chat` 只读 discovery 入口，返回自然语言 Leader chat 响应字段、`leader_explanation` 字段、契约文档路径和 ProjectView contract 关联。
+- 新增 `agentdeck contract leader-chat --example`，输出稳定 GUI-ready chat response fixture，包含 `project_view`、`leader_actions`、`leader_explanation`、`review`、`recovery` 和 `leader_action`。
+- 在 `src/agentdeck/contracts.py` 中新增 `LEADER_CHAT_RESPONSE_FIELDS`、`LEADER_CHAT_EXPLANATION_FIELDS`、`leader_chat_contract_payload()`、`leader_chat_contract_response()` 和 `leader_chat_example()`，让 CLI 与测试复用同一契约源。
+- 新增 `docs/contracts/leader-chat-schema.md`，说明 chat 响应不是第二状态源，`project_view` 仍是状态真相，`leader_explanation` 只是解释层。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录新 discovery 命令和接手约束。
+- 保持安全边界：本轮只新增只读 contract discovery 和稳定 example，不读取 live state、不修改 `.agentdeck/state`、不发送 tmux 输入。
+- 本地验证：先运行 leader-chat contract 目标测试看到缺少 `LEADER_CHAT_EXPLANATION_FIELDS` / `leader_chat_contract_payload` 的 import 红灯；实现后 contract 目标测试 5 项通过，contract 相关测试 13 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 83 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时目录 smoke 确认 `agentdeck contract leader-chat --example` 输出 contract_exists、explanation_fields、review 示例、`leader_actions == project_view.leader_actions`、`safety=safe_apply` 和 `recommended_action_id=act_example`。
+
 ### Current - Explain Leader chat recommendations
 
 - `agentdeck leader chat` 的 plan/review/apply_action 响应现在都会返回 `leader_explanation`，面向自然语言 shell 和未来 GUI 解释当前模式、推荐 action、reason、next_command、safety 和是否需要人类显式确认。

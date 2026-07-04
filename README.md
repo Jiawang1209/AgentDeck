@@ -43,6 +43,8 @@ agentdeck project init
 agentdeck status
 agentdeck contract project-view
 agentdeck contract project-view --example
+agentdeck contract leader-chat
+agentdeck contract leader-chat --example
 agentdeck agent list
 agentdeck agent spawn --agent planner
 agentdeck agent capture --agent planner --lines 200
@@ -217,7 +219,7 @@ agentdeck trace --id inb_xxx
 
 `agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、leader_errors、leader_actions、inbox、recovery 的轻量摘要。
 
-详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。GUI、自然语言入口和恢复工具应优先按该契约消费 `agentdeck status`，不要把 tmux pane 或 state 文件当成第二套状态源。
+详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，`--example` 会附带包含 `leader_explanation` 的稳定响应示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck status` 和 `agentdeck leader chat`，不要把 tmux pane 或 state 文件当成第二套状态源。
 
 `status.inbox.heads` 会按 agent 暴露最早的 `pending` inbox item；没有待处理 item 的 agent 会返回 `null`。GUI 和 Leader chat loop 可以用它直接显示每个 agent 当前必须先处理或 ack 的 mailbox head。
 
@@ -252,7 +254,7 @@ agentdeck plan status --plan-id pln_xxx
 
 当前默认使用本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。也可以显式使用 `--provider openai-compatible` 调用 OpenAI-compatible `/chat/completions` API。两种模式都不会 dispatch、不会发送 tmux 输入。
 
-`leader chat` 是自然语言入口 MVP。它会先读取并校验 `agentdeck status` 的 ProjectView：如果 ProjectView 不满足 `project-view/v1` 契约，chat 会返回非 0，且不会创建 plan 或 chat turn；如果当前还没有 plan，就把 message 当作目标创建 plan-only 记录；如果已有 plan，就 review 最新 plan、持久化或复用一条 `leader_actions[]` 建议，然后重新读取 ProjectView 的 `status.recovery` 作为恢复决策源。chat 输出会在顶层返回与 `project_view.leader_actions` 相同的 `leader_actions` 摘要，并返回 `leader_explanation` 说明当前模式、推荐 action、reason、next_command、safety 和是否需要人类显式确认；review 输出还会返回 `recovery`，并让 `next_command` 等于 `recovery.next_command`；`leader_action` 包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，方便 GUI 或对话层直接展示执行按钮与阻塞原因。每次 chat turn 都会写入 `.agentdeck/state/state.json` 的 `chat_turns[]`，并可通过 `leader chat-history` 查看；review turn 会记录 action_id/action_kind。它不会创建 approval、不会 dispatch、不会发送 tmux 输入。
+`leader chat` 是自然语言入口 MVP。它会先读取并校验 `agentdeck status` 的 ProjectView：如果 ProjectView 不满足 `project-view/v1` 契约，chat 会返回非 0，且不会创建 plan 或 chat turn；如果当前还没有 plan，就把 message 当作目标创建 plan-only 记录；如果已有 plan，就 review 最新 plan、持久化或复用一条 `leader_actions[]` 建议，然后重新读取 ProjectView 的 `status.recovery` 作为恢复决策源。chat 输出会在顶层返回与 `project_view.leader_actions` 相同的 `leader_actions` 摘要，并返回 `leader_explanation` 说明当前模式、推荐 action、reason、next_command、safety 和是否需要人类显式确认；响应契约见 `docs/contracts/leader-chat-schema.md`，可通过 `agentdeck contract leader-chat` 发现。review 输出还会返回 `recovery`，并让 `next_command` 等于 `recovery.next_command`；`leader_action` 包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，方便 GUI 或对话层直接展示执行按钮与阻塞原因。每次 chat turn 都会写入 `.agentdeck/state/state.json` 的 `chat_turns[]`，并可通过 `leader chat-history` 查看；review turn 会记录 action_id/action_kind。它不会创建 approval、不会 dispatch、不会发送 tmux 输入。
 
 当人类明确输入 `agentdeck leader chat --message "apply action act_xxx"` 或 `--message "/apply-action act_xxx"` 时，chat 会复用 `leader apply-action` 的安全白名单。当前只会应用 `create_approvals`，并会拒绝 dispatch/capture 等 runtime action。
 

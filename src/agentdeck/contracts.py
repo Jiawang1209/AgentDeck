@@ -72,6 +72,33 @@ PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS = (
     "created_at",
 )
 
+LEADER_CHAT_RESPONSE_FIELDS = (
+    "ok",
+    "turn_id",
+    "mode",
+    "message",
+    "project_view",
+    "leader_actions",
+    "leader_explanation",
+    "plan_id",
+    "review",
+    "recovery",
+    "next_command",
+    "leader_action",
+)
+
+LEADER_CHAT_EXPLANATION_FIELDS = (
+    "mode",
+    "summary",
+    "reason",
+    "next_command",
+    "recommended_action_id",
+    "action_kind",
+    "action_status",
+    "safety",
+    "requires_explicit_user",
+)
+
 
 def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
@@ -98,6 +125,30 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_leader_actions_fields"] = list(example["leader_actions"])
         payload["example_leader_action_item_fields"] = list(example["leader_actions"]["items"][0])
         payload["example_project_view"] = example
+    return payload
+
+
+def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "chat_command": "agentdeck leader chat --message <text>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(LEADER_CHAT_RESPONSE_FIELDS),
+        "explanation_fields": list(LEADER_CHAT_EXPLANATION_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def leader_chat_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = leader_chat_contract_payload(contract_path)
+    if include_example:
+        example = leader_chat_example()
+        payload["example"] = True
+        payload["example_response_fields"] = list(example)
+        payload["example_explanation_fields"] = list(example["leader_explanation"])
+        payload["example_leader_chat"] = example
     return payload
 
 
@@ -260,4 +311,40 @@ def project_view_example() -> dict[str, object]:
                 }
             ],
         },
+    }
+
+
+def leader_chat_example() -> dict[str, object]:
+    project_view = project_view_example()
+    leader_action = project_view["leader_actions"]["items"][0]
+    recovery = project_view["recovery"]
+    next_command = recovery["next_command"]
+    return {
+        "ok": True,
+        "turn_id": "cht_example",
+        "mode": "review",
+        "message": "继续",
+        "project_view": project_view,
+        "leader_actions": project_view["leader_actions"],
+        "leader_explanation": {
+            "mode": "review",
+            "summary": "Leader recommends create_approvals because plan has no approval records.",
+            "reason": "plan has no approval records",
+            "next_command": next_command,
+            "recommended_action_id": "act_example",
+            "action_kind": "create_approvals",
+            "action_status": "pending",
+            "safety": "safe_apply",
+            "requires_explicit_user": False,
+        },
+        "plan_id": "pln_example",
+        "review": {
+            "plan_id": "pln_example",
+            "next_action": "wait_for_approval",
+            "reason": "plan has no approval records",
+            "counts": {"steps": 1, "approvals": 0, "pending": 0, "approved": 0, "rejected": 0, "dispatched": 0},
+        },
+        "recovery": recovery,
+        "next_command": next_command,
+        "leader_action": leader_action,
     }

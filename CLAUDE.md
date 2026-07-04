@@ -109,9 +109,11 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - ProjectView 字段契约维护在 `docs/contracts/project-view-schema.md`；当前 `schema_version` 是 `project-view/v1`，任何 GUI、recovery 或自然语言入口改动都要保持该文档同步。
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`；不要在 Python 源码里重复手写版本字符串。
 - ProjectView contract discovery payload 和 example fixture 的源码入口是 `src/agentdeck/contracts.py`；CLI 只负责调用它。
+- Leader chat response contract 维护在 `docs/contracts/leader-chat-schema.md`，发现入口是 `agentdeck contract leader-chat`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。
 - `src/agentdeck/contracts.py::validate_project_view_contract()` 是 ProjectView-like payload 的 v1 基础契约校验入口。
 - `agentdeck status` 必须在输出 JSON 前调用 `validate_project_view_contract()` 自校验；校验失败时返回非 0 且不得输出半坏的 ProjectView。
 - `agentdeck contract project-view` 是只读契约发现入口，供 GUI 或外部集成读取 schema version、契约文档路径和关键字段列表；`--example` 会返回稳定 ProjectView 示例，不代表 live state。
+- `agentdeck contract leader-chat` 是只读契约发现入口，供 GUI 或外部集成读取 `leader chat` 响应字段和 `leader_explanation` 字段；`--example` 会返回稳定 chat 响应示例，不读取或修改 live state。
 - `agentdeck events --limit <n>` 是只读事件时间线入口，用于审计和 GUI 最近事件列表。
 - `agentdeck status` 的 `recovery` 是默认恢复入口，必须保持只读，并暴露 status/reason/next_command/recommended_action/pending/leader_action/latest_event/recent_events；`recommended_action` 必须说明 label/command/safety/requires_explicit_user/source/target_id。
 - `agentdeck status` 的 `chat_turns.items` 必须保留 action_id/action_kind，供 GUI 从自然语言 turn 跳转到 action。

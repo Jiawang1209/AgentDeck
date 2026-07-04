@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
-from .contracts import project_view_contract_response, validate_project_view_contract
+from .contracts import leader_chat_contract_response, project_view_contract_response, validate_project_view_contract
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
@@ -97,6 +97,13 @@ def events_command(args: argparse.Namespace) -> int:
 def contract_project_view_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "project-view-schema.md"
     payload = project_view_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_leader_chat_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-chat-schema.md"
+    payload = leader_chat_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -1173,6 +1180,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_project_view.add_argument("--example", action="store_true", help="Include a GUI-ready ProjectView example")
     contract_project_view.set_defaults(func=contract_project_view_command)
+    contract_leader_chat = contract_subparsers.add_parser(
+        "leader-chat",
+        help="Show Leader chat response contract discovery metadata",
+    )
+    contract_leader_chat.add_argument("--example", action="store_true", help="Include a GUI-ready Leader chat example")
+    contract_leader_chat.set_defaults(func=contract_leader_chat_command)
 
     project = subparsers.add_parser("project", help="Project management commands")
     project_subparsers = project.add_subparsers(dest="project_command")

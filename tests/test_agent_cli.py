@@ -5,7 +5,13 @@ from pathlib import Path
 
 from agentdeck import cli
 from agentdeck.config import write_default_config
-from agentdeck.contracts import project_view_contract_payload, project_view_contract_response, validate_project_view_contract
+from agentdeck.contracts import (
+    leader_chat_contract_payload,
+    leader_chat_contract_response,
+    project_view_contract_payload,
+    project_view_contract_response,
+    validate_project_view_contract,
+)
 from agentdeck.state import StateStore
 
 
@@ -151,6 +157,45 @@ def test_contract_project_view_cli_matches_contract_module(capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     expected = project_view_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+
+
+def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "leader-chat"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = leader_chat_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["chat_command"] == "agentdeck leader chat --message <text>"
+    assert payload["contract_path"].endswith("docs/contracts/leader-chat-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == expected["response_fields"]
+    assert payload["explanation_fields"] == expected["explanation_fields"]
+
+
+def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None:
+    exit_code = cli.main(["contract", "leader-chat", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["example"] is True
+    example = payload["example_leader_chat"]
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_explanation_fields"] == payload["explanation_fields"]
+    assert set(payload["example_explanation_fields"]) == set(example["leader_explanation"])
+    assert example["leader_explanation"]["safety"] == "safe_apply"
+    assert example["leader_explanation"]["recommended_action_id"] == example["leader_action"]["action_id"]
+    assert example["leader_actions"] == example["project_view"]["leader_actions"]
+
+
+def test_contract_leader_chat_cli_matches_contract_module(capsys) -> None:
+    cli.main(["contract", "leader-chat", "--example"])
+
+    payload = json.loads(capsys.readouterr().out)
+    expected = leader_chat_contract_response(Path(payload["contract_path"]), include_example=True)
     assert payload == expected
 
 

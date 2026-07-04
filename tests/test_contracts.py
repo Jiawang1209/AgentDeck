@@ -3,11 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from agentdeck.contracts import (
+    LEADER_CHAT_EXPLANATION_FIELDS,
+    LEADER_CHAT_RESPONSE_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
     PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS,
     PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS,
     PROJECT_VIEW_RECOVERY_FIELDS,
     PROJECT_VIEW_TOP_LEVEL_FIELDS,
+    leader_chat_contract_payload,
+    leader_chat_contract_response,
+    leader_chat_example,
     project_view_contract_payload,
     project_view_contract_response,
     project_view_example,
@@ -120,3 +125,35 @@ def test_validate_project_view_contract_reports_missing_leader_action_recommenda
             "missing leader_actions item field: is_recommended",
         ],
     }
+
+
+def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-chat-schema.md"
+    contract_path.write_text("# Leader Chat Contract\n", encoding="utf-8")
+
+    payload = leader_chat_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["chat_command"] == "agentdeck leader chat --message <text>"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == list(LEADER_CHAT_RESPONSE_FIELDS)
+    assert payload["explanation_fields"] == list(LEADER_CHAT_EXPLANATION_FIELDS)
+
+
+def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-chat-schema.md"
+    contract_path.write_text("# Leader Chat Contract\n", encoding="utf-8")
+
+    payload = leader_chat_contract_response(contract_path, include_example=True)
+    example = leader_chat_example()
+
+    assert payload["example"] is True
+    assert payload["example_leader_chat"] == example
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_explanation_fields"] == payload["explanation_fields"]
+    assert set(payload["example_explanation_fields"]) == set(example["leader_explanation"])
+    assert example["leader_explanation"]["recommended_action_id"] == "act_example"
+    assert example["leader_explanation"]["safety"] == "safe_apply"
+    assert example["leader_actions"] == example["project_view"]["leader_actions"]
