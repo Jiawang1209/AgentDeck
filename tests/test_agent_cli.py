@@ -6,6 +6,8 @@ from pathlib import Path
 from agentdeck import cli
 from agentdeck.config import write_default_config
 from agentdeck.contracts import (
+    continue_contract_payload,
+    continue_contract_response,
     leader_chat_contract_payload,
     leader_chat_contract_response,
     project_view_contract_payload,
@@ -231,6 +233,34 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == expected["response_fields"]
     assert payload["explanation_fields"] == expected["explanation_fields"]
+
+
+def test_contract_continue_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "continue"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = continue_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["continue_command"] == "agentdeck continue"
+    assert payload["contract_path"].endswith("docs/contracts/continue-card-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["continue_card_fields"] == expected["continue_card_fields"]
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+
+
+def test_contract_continue_example_exports_gui_ready_card(capsys) -> None:
+    exit_code = cli.main(["contract", "continue", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = continue_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_continue_card"]
+    assert payload["example_continue_card_fields"] == payload["continue_card_fields"]
+    assert set(payload["example_continue_card_fields"]) == set(example)
+    assert example["mode"] == "continue"
+    assert example["next_command"] == "agentdeck leader apply-action --action-id act_example"
 
 
 def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None:

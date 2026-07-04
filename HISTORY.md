@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Discover continue recovery card contract
+
+- 新增 `agentdeck contract continue`，用于只读发现顶层 `agentdeck continue` 的恢复卡片契约。
+- `agentdeck contract continue --example` 现在返回稳定 `example_continue_card` 和 `example_continue_card_fields`，供 GUI 或外部集成直接消费。
+- 新增 `docs/contracts/continue-card-schema.md`，记录 continue card shape、ProjectView 依赖和只读边界。
+- `continue_example()` 现在复用 ProjectView 示例派生稳定恢复卡片，`leader_chat_example()` 也复用同一份 continue card 示例，避免字段漂移。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 `agentdeck contract continue` 是只读契约发现入口。
+- 保持安全边界：本轮只扩展 contract discovery、example 和文档，不改变 `agentdeck continue`、`leader chat`、审批、dispatch、trace 或 tmux 执行语义。
+- 本地验证：先运行目标测试看到 `continue_contract_payload` 缺失的红灯；实现后目标测试 4 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 103 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，CLI smoke 确认 `agentdeck contract continue --example` 返回 `continue_command=agentdeck continue`、`contract_exists=true`、example 字段列表与 card 匹配，且 `mode=continue`。
+
 ### Current - Discover Leader chat continue card contract
 
 - `agentdeck contract leader-chat` 现在公开 `continue_card_fields`，让 GUI 和自然语言壳可以发现 continue-mode 的 recovery card 字段。

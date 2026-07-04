@@ -278,6 +278,28 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
     return payload
 
 
+def continue_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "continue_command": "agentdeck continue",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "continue_card_fields": list(CONTINUE_CARD_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def continue_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = continue_contract_payload(contract_path)
+    if include_example:
+        example = continue_example()
+        payload["example"] = True
+        payload["example_continue_card_fields"] = list(example)
+        payload["example_continue_card"] = example
+    return payload
+
+
 def trace_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -635,19 +657,7 @@ def leader_chat_example() -> dict[str, object]:
     leader_action = project_view["leader_actions"]["items"][0]
     recovery = project_view["recovery"]
     next_command = recovery["next_command"]
-    continue_card = {
-        "ok": True,
-        "mode": "continue",
-        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
-        "project_view_command": "agentdeck status",
-        "status": recovery["status"],
-        "reason": recovery["reason"],
-        "next_command": next_command,
-        "recommended_action": recovery["recommended_action"],
-        "pending": recovery["pending"],
-        "leader_action": leader_action,
-        "action_detail_command": "agentdeck leader action --action-id act_example",
-    }
+    continue_card = continue_example()
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -672,6 +682,25 @@ def leader_chat_example() -> dict[str, object]:
         "next_command": next_command,
         "leader_action": leader_action,
         "continue_card": continue_card,
+    }
+
+
+def continue_example() -> dict[str, object]:
+    project_view = project_view_example()
+    leader_action = project_view["leader_actions"]["items"][0]
+    recovery = project_view["recovery"]
+    return {
+        "ok": True,
+        "mode": "continue",
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_command": "agentdeck status",
+        "status": recovery["status"],
+        "reason": recovery["reason"],
+        "next_command": recovery["next_command"],
+        "recommended_action": recovery["recommended_action"],
+        "pending": recovery["pending"],
+        "leader_action": leader_action,
+        "action_detail_command": "agentdeck leader action --action-id act_example",
     }
 
 

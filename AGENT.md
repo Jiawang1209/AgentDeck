@@ -101,6 +101,7 @@ Worker 不应该：
 - `agentdeck status` 输出 JSON 前必须先用 `validate_project_view_contract()` 自校验；失败时只能返回错误，不输出半坏 ProjectView。
 - `agentdeck contract project-view` 返回 ProjectView 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定示例，供 GUI 原型使用。
 - `agentdeck contract leader-chat` 返回自然语言 Leader chat 响应契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定响应示例，供 GUI 原型使用。
+- `agentdeck contract continue` 返回顶层 continue 恢复卡片契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定恢复卡片示例，供 GUI 原型使用。
 - `agentdeck contract trace` 返回通信 lineage 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 trace 示例，供 GUI 原型使用。
 - `agentdeck trace --id <id>` 输出前必须通过 `validate_trace_contract()` 自校验；失败时只能返回错误，不输出半坏 trace。
 - `agentdeck leader chat` 输出 JSON 前必须通过 `validate_leader_chat_contract()` 自校验；校验失败时只能返回错误，不输出半坏 chat response，并必须写入 `leader_errors[]` 和 `leader_chat_contract_failed` 事件。
@@ -111,7 +112,7 @@ Worker 不应该：
 - `status.chat_turns.items` 包含 action_id/action_kind，可把自然语言 turn 关联回 leader_actions。
 - `status.leader_actions` 包含 recommended_action_id，`items[]` 包含 can_apply/apply_command/explicit_command/apply_blocker/is_recommended，可直接驱动 GUI action 按钮、阻塞提示和当前推荐项高亮。
 - `status.messages.items[]`、`status.jobs.items[]` 和 `status.replies.items[]` 包含 `trace_command`；ProjectView contract discovery 会公开对应 item field lists，缺少 trace 入口的 summary item 应被 validator 拒绝。
-- `agentdeck continue` 是顶层只读恢复入口；它必须先通过 ProjectView contract 守门，再返回 recovery-driven 下一步卡片，不得写 state、创建 action、apply action、dispatch 或发送 tmux 输入。
+- `agentdeck continue` 是顶层只读恢复入口；它必须先通过 ProjectView contract 守门，再返回 recovery-driven 下一步卡片，不得写 state、创建 action、apply action、dispatch 或发送 tmux 输入；`agentdeck contract continue` 会公开 `continue_card_fields`。
 - `status.inbox.heads` 按 agent 暴露最早 pending inbox item；GUI/Leader 应优先用它判断当前可处理或可 ack 的 mailbox head。
 - 后续升级为更严格的 reply block 标记。
 

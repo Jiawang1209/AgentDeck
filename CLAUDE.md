@@ -115,6 +115,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck status` 必须在输出 JSON 前调用 `validate_project_view_contract()` 自校验；校验失败时返回非 0 且不得输出半坏的 ProjectView。
 - `agentdeck contract project-view` 是只读契约发现入口，供 GUI 或外部集成读取 schema version、契约文档路径和关键字段列表；`--example` 会返回稳定 ProjectView 示例，不代表 live state。
 - `agentdeck contract leader-chat` 是只读契约发现入口，供 GUI 或外部集成读取 `leader chat` 响应字段和 `leader_explanation` 字段；`--example` 会返回稳定 chat 响应示例，不读取或修改 live state。
+- `agentdeck contract continue` 是只读契约发现入口，供 GUI 或外部集成读取 `agentdeck continue` 的恢复卡片字段；`--example` 会返回稳定 continue card 示例，不读取或修改 live state。
 - `agentdeck contract trace` 是只读契约发现入口，供 GUI 或外部集成读取通信 lineage 的 message/attempt/job/reply/inbox 字段；`--example` 会返回稳定 trace 示例，不读取或修改 live state。
 - `agentdeck trace --id <id>` 输出 JSON 前必须通过 `validate_trace_contract()` 自校验；失败时返回非 0 且不得输出半坏 trace。
 - `agentdeck leader chat` 输出 JSON 前必须通过 `validate_leader_chat_contract()` 自校验；校验失败时返回非 0、不得输出半坏 chat response，并必须写入 `leader_errors[]` 和 `leader_chat_contract_failed` 事件。
@@ -126,7 +127,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck status` 的 `chat_turns.items` 必须保留 action_id/action_kind，供 GUI 从自然语言 turn 跳转到 action。
 - `agentdeck status` 的 `leader_actions` 必须保留 recommended_action_id，`items[]` 必须保留 can_apply/apply_command/explicit_command/apply_blocker/is_recommended，供 GUI 和对话层展示安全动作与当前推荐项。
 - `agentdeck status` 的 `messages.items[]`、`jobs.items[]` 和 `replies.items[]` 必须保留 `trace_command`；`agentdeck contract project-view` 必须公开对应 item field lists，validator 必须拒绝缺失 trace 入口的 summary item。
-- `agentdeck continue` 是顶层只读恢复入口；它必须先通过 ProjectView contract 守门，再返回 recovery-driven 下一步卡片，不得写 state、创建 action、apply action、dispatch 或发送 tmux 输入。
+- `agentdeck continue` 是顶层只读恢复入口；它必须先通过 ProjectView contract 守门，再返回 recovery-driven 下一步卡片，不得写 state、创建 action、apply action、dispatch 或发送 tmux 输入；`agentdeck contract continue` 必须公开 `continue_card_fields`。
 - `agentdeck status` 的 `inbox.heads` 是 mailbox head-only 语义的只读入口；显示或 ack inbox 前优先读取它。
 - `agentdeck leader chat --message <text>` 是当前自然语言入口 MVP：它读取 ProjectView 前必须通过 `validate_project_view_contract()` 守门；无 plan 时创建 plan-only 记录、持久化一条 safe `create_approvals` Leader action，并在响应前重新读取 ProjectView，使同次响应包含刚创建的 plan、chat turn 和 action queue；有 plan 时 review 最新 plan，并持久化或复用一条 `leader_actions[]` 建议；chat 输出必须包含顶层 `leader_actions`，且它必须等于同次响应的 `project_view.leader_actions`；chat 输出还必须包含 `leader_explanation`，说明 mode、summary、reason、next_command、recommended_action_id、action_kind、action_status、safety 和 requires_explicit_user；plan/review 输出必须包含 `recovery`，且 `next_command` 必须来自 `status.recovery.next_command`；每轮会写入 `chat_turns[]`，可用 `agentdeck leader chat-history` 查看。
 - `agentdeck leader chat --message "继续"`、`"继续吧"` 或 `"/continue"` 必须走 recovery-first 的 `mode=continue`，复用 `agentdeck continue` 的下一步卡片，只记录 chat turn，不得创建新的 leader action、apply action、dispatch 或发送 tmux 输入；`agentdeck contract leader-chat` 必须公开 `continue_card_fields`，example 必须包含稳定 `continue_card`。

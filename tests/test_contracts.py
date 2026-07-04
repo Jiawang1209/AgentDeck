@@ -24,6 +24,9 @@ from agentdeck.contracts import (
     leader_chat_contract_payload,
     leader_chat_contract_response,
     leader_chat_example,
+    continue_contract_payload,
+    continue_contract_response,
+    continue_example,
     project_view_contract_payload,
     project_view_contract_response,
     project_view_example,
@@ -202,6 +205,37 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["response_fields"] == list(LEADER_CHAT_RESPONSE_FIELDS)
     assert payload["explanation_fields"] == list(LEADER_CHAT_EXPLANATION_FIELDS)
     assert payload["continue_card_fields"] == list(CONTINUE_CARD_FIELDS)
+
+
+def test_continue_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "continue-card-schema.md"
+    contract_path.write_text("# Continue Card Contract\n", encoding="utf-8")
+
+    payload = continue_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["continue_command"] == "agentdeck continue"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["continue_card_fields"] == list(CONTINUE_CARD_FIELDS)
+    assert payload["project_view_schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+
+
+def test_continue_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "continue-card-schema.md"
+    contract_path.write_text("# Continue Card Contract\n", encoding="utf-8")
+
+    payload = continue_contract_response(contract_path, include_example=True)
+    example = continue_example()
+
+    assert payload["example"] is True
+    assert payload["example_continue_card"] == example
+    assert payload["example_continue_card_fields"] == payload["continue_card_fields"]
+    assert set(payload["example_continue_card_fields"]) == set(example)
+    assert example["mode"] == "continue"
+    assert example["project_view_command"] == "agentdeck status"
+    assert example["action_detail_command"] == "agentdeck leader action --action-id act_example"
 
 
 def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: Path) -> None:

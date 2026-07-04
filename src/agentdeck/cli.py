@@ -8,6 +8,7 @@ import sys
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
 from .contracts import (
+    continue_contract_response,
     leader_chat_contract_response,
     project_view_contract_response,
     trace_contract_response,
@@ -184,6 +185,13 @@ def contract_project_view_command(args: argparse.Namespace) -> int:
 def contract_leader_chat_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-chat-schema.md"
     payload = leader_chat_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_continue_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "continue-card-schema.md"
+    payload = continue_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -1386,6 +1394,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_leader_chat.add_argument("--example", action="store_true", help="Include a GUI-ready Leader chat example")
     contract_leader_chat.set_defaults(func=contract_leader_chat_command)
+    contract_continue = contract_subparsers.add_parser(
+        "continue",
+        help="Show continue recovery card contract discovery metadata",
+    )
+    contract_continue.add_argument("--example", action="store_true", help="Include a GUI-ready continue card example")
+    contract_continue.set_defaults(func=contract_continue_command)
     contract_trace = contract_subparsers.add_parser(
         "trace",
         help="Show communication trace contract discovery metadata",

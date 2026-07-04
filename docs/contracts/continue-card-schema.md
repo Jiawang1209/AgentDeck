@@ -1,0 +1,49 @@
+# Continue Card Contract
+
+`agentdeck continue` is the read-only recovery card entrypoint for CLI users, natural-language shells, and future GUI clients.
+
+It does not replace ProjectView. It validates `agentdeck status` ProjectView first, then projects `status.recovery` into a smaller next-step card.
+
+Use `agentdeck contract continue` to discover this contract:
+
+```json
+{
+  "schema_version": "project-view/v1",
+  "continue_command": "agentdeck continue",
+  "contract_path": "/absolute/repo/docs/contracts/continue-card-schema.md",
+  "contract_exists": true,
+  "continue_card_fields": [],
+  "project_view_schema_version": "project-view/v1",
+  "project_view_contract": "agentdeck contract project-view"
+}
+```
+
+Use `agentdeck contract continue --example` to include a stable GUI-ready continue card fixture.
+
+## Card Shape
+
+```json
+{
+  "ok": true,
+  "mode": "continue",
+  "project_view_schema_version": "project-view/v1",
+  "project_view_command": "agentdeck status",
+  "status": "action_required",
+  "reason": "pending leader action: create_approvals",
+  "next_command": "agentdeck leader apply-action --action-id act_xxx",
+  "recommended_action": {},
+  "pending": {},
+  "leader_action": {},
+  "action_detail_command": "agentdeck leader action --action-id act_xxx"
+}
+```
+
+`recommended_action` and `pending` come from `ProjectView.recovery`. `leader_action` is populated only when the recommended action source is `leader_action`; otherwise it is `null`.
+
+## Boundaries
+
+- The contract command is read-only.
+- `agentdeck continue` is read-only.
+- `agentdeck continue` must pass ProjectView validation before printing JSON.
+- It must not create plans, create leader actions, apply actions, dispatch work, capture replies, ack inbox items, or send tmux input.
+- GUI clients should use `next_command` and `recommended_action.safety` to render an affordance, not to auto-run runtime work.
