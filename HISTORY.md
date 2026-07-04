@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Deduplicate pending Leader next actions
+
+- 将 `agentdeck leader next` 收紧为幂等 action suggestion：相同 pending action 已存在时复用原 action_id，不重复追加到 `leader_actions[]`。
+- 去重 key 包含 kind、plan_id、approval_id、agent_id 和 message_id，确保同一 plan 阶段的 create_approvals、dispatch_approved、wait_for_reply 等建议不会污染 queue。
+- 已 applied 或非 pending 的历史 action 不参与复用，后续阶段仍可生成新的 pending action。
+- 保持安全边界：`leader next` 仍然只记录/复用 action，不创建 approval、不 dispatch、不发送 tmux 输入。
+- 扩展 `tests/test_leader_cli.py`，覆盖重复 `create_approvals` 和重复 `dispatch_approved` 建议复用同一 action_id。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 `leader next` 的幂等队列语义。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_next_reuses_existing_pending_create_approvals_action tests/test_leader_cli.py::test_leader_next_reuses_existing_pending_dispatch_action -q` 看到重复调用生成不同 action_id；实现后同一测试与相邻 leader next/actions 测试 5 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 53 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认连续两次 `leader next` 返回相同 action_id，`leader_actions` 只有 1 条，且 approvals/messages/jobs 仍为 0。
+
 ### Current - Add ProjectView inbox heads
 
 - 扩展 `agentdeck status` 的 ProjectView，`inbox` 摘要现在包含 `heads`，按 agent 暴露最早的 `pending` inbox item。

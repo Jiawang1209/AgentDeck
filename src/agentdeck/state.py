@@ -296,15 +296,29 @@ class StateStore:
                 "reason": "plan has no approval records",
                 "created_at": utc_now(),
             }
-            state.setdefault("leader_actions", []).append(action)
-            self.save(state)
-            return action
+            return self._record_or_reuse_pending_leader_action(state, action)
         review = self.leader_review(plan_id)
         action = self._action_from_review(review)
         state = self.load()
-        state.setdefault("leader_actions", []).append(action)
+        return self._record_or_reuse_pending_leader_action(state, action)
+
+    def _record_or_reuse_pending_leader_action(self, state: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+        actions = state.setdefault("leader_actions", [])
+        existing = next((item for item in actions if self._same_pending_leader_action(item, action)), None)
+        if existing is not None:
+            return existing
+        actions.append(action)
         self.save(state)
         return action
+
+    @staticmethod
+    def _same_pending_leader_action(existing: dict[str, Any], candidate: dict[str, Any]) -> bool:
+        if existing.get("status") != "pending":
+            return False
+        return all(
+            existing.get(key) == candidate.get(key)
+            for key in ["kind", "plan_id", "approval_id", "agent_id", "message_id"]
+        )
 
     def _action_from_review(self, review: dict[str, Any]) -> dict[str, Any]:
         next_action = review.get("next_action")

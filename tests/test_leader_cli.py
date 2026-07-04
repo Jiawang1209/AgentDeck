@@ -258,6 +258,27 @@ def test_leader_next_records_create_approvals_action_without_executing(tmp_path,
     assert '"event_type": "leader_action_suggested"' in events
 
 
+def test_leader_next_reuses_existing_pending_create_approvals_action(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "重复查看下一步"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["leader", "next", "--plan-id", plan_id])
+    first = json.loads(capsys.readouterr().out)
+
+    exit_code = cli.main(["leader", "next", "--plan-id", plan_id])
+
+    assert exit_code == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["action_id"] == first["action_id"]
+    assert second["kind"] == "create_approvals"
+    state = StateStore(root).load()
+    assert len(state["leader_actions"]) == 1
+    assert state["leader_actions"][0]["action_id"] == first["action_id"]
+    assert state["approvals"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
 def test_leader_next_records_dispatch_action_without_dispatching(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "需要派发"])
@@ -279,6 +300,31 @@ def test_leader_next_records_dispatch_action_without_dispatching(tmp_path, monke
     assert len(state["leader_actions"]) == 1
     assert state["leader_actions"][0]["approval_id"] == approval_id
     assert state["approvals"][0]["status"] == "approved"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
+def test_leader_next_reuses_existing_pending_dispatch_action(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "重复派发建议"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    cli.main(["leader", "next", "--plan-id", plan_id])
+    first = json.loads(capsys.readouterr().out)
+
+    exit_code = cli.main(["leader", "next", "--plan-id", plan_id])
+
+    assert exit_code == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["action_id"] == first["action_id"]
+    assert second["kind"] == "dispatch_approved"
+    assert second["approval_id"] == approval_id
+    state = StateStore(root).load()
+    assert len(state["leader_actions"]) == 1
+    assert state["leader_actions"][0]["approval_id"] == approval_id
     assert state["messages"] == []
     assert state["jobs"] == []
 
