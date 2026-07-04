@@ -394,6 +394,13 @@ def test_status_includes_recovery_summary(tmp_path, monkeypatch, capsys) -> None
         "status": "action_required",
         "reason": "pending leader action: create_approvals",
         "next_command": "agentdeck leader apply-action --action-id act_demo",
+        "recommended_action": {
+            "label": "Apply safe Leader action",
+            "command": "agentdeck leader apply-action --action-id act_demo",
+            "safety": "safe_apply",
+            "requires_explicit_user": False,
+            "source": "leader_action",
+        },
         "pending": {
             "leader_actions": 1,
             "approvals": 1,

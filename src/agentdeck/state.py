@@ -862,6 +862,7 @@ class StateStore:
             "status": "idle",
             "reason": "no pending recovery action",
             "next_command": None,
+            "recommended_action": None,
             "pending": {
                 "leader_actions": len(pending_leader_actions),
                 "approvals": len(pending_approvals),
@@ -875,11 +876,19 @@ class StateStore:
         if pending_leader_actions:
             action = pending_leader_actions[-1]
             detail = self._leader_action_detail_fields(action)
+            next_command = detail.get("apply_command") or action.get("command")
             summary.update(
                 {
                     "status": "action_required",
                     "reason": f"pending leader action: {action.get('kind')}",
-                    "next_command": detail.get("apply_command") or action.get("command"),
+                    "next_command": next_command,
+                    "recommended_action": self._recommended_action(
+                        label="Apply safe Leader action" if detail.get("can_apply") else "Run explicit Leader action",
+                        command=next_command,
+                        safety="safe_apply" if detail.get("can_apply") else "explicit_runtime",
+                        requires_explicit_user=not bool(detail.get("can_apply")),
+                        source="leader_action",
+                    ),
                     "leader_action": {
                         "action_id": action.get("action_id"),
                         "kind": action.get("kind"),
@@ -892,11 +901,19 @@ class StateStore:
             )
         elif approved_approvals:
             approval_id = approved_approvals[0].get("approval_id")
+            next_command = f"agentdeck approval dispatch --approval-id {approval_id}"
             summary.update(
                 {
                     "status": "dispatch_ready",
                     "reason": "approved approval is waiting for dispatch",
-                    "next_command": f"agentdeck approval dispatch --approval-id {approval_id}",
+                    "next_command": next_command,
+                    "recommended_action": self._recommended_action(
+                        label="Dispatch approved task",
+                        command=next_command,
+                        safety="explicit_runtime",
+                        requires_explicit_user=True,
+                        source="approval",
+                    ),
                 }
             )
         elif pending_approvals:
@@ -905,6 +922,13 @@ class StateStore:
                     "status": "approval_required",
                     "reason": "pending approvals require human decision",
                     "next_command": "agentdeck approval list",
+                    "recommended_action": self._recommended_action(
+                        label="Review approvals",
+                        command="agentdeck approval list",
+                        safety="inspect",
+                        requires_explicit_user=False,
+                        source="approval",
+                    ),
                 }
             )
         elif pending_inbox_items:
@@ -913,9 +937,34 @@ class StateStore:
                     "status": "inbox_pending",
                     "reason": "agent inbox has pending items",
                     "next_command": "agentdeck status",
+                    "recommended_action": self._recommended_action(
+                        label="Inspect pending inbox",
+                        command="agentdeck status",
+                        safety="inspect",
+                        requires_explicit_user=False,
+                        source="inbox",
+                    ),
                 }
             )
         return summary
+
+    @staticmethod
+    def _recommended_action(
+        label: str,
+        command: object,
+        safety: str,
+        requires_explicit_user: bool,
+        source: str,
+    ) -> dict[str, Any] | None:
+        if not command:
+            return None
+        return {
+            "label": label,
+            "command": command,
+            "safety": safety,
+            "requires_explicit_user": requires_explicit_user,
+            "source": source,
+        }
 
     @staticmethod
     def _event_summary(event: dict[str, Any]) -> dict[str, Any]:

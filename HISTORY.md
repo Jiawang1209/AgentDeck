@@ -4,6 +4,18 @@
 
 ## 2026-07-04
 
+### Current - Add recovery recommended action metadata
+
+- 扩展 `agentdeck status` 的 `status.recovery`，新增 `recommended_action` 字段，为未来 GUI 提供可直接渲染的下一步动作元数据。
+- `recommended_action` 包含 `label`、`command`、`safety`、`requires_explicit_user` 和 `source`，区分 safe apply、显式 runtime 动作和只读检查入口。
+- 对 pending `create_approvals` leader action，recovery 会继续推荐安全的 `agentdeck leader apply-action --action-id <id>`，并标记 `safety=safe_apply`、`requires_explicit_user=false`。
+- 对 dispatch、approval list 和 inbox inspect 状态，也统一生成 recommended_action，避免 GUI 自行推断命令安全语义。
+- 保持安全边界：recommended_action 只描述动作，不执行动作、不修改 state、不发送 tmux 输入。
+- 扩展 `tests/test_agent_cli.py`，先验证缺少 `recommended_action` 的红灯，再实现 recovery 动作元数据。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 recovery recommended_action 的 GUI 契约。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_includes_recovery_summary -q` 看到 `recommended_action` 缺失；实现后同一测试 1 项通过，ProjectView/Leader 相关测试 37 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 59 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `recovery.recommended_action` 返回 `label=Apply safe Leader action`、`safety=safe_apply`、`source=leader_action` 且 command 与 `next_command` 一致。
+
 ### Current - Route Leader chat through recovery summary
 
 - 调整 `agentdeck leader chat --message <text>` 的 review 分支：持久化或复用 `leader_actions[]` 后重新读取 ProjectView，并把 `status.recovery` 作为自然语言继续的恢复决策源。
