@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Gate Leader chat on ProjectView validation
+
+- `agentdeck leader chat --message <text>` 现在会在读取 ProjectView 后先复用 `validate_project_view_contract()` 守门，再进入 plan/review/apply-action 分支。
+- 新增 CLI 内部 `_project_view_payload_or_error()`，让 `agentdeck status` 和 Leader chat 共用同一套 ProjectView payload 生成、校验和 stderr 错误格式。
+- 当 ProjectView 违反 `project-view/v1` 基础契约时，chat 返回非 0，不输出半坏 JSON，也不会创建 plan、chat_turn、message、job 或 inbox。
+- 新增 `test_leader_chat_refuses_invalid_project_view_before_planning`，用缺失 `recovery` 的 ProjectView 模拟状态面漂移，锁定自然语言入口的失败边界。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 Leader chat 必须通过 ProjectView 合约守门。
+- 保持安全边界：本轮只收紧自然语言入口的状态面校验，不新增自动 dispatch、不创建 approval、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_refuses_invalid_project_view_before_planning -q` 看到 chat 未拒绝缺 `recovery` 的 ProjectView 且返回 0；实现后同一测试 1 项通过，Leader chat/status 相关测试 7 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 73 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader chat` 返回 `mode=plan` 且嵌入的 `project_view` 可被 validator 校验为 `{'ok': True, 'errors': []}`。
+
 ### Current - Add ProjectView status self-validation
 
 - `agentdeck status` 现在会在输出 JSON 前调用 `validate_project_view_contract()` 自校验 ProjectView。

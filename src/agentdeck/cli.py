@@ -19,6 +19,17 @@ def _print_json(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
 
 
+def _project_view_payload_or_error(config: ProjectConfig, store: StateStore) -> dict[str, object] | None:
+    payload = asdict(store.project_view(config))
+    validation = validate_project_view_contract(payload)
+    if not validation["ok"]:
+        print("ProjectView contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return None
+    return payload
+
+
 def doctor_command(_args: argparse.Namespace) -> int:
     root = project_root()
     tmux = TmuxBackend().doctor()
@@ -67,12 +78,8 @@ def status_command(_args: argparse.Namespace) -> int:
         print("Run: python -m agentdeck project init", file=sys.stderr)
         return 1
     store = StateStore(root)
-    payload = asdict(store.project_view(config))
-    validation = validate_project_view_contract(payload)
-    if not validation["ok"]:
-        print("ProjectView contract validation failed", file=sys.stderr)
-        for error in validation["errors"]:
-            print(f"- {error}", file=sys.stderr)
+    payload = _project_view_payload_or_error(config, store)
+    if payload is None:
         return 1
     _print_json(payload)
     return 0
@@ -663,7 +670,9 @@ def leader_chat_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
-    project_view = asdict(store.project_view(config))
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
     apply_action_id = _chat_apply_action_id(args.message)
     if apply_action_id:
         try:
@@ -708,13 +717,16 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 },
             )
         )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
         _print_json(
             {
                 "ok": True,
                 "turn_id": turn["turn_id"],
                 "mode": "apply_action",
                 "message": args.message,
-                "project_view": asdict(store.project_view(config)),
+                "project_view": refreshed_project_view,
                 "plan_id": action.get("plan_id"),
                 "leader_action": action_detail,
                 "result": result,
@@ -729,7 +741,9 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         review = store.leader_review(plan_id)
         action = store.suggest_leader_action(plan_id)
         action_detail = store.leader_action_detail(str(action["action_id"]))
-        project_view = asdict(store.project_view(config))
+        project_view = _project_view_payload_or_error(config, store)
+        if project_view is None:
+            return 1
         recovery = project_view.get("recovery", {})
         next_command = recovery.get("next_command") if isinstance(recovery, dict) else action.get("command")
         turn = store.record_chat_turn(

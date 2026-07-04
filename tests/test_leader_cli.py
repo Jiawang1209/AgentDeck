@@ -175,6 +175,33 @@ def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_
     assert '"event_type": "leader_chat_turn"' in events
 
 
+def test_leader_chat_refuses_invalid_project_view_before_planning(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    original_asdict = cli.asdict
+
+    def broken_project_view_asdict(obj):
+        payload = original_asdict(obj)
+        if obj.__class__.__name__ == "ProjectView":
+            payload.pop("recovery", None)
+        return payload
+
+    monkeypatch.setattr(cli, "asdict", broken_project_view_asdict)
+
+    exit_code = cli.main(["leader", "chat", "--message", "帮我实现自动回复回收"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "ProjectView contract validation failed" in captured.err
+    assert "missing top-level field: recovery" in captured.err
+    state = StateStore(root).load()
+    assert state["plans"] == []
+    assert state["chat_turns"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state.get("inbox", {}) == {}
+
+
 def test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "已有计划"])
