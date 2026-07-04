@@ -78,6 +78,61 @@ def test_leader_plan_rejects_unsupported_provider(tmp_path, monkeypatch, capsys)
     assert state.get("plans", []) == []
 
 
+def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "帮我实现自动回复回收"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "plan"
+    assert payload["message"] == "帮我实现自动回复回收"
+    assert payload["project_view"]["plans"]["count"] == 0
+    assert payload["plan_id"].startswith("pln_")
+    assert payload["next_command"] == f"agentdeck approval create-from-plan --plan-id {payload['plan_id']}"
+    assert payload["review"] is None
+
+    state = StateStore(root).load()
+    assert len(state["plans"]) == 1
+    assert state["plans"][0]["task"] == "帮我实现自动回复回收"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state.get("inbox", {}) == {}
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "leader_chat_turn"' in events
+
+
+def test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "已有计划"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+
+    exit_code = cli.main(["leader", "chat", "--message", "继续"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "review"
+    assert payload["message"] == "继续"
+    assert payload["plan_id"] == plan_id
+    assert payload["project_view"]["plans"]["count"] == 1
+    assert payload["review"]["next_action"] == "dispatch_approved"
+    assert payload["next_command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
+
+    state = StateStore(root).load()
+    assert len(state["plans"]) == 1
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "leader_chat_turn"' in events
+
+
 def test_plan_list_outputs_plan_summaries(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "第一项任务"])

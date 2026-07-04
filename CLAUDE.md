@@ -46,6 +46,7 @@ agentdeck status
 agentdeck agent list
 agentdeck agent stop --agent planner
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
+agentdeck leader chat --message "帮我设计自动 reply extraction"
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
 agentdeck plan list
@@ -99,6 +100,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - 每次开发内容都要同步更新 `HISTORY.md`，并和对应代码/文档改动放在同一次 commit 中。
 - 每次开发前先对照 `docs/roadmap/ultimate-goal-roadmap.md`，确认功能服务 Leader Agent、多 Agent 通信、可见 runtime、审批、恢复或 GUI 主线。
 - GUI、自然语言入口和 Leader chat loop 应优先消费 `agentdeck status` 的 ProjectView 摘要；不要直接散读 state 文件作为主入口。
+- `agentdeck leader chat --message <text>` 是当前自然语言入口 MVP：无 plan 时创建 plan-only 记录，有 plan 时 review 最新 plan 并返回下一条建议命令。
 - 自然语言任务调度优先从 `agentdeck leader plan --task <text>` 生成 plan-only 记录开始；不要跳过 plan 直接自动 dispatch。
 - `agentdeck leader review --plan-id <id>` 是当前本地 Leader review loop，用于基于 approval/dispatch/reply 状态建议下一步。
 - 审批、dispatch 或恢复任务前优先用 `agentdeck plan list`、`agentdeck plan show --plan-id <id>` 和 `agentdeck plan status --plan-id <id>` 检查计划。

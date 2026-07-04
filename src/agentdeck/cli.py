@@ -484,6 +484,89 @@ def leader_review_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _next_command_for_review(review: dict[str, object]) -> str | None:
+    action = review.get("next_action")
+    if action == "dispatch_approved" and review.get("approval_id"):
+        return f"agentdeck approval dispatch --approval-id {review['approval_id']}"
+    if action == "wait_for_reply" and review.get("agent_id") and review.get("message_id"):
+        return f"agentdeck capture-reply --agent {review['agent_id']} --message-id {review['message_id']}"
+    if action == "wait_for_approval" and review.get("plan_id"):
+        return f"agentdeck approval create-from-plan --plan-id {review['plan_id']}"
+    if action == "summarize" and review.get("plan_id"):
+        return f"agentdeck plan status --plan-id {review['plan_id']}"
+    return None
+
+
+def leader_chat_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    project_view = asdict(store.project_view(config))
+    plans = store.list_plans()
+    if plans:
+        latest_plan = plans[-1]
+        plan_id = str(latest_plan["plan_id"])
+        review = store.leader_review(plan_id)
+        payload = {
+            "ok": True,
+            "mode": "review",
+            "message": args.message,
+            "project_view": project_view,
+            "plan_id": plan_id,
+            "review": review,
+            "next_command": _next_command_for_review(review),
+        }
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "mode": "review",
+                    "plan_id": plan_id,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        _print_json(payload)
+        return 0
+
+    try:
+        provider = leader_provider(args.provider)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    orchestrator = LeaderOrchestrator(config, provider)
+    plan = orchestrator.plan(args.message)
+    record = store.record_plan(args.message, provider.name, args.model, plan)
+    payload = {
+        "ok": True,
+        "mode": "plan",
+        "message": args.message,
+        "project_view": project_view,
+        "plan_id": record["plan_id"],
+        "status": record["status"],
+        "provider": record["provider"],
+        "model": record["model"],
+        "dispatch_ready": record["dispatch_ready"],
+        "plan": record["plan"],
+        "review": None,
+        "next_command": f"agentdeck approval create-from-plan --plan-id {record['plan_id']}",
+    }
+    store.append_event(
+        EventRecord.create(
+            "leader_chat_turn",
+            {
+                "mode": "plan",
+                "plan_id": record["plan_id"],
+                "provider": record["provider"],
+                "model": record["model"],
+                "message_length": len(args.message),
+            },
+        )
+    )
+    _print_json(payload)
+    return 0
+
+
 def _plan_summary(plan: dict[str, object]) -> dict[str, object]:
     body = plan.get("plan", {})
     steps = body.get("steps", []) if isinstance(body, dict) else []
@@ -720,6 +803,11 @@ def build_parser() -> argparse.ArgumentParser:
     leader_review = leader_subparsers.add_parser("review", help="Review plan progress and recommend next action")
     leader_review.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
     leader_review.set_defaults(func=leader_review_command)
+    leader_chat = leader_subparsers.add_parser("chat", help="Natural-language Leader entrypoint")
+    leader_chat.add_argument("--message", required=True, help="Natural-language message for the Leader")
+    leader_chat.add_argument("--provider", default="fake", help="Leader provider to use when a new plan is needed")
+    leader_chat.add_argument("--model", default="fake-plan", help="Provider model label recorded with new plans")
+    leader_chat.set_defaults(func=leader_chat_command)
 
     plan = subparsers.add_parser("plan", help="Inspect Leader plans")
     plan_subparsers = plan.add_subparsers(dest="plan_command")

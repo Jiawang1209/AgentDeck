@@ -12,6 +12,7 @@
 
 - 理解用户目标。
 - 读取项目上下文。
+- 通过 `agentdeck leader chat --message <text>` 接收自然语言输入，并基于 ProjectView 决定创建 plan 或 review 最新 plan。
 - 拆解任务。
 - 用 `agentdeck leader plan --task <text>` 生成 plan-only 记录。
 - 分配 Worker。
@@ -93,13 +94,14 @@ Worker 不应该：
 
 ## Leader Planning
 
+- `agentdeck leader chat --message <text>` 是自然语言 Leader 入口 MVP；它会读取 ProjectView，无 plan 时创建 plan-only 记录，有 plan 时 review 最新 plan 并返回建议命令。
 - `agentdeck leader plan --task <text>` 会写入 `.agentdeck/state/state.json` 的 `plans[]`。
 - `agentdeck leader review --plan-id <id>` 会基于 plan status 和 replies 输出下一步建议。
 - `agentdeck plan list` 返回 plan 摘要，不包含完整 `plan` body。
 - `agentdeck plan show --plan-id <id>` 返回完整 plan，用于审批前检查。
 - `agentdeck plan status --plan-id <id>` 返回 plan step、approval 状态和 dispatch lineage 汇总。
 - 默认 `fake` provider 是本地 dry-run provider，不调用外部 LLM。
-- plan-only 阶段不会写入 `messages`、`jobs` 或 `inbox`，也不会发送 tmux 输入。
+- chat/plan-only 阶段不会写入 `messages`、`jobs` 或 `inbox`，也不会发送 tmux 输入。
 - 后续 DeepSeek/OpenAI-compatible 或其他 API-backed provider 必须复用同一 plan schema。
 
 ## 审批规则

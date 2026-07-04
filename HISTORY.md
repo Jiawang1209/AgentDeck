@@ -4,6 +4,18 @@
 
 ## 2026-07-04
 
+### Current - Add Leader chat loop MVP
+
+- 新增 `agentdeck leader chat --message <text>`，作为自然语言 Leader 入口 MVP。
+- chat loop 会读取 ProjectView：无 plan 时创建 plan-only 记录；已有 plan 时 review 最新 plan 并返回下一条建议命令。
+- chat loop 保持人类审批边界，不创建 approval、不 dispatch、不发送 tmux 输入、不写入 messages/jobs/inbox。
+- 输出包含 mode、message、project_view、plan_id、review 和 next_command，方便未来 GUI 或对话入口消费。
+- 新增 `leader_chat_turn` 事件，记录 chat turn 的 mode、plan_id、provider/model 和 message_length。
+- 扩展 `tests/test_leader_cli.py`，覆盖自然语言创建 plan 和继续 review 最新 plan 两条路径。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 Leader chat loop 用法与边界。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_creates_plan_from_natural_language_without_dispatching tests/test_leader_cli.py::test_leader_chat_reviews_latest_plan_instead_of_creating_another_plan -q` 看到 `leader chat` 子命令不存在；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 34 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认第一轮 chat 输出 `plan`、审批后第二轮 chat 输出 `review` 和显式 `approval dispatch` 建议。
+
 ### Current - Expand ProjectView status summaries
 
 - 扩展 `agentdeck status` 的 ProjectView 输出，新增 plans、approvals、messages、jobs、replies 和 inbox 摘要。
