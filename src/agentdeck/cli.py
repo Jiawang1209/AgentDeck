@@ -617,9 +617,11 @@ def leader_action_command(args: argparse.Namespace) -> int:
 
 
 def leader_apply_action_command(args: argparse.Namespace) -> int:
-    _config, store, exit_code = _load_project_or_error()
-    if store is None:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
         return exit_code
+    if _project_view_payload_or_error(config, store) is None:
+        return 1
     try:
         applied = store.apply_leader_action(args.action_id)
     except KeyError:

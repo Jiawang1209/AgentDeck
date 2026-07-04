@@ -264,7 +264,7 @@ agentdeck plan status --plan-id pln_xxx
 
 `leader action --action-id <id>` 返回单个 action 的详情，包括 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`。它是只读入口，适合 GUI、自然语言 Leader 或人类在执行前确认当前 action 为什么能或不能安全应用。
 
-`leader apply-action --action-id <id>` 是显式确认入口。当前只允许应用 `create_approvals`，会创建 approval queue 并把 action 标记为 `applied`。`dispatch_approved`、`wait_for_reply` 等 action 仍会被拒绝，必须由人类运行对应的 `approval dispatch` 或 `capture-reply` 命令。
+`leader apply-action --action-id <id>` 是显式确认入口。它会先校验 ProjectView；当前只允许应用 `create_approvals`，会创建 approval queue 并把 action 标记为 `applied`。`dispatch_approved`、`wait_for_reply` 等 action 仍会被拒绝，必须由人类运行对应的 `approval dispatch` 或 `capture-reply` 命令。
 
 计划确认后，可以创建审批项：
 

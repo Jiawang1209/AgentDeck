@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Gate Leader apply-action on ProjectView validation
+
+- `agentdeck leader apply-action --action-id <id>` 现在会在应用 safe action 前复用 `_project_view_payload_or_error()`，只有 ProjectView 满足 `project-view/v1` 契约后才会调用 `store.apply_leader_action()`。
+- 新增 `test_leader_apply_action_refuses_invalid_project_view_before_applying`，锁定状态面无效时不得创建 approvals、不得把 leader action 标记为 applied、不得写入 message 或 job。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录显式 safe apply 前也必须通过 ProjectView contract 守门。
+- 保持安全边界：本轮只收紧 safe apply 的状态面校验，不新增自动 dispatch、不扩大可 apply action 白名单、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_apply_action_refuses_invalid_project_view_before_applying -q` 看到旧实现返回 0；实现后同一测试 1 项通过，apply-action/chat apply 相关测试 6 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 76 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `leader apply-action` 返回 `kind=create_approvals/status=applied/approval_count=3`。
+
 ### Current - Gate Leader review and next on ProjectView validation
 
 - `agentdeck leader review --plan-id <id>` 和 `agentdeck leader next [--plan-id <id>]` 现在会在读取项目后先复用 `_project_view_payload_or_error()`，只有 ProjectView 满足 `project-view/v1` 契约后才继续做 review 或写入 `leader_actions[]`。

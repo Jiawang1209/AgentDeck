@@ -539,6 +539,28 @@ def test_leader_apply_action_creates_approvals_and_marks_action_applied(tmp_path
     assert '"event_type": "leader_action_applied"' in events
 
 
+def test_leader_apply_action_refuses_invalid_project_view_before_applying(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "坏状态不能应用 action"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["leader", "next", "--plan-id", plan_id])
+    action_id = json.loads(capsys.readouterr().out)["action_id"]
+    break_project_view_recovery(monkeypatch)
+
+    exit_code = cli.main(["leader", "apply-action", "--action-id", action_id])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "ProjectView contract validation failed" in captured.err
+    assert "missing top-level field: recovery" in captured.err
+    state = StateStore(root).load()
+    assert state["leader_actions"][0]["status"] == "pending"
+    assert state["approvals"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
 def test_leader_chat_applies_create_approvals_action_when_explicitly_requested(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "对话应用 action"])

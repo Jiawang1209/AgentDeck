@@ -113,7 +113,7 @@ Worker 不应该：
 - `agentdeck leader next` 会先通过 ProjectView contract 守门，再把下一步建议写入 `leader_actions[]`，但不会执行命令；相同 pending action 已存在时会复用原 action_id。
 - `agentdeck leader actions` 返回已持久化的 action queue 摘要。
 - `agentdeck leader action --action-id <id>` 返回单个 action 的只读详情，包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`。
-- `agentdeck leader apply-action --action-id <id>` 当前只允许应用 `create_approvals`，dispatch/capture 类 action 必须继续由人类显式命令执行。
+- `agentdeck leader apply-action --action-id <id>` 执行 safe apply 前必须通过 ProjectView contract 守门；当前只允许应用 `create_approvals`，dispatch/capture 类 action 必须继续由人类显式命令执行。
 - `agentdeck plan list` 返回 plan 摘要，不包含完整 `plan` body。
 - `agentdeck plan show --plan-id <id>` 返回完整 plan，用于审批前检查。
 - `agentdeck plan status --plan-id <id>` 返回 plan step、approval 状态和 dispatch lineage 汇总。
