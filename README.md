@@ -221,7 +221,7 @@ agentdeck trace --id inb_xxx
 
 `status.inbox.heads` 会按 agent 暴露最早的 `pending` inbox item；没有待处理 item 的 agent 会返回 `null`。GUI 和 Leader chat loop 可以用它直接显示每个 agent 当前必须先处理或 ack 的 mailbox head。
 
-`status.leader_actions.items` 会包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，GUI 可以直接根据 ProjectView 渲染 action 按钮和阻塞提示。
+`status.leader_actions` 会包含 `recommended_action_id`，每个 `items[]` 会包含 `can_apply`、`apply_command`、`explicit_command`、`apply_blocker` 和 `is_recommended`，GUI 可以直接根据 ProjectView 渲染 action 按钮、阻塞提示和当前推荐项高亮。
 
 `status.chat_turns.items` 会包含 review/apply turn 关联的 `action_id` 和 `action_kind`，GUI 可以从自然语言对话历史直接跳转到对应 action。
 

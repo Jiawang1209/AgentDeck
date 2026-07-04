@@ -341,6 +341,7 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
         "count": 1,
         "by_kind": {"create_approvals": 1},
         "by_status": {"pending": 1},
+        "recommended_action_id": "act_demo",
         "items": [
             {
                 "action_id": "act_demo",
@@ -357,6 +358,7 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
                 "apply_command": "agentdeck leader apply-action --action-id act_demo",
                 "explicit_command": "agentdeck approval create-from-plan --plan-id pln_demo",
                 "apply_blocker": None,
+                "is_recommended": True,
                 "created_at": "2026-07-04T00:00:00+00:00",
             }
         ],

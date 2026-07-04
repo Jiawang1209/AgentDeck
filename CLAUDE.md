@@ -115,7 +115,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck events --limit <n>` 是只读事件时间线入口，用于审计和 GUI 最近事件列表。
 - `agentdeck status` 的 `recovery` 是默认恢复入口，必须保持只读，并暴露 status/reason/next_command/recommended_action/pending/leader_action/latest_event/recent_events；`recommended_action` 必须说明 label/command/safety/requires_explicit_user/source/target_id。
 - `agentdeck status` 的 `chat_turns.items` 必须保留 action_id/action_kind，供 GUI 从自然语言 turn 跳转到 action。
-- `agentdeck status` 的 `leader_actions.items` 必须保留 can_apply/apply_command/explicit_command/apply_blocker，供 GUI 和对话层展示安全动作。
+- `agentdeck status` 的 `leader_actions` 必须保留 recommended_action_id，`items[]` 必须保留 can_apply/apply_command/explicit_command/apply_blocker/is_recommended，供 GUI 和对话层展示安全动作与当前推荐项。
 - `agentdeck status` 的 `inbox.heads` 是 mailbox head-only 语义的只读入口；显示或 ack inbox 前优先读取它。
 - `agentdeck leader chat --message <text>` 是当前自然语言入口 MVP：它读取 ProjectView 前必须通过 `validate_project_view_contract()` 守门；无 plan 时创建 plan-only 记录，有 plan 时 review 最新 plan，并持久化或复用一条 `leader_actions[]` 建议；review 输出必须包含 `recovery`，且 `next_command` 必须来自 `status.recovery.next_command`；每轮会写入 `chat_turns[]`，可用 `agentdeck leader chat-history` 查看。
 - `agentdeck leader chat --message "apply action <id>"` 只能复用 safe apply-action 白名单；不得通过 chat 自动应用 dispatch/capture 类 action。

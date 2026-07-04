@@ -150,7 +150,7 @@ Summary items intentionally omit long prompts and pane output. Use detail comman
 }
 ```
 
-`agentdeck leader actions` also returns a top-level `recommended_action_id`, derived from `recovery.recommended_action.target_id`, so GUI queues can highlight the active recovery affordance without opening every detail view.
+ProjectView `leader_actions` and `agentdeck leader actions` both return a top-level `recommended_action_id`, derived from `recovery.recommended_action.target_id`, so GUI queues can highlight the active recovery affordance without opening every detail view.
 
 `can_apply=true` is currently limited to safe `create_approvals` actions. Runtime actions such as dispatch or capture stay explicit and should be shown with their blocker text.
 

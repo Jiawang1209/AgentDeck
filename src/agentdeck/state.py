@@ -797,6 +797,8 @@ class StateStore:
     def _leader_action_summaries(leader_actions: list[dict[str, Any]]) -> dict[str, Any]:
         by_kind: dict[str, int] = {}
         by_status: dict[str, int] = {}
+        pending_actions = [item for item in leader_actions if item.get("status") == "pending"]
+        recommended_action_id = pending_actions[-1].get("action_id") if pending_actions else None
         items = []
         for action in leader_actions:
             kind = str(action.get("kind", "unknown"))
@@ -816,10 +818,17 @@ class StateStore:
                     "command": action.get("command"),
                     "reason": action.get("reason"),
                     **StateStore._leader_action_detail_fields(action),
+                    "is_recommended": action.get("action_id") == recommended_action_id,
                     "created_at": action.get("created_at"),
                 }
             )
-        return {"count": len(items), "by_kind": by_kind, "by_status": by_status, "items": items}
+        return {
+            "count": len(items),
+            "by_kind": by_kind,
+            "by_status": by_status,
+            "recommended_action_id": recommended_action_id,
+            "items": items,
+        }
 
     def _inbox_summary(self, inbox: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         by_agent = {agent_id: len(items) for agent_id, items in inbox.items()}

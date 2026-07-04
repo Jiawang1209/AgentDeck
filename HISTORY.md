@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Mark recommended action in ProjectView leader actions
+
+- `agentdeck status` 的 ProjectView `leader_actions` 摘要现在会从 pending leader actions 中派生顶层 `recommended_action_id`，与 `status.recovery` 的 pending leader action 优先级保持一致。
+- ProjectView `leader_actions.items[]` 新增 `is_recommended`，让未来 GUI 默认状态面也能直接高亮当前 recovery 推荐 action。
+- 扩展 `test_status_includes_project_state_summaries`，先验证 status 缺少 `recommended_action_id/is_recommended` 的红灯，再实现 ProjectView 输出。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 ProjectView 和 `leader actions` CLI 均暴露推荐项标记。
+- 保持安全边界：本轮只扩展只读 ProjectView 摘要，不应用 action、不创建 approval、不 dispatch、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_includes_project_state_summaries -q` 看到 status 缺少推荐项字段；实现后同一测试 1 项通过，ProjectView/leader actions/contract 相关测试 11 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 77 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `status.leader_actions.recommended_action_id=<action_id>`、`items[0].is_recommended=True` 且与 `recovery.recommended_action.target_id` 一致。
+
 ### Current - Mark recommended action in Leader action queue
 
 - `agentdeck leader actions` 现在会读取并校验 ProjectView，从 `recovery.recommended_action.target_id` 派生顶层 `recommended_action_id`。
