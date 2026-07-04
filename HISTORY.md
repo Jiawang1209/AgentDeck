@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView inbox heads
+
+- 扩展 `agentdeck status` 的 ProjectView，`inbox` 摘要现在包含 `heads`，按 agent 暴露最早的 `pending` inbox item。
+- `heads` 使用 head-only mailbox 语义：已 ack 历史 item 会被跳过，没有 pending item 的 agent 返回 `null`。
+- head 摘要只包含 inbox_id、event_type、message_id、reply_id、from_actor/from_agent、to_agent、task、status 和 created_at 等 GUI/Leader 需要的轻量字段。
+- 保持 `agentdeck status` 只读：不修改 state、不发送 tmux 输入、不创建 event。
+- 扩展 `tests/test_agent_cli.py`，覆盖多 agent inbox 中 pending head、已 ack 历史 item 跳过，以及无 pending head 的 agent。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 `status.inbox.heads` 作为 GUI/Leader 判断 mailbox head 的默认入口。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_includes_project_state_summaries -q` 看到 `status.inbox` 缺少 `heads`；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 51 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `status.inbox.heads.planner.task` 为第一条 pending task，只有已 ack 历史项的 coder head 为 `null`。
+
 ### Current - Enforce head-only inbox ack
 
 - 将 `agentdeck ack --agent <id> --inbox-id <id>` 收紧为 head-only mailbox 语义：只能确认该 agent 最早的 `pending` inbox item。

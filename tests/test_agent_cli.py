@@ -170,10 +170,48 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
         "planner": [
             {
                 "inbox_id": "inb_demo",
+                "event_type": "task_request",
                 "message_id": "msg_demo",
-                "from_agent": "leader",
+                "from_actor": "leader",
                 "to_agent": "planner",
+                "task": "构建 ProjectView",
                 "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ],
+        "coder": [
+            {
+                "inbox_id": "inb_coder_done",
+                "event_type": "task_request",
+                "message_id": "msg_done",
+                "from_actor": "leader",
+                "to_agent": "coder",
+                "task": "已处理任务",
+                "status": "acked",
+                "created_at": "2026-07-04T00:00:01+00:00",
+            },
+            {
+                "inbox_id": "inb_coder_head",
+                "event_type": "task_reply",
+                "message_id": "msg_coder",
+                "reply_id": "rep_coder",
+                "from_agent": "planner",
+                "to_agent": "coder",
+                "task": "等待处理回复",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:02+00:00",
+            },
+        ],
+        "reviewer": [
+            {
+                "inbox_id": "inb_reviewer_done",
+                "event_type": "task_request",
+                "message_id": "msg_reviewer",
+                "from_actor": "leader",
+                "to_agent": "reviewer",
+                "task": "已确认",
+                "status": "acked",
+                "created_at": "2026-07-04T00:00:03+00:00",
             }
         ]
     }
@@ -249,9 +287,36 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
         ],
     }
     assert payload["inbox"] == {
-        "total": 1,
-        "by_agent": {"planner": 1},
-        "by_status": {"pending": 1},
+        "total": 4,
+        "by_agent": {"planner": 1, "coder": 2, "reviewer": 1},
+        "by_status": {"pending": 2, "acked": 2},
+        "heads": {
+            "planner": {
+                "inbox_id": "inb_demo",
+                "event_type": "task_request",
+                "message_id": "msg_demo",
+                "reply_id": None,
+                "from_actor": "leader",
+                "from_agent": None,
+                "to_agent": "planner",
+                "task": "构建 ProjectView",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            },
+            "coder": {
+                "inbox_id": "inb_coder_head",
+                "event_type": "task_reply",
+                "message_id": "msg_coder",
+                "reply_id": "rep_coder",
+                "from_actor": None,
+                "from_agent": "planner",
+                "to_agent": "coder",
+                "task": "等待处理回复",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:02+00:00",
+            },
+            "reviewer": None,
+        },
     }
 
 

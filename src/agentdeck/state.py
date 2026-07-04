@@ -791,6 +791,25 @@ class StateStore:
             "total": len(all_items),
             "by_agent": by_agent,
             "by_status": self._status_counts(all_items),
+            "heads": {agent_id: self._inbox_head_summary(items) for agent_id, items in inbox.items()},
+        }
+
+    @staticmethod
+    def _inbox_head_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+        head = next((item for item in items if item.get("status") == "pending"), None)
+        if head is None:
+            return None
+        return {
+            "inbox_id": head.get("inbox_id"),
+            "event_type": head.get("event_type"),
+            "message_id": head.get("message_id"),
+            "reply_id": head.get("reply_id"),
+            "from_actor": head.get("from_actor"),
+            "from_agent": head.get("from_agent"),
+            "to_agent": head.get("to_agent"),
+            "task": head.get("task"),
+            "status": head.get("status"),
+            "created_at": head.get("created_at"),
         }
 
     def project_view(self, config: ProjectConfig) -> ProjectView:

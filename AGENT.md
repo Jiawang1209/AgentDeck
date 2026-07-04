@@ -90,6 +90,7 @@ Worker 不应该：
 - `agentdeck ack --agent <id> --inbox-id <id>` 只能确认该 agent 最早的 pending inbox item，不得越过 head。
 - `agentdeck trace --id <id>` 可用 message/attempt/job/reply/inbox 任意 ID 还原通信链路。
 - `agentdeck status` 返回 ProjectView 只读摘要，包含 agents、plans、approvals、messages、jobs、replies、chat_turns、leader_actions 和 inbox，适合作为 GUI 与 Leader chat loop 的默认状态入口。
+- `status.inbox.heads` 按 agent 暴露最早 pending inbox item；GUI/Leader 应优先用它判断当前可处理或可 ack 的 mailbox head。
 - 后续升级为更严格的 reply block 标记。
 
 ## Leader Planning
