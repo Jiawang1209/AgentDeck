@@ -4,7 +4,18 @@
 
 ## 2026-07-04
 
-### Current - Add tmux agent runtime CLI MVP
+### Current - Add agent stop and spawn lifecycle guard
+
+- 新增 `agentdeck agent stop --agent <id>`，通过 tmux `kill-pane` 停止已绑定 agent pane，并把 state 中的 agent 标记为 `stopped`。
+- 新增重复 spawn 保护：当 agent 已处于 `running` 且已有 `pane_id` 时，`agentdeck agent spawn` 会拒绝创建第二个 pane。
+- 扩展 `StateStore`，增加 `mark_agent_stopped()`。
+- 扩展 `RuntimeBackend` / `TmuxBackend`，增加 `kill_pane()`。
+- 扩展 `tests/test_agent_cli.py`，覆盖重复 spawn guard 和 stop 生命周期。
+- 更新 `README.md` 与 `CLAUDE.md`，补充 stop 命令和生命周期约束。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py -q`，看到 2 个测试失败；实现后重新运行，同一测试文件 6 项通过。
+- 真实 tmux smoke：在临时项目中 spawn planner 得到 pane `%1`，运行 `agentdeck agent stop --agent planner` 后返回 `status: stopped`，`agent list` 中 planner 的 `pane_id` 为 `null`。
+
+### abb3ccd - Add tmux agent runtime CLI MVP
 
 - 新增 `agentdeck agent list`，展示配置中的 agent 及其 runtime binding。
 - 新增 `agentdeck agent spawn --agent <id>`，通过 tmux backend 创建项目 session、spawn agent pane，并记录 `agent_id -> pane_id`。

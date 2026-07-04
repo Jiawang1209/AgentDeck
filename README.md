@@ -43,6 +43,7 @@ agentdeck agent list
 agentdeck agent spawn --agent planner
 agentdeck agent capture --agent planner --lines 200
 agentdeck agent send --agent planner --text "继续"
+agentdeck agent stop --agent planner
 ```
 
 `project init` 会创建：
@@ -77,25 +78,29 @@ agentdeck doctor
 agentdeck project init
 agentdeck status
 agentdeck agent list
+agentdeck agent stop --agent planner
 python -m compileall src
 ```
 
 ## Agent Runtime Commands
 
-当前 tmux runtime MVP 已支持四个 agent 操作命令：
+当前 tmux runtime MVP 已支持五个 agent 操作命令：
 
 ```bash
 agentdeck agent list
 agentdeck agent spawn --agent planner
 agentdeck agent capture --agent planner --lines 200
 agentdeck agent send --agent planner --text "继续"
+agentdeck agent stop --agent planner
 ```
 
 这些命令的约束：
 
 - `agent_id` 来自 `.agentdeck/config.toml`。
 - `spawn` 会创建项目 tmux session，并记录 `agent_id -> pane_id` 绑定。
+- `spawn` 会拒绝重复启动已经处于 `running` 状态且已有 `pane_id` 的 agent。
 - `capture` 和 `send` 只面向已经 spawn 的 agent。
+- `stop` 会 kill 对应 tmux pane，并把该 agent 标记为 `stopped`。
 - `send` 是人工执行的显式命令，后续自动调度前还会加入审批队列。
 - runtime binding 与事件会写入 `.agentdeck/state/`。
 

@@ -83,3 +83,9 @@ class TmuxBackend:
             ["tmux", "-L", config.socket_name, "send-keys", "-t", pane_id, "Enter"],
             check=True,
         )
+
+    def kill_pane(self, config: RuntimeConfig, pane_id: str) -> None:
+        subprocess.run(
+            ["tmux", "-L", config.socket_name, "kill-pane", "-t", pane_id],
+            check=True,
+        )

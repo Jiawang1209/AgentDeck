@@ -14,6 +14,7 @@ class FakeTmuxBackend:
         self.spawned: list[tuple[str, str]] = []
         self.captured: list[tuple[str, int]] = []
         self.sent: list[tuple[str, str]] = []
+        self.killed: list[str] = []
 
     def create_session(self, _config) -> None:
         self.created_sessions += 1
@@ -28,6 +29,9 @@ class FakeTmuxBackend:
 
     def send_input(self, _config, pane_id: str, text: str) -> None:
         self.sent.append((pane_id, text))
+
+    def kill_pane(self, _config, pane_id: str) -> None:
+        self.killed.append(pane_id)
 
 
 def prepare_project(tmp_path: Path, monkeypatch) -> Path:
@@ -70,6 +74,29 @@ def test_agent_spawn_records_pane_binding_and_event(tmp_path, monkeypatch, capsy
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "agent_spawned"' in events
+
+
+def test_agent_spawn_refuses_existing_running_binding(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"]["planner"] = {
+        "agent_id": "planner",
+        "pane_id": "%42",
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "spawn", "--agent", "planner"])
+
+    assert exit_code == 1
+    assert "already running" in capsys.readouterr().err
+    assert fake.created_sessions == 0
+    assert fake.spawned == []
 
 
 def test_agent_capture_reads_bound_pane(tmp_path, monkeypatch, capsys) -> None:
@@ -121,3 +148,33 @@ def test_agent_send_uses_bound_pane_and_records_event(tmp_path, monkeypatch, cap
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "agent_input_sent"' in events
+
+
+def test_agent_stop_kills_bound_pane_and_marks_stopped(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"]["planner"] = {
+        "agent_id": "planner",
+        "pane_id": "%42",
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "stop", "--agent", "planner"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"ok": True, "agent_id": "planner", "pane_id": "%42", "status": "stopped"}
+    assert fake.killed == ["%42"]
+
+    state = StateStore(root).load()
+    assert state["agents"]["planner"]["pane_id"] is None
+    assert state["agents"]["planner"]["status"] == "stopped"
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "agent_stopped"' in events

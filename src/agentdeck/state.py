@@ -37,6 +37,24 @@ class StateStore:
         agents[binding.agent_id] = asdict(binding)
         self.save(state)
 
+    def mark_agent_stopped(self, agent_id: str) -> dict[str, Any]:
+        state = self.load()
+        agents = state.setdefault("agents", {})
+        current = agents.get(
+            agent_id,
+            {
+                "agent_id": agent_id,
+                "pane_id": None,
+                "session_name": None,
+                "cwd": None,
+                "status": "configured",
+            },
+        )
+        current.update({"pane_id": None, "status": "stopped"})
+        agents[agent_id] = current
+        self.save(state)
+        return current
+
     def agent_binding(self, agent_id: str) -> dict[str, Any] | None:
         return self.load().get("agents", {}).get(agent_id)
 

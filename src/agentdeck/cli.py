@@ -100,6 +100,10 @@ def agent_spawn_command(args: argparse.Namespace) -> int:
     if agent is None:
         print(f"unknown agent: {args.agent}", file=sys.stderr)
         return 1
+    existing = store.agent_binding(agent.agent_id)
+    if existing and existing.get("pane_id") and existing.get("status") == "running":
+        print(f"agent already running: {agent.agent_id} pane={existing['pane_id']}", file=sys.stderr)
+        return 1
 
     backend = TmuxBackend()
     backend.create_session(config.runtime)
@@ -171,6 +175,29 @@ def agent_send_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def agent_stop_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    binding, exit_code = _running_binding_or_error(store, args.agent)
+    if binding is None:
+        return exit_code
+    pane_id = str(binding["pane_id"])
+    TmuxBackend().kill_pane(config.runtime, pane_id)
+    store.mark_agent_stopped(args.agent)
+    store.append_event(
+        EventRecord.create(
+            "agent_stopped",
+            {
+                "agent_id": args.agent,
+                "pane_id": pane_id,
+            },
+        )
+    )
+    _print_json({"ok": True, "agent_id": args.agent, "pane_id": pane_id, "status": "stopped"})
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentdeck")
     subparsers = parser.add_subparsers(dest="command")
@@ -205,6 +232,10 @@ def build_parser() -> argparse.ArgumentParser:
     agent_send.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
     agent_send.add_argument("--text", required=True, help="Text to send followed by Enter")
     agent_send.set_defaults(func=agent_send_command)
+
+    agent_stop = agent_subparsers.add_parser("stop", help="Kill a spawned agent pane and mark it stopped")
+    agent_stop.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
+    agent_stop.set_defaults(func=agent_stop_command)
 
     return parser
 

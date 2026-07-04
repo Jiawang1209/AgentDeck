@@ -27,3 +27,6 @@ class RuntimeBackend(Protocol):
 
     def send_input(self, config: RuntimeConfig, pane_id: str, text: str) -> None:
         raise NotImplementedError
+
+    def kill_pane(self, config: RuntimeConfig, pane_id: str) -> None:
+        raise NotImplementedError
