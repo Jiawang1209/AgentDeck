@@ -1,3 +1,6 @@
 References/
 *.zip
 .DS_Store
+.agentdeck/
+__pycache__/
+*.py[cod]

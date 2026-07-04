@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+from dataclasses import asdict
+import json
+from pathlib import Path
+from typing import Any
+
+from .config import CONFIG_DIR, ensure_project_layout, project_root
+from .models import EventRecord, ProjectConfig, ProjectView
+
+
+class StateStore:
+    def __init__(self, root: Path | None = None) -> None:
+        self.root = root or project_root()
+        self.deck_dir = ensure_project_layout(self.root)
+        self.state_path = self.deck_dir / "state" / "state.json"
+        self.events_path = self.deck_dir / "state" / "events.jsonl"
+
+    def load(self) -> dict[str, Any]:
+        if not self.state_path.exists():
+            return {"agents": {}, "messages": [], "jobs": [], "replies": []}
+        return json.loads(self.state_path.read_text(encoding="utf-8"))
+
+    def save(self, state: dict[str, Any]) -> None:
+        self.state_path.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def append_event(self, event: EventRecord) -> None:
+        with self.events_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
+
+    def project_view(self, config: ProjectConfig) -> ProjectView:
+        state = self.load()
+        bindings = state.get("agents", {})
+        agents = []
+        for agent in config.agents:
+            binding = bindings.get(agent.agent_id, {})
+            agents.append(
+                {
+                    "agent_id": agent.agent_id,
+                    "role": agent.role,
+                    "provider": agent.provider,
+                    "command": agent.command,
+                    "workspace_mode": agent.workspace_mode,
+                    "runtime": binding,
+                }
+            )
+        return ProjectView(
+            project=config.name,
+            root=config.root,
+            runtime_backend=config.runtime.backend,
+            leader=asdict(config.leader),
+            agents=agents,
+            state_path=str(self.state_path),
+        )
+
+
+def agentdeck_dir(root: Path | None = None) -> Path:
+    return (root or project_root()) / CONFIG_DIR
