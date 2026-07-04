@@ -5,7 +5,7 @@ from pathlib import Path
 
 from agentdeck import cli
 from agentdeck.config import write_default_config
-from agentdeck.contracts import project_view_contract_response
+from agentdeck.contracts import project_view_contract_payload, project_view_contract_response
 from agentdeck.state import StateStore
 
 
@@ -101,47 +101,14 @@ def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
+    expected = project_view_contract_payload(Path(payload["contract_path"]))
     assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
     assert payload["status_command"] == "agentdeck status"
     assert payload["contract_path"].endswith("docs/contracts/project-view-schema.md")
     assert payload["contract_exists"] is True
-    assert payload["top_level_fields"] == [
-        "schema_version",
-        "project",
-        "root",
-        "runtime_backend",
-        "leader",
-        "agents",
-        "state_path",
-        "plans",
-        "approvals",
-        "messages",
-        "jobs",
-        "replies",
-        "chat_turns",
-        "leader_errors",
-        "leader_actions",
-        "inbox",
-        "recovery",
-    ]
-    assert payload["recovery_fields"] == [
-        "status",
-        "reason",
-        "next_command",
-        "recommended_action",
-        "pending",
-        "leader_action",
-        "latest_event",
-        "recent_events",
-    ]
-    assert payload["recommended_action_fields"] == [
-        "label",
-        "command",
-        "safety",
-        "requires_explicit_user",
-        "source",
-        "target_id",
-    ]
+    assert payload["top_level_fields"] == expected["top_level_fields"]
+    assert payload["recovery_fields"] == expected["recovery_fields"]
+    assert payload["recommended_action_fields"] == expected["recommended_action_fields"]
 
 
 def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
@@ -471,38 +438,15 @@ def test_status_matches_project_view_contract_for_gui_clients(tmp_path, monkeypa
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     expected_top_level = {
-        "schema_version",
-        "project",
-        "root",
-        "runtime_backend",
-        "leader",
-        "agents",
-        "state_path",
-        "plans",
-        "approvals",
-        "messages",
-        "jobs",
-        "replies",
-        "chat_turns",
-        "leader_errors",
-        "leader_actions",
-        "inbox",
-        "recovery",
+        *project_view_contract_payload(contract_path)["top_level_fields"],
     }
     assert expected_top_level <= set(payload)
     assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
     expected_recovery = {
-        "status",
-        "reason",
-        "next_command",
-        "recommended_action",
-        "pending",
-        "leader_action",
-        "latest_event",
-        "recent_events",
+        *project_view_contract_payload(contract_path)["recovery_fields"],
     }
     assert expected_recovery <= set(payload["recovery"])
-    expected_action = {"label", "command", "safety", "requires_explicit_user", "source", "target_id"}
+    expected_action = {*project_view_contract_payload(contract_path)["recommended_action_fields"]}
     assert expected_action <= set(payload["recovery"]["recommended_action"])
     assert payload["recovery"]["recommended_action"]["target_id"] == "act_contract"
 

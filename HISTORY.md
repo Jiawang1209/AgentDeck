@@ -4,6 +4,15 @@
 
 ## 2026-07-04
 
+### Current - Reuse ProjectView contract fields in status tests
+
+- 调整 `tests/test_agent_cli.py` 的 ProjectView contract/status 测试，改为从 `agentdeck.contracts.project_view_contract_payload()` 读取 top-level、recovery 和 recommended_action 字段列表。
+- `test_contract_project_view_discovers_schema_for_gui_clients` 不再手写字段列表，直接和 contract 模块输出比对。
+- `test_status_matches_project_view_contract_for_gui_clients` 也复用 contract 模块字段列表，减少 status 测试、contract discovery 和 example fixture 之间的漂移点。
+- 保持安全边界：本轮只重构测试护栏，不改变 CLI 输出、不修改 state、不发送 tmux 输入。
+- 本地验证：`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_project_view_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_status_matches_project_view_contract_for_gui_clients tests/test_agent_cli.py::test_contract_project_view_cli_matches_contract_module -q` 3 项通过，`tests/test_contracts.py tests/test_agent_cli.py tests/test_leader_cli.py` 55 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 68 项通过，`conda run -n agentdeck python -m compileall src tests` 通过。
+
 ### Current - Add ProjectView contract module parity
 
 - 新增 `agentdeck.contracts.project_view_contract_response()`，统一生成 `agentdeck contract project-view` 的默认输出和 `--example` 输出。
