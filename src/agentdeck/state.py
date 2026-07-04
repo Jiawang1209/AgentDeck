@@ -1007,6 +1007,7 @@ class StateStore:
                 }
             )
         return ProjectView(
+            schema_version="project-view/v1",
             project=config.name,
             root=config.root,
             runtime_backend=config.runtime.backend,

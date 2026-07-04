@@ -76,6 +76,7 @@ class AgentRuntimeBinding:
 
 @dataclass
 class ProjectView:
+    schema_version: str
     project: str
     root: str
     runtime_backend: str

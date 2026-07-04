@@ -355,6 +355,71 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
     }
 
 
+def test_status_matches_project_view_contract_for_gui_clients(tmp_path, monkeypatch, capsys) -> None:
+    contract_path = Path(__file__).resolve().parents[1] / "docs" / "contracts" / "project-view-schema.md"
+    assert contract_path.exists()
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["leader_actions"] = [
+        {
+            "action_id": "act_contract",
+            "kind": "create_approvals",
+            "status": "pending",
+            "requires_confirmation": True,
+            "plan_id": "pln_contract",
+            "approval_id": None,
+            "agent_id": None,
+            "message_id": None,
+            "command": "agentdeck approval create-from-plan --plan-id pln_contract",
+            "reason": "contract smoke",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    store.save(state)
+    store.append_event(cli.EventRecord.create("leader_chat_turn", {"turn_id": "cht_contract"}))
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected_top_level = {
+        "schema_version",
+        "project",
+        "root",
+        "runtime_backend",
+        "leader",
+        "agents",
+        "state_path",
+        "plans",
+        "approvals",
+        "messages",
+        "jobs",
+        "replies",
+        "chat_turns",
+        "leader_errors",
+        "leader_actions",
+        "inbox",
+        "recovery",
+    }
+    assert expected_top_level <= set(payload)
+    assert payload["schema_version"] == "project-view/v1"
+    expected_recovery = {
+        "status",
+        "reason",
+        "next_command",
+        "recommended_action",
+        "pending",
+        "leader_action",
+        "latest_event",
+        "recent_events",
+    }
+    assert expected_recovery <= set(payload["recovery"])
+    expected_action = {"label", "command", "safety", "requires_explicit_user", "source", "target_id"}
+    assert expected_action <= set(payload["recovery"]["recommended_action"])
+    assert payload["recovery"]["recommended_action"]["target_id"] == "act_contract"
+
+
 def test_status_includes_recovery_summary(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

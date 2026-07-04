@@ -4,6 +4,16 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView contract smoke test
+
+- 扩展 ProjectView 顶层输出，新增 `schema_version: "project-view/v1"`，为未来 GUI 和自然语言入口提供明确契约版本。
+- 新增 `tests/test_agent_cli.py::test_status_matches_project_view_contract_for_gui_clients`，将临时 contract smoke 固化为自动化测试。
+- 测试会检查 `docs/contracts/project-view-schema.md` 存在，并验证 `agentdeck status` 输出包含契约声明的 top-level、`recovery` 和 `recommended_action` 关键字段。
+- 同步更新 `docs/contracts/project-view-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，记录当前 ProjectView schema version。
+- 保持安全边界：本轮只增加契约版本和测试护栏，不改变 dispatch、approval、tmux 或 state mutation 行为。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_matches_project_view_contract_for_gui_clients -q` 看到缺少 `schema_version`；实现后同一测试 1 项通过，ProjectView/Leader 相关测试 40 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 61 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `schema_version=project-view/v1` 且 `recommended_action` 包含 label/command/safety/requires_explicit_user/source/target_id。
+
 ### Current - Add ProjectView contract document
 
 - 新增 `docs/contracts/project-view-schema.md`，把 `agentdeck status` 的 ProjectView 作为 CLI、自然语言 Leader、恢复工具和未来 GUI 的统一只读状态契约沉淀下来。

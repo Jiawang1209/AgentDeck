@@ -8,6 +8,7 @@ GUI clients should consume ProjectView first. They should not scan `.agentdeck/s
 
 ```json
 {
+  "schema_version": "project-view/v1",
   "project": "repo-name",
   "root": "/absolute/project/root",
   "runtime_backend": "tmux",
