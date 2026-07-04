@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
-from .contracts import project_view_contract_response
+from .contracts import project_view_contract_response, validate_project_view_contract
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
@@ -67,7 +67,14 @@ def status_command(_args: argparse.Namespace) -> int:
         print("Run: python -m agentdeck project init", file=sys.stderr)
         return 1
     store = StateStore(root)
-    _print_json(asdict(store.project_view(config)))
+    payload = asdict(store.project_view(config))
+    validation = validate_project_view_contract(payload)
+    if not validation["ok"]:
+        print("ProjectView contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
 
 

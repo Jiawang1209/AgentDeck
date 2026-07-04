@@ -12,6 +12,8 @@ Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_
 
 Use `validate_project_view_contract(payload)` from `src/agentdeck/contracts.py` to check any ProjectView-like payload against the v1 baseline contract.
 
+`agentdeck status` self-validates its generated ProjectView with `validate_project_view_contract()` before printing JSON. If validation fails, it exits non-zero, writes the contract errors to stderr, and does not print a partial ProjectView.
+
 ## Top-Level Shape
 
 ```json

@@ -453,6 +453,27 @@ def test_status_matches_project_view_contract_for_gui_clients(tmp_path, monkeypa
     assert validate_project_view_contract(payload) == {"ok": True, "errors": []}
 
 
+def test_status_refuses_project_view_contract_violation(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    original_asdict = cli.asdict
+
+    def broken_project_view_asdict(obj):
+        payload = original_asdict(obj)
+        if obj.__class__.__name__ == "ProjectView":
+            payload.pop("recovery", None)
+        return payload
+
+    monkeypatch.setattr(cli, "asdict", broken_project_view_asdict)
+
+    exit_code = cli.main(["status"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "ProjectView contract validation failed" in captured.err
+    assert "missing top-level field: recovery" in captured.err
+
+
 def test_status_includes_recovery_summary(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

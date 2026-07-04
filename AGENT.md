@@ -95,6 +95,7 @@ Worker 不应该：
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`。
 - ProjectView contract payload 和 example fixture 维护在 `src/agentdeck/contracts.py`，需要复用时优先 import 该模块。
 - `validate_project_view_contract(payload)` 可校验任意 ProjectView-like payload 是否满足 v1 基础契约。
+- `agentdeck status` 输出 JSON 前必须先用 `validate_project_view_contract()` 自校验；失败时只能返回错误，不输出半坏 ProjectView。
 - `agentdeck contract project-view` 返回 ProjectView 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定示例，供 GUI 原型使用。
 - `status.recovery` 是当前恢复入口，包含 status/reason/next_command/recommended_action/pending/leader_action/latest_event/recent_events，用来判断下一步该继续什么；`recommended_action` 可直接驱动 GUI 的下一步按钮或检查入口，并通过 target_id 关联 action、approval 或 inbox item。
 - `status.chat_turns.items` 包含 action_id/action_kind，可把自然语言 turn 关联回 leader_actions。

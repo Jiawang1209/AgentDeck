@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add ProjectView status self-validation
+
+- `agentdeck status` 现在会在输出 JSON 前调用 `validate_project_view_contract()` 自校验 ProjectView。
+- 当 ProjectView 违反 `project-view/v1` 基础契约时，status 返回非 0、错误写入 stderr，并且不输出半坏的 ProjectView JSON。
+- 新增 `test_status_refuses_project_view_contract_violation`，用缺失 `recovery` 的 ProjectView 模拟内部漂移，锁定 CLI 自校验行为。
+- 更新 `docs/contracts/project-view-schema.md`、`CLAUDE.md` 与 `AGENT.md`，记录 status 自校验是 GUI、Leader chat loop 和恢复入口的输出前守门规则。
+- 保持安全边界：本轮只校验 status payload，不读取额外 live state、不修改 `.agentdeck/state`、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_refuses_project_view_contract_violation -q` 看到 status 未拒绝缺 `recovery` 的 ProjectView 且返回 0；实现后同一测试 1 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 72 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `agentdeck status` 输出可被 `validate_project_view_contract()` 校验为 `{'ok': True, 'errors': []}`。
+
 ### Current - Add ProjectView contract validator
 
 - 新增 `agentdeck.contracts.validate_project_view_contract(payload)`，用于校验任意 ProjectView-like payload 是否满足 `project-view/v1` 基础契约。
