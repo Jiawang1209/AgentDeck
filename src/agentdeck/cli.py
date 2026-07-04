@@ -564,6 +564,35 @@ def leader_actions_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+def leader_apply_action_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    try:
+        applied = store.apply_leader_action(args.action_id)
+    except KeyError:
+        print(f"unknown leader action: {args.action_id}", file=sys.stderr)
+        return 1
+    except (PermissionError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    action = applied["action"]
+    result = applied["result"]
+    store.append_event(
+        EventRecord.create(
+            "leader_action_applied",
+            {
+                "action_id": action["action_id"],
+                "kind": action["kind"],
+                "plan_id": action["plan_id"],
+                "result_count": result.get("count"),
+            },
+        )
+    )
+    _print_json({"ok": True, **_leader_action_summary(action), "result": result})
+    return 0
+
+
 def _next_command_for_review(review: dict[str, object]) -> str | None:
     action = review.get("next_action")
     if action == "dispatch_approved" and review.get("approval_id"):
@@ -935,6 +964,12 @@ def build_parser() -> argparse.ArgumentParser:
     leader_next.set_defaults(func=leader_next_command)
     leader_actions = leader_subparsers.add_parser("actions", help="List persisted Leader action suggestions")
     leader_actions.set_defaults(func=leader_actions_command)
+    leader_apply_action = leader_subparsers.add_parser(
+        "apply-action",
+        help="Apply a safe pending Leader action with explicit confirmation",
+    )
+    leader_apply_action.add_argument("--action-id", required=True, help="Leader action id from agentdeck leader next")
+    leader_apply_action.set_defaults(func=leader_apply_action_command)
     leader_chat = leader_subparsers.add_parser("chat", help="Natural-language Leader entrypoint")
     leader_chat.add_argument("--message", required=True, help="Natural-language message for the Leader")
     leader_chat.add_argument("--provider", default="fake", help="Leader provider to use when a new plan is needed")

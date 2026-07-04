@@ -334,8 +334,36 @@ class StateStore:
     def list_leader_actions(self) -> list[dict[str, Any]]:
         return list(self.load().get("leader_actions", []))
 
+    def apply_leader_action(self, action_id: str) -> dict[str, Any]:
+        state = self.load()
+        action = next((item for item in state.get("leader_actions", []) if item.get("action_id") == action_id), None)
+        if action is None:
+            raise KeyError(action_id)
+        if action.get("status") != "pending":
+            raise ValueError(f"leader action is not pending: {action_id}")
+        if action.get("kind") != "create_approvals":
+            raise PermissionError(f"leader action requires explicit command: {action_id}")
+        plan_id = str(action.get("plan_id"))
+        approvals = self._create_approvals_from_plan_state(state, plan_id)
+        action["status"] = "applied"
+        action["applied_at"] = utc_now()
+        self.save(state)
+        return {
+            "action": action,
+            "result": {
+                "plan_id": plan_id,
+                "count": len(approvals),
+                "approvals": approvals,
+            },
+        }
+
     def create_approvals_from_plan(self, plan_id: str) -> list[dict[str, Any]]:
         state = self.load()
+        approvals = self._create_approvals_from_plan_state(state, plan_id)
+        self.save(state)
+        return approvals
+
+    def _create_approvals_from_plan_state(self, state: dict[str, Any], plan_id: str) -> list[dict[str, Any]]:
         plan_record = next((plan for plan in state.get("plans", []) if plan.get("plan_id") == plan_id), None)
         if plan_record is None:
             raise KeyError(plan_id)
@@ -361,7 +389,6 @@ class StateStore:
             }
             approvals.append(approval)
         state.setdefault("approvals", []).extend(approvals)
-        self.save(state)
         return approvals
 
     def list_approvals(self) -> list[dict[str, Any]]:

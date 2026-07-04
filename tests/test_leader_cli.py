@@ -300,6 +300,72 @@ def test_leader_actions_lists_persisted_actions(tmp_path, monkeypatch, capsys) -
     assert payload["actions"][0]["status"] == "pending"
 
 
+def test_leader_apply_action_creates_approvals_and_marks_action_applied(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "应用审批 action"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["leader", "next", "--plan-id", plan_id])
+    action_id = json.loads(capsys.readouterr().out)["action_id"]
+
+    exit_code = cli.main(["leader", "apply-action", "--action-id", action_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["action_id"] == action_id
+    assert payload["kind"] == "create_approvals"
+    assert payload["status"] == "applied"
+    assert payload["result"]["count"] == 3
+    assert [item["agent_id"] for item in payload["result"]["approvals"]] == ["planner", "coder", "reviewer"]
+
+    state = StateStore(root).load()
+    assert len(state["approvals"]) == 3
+    assert state["leader_actions"][0]["status"] == "applied"
+    assert state["leader_actions"][0]["applied_at"]
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "leader_action_applied"' in events
+
+
+def test_leader_apply_action_rejects_already_applied_action(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "重复应用"])
+    capsys.readouterr()
+    cli.main(["leader", "next"])
+    action_id = json.loads(capsys.readouterr().out)["action_id"]
+    cli.main(["leader", "apply-action", "--action-id", action_id])
+    capsys.readouterr()
+
+    exit_code = cli.main(["leader", "apply-action", "--action-id", action_id])
+
+    assert exit_code == 1
+    assert f"leader action is not pending: {action_id}" in capsys.readouterr().err
+
+
+def test_leader_apply_action_refuses_dispatch_action(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "不能自动 dispatch"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    cli.main(["leader", "next", "--plan-id", plan_id])
+    action_id = json.loads(capsys.readouterr().out)["action_id"]
+
+    exit_code = cli.main(["leader", "apply-action", "--action-id", action_id])
+
+    assert exit_code == 1
+    assert f"leader action requires explicit command: {action_id}" in capsys.readouterr().err
+    state = StateStore(root).load()
+    assert state["leader_actions"][0]["status"] == "pending"
+    assert state["approvals"][0]["status"] == "approved"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
 def test_plan_list_outputs_plan_summaries(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "第一项任务"])

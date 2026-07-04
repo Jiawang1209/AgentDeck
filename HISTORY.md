@@ -4,6 +4,18 @@
 
 ## 2026-07-04
 
+### Current - Add safe Leader action apply
+
+- 新增 `agentdeck leader apply-action --action-id <id>`，作为 action queue 的显式确认入口。
+- 当前只允许应用 `create_approvals` action：创建 approvals，并把 action 标记为 `applied`、写入 `applied_at`。
+- `dispatch_approved` 等需要发送 tmux 输入或影响 runtime 的 action 会被拒绝，必须继续由人类显式运行 `agentdeck approval dispatch ...`。
+- 重复 apply 已应用 action 会明确失败，不重复创建 approvals。
+- 新增 `leader_action_applied` 事件，记录 action_id、kind、plan_id 和 result_count。
+- 扩展 `tests/test_leader_cli.py`，覆盖 apply create_approvals、重复 apply 失败、dispatch action 拒绝和未派发安全边界。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 safe apply-action 用法与限制。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_apply_action_creates_approvals_and_marks_action_applied tests/test_leader_cli.py::test_leader_apply_action_rejects_already_applied_action tests/test_leader_cli.py::test_leader_apply_action_refuses_dispatch_action -q` 看到 `apply-action` 子命令不存在；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 47 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 apply-action 创建 3 个 approvals、action 标记 applied，messages/jobs 仍为 0。
+
 ### Current - Add Leader next action queue
 
 - 新增 `agentdeck leader next [--plan-id <id>]`，基于最新 plan 或指定 plan 计算下一步，并持久化为 `leader_actions[]`。

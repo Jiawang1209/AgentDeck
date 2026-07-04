@@ -53,6 +53,7 @@ agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
 agentdeck leader next
 agentdeck leader actions
+agentdeck leader apply-action --action-id act_xxx
 agentdeck plan list
 agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
@@ -224,6 +225,7 @@ agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
 agentdeck leader next
 agentdeck leader actions
+agentdeck leader apply-action --action-id act_xxx
 agentdeck plan list
 agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
@@ -237,7 +239,9 @@ agentdeck plan status --plan-id pln_xxx
 
 `leader review` 使用本地 deterministic 规则读取 plan status 和 replies，输出下一步建议：`dispatch_approved`、`wait_for_reply`、`summarize` 或 `wait_for_approval`。后续接入真实 Leader LLM 时应复用该输出结构。
 
-`leader next` 会把下一步建议持久化到 `leader_actions[]`，例如创建 approvals 或派发 approved step 的命令。它只记录 pending action，不执行命令；`leader actions` 可查看已记录的 action queue。真正创建审批项或 dispatch 仍然要人类显式运行对应命令。
+`leader next` 会把下一步建议持久化到 `leader_actions[]`，例如创建 approvals 或派发 approved step 的命令。它只记录 pending action，不执行命令；`leader actions` 可查看已记录的 action queue。
+
+`leader apply-action --action-id <id>` 是显式确认入口。当前只允许应用 `create_approvals`，会创建 approval queue 并把 action 标记为 `applied`。`dispatch_approved`、`wait_for_reply` 等 action 仍会被拒绝，必须由人类运行对应的 `approval dispatch` 或 `capture-reply` 命令。
 
 计划确认后，可以创建审批项：
 
