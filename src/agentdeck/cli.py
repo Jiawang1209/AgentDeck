@@ -135,6 +135,43 @@ def events_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def continue_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    recovery = project_view.get("recovery", {})
+    recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+    target_id = recommended_action.get("target_id") if isinstance(recommended_action, dict) else None
+    source = recommended_action.get("source") if isinstance(recommended_action, dict) else None
+    leader_action = None
+    action_detail_command = None
+    if source == "leader_action" and target_id:
+        try:
+            leader_action = store.leader_action_detail(str(target_id))
+            action_detail_command = f"agentdeck leader action --action-id {target_id}"
+        except KeyError:
+            leader_action = None
+    _print_json(
+        {
+            "ok": True,
+            "mode": "continue",
+            "project_view_schema_version": project_view.get("schema_version"),
+            "project_view_command": "agentdeck status",
+            "status": recovery.get("status") if isinstance(recovery, dict) else None,
+            "reason": recovery.get("reason") if isinstance(recovery, dict) else None,
+            "next_command": recovery.get("next_command") if isinstance(recovery, dict) else None,
+            "recommended_action": recommended_action,
+            "pending": recovery.get("pending") if isinstance(recovery, dict) else None,
+            "leader_action": leader_action,
+            "action_detail_command": action_detail_command,
+        }
+    )
+    return 0
+
+
 def contract_project_view_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "project-view-schema.md"
     payload = project_view_contract_response(contract_path, include_example=args.example)
@@ -1253,6 +1290,9 @@ def build_parser() -> argparse.ArgumentParser:
     events = subparsers.add_parser("events", help="Show recent audit events")
     events.add_argument("--limit", type=int, default=20, help="Number of recent events to show")
     events.set_defaults(func=events_command)
+
+    continue_parser = subparsers.add_parser("continue", help="Show the current recovery-driven next step")
+    continue_parser.set_defaults(func=continue_command)
 
     contract = subparsers.add_parser("contract", help="Discover machine-readable AgentDeck contracts")
     contract_subparsers = contract.add_subparsers(dest="contract_command")

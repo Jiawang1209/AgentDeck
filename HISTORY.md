@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Add read-only continue recovery card
+
+- 新增顶层命令 `agentdeck continue`，把 ProjectView `status.recovery` 整理成一张下一步卡片，返回 status、reason、next_command、recommended_action、pending、project_view_command，以及可选的 `leader_action` 详情和 `action_detail_command`。
+- `agentdeck continue` 会先通过 `validate_project_view_contract()` 守门；ProjectView 漂移时返回非 0 且不输出半坏下一步建议。
+- 对 `source=leader_action` 的 recommended action，`continue` 会复用 `leader_action_detail()` 暴露 can_apply/apply_command/explicit_command/apply_blocker，方便 GUI 或自然语言壳在执行前展示详情。
+- 新增只读性测试，确认 `continue` 不修改 `.agentdeck/state/state.json`，不创建 action、不 apply action、不 dispatch、不发送 tmux 输入。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 `agentdeck continue` 是只读恢复入口，不是自动执行器。
+- 保持安全边界：本轮只新增只读恢复卡片，不改变 `leader next`、`leader chat`、审批、dispatch、trace 或 tmux 执行语义。
+- 本地验证：先运行目标测试看到 `agentdeck continue` 命令不存在的红灯；实现后目标测试 2 项通过，`tests/test_agent_cli.py tests/test_leader_cli.py` 67 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 99 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `agentdeck continue` 返回 `status=action_required`、safe apply next_command、leader_action.can_apply=true，且 state 文件 hash 不变。
+
 ### Current - Surface ProjectView summary trace commands
 
 - `agentdeck status` 的 `messages.items[]`、`jobs.items[]` 和 `replies.items[]` 现在都会包含 `trace_command`，让 GUI、人类和 Leader chat loop 可以从 ProjectView 摘要直接跳到通信 lineage。

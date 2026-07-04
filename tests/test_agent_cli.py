@@ -105,6 +105,56 @@ def test_events_returns_empty_list_when_log_is_missing(tmp_path, monkeypatch, ca
     assert payload == {"count": 0, "limit": 20, "events": []}
 
 
+def test_continue_returns_recovery_card_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "chat", "--message", "帮我规划下一步"])
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+    status_before = cli.asdict(StateStore(root).project_view(cli.load_config(root)))
+
+    exit_code = cli.main(["continue"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    recovery = status_before["recovery"]
+    recommended_action = recovery["recommended_action"]
+    assert payload["ok"] is True
+    assert payload["mode"] == "continue"
+    assert payload["project_view_schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["project_view_command"] == "agentdeck status"
+    assert payload["status"] == recovery["status"]
+    assert payload["reason"] == recovery["reason"]
+    assert payload["next_command"] == recovery["next_command"]
+    assert payload["recommended_action"] == recommended_action
+    assert payload["pending"] == recovery["pending"]
+    assert payload["leader_action"]["action_id"] == recommended_action["target_id"]
+    assert payload["leader_action"]["can_apply"] is True
+    assert payload["leader_action"]["apply_command"] == recovery["next_command"]
+    assert payload["action_detail_command"] == f"agentdeck leader action --action-id {recommended_action['target_id']}"
+    assert StateStore(root).load() == state_before
+
+
+def test_continue_refuses_invalid_project_view_before_printing(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    original_asdict = cli.asdict
+
+    def broken_project_view_asdict(obj):
+        payload = original_asdict(obj)
+        if obj.__class__.__name__ == "ProjectView":
+            payload.pop("recovery", None)
+        return payload
+
+    monkeypatch.setattr(cli, "asdict", broken_project_view_asdict)
+
+    exit_code = cli.main(["continue"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "ProjectView contract validation failed" in captured.err
+    assert "missing top-level field: recovery" in captured.err
+
+
 def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
     exit_code = cli.main(["contract", "project-view"])
 

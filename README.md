@@ -41,6 +41,7 @@ conda activate agentdeck
 agentdeck doctor
 agentdeck project init
 agentdeck status
+agentdeck continue
 agentdeck contract project-view
 agentdeck contract project-view --example
 agentdeck contract leader-chat
@@ -251,6 +252,7 @@ AgentDeck 已提供第一版 plan-only Leader 能力：
 agentdeck leader chat --message "帮我设计自动 reply extraction"
 agentdeck leader chat --message "继续"
 agentdeck leader chat-history
+agentdeck continue
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
 agentdeck leader next
@@ -263,6 +265,8 @@ agentdeck plan status --plan-id pln_xxx
 ```
 
 当前默认使用本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。也可以显式使用 `--provider openai-compatible` 调用 OpenAI-compatible `/chat/completions` API。两种模式都不会 dispatch、不会发送 tmux 输入。
+
+`agentdeck continue` 是顶层只读恢复入口。它会先校验 ProjectView，再把 `status.recovery` 整理成一张下一步卡片：包含 status、reason、next_command、recommended_action、pending 计数、project_view_command，以及可选的 `leader_action` 详情和 `action_detail_command`。它不创建 plan、不写入 `leader_actions[]`、不 apply action、不 dispatch、不发送 tmux 输入，适合终端用户、自然语言壳和 GUI 在任何时刻询问“现在该继续什么”。
 
 `leader chat` 是自然语言入口 MVP。它会先读取并校验 `agentdeck status` 的 ProjectView：如果 ProjectView 不满足 `project-view/v1` 契约，chat 会返回非 0，且不会创建 plan 或 chat turn；如果当前还没有 plan，就把 message 当作目标创建 plan-only 记录，并持久化一条可安全应用的 `create_approvals` Leader action，然后在响应前重新读取 ProjectView，让同一次 chat 响应包含刚创建的 plan、chat turn 和 action queue；如果已有 plan，就 review 最新 plan、持久化或复用一条 `leader_actions[]` 建议，然后重新读取 ProjectView 的 `status.recovery` 作为恢复决策源。chat 输出会在顶层返回与 `project_view.leader_actions` 相同的 `leader_actions` 摘要，并返回 `leader_explanation` 说明当前模式、推荐 action、reason、next_command、safety 和是否需要人类显式确认；响应契约见 `docs/contracts/leader-chat-schema.md`，可通过 `agentdeck contract leader-chat` 发现，输出 JSON 前也会通过 `validate_leader_chat_contract()` 自校验，失败会写入 `leader_errors[]` 和 `leader_chat_contract_failed` 事件。plan/review 输出都会返回 `recovery`，并让 `next_command` 等于 `recovery.next_command`；`leader_action` 包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，方便 GUI 或对话层直接展示执行按钮与阻塞原因。每次 chat turn 都会写入 `.agentdeck/state/state.json` 的 `chat_turns[]`，并可通过 `leader chat-history` 查看；plan/review turn 会记录 action_id/action_kind。它不会创建 approval、不会 dispatch、不会发送 tmux 输入。
 
