@@ -107,6 +107,32 @@ def test_dispatch_sends_role_prompt_task_and_records_event(tmp_path, monkeypatch
     assert state["messages"][0]["message_id"] == payload["message_id"]
     assert state["messages"][0]["to_agent"] == "planner"
     assert state["messages"][0]["task"] == "设计消息账本"
+    assert state["attempts"][0]["message_id"] == payload["message_id"]
+    assert state["attempts"][0]["agent_id"] == "planner"
+    assert state["jobs"][0]["message_id"] == payload["message_id"]
+    assert state["jobs"][0]["attempt_id"] == state["attempts"][0]["attempt_id"]
+    assert state["jobs"][0]["status"] == "dispatched"
+    assert state["inbox"]["planner"][0]["event_type"] == "task_request"
+    assert state["inbox"]["planner"][0]["message_id"] == payload["message_id"]
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "task_dispatched"' in events
+
+
+def test_inbox_lists_task_requests_for_agent(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "planner", "--task", "设计消息账本"])
+    capsys.readouterr()
+
+    exit_code = cli.main(["inbox", "--agent", "planner"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["agent_id"] == "planner"
+    assert payload["count"] == 1
+    assert payload["items"][0]["event_type"] == "task_request"
+    assert payload["items"][0]["task"] == "设计消息账本"
+    assert payload["items"][0]["status"] == "pending"

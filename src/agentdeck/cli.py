@@ -267,7 +267,8 @@ def dispatch_command(args: argparse.Namespace) -> int:
         return exit_code
     pane_id = str(binding["pane_id"])
     prompt = build_dispatch_prompt(agent, args.task)
-    message = store.append_message("user", agent.agent_id, args.task, prompt)
+    records = store.create_dispatch_records("user", agent.agent_id, args.task, prompt, pane_id)
+    message = records["message"]
     TmuxBackend().send_input(config.runtime, pane_id, prompt)
     store.append_event(
         EventRecord.create(
@@ -288,6 +289,18 @@ def dispatch_command(args: argparse.Namespace) -> int:
             "pane_id": pane_id,
         }
     )
+    return 0
+
+
+def inbox_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if _agent_by_id(config, args.agent) is None:
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    items = store.inbox_items(args.agent)
+    _print_json({"agent_id": args.agent, "count": len(items), "items": items})
     return 0
 
 
@@ -343,6 +356,10 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
     dispatch.add_argument("--task", required=True, help="Task text to send with the agent role prompt")
     dispatch.set_defaults(func=dispatch_command)
+
+    inbox = subparsers.add_parser("inbox", help="Show pending inbox items for an agent")
+    inbox.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
+    inbox.set_defaults(func=inbox_command)
 
     return parser
 

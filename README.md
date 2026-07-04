@@ -46,6 +46,7 @@ agentdeck agent send --agent planner --text "继续"
 agentdeck agent stop --agent planner
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
 agentdeck dispatch --agent planner --task "设计消息账本"
+agentdeck inbox --agent planner
 ```
 
 `project init` 会创建：
@@ -82,6 +83,7 @@ agentdeck status
 agentdeck agent list
 agentdeck agent stop --agent planner
 agentdeck dispatch --agent planner --task "设计消息账本"
+agentdeck inbox --agent planner
 python -m compileall src
 ```
 
@@ -130,10 +132,16 @@ agentdeck dispatch --agent planner --task "设计消息账本"
 当前通信路径是 MVP 形态：
 
 ```text
-Human/Leader -> dispatch -> message record -> tmux pane
+Human/Leader -> dispatch -> message/attempt/job/inbox -> tmux pane
 ```
 
-每次 dispatch 会写入 `.agentdeck/state/state.json` 的 `messages`，并追加 `task_dispatched` 事件。后续会把它升级成 CCB 式 `message -> attempt -> job -> reply -> inbox` 账本。
+每次 dispatch 会写入 `.agentdeck/state/state.json` 的 `messages`、`attempts`、`jobs` 和目标 agent 的 `inbox`，并追加 `task_dispatched` 事件。可以查看某个 agent 的 inbox：
+
+```bash
+agentdeck inbox --agent planner
+```
+
+后续会继续补 `reply`、`ack`、`trace`，把它升级成完整 CCB 式通信账本。
 
 DeepSeek API key 后续会通过环境变量读取：
 

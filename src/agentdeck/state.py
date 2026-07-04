@@ -74,6 +74,67 @@ class StateStore:
         self.save(state)
         return message
 
+    def create_dispatch_records(
+        self,
+        from_actor: str,
+        to_agent: str,
+        task: str,
+        prompt: str,
+        pane_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        state = self.load()
+        message = {
+            "message_id": new_id("msg"),
+            "from_actor": from_actor,
+            "to_agent": to_agent,
+            "task": task,
+            "prompt": prompt,
+            "status": "dispatched",
+            "created_at": utc_now(),
+        }
+        attempt = {
+            "attempt_id": new_id("att"),
+            "message_id": message["message_id"],
+            "agent_id": to_agent,
+            "status": "dispatched",
+            "created_at": utc_now(),
+        }
+        job = {
+            "job_id": new_id("job"),
+            "message_id": message["message_id"],
+            "attempt_id": attempt["attempt_id"],
+            "agent_id": to_agent,
+            "pane_id": pane_id,
+            "status": "dispatched",
+            "created_at": utc_now(),
+        }
+        inbox_item = {
+            "inbox_id": new_id("inb"),
+            "event_type": "task_request",
+            "message_id": message["message_id"],
+            "attempt_id": attempt["attempt_id"],
+            "job_id": job["job_id"],
+            "from_actor": from_actor,
+            "to_agent": to_agent,
+            "task": task,
+            "status": "pending",
+            "created_at": utc_now(),
+        }
+        state.setdefault("messages", []).append(message)
+        state.setdefault("attempts", []).append(attempt)
+        state.setdefault("jobs", []).append(job)
+        state.setdefault("inbox", {}).setdefault(to_agent, []).append(inbox_item)
+        self.save(state)
+        return {
+            "message": message,
+            "attempt": attempt,
+            "job": job,
+            "inbox_item": inbox_item,
+        }
+
+    def inbox_items(self, agent_id: str) -> list[dict[str, Any]]:
+        return list(self.load().get("inbox", {}).get(agent_id, []))
+
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
         bindings = state.get("agents", {})

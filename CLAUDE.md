@@ -46,6 +46,7 @@ agentdeck agent list
 agentdeck agent stop --agent planner
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
 agentdeck dispatch --agent planner --task "设计消息账本"
+agentdeck inbox --agent planner
 pytest tests/test_agent_cli.py -q
 pytest tests/test_dispatch_cli.py -q
 python -m compileall src

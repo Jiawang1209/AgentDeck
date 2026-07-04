@@ -79,7 +79,9 @@ Worker 不应该：
 - task request 和 task reply 都进入 mailbox。
 - 每个 agent 同时只消费一个 active task。
 - 所有 job/reply/event 都要可 trace。
-- 当前 MVP 通信路径是 `dispatch -> message record -> tmux pane`；后续升级为 `message -> attempt -> job -> reply -> inbox`。
+- 当前 MVP 通信路径是 `dispatch -> message/attempt/job/inbox -> tmux pane`。
+- `agentdeck inbox --agent <id>` 可查看某个 agent 收到的 task request。
+- 后续升级为完整 `message -> attempt -> job -> reply -> inbox -> ack/trace`。
 
 ## 审批规则
 
