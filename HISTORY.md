@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add plan status view
+
+- 新增 `agentdeck plan status --plan-id <id>`，汇总 plan、approval 状态和 dispatch lineage。
+- 扩展 `StateStore.plan_status()`，按 step 返回 agent、role、task、approval_id、approval_status、message_id、attempt_id、job_id 和 reject reason。
+- status 输出包含 counts：steps、approvals、pending、approved、rejected、dispatched。
+- 该命令是只读视图，不修改 state、不发送 tmux 输入，面向自然语言入口、GUI 和恢复任务进度。
+- 扩展 `tests/test_leader_cli.py`，覆盖 dispatched/rejected/pending 混合状态，以及 unknown plan 错误。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 plan status 工作流。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_plan_status_summarizes_approvals_and_dispatch_lineage tests/test_leader_cli.py::test_plan_status_rejects_unknown_plan_id -q` 看到 `plan status` 子命令不存在；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 25 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，`agentdeck plan --help` 显示 status 子命令，临时 git 项目 smoke 确认 pending approvals 可汇总到 plan status。
+
 ### Current - Add approved approval dispatch
 
 - 新增 `agentdeck approval dispatch --approval-id <id>`，将已批准的 approval step 转成现有 `dispatch -> message/attempt/job/inbox` 链路。

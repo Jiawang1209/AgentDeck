@@ -451,6 +451,19 @@ def plan_show_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def plan_status_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    try:
+        status = store.plan_status(args.plan_id)
+    except KeyError:
+        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    _print_json(status)
+    return 0
+
+
 def approval_create_from_plan_command(args: argparse.Namespace) -> int:
     _config, store, exit_code = _load_project_or_error()
     if store is None:
@@ -642,6 +655,9 @@ def build_parser() -> argparse.ArgumentParser:
     plan_show = plan_subparsers.add_parser("show", help="Show a saved Leader plan")
     plan_show.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
     plan_show.set_defaults(func=plan_show_command)
+    plan_status = plan_subparsers.add_parser("status", help="Show plan progress across approvals and dispatches")
+    plan_status.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
+    plan_status.set_defaults(func=plan_status_command)
 
     approval = subparsers.add_parser("approval", help="Approval gate commands")
     approval_subparsers = approval.add_subparsers(dest="approval_command")

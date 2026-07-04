@@ -49,6 +49,7 @@ agentdeck agent assign-role --agent planner --role "architecture planning" --rol
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck plan list
 agentdeck plan show --plan-id pln_xxx
+agentdeck plan status --plan-id pln_xxx
 agentdeck approval create-from-plan --plan-id pln_xxx
 agentdeck approval list
 agentdeck approval approve --approval-id apv_xxx
@@ -96,7 +97,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - 每次开发内容都要同步更新 `HISTORY.md`，并和对应代码/文档改动放在同一次 commit 中。
 - 每次开发前先对照 `docs/roadmap/ultimate-goal-roadmap.md`，确认功能服务 Leader Agent、多 Agent 通信、可见 runtime、审批、恢复或 GUI 主线。
 - 自然语言任务调度优先从 `agentdeck leader plan --task <text>` 生成 plan-only 记录开始；不要跳过 plan 直接自动 dispatch。
-- 审批或 dispatch 前优先用 `agentdeck plan list` 和 `agentdeck plan show --plan-id <id>` 检查计划。
+- 审批、dispatch 或恢复任务前优先用 `agentdeck plan list`、`agentdeck plan show --plan-id <id>` 和 `agentdeck plan status --plan-id <id>` 检查计划。
 - 使用 `agentdeck approval create-from-plan --plan-id <id>` 创建审批项，使用 `approval approve/reject` 更新状态；只有 approved approval 才能通过 `agentdeck approval dispatch --approval-id <id>` 派发。
 - 先更新架构/README/agent 文档，再扩展行为。
 - 所有开发命令默认先激活 `agentdeck` conda 环境。

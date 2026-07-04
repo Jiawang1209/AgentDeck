@@ -123,6 +123,56 @@ def test_plan_show_rejects_unknown_plan_id(tmp_path, monkeypatch, capsys) -> Non
     assert "unknown plan: pln_missing" in capsys.readouterr().err
 
 
+def test_plan_status_summarizes_approvals_and_dispatch_lineage(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--task", "查看计划状态"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    planner_approval_id = approvals[0]["approval_id"]
+    coder_approval_id = approvals[1]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", planner_approval_id])
+    capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", planner_approval_id])
+    dispatch_payload = json.loads(capsys.readouterr().out)
+    cli.main(["approval", "reject", "--approval-id", coder_approval_id, "--reason", "先等 planner"])
+    capsys.readouterr()
+
+    exit_code = cli.main(["plan", "status", "--plan-id", plan_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["plan_id"] == plan_id
+    assert payload["task"] == "查看计划状态"
+    assert payload["counts"] == {
+        "steps": 3,
+        "approvals": 3,
+        "pending": 1,
+        "approved": 0,
+        "rejected": 1,
+        "dispatched": 1,
+    }
+    assert [step["agent_id"] for step in payload["steps"]] == ["planner", "coder", "reviewer"]
+    assert payload["steps"][0]["approval_status"] == "dispatched"
+    assert payload["steps"][0]["message_id"] == dispatch_payload["message_id"]
+    assert payload["steps"][0]["job_id"].startswith("job_")
+    assert payload["steps"][1]["approval_status"] == "rejected"
+    assert payload["steps"][1]["reason"] == "先等 planner"
+    assert payload["steps"][2]["approval_status"] == "pending"
+
+
+def test_plan_status_rejects_unknown_plan_id(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["plan", "status", "--plan-id", "pln_missing"])
+
+    assert exit_code == 1
+    assert "unknown plan: pln_missing" in capsys.readouterr().err
+
+
 def test_approval_create_from_plan_generates_step_approvals(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "审批后再派发"])

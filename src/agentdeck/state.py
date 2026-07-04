@@ -105,6 +105,57 @@ class StateStore:
                 return plan
         raise KeyError(plan_id)
 
+    def plan_status(self, plan_id: str) -> dict[str, Any]:
+        state = self.load()
+        plan_record = next((plan for plan in state.get("plans", []) if plan.get("plan_id") == plan_id), None)
+        if plan_record is None:
+            raise KeyError(plan_id)
+        plan_body = plan_record.get("plan", {})
+        steps = plan_body.get("steps", []) if isinstance(plan_body, dict) else []
+        approvals = [item for item in state.get("approvals", []) if item.get("plan_id") == plan_id]
+        approvals_by_step = {item.get("step"): item for item in approvals}
+        status_counts = {
+            "steps": len(steps) if isinstance(steps, list) else 0,
+            "approvals": len(approvals),
+            "pending": 0,
+            "approved": 0,
+            "rejected": 0,
+            "dispatched": 0,
+        }
+        status_steps = []
+        if isinstance(steps, list):
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                approval = approvals_by_step.get(step.get("step"))
+                approval_status = approval.get("status") if approval else "not_created"
+                if approval_status in status_counts:
+                    status_counts[approval_status] += 1
+                status_item = {
+                    "step": step.get("step"),
+                    "agent_id": step.get("agent_id"),
+                    "role": step.get("role"),
+                    "task": step.get("task"),
+                    "approval_id": approval.get("approval_id") if approval else None,
+                    "approval_status": approval_status,
+                    "message_id": approval.get("message_id") if approval else None,
+                    "attempt_id": approval.get("attempt_id") if approval else None,
+                    "job_id": approval.get("job_id") if approval else None,
+                }
+                if approval and approval.get("reason"):
+                    status_item["reason"] = approval.get("reason")
+                status_steps.append(status_item)
+        return {
+            "plan_id": plan_id,
+            "task": plan_record.get("task"),
+            "status": plan_record.get("status"),
+            "provider": plan_record.get("provider"),
+            "model": plan_record.get("model"),
+            "created_at": plan_record.get("created_at"),
+            "counts": status_counts,
+            "steps": status_steps,
+        }
+
     def create_approvals_from_plan(self, plan_id: str) -> list[dict[str, Any]]:
         state = self.load()
         plan_record = next((plan for plan in state.get("plans", []) if plan.get("plan_id") == plan_id), None)
