@@ -754,6 +754,8 @@ class StateStore:
                     "message": turn.get("message"),
                     "plan_id": turn.get("plan_id"),
                     "next_command": turn.get("next_command"),
+                    "action_id": turn.get("action_id"),
+                    "action_kind": turn.get("action_kind"),
                     "created_at": turn.get("created_at"),
                 }
             )

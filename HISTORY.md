@@ -4,6 +4,16 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView chat turn action links
+
+- 扩展 `agentdeck status` 的 ProjectView，`chat_turns.items[]` 现在包含 `action_id` 和 `action_kind`。
+- GUI 或自然语言入口只读取 `agentdeck status` 时，可以从 review/apply chat turn 直接跳转到对应 `leader_actions[]` item。
+- 保持 `agentdeck status` 只读，不修改 state、不创建 event、不发送 tmux 输入。
+- 扩展 `tests/test_agent_cli.py`，覆盖 ProjectView chat turn 的 action_id/action_kind 摘要；复跑 `leader chat-history` 测试确认 CLI history 仍保留 action link。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 ProjectView chat_turns 到 action queue 的 GUI 契约。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_includes_project_state_summaries -q` 看到 `chat_turns.items` 缺少 action_id/action_kind；实现后同一测试与 chat-history 测试 2 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 56 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `status.chat_turns.items[0].action_id` 与 `status.leader_actions.items[0].action_id` 匹配，action_kind 为 `create_approvals`。
+
 ### Current - Add ProjectView Leader action details
 
 - 扩展 `agentdeck status` 的 ProjectView，`leader_actions.items[]` 现在包含 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`。
