@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add Leader plan MVP
+
+- 新增 `agentdeck leader plan --task <text>`，让 Leader 先生成 plan-only 结构化计划，并写入 `.agentdeck/state/state.json` 的 `plans[]`。
+- 新增 provider 抽象与本地 `fake` Leader provider；当前默认 dry-run，不调用外部 LLM，不 dispatch，不发送 tmux 输入。
+- 暂时拒绝未实现的真实 provider，例如 `--provider deepseek` 会明确失败，避免把 fake dry-run 误报成真实 LLM 调用。
+- 扩展 `LeaderOrchestrator.plan()` 与 `StateStore.record_plan()`，记录 `plan_id`、provider、model、status、dispatch_ready 和 plan steps。
+- 新增 `tests/test_leader_cli.py`，用 TDD 验证 `leader plan` 会创建 plan，但不会创建 message/job/inbox。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 plan-only Leader 工作流和 provider-agnostic 边界。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_plan_creates_structured_plan_without_dispatching -q` 看到 `leader` 子命令不存在；实现后同一测试通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 15 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，临时 git 项目 smoke 确认 `agentdeck leader plan` 写入 1 个 plan 且 `messages/jobs` 仍为 0。
+
 ### Current - Add ultimate goal roadmap
 
 - 新增 `docs/roadmap/ultimate-goal-roadmap.md`，明确 AgentDeck 的终极目标是任意 API-backed Leader LLM 调度多角色 Codex/Claude/其他 CLI Agent，并通过可见 runtime、通信账本、审批和恢复能力形成本地多智能体工作台。

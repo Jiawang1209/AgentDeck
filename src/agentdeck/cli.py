@@ -7,7 +7,8 @@ import sys
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
 from .models import AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
-from .providers import DeepSeekProvider
+from .orchestration.leader import LeaderOrchestrator
+from .providers import DeepSeekProvider, leader_provider
 from .runtime import TmuxBackend
 from .state import StateStore, agentdeck_dir
 
@@ -376,6 +377,43 @@ def trace_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def leader_plan_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        provider = leader_provider(args.provider)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    orchestrator = LeaderOrchestrator(config, provider)
+    plan = orchestrator.plan(args.task)
+    record = store.record_plan(args.task, provider.name, args.model, plan)
+    store.append_event(
+        EventRecord.create(
+            "leader_plan_created",
+            {
+                "plan_id": record["plan_id"],
+                "provider": record["provider"],
+                "model": record["model"],
+                "task_length": len(args.task),
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "plan_id": record["plan_id"],
+            "status": record["status"],
+            "provider": record["provider"],
+            "model": record["model"],
+            "dispatch_ready": record["dispatch_ready"],
+            "plan": record["plan"],
+        }
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentdeck")
     subparsers = parser.add_subparsers(dest="command")
@@ -423,6 +461,14 @@ def build_parser() -> argparse.ArgumentParser:
     agent_assign_role.add_argument("--role", required=True, help="Human-readable role name")
     agent_assign_role.add_argument("--role-prompt", required=True, help="Role instruction injected during dispatch")
     agent_assign_role.set_defaults(func=agent_assign_role_command)
+
+    leader = subparsers.add_parser("leader", help="Leader planning commands")
+    leader_subparsers = leader.add_subparsers(dest="leader_command")
+    leader_plan = leader_subparsers.add_parser("plan", help="Create a plan without dispatching work")
+    leader_plan.add_argument("--task", required=True, help="Goal for the Leader Agent to plan")
+    leader_plan.add_argument("--provider", default="fake", help="Leader provider to use; defaults to local fake")
+    leader_plan.add_argument("--model", default="fake-plan", help="Provider model label recorded with the plan")
+    leader_plan.set_defaults(func=leader_plan_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")

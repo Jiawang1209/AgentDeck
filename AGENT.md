@@ -13,6 +13,7 @@
 - 理解用户目标。
 - 读取项目上下文。
 - 拆解任务。
+- 用 `agentdeck leader plan --task <text>` 生成 plan-only 记录。
 - 分配 Worker。
 - 请求人类审批。
 - 汇总 Worker 结果。
@@ -24,6 +25,7 @@
 Leader 不应该：
 
 - 把 Worker 的完整长输出全部塞进上下文。
+- 跳过 plan 和审批直接自动 dispatch。
 - 在没有审批的情况下执行破坏性命令。
 - 在 Worker 修改文件后不重新读取就直接汇总。
 - 把 provider 特定字段泄漏到 orchestration 核心。
@@ -86,6 +88,13 @@ Worker 不应该：
 - `agentdeck ack --agent <id> --inbox-id <id>` 可确认 inbox item。
 - `agentdeck trace --id <id>` 可用 message/attempt/job/reply/inbox 任意 ID 还原通信链路。
 - 后续升级为自动 reply extraction 和 head-only ack。
+
+## Leader Planning
+
+- `agentdeck leader plan --task <text>` 会写入 `.agentdeck/state/state.json` 的 `plans[]`。
+- 默认 `fake` provider 是本地 dry-run provider，不调用外部 LLM。
+- plan-only 阶段不会写入 `messages`、`jobs` 或 `inbox`，也不会发送 tmux 输入。
+- 后续 DeepSeek/OpenAI-compatible 或其他 API-backed provider 必须复用同一 plan schema。
 
 ## 审批规则
 

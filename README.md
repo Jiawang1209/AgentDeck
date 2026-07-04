@@ -47,6 +47,7 @@ agentdeck agent capture --agent planner --lines 200
 agentdeck agent send --agent planner --text "继续"
 agentdeck agent stop --agent planner
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
+agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
@@ -87,6 +88,7 @@ agentdeck project init
 agentdeck status
 agentdeck agent list
 agentdeck agent stop --agent planner
+agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
@@ -173,13 +175,35 @@ agentdeck trace --id inb_xxx
 
 `trace` 会返回同一条 message lineage 下的 message、attempts、jobs、replies 和 inbox_items。后续会继续补自动 reply extraction 和更严格的 mailbox head-only ack。
 
+## Leader Planning
+
+AgentDeck 已提供第一版 plan-only Leader 能力：
+
+```bash
+agentdeck leader plan --task "设计自动 reply extraction"
+```
+
+当前默认且仅支持本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。这个命令不会 dispatch、不会发送 tmux 输入、不会调用外部 LLM。未实现的真实 provider 会明确失败，而不是静默退回 fake。
+
+返回结果包含：
+
+- `plan_id`
+- `provider`
+- `model`
+- `status`
+- `dispatch_ready`
+- `plan.goal`
+- `plan.steps[]`
+
+后续接入 DeepSeek/OpenAI-compatible 或其他 API-backed provider 时，应复用同一个 provider 抽象和 plan schema。
+
 Provider API key 后续会通过环境变量读取。以 DeepSeek 为例：
 
 ```bash
 export DEEPSEEK_API_KEY="..."
 ```
 
-当前版本只搭建 provider adapter 边界，不会主动调用外部 LLM。
+当前版本只使用本地 `fake` provider 做 plan dry-run，不会主动调用外部 LLM。
 
 ## 设计原则
 

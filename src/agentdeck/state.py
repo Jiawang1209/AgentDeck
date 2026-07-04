@@ -18,7 +18,7 @@ class StateStore:
 
     def load(self) -> dict[str, Any]:
         if not self.state_path.exists():
-            return {"agents": {}, "messages": [], "jobs": [], "replies": []}
+            return {"agents": {}, "messages": [], "jobs": [], "replies": [], "plans": []}
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
     def save(self, state: dict[str, Any]) -> None:
@@ -73,6 +73,28 @@ class StateStore:
         messages.append(message)
         self.save(state)
         return message
+
+    def record_plan(
+        self,
+        task: str,
+        provider: str,
+        model: str,
+        plan: dict[str, Any],
+    ) -> dict[str, Any]:
+        state = self.load()
+        record = {
+            "plan_id": new_id("pln"),
+            "task": task,
+            "provider": provider,
+            "model": model,
+            "status": "planned",
+            "dispatch_ready": bool(plan.get("dispatch_ready", False)),
+            "plan": plan,
+            "created_at": utc_now(),
+        }
+        state.setdefault("plans", []).append(record)
+        self.save(state)
+        return record
 
     def create_dispatch_records(
         self,

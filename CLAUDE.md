@@ -46,6 +46,7 @@ agentdeck status
 agentdeck agent list
 agentdeck agent stop --agent planner
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
+agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
@@ -88,6 +89,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - 每次新增功能或用户可见行为变化都要 commit。
 - 每次开发内容都要同步更新 `HISTORY.md`，并和对应代码/文档改动放在同一次 commit 中。
 - 每次开发前先对照 `docs/roadmap/ultimate-goal-roadmap.md`，确认功能服务 Leader Agent、多 Agent 通信、可见 runtime、审批、恢复或 GUI 主线。
+- 自然语言任务调度优先从 `agentdeck leader plan --task <text>` 生成 plan-only 记录开始；不要跳过 plan 直接自动 dispatch。
 - 先更新架构/README/agent 文档，再扩展行为。
 - 所有开发命令默认先激活 `agentdeck` conda 环境。
 - `References/` 只读学习，不纳入 git，不直接复制大段源码。
