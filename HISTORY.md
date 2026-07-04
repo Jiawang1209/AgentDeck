@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Discover Leader chat continue card contract
+
+- `agentdeck contract leader-chat` 现在公开 `continue_card_fields`，让 GUI 和自然语言壳可以发现 continue-mode 的 recovery card 字段。
+- `agentdeck contract leader-chat --example` 现在返回 `example_continue_card_fields`，并把稳定示例切换为 `mode=continue`，包含 `continue_card`。
+- `LEADER_CHAT_RESPONSE_FIELDS` 现在包含 `continue_card`，`validate_leader_chat_contract()` 会校验响应中出现的 `continue_card` 字段是否满足 `CONTINUE_CARD_FIELDS`。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 continue card 是机器可发现契约。
+- 保持安全边界：本轮只扩展 contract discovery、example 和 validator，不改变 `agentdeck continue`、`leader chat`、审批、dispatch、trace 或 tmux 执行语义。
+- 本地验证：先运行目标测试看到 `CONTINUE_CARD_FIELDS` 缺失的红灯；实现后 `tests/test_contracts.py` 19 项通过，leader-chat contract CLI 相关 3 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 99 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，CLI smoke 确认 `agentdeck contract leader-chat --example` 返回 `continue_card_fields`、`example_mode=continue`、`response_fields` 包含 `continue_card`，且 example 字段列表与 `continue_card` 匹配。
+
 ### Current - Route Leader chat continue through recovery card
 
 - `agentdeck leader chat --message "继续"`、`"继续吧"` 和 `"/continue"` 现在进入 recovery-first 的 `mode=continue`。

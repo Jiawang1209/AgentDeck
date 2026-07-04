@@ -961,6 +961,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "recovery": refreshed_project_view.get("recovery"),
             "next_command": next_command,
             "leader_action": action_detail,
+            "continue_card": None,
             "result": result,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -1059,6 +1060,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "recovery": recovery,
             "next_command": next_command,
             "leader_action": action_detail,
+            "continue_card": None,
         }
         store.append_event(
             EventRecord.create(
@@ -1127,6 +1129,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         "plan_id": record["plan_id"],
         "recovery": refreshed_project_view.get("recovery"),
         "leader_action": action_detail,
+        "continue_card": None,
         "status": record["status"],
         "provider": record["provider"],
         "model": record["model"],

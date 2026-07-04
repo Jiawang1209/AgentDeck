@@ -14,6 +14,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "contract_exists": true,
   "response_fields": [],
   "explanation_fields": [],
+  "continue_card_fields": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view"
 }
@@ -40,11 +41,32 @@ The review-mode response shape is:
   "review": {},
   "recovery": {},
   "next_command": "agentdeck leader apply-action --action-id act_xxx",
-  "leader_action": {}
+  "leader_action": {},
+  "continue_card": null
 }
 ```
 
 `leader_actions` is identical to `project_view.leader_actions`. It is provided so a chat surface can render the queue without issuing a second status call.
+
+Continue-mode responses include `continue_card`, which reuses the same recovery card shape as `agentdeck continue`:
+
+```json
+{
+  "ok": true,
+  "mode": "continue",
+  "project_view_schema_version": "project-view/v1",
+  "project_view_command": "agentdeck status",
+  "status": "action_required",
+  "reason": "pending leader action: create_approvals",
+  "next_command": "agentdeck leader apply-action --action-id act_xxx",
+  "recommended_action": {},
+  "pending": {},
+  "leader_action": {},
+  "action_detail_command": "agentdeck leader action --action-id act_xxx"
+}
+```
+
+`agentdeck contract leader-chat --example` exposes `example_continue_card_fields` and a stable continue-mode example so GUI clients can build recovery cards without guessing fields.
 
 ## Explanation
 
@@ -73,4 +95,4 @@ The review-mode response shape is:
 - Chat responses must pass `validate_leader_chat_contract()` before printing JSON.
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, and `leader_explanation` as explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, and `leader_explanation` as explanation.

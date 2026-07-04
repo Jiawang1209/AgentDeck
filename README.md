@@ -272,6 +272,8 @@ agentdeck plan status --plan-id pln_xxx
 
 当人类输入 `agentdeck leader chat --message "继续"`、`"继续吧"` 或 `"/continue"` 时，chat 会进入 recovery-first 的 `mode=continue`：它复用 `agentdeck continue` 的下一步卡片，返回 `continue_card`、`recovery`、`next_command` 和解释信息，只记录一条 chat turn，不创建新的 `leader_actions[]`，也不执行任何 action。需要让 Leader 重新 review 并排队 action 时，可以输入更具体的目标或继续使用 `agentdeck leader next`。
 
+`agentdeck contract leader-chat` 会公开 `continue_card_fields`，`--example` 会返回稳定的 continue-mode 示例和 `example_continue_card_fields`，供 GUI 或自然语言壳发现 `continue_card` 字段。
+
 当人类明确输入 `agentdeck leader chat --message "apply action act_xxx"` 或 `--message "/apply-action act_xxx"` 时，chat 会复用 `leader apply-action` 的安全白名单。当前只会应用 `create_approvals`，并会拒绝 dispatch/capture 等 runtime action。safe apply 完成后，chat 响应会从刷新后的 recovery 继续返回下一步，例如 `agentdeck approval list`，让 GUI 或对话层可以立刻进入审批检查。
 
 `plan list` 返回计划摘要，适合给自然语言入口或 GUI 做列表视图；`plan show` 返回完整计划，适合审批前人工检查；`plan status` 汇总每个 step 的 approval 状态、message_id、attempt_id 和 job_id，适合恢复任务进度。

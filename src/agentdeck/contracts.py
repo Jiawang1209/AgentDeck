@@ -122,6 +122,21 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "recovery",
     "next_command",
     "leader_action",
+    "continue_card",
+)
+
+CONTINUE_CARD_FIELDS = (
+    "ok",
+    "mode",
+    "project_view_schema_version",
+    "project_view_command",
+    "status",
+    "reason",
+    "next_command",
+    "recommended_action",
+    "pending",
+    "leader_action",
+    "action_detail_command",
 )
 
 LEADER_CHAT_EXPLANATION_FIELDS = (
@@ -245,6 +260,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "response_fields": list(LEADER_CHAT_RESPONSE_FIELDS),
         "explanation_fields": list(LEADER_CHAT_EXPLANATION_FIELDS),
+        "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -257,6 +273,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example"] = True
         payload["example_response_fields"] = list(example)
         payload["example_explanation_fields"] = list(example["leader_explanation"])
+        payload["example_continue_card_fields"] = list(example["continue_card"])
         payload["example_leader_chat"] = example
     return payload
 
@@ -432,6 +449,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append(f"missing leader_explanation field: {field}")
     elif "leader_explanation" in payload:
         errors.append("leader_explanation must be an object")
+    continue_card = payload.get("continue_card")
+    if isinstance(continue_card, dict):
+        for field in CONTINUE_CARD_FIELDS:
+            if field not in continue_card:
+                errors.append(f"missing continue_card field: {field}")
+    elif "continue_card" in payload and continue_card is not None:
+        errors.append("continue_card must be an object")
     return {"ok": not errors, "errors": errors}
 
 
@@ -611,34 +635,43 @@ def leader_chat_example() -> dict[str, object]:
     leader_action = project_view["leader_actions"]["items"][0]
     recovery = project_view["recovery"]
     next_command = recovery["next_command"]
+    continue_card = {
+        "ok": True,
+        "mode": "continue",
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_command": "agentdeck status",
+        "status": recovery["status"],
+        "reason": recovery["reason"],
+        "next_command": next_command,
+        "recommended_action": recovery["recommended_action"],
+        "pending": recovery["pending"],
+        "leader_action": leader_action,
+        "action_detail_command": "agentdeck leader action --action-id act_example",
+    }
     return {
         "ok": True,
         "turn_id": "cht_example",
-        "mode": "review",
+        "mode": "continue",
         "message": "继续",
         "project_view": project_view,
         "leader_actions": project_view["leader_actions"],
         "leader_explanation": {
-            "mode": "review",
-            "summary": "Leader recommends create_approvals because plan has no approval records.",
-            "reason": "plan has no approval records",
+            "mode": "continue",
+            "summary": "Leader is continuing from ProjectView recovery status action_required.",
+            "reason": recovery["reason"],
             "next_command": next_command,
             "recommended_action_id": "act_example",
-            "action_kind": "create_approvals",
-            "action_status": "pending",
+            "action_kind": "leader_action",
+            "action_status": "action_required",
             "safety": "safe_apply",
             "requires_explicit_user": False,
         },
         "plan_id": "pln_example",
-        "review": {
-            "plan_id": "pln_example",
-            "next_action": "wait_for_approval",
-            "reason": "plan has no approval records",
-            "counts": {"steps": 1, "approvals": 0, "pending": 0, "approved": 0, "rejected": 0, "dispatched": 0},
-        },
+        "review": None,
         "recovery": recovery,
         "next_command": next_command,
         "leader_action": leader_action,
+        "continue_card": continue_card,
     }
 
 
