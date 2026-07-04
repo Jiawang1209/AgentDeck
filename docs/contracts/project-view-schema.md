@@ -6,7 +6,7 @@ GUI clients should consume ProjectView first. They should not scan `.agentdeck/s
 
 The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in `src/agentdeck/models.py`. Current value: `project-view/v1`.
 
-Reusable contract payload and example fixture helpers live in `src/agentdeck/contracts.py`.
+Reusable contract response, payload, and example fixture helpers live in `src/agentdeck/contracts.py`. The CLI discovery command uses `project_view_contract_response()` directly so command output and reusable module output stay identical.
 
 ## Top-Level Shape
 

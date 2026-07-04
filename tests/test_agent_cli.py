@@ -5,6 +5,7 @@ from pathlib import Path
 
 from agentdeck import cli
 from agentdeck.config import write_default_config
+from agentdeck.contracts import project_view_contract_response
 from agentdeck.state import StateStore
 
 
@@ -171,6 +172,14 @@ def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
         "source": "leader_action",
         "target_id": "act_example",
     }
+
+
+def test_contract_project_view_cli_matches_contract_module(capsys) -> None:
+    cli.main(["contract", "project-view", "--example"])
+
+    payload = json.loads(capsys.readouterr().out)
+    expected = project_view_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
 
 
 def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:

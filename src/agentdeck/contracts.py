@@ -51,6 +51,18 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
     }
 
 
+def project_view_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = project_view_contract_payload(contract_path)
+    if include_example:
+        example = project_view_example()
+        payload["example"] = True
+        payload["example_top_level_fields"] = list(example)
+        payload["example_recovery_fields"] = list(example["recovery"])
+        payload["example_recommended_action_fields"] = list(example["recovery"]["recommended_action"])
+        payload["example_project_view"] = example
+    return payload
+
+
 def project_view_example() -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,

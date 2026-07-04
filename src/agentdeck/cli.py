@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
-from .contracts import project_view_contract_payload, project_view_example
+from .contracts import project_view_contract_response
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
@@ -82,14 +82,7 @@ def events_command(args: argparse.Namespace) -> int:
 
 def contract_project_view_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "project-view-schema.md"
-    payload = project_view_contract_payload(contract_path)
-    if args.example:
-        example = project_view_example()
-        payload["example"] = True
-        payload["example_top_level_fields"] = list(example)
-        payload["example_recovery_fields"] = list(example["recovery"])
-        payload["example_recommended_action_fields"] = list(example["recovery"]["recommended_action"])
-        payload["example_project_view"] = example
+    payload = project_view_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 

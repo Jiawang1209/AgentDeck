@@ -4,6 +4,17 @@
 
 ## 2026-07-04
 
+### Current - Add ProjectView contract module parity
+
+- 新增 `agentdeck.contracts.project_view_contract_response()`，统一生成 `agentdeck contract project-view` 的默认输出和 `--example` 输出。
+- `cli.py` 的 contract 命令改为直接调用 `project_view_contract_response()`，不再在命令层手动拼接 example 字段。
+- 扩展 `tests/test_contracts.py`，覆盖默认 response 与 `project_view_contract_payload()` 一致、example response 与 `project_view_example()` 字段一致。
+- 扩展 `tests/test_agent_cli.py`，新增 CLI/module parity 测试，直接比较 `agentdeck contract project-view --example` 输出和 `project_view_contract_response(..., include_example=True)`。
+- 更新 `docs/contracts/project-view-schema.md`，记录 CLI discovery 命令使用 `project_view_contract_response()` 作为统一输出源。
+- 保持安全边界：本轮只统一只读契约输出路径，不改变 ProjectView 字段、不读取 live state、不修改 `.agentdeck/state`、不发送 tmux 输入。
+- 本地验证：先运行 `conda run -n agentdeck pytest tests/test_contracts.py -q` 看到 `project_view_contract_response` 缺失；实现后 contracts/CLI parity 测试 5 项通过，`tests/test_agent_cli.py tests/test_leader_cli.py` 51 项通过。
+- 完整验证：`conda run -n agentdeck pytest -q` 68 项通过，`conda run -n agentdeck python -m compileall src tests` 通过，非项目临时目录 smoke 确认 CLI `--example` 输出与 `project_view_contract_response(..., include_example=True)` 完全一致。
+
 ### Current - Split ProjectView contract module
 
 - 新增 `src/agentdeck/contracts.py`，把 ProjectView contract discovery payload 和 GUI-ready example fixture 从 `cli.py` 拆成可复用模块。
