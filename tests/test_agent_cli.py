@@ -98,6 +98,16 @@ def bind_agent(root: Path, agent_id: str, pane_id: str = "%42") -> None:
     store.save(state)
 
 
+def test_dispatch_prompt_requests_full_output_path_for_artifact_recovery(tmp_path, monkeypatch) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+
+    prompt = cli.build_dispatch_prompt(config.agents[0], "写设计文档")
+
+    assert "请按以下格式返回:" in prompt
+    assert "full_output_path:" in prompt
+
+
 def test_agent_list_outputs_configured_agents(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
 
@@ -711,6 +721,86 @@ def test_workbench_surfaces_capture_reply_operator_for_dispatched_step_waiting_f
     assert registry_item["card"] == "operator_card"
     assert StateStore(root).load() == state_before
     assert fake.captured == []
+
+
+def test_capture_reply_records_full_output_path_as_artifact(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"]["planner"] = {
+        "agent_id": "planner",
+        "pane_id": "%42",
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    state["messages"] = [
+        {
+            "message_id": "msg_artifact",
+            "from_actor": "leader",
+            "to_agent": "planner",
+            "task": "写设计文档",
+            "prompt": "prompt",
+            "status": "dispatched",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["attempts"] = [
+        {
+            "attempt_id": "att_artifact",
+            "message_id": "msg_artifact",
+            "agent_id": "planner",
+            "status": "dispatched",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["jobs"] = [
+        {
+            "job_id": "job_artifact",
+            "message_id": "msg_artifact",
+            "attempt_id": "att_artifact",
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "status": "dispatched",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    store.save(state)
+
+    def capture_output(_config, pane_id: str, lines: int = 200) -> str:
+        fake.captured.append((pane_id, lines))
+        return "\n".join(
+            [
+                "older output",
+                "status: completed",
+                "summary: 设计文档已完成",
+                "full_output_path: docs/architecture/agent-plan.md",
+                "verification: pytest -q",
+            ]
+        )
+
+    fake.capture_output = capture_output
+
+    exit_code = cli.main(["capture-reply", "--agent", "planner", "--message-id", "msg_artifact"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["message_id"] == "msg_artifact"
+    assert payload["artifacts"]["count"] == 1
+    assert payload["artifacts"]["items"][0]["path"] == "docs/architecture/agent-plan.md"
+    assert payload["artifacts"]["items"][0]["kind"] == "markdown"
+    assert payload["artifacts"]["items"][0]["trace_command"] == "agentdeck trace --id msg_artifact"
+    state_after = StateStore(root).load()
+    assert state_after["artifacts"][0]["message_id"] == "msg_artifact"
+    assert state_after["artifacts"][0]["job_id"] == "job_artifact"
+    assert state_after["artifacts"][0]["reply_id"] == payload["reply_id"]
+    assert state_after["artifacts"][0]["from_agent"] == "planner"
+    assert state_after["artifacts"][0]["path"] == "docs/architecture/agent-plan.md"
+    assert state_after["artifacts"][0]["kind"] == "markdown"
+    assert state_after["artifacts"][0]["status"] == "created"
 
 
 def test_continue_refuses_invalid_project_view_before_printing(tmp_path, monkeypatch, capsys) -> None:

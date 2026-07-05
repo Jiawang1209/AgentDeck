@@ -2328,6 +2328,7 @@ def build_dispatch_prompt(agent: AgentSpec, task: str) -> str:
             "verification:",
             "risks:",
             "next_steps:",
+            "full_output_path:",
         ]
     )
 
@@ -2443,6 +2444,7 @@ def reply_command(args: argparse.Namespace) -> int:
                 "reply_id": reply["reply_id"],
                 "message_id": reply["message_id"],
                 "from_agent": args.agent,
+                "artifact_count": len(reply.get("artifacts", [])) if isinstance(reply.get("artifacts"), list) else 0,
             },
         )
     )
@@ -2471,6 +2473,9 @@ def _reply_success_payload(reply: dict[str, object], store: StateStore) -> dict[
                 print(f"- {error}", file=sys.stderr)
             return None
         payload["inbox_card"] = inbox_card
+    artifacts = reply.get("artifacts")
+    if isinstance(artifacts, list) and artifacts:
+        payload["artifacts"] = store.artifact_summaries(artifacts)
     return payload
 
 
@@ -2515,6 +2520,7 @@ def capture_reply_command(args: argparse.Namespace) -> int:
                 "from_agent": args.agent,
                 "pane_id": pane_id,
                 "captured_lines": len(text.splitlines()),
+                "artifact_count": len(reply.get("artifacts", [])) if isinstance(reply.get("artifacts"), list) else 0,
             },
         )
     )

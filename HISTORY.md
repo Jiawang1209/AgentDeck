@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Capture reply artifact paths into the ledger
+
+- 扩展 `agentdeck capture-reply` / `agentdeck reply` 入账路径：当结构化回复块包含 `full_output_path: <path>` 时，`StateStore.record_reply()` 会在同一次 reply 入账中创建 artifact 记录，关联 message/attempt/job/reply/from_agent，并按文件后缀推断 `kind`。
+- 扩展 reply 成功响应：带 artifact 的 `reply` / `capture-reply` 会返回同源 `artifacts` 摘要，字段形状复用 ProjectView artifact summary，GUI/TUI 可立即从响应跳转到 `agentdeck trace --id <message_id>`。
+- 扩展 dispatch prompt：Worker 任务模板现在明确要求输出 `full_output_path:`，让产物登记从任务提示开始可发现，而不是隐藏在实现里。
+- 同步 README、CLAUDE.md 和 AGENT.md，明确 artifact 入账只登记路径摘要，不读取文件内容，不成为第二套 workflow state。
+- 验证记录：已先确认红测失败，`capture-reply` 成功响应最初没有 `artifacts`，state 也不会从 `full_output_path:` 创建 artifact；实现后目标测试 `conda run -n agentdeck pytest -q tests/test_agent_cli.py::test_dispatch_prompt_requests_full_output_path_for_artifact_recovery tests/test_agent_cli.py::test_capture_reply_records_full_output_path_as_artifact` 2 项通过；聚焦回归 `conda run -n agentdeck pytest -q tests/test_agent_cli.py::test_dispatch_prompt_requests_full_output_path_for_artifact_recovery tests/test_agent_cli.py::test_capture_reply_records_full_output_path_as_artifact tests/test_agent_cli.py::test_status_includes_project_state_summaries tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state` 4 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 314 项通过。
+
 ### Current - Add artifact summaries to the communication ledger
 
 - 扩展 ProjectView：`agentdeck status` 现在会返回顶层 `artifacts` 摘要，包含 `count`、`by_status`、`by_kind` 和 `items[]`；每个 artifact item 暴露 `artifact_id`、关联 message/job/reply id、`from_agent`、`path`、`kind`、`status`、`created_at` 和 `trace_command`，供 GUI/TUI 从产物行跳回通信 lineage。

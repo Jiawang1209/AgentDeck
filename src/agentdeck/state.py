@@ -649,6 +649,8 @@ class StateStore:
             "created_at": utc_now(),
         }
         state.setdefault("replies", []).append(reply)
+        artifacts = self._artifacts_from_reply(reply, text)
+        state.setdefault("artifacts", []).extend(artifacts)
         message["status"] = "replied"
         if attempt:
             attempt["status"] = "completed"
@@ -672,7 +674,50 @@ class StateStore:
                 }
             )
         self.save(state)
-        return reply
+        return {**reply, "artifacts": artifacts}
+
+    @classmethod
+    def _artifacts_from_reply(cls, reply: dict[str, Any], text: str) -> list[dict[str, Any]]:
+        output_path = cls._structured_reply_value(text, "full_output_path")
+        if not output_path:
+            return []
+        return [
+            {
+                "artifact_id": new_id("art"),
+                "message_id": reply.get("message_id"),
+                "attempt_id": reply.get("attempt_id"),
+                "job_id": reply.get("job_id"),
+                "reply_id": reply.get("reply_id"),
+                "from_agent": reply.get("from_agent"),
+                "path": output_path,
+                "kind": cls._artifact_kind(output_path),
+                "status": "created",
+                "created_at": utc_now(),
+            }
+        ]
+
+    @staticmethod
+    def _structured_reply_value(text: str, key: str) -> str | None:
+        prefix = f"{key}:"
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.lower().startswith(prefix):
+                value = stripped[len(prefix):].strip().strip("\"'`")
+                return value or None
+        return None
+
+    @staticmethod
+    def _artifact_kind(path: str) -> str:
+        suffix = Path(path).suffix.lower()
+        if suffix in {".md", ".markdown"}:
+            return "markdown"
+        if suffix == ".json":
+            return "json"
+        if suffix in {".txt", ".log"}:
+            return "text"
+        if suffix == ".py":
+            return "python"
+        return "file"
 
     def ack_inbox_item(self, agent_id: str, inbox_id: str) -> dict[str, Any]:
         state = self.load()
@@ -897,7 +942,7 @@ class StateStore:
             ],
         }
 
-    def _artifact_summaries(self, artifacts: list[dict[str, Any]]) -> dict[str, Any]:
+    def artifact_summaries(self, artifacts: list[dict[str, Any]]) -> dict[str, Any]:
         by_kind: dict[str, int] = {}
         for artifact in artifacts:
             kind = str(artifact.get("kind", "unknown"))
@@ -1336,7 +1381,7 @@ class StateStore:
             messages=self._message_summaries(state.get("messages", [])),
             jobs=self._job_summaries(state.get("jobs", [])),
             replies=self._reply_summaries(state.get("replies", [])),
-            artifacts=self._artifact_summaries(state.get("artifacts", [])),
+            artifacts=self.artifact_summaries(state.get("artifacts", [])),
             chat_turns=self._chat_turn_summaries(state.get("chat_turns", [])),
             leader_errors=self._leader_error_summaries(state.get("leader_errors", [])),
             leader_actions=self._leader_action_summaries(state.get("leader_actions", [])),

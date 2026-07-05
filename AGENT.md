@@ -87,11 +87,11 @@ Worker 不应该：
 - `agentdeck inbox --agent <id>` 可查看某个 agent 收到的 task request。
 - `agentdeck reply --agent <id> --message-id <id> --text <text>` 可把 agent 结果记录为 reply。
 - `agentdeck capture-reply --agent <id> --message-id <id>` 可从 pane 最近输出捕获最后一个 `status:` 结构化回复块。
-- `dispatch`、`approval dispatch`、`reply` 和 `capture-reply` 的成功 JSON 输出必须包含 `trace_command`，指向对应 message/reply lineage；`approval dispatch` 成功响应还必须嵌入目标 agent 的同源 `inbox_card`，复用 `agentdeck inbox --agent <id>` 队列形状，但不得自动 ack 或连续派发；`reply` / `capture-reply` 当 reply 回流到某个 agent inbox 时也必须嵌入接收方 `inbox_card`，但不得自动 ack 或继续 review。
+- `dispatch`、`approval dispatch`、`reply` 和 `capture-reply` 的成功 JSON 输出必须包含 `trace_command`，指向对应 message/reply lineage；当结构化 reply 含 `full_output_path:` 时，`reply` / `capture-reply` 必须登记 artifact 摘要并在成功 JSON 中返回 `artifacts`，但不得读取文件内容；`approval dispatch` 成功响应还必须嵌入目标 agent 的同源 `inbox_card`，复用 `agentdeck inbox --agent <id>` 队列形状，但不得自动 ack 或连续派发；`reply` / `capture-reply` 当 reply 回流到某个 agent inbox 时也必须嵌入接收方 `inbox_card`，但不得自动 ack 或继续 review。
 - `agentdeck ack --agent <id> --inbox-id <id>` 只能确认该 agent 最早的 pending inbox item，不得越过 head。
 - `agentdeck trace --id <id>` 可用 message/attempt/job/reply/inbox 任意 ID 还原通信链路。
 - `agentdeck events --limit <n>` 返回最近审计事件，不修改 state；`agentdeck events --since <event_id>` 返回 cursor 之后的审计事件和 cursor metadata，cursor 由 GUI/调用方持有，不得写入 AgentDeck state。
-- `agentdeck status` 返回 ProjectView 只读摘要，包含 agents、plans、approvals、messages、jobs、replies、chat_turns、leader_actions、inbox 和 recovery，适合作为 GUI 与 Leader chat loop 的默认状态入口。
+- `agentdeck status` 返回 ProjectView 只读摘要，包含 agents、plans、approvals、messages、jobs、replies、artifacts、chat_turns、leader_actions、inbox 和 recovery，适合作为 GUI 与 Leader chat loop 的默认状态入口。
 - ProjectView 详细字段契约见 `docs/contracts/project-view-schema.md`；当前 `schema_version` 是 `project-view/v1`，修改 status、recovery、GUI 或自然语言入口时必须同步该文档。
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`。
 - ProjectView contract payload 和 example fixture 维护在 `src/agentdeck/contracts.py`，需要复用时优先 import 该模块。
