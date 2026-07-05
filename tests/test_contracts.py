@@ -1052,6 +1052,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_ledger_card_fields"] == list(example["ledger_card"])
     assert payload["example_workbench_card_fields"] == payload["workbench_card_fields"]
     assert payload["example_workbench_card_fields"] == list(example["workbench_card"])
+    assert payload["example_capability_card_fields"] == payload["capability_card_fields"]
+    assert payload["example_capability_card_fields"] == list(example["capability_card"])
     assert example["leader_explanation"]["recommended_action_id"] == "act_example"
     assert example["leader_explanation"]["safety"] == "safe_apply"
     assert example["mode"] == "continue"
@@ -1152,6 +1154,18 @@ def test_validate_leader_chat_contract_requires_disabled_control_blocker() -> No
     assert result == {
         "ok": False,
         "errors": ["intent_card.controls: disabled controls must include blocker"],
+    }
+
+
+def test_validate_leader_chat_contract_requires_capability_count_match() -> None:
+    payload = leader_chat_example()
+    payload["capability_card"]["capability_count"] = 999
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["capability_card.capability_count must match capabilities length"],
     }
 
 

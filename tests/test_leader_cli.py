@@ -906,6 +906,59 @@ def test_leader_chat_opens_workbench_snapshot_without_mutating_state(tmp_path, m
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "帮助"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "help"
+    assert payload["message"] == "帮助"
+    assert payload["plan_id"] is None
+    assert payload["review"] is None
+    assert payload["leader_action"] is None
+    assert payload["continue_card"] is None
+    assert payload["inbox_card"] is None
+    assert payload["approval_card"] is None
+    assert payload["runtime_card"] is None
+    assert payload["queue_card"] is None
+    assert payload["operator_card"] is None
+    assert payload["role_card"] is None
+    assert payload["ledger_card"] is None
+    assert payload["workbench_card"] is None
+    assert payload["capability_card"]["mode"] == "help"
+    assert payload["capability_card"]["default_command"] == "agentdeck workbench"
+    assert payload["capability_card"]["capability_count"] == len(payload["capability_card"]["capabilities"])
+    capability_modes = {item["mode"] for item in payload["capability_card"]["capabilities"]}
+    assert {"continue", "workbench", "runtime", "role", "ledger", "queue", "approval", "inbox"} <= capability_modes
+    assert payload["capability_card"]["capabilities"][0]["safety"] == "inspect"
+    assert payload["next_command"] == "agentdeck workbench"
+    assert payload["leader_explanation"]["mode"] == "help"
+    assert payload["leader_explanation"]["action_kind"] == "help"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["intent_card"]["embedded_card"] == "capability_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect capability_card",
+        "command": "agentdeck workbench",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "help"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck workbench"
+    assert state_after["chat_turns"][0]["action_kind"] == "help"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["approvals"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

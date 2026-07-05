@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add Leader chat capability help mode
+
+- 新增自然语言只读 help/capability 意图：`agentdeck leader chat --message "帮助"` / `"help"` / `"你能做什么"` / `"命令面板"` 会进入 `mode=help`，返回 `capability_card`，作为自然语言壳和未来 GUI 命令面板的能力发现入口。
+- `capability_card` 由 `src/agentdeck/contracts.py` 的稳定 helper 生成，列出 continue、workbench、runtime、role、ledger、queue、approval、inbox 和 setup 能力，以及每项能力的示例说法、推荐命令、safety、显式用户要求和对应卡片。
+- 扩展 Leader chat response contract：新增顶层 `capability_card`、`LEADER_CHAT_CAPABILITY_CARD_FIELDS`、`LEADER_CHAT_CAPABILITY_ITEM_FIELDS`、`capability_card_fields` / `capability_item_fields` 和 example 字段；`validate_leader_chat_contract()` 会拒绝 capability count 与列表长度不一致的响应。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 help mode 不调用 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 完整验证：已先确认红测失败，`帮助` 最初误走 `mode=plan`，contract example 最初缺少 `example_capability_card_fields`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_requires_capability_count_match -q` 3 项通过；leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 133 项通过；`conda run -n agentdeck pytest -q` 205 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `leader-chat-help-capability-smoke-ok`。
+
 ### Current - Harden Leader intent control validation
 
 - 加强 `validate_leader_chat_contract()` 对 `intent_card.controls[]` 的语义校验：`kind=inspect` 必须使用 `safety=inspect`，disabled control 必须提供 blocker。

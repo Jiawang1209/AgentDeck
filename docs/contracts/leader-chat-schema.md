@@ -24,6 +24,8 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "role_agent_fields": [],
   "ledger_card_fields": [],
   "workbench_card_fields": [],
+  "capability_card_fields": [],
+  "capability_item_fields": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view"
 }
@@ -60,7 +62,8 @@ The review-mode response shape is:
   "operator_card": null,
   "role_card": null,
   "ledger_card": null,
-  "workbench_card": null
+  "workbench_card": null,
+  "capability_card": null
 }
 ```
 
@@ -99,6 +102,32 @@ The review-mode response shape is:
 ```
 
 `route_source` is `local_rule` for local intent routing, `provider_plan` for first-time provider-backed planning, and `state_review` for review of an existing plan. `embedded_card` names the primary top-level card the GUI should render for that route, or `null` when there is no embedded card. `read_only=false` marks routes that create or apply state, such as `plan`, `review`, or `apply_action`. `controls[]` are renderable command descriptors only; they must not be executed automatically. When an embedded card has a safe read-only command, `controls[]` should include an `inspect` control before the `next` control.
+
+Help-mode responses include `capability_card`, a read-only capability map for natural-language shells and future GUI command palettes:
+
+```json
+{
+  "mode": "help",
+  "title": "Leader chat capabilities",
+  "summary": "Read-only capability map for natural-language and GUI command surfaces.",
+  "default_command": "agentdeck workbench",
+  "capability_count": 1,
+  "capabilities": [
+    {
+      "mode": "workbench",
+      "label": "Open workbench",
+      "description": "Inspect the full local control plane snapshot.",
+      "example_messages": ["打开工作台", "workbench"],
+      "command": "agentdeck workbench",
+      "safety": "inspect",
+      "requires_explicit_user": false,
+      "card": "workbench_card"
+    }
+  ]
+}
+```
+
+Help-mode is returned when the human asks `帮助`, `help`, `/help`, `你能做什么`, `有哪些能力`, `命令面板`, `commands`, or `capabilities`. It records a chat turn, recommends `agentdeck workbench`, embeds `capability_card`, and must not create a plan, leader action, approval, message, job, inbox item, inspect tmux panes, call the provider, or send tmux input.
 
 Continue-mode responses include `continue_card`, which reuses the same recovery card shape as `agentdeck continue`:
 
@@ -328,6 +357,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Chat responses must include `intent_card`, and `intent_card.next_command` must describe the same next action as the top-level response.
 - Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; `validate_leader_chat_contract()` rejects disabled controls without a blocker and rejects `kind=inspect` controls unless `safety=inspect`.
+- Chat help-mode responses must include `capability_card`; `validate_leader_chat_contract()` rejects capability cards whose `capability_count` does not match `capabilities[]`.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.
@@ -338,4 +368,4 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, or `runtime_card` when `recovery.recommended_action.source` points at those queues or runtime recovery.
 - Chat setup-mode responses may include `provider_health` and must recommend `agentdeck doctor` without calling the provider.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `workbench_card` as the full dashboard snapshot, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as safety/reason explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `workbench_card` as the full dashboard snapshot, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as safety/reason explanation.

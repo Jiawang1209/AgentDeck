@@ -359,6 +359,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "role_card",
     "ledger_card",
     "workbench_card",
+    "capability_card",
 )
 
 CONTINUE_CARD_FIELDS = (
@@ -628,6 +629,26 @@ LEADER_CHAT_INTENT_CONTROL_FIELDS = (
     "blocker",
 )
 
+LEADER_CHAT_CAPABILITY_CARD_FIELDS = (
+    "mode",
+    "title",
+    "summary",
+    "default_command",
+    "capability_count",
+    "capabilities",
+)
+
+LEADER_CHAT_CAPABILITY_ITEM_FIELDS = (
+    "mode",
+    "label",
+    "description",
+    "example_messages",
+    "command",
+    "safety",
+    "requires_explicit_user",
+    "card",
+)
+
 TRACE_TOP_LEVEL_FIELDS = (
     "schema_version",
     "query_id",
@@ -747,6 +768,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "workbench_card_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
+        "capability_card_fields": list(LEADER_CHAT_CAPABILITY_CARD_FIELDS),
+        "capability_item_fields": list(LEADER_CHAT_CAPABILITY_ITEM_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -769,8 +792,113 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_role_agent_fields"] = list(example["role_card"]["agents"][0])
         payload["example_ledger_card_fields"] = list(example["ledger_card"])
         payload["example_workbench_card_fields"] = list(example["workbench_card"])
+        payload["example_capability_card_fields"] = list(example["capability_card"])
+        payload["example_capability_item_fields"] = list(example["capability_card"]["capabilities"][0])
         payload["example_leader_chat"] = example
     return payload
+
+
+def leader_chat_capability_card() -> dict[str, object]:
+    capabilities = [
+        {
+            "mode": "workbench",
+            "label": "Open workbench",
+            "description": "Inspect the full local control plane snapshot.",
+            "example_messages": ["打开工作台", "workbench"],
+            "command": "agentdeck workbench",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "workbench_card",
+        },
+        {
+            "mode": "continue",
+            "label": "Continue from recovery",
+            "description": "Inspect the recovery-driven next step.",
+            "example_messages": ["继续", "/continue"],
+            "command": "agentdeck continue",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "continue_card",
+        },
+        {
+            "mode": "runtime",
+            "label": "Inspect runtime",
+            "description": "Inspect visible tmux agent panes without sending input.",
+            "example_messages": ["查看 runtime", "查看终端"],
+            "command": "agentdeck agent list",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "runtime_card",
+        },
+        {
+            "mode": "role",
+            "label": "Inspect roles",
+            "description": "Inspect configured agent roles and assignment commands.",
+            "example_messages": ["查看角色", "查看分工"],
+            "command": "agentdeck workbench",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "role_card",
+        },
+        {
+            "mode": "ledger",
+            "label": "Inspect ledger",
+            "description": "Inspect message, job, reply, inbox, and trace summaries.",
+            "example_messages": ["查看账本", "查看通信"],
+            "command": "agentdeck workbench",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "ledger_card",
+        },
+        {
+            "mode": "queue",
+            "label": "Inspect queues",
+            "description": "Inspect active queue and operator controls without applying actions.",
+            "example_messages": ["查看队列", "下一步按钮"],
+            "command": "agentdeck workbench",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "queue_card",
+        },
+        {
+            "mode": "approval",
+            "label": "Inspect approvals",
+            "description": "Inspect approval queue and explicit approve or dispatch commands.",
+            "example_messages": ["查看审批", "批准当前审批"],
+            "command": "agentdeck approval list",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "approval_card",
+        },
+        {
+            "mode": "inbox",
+            "label": "Inspect inbox",
+            "description": "Inspect an agent mailbox head, trace command, or explicit ack command.",
+            "example_messages": ["查看 planner inbox", "追踪 planner 当前 inbox"],
+            "command": "agentdeck inbox --agent <agent_id>",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "inbox_card",
+        },
+        {
+            "mode": "setup",
+            "label": "Inspect provider setup",
+            "description": "Inspect Leader provider readiness and missing environment names.",
+            "example_messages": ["doctor", "检查 Leader provider 配置"],
+            "command": "agentdeck doctor",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "provider_health",
+        },
+    ]
+    return {
+        "mode": "help",
+        "title": "Leader chat capabilities",
+        "summary": "Read-only capability map for natural-language and GUI command surfaces.",
+        "default_command": "agentdeck workbench",
+        "capability_count": len(capabilities),
+        "capabilities": capabilities,
+    }
 
 
 def continue_contract_payload(contract_path: Path) -> dict[str, object]:
@@ -1487,7 +1615,33 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append(f"workbench_card: {error}")
     elif "workbench_card" in payload and workbench_card is not None:
         errors.append("workbench_card must be an object")
+    capability_card = payload.get("capability_card")
+    if isinstance(capability_card, dict):
+        _validate_capability_card_contract(errors, capability_card)
+    elif "capability_card" in payload and capability_card is not None:
+        errors.append("capability_card must be an object")
     return {"ok": not errors, "errors": errors}
+
+
+def _validate_capability_card_contract(errors: list[str], capability_card: dict[str, object]) -> None:
+    for field in LEADER_CHAT_CAPABILITY_CARD_FIELDS:
+        if field not in capability_card:
+            errors.append(f"missing capability_card field: {field}")
+    if capability_card.get("mode") != "help":
+        errors.append("capability_card.mode must be help")
+    capabilities = capability_card.get("capabilities")
+    if isinstance(capabilities, list):
+        if capability_card.get("capability_count") != len(capabilities):
+            errors.append("capability_card.capability_count must match capabilities length")
+        for item in capabilities:
+            if isinstance(item, dict):
+                for field in LEADER_CHAT_CAPABILITY_ITEM_FIELDS:
+                    if field not in item:
+                        errors.append(f"capability_card.capabilities: missing capability field: {field}")
+            else:
+                errors.append("capability_card.capabilities items must be objects")
+    elif "capabilities" in capability_card:
+        errors.append("capability_card.capabilities must be a list")
 
 
 def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]:
@@ -1903,6 +2057,7 @@ def leader_chat_example() -> dict[str, object]:
     role_card = workbench_example()["role_card"]
     ledger_card = workbench_example()["ledger_card"]
     workbench_card = workbench_example()
+    capability_card = leader_chat_capability_card()
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -1954,6 +2109,7 @@ def leader_chat_example() -> dict[str, object]:
         "role_card": role_card,
         "ledger_card": ledger_card,
         "workbench_card": workbench_card,
+        "capability_card": capability_card,
     }
 
 

@@ -20,6 +20,7 @@ from .contracts import (
     inbox_contract_response,
     leader_actions_contract_response,
     leader_action_contract_response,
+    leader_chat_capability_card,
     leader_chat_contract_response,
     project_view_contract_response,
     runtime_agent_controls,
@@ -68,6 +69,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "queue_card",
         "role_card",
         "ledger_card",
+        "capability_card",
     ):
         if payload.get(card_name) is not None:
             embedded_card = card_name
@@ -129,6 +131,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         inbox_card = payload.get("inbox_card")
         agent_id = inbox_card.get("agent_id") if isinstance(inbox_card, dict) else None
         return f"agentdeck inbox --agent {agent_id}" if agent_id else None
+    if embedded_card == "capability_card":
+        return "agentdeck workbench"
     return None
 
 
@@ -149,6 +153,7 @@ def _print_leader_chat_payload_or_error(
     *,
     task: str,
 ) -> int:
+    payload.setdefault("capability_card", None)
     payload.setdefault("intent_card", _leader_chat_intent_card(payload))
     validation = validate_leader_chat_contract(payload)
     if not validation["ok"]:
@@ -1668,6 +1673,24 @@ def _is_continue_chat_message(message: str) -> bool:
     return normalized in {"继续", "继续吧", "/continue", "continue"}
 
 
+def _chat_wants_help(message: str) -> bool:
+    normalized = message.strip().lower()
+    return normalized in {
+        "help",
+        "/help",
+        "?",
+        "？",
+        "帮助",
+        "你能做什么",
+        "能做什么",
+        "有哪些能力",
+        "查看能力",
+        "命令面板",
+        "commands",
+        "capabilities",
+    }
+
+
 def _chat_wants_setup(message: str) -> bool:
     normalized = message.strip().lower()
     return any(
@@ -1924,6 +1947,18 @@ def _leader_chat_explanation(
             "safety": "inspect",
             "requires_explicit_user": False,
         }
+    if mode == "help":
+        return {
+            "mode": mode,
+            "summary": "Leader is showing the local capability map for chat and GUI command discovery.",
+            "reason": "human asked what the Leader chat surface can do",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": "help",
+            "action_status": "ready",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
     if mode == "runtime":
         runtime_card = _workbench_runtime_card(project_view)
         by_status = runtime_card.get("by_status") if isinstance(runtime_card.get("by_status"), dict) else {}
@@ -2133,6 +2168,61 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "workbench_card": None,
             "result": result,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_help(args.message):
+        next_command = "agentdeck workbench"
+        turn = store.record_chat_turn(
+            mode="help",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="help",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "help",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "help",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "help",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
+            "capability_card": leader_chat_capability_card(),
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
