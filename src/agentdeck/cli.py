@@ -310,6 +310,7 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
             "missing_env": [],
             "detail": "fake provider is local and ready",
             "doctor_command": "agentdeck doctor",
+            "setup_commands": _provider_setup_commands(provider),
         }
     required_env = provider_env.get(provider)
     if required_env is None:
@@ -320,6 +321,7 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
             "missing_env": [],
             "detail": f"unsupported leader provider: {provider}",
             "doctor_command": "agentdeck doctor",
+            "setup_commands": [],
         }
     missing_env = [] if os.environ.get(required_env) else [required_env]
     ready = not missing_env
@@ -331,7 +333,24 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
         "missing_env": missing_env,
         "detail": detail,
         "doctor_command": "agentdeck doctor",
+        "setup_commands": _provider_setup_commands(provider),
     }
+
+
+def _provider_setup_commands(provider: str) -> list[str]:
+    if provider == "deepseek":
+        return [
+            'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
+            'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
+            'export DEEPSEEK_MODEL="deepseek-chat"',
+        ]
+    if provider == "openai-compatible":
+        return [
+            'export AGENTDECK_LEADER_API_KEY="<your-provider-api-key>"',
+            'export AGENTDECK_LEADER_BASE_URL="https://api.example.com/v1"',
+            'export AGENTDECK_LEADER_MODEL="<model-name>"',
+        ]
+    return []
 
 
 def _workbench_queue_card(

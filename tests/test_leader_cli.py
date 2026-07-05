@@ -411,6 +411,11 @@ def test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning
         "missing_env": ["DEEPSEEK_API_KEY"],
         "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
         "doctor_command": "agentdeck doctor",
+        "setup_commands": [
+            'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
+            'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
+            'export DEEPSEEK_MODEL="deepseek-chat"',
+        ],
     }
     assert payload["leader_explanation"] == {
         "mode": "setup",
@@ -438,6 +443,28 @@ def test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "leader_chat_turn"' in events
+
+
+def test_leader_chat_setup_commands_never_expose_real_provider_key(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project_with_default_leader(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "real-secret-key")
+
+    exit_code = cli.main(["leader", "chat", "--message", "doctor"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    rendered = json.dumps(payload, ensure_ascii=False)
+    assert payload["mode"] == "setup"
+    assert payload["provider_health"]["ready"] is True
+    assert payload["provider_health"]["missing_env"] == []
+    assert payload["provider_health"]["setup_commands"] == [
+        'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
+        'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
+        'export DEEPSEEK_MODEL="deepseek-chat"',
+    ]
+    assert "real-secret-key" not in rendered
 
 
 def test_leader_chat_continue_returns_recovery_card_without_creating_action(tmp_path, monkeypatch, capsys) -> None:

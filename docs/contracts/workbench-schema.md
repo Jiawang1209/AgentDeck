@@ -111,11 +111,16 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
   "ready": false,
   "missing_env": ["DEEPSEEK_API_KEY"],
   "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
-  "doctor_command": "agentdeck doctor"
+  "doctor_command": "agentdeck doctor",
+  "setup_commands": [
+    "export DEEPSEEK_API_KEY=\"<your-deepseek-api-key>\"",
+    "export DEEPSEEK_BASE_URL=\"https://api.deepseek.com/v1\"",
+    "export DEEPSEEK_MODEL=\"deepseek-chat\""
+  ]
 }
 ```
 
-The card never exposes API key values and never calls the provider. It includes the configured Leader identity and model so GUI clients can render provider setup next to the Leader card without joining another state source. It only reports whether AgentDeck recognizes the provider and whether the required local environment variable is present. GUI clients can render `doctor_command` as the next diagnostic action.
+The card never exposes API key values and never calls the provider. It includes the configured Leader identity and model so GUI clients can render provider setup next to the Leader card without joining another state source. It only reports whether AgentDeck recognizes the provider and whether the required local environment variable is present. GUI clients can render `doctor_command` as the next diagnostic action and `setup_commands` as copyable placeholder commands; placeholders must never be replaced with real secret values in AgentDeck output.
 
 ## Runtime Card
 

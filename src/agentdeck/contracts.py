@@ -237,6 +237,7 @@ WORKBENCH_PROVIDER_HEALTH_FIELDS = (
     "missing_env",
     "detail",
     "doctor_command",
+    "setup_commands",
 )
 
 WORKBENCH_RUNTIME_CARD_FIELDS = (
@@ -1007,6 +1008,8 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("provider_health.ready must be a boolean")
         if "missing_env" in provider_health and not isinstance(provider_health.get("missing_env"), list):
             errors.append("provider_health.missing_env must be a list")
+        if "setup_commands" in provider_health and not isinstance(provider_health.get("setup_commands"), list):
+            errors.append("provider_health.setup_commands must be a list")
     elif "provider_health" in payload:
         errors.append("provider_health must be an object")
     runtime_card = payload.get("runtime_card")
@@ -1396,6 +1399,7 @@ def workbench_example() -> dict[str, object]:
             "missing_env": [],
             "detail": "fake provider is local and ready",
             "doctor_command": "agentdeck doctor",
+            "setup_commands": [],
         },
         "runtime_card": {
             "backend": "tmux",

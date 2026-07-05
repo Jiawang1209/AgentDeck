@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add provider setup commands
+
+- 扩展 workbench/setup-mode `provider_health`：新增 `setup_commands`，为 DeepSeek 和 OpenAI-compatible Leader provider 提供可复制的 placeholder export 命令。
+- `setup_commands` 只包含占位符，例如 `"<your-deepseek-api-key>"`，不得读取、回显或保存真实 API key；即使本地已设置真实 key，输出也必须保持 placeholder。
+- 更新 workbench contract 字段、example fixture 和 validator，要求 `provider_health.setup_commands` 是 list。
+- 更新自然语言 setup diagnostics 测试，覆盖缺少 `DEEPSEEK_API_KEY` 时返回 DeepSeek placeholder exports，以及设置真实 key 后不会把 key 泄露到 JSON 输出。
+- 更新 `README.md`、`docs/contracts/leader-chat-schema.md`、`docs/contracts/workbench-schema.md`、`CLAUDE.md` 与 `AGENT.md`，明确 `setup_commands` 是人类复制后自行编辑的安全提示，不是自动环境修改。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_leader_cli.py::test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning tests/test_leader_cli.py::test_leader_chat_setup_commands_never_expose_real_provider_key -q` 最初因 provider_health 缺少 `setup_commands` 失败；实现后目标测试 4 项通过，workbench contract/example 相关测试 2 项通过；`conda run -n agentdeck pytest -q` 166 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `setup-commands-missing-ok` 与 `setup-commands-secret-redacted-ok`。
+
 ### Current - Add natural-language setup diagnostics
 
 - 扩展 `agentdeck leader chat`：当人类输入 `doctor`、`检查 Leader provider 配置`、`诊断环境变量` 等 setup/diagnostics 意图时，进入只读 `mode=setup`。
