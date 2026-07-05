@@ -142,6 +142,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
     command = str(next_command or "")
     if command == "agentdeck approval dispatch-ready --confirm":
         return "Dispatch ready approvals"
+    if command == "agentdeck agent spawn-ready --confirm":
+        return "Spawn ready agents"
     if command == "agentdeck agent refresh":
         return "Refresh runtime"
     spawn_match = re.fullmatch(r"agentdeck agent spawn --agent ([^\s]+)", command)
@@ -1349,6 +1351,14 @@ def _agent_ready_card_payload(project_view: dict[str, object]) -> dict[str, obje
     total_count = len(agents)
     not_running_count = total_count - running_count
     dispatch_ready_command = "agentdeck approval dispatch-ready --confirm"
+    spawn_ready_command = "agentdeck agent spawn-ready --confirm"
+    next_command = (
+        spawn_ready_command
+        if len(spawn_commands) > 1
+        else spawn_commands[0]
+        if spawn_commands
+        else dispatch_ready_command
+    )
     return {
         "ok": True,
         "mode": "agent_runtime_ready",
@@ -1357,8 +1367,9 @@ def _agent_ready_card_payload(project_view: dict[str, object]) -> dict[str, obje
         "running_count": running_count,
         "not_running_count": not_running_count,
         "all_running": not_running_count == 0,
-        "next_command": spawn_commands[0] if spawn_commands else dispatch_ready_command,
+        "next_command": next_command,
         "spawn_commands": spawn_commands,
+        "spawn_ready_command": spawn_ready_command,
         "refresh_command": runtime_card.get("refresh_command"),
         "dispatch_ready_command": dispatch_ready_command,
         "runtime_card": runtime_card,
@@ -1660,6 +1671,99 @@ def agent_spawn_command(args: argparse.Namespace) -> int:
         )
     )
     _print_json(asdict(binding))
+    return 0
+
+
+def agent_spawn_ready_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("agent spawn-ready requires --confirm", file=sys.stderr)
+        return 1
+
+    backend = TmuxBackend()
+    created_session = False
+    results: list[dict[str, object]] = []
+    spawned_count = 0
+    skipped_count = 0
+    for agent in config.agents:
+        existing = store.agent_binding(agent.agent_id)
+        previous_status = (
+            str(existing.get("status", "configured"))
+            if isinstance(existing, dict)
+            else "configured"
+        )
+        previous_pane_id = existing.get("pane_id") if isinstance(existing, dict) else None
+        spawn_command = f"agentdeck agent spawn --agent {agent.agent_id}"
+        if isinstance(existing, dict) and existing.get("pane_id") and existing.get("status") == "running":
+            skipped_count += 1
+            results.append(
+                {
+                    "agent_id": agent.agent_id,
+                    "status": "skipped",
+                    "previous_status": previous_status,
+                    "pane_id": previous_pane_id,
+                    "spawn_command": spawn_command,
+                    "blocker": "agent already running",
+                }
+            )
+            continue
+        if not created_session:
+            backend.create_session(config.runtime)
+            created_session = True
+        pane_id = backend.spawn_agent(config.runtime, agent, config.root)
+        binding = AgentRuntimeBinding(
+            agent_id=agent.agent_id,
+            pane_id=pane_id,
+            session_name=config.runtime.session_name,
+            cwd=config.root,
+            status="running",
+        )
+        store.bind_agent(binding)
+        store.append_event(
+            EventRecord.create(
+                "agent_spawned",
+                {
+                    "agent_id": agent.agent_id,
+                    "pane_id": pane_id,
+                    "session_name": config.runtime.session_name,
+                    "cwd": config.root,
+                },
+            )
+        )
+        spawned_count += 1
+        results.append(
+            {
+                "agent_id": agent.agent_id,
+                "status": "spawned",
+                "previous_status": previous_status,
+                "pane_id": pane_id,
+                "spawn_command": spawn_command,
+                "blocker": None,
+            }
+        )
+    store.append_event(
+        EventRecord.create(
+            "agent_spawn_ready_completed",
+            {
+                "spawned_count": spawned_count,
+                "skipped_count": skipped_count,
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "agent_spawn_ready",
+            "requires_explicit_user": True,
+            "safety": "explicit_runtime",
+            "spawned_count": spawned_count,
+            "skipped_count": skipped_count,
+            "results": results,
+            "ready_command": "agentdeck agent ready",
+        }
+    )
     return 0
 
 
@@ -4990,6 +5094,13 @@ def build_parser() -> argparse.ArgumentParser:
     agent_spawn = agent_subparsers.add_parser("spawn", help="Spawn a configured agent in tmux")
     agent_spawn.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
     agent_spawn.set_defaults(func=agent_spawn_command)
+
+    agent_spawn_ready = agent_subparsers.add_parser(
+        "spawn-ready",
+        help="Spawn all configured agents that are not already running",
+    )
+    agent_spawn_ready.add_argument("--confirm", action="store_true", help="Explicitly confirm batch spawn")
+    agent_spawn_ready.set_defaults(func=agent_spawn_ready_command)
 
     agent_capture = agent_subparsers.add_parser("capture", help="Capture output from a spawned agent pane")
     agent_capture.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")

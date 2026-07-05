@@ -18,6 +18,7 @@ The contract command returns:
   "schema_version": "project-view/v1",
   "list_command": "agentdeck agent list",
   "ready_command": "agentdeck agent ready",
+  "spawn_ready_command": "agentdeck agent spawn-ready --confirm",
   "spawn_command_template": "agentdeck agent spawn --agent <id>",
   "capture_command_template": "agentdeck agent capture --agent <id> --lines 200",
   "send_command_template": "agentdeck agent send --agent <id> --text <text>",
@@ -30,6 +31,8 @@ The contract command returns:
   "refresh_response_fields": [],
   "refresh_agent_fields": [],
   "ready_response_fields": [],
+  "spawn_ready_response_fields": [],
+  "spawn_ready_result_fields": [],
   "runtime_control_fields": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view",
@@ -37,7 +40,7 @@ The contract command returns:
 }
 ```
 
-Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready fixture with one running agent, a ready response, a capture response, and reusable runtime controls.
+Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready fixture with one running agent, a ready response, a spawn-ready response, a capture response, and reusable runtime controls.
 
 ## Agent Item Fields
 
@@ -60,11 +63,12 @@ Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready f
   "running_count": 1,
   "not_running_count": 2,
   "all_running": false,
-  "next_command": "agentdeck agent spawn --agent coder",
+  "next_command": "agentdeck agent spawn-ready --confirm",
   "spawn_commands": [
     "agentdeck agent spawn --agent coder",
     "agentdeck agent spawn --agent reviewer"
   ],
+  "spawn_ready_command": "agentdeck agent spawn-ready --confirm",
   "refresh_command": "agentdeck agent refresh",
   "dispatch_ready_command": "agentdeck approval dispatch-ready --confirm",
   "runtime_card": {}
@@ -78,13 +82,59 @@ Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready f
 - `running_count`: number of agents with `status=running` and a pane id.
 - `not_running_count`: configured agents that still need explicit spawn or repair.
 - `all_running`: whether every configured agent has a running pane.
-- `next_command`: first explicit spawn command when any agent is not running; otherwise `agentdeck approval dispatch-ready --confirm`.
+- `next_command`: explicit `agentdeck agent spawn-ready --confirm` when multiple configured agents are not running, the single agent spawn command when exactly one agent is not running, otherwise `agentdeck approval dispatch-ready --confirm`.
 - `spawn_commands`: explicit spawn commands for every not-running configured agent.
+- `spawn_ready_command`: explicit batch startup command for all not-running configured agents.
 - `refresh_command`: explicit runtime reconciliation command.
 - `dispatch_ready_command`: explicit batch approval dispatch command for the later step after agents are running.
 - `runtime_card`: the same GUI-ready runtime card shape used by `agentdeck workbench`.
 
 The command does not inspect tmux, create panes, refresh bindings, send input, write events, or dispatch approvals.
+
+## Spawn-Ready Response Fields
+
+`agentdeck agent spawn-ready --confirm` is the explicit batch startup command for configured agents that are not already running:
+
+```json
+{
+  "ok": true,
+  "mode": "agent_spawn_ready",
+  "requires_explicit_user": true,
+  "safety": "explicit_runtime",
+  "spawned_count": 2,
+  "skipped_count": 1,
+  "results": [
+    {
+      "agent_id": "planner",
+      "status": "skipped",
+      "previous_status": "running",
+      "pane_id": "%42",
+      "spawn_command": "agentdeck agent spawn --agent planner",
+      "blocker": "agent already running"
+    },
+    {
+      "agent_id": "coder",
+      "status": "spawned",
+      "previous_status": "configured",
+      "pane_id": "%43",
+      "spawn_command": "agentdeck agent spawn --agent coder",
+      "blocker": null
+    }
+  ],
+  "ready_command": "agentdeck agent ready"
+}
+```
+
+- `ok`: whether the batch command completed.
+- `mode`: always `agent_spawn_ready`.
+- `requires_explicit_user`: always `true`.
+- `safety`: always `explicit_runtime`.
+- `spawned_count`: number of agents spawned in this run.
+- `skipped_count`: number of already-running agents skipped.
+- `results`: per-agent result list with agent id, previous status, pane id, explicit single-agent spawn command, and blocker.
+- `ready_command`: command to re-open the readiness card after startup.
+
+The command requires `--confirm`; without it, the command exits non-zero and must not write state or create panes.
 
 ## Capture Response Fields
 

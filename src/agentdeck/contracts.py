@@ -657,6 +657,26 @@ AGENT_RUNTIME_REFRESH_AGENT_FIELDS = (
     "changed",
 )
 
+AGENT_RUNTIME_SPAWN_READY_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "requires_explicit_user",
+    "safety",
+    "spawned_count",
+    "skipped_count",
+    "results",
+    "ready_command",
+)
+
+AGENT_RUNTIME_SPAWN_READY_RESULT_FIELDS = (
+    "agent_id",
+    "status",
+    "previous_status",
+    "pane_id",
+    "spawn_command",
+    "blocker",
+)
+
 AGENT_RUNTIME_READY_RESPONSE_FIELDS = (
     "ok",
     "mode",
@@ -667,6 +687,7 @@ AGENT_RUNTIME_READY_RESPONSE_FIELDS = (
     "all_running",
     "next_command",
     "spawn_commands",
+    "spawn_ready_command",
     "refresh_command",
     "dispatch_ready_command",
     "runtime_card",
@@ -1436,6 +1457,7 @@ def agent_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "list_command": "agentdeck agent list",
         "ready_command": "agentdeck agent ready",
+        "spawn_ready_command": "agentdeck agent spawn-ready --confirm",
         "spawn_command_template": "agentdeck agent spawn --agent <id>",
         "capture_command_template": "agentdeck agent capture --agent <id> --lines 200",
         "send_command_template": "agentdeck agent send --agent <id> --text <text>",
@@ -1448,6 +1470,8 @@ def agent_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
         "refresh_response_fields": list(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS),
         "refresh_agent_fields": list(AGENT_RUNTIME_REFRESH_AGENT_FIELDS),
         "ready_response_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
+        "spawn_ready_response_fields": list(AGENT_RUNTIME_SPAWN_READY_RESPONSE_FIELDS),
+        "spawn_ready_result_fields": list(AGENT_RUNTIME_SPAWN_READY_RESULT_FIELDS),
         "runtime_control_fields": list(WORKBENCH_RUNTIME_CONTROL_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
@@ -1465,6 +1489,8 @@ def agent_runtime_contract_response(contract_path: Path, include_example: bool =
         payload["example_refresh_response_fields"] = list(example["refresh"])
         payload["example_refresh_agent_fields"] = list(example["refresh"]["agents"][0])
         payload["example_ready_response_fields"] = list(example["ready"])
+        payload["example_spawn_ready_response_fields"] = list(example["spawn_ready"])
+        payload["example_spawn_ready_result_fields"] = list(example["spawn_ready"]["results"][0])
         payload["example_control_fields"] = list(example["controls"][0])
         payload["example_agent_runtime"] = example
     return payload
@@ -3769,6 +3795,7 @@ def agent_runtime_example() -> dict[str, object]:
             "all_running": True,
             "next_command": "agentdeck approval dispatch-ready --confirm",
             "spawn_commands": [],
+            "spawn_ready_command": "agentdeck agent spawn-ready --confirm",
             "refresh_command": "agentdeck agent refresh",
             "dispatch_ready_command": "agentdeck approval dispatch-ready --confirm",
             "runtime_card": {
@@ -3795,6 +3822,33 @@ def agent_runtime_example() -> dict[str, object]:
                     }
                 ],
             },
+        },
+        "spawn_ready": {
+            "ok": True,
+            "mode": "agent_spawn_ready",
+            "requires_explicit_user": True,
+            "safety": "explicit_runtime",
+            "spawned_count": 1,
+            "skipped_count": 1,
+            "results": [
+                {
+                    "agent_id": "planner",
+                    "status": "spawned",
+                    "previous_status": "configured",
+                    "pane_id": "%42",
+                    "spawn_command": "agentdeck agent spawn --agent planner",
+                    "blocker": None,
+                },
+                {
+                    "agent_id": "reviewer",
+                    "status": "skipped",
+                    "previous_status": "running",
+                    "pane_id": "%43",
+                    "spawn_command": "agentdeck agent spawn --agent reviewer",
+                    "blocker": "agent already running",
+                },
+            ],
+            "ready_command": "agentdeck agent ready",
         },
         "controls": runtime_agent_controls(agent_id, True),
     }

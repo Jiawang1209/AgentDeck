@@ -901,7 +901,7 @@ def test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup(
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "runtime"
     assert payload["message"] == "启动所有 agent"
-    assert payload["next_command"] == "agentdeck agent spawn --agent coder"
+    assert payload["next_command"] == "agentdeck agent spawn-ready --confirm"
     assert payload["agent_ready_card"]["mode"] == "agent_runtime_ready"
     assert payload["agent_ready_card"]["total_count"] == 3
     assert payload["agent_ready_card"]["running_count"] == 1
@@ -912,6 +912,7 @@ def test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup(
         "agentdeck agent spawn --agent coder",
         "agentdeck agent spawn --agent reviewer",
     ]
+    assert payload["agent_ready_card"]["spawn_ready_command"] == "agentdeck agent spawn-ready --confirm"
     assert payload["agent_ready_card"]["runtime_card"] == payload["runtime_card"]
     assert payload["leader_explanation"]["mode"] == "runtime"
     assert payload["leader_explanation"]["summary"] == (
@@ -934,8 +935,8 @@ def test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup(
     }
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
-        "label": "Spawn coder",
-        "command": "agentdeck agent spawn --agent coder",
+        "label": "Spawn ready agents",
+        "command": "agentdeck agent spawn-ready --confirm",
         "safety": "explicit_runtime",
         "enabled": True,
         "blocker": None,
@@ -944,7 +945,7 @@ def test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup(
     state_after = StateStore(root).load()
     assert state_after["chat_turns"][0]["mode"] == "runtime"
     assert state_after["chat_turns"][0]["action_kind"] == "runtime_ready"
-    assert state_after["chat_turns"][0]["next_command"] == "agentdeck agent spawn --agent coder"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck agent spawn-ready --confirm"
     assert state_after["agents"]["planner"]["status"] == "running"
     assert state_after["agents"].get("coder") is None
     assert state_after["agents"].get("reviewer") is None

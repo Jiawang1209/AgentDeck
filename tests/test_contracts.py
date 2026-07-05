@@ -229,6 +229,7 @@ def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) 
     assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
     assert payload["list_command"] == "agentdeck agent list"
     assert payload["ready_command"] == "agentdeck agent ready"
+    assert payload["spawn_ready_command"] == "agentdeck agent spawn-ready --confirm"
     assert payload["spawn_command_template"] == "agentdeck agent spawn --agent <id>"
     assert payload["capture_command_template"] == "agentdeck agent capture --agent <id> --lines 200"
     assert payload["send_command_template"] == "agentdeck agent send --agent <id> --text <text>"
@@ -250,9 +251,28 @@ def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) 
         "all_running",
         "next_command",
         "spawn_commands",
+        "spawn_ready_command",
         "refresh_command",
         "dispatch_ready_command",
         "runtime_card",
+    ]
+    assert payload["spawn_ready_response_fields"] == [
+        "ok",
+        "mode",
+        "requires_explicit_user",
+        "safety",
+        "spawned_count",
+        "skipped_count",
+        "results",
+        "ready_command",
+    ]
+    assert payload["spawn_ready_result_fields"] == [
+        "agent_id",
+        "status",
+        "previous_status",
+        "pane_id",
+        "spawn_command",
+        "blocker",
     ]
     assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
     assert payload["workbench_contract"] == "agentdeck contract workbench"
@@ -272,11 +292,17 @@ def test_agent_runtime_contract_response_includes_example_without_drift(tmp_path
     assert payload["example_capture_response_fields"] == payload["capture_response_fields"]
     assert payload["example_refresh_response_fields"] == payload["refresh_response_fields"]
     assert payload["example_refresh_agent_fields"] == payload["refresh_agent_fields"]
+    assert payload["example_ready_response_fields"] == payload["ready_response_fields"]
+    assert payload["example_spawn_ready_response_fields"] == payload["spawn_ready_response_fields"]
+    assert payload["example_spawn_ready_result_fields"] == payload["spawn_ready_result_fields"]
     assert payload["example_control_fields"] == payload["runtime_control_fields"]
     assert set(example["agents"][0]) == set(AGENT_RUNTIME_AGENT_ITEM_FIELDS)
     assert set(example["capture"]) == set(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
     assert set(example["refresh"]) == set(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS)
     assert set(example["refresh"]["agents"][0]) == set(AGENT_RUNTIME_REFRESH_AGENT_FIELDS)
+    assert set(example["ready"]) == set(payload["ready_response_fields"])
+    assert set(example["spawn_ready"]) == set(payload["spawn_ready_response_fields"])
+    assert set(example["spawn_ready"]["results"][0]) == set(payload["spawn_ready_result_fields"])
     assert set(example["controls"][0]) == set(WORKBENCH_RUNTIME_CONTROL_FIELDS)
 
 

@@ -120,7 +120,8 @@ def test_agent_ready_outputs_startup_card_without_mutating_state(tmp_path, monke
     assert payload["running_count"] == 1
     assert payload["not_running_count"] == 2
     assert payload["all_running"] is False
-    assert payload["next_command"] == "agentdeck agent spawn --agent coder"
+    assert payload["next_command"] == "agentdeck agent spawn-ready --confirm"
+    assert payload["spawn_ready_command"] == "agentdeck agent spawn-ready --confirm"
     assert payload["spawn_commands"] == [
         "agentdeck agent spawn --agent coder",
         "agentdeck agent spawn --agent reviewer",
@@ -540,6 +541,7 @@ def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None
     assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
     assert payload["list_command"] == "agentdeck agent list"
     assert payload["ready_command"] == "agentdeck agent ready"
+    assert payload["spawn_ready_command"] == "agentdeck agent spawn-ready --confirm"
     assert payload["spawn_command_template"] == "agentdeck agent spawn --agent <id>"
     assert payload["capture_command_template"] == "agentdeck agent capture --agent <id> --lines 200"
     assert payload["send_command_template"] == "agentdeck agent send --agent <id> --text <text>"
@@ -561,9 +563,28 @@ def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None
         "all_running",
         "next_command",
         "spawn_commands",
+        "spawn_ready_command",
         "refresh_command",
         "dispatch_ready_command",
         "runtime_card",
+    ]
+    assert payload["spawn_ready_response_fields"] == [
+        "ok",
+        "mode",
+        "requires_explicit_user",
+        "safety",
+        "spawned_count",
+        "skipped_count",
+        "results",
+        "ready_command",
+    ]
+    assert payload["spawn_ready_result_fields"] == [
+        "agent_id",
+        "status",
+        "previous_status",
+        "pane_id",
+        "spawn_command",
+        "blocker",
     ]
     assert payload["workbench_contract"] == "agentdeck contract workbench"
 
@@ -582,12 +603,16 @@ def test_contract_agent_runtime_example_exports_gui_ready_runtime_contract(capsy
     assert payload["example_refresh_response_fields"] == payload["refresh_response_fields"]
     assert payload["example_refresh_agent_fields"] == payload["refresh_agent_fields"]
     assert payload["example_ready_response_fields"] == payload["ready_response_fields"]
+    assert payload["example_spawn_ready_response_fields"] == payload["spawn_ready_response_fields"]
+    assert payload["example_spawn_ready_result_fields"] == payload["spawn_ready_result_fields"]
     assert payload["example_control_fields"] == payload["runtime_control_fields"]
     assert set(example["agents"][0]) == set(payload["agent_item_fields"])
     assert set(example["capture"]) == set(payload["capture_response_fields"])
     assert set(example["refresh"]) == set(payload["refresh_response_fields"])
     assert set(example["refresh"]["agents"][0]) == set(payload["refresh_agent_fields"])
     assert set(example["ready"]) == set(payload["ready_response_fields"])
+    assert set(example["spawn_ready"]) == set(payload["spawn_ready_response_fields"])
+    assert set(example["spawn_ready"]["results"][0]) == set(payload["spawn_ready_result_fields"])
     assert set(example["controls"][0]) == set(payload["runtime_control_fields"])
     assert example["agents"][0]["runtime"]["pane_id"] == "%42"
     assert example["capture"]["output"] == "status: completed\n"
@@ -2800,6 +2825,90 @@ def test_agent_spawn_records_pane_binding_and_event(tmp_path, monkeypatch, capsy
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "agent_spawned"' in events
+
+
+def test_agent_spawn_ready_requires_confirm_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    state_before = StateStore(root).load()
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "spawn-ready"])
+
+    assert exit_code == 1
+    assert "agent spawn-ready requires --confirm" in capsys.readouterr().err
+    assert StateStore(root).load() == state_before
+    assert fake.created_sessions == 0
+    assert fake.spawned == []
+
+
+def test_agent_spawn_ready_spawns_all_not_running_agents(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"]["planner"] = {
+        "agent_id": "planner",
+        "pane_id": "%99",
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "spawn-ready", "--confirm"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "ok": True,
+        "mode": "agent_spawn_ready",
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "spawned_count": 2,
+        "skipped_count": 1,
+        "results": [
+            {
+                "agent_id": "planner",
+                "status": "skipped",
+                "previous_status": "running",
+                "pane_id": "%99",
+                "spawn_command": "agentdeck agent spawn --agent planner",
+                "blocker": "agent already running",
+            },
+            {
+                "agent_id": "coder",
+                "status": "spawned",
+                "previous_status": "configured",
+                "pane_id": "%42",
+                "spawn_command": "agentdeck agent spawn --agent coder",
+                "blocker": None,
+            },
+            {
+                "agent_id": "reviewer",
+                "status": "spawned",
+                "previous_status": "configured",
+                "pane_id": "%42",
+                "spawn_command": "agentdeck agent spawn --agent reviewer",
+                "blocker": None,
+            },
+        ],
+        "ready_command": "agentdeck agent ready",
+    }
+    assert fake.created_sessions == 1
+    assert fake.spawned == [("coder", str(root)), ("reviewer", str(root))]
+
+    state_after = StateStore(root).load()
+    assert state_after["agents"]["planner"]["pane_id"] == "%99"
+    assert state_after["agents"]["coder"]["pane_id"] == "%42"
+    assert state_after["agents"]["coder"]["status"] == "running"
+    assert state_after["agents"]["reviewer"]["pane_id"] == "%42"
+    assert state_after["agents"]["reviewer"]["status"] == "running"
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert events.count('"event_type": "agent_spawned"') == 2
+    assert '"event_type": "agent_spawn_ready_completed"' in events
 
 
 def test_agent_spawn_refuses_existing_running_binding(tmp_path, monkeypatch, capsys) -> None:

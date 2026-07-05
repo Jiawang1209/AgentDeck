@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add explicit spawn-ready runtime batch
+
+- 新增显式批量启动入口 `agentdeck agent spawn-ready --confirm`：它会启动所有尚未 `running` 的 configured agents，跳过已 running pane，并在结果中返回每个 agent 的 previous_status、pane_id、spawn_command 和 blocker。
+- 保持人类控制边界：不带 `--confirm` 必须失败且不得写 state 或创建 pane；带 confirm 时才创建 tmux session/pane，逐 agent 写入 `agent_spawned` 事件，并追加一次 `agent_spawn_ready_completed` 汇总事件。
+- 调整 `agentdeck agent ready`：当多个 configured agents 未 running 时，`next_command` 现在推荐 `agentdeck agent spawn-ready --confirm`；只有一个未 running agent 时才推荐单 agent spawn；全部 running 时继续推荐 `agentdeck approval dispatch-ready --confirm`。
+- 调整 `agentdeck leader chat --message "启动所有 agent"`：自然语言 runtime ready card 的顶层 `next_command`、`leader_explanation.next_command`、`intent_card` next control 和 chat turn 记录都会对齐到 `agent_ready_card.next_command`，多个未运行 agent 时显示 `Spawn ready agents`。
+- 扩展 `agentdeck contract agent-runtime`：新增 `spawn_ready_command`、`spawn_ready_response_fields`、`spawn_ready_result_fields` 和稳定 `spawn_ready` example，供 GUI/TUI 不解析 CLI help 也能发现批量启动输出形状。
+- 同步 README、`docs/contracts/agent-runtime-schema.md`、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md，明确 `spawn-ready` 是显式 runtime command，不是 Leader chat 的自动执行权限。
+- 验证记录：已先确认红测失败，`agent ready` 仍推荐第一条单 agent spawn，`agent spawn-ready` 最初不是合法子命令，agent runtime contract 最初缺少 `spawn_ready_command`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_agent_ready_outputs_startup_card_without_mutating_state tests/test_agent_cli.py::test_agent_spawn_ready_requires_confirm_without_mutating_state tests/test_agent_cli.py::test_agent_spawn_ready_spawns_all_not_running_agents tests/test_contracts.py::test_agent_runtime_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_agent_runtime_contract_response_includes_example_without_drift tests/test_leader_cli.py::test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup -q` 6 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 271 项通过。
+
 ### Current - Surface agent ready card through Leader chat
 
 - 扩展 `agentdeck leader chat --message "启动所有 agent"` / `"启动全部 agent"` / `"prepare all agents"`：自然语言 runtime 入口现在会走本地 `mode=runtime`，嵌入 `agent_ready_card`，复用 `agentdeck agent ready` 的 readiness shape，而不是落入 provider-backed plan。
