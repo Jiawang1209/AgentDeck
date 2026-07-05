@@ -827,6 +827,58 @@ def test_leader_chat_inspects_ledger_without_mutating_state(tmp_path, monkeypatc
     assert state_after["leader_actions"] == []
 
 
+def test_leader_chat_opens_workbench_snapshot_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+
+    exit_code = cli.main(["leader", "chat", "--message", "打开工作台"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "workbench"
+    assert payload["message"] == "打开工作台"
+    assert payload["plan_id"] is None
+    assert payload["review"] is None
+    assert payload["leader_action"] is None
+    assert payload["continue_card"] is None
+    assert payload["inbox_card"] is None
+    assert payload["approval_card"] is None
+    assert payload["runtime_card"] is None
+    assert payload["queue_card"] is None
+    assert payload["operator_card"] is None
+    assert payload["role_card"] is None
+    assert payload["ledger_card"] is None
+    assert payload["next_command"] == payload["workbench_card"]["next_command"]
+    assert payload["workbench_card"]["mode"] == "workbench"
+    assert payload["workbench_card"]["project_view"]["chat_turns"]["items"][0]["mode"] == "workbench"
+    assert payload["workbench_card"]["runtime_card"]["by_status"]["running"] == 1
+    assert payload["workbench_card"]["runtime_card"]["agents"][0]["pane_id"] == "%42"
+    assert payload["workbench_card"]["role_card"]["count"] == 3
+    assert payload["workbench_card"]["ledger_card"]["messages"]["count"] == 0
+    assert payload["workbench_card"]["queue_card"]["active_queue_source"] == "none"
+    assert payload["workbench_card"]["operator_card"]["preview_command"] == "agentdeck status"
+    assert payload["workbench_card"]["contracts_card"]["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["leader_explanation"]["mode"] == "workbench"
+    assert payload["leader_explanation"]["action_kind"] == "workbench"
+    assert payload["leader_explanation"]["action_status"] == "ready"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["leader_explanation"]["next_command"] == payload["next_command"]
+    assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
+    assert payload["project_view"]["chat_turns"]["items"][0]["mode"] == "workbench"
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "workbench"
+    assert state_after["chat_turns"][0]["next_command"] == payload["next_command"]
+    assert state_after["chat_turns"][0]["action_kind"] == "workbench"
+    assert state_after["agents"]["planner"]["status"] == "running"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["approvals"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

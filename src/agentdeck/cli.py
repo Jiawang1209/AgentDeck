@@ -1608,6 +1608,24 @@ def _chat_wants_setup(message: str) -> bool:
     )
 
 
+def _chat_wants_workbench(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(
+        token in normalized
+        for token in [
+            "workbench",
+            "dashboard",
+            "overview",
+            "control plane",
+            "工作台",
+            "总览",
+            "仪表盘",
+            "控制台",
+            "全局状态",
+        ]
+    )
+
+
 def _chat_wants_runtime(message: str) -> bool:
     normalized = message.strip().lower()
     return any(
@@ -1844,6 +1862,18 @@ def _leader_chat_explanation(
             "safety": "inspect",
             "requires_explicit_user": False,
         }
+    if mode == "workbench":
+        return {
+            "mode": mode,
+            "summary": "Leader recommends opening the unified workbench snapshot without mutating state.",
+            "reason": "human asked to inspect the full local control plane",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": "workbench",
+            "action_status": "ready",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
     if mode == "queue":
         recovery = project_view.get("recovery") if isinstance(project_view.get("recovery"), dict) else {}
         recovery_action = recovery.get("recommended_action") if isinstance(recovery.get("recommended_action"), dict) else {}
@@ -2022,6 +2052,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": None,
+            "workbench_card": None,
             "result": result,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -2091,6 +2122,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2145,7 +2177,65 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": None,
+            "workbench_card": None,
             "provider_health": _workbench_provider_health(refreshed_project_view),
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_workbench(args.message):
+        initial_workbench = _workbench_snapshot_payload(project_view, store, since_event_id=None)
+        next_command = initial_workbench.get("next_command")
+        turn = store.record_chat_turn(
+            mode="workbench",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="workbench",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "workbench",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        workbench_card = _workbench_snapshot_payload(refreshed_project_view, store, since_event_id=None)
+        next_command = workbench_card.get("next_command")
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "workbench",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "workbench",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": workbench_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2200,6 +2290,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2261,6 +2352,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": ledger_card,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2315,6 +2407,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": role_card,
             "ledger_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2382,6 +2475,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": operator_card,
             "role_card": None,
             "ledger_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2463,6 +2557,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2543,6 +2638,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2594,6 +2690,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": None,
+            "workbench_card": None,
         }
         store.append_event(
             EventRecord.create(
@@ -2679,6 +2776,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         "operator_card": None,
         "role_card": None,
         "ledger_card": None,
+        "workbench_card": None,
     }
     store.append_event(
         EventRecord.create(

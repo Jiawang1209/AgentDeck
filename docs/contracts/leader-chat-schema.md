@@ -21,6 +21,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "role_card_fields": [],
   "role_agent_fields": [],
   "ledger_card_fields": [],
+  "workbench_card_fields": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view"
 }
@@ -55,7 +56,8 @@ The review-mode response shape is:
   "queue_card": null,
   "operator_card": null,
   "role_card": null,
-  "ledger_card": null
+  "ledger_card": null,
+  "workbench_card": null
 }
 ```
 
@@ -111,6 +113,27 @@ Runtime-mode responses are returned when the human asks to inspect `runtime`, `t
 ```
 
 Runtime-mode records a chat turn for history, but it must not create a plan, leader action, approval, message, job, inbox item, refresh stale panes, spawn/stop agents, capture pane output, or send tmux input.
+
+Workbench-mode responses are returned when the human asks to open the full workbench, dashboard, overview, or local control plane. They return `workbench_card`, reusing the same validated snapshot shape as `agentdeck workbench`:
+
+```json
+{
+  "mode": "workbench",
+  "next_command": "agentdeck continue",
+  "workbench_card": {
+    "mode": "workbench",
+    "project_view": {},
+    "runtime_card": {},
+    "role_card": {},
+    "ledger_card": {},
+    "queue_card": {},
+    "operator_card": {},
+    "contracts_card": {}
+  }
+}
+```
+
+When `workbench_card` is present, `validate_leader_chat_contract()` reuses `validate_workbench_contract()` and prefixes nested errors with `workbench_card:`. Workbench-mode records a chat turn for history, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, approve approvals, dispatch work, refresh runtime, capture pane output, read pane output, or send tmux input.
 
 Ledger-mode responses are returned when the human asks to inspect the communication ledger, message lineage, or trace commands. They return `ledger_card`, reusing the same ledger projection as `agentdeck workbench`:
 
@@ -272,7 +295,8 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat queue-mode responses must reuse the workbench queue and operator cards through `queue_card` and `operator_card`.
 - Chat role-mode responses must reuse the workbench role card through `role_card`.
 - Chat ledger-mode responses must reuse the workbench ledger card through `ledger_card`.
+- Chat workbench-mode responses must reuse the complete workbench snapshot through `workbench_card`.
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, or `runtime_card` when `recovery.recommended_action.source` points at those queues or runtime recovery.
 - Chat setup-mode responses may include `provider_health` and must recommend `agentdeck doctor` without calling the provider.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `workbench_card` as the full dashboard snapshot, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as explanation.

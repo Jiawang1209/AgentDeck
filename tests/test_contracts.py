@@ -364,6 +364,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
     assert payload["role_agent_fields"] == list(WORKBENCH_ROLE_AGENT_FIELDS)
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
+    assert payload["workbench_card_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
 
 
 def test_continue_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
@@ -1041,6 +1042,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert set(payload["example_role_agent_fields"]) == set(example["role_card"]["agents"][0])
     assert payload["example_ledger_card_fields"] == payload["ledger_card_fields"]
     assert payload["example_ledger_card_fields"] == list(example["ledger_card"])
+    assert payload["example_workbench_card_fields"] == payload["workbench_card_fields"]
+    assert payload["example_workbench_card_fields"] == list(example["workbench_card"])
     assert example["leader_explanation"]["recommended_action_id"] == "act_example"
     assert example["leader_explanation"]["safety"] == "safe_apply"
     assert example["mode"] == "continue"

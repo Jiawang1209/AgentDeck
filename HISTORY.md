@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add Leader workbench chat mode
+
+- 新增自然语言只读 workbench 意图：`agentdeck leader chat --message "打开工作台"` / `"查看总览"` / `"dashboard"` 会进入 `mode=workbench`，嵌入完整 `workbench_card`，供未来 GUI/自然语言壳一跳拿到统一工作台快照。
+- `workbench_card` 直接复用 `agentdeck workbench` 的快照契约，并在 `validate_leader_chat_contract()` 内通过 `validate_workbench_contract()` 校验，避免 Leader chat 和 workbench 出现两套 dashboard 字段规则。
+- 扩展 Leader chat response contract：新增顶层 `workbench_card`，`agentdeck contract leader-chat` 现在公开 `workbench_card_fields` 和 `example_workbench_card_fields`。
+- workbench chat mode 的 `next_command` 等于 `workbench_card.next_command`；它只记录 chat turn，不创建 plan/action/approval/message/job/inbox、不 ack、不 approve、不 dispatch、不 refresh runtime、不 capture、不读取 pane 输出、不发送 tmux 输入。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 workbench mode 是统一工作台展示入口，不代表自动执行许可。
+- 完整验证：已先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_opens_workbench_snapshot_without_mutating_state -q` 最初返回 `mode=plan`；契约红测最初因缺少 `workbench_card_fields` / `example_workbench_card_fields` 失败；实现后目标测试 4 项通过，leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 126 项通过；`conda run -n agentdeck pytest -q` 198 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `leader-chat-workbench-mode-smoke-ok`。
+
 ### Current - Add Leader ledger chat mode
 
 - 新增自然语言只读 ledger 意图：`agentdeck leader chat --message "查看账本"` / `"查看通信"` 会进入 `mode=ledger`，返回复用 workbench 投影的 `ledger_card`，展示 messages/jobs/replies/inbox 摘要和去重后的 `trace_commands`。

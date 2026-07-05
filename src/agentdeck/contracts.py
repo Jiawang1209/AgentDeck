@@ -357,6 +357,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "operator_card",
     "role_card",
     "ledger_card",
+    "workbench_card",
 )
 
 CONTINUE_CARD_FIELDS = (
@@ -722,6 +723,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
+        "workbench_card_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -741,6 +743,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_role_card_fields"] = list(example["role_card"])
         payload["example_role_agent_fields"] = list(example["role_card"]["agents"][0])
         payload["example_ledger_card_fields"] = list(example["ledger_card"])
+        payload["example_workbench_card_fields"] = list(example["workbench_card"])
         payload["example_leader_chat"] = example
     return payload
 
@@ -1428,6 +1431,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_ledger_card_contract(errors, ledger_card, prefix="ledger_card")
     elif "ledger_card" in payload and ledger_card is not None:
         errors.append("ledger_card must be an object")
+    workbench_card = payload.get("workbench_card")
+    if isinstance(workbench_card, dict):
+        workbench_validation = validate_workbench_contract(workbench_card)
+        for error in workbench_validation["errors"]:
+            errors.append(f"workbench_card: {error}")
+    elif "workbench_card" in payload and workbench_card is not None:
+        errors.append("workbench_card must be an object")
     return {"ok": not errors, "errors": errors}
 
 
@@ -1843,6 +1853,7 @@ def leader_chat_example() -> dict[str, object]:
     operator_card = workbench_example()["operator_card"]
     role_card = workbench_example()["role_card"]
     ledger_card = workbench_example()["ledger_card"]
+    workbench_card = workbench_example()
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -1874,6 +1885,7 @@ def leader_chat_example() -> dict[str, object]:
         "operator_card": operator_card,
         "role_card": role_card,
         "ledger_card": ledger_card,
+        "workbench_card": workbench_card,
     }
 
 

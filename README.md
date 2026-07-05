@@ -69,6 +69,7 @@ agentdeck agent refresh
 agentdeck agent stop --agent planner
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
 agentdeck leader chat --message "帮我设计自动 reply extraction"
+agentdeck leader chat --message "打开工作台"
 agentdeck leader chat --message "查看账本"
 agentdeck leader chat --message "查看角色"
 agentdeck leader chat --message "查看队列"
@@ -289,6 +290,7 @@ AgentDeck 已提供第一版 plan-only Leader 能力：
 ```bash
 agentdeck leader chat --message "帮我设计自动 reply extraction"
 agentdeck leader chat --message "继续"
+agentdeck leader chat --message "打开工作台"
 agentdeck leader chat --message "查看账本"
 agentdeck leader chat --message "查看角色"
 agentdeck leader chat --message "查看队列"
@@ -322,6 +324,8 @@ agentdeck plan status --plan-id pln_xxx
 
 当人类输入 `agentdeck leader chat --message "继续"`、`"继续吧"` 或 `"/continue"` 时，chat 会进入 recovery-first 的 `mode=continue`：它复用 `agentdeck continue` 的下一步卡片，返回 `continue_card`、`recovery`、`next_command` 和解释信息；如果 recovery 指向 pending inbox，会同时嵌入对应 agent 的 `inbox_card`；如果 recovery 指向 approval queue，会同时嵌入 `approval_card`；如果 recovery 指向 stale runtime，会同时嵌入 `runtime_card`，让 GUI 或自然语言壳直接渲染 `agentdeck agent refresh` 入口。该模式只记录一条 chat turn，不创建新的 `leader_actions[]`，也不执行任何 action、refresh、spawn、stop、capture 或 tmux 输入。需要让 Leader 重新 review 并排队 action 时，可以输入更具体的目标或继续使用 `agentdeck leader next`。
 
+当人类输入 `agentdeck leader chat --message "打开工作台"`、`"查看总览"`、`"dashboard"` 或 `"workbench"` 这类全局工作台意图时，chat 会进入只读 `mode=workbench`：它嵌入一张完整 `workbench_card`，该卡片复用 `agentdeck workbench` 的快照契约，包含 leader/provider/runtime/role/ledger/queue/operator/audit/contracts/change_summary 等 GUI-ready 投影。`next_command` 等于 `workbench_card.next_command`，该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，不 ack、不 approve、不 dispatch、不 refresh runtime、不 capture、不读取 pane 输出、不发送 tmux 输入。
+
 当人类输入 `agentdeck leader chat --message "查看账本"`、`"查看通信"`、`"ledger"` 或 `"trace commands"` 这类 ledger 意图时，chat 会进入只读 `mode=ledger`：它复用 workbench 的 `ledger_card`，返回 messages/jobs/replies/inbox 摘要和去重后的 `trace_commands`；如果有 trace，`next_command` 会指向第一条 `agentdeck trace --id <id>`，否则建议 `agentdeck workbench`。该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
 
 当人类输入 `agentdeck leader chat --message "查看角色"`、`"查看分工"`、`"roles"` 或 `"assign-role"` 这类 role 意图时，chat 会进入只读 `mode=role`：它复用 workbench 的 `role_card`，返回每个 agent 的 role、provider、workspace_mode、role_prompt 和可复制的 `assign_command`。该模式只记录 chat turn，不创建 plan、leader action、approval、message、job、inbox，不修改配置，也不发送 tmux 输入；真正修改角色仍必须由人类显式运行 `agentdeck agent assign-role ...`。
@@ -336,7 +340,7 @@ agentdeck plan status --plan-id pln_xxx
 
 当人类输入 `agentdeck leader chat --message "查看审批"` 这类 approval 意图时，chat 会进入只读 `mode=approval`：它复用 `agentdeck approval list` 的队列 shape 返回 `approval_card`，并建议 `agentdeck approval list`；当输入包含 `批准` 或 `approve` 且存在 pending approval 时，`next_command` 会变成第一条 pending approval 的 `approve_command`；当输入包含 `派发` 或 `dispatch` 且存在 approved approval 时，`next_command` 会变成第一条 approved approval 的 `dispatch_command`。approve/dispatch 建议都会标记 `safety=explicit_runtime` 与 `requires_explicit_user=true`。该模式只记录 chat turn，不执行 approve/reject/dispatch、不发送 tmux 输入。
 
-`agentdeck contract leader-chat` 会公开 `continue_card_fields`、`runtime_card_fields`、`queue_card_fields`、`operator_card_fields`、`role_card_fields`、`role_agent_fields` 和 `ledger_card_fields`，`--example` 会返回稳定的 continue-mode 示例和 `example_continue_card_fields` / `example_runtime_card_fields` / `example_queue_card_fields` / `example_operator_card_fields` / `example_role_card_fields` / `example_role_agent_fields` / `example_ledger_card_fields`，供 GUI 或自然语言壳发现恢复和控制卡片字段。chat 响应里的 `continue_card` 必须复用 `validate_continue_contract()` 校验，避免自然语言“继续”和独立 `agentdeck continue` 出现两套恢复卡片规则。chat 响应里的 `inbox_card` 必须复用 `validate_inbox_contract()` 校验，避免自然语言 inbox 视图和独立 `agentdeck inbox` 出现两套 mailbox 规则。chat 响应里的 `approval_card` 必须复用 `validate_approval_contract()` 校验，避免自然语言审批视图和独立 `agentdeck approval list` 出现两套 approval 规则。chat 响应里的 `runtime_card`、`queue_card`、`operator_card`、`role_card` 和 `ledger_card` 必须复用 workbench 字段规则，避免自然语言控制面和 `agentdeck workbench` 出现两套 runtime/queue/operator/role/ledger 规则。
+`agentdeck contract leader-chat` 会公开 `continue_card_fields`、`runtime_card_fields`、`queue_card_fields`、`operator_card_fields`、`role_card_fields`、`role_agent_fields`、`ledger_card_fields` 和 `workbench_card_fields`，`--example` 会返回稳定的 continue-mode 示例和 `example_continue_card_fields` / `example_runtime_card_fields` / `example_queue_card_fields` / `example_operator_card_fields` / `example_role_card_fields` / `example_role_agent_fields` / `example_ledger_card_fields` / `example_workbench_card_fields`，供 GUI 或自然语言壳发现恢复和控制卡片字段。chat 响应里的 `continue_card` 必须复用 `validate_continue_contract()` 校验，避免自然语言“继续”和独立 `agentdeck continue` 出现两套恢复卡片规则。chat 响应里的 `inbox_card` 必须复用 `validate_inbox_contract()` 校验，避免自然语言 inbox 视图和独立 `agentdeck inbox` 出现两套 mailbox 规则。chat 响应里的 `approval_card` 必须复用 `validate_approval_contract()` 校验，避免自然语言审批视图和独立 `agentdeck approval list` 出现两套 approval 规则。chat 响应里的 `runtime_card`、`queue_card`、`operator_card`、`role_card` 和 `ledger_card` 必须复用 workbench 字段规则，`workbench_card` 必须复用 `validate_workbench_contract()` 校验，避免自然语言控制面和 `agentdeck workbench` 出现两套 runtime/queue/operator/role/ledger/workbench 规则。
 
 当人类明确输入 `agentdeck leader chat --message "apply action act_xxx"` 或 `--message "/apply-action act_xxx"` 时，chat 会复用 `leader apply-action` 的安全白名单。当前只会应用 `create_approvals`，并会拒绝 dispatch/capture 等 runtime action。safe apply 完成后，chat 响应会从刷新后的 recovery 继续返回下一步，例如 `agentdeck approval list`，让 GUI 或对话层可以立刻进入审批检查。
 
