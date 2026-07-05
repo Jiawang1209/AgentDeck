@@ -3472,6 +3472,13 @@ def approval_dispatch_command(args: argparse.Namespace) -> int:
             },
         )
     )
+    inbox_card = _inbox_queue_payload(agent.agent_id, store)
+    validation = validate_inbox_contract(inbox_card)
+    if not validation["ok"]:
+        print("Inbox contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
     _print_json(
         {
             "ok": True,
@@ -3480,6 +3487,7 @@ def approval_dispatch_command(args: argparse.Namespace) -> int:
             "agent_id": agent.agent_id,
             "pane_id": pane_id,
             "trace_command": _trace_command(message["message_id"]),
+            "inbox_card": inbox_card,
         }
     )
     return 0

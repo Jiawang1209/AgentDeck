@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Embed inbox card after approval dispatch
+
+- 扩展 `agentdeck approval dispatch --approval-id <id>` 成功响应：除 `trace_command` 外，现在同步嵌入目标 agent 的 `inbox_card`，让 GUI/TUI 或自然语言壳立即看到 worker mailbox head、trace 和 ack 入口。
+- `inbox_card` 复用 `agentdeck inbox --agent <id>` 队列形状，并通过 `validate_inbox_contract()` 校验，不成为第二套 inbox 状态源。
+- 保持安全边界不变：`approval dispatch` 仍是单个显式 runtime 命令，不会自动连续派发 plan、不会 ack inbox、不会 capture reply。
+- 同步 `docs/contracts/approvals-schema.md`、README、CLAUDE.md、AGENT.md 和测试；本轮推进了“审批通过 -> 可见 tmux runtime dispatch -> mailbox/trace 可恢复”的北极星主线。
+- 完整验证：已先确认红测失败，`approval dispatch` 成功响应最初缺少 `inbox_card`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_approval_dispatch_sends_approved_step_to_agent_and_records_lineage -q` 1 项通过；`conda run -n agentdeck pytest tests/test_leader_cli.py -q` 65 项通过；`conda run -n agentdeck pytest -q` 233 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时项目 in-process smoke 确认 `approval-dispatch-inbox-card-smoke-ok`。
+
 ### Current - Embed approval card after chat safe apply
 
 - 扩展 `agentdeck leader chat --message "apply action <id>"` 的 safe apply 响应：应用 `create_approvals` 后，同一响应现在会嵌入同源 `approval_card`，让 GUI/TUI 或自然语言壳立即展示刚创建的人类审批队列。

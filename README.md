@@ -217,7 +217,7 @@ agentdeck dispatch --agent planner --task "设计消息账本"
 Human/Leader -> dispatch -> message/attempt/job/inbox -> tmux pane -> reply -> sender inbox -> ack
 ```
 
-每次 dispatch 会写入 `.agentdeck/state/state.json` 的 `messages`、`attempts`、`jobs` 和目标 agent 的 `inbox`，并追加 `task_dispatched` 事件。`dispatch` 和 `approval dispatch` 的 JSON 输出会包含 `trace_command`，指向同一条 message lineage。可以查看某个 agent 的 inbox：
+每次 dispatch 会写入 `.agentdeck/state/state.json` 的 `messages`、`attempts`、`jobs` 和目标 agent 的 `inbox`，并追加 `task_dispatched` 事件。`dispatch` 和 `approval dispatch` 的 JSON 输出会包含 `trace_command`，指向同一条 message lineage；`approval dispatch` 成功响应还会嵌入目标 agent 的 `inbox_card`，复用 `agentdeck inbox --agent <id>` 队列形状，让 GUI 或自然语言壳立刻看到 worker mailbox head、trace 和 ack 入口。可以查看某个 agent 的 inbox：
 
 ```bash
 agentdeck inbox --agent planner
@@ -381,7 +381,7 @@ agentdeck approval dispatch --approval-id apv_xxx
 
 `agentdeck approval list` 是人类审批队列的只读入口。每个 approval item 会包含 `approve_command`、`reject_command`、`dispatch_command`、`can_dispatch` 和 `dispatch_blocker`，方便 GUI 渲染审批按钮和阻塞原因；输出前会通过 `validate_approval_contract()` 自校验。契约见 `docs/contracts/approvals-schema.md`，可用 `agentdeck contract approvals --example` 发现。真正的 approve/reject/dispatch 仍必须由人类显式运行对应命令。
 
-`approval dispatch` 只接受 `approved` 状态的审批项，并把对应 plan step 转成现有 `dispatch -> message/attempt/job/inbox` 链路。它仍然是显式命令，不会自动连续派发整个 plan。
+`approval dispatch` 只接受 `approved` 状态的审批项，并把对应 plan step 转成现有 `dispatch -> message/attempt/job/inbox` 链路。成功响应会包含 `trace_command` 和目标 agent 的 `inbox_card`，方便 GUI 直接跳到 worker mailbox；它仍然是显式命令，不会自动连续派发整个 plan，也不会 ack inbox。
 
 返回结果包含：
 

@@ -61,6 +61,8 @@ Use `agentdeck contract approvals --example` to include a stable GUI-ready appro
 
 `preview_command` is the safe read-only queue view for the item. `controls[]` is the GUI-ready button list; each control has `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`. `can_dispatch=true` means the approval is approved and can be dispatched by an explicit human command. Pending or rejected approvals keep `can_dispatch=false` and expose `dispatch_blocker`.
 
+`agentdeck approval dispatch --approval-id <id>` is an explicit runtime command, not part of the read-only queue contract. On success it returns `trace_command` for the created message lineage and embeds the target agent's `inbox_card`, reusing the `agentdeck inbox --agent <id>` queue shape so GUI clients can show the worker mailbox head without reading state directly.
+
 ## Boundaries
 
 - The contract command is read-only.

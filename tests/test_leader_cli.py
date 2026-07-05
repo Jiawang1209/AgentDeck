@@ -2320,6 +2320,13 @@ def test_approval_dispatch_sends_approved_step_to_agent_and_records_lineage(tmp_
     assert payload["pane_id"] == "%77"
     assert payload["message_id"].startswith("msg_")
     assert payload["trace_command"] == f"agentdeck trace --id {payload['message_id']}"
+    assert payload["inbox_card"]["agent_id"] == "planner"
+    assert payload["inbox_card"]["count"] == 1
+    assert payload["inbox_card"]["items"][0]["event_type"] == "task_request"
+    assert payload["inbox_card"]["items"][0]["message_id"] == payload["message_id"]
+    assert payload["inbox_card"]["items"][0]["trace_command"].startswith("agentdeck trace --id inb_")
+    assert payload["inbox_card"]["items"][0]["ack_command"].startswith("agentdeck ack --agent planner")
+    assert payload["inbox_card"]["items"][0]["can_ack"] is True
     assert fake.sent and fake.sent[0][0] == "%77"
     assert "AgentDeck dispatch" in fake.sent[0][1]
     assert "Break down the goal" in fake.sent[0][1]

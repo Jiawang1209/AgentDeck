@@ -87,7 +87,7 @@ Worker 不应该：
 - `agentdeck inbox --agent <id>` 可查看某个 agent 收到的 task request。
 - `agentdeck reply --agent <id> --message-id <id> --text <text>` 可把 agent 结果记录为 reply。
 - `agentdeck capture-reply --agent <id> --message-id <id>` 可从 pane 最近输出捕获最后一个 `status:` 结构化回复块。
-- `dispatch`、`approval dispatch`、`reply` 和 `capture-reply` 的成功 JSON 输出必须包含 `trace_command`，指向对应 message/reply lineage。
+- `dispatch`、`approval dispatch`、`reply` 和 `capture-reply` 的成功 JSON 输出必须包含 `trace_command`，指向对应 message/reply lineage；`approval dispatch` 成功响应还必须嵌入目标 agent 的同源 `inbox_card`，复用 `agentdeck inbox --agent <id>` 队列形状，但不得自动 ack 或连续派发。
 - `agentdeck ack --agent <id> --inbox-id <id>` 只能确认该 agent 最早的 pending inbox item，不得越过 head。
 - `agentdeck trace --id <id>` 可用 message/attempt/job/reply/inbox 任意 ID 还原通信链路。
 - `agentdeck events --limit <n>` 返回最近审计事件，不修改 state；`agentdeck events --since <event_id>` 返回 cursor 之后的审计事件和 cursor metadata，cursor 由 GUI/调用方持有，不得写入 AgentDeck state。
