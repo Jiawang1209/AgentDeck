@@ -235,6 +235,21 @@ def test_validate_control_registry_card_contract_requires_provider_switch_comman
     }
 
 
+def test_validate_control_registry_card_contract_requires_disabled_provider_blocker() -> None:
+    payload = controls_example()
+    provider_item = next(
+        item for item in payload["items"] if item["scope"] == "provider" and item["enabled"] is False
+    )
+    provider_item["blocker"] = None
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: disabled provider set_provider controls must include blocker"],
+    }
+
+
 def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     contract_path = tmp_path / "agent-runtime-schema.md"
     contract_path.write_text("# Agent Runtime Contract\n", encoding="utf-8")

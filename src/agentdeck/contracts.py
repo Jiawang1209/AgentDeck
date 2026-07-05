@@ -2544,6 +2544,8 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     errors.append("control_registry_card.items: provider set_provider must use safety=explicit_user")
                 if not str(item.get("command") or "").startswith("agentdeck leader set-provider --provider "):
                     errors.append("control_registry_card.items: provider set_provider command must use leader set-provider")
+                if item.get("enabled") is False and not item.get("blocker"):
+                    errors.append("control_registry_card.items: disabled provider set_provider controls must include blocker")
     elif "items" in control_registry_card:
         errors.append("control_registry_card.items must be a list")
 
