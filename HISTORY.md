@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Resolve current capture-reply from waiting review
+
+- 扩展 `agentdeck leader chat` capture-reply intent：当用户输入 `"捕获当前回复"`、`"回收当前结果"` 或类似 current/latest reply 请求时，chat 会读取 latest plan 的 `leader_review`；只有 review 明确是 `wait_for_reply` 时，才解析出对应 agent/message 并建议显式 `agentdeck capture-reply --agent <id> --message-id <msg_id>`。
+- 保持显式优先级和安全边界：`"捕获 planner 对 msg_xxx 的回复"` 仍优先按文本里的 agent/message 解析；“当前回复”不会扫描 pane、不会猜测任意 message、不会读取 tmux 输出、不会写 reply、不会创建 message/job/inbox、不会 dispatch。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "捕获当前回复"` 最初落入 `mode=review`；实现后新增测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_capture_current_reply_uses_latest_waiting_review_without_capturing -q` 通过；相关回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_capture_current_reply_uses_latest_waiting_review_without_capturing tests/test_leader_cli.py::test_leader_chat_capture_reply_intent_suggests_explicit_command_without_capturing tests/test_leader_cli.py::test_leader_review_recommends_waiting_for_dispatched_reply tests/test_leader_cli.py::test_leader_chat_captures_agent_output_as_read_only_card tests/test_leader_cli.py::test_leader_chat_traces_specific_communication_id_without_mutating_runtime tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 7 项通过；最终 `conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 291 项通过。
+
 ### Current - Tolerate fenced JSON from CLI-backed Leaders
 
 - 增强 `codex-cli` / `claude-cli` Leader provider 的 plan 解析：本地 CLI stdout 可以是纯 JSON plan，也可以把唯一 JSON plan 包在 Markdown fenced `json` block 中。
