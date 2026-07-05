@@ -198,6 +198,7 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
     assert set(payload["example_control_registry_item_fields"]) == set(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
     assert example["mode"] == "control_registry"
     assert example["source_command"] == "agentdeck workbench"
+    assert example["default_command"] == "agentdeck controls"
     assert example["item_count"] == len(example["items"])
 
 

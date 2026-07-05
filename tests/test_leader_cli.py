@@ -944,7 +944,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
     assert payload["control_registry_card"]["mode"] == "control_registry"
     assert payload["control_registry_card"]["title"] == "Command palette"
     assert payload["control_registry_card"]["source_command"] == "agentdeck workbench"
-    assert payload["control_registry_card"]["default_command"] == "agentdeck workbench"
+    assert payload["control_registry_card"]["default_command"] == "agentdeck controls"
     assert payload["control_registry_card"]["item_count"] == len(payload["control_registry_card"]["items"])
     assert payload["control_registry_card"]["items"][0] == {
         "scope": "leader",

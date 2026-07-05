@@ -153,7 +153,7 @@ Help-mode also includes `control_registry_card`, a read-only command palette sna
   "mode": "control_registry",
   "title": "Command palette",
   "source_command": "agentdeck workbench",
-  "default_command": "agentdeck workbench",
+  "default_command": "agentdeck controls",
   "item_count": 1,
   "items": [
     {

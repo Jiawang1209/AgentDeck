@@ -1038,7 +1038,7 @@ def leader_chat_control_registry_card(workbench_card: dict[str, object]) -> dict
         "mode": "control_registry",
         "title": "Command palette",
         "source_command": "agentdeck workbench",
-        "default_command": "agentdeck workbench",
+        "default_command": "agentdeck controls",
         "item_count": len(items),
         "items": items,
     }

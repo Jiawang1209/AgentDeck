@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Point command palette default to controls
+
+- 调整 `control_registry_card.default_command`：从 `agentdeck workbench` 改为独立入口 `agentdeck controls`，让 GUI/TUI 或自然语言壳可以直接刷新命令面板。
+- 保持 `source_command=agentdeck workbench`，明确命令面板仍从同一次 workbench snapshot 派生，不成为第二套 control 状态源。
+- 同步 `docs/contracts/controls-schema.md`、`docs/contracts/leader-chat-schema.md`、README、CLAUDE.md、AGENT.md 和测试；该调整不改变任何 control 执行路径，不写 state、不调用 provider、不读取 pane。
+- 完整验证：已先确认红测失败，live `agentdeck controls`、controls contract example 和 Leader help 嵌入 `control_registry_card` 的 `default_command` 最初仍为 `agentdeck workbench`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning -q` 3 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 217 项通过；`conda run -n agentdeck pytest -q` 232 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `controls-default-command-smoke-ok`。
+
 ### Current - Surface controls contract in workbench
 
 - 扩展 `workbench.contracts_card`：新增 `controls_contract=agentdeck contract controls`，让 GUI/TUI 从一屏工作台直接发现独立命令面板契约。

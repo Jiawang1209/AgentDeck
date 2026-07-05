@@ -1185,7 +1185,7 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
     assert payload["mode"] == "control_registry"
     assert payload["title"] == "Command palette"
     assert payload["source_command"] == "agentdeck workbench"
-    assert payload["default_command"] == "agentdeck workbench"
+    assert payload["default_command"] == "agentdeck controls"
     assert payload["item_count"] == len(payload["items"])
     assert payload["items"][0] == {
         "scope": "leader",
