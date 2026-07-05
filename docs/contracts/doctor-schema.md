@@ -17,11 +17,14 @@ The contract command returns:
   "doctor_command": "agentdeck doctor",
   "response_fields": [],
   "configured_leader_fields": [],
-  "provider_check_fields": []
+  "provider_check_fields": [],
+  "workbench_contract": "agentdeck contract workbench",
+  "leader_chat_contract": "agentdeck contract leader-chat",
+  "leader_review_contract": "agentdeck contract leader-review"
 }
 ```
 
-Use `agentdeck contract doctor --example` to include a stable GUI-ready diagnostics fixture.
+Use `agentdeck contract doctor --example` to include a stable GUI-ready diagnostics fixture. GUI clients can follow the related contract commands to render setup guidance next to workbench, natural-language Leader chat, and deterministic Leader review surfaces without hard-coding those schema entrypoints.
 
 ## Response
 
@@ -75,3 +78,4 @@ Provider checks such as `deepseek` and `openai_compatible` contain:
 - `setup_commands` must only contain placeholder commands that a human can copy and edit outside AgentDeck.
 - Output must never include real API key values.
 - GUI clients can use `agentdeck contract doctor` to discover fields before rendering setup guidance.
+- The discovery payload should expose adjacent workbench, Leader chat, and Leader review contracts so setup screens can link directly to the main control surfaces.

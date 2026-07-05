@@ -4,6 +4,12 @@
 
 ## 2026-07-05
 
+### Current - Surface Leader review contract in doctor
+
+- 扩展 `agentdeck contract doctor` discovery payload：新增 `leader_review_contract=agentdeck contract leader-review`，让 GUI setup/diagnostics 页面能从 doctor schema 直接发现 Leader review 契约。
+- 同步 `docs/contracts/doctor-schema.md`、README、CLAUDE.md、AGENT.md 和测试。
+- 完整验证：已先确认红测失败，doctor contract 最初缺少 `leader_review_contract`；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_doctor_contract_payload_is_reusable_without_cli tests/test_agent_cli.py::test_contract_doctor_discovers_schema_for_gui_clients -q` 2 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 143 项通过；`conda run -n agentdeck pytest -q` 223 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `doctor-leader-review-contract-smoke-ok`。
+
 ### Current - Surface Leader review contract in workbench
 
 - 扩展 `workbench.contracts_card`：新增 `leader_review_contract=agentdeck contract leader-review`，让 GUI/TUI 从一屏工作台直接发现 Leader review 响应契约。

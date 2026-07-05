@@ -116,7 +116,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`；不要在 Python 源码里重复手写版本字符串。
 - ProjectView contract discovery payload 和 example fixture 的源码入口是 `src/agentdeck/contracts.py`；CLI 只负责调用它。
 - Contract index 维护在 `docs/contracts/contract-index-schema.md`，发现入口是 `agentdeck contract list`；`CONTRACT_INDEX_SPECS`、payload helper 和测试都在 `src/agentdeck/contracts.py` / `tests/` 中。新增 GUI-consumable contract 时必须同步索引。
-- Doctor diagnostics contract 维护在 `docs/contracts/doctor-schema.md`，发现入口是 `agentdeck contract doctor`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。
+- Doctor diagnostics contract 维护在 `docs/contracts/doctor-schema.md`，发现入口是 `agentdeck contract doctor`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。doctor contract discovery 必须公开 workbench、Leader chat 和 Leader review contract 入口，供 GUI setup 面板跳转到主控制面契约。
 - Events timeline contract 维护在 `docs/contracts/events-schema.md`，发现入口是 `agentdeck contract events`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。
 - Leader chat response contract 维护在 `docs/contracts/leader-chat-schema.md`，发现入口是 `agentdeck contract leader-chat`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。
 - Workbench snapshot contract 维护在 `docs/contracts/workbench-schema.md`，发现入口是 `agentdeck contract workbench`；payload、example fixture 和 `validate_workbench_contract()` 也在 `src/agentdeck/contracts.py`。

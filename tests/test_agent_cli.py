@@ -537,6 +537,9 @@ def test_contract_doctor_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["response_fields"] == expected["response_fields"]
     assert payload["configured_leader_fields"] == expected["configured_leader_fields"]
     assert payload["provider_check_fields"] == expected["provider_check_fields"]
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["leader_chat_contract"] == "agentdeck contract leader-chat"
+    assert payload["leader_review_contract"] == "agentdeck contract leader-review"
 
 
 def test_contract_doctor_example_exports_gui_ready_diagnostics(capsys) -> None:

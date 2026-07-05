@@ -443,6 +443,9 @@ def test_doctor_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None
         "setup_commands",
     ]
     assert payload["provider_check_fields"] == ["ok", "detail"]
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["leader_chat_contract"] == "agentdeck contract leader-chat"
+    assert payload["leader_review_contract"] == "agentdeck contract leader-review"
 
 
 def test_doctor_contract_response_includes_example_without_drift(tmp_path: Path) -> None:

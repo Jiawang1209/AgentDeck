@@ -1039,6 +1039,7 @@ def doctor_contract_payload(contract_path: Path) -> dict[str, object]:
         "provider_check_fields": list(DOCTOR_PROVIDER_CHECK_FIELDS),
         "workbench_contract": "agentdeck contract workbench",
         "leader_chat_contract": "agentdeck contract leader-chat",
+        "leader_review_contract": "agentdeck contract leader-review",
     }
 
 
