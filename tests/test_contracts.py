@@ -1769,6 +1769,20 @@ def test_validate_leader_chat_contract_requires_next_control_command_match() -> 
     }
 
 
+def test_validate_leader_chat_contract_requires_next_control_when_next_command_exists() -> None:
+    payload = leader_chat_example()
+    payload["intent_card"]["controls"] = [
+        control for control in payload["intent_card"]["controls"] if control["kind"] != "next"
+    ]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card.controls: next_command requires a next control"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_reply_waiting_trace_intent_card() -> None:
     payload = leader_chat_example()
     trace = trace_example()

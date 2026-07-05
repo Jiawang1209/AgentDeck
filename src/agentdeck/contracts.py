@@ -2222,6 +2222,7 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         )
         controls = intent_card.get("controls")
         if isinstance(controls, list):
+            has_next_control = False
             for control in controls:
                 if isinstance(control, dict):
                     for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
@@ -2229,8 +2230,10 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                             errors.append(f"intent_card.controls: missing control field: {field}")
                     if control.get("kind") == "inspect" and control.get("safety") != "inspect":
                         errors.append("intent_card.controls: inspect controls must use safety=inspect")
-                    if control.get("kind") == "next" and control.get("command") != intent_card.get("next_command"):
-                        errors.append("intent_card.controls: next control command must match intent next_command")
+                    if control.get("kind") == "next":
+                        has_next_control = True
+                        if control.get("command") != intent_card.get("next_command"):
+                            errors.append("intent_card.controls: next control command must match intent next_command")
                     if (
                         expected_reply_waiting_trace_command is not None
                         and control.get("kind") == "inspect"
@@ -2247,6 +2250,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                         errors.append("intent_card.controls: disabled controls must include blocker")
                 else:
                     errors.append("intent_card.controls items must be objects")
+            if intent_card.get("next_command") is not None and not has_next_control:
+                errors.append("intent_card.controls: next_command requires a next control")
         elif "controls" in intent_card:
             errors.append("intent_card.controls must be a list")
     elif "intent_card" in payload:
