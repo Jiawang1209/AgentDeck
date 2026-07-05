@@ -280,6 +280,19 @@ def test_validate_control_registry_card_contract_requires_enabled_policy_safety(
     }
 
 
+def test_validate_control_registry_card_contract_requires_role_assign_command() -> None:
+    payload = controls_example()
+    role_item = next(item for item in payload["items"] if item["scope"] == "role" and item["kind"] == "assign_role")
+    role_item["command"] = "agentdeck doctor"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: role assign_role command must use agent assign-role"],
+    }
+
+
 def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     contract_path = tmp_path / "agent-runtime-schema.md"
     contract_path.write_text("# Agent Runtime Contract\n", encoding="utf-8")

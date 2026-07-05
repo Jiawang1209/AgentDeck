@@ -2553,6 +2553,11 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     errors.append("control_registry_card.items: enabled policy set_mode must use safety=explicit_user")
                 if item.get("enabled") is False and not item.get("blocker"):
                     errors.append("control_registry_card.items: disabled policy set_mode controls must include blocker")
+            if item.get("scope") == "role" and item.get("kind") == "assign_role":
+                if not str(item.get("command") or "").startswith("agentdeck agent assign-role --agent "):
+                    errors.append("control_registry_card.items: role assign_role command must use agent assign-role")
+                if item.get("enabled") is False and not item.get("blocker"):
+                    errors.append("control_registry_card.items: disabled role assign_role controls must include blocker")
     elif "items" in control_registry_card:
         errors.append("control_registry_card.items must be a list")
 
