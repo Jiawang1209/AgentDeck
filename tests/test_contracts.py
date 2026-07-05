@@ -1169,6 +1169,30 @@ def test_validate_leader_chat_contract_requires_capability_count_match() -> None
     }
 
 
+def test_validate_leader_chat_contract_requires_apply_capability_safety() -> None:
+    payload = leader_chat_example()
+    payload["capability_card"]["capabilities"].append(
+        {
+            "mode": "apply_action",
+            "label": "Apply safe action",
+            "description": "Apply a queued safe Leader action.",
+            "example_messages": ["apply action act_xxx"],
+            "command": "agentdeck leader apply-action --action-id <action_id>",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "leader_action",
+        }
+    )
+    payload["capability_card"]["capability_count"] += 1
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["capability_card.capabilities: apply_action must use safety=safe_apply"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_embedded_project_view_contract() -> None:
     payload = leader_chat_example()
     del payload["project_view"]["leader_actions"]["recommended_action_id"]

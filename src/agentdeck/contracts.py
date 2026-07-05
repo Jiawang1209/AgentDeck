@@ -811,6 +811,36 @@ def leader_chat_capability_card() -> dict[str, object]:
             "card": "workbench_card",
         },
         {
+            "mode": "plan",
+            "label": "Create Leader plan",
+            "description": "Create a plan-only record from a new natural-language goal.",
+            "example_messages": ["帮我实现一个功能", "设计多 Agent 任务"],
+            "command": "agentdeck leader chat --message <goal>",
+            "safety": "plan_only",
+            "requires_explicit_user": False,
+            "card": "leader_action",
+        },
+        {
+            "mode": "review",
+            "label": "Review current plan",
+            "description": "Review latest plan state and queue the recommended next Leader action.",
+            "example_messages": ["继续推进这个计划", "下一步做什么"],
+            "command": "agentdeck leader chat --message <goal>",
+            "safety": "safe_apply",
+            "requires_explicit_user": False,
+            "card": "leader_action",
+        },
+        {
+            "mode": "apply_action",
+            "label": "Apply safe Leader action",
+            "description": "Apply a queued safe Leader action such as creating approvals.",
+            "example_messages": ["apply action act_xxx", "/apply-action act_xxx"],
+            "command": "agentdeck leader apply-action --action-id <action_id>",
+            "safety": "safe_apply",
+            "requires_explicit_user": False,
+            "card": "leader_action",
+        },
+        {
             "mode": "continue",
             "label": "Continue from recovery",
             "description": "Inspect the recovery-driven next step.",
@@ -1638,6 +1668,10 @@ def _validate_capability_card_contract(errors: list[str], capability_card: dict[
                 for field in LEADER_CHAT_CAPABILITY_ITEM_FIELDS:
                     if field not in item:
                         errors.append(f"capability_card.capabilities: missing capability field: {field}")
+                if item.get("mode") == "plan" and item.get("safety") != "plan_only":
+                    errors.append("capability_card.capabilities: plan must use safety=plan_only")
+                if item.get("mode") in {"review", "apply_action"} and item.get("safety") != "safe_apply":
+                    errors.append(f"capability_card.capabilities: {item.get('mode')} must use safety=safe_apply")
             else:
                 errors.append("capability_card.capabilities items must be objects")
     elif "capabilities" in capability_card:

@@ -931,7 +931,26 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
     assert payload["capability_card"]["default_command"] == "agentdeck workbench"
     assert payload["capability_card"]["capability_count"] == len(payload["capability_card"]["capabilities"])
     capability_modes = {item["mode"] for item in payload["capability_card"]["capabilities"]}
-    assert {"continue", "workbench", "runtime", "role", "ledger", "queue", "approval", "inbox"} <= capability_modes
+    assert {
+        "plan",
+        "review",
+        "apply_action",
+        "continue",
+        "workbench",
+        "runtime",
+        "role",
+        "ledger",
+        "queue",
+        "approval",
+        "inbox",
+    } <= capability_modes
+    capabilities = {item["mode"]: item for item in payload["capability_card"]["capabilities"]}
+    assert capabilities["plan"]["safety"] == "plan_only"
+    assert capabilities["plan"]["requires_explicit_user"] is False
+    assert capabilities["review"]["command"] == "agentdeck leader chat --message <goal>"
+    assert capabilities["review"]["safety"] == "safe_apply"
+    assert capabilities["apply_action"]["command"] == "agentdeck leader apply-action --action-id <action_id>"
+    assert capabilities["apply_action"]["safety"] == "safe_apply"
     assert payload["capability_card"]["capabilities"][0]["safety"] == "inspect"
     assert payload["next_command"] == "agentdeck workbench"
     assert payload["leader_explanation"]["mode"] == "help"

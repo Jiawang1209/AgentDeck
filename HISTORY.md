@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Expand Leader capability map for scheduling
+
+- 扩展 `capability_card`：在 help mode 能力发现中补齐 `plan`、`review` 和 `apply_action`，让未来 GUI 命令面板能看到 API-backed Leader 调度、状态 review 和 safe apply 主线。
+- 加强 capability item 语义校验：`plan` 必须使用 `safety=plan_only`，`review` 和 `apply_action` 必须使用 `safety=safe_apply`，避免 GUI 或自然语言壳把可改变状态的调度入口误标成 inspect。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 help mode 本身仍然只读，能力项只是命令发现，不代表自动执行许可。
+- 完整验证：已先确认红测失败，help card 最初缺少 `plan` / `review` / `apply_action`，validator 最初未拒绝 `apply_action` 使用 `safety=inspect`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_validate_leader_chat_contract_requires_apply_capability_safety -q` 2 项通过；leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 134 项通过；`conda run -n agentdeck pytest -q` 206 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `leader-chat-capability-scheduling-smoke-ok`。
+
 ### Current - Add Leader chat capability help mode
 
 - 新增自然语言只读 help/capability 意图：`agentdeck leader chat --message "帮助"` / `"help"` / `"你能做什么"` / `"命令面板"` 会进入 `mode=help`，返回 `capability_card`，作为自然语言壳和未来 GUI 命令面板的能力发现入口。
