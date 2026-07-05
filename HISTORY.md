@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add preview command to workbench operator card
+
+- 扩展 `agentdeck workbench` 的 `operator_card`：新增 `preview_command`，为 GUI/TUI 提供执行前的只读预览入口。
+- `preview_command` 会按 action_kind 派生：leader_action 指向 `agentdeck leader action --action-id <id>`，inbox 指向 `agentdeck trace --id <inbox_id>`，approval 指向 `agentdeck approval list`，未知状态回退到 `agentdeck status`。
+- 扩展 workbench contract：`WORKBENCH_OPERATOR_CARD_FIELDS` 新增 `preview_command`，example fixture 与 validator 一并覆盖。
+- 补充 CLI 与 contract 测试，覆盖 operator card discovery、inbox preview 投影、example 防漂移和 validator 缺字段拒绝。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 GUI 应优先渲染 `preview_command` 作为安全首击，再让人类显式执行 action。
+- 保持安全边界：本轮仍只读，不写 state、不创建 chat turn、不 ack、不 approve、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_workbench_contract_requires_operator_fields -q` 最初因 `preview_command` 未出现在 contract/example/workbench payload 中失败；实现后 preview_command 目标测试 5 项通过；`conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 86 项通过；`conda run -n agentdeck pytest -q` 151 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `contract-preview-ok` 与 `workbench-preview-ok`。
+
 ### Current - Add operator card to workbench snapshot
 
 - 扩展 `agentdeck workbench`：新增 `operator_card`，从 recovery recommended_action、continue_card 和 active queue 派生 GUI/TUI 可渲染的人类操作卡。

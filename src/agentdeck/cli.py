@@ -238,6 +238,7 @@ def _workbench_operator_card(
     leader_action = continue_card.get("leader_action")
     leader_action = leader_action if isinstance(leader_action, dict) else {}
     source = str(recommended_action.get("source", "none"))
+    target_id = recommended_action.get("target_id")
     action_kind = source if source in ("inbox", "approval", "leader_action") else "none"
     can_apply = bool(leader_action.get("can_apply")) if action_kind == "leader_action" else False
     apply_command = leader_action.get("apply_command") if can_apply else None
@@ -251,7 +252,8 @@ def _workbench_operator_card(
         "safety": recommended_action.get("safety"),
         "requires_explicit_user": bool(recommended_action.get("requires_explicit_user")),
         "source": source,
-        "target_id": recommended_action.get("target_id"),
+        "target_id": target_id,
+        "preview_command": _workbench_operator_preview_command(action_kind, target_id),
         "active_queue_source": active_queue_source,
         "action_kind": action_kind,
         "can_apply": can_apply,
@@ -259,6 +261,16 @@ def _workbench_operator_card(
         "explicit_command": explicit_command,
         "blocker": leader_action.get("apply_blocker"),
     }
+
+
+def _workbench_operator_preview_command(action_kind: str, target_id: object) -> str:
+    if action_kind == "leader_action" and target_id:
+        return f"agentdeck leader action --action-id {target_id}"
+    if action_kind == "inbox" and target_id:
+        return f"agentdeck trace --id {target_id}"
+    if action_kind == "approval":
+        return "agentdeck approval list"
+    return "agentdeck status"
 
 
 def _workbench_ledger_card(project_view: dict[str, object]) -> dict[str, object]:

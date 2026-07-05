@@ -360,11 +360,11 @@ def test_validate_workbench_contract_requires_ledger_trace_commands() -> None:
 
 def test_validate_workbench_contract_requires_operator_fields() -> None:
     payload = workbench_example()
-    del payload["operator_card"]["safety"]
+    del payload["operator_card"]["preview_command"]
 
     result = validate_workbench_contract(payload)
 
-    assert result == {"ok": False, "errors": ["missing operator_card field: safety"]}
+    assert result == {"ok": False, "errors": ["missing operator_card field: preview_command"]}
 
 
 def test_validate_workbench_contract_requires_matching_project_view_summaries() -> None:

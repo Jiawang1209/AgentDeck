@@ -125,6 +125,7 @@ The card does not capture pane output and does not prove task completion. It onl
   "requires_explicit_user": false,
   "source": "leader_action",
   "target_id": "act_xxx",
+  "preview_command": "agentdeck leader action --action-id act_xxx",
   "active_queue_source": "leader_action",
   "action_kind": "leader_action",
   "can_apply": true,
@@ -134,7 +135,7 @@ The card does not capture pane output and does not prove task completion. It onl
 }
 ```
 
-GUI clients may render `command`, `apply_command`, or `explicit_command` as buttons, but execution still belongs to the user or a later explicit approval flow. The card must not be treated as permission to auto-dispatch, auto-ack, auto-approve, or send tmux input.
+GUI clients may render `preview_command` as the safest first click before rendering `command`, `apply_command`, or `explicit_command` as explicit action buttons. Execution still belongs to the user or a later explicit approval flow. The card must not be treated as permission to auto-dispatch, auto-ack, auto-approve, or send tmux input.
 
 When `recovery.recommended_action.source` is:
 
