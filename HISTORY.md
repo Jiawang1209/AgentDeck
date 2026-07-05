@@ -4,6 +4,12 @@
 
 ## 2026-07-05
 
+### Current - Surface controls contract in workbench
+
+- 扩展 `workbench.contracts_card`：新增 `controls_contract=agentdeck contract controls`，让 GUI/TUI 从一屏工作台直接发现独立命令面板契约。
+- 同步 `WORKBENCH_CONTRACTS_CARD_FIELDS`、live `_workbench_contracts_card()`、workbench example、`docs/contracts/workbench-schema.md`、README、CLAUDE.md、AGENT.md 和测试；该字段只做 contract discovery，不读取 state、不执行 contract 命令、不触发 control。
+- 完整验证：已先确认红测失败，workbench contract fields、live `contracts_card` 和 workbench example 最初缺少 `controls_contract`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 3 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 217 项通过；`conda run -n agentdeck pytest -q` 232 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `workbench-controls-contract-smoke-ok`。
+
 ### Current - Add controls contract discovery
 
 - 新增 `agentdeck contract controls` / `--example`，公开独立命令面板 `control_registry_card` 字段和 `control_registry_item_fields`，让 GUI/TUI 能通过 contract index 发现 `agentdeck controls` 的稳定响应形状。
