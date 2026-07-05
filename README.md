@@ -204,7 +204,7 @@ Human/Leader -> dispatch -> message/attempt/job/inbox -> tmux pane -> reply -> s
 agentdeck inbox --agent planner
 ```
 
-`agentdeck inbox --agent <id>` 是单个 agent mailbox 的只读入口。每个 item 会包含 `preview_command`、`trace_command`、`ack_command`、`is_head`、`can_ack` 和 `ack_blocker`；`preview_command` 指向只读 lineage 预览，`ack_command` 仍然需要人类显式执行。输出前会通过 `validate_inbox_contract()` 自校验。契约见 `docs/contracts/inbox-schema.md`，可用 `agentdeck contract inbox --example` 发现。
+`agentdeck inbox --agent <id>` 是单个 agent mailbox 的只读入口。每个 item 会包含 `controls[]`、`preview_command`、`trace_command`、`ack_command`、`is_head`、`can_ack` 和 `ack_blocker`；`controls[]` 是 GUI-ready 按钮列表，`preview_command` 指向只读 lineage 预览，`ack_command` 仍然需要人类显式执行。输出前会通过 `validate_inbox_contract()` 自校验。契约见 `docs/contracts/inbox-schema.md`，可用 `agentdeck contract inbox --example` 发现。
 
 Agent 完成任务后，可以先用手动命令把回复写入账本：
 
@@ -248,7 +248,7 @@ agentdeck trace --id inb_xxx
 
 `status.inbox.heads` 会按 agent 暴露最早的 `pending` inbox item；没有待处理 item 的 agent 会返回 `null`。GUI 和 Leader chat loop 可以用它直接显示每个 agent 当前必须先处理或 ack 的 mailbox head。
 
-`status.leader_actions` 会包含 `recommended_action_id`，每个 `items[]` 会包含 `preview_command`、`can_apply`、`apply_command`、`explicit_command`、`apply_blocker` 和 `is_recommended`，GUI 可以先渲染只读 action detail 预览，再渲染 action 按钮、阻塞提示和当前推荐项高亮。
+`status.leader_actions` 会包含 `recommended_action_id`，每个 `items[]` 会包含 `controls[]`、`preview_command`、`can_apply`、`apply_command`、`explicit_command`、`apply_blocker` 和 `is_recommended`，GUI 可以直接按 `controls[]` 渲染只读预览、安全 apply、显式命令按钮、阻塞提示和当前推荐项高亮。
 
 `status.chat_turns.items` 会包含 review/apply turn 关联的 `action_id` 和 `action_kind`，GUI 可以从自然语言对话历史直接跳转到对应 action。
 
@@ -321,7 +321,7 @@ agentdeck plan status --plan-id pln_xxx
 
 `leader review` 会先校验 ProjectView，再使用本地 deterministic 规则读取 plan status 和 replies，输出下一步建议：`dispatch_approved`、`wait_for_reply`、`summarize` 或 `wait_for_approval`。后续接入真实 Leader LLM 时应复用该输出结构。
 
-`leader next` 会先校验 ProjectView，再把下一步建议持久化到 `leader_actions[]`，例如创建 approvals 或派发 approved step 的命令。它只记录 pending action，不执行命令；如果相同 pending action 已存在，会复用原 action_id，不重复污染 queue。`leader actions` 可查看已记录的 action queue，并通过 `recommended_action_id` 与每项 `is_recommended` 标记当前 recovery 推荐项；每项也包含 `preview_command`、`can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，输出前会通过 `validate_leader_actions_contract()` 自校验。契约见 `docs/contracts/leader-actions-schema.md`，可用 `agentdeck contract leader-actions --example` 发现。
+`leader next` 会先校验 ProjectView，再把下一步建议持久化到 `leader_actions[]`，例如创建 approvals 或派发 approved step 的命令。它只记录 pending action，不执行命令；如果相同 pending action 已存在，会复用原 action_id，不重复污染 queue。`leader actions` 可查看已记录的 action queue，并通过 `recommended_action_id` 与每项 `is_recommended` 标记当前 recovery 推荐项；每项也包含 `controls[]`、`preview_command`、`can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`，输出前会通过 `validate_leader_actions_contract()` 自校验。契约见 `docs/contracts/leader-actions-schema.md`，可用 `agentdeck contract leader-actions --example` 发现。
 
 `leader action --action-id <id>` 返回单个 action 的详情，包括 `preview_command`、`can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`。它会附带当前 `recovery`、`recommended_action` 和 `matches_recommended_action`，方便 GUI 判断这个 action 是否就是当前恢复入口推荐的下一步。它是只读入口，输出前会通过 `validate_leader_action_contract()` 自校验；契约见 `docs/contracts/leader-action-schema.md`，可用 `agentdeck contract leader-action --example` 发现。适合 GUI、自然语言 Leader 或人类在执行前确认当前 action 为什么能或不能安全应用。
 

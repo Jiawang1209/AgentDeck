@@ -44,6 +44,16 @@ Use `agentdeck contract inbox --example` to include a stable GUI-ready inbox fix
       "status": "pending",
       "created_at": "2026-07-04T00:00:00+00:00",
       "preview_command": "agentdeck trace --id inb_xxx",
+      "controls": [
+        {
+          "kind": "preview",
+          "label": "Trace inbox item",
+          "command": "agentdeck trace --id inb_xxx",
+          "safety": "inspect",
+          "enabled": true,
+          "blocker": null
+        }
+      ],
       "trace_command": "agentdeck trace --id inb_xxx",
       "ack_command": "agentdeck ack --agent planner --inbox-id inb_xxx",
       "is_head": true,
@@ -54,7 +64,7 @@ Use `agentdeck contract inbox --example` to include a stable GUI-ready inbox fix
 }
 ```
 
-`preview_command` is the safe read-only lineage view for the item. Only the earliest pending item is the actionable inbox head. Non-head items keep `can_ack=false` and include `ack_blocker`.
+`preview_command` is the safe read-only lineage view for the item. `controls[]` is the GUI-ready button list; each control has `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`. Only the earliest pending item is the actionable inbox head. Non-head items keep `can_ack=false` and include `ack_blocker`.
 
 ## Boundaries
 
@@ -62,4 +72,4 @@ Use `agentdeck contract inbox --example` to include a stable GUI-ready inbox fix
 - `agentdeck inbox --agent <id>` is read-only.
 - `agentdeck inbox --agent <id>` must pass `validate_inbox_contract()` before printing JSON.
 - It must not create plans, create approvals, apply actions, dispatch work, capture replies, ack inbox items, or send tmux input.
-- GUI clients should use `head_inbox_id`, `is_head`, `can_ack`, `preview_command`, `ack_command`, `ack_blocker`, and `trace_command` to render mailbox controls while preserving head-only ack semantics.
+- GUI clients should prefer `controls[]`, while retaining `head_inbox_id`, `is_head`, `can_ack`, `preview_command`, `ack_command`, `ack_blocker`, and `trace_command` for compatibility.

@@ -40,6 +40,16 @@ Use `agentdeck contract leader-actions --example` to include a stable GUI-ready 
       "command": "agentdeck approval create-from-plan --plan-id pln_xxx",
       "reason": "plan has no approval records",
       "preview_command": "agentdeck leader action --action-id act_xxx",
+      "controls": [
+        {
+          "kind": "preview",
+          "label": "Preview Leader action",
+          "command": "agentdeck leader action --action-id act_xxx",
+          "safety": "inspect",
+          "enabled": true,
+          "blocker": null
+        }
+      ],
       "can_apply": true,
       "apply_command": "agentdeck leader apply-action --action-id act_xxx",
       "explicit_command": "agentdeck approval create-from-plan --plan-id pln_xxx",
@@ -53,7 +63,7 @@ Use `agentdeck contract leader-actions --example` to include a stable GUI-ready 
 
 `action_item_fields` matches ProjectView `leader_actions.items[]`, so GUI clients can render the same action queue from either `agentdeck status` or `agentdeck leader actions`.
 
-`preview_command` is the safe read-only action detail view. `can_apply=true` is currently limited to safe `create_approvals` actions. Runtime actions such as dispatch or capture stay explicit and should be shown with `apply_blocker`.
+`preview_command` is the safe read-only action detail view. `controls[]` is the GUI-ready button list; each control has `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`. `can_apply=true` is currently limited to safe `create_approvals` actions. Runtime actions such as dispatch or capture stay explicit and should be shown with `apply_blocker`.
 
 ## Boundaries
 
@@ -62,4 +72,4 @@ Use `agentdeck contract leader-actions --example` to include a stable GUI-ready 
 - `agentdeck leader actions` must pass ProjectView validation before printing JSON.
 - `agentdeck leader actions` must pass `validate_leader_actions_contract()` before printing JSON.
 - It must not create plans, create approvals, apply actions, dispatch work, capture replies, ack inbox items, or send tmux input.
-- GUI clients should use `recommended_action_id`, `is_recommended`, `preview_command`, `can_apply`, `apply_command`, `explicit_command`, and `apply_blocker` to render action queue controls while preserving human approval and explicit runtime boundaries.
+- GUI clients should prefer `controls[]`, while retaining `recommended_action_id`, `is_recommended`, `preview_command`, `can_apply`, `apply_command`, `explicit_command`, and `apply_blocker` for compatibility.

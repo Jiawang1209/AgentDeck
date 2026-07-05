@@ -39,6 +39,16 @@ Use `agentdeck contract approvals --example` to include a stable GUI-ready appro
       "created_at": "2026-07-04T00:00:00+00:00",
       "reason": null,
       "preview_command": "agentdeck approval list",
+      "controls": [
+        {
+          "kind": "preview",
+          "label": "Preview approval queue",
+          "command": "agentdeck approval list",
+          "safety": "inspect",
+          "enabled": true,
+          "blocker": null
+        }
+      ],
       "approve_command": "agentdeck approval approve --approval-id apv_xxx",
       "reject_command": "agentdeck approval reject --approval-id apv_xxx --reason <reason>",
       "dispatch_command": "agentdeck approval dispatch --approval-id apv_xxx",
@@ -49,7 +59,7 @@ Use `agentdeck contract approvals --example` to include a stable GUI-ready appro
 }
 ```
 
-`preview_command` is the safe read-only queue view for the item. `can_dispatch=true` means the approval is approved and can be dispatched by an explicit human command. Pending or rejected approvals keep `can_dispatch=false` and expose `dispatch_blocker`.
+`preview_command` is the safe read-only queue view for the item. `controls[]` is the GUI-ready button list; each control has `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`. `can_dispatch=true` means the approval is approved and can be dispatched by an explicit human command. Pending or rejected approvals keep `can_dispatch=false` and expose `dispatch_blocker`.
 
 ## Boundaries
 
@@ -57,4 +67,4 @@ Use `agentdeck contract approvals --example` to include a stable GUI-ready appro
 - `agentdeck approval list` is read-only.
 - `agentdeck approval list` must pass `validate_approval_contract()` before printing JSON.
 - It must not create plans, create approvals, approve, reject, dispatch work, capture replies, ack inbox items, or send tmux input.
-- GUI clients should use `preview_command`, `approve_command`, `reject_command`, `dispatch_command`, `can_dispatch`, and `dispatch_blocker` to render approval controls while preserving explicit human approval.
+- GUI clients should prefer `controls[]`, while retaining `preview_command`, `approve_command`, `reject_command`, `dispatch_command`, `can_dispatch`, and `dispatch_blocker` for compatibility.

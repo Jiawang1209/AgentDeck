@@ -712,6 +712,8 @@ def test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging(
     assert payload["next_command"] == "agentdeck ack --agent planner --inbox-id inb_ack_me"
     assert payload["inbox_card"]["items"][0]["ack_command"] == payload["next_command"]
     assert payload["inbox_card"]["items"][0]["preview_command"] == "agentdeck trace --id inb_ack_me"
+    assert payload["inbox_card"]["items"][0]["controls"][0]["command"] == "agentdeck trace --id inb_ack_me"
+    assert payload["inbox_card"]["items"][0]["controls"][1]["command"] == payload["next_command"]
     assert payload["inbox_card"]["items"][0]["can_ack"] is True
     assert payload["leader_explanation"]["action_kind"] == "inbox_ack"
     assert payload["leader_explanation"]["recommended_action_id"] == "inb_ack_me"
@@ -754,6 +756,10 @@ def test_leader_chat_inspects_approval_queue_without_mutating_state(tmp_path, mo
         "agentdeck approval approve --approval-id apv_"
     )
     assert payload["approval_card"]["approvals"][0]["preview_command"] == "agentdeck approval list"
+    assert payload["approval_card"]["approvals"][0]["controls"][0]["command"] == "agentdeck approval list"
+    assert payload["approval_card"]["approvals"][0]["controls"][1]["command"] == (
+        payload["approval_card"]["approvals"][0]["approve_command"]
+    )
     assert payload["leader_explanation"]["mode"] == "approval"
     assert payload["leader_explanation"]["action_kind"] == "approval"
     assert payload["leader_explanation"]["action_status"] == "pending"
@@ -1053,6 +1059,8 @@ def test_leader_actions_lists_persisted_actions(tmp_path, monkeypatch, capsys) -
     assert payload["actions"][0]["status"] == "pending"
     assert payload["actions"][0]["can_apply"] is True
     assert payload["actions"][0]["preview_command"] == f"agentdeck leader action --action-id {first['action_id']}"
+    assert payload["actions"][0]["controls"][0]["command"] == payload["actions"][0]["preview_command"]
+    assert payload["actions"][0]["controls"][1]["command"] == payload["actions"][0]["apply_command"]
     assert payload["actions"][0]["apply_command"] == f"agentdeck leader apply-action --action-id {first['action_id']}"
     assert payload["actions"][0]["explicit_command"] == first["command"]
     assert payload["actions"][0]["apply_blocker"] is None

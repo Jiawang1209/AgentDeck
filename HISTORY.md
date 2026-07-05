@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add queue item controls
+
+- 扩展 leader action、approval 和 inbox 三类 queue item：新增 `controls[]`，为 GUI/TUI 提供统一按钮描述对象。
+- 每个 control 包含 `kind`、`label`、`command`、`safety`、`enabled` 和 `blocker`；preview control 始终是只读 inspect，apply/approve/reject/dispatch/ack/explicit control 仍保持人类显式执行边界。
+- 保留既有 `preview_command`、`apply_command`、`approve_command`、`ack_command` 等兼容字段；`controls[]` 是新增消费层，不自动执行任何命令、不读取 pane、不发送 tmux 输入。
+- 更新 approvals/inbox/leader-actions/ProjectView contract 字段、example fixture、validator、live queue 测试，以及 `README.md`、`docs/contracts/*.md`、`CLAUDE.md` 和 `AGENT.md`。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_contracts.py::test_approval_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_approval_contract_requires_gui_action_fields tests/test_contracts.py::test_inbox_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_inbox_contract_requires_head_ack_fields tests/test_contracts.py::test_leader_actions_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_actions_contract_requires_applyability_fields tests/test_agent_cli.py::test_contract_approvals_example_exports_gui_ready_queue tests/test_agent_cli.py::test_contract_inbox_example_exports_gui_ready_queue tests/test_agent_cli.py::test_contract_leader_actions_example_exports_gui_ready_queue tests/test_leader_cli.py::test_leader_actions_lists_persisted_actions tests/test_leader_cli.py::test_leader_chat_suggests_approve_for_pending_approval_without_approving tests/test_leader_cli.py::test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging -q` 最初因 queue items 缺少 `controls` 失败；实现后目标测试通过；`conda run -n agentdeck pytest -q` 通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `leader-controls-ok`、`approval-controls-ok` 和 `inbox-controls-ok`。
+
 ### Current - Add leader action preview commands
 
 - 扩展 ProjectView `leader_actions.items[]`、`agentdeck leader actions` 和 `agentdeck leader action --action-id <id>`：新增 `preview_command`，统一 action / approval / inbox 三类队列的“只读预览优先、显式执行随后”模型。

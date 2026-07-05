@@ -945,6 +945,7 @@ def _inbox_queue_item(agent_id: str, item: dict[str, object], head_inbox_id: obj
         "status": item.get("status"),
         "created_at": item.get("created_at"),
         "preview_command": _trace_command(inbox_id),
+        "controls": _inbox_item_controls(agent_id, str(inbox_id), can_ack),
         "trace_command": _trace_command(inbox_id),
         "ack_command": f"agentdeck ack --agent {agent_id} --inbox-id {inbox_id}",
         "is_head": is_head,
@@ -1230,6 +1231,7 @@ def _leader_action_summary(action: dict[str, object], recommended_action_id: obj
         "created_at": action.get("created_at"),
         "can_apply": detail_fields["can_apply"],
         "preview_command": detail_fields["preview_command"],
+        "controls": detail_fields["controls"],
         "apply_command": detail_fields["apply_command"],
         "explicit_command": detail_fields["explicit_command"],
         "apply_blocker": detail_fields["apply_blocker"],
@@ -2172,11 +2174,77 @@ def _approval_queue_item(approval: dict[str, object]) -> dict[str, object]:
         **approval,
         "reason": approval.get("reason"),
         "preview_command": "agentdeck approval list",
+        "controls": _approval_item_controls(approval_id, can_dispatch),
         "approve_command": f"agentdeck approval approve --approval-id {approval_id}",
         "reject_command": f"agentdeck approval reject --approval-id {approval_id} --reason <reason>",
         "dispatch_command": f"agentdeck approval dispatch --approval-id {approval_id}",
         "can_dispatch": can_dispatch,
         "dispatch_blocker": None if can_dispatch else "approval is not approved",
+    }
+
+
+def _approval_item_controls(approval_id: str, can_dispatch: bool) -> list[dict[str, object]]:
+    dispatch_blocker = None if can_dispatch else "approval is not approved"
+    return [
+        _control(
+            kind="preview",
+            label="Preview approval queue",
+            command="agentdeck approval list",
+            safety="inspect",
+        ),
+        _control(
+            kind="approve",
+            label="Approve",
+            command=f"agentdeck approval approve --approval-id {approval_id}",
+            safety="explicit_runtime",
+        ),
+        _control(
+            kind="reject",
+            label="Reject",
+            command=f"agentdeck approval reject --approval-id {approval_id} --reason <reason>",
+            safety="explicit_runtime",
+        ),
+        _control(
+            kind="dispatch",
+            label="Dispatch",
+            command=f"agentdeck approval dispatch --approval-id {approval_id}",
+            safety="explicit_runtime",
+            enabled=can_dispatch,
+            blocker=dispatch_blocker,
+        ),
+    ]
+
+
+def _inbox_item_controls(agent_id: str, inbox_id: str, can_ack: bool) -> list[dict[str, object]]:
+    ack_blocker = None if can_ack else "inbox item is not head"
+    return [
+        _control(
+            kind="preview",
+            label="Trace inbox item",
+            command=f"agentdeck trace --id {inbox_id}",
+            safety="inspect",
+        ),
+        _control(
+            kind="ack",
+            label="Acknowledge inbox head",
+            command=f"agentdeck ack --agent {agent_id} --inbox-id {inbox_id}",
+            safety="explicit_runtime",
+            enabled=can_ack,
+            blocker=ack_blocker,
+        ),
+    ]
+
+
+def _control(
+    *, kind: str, label: str, command: object, safety: str, enabled: bool = True, blocker: object = None
+) -> dict[str, object]:
+    return {
+        "kind": kind,
+        "label": label,
+        "command": command,
+        "safety": safety,
+        "enabled": enabled,
+        "blocker": blocker,
     }
 
 

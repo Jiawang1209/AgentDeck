@@ -380,13 +380,51 @@ class StateStore:
             apply_blocker = f"leader action is not pending: {action_id}"
         elif action.get("kind") != "create_approvals":
             apply_blocker = "leader action requires explicit command"
+        apply_command = f"agentdeck leader apply-action --action-id {action_id}" if can_apply else None
         return {
             "can_apply": can_apply,
             "preview_command": f"agentdeck leader action --action-id {action_id}",
-            "apply_command": f"agentdeck leader apply-action --action-id {action_id}" if can_apply else None,
+            "controls": StateStore._leader_action_controls(
+                action_id=action_id,
+                apply_command=apply_command,
+                explicit_command=action.get("command"),
+                apply_blocker=apply_blocker,
+            ),
+            "apply_command": apply_command,
             "explicit_command": action.get("command"),
             "apply_blocker": apply_blocker,
         }
+
+    @staticmethod
+    def _leader_action_controls(
+        *, action_id: str, apply_command: object, explicit_command: object, apply_blocker: object
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "kind": "preview",
+                "label": "Preview Leader action",
+                "command": f"agentdeck leader action --action-id {action_id}",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "apply",
+                "label": "Apply safe Leader action",
+                "command": apply_command,
+                "safety": "safe_apply",
+                "enabled": apply_command is not None,
+                "blocker": apply_blocker,
+            },
+            {
+                "kind": "explicit",
+                "label": "Run explicit command",
+                "command": explicit_command,
+                "safety": "explicit_runtime",
+                "enabled": explicit_command is not None,
+                "blocker": None,
+            },
+        ]
 
     def apply_leader_action(self, action_id: str) -> dict[str, Any]:
         state = self.load()

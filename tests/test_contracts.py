@@ -538,8 +538,44 @@ def test_approval_contract_response_includes_example_without_drift(tmp_path: Pat
     assert set(payload["example_approval_item_fields"]) == set(example["approvals"][0])
     assert example["approvals"][0]["can_dispatch"] is False
     assert example["approvals"][0]["preview_command"] == "agentdeck approval list"
+    assert example["approvals"][0]["controls"] == [
+        {
+            "kind": "preview",
+            "label": "Preview approval queue",
+            "command": "agentdeck approval list",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "approve",
+            "label": "Approve",
+            "command": "agentdeck approval approve --approval-id apv_pending",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "reject",
+            "label": "Reject",
+            "command": "agentdeck approval reject --approval-id apv_pending --reason <reason>",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "dispatch",
+            "label": "Dispatch",
+            "command": "agentdeck approval dispatch --approval-id apv_pending",
+            "safety": "explicit_runtime",
+            "enabled": False,
+            "blocker": "approval is not approved",
+        },
+    ]
     assert example["approvals"][1]["can_dispatch"] is True
     assert example["approvals"][1]["preview_command"] == "agentdeck approval list"
+    assert example["approvals"][1]["controls"][3]["enabled"] is True
+    assert example["approvals"][1]["controls"][3]["blocker"] is None
 
 
 def test_validate_approval_contract_accepts_example() -> None:
@@ -550,13 +586,13 @@ def test_validate_approval_contract_accepts_example() -> None:
 
 def test_validate_approval_contract_requires_gui_action_fields() -> None:
     payload = approval_example()
-    del payload["approvals"][0]["preview_command"]
+    del payload["approvals"][0]["controls"]
 
     result = validate_approval_contract(payload)
 
     assert result == {
         "ok": False,
-        "errors": ["missing approval item field: preview_command"],
+        "errors": ["missing approval item field: controls"],
     }
 
 
@@ -591,8 +627,28 @@ def test_inbox_contract_response_includes_example_without_drift(tmp_path: Path) 
     assert example["head_inbox_id"] == "inb_task"
     assert example["items"][0]["can_ack"] is True
     assert example["items"][0]["preview_command"] == "agentdeck trace --id inb_task"
+    assert example["items"][0]["controls"] == [
+        {
+            "kind": "preview",
+            "label": "Trace inbox item",
+            "command": "agentdeck trace --id inb_task",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "ack",
+            "label": "Acknowledge inbox head",
+            "command": "agentdeck ack --agent planner --inbox-id inb_task",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
     assert example["items"][1]["can_ack"] is False
     assert example["items"][1]["preview_command"] == "agentdeck trace --id inb_reply"
+    assert example["items"][1]["controls"][1]["enabled"] is False
+    assert example["items"][1]["controls"][1]["blocker"] == "inbox item is not head"
 
 
 def test_validate_inbox_contract_accepts_example() -> None:
@@ -603,13 +659,13 @@ def test_validate_inbox_contract_accepts_example() -> None:
 
 def test_validate_inbox_contract_requires_head_ack_fields() -> None:
     payload = inbox_example()
-    del payload["items"][0]["preview_command"]
+    del payload["items"][0]["controls"]
 
     result = validate_inbox_contract(payload)
 
     assert result == {
         "ok": False,
-        "errors": ["missing inbox item field: preview_command"],
+        "errors": ["missing inbox item field: controls"],
     }
 
 
@@ -692,6 +748,32 @@ def test_leader_actions_contract_response_includes_example_without_drift(tmp_pat
     assert set(payload["example_action_item_fields"]) == set(example["actions"][0])
     assert example["recommended_action_id"] == "act_example"
     assert example["actions"][0]["preview_command"] == "agentdeck leader action --action-id act_example"
+    assert example["actions"][0]["controls"] == [
+        {
+            "kind": "preview",
+            "label": "Preview Leader action",
+            "command": "agentdeck leader action --action-id act_example",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "apply",
+            "label": "Apply safe Leader action",
+            "command": "agentdeck leader apply-action --action-id act_example",
+            "safety": "safe_apply",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "explicit",
+            "label": "Run explicit command",
+            "command": "agentdeck approval create-from-plan --plan-id pln_example",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
     assert example["actions"][0]["can_apply"] is True
     assert example["actions"][0]["is_recommended"] is True
 
@@ -704,13 +786,13 @@ def test_validate_leader_actions_contract_accepts_example() -> None:
 
 def test_validate_leader_actions_contract_requires_applyability_fields() -> None:
     payload = leader_actions_example()
-    del payload["actions"][0]["preview_command"]
+    del payload["actions"][0]["controls"]
 
     result = validate_leader_actions_contract(payload)
 
     assert result == {
         "ok": False,
-        "errors": ["missing leader action item field: preview_command"],
+        "errors": ["missing leader action item field: controls"],
     }
 
 

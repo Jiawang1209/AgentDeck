@@ -814,8 +814,11 @@ def test_contract_approvals_example_exports_gui_ready_queue(capsys) -> None:
     assert payload["example_approval_item_fields"] == payload["approval_item_fields"]
     assert set(payload["example_approval_item_fields"]) == set(example["approvals"][0])
     assert "preview_command" in payload["approval_item_fields"]
+    assert "controls" in payload["approval_item_fields"]
     assert example["approvals"][0]["approve_command"] == "agentdeck approval approve --approval-id apv_pending"
     assert example["approvals"][0]["preview_command"] == "agentdeck approval list"
+    assert example["approvals"][0]["controls"][0]["command"] == example["approvals"][0]["preview_command"]
+    assert example["approvals"][0]["controls"][1]["command"] == example["approvals"][0]["approve_command"]
     assert example["approvals"][1]["dispatch_command"] == "agentdeck approval dispatch --approval-id apv_approved"
 
 
@@ -847,9 +850,12 @@ def test_contract_inbox_example_exports_gui_ready_queue(capsys) -> None:
     assert payload["example_inbox_item_fields"] == payload["inbox_item_fields"]
     assert set(payload["example_inbox_item_fields"]) == set(example["items"][0])
     assert "preview_command" in payload["inbox_item_fields"]
+    assert "controls" in payload["inbox_item_fields"]
     assert example["items"][0]["ack_command"] == "agentdeck ack --agent planner --inbox-id inb_task"
     assert example["items"][0]["trace_command"] == "agentdeck trace --id inb_task"
     assert example["items"][0]["preview_command"] == "agentdeck trace --id inb_task"
+    assert example["items"][0]["controls"][0]["command"] == example["items"][0]["preview_command"]
+    assert example["items"][0]["controls"][1]["command"] == example["items"][0]["ack_command"]
 
 
 def test_contract_leader_action_discovers_schema_for_gui_clients(capsys) -> None:
@@ -910,7 +916,10 @@ def test_contract_leader_actions_example_exports_gui_ready_queue(capsys) -> None
     assert payload["example_action_item_fields"] == payload["action_item_fields"]
     assert set(payload["example_action_item_fields"]) == set(example["actions"][0])
     assert "preview_command" in payload["action_item_fields"]
+    assert "controls" in payload["action_item_fields"]
     assert example["actions"][0]["preview_command"] == "agentdeck leader action --action-id act_example"
+    assert example["actions"][0]["controls"][0]["command"] == example["actions"][0]["preview_command"]
+    assert example["actions"][0]["controls"][1]["command"] == example["actions"][0]["apply_command"]
     assert example["actions"][0]["apply_command"] == "agentdeck leader apply-action --action-id act_example"
 
 
@@ -1201,6 +1210,32 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
                 "command": "agentdeck approval create-from-plan --plan-id pln_demo",
                 "reason": "plan has no approval records",
                 "preview_command": "agentdeck leader action --action-id act_demo",
+                "controls": [
+                    {
+                        "kind": "preview",
+                        "label": "Preview Leader action",
+                        "command": "agentdeck leader action --action-id act_demo",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                    {
+                        "kind": "apply",
+                        "label": "Apply safe Leader action",
+                        "command": "agentdeck leader apply-action --action-id act_demo",
+                        "safety": "safe_apply",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                    {
+                        "kind": "explicit",
+                        "label": "Run explicit command",
+                        "command": "agentdeck approval create-from-plan --plan-id pln_demo",
+                        "safety": "explicit_runtime",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                ],
                 "can_apply": True,
                 "apply_command": "agentdeck leader apply-action --action-id act_demo",
                 "explicit_command": "agentdeck approval create-from-plan --plan-id pln_demo",
