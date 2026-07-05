@@ -2322,6 +2322,55 @@ def test_contract_inbox_example_exports_gui_ready_queue(capsys) -> None:
     assert example["items"][0]["controls"][1]["command"] == example["items"][0]["ack_command"]
 
 
+def test_inbox_and_ack_allow_logical_leader_mailbox(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["inbox"] = {
+        "leader": [
+            {
+                "inbox_id": "inb_leader_reply",
+                "event_type": "task_reply",
+                "message_id": "msg_leader_reply",
+                "attempt_id": "att_leader_reply",
+                "job_id": "job_leader_reply",
+                "reply_id": "rep_leader_reply",
+                "from_actor": None,
+                "from_agent": "planner",
+                "to_agent": "leader",
+                "task": "planner completed work",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["inbox", "--agent", "leader"])
+
+    assert exit_code == 0
+    inbox_payload = json.loads(capsys.readouterr().out)
+    assert inbox_payload["agent_id"] == "leader"
+    assert inbox_payload["count"] == 1
+    assert inbox_payload["head_inbox_id"] == "inb_leader_reply"
+    assert inbox_payload["items"][0]["ack_command"] == (
+        "agentdeck ack --agent leader --inbox-id inb_leader_reply"
+    )
+
+    exit_code = cli.main(["ack", "--agent", "leader", "--inbox-id", "inb_leader_reply"])
+
+    assert exit_code == 0
+    ack_payload = json.loads(capsys.readouterr().out)
+    assert ack_payload == {
+        "ok": True,
+        "agent_id": "leader",
+        "inbox_id": "inb_leader_reply",
+        "status": "acked",
+    }
+    state_after = StateStore(root).load()
+    assert state_after["inbox"]["leader"][0]["status"] == "acked"
+
+
 def test_contract_leader_action_discovers_schema_for_gui_clients(capsys) -> None:
     exit_code = cli.main(["contract", "leader-action"])
 

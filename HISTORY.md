@@ -2,6 +2,17 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-06
+
+### Current - Add natural-language Leader inbox controls
+
+- 扩展 `agentdeck leader chat`：当用户输入 `"查看 leader inbox"` 时，进入只读 `mode=inbox`，复用 `agentdeck inbox --agent leader` 的 queue shape 返回逻辑 Leader mailbox 的 `inbox_card`，用于查看 worker reply 回流。
+- 扩展自然语言 ack 建议：当用户输入 `"确认 leader 当前 inbox"` 且 Leader mailbox 有 pending head 时，`next_command` 会建议显式 `agentdeck ack --agent leader --inbox-id <id>`，`leader_explanation.action_kind=inbox_ack`，并保持 `safety=explicit_runtime` / `requires_explicit_user=true`。
+- 补齐 CLI mailbox 入口：`agentdeck inbox --agent leader` 和 `agentdeck ack --agent leader --inbox-id <id>` 现在作为逻辑 mailbox 命令合法；这不会把 `leader` 变成 runtime agent，spawn/send/capture/stop/terminal 等 tmux pane 命令仍只面向配置里的 worker agent。
+- 保持人类控制边界：自然语言 Leader inbox inspect/ack 只记录 chat turn，不执行 ack、不 dispatch、不 capture reply、不发送 tmux 输入，也不调用 provider。
+- 同步 README、`docs/contracts/inbox-schema.md`、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md，明确 worker agent mailbox 与逻辑 Leader mailbox 的差异。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "查看 leader inbox"` 最初落入 `mode=plan`，`agentdeck inbox --agent leader` 最初返回 `unknown agent: leader`；实现后新增测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_and_acknowledges_leader_inbox_without_provider_or_runtime -q` 和 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_inbox_and_ack_allow_logical_leader_mailbox -q` 均通过；相关回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_and_acknowledges_leader_inbox_without_provider_or_runtime tests/test_agent_cli.py::test_inbox_and_ack_allow_logical_leader_mailbox tests/test_leader_cli.py::test_leader_chat_inspects_agent_inbox_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging tests/test_leader_cli.py::test_leader_chat_suggests_trace_for_current_inbox_head tests/test_leader_cli.py::test_leader_chat_continue_embeds_inbox_card_for_pending_inbox tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 8 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 287 项通过。
+
 ## 2026-07-05
 
 ### Current - Add natural-language capture-reply suggestion

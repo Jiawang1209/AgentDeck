@@ -1757,6 +1757,10 @@ def _agent_by_id(config: ProjectConfig, agent_id: str) -> AgentSpec | None:
     return None
 
 
+def _is_known_mailbox_agent(config: ProjectConfig, agent_id: str) -> bool:
+    return agent_id == config.leader.agent_id or _agent_by_id(config, agent_id) is not None
+
+
 def agent_list_command(_args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -2212,7 +2216,7 @@ def inbox_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
-    if _agent_by_id(config, args.agent) is None:
+    if not _is_known_mailbox_agent(config, args.agent):
         print(f"unknown agent: {args.agent}", file=sys.stderr)
         return 1
     payload = _inbox_queue_payload(args.agent, store)
@@ -2368,7 +2372,7 @@ def ack_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
-    if _agent_by_id(config, args.agent) is None:
+    if not _is_known_mailbox_agent(config, args.agent):
         print(f"unknown agent: {args.agent}", file=sys.stderr)
         return 1
     try:
@@ -3187,6 +3191,8 @@ def _chat_inbox_agent_id(message: str, config: ProjectConfig) -> str | None:
     mentions_inbox = any(token in normalized for token in ["inbox", "收件箱", "消息", "mailbox"])
     if not mentions_inbox:
         return None
+    if config.leader.agent_id.lower() in normalized:
+        return config.leader.agent_id
     for agent in config.agents:
         if agent.agent_id.lower() in normalized:
             return agent.agent_id

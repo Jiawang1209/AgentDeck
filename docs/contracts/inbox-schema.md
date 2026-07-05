@@ -1,8 +1,10 @@
 # Inbox Queue Contract
 
-`agentdeck inbox --agent <id>` is the read-only mailbox view for one AgentDeck agent.
+`agentdeck inbox --agent <id>` is the read-only mailbox view for one AgentDeck mailbox owner.
 
-It does not acknowledge messages and does not replace ProjectView or trace. It lists one agent's inbox items, derives head-only ack metadata, links each item to trace, and validates the queue payload before printing JSON.
+It does not acknowledge messages and does not replace ProjectView or trace. It lists one mailbox owner's inbox items, derives head-only ack metadata, links each item to trace, and validates the queue payload before printing JSON.
+
+`<id>` may be a configured worker agent id, such as `planner`, or the logical Leader mailbox owner `leader`. The logical Leader mailbox is for worker replies flowing back to the Leader; it is not a tmux/runtime agent and must not be treated as valid for spawn, send, capture, stop, or terminal commands.
 
 Use `agentdeck contract inbox` to discover this contract:
 
@@ -70,6 +72,7 @@ Use `agentdeck contract inbox --example` to include a stable GUI-ready inbox fix
 
 - The contract command is read-only.
 - `agentdeck inbox --agent <id>` is read-only.
+- `<id>` may be a configured worker agent id or the logical Leader mailbox owner `leader`.
 - `agentdeck inbox --agent <id>` must pass `validate_inbox_contract()` before printing JSON.
 - It must not create plans, create approvals, apply actions, dispatch work, capture replies, ack inbox items, or send tmux input.
 - GUI clients should prefer `controls[]`, while retaining `head_inbox_id`, `is_head`, `can_ack`, `preview_command`, `ack_command`, `ack_blocker`, and `trace_command` for compatibility.

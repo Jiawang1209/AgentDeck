@@ -2572,6 +2572,95 @@ def test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging(
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_inspects_and_acknowledges_leader_inbox_without_provider_or_runtime(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["inbox"] = {
+        "leader": [
+            {
+                "inbox_id": "inb_leader_reply",
+                "event_type": "task_reply",
+                "message_id": "msg_leader_reply",
+                "attempt_id": "att_leader_reply",
+                "job_id": "job_leader_reply",
+                "reply_id": "rep_leader_reply",
+                "from_actor": None,
+                "from_agent": "planner",
+                "to_agent": "leader",
+                "task": "planner 完成摘要",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看 leader inbox"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+    assert payload["mode"] == "inbox"
+    assert payload["next_command"] == "agentdeck inbox --agent leader"
+    assert payload["inbox_card"]["agent_id"] == "leader"
+    assert payload["inbox_card"]["count"] == 1
+    assert payload["inbox_card"]["head_inbox_id"] == "inb_leader_reply"
+    assert payload["inbox_card"]["items"][0]["ack_command"] == (
+        "agentdeck ack --agent leader --inbox-id inb_leader_reply"
+    )
+    assert payload["leader_explanation"]["mode"] == "inbox"
+    assert payload["leader_explanation"]["summary"] == (
+        "Leader recommends inspecting leader inbox without mutating runtime state."
+    )
+    assert payload["leader_explanation"]["reason"] == "human asked to inspect an agent inbox"
+    assert payload["leader_explanation"]["next_command"] == "agentdeck inbox --agent leader"
+    assert payload["leader_explanation"]["recommended_action_id"] == "inb_leader_reply"
+    assert payload["leader_explanation"]["action_kind"] == "inbox"
+    assert payload["leader_explanation"]["action_status"] == "pending"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["intent_card"]["embedded_card"] == "inbox_card"
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Open inbox",
+        "command": "agentdeck inbox --agent leader",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    exit_code = cli.main(["leader", "chat", "--message", "确认 leader 当前 inbox"])
+
+    assert exit_code == 0
+    ack_payload = json.loads(capsys.readouterr().out)
+    assert cli.validate_leader_chat_contract(ack_payload) == {"ok": True, "errors": []}
+    assert ack_payload["mode"] == "inbox"
+    assert ack_payload["next_command"] == "agentdeck ack --agent leader --inbox-id inb_leader_reply"
+    assert ack_payload["leader_explanation"]["action_kind"] == "inbox_ack"
+    assert ack_payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert ack_payload["leader_explanation"]["requires_explicit_user"] is True
+    assert ack_payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Acknowledge inbox item",
+        "command": "agentdeck ack --agent leader --inbox-id inb_leader_reply",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    state_after = StateStore(root).load()
+    assert state_after["inbox"]["leader"][0]["status"] == "pending"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck inbox --agent leader"
+    assert state_after["chat_turns"][1]["next_command"] == "agentdeck ack --agent leader --inbox-id inb_leader_reply"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_inspects_approval_queue_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "审批自然语言入口"])
