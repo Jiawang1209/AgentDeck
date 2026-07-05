@@ -94,6 +94,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "role_card",
         "ledger_card",
         "control_mode_card",
+        "provider_health",
         "capability_card",
     ):
         if payload.get(card_name) is not None:
@@ -168,6 +169,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         if mode == "approve":
             return "Switch to approval mode"
         return "Request autonomous mode"
+    if re.fullmatch(r"agentdeck leader set-provider --provider [^\s]+ --model [^\s]+", command):
+        return "Switch Leader provider"
     approval_match = re.fullmatch(
         r"agentdeck approval (approve|reject|dispatch) --approval-id [^\s]+(?: --reason .+)?", command
     )
@@ -234,6 +237,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck workbench"
     if embedded_card == "control_mode_card":
         return "agentdeck workbench"
+    if embedded_card == "provider_health":
+        return "agentdeck doctor"
     if embedded_card == "approval_card":
         return "agentdeck approval list"
     if embedded_card == "inbox_card":
@@ -254,6 +259,14 @@ def _leader_chat_intent_card_blocker(embedded_card: object, payload: dict[str, o
         dispatch_batch_preview_card = payload.get("dispatch_batch_preview_card")
         if isinstance(dispatch_batch_preview_card, dict) and not dispatch_batch_preview_card.get("ready_count"):
             return "no ready approvals to dispatch"
+    if embedded_card == "provider_health":
+        provider_health = payload.get("provider_health")
+        controls = provider_health.get("controls") if isinstance(provider_health, dict) else None
+        if isinstance(controls, list):
+            for control in controls:
+                if isinstance(control, dict) and control.get("command") == payload.get("next_command"):
+                    blocker = control.get("blocker")
+                    return str(blocker) if blocker else None
     return None
 
 
@@ -2746,6 +2759,39 @@ def _chat_wants_setup(message: str) -> bool:
     )
 
 
+def _chat_provider_switch_intent(message: str) -> tuple[str, str] | None:
+    normalized = message.strip().lower()
+    mentions_switch = any(
+        token in normalized
+        for token in [
+            "切换",
+            "换成",
+            "改成",
+            "使用",
+            "用 ",
+            "use ",
+            "switch",
+            "set provider",
+            "leader provider",
+        ]
+    )
+    if not mentions_switch:
+        return None
+    aliases: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("codex-cli", ("codex cli", "codex-cli", "codex")),
+        ("claude-cli", ("claude code", "claude cli", "claude-cli", "claude")),
+        ("deepseek", ("deepseek", "deep seek", "深度求索")),
+        ("openai-compatible", ("openai-compatible", "openai compatible", "openai兼容", "openai 兼容")),
+        ("fake", ("fake", "假 provider", "本地 fake")),
+    )
+    for provider, provider_aliases in aliases:
+        if any(alias in normalized for alias in provider_aliases):
+            for switch_provider, switch_model, _label in LEADER_PROVIDER_SWITCHES:
+                if switch_provider == provider:
+                    return switch_provider, switch_model
+    return None
+
+
 def _chat_policy_mode(message: str) -> str | None:
     normalized = message.strip().lower()
     mentions_policy = any(
@@ -3280,6 +3326,22 @@ def _leader_chat_explanation(
     if mode == "setup":
         leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
         provider = leader.get("provider")
+        provider_switch_match = re.fullmatch(
+            r"agentdeck leader set-provider --provider ([^\s]+) --model [^\s]+",
+            str(next_command or ""),
+        )
+        if provider_switch_match:
+            return {
+                "mode": mode,
+                "summary": "Leader recommends an explicit provider switch command without mutating provider config.",
+                "reason": "human asked to switch Leader provider",
+                "next_command": next_command,
+                "recommended_action_id": provider_switch_match.group(1),
+                "action_kind": "provider_switch",
+                "action_status": "suggested" if provider_switch_match.group(1) != provider else "already_current",
+                "safety": "explicit_user",
+                "requires_explicit_user": True,
+            }
         return {
             "mode": mode,
             "summary": "Leader recommends inspecting provider setup before planning or dispatching work.",
@@ -3854,6 +3916,64 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "workbench_card": None,
             "control_mode_card": _workbench_control_mode_card(refreshed_project_view),
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    provider_switch_intent = _chat_provider_switch_intent(args.message)
+    if provider_switch_intent is not None:
+        target_provider, target_model = provider_switch_intent
+        next_command = f"agentdeck leader set-provider --provider {target_provider} --model {target_model}"
+        turn = store.record_chat_turn(
+            mode="setup",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="provider_switch",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "setup",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        provider_health = _workbench_provider_health(refreshed_project_view)
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "setup",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "setup",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
+            "provider_health": provider_health,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

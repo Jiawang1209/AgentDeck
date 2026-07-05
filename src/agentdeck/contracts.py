@@ -937,6 +937,8 @@ LEADER_CHAT_CAPABILITY_PLACEHOLDERS = (
     {"placeholder": "<action_id>", "blocker": "requires action_id"},
     {"placeholder": "<agent_id>", "blocker": "requires agent_id"},
     {"placeholder": "<mode>", "blocker": "requires control mode"},
+    {"placeholder": "<provider>", "blocker": "requires leader provider"},
+    {"placeholder": "<model>", "blocker": "requires leader model"},
 )
 
 LEADER_CHAT_INTENT_PLACEHOLDERS = (
@@ -1257,6 +1259,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "card": "control_mode_card",
         },
         {
+            "mode": "provider_switch",
+            "label": "Switch Leader provider",
+            "description": "Suggest an explicit Leader provider switch command without mutating config.",
+            "example_messages": ["切换 Leader 到 Codex CLI", "使用 Claude Code 做 Leader"],
+            "command": "agentdeck leader set-provider --provider <provider> --model <model>",
+            "safety": "explicit_user",
+            "requires_explicit_user": True,
+            "card": "provider_health",
+        },
+        {
             "mode": "setup",
             "label": "Inspect provider setup",
             "description": "Inspect Leader provider readiness and missing environment names.",
@@ -1323,6 +1335,7 @@ def _capability_item_control(item: dict[str, object]) -> dict[str, object]:
         "review": "review",
         "apply_action": "apply",
         "policy": "set",
+        "provider_switch": "set_provider",
     }.get(mode, "inspect")
     blocker = _placeholder_blocker(command)
     return {

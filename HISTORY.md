@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add natural-language Leader provider switch
+
+- 扩展 `agentdeck leader chat`：当用户输入 `"切换 Leader 到 Codex CLI"`、`"使用 Claude Code 做 Leader"`、`"换成 DeepSeek Leader"` 等 provider switch 意图时，进入只读 `mode=setup`，嵌入同源 `provider_health`，并返回具体 `agentdeck leader set-provider --provider <provider> --model <model>` 作为 `next_command`。
+- 保持人类控制边界：自然语言 provider switch 只记录 chat turn，不修改 `.agentdeck/config.toml`、不调用当前或目标 provider、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入；真正切换仍必须由人类显式运行返回的 `leader set-provider` 命令。
+- 扩展 `intent_card`：provider switch 响应以 `provider_health` 为 `embedded_card`，先给出只读 `agentdeck doctor` inspect control，再给出 `Switch Leader provider` next control；当前 provider 的 set-provider control 仍会 disabled 并给出 `already current provider` blocker。
+- 扩展 help/capability contract：新增 `provider_switch` capability，模板命令为 `agentdeck leader set-provider --provider <provider> --model <model>`，并把 `<provider>` / `<model>` 纳入 capability placeholder 白名单。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "切换 Leader 到 Codex CLI"` 最初落入 provider-backed plan 并因缺少 `DEEPSEEK_API_KEY` 失败；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 4 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 5 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 282 项通过。
+
 ### Current - Expose Leader provider switch controls
 
 - 扩展 workbench `provider_health.controls[]`：为 fake、DeepSeek、OpenAI-compatible、Codex CLI 和 Claude CLI 暴露显式 `agentdeck leader set-provider --provider <provider> --model <model>` 切换入口。

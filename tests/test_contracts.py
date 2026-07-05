@@ -1538,6 +1538,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
         {"placeholder": "<action_id>", "blocker": "requires action_id"},
         {"placeholder": "<agent_id>", "blocker": "requires agent_id"},
         {"placeholder": "<mode>", "blocker": "requires control mode"},
+        {"placeholder": "<provider>", "blocker": "requires leader provider"},
+        {"placeholder": "<model>", "blocker": "requires leader model"},
     ]
     assert example["capability_card"]["capabilities"][0]["controls"][0] == {
         "kind": "inspect",

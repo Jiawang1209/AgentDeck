@@ -509,6 +509,81 @@ def test_leader_chat_setup_commands_never_expose_real_provider_key(
     assert "real-secret-key" not in rendered
 
 
+def test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project_with_default_leader(tmp_path, monkeypatch)
+    config_before = (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    exit_code = cli.main(["leader", "chat", "--message", "切换 Leader 到 Codex CLI"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "setup"
+    assert payload["message"] == "切换 Leader 到 Codex CLI"
+    assert payload["next_command"] == "agentdeck leader set-provider --provider codex-cli --model codex-default"
+    assert payload["plan_id"] is None
+    assert payload["review"] is None
+    assert payload["leader_action"] is None
+    assert payload["continue_card"] is None
+    assert payload["inbox_card"] is None
+    assert payload["approval_card"] is None
+    assert payload["provider_health"]["provider"] == "deepseek"
+    assert payload["leader_explanation"] == {
+        "mode": "setup",
+        "summary": "Leader recommends an explicit provider switch command without mutating provider config.",
+        "reason": "human asked to switch Leader provider",
+        "next_command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+        "recommended_action_id": "codex-cli",
+        "action_kind": "provider_switch",
+        "action_status": "suggested",
+        "safety": "explicit_user",
+        "requires_explicit_user": True,
+    }
+    assert payload["intent_card"] == {
+        "mode": "setup",
+        "matched_intent": "setup",
+        "route_source": "local_rule",
+        "embedded_card": "provider_health",
+        "read_only": True,
+        "next_command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+        "requires_explicit_user": True,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect provider_health",
+                "command": "agentdeck doctor",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "next",
+                "label": "Switch Leader provider",
+                "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+    assert (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8") == config_before
+
+    state = StateStore(root).load()
+    assert state["plans"] == []
+    assert state["leader_actions"] == []
+    assert state["chat_turns"][0]["mode"] == "setup"
+    assert state["chat_turns"][0]["next_command"] == (
+        "agentdeck leader set-provider --provider codex-cli --model codex-default"
+    )
+    assert state["chat_turns"][0]["action_kind"] == "provider_switch"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state.get("inbox", {}) == {}
+
+
 def test_leader_chat_continue_returns_recovery_card_without_creating_action(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "已有计划"])
@@ -1772,6 +1847,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "approval",
         "inbox",
         "policy",
+        "provider_switch",
     } <= capability_modes
     capabilities = {item["mode"]: item for item in payload["capability_card"]["capabilities"]}
     assert capabilities["plan"]["safety"] == "plan_only"
@@ -1818,6 +1894,19 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "safety": "explicit_user",
         "enabled": False,
         "blocker": "requires control mode",
+    }
+    assert capabilities["provider_switch"]["command"] == (
+        "agentdeck leader set-provider --provider <provider> --model <model>"
+    )
+    assert capabilities["provider_switch"]["safety"] == "explicit_user"
+    assert capabilities["provider_switch"]["requires_explicit_user"] is True
+    assert capabilities["provider_switch"]["controls"][0] == {
+        "kind": "set_provider",
+        "label": "Switch Leader provider",
+        "command": "agentdeck leader set-provider --provider <provider> --model <model>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires leader provider",
     }
     assert capabilities["workbench"]["controls"][0] == {
         "kind": "inspect",
