@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Label runtime intent controls by action
+
+- 调整 `agentdeck leader chat` 的 runtime explicit action `intent_card.controls[]`：`刷新 runtime`、`启动 planner`、`发送给 planner：继续`、`停止 planner` 的 next control 现在分别使用 `Refresh runtime`、`Spawn planner`、`Send input to planner`、`Stop planner`。
+- 保持安全边界：该变化只影响 GUI/自然语言壳可渲染的 `label`，不执行 refresh/spawn/send/stop，不创建 plan/action/approval/message/job/inbox，也不修改 runtime state。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试，明确 GUI 应使用 `label` 渲染按钮，而不是解析 `command`。
+- 验证记录：已先确认红测失败，`刷新 runtime` 的 next control label 最初仍是 `Next command`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_runtime_refresh_without_reconciling_state tests/test_leader_cli.py::test_leader_chat_suggests_agent_spawn_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_suggests_agent_send_without_sending_input tests/test_leader_cli.py::test_leader_chat_suggests_agent_stop_without_killing_pane -q` 4 项通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_runtime_refresh_without_reconciling_state tests/test_leader_cli.py::test_leader_chat_suggests_agent_spawn_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_suggests_agent_send_without_sending_input tests/test_leader_cli.py::test_leader_chat_suggests_agent_stop_without_killing_pane tests/test_leader_cli.py::test_leader_chat_inspects_runtime_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 9 项通过；`conda run -n agentdeck pytest -q` 254 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-runtime-label-smoke-ok labels=Refresh runtime|Spawn coder|Send input to planner|Stop planner messages=0 jobs=0 plans=0`。
+
 ### Current - Suggest runtime refresh through Leader chat
 
 - 扩展 `agentdeck leader chat --message "刷新 runtime"` / `"runtime refresh"`：自然语言入口现在会进入 `mode=runtime`，嵌入同源 `runtime_card`，并把 `next_command` 指向显式 `agentdeck agent refresh`。

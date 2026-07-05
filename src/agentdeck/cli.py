@@ -116,7 +116,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     controls.append(
         {
             "kind": "next",
-            "label": "Next command",
+            "label": _leader_chat_next_control_label(next_command),
             "command": next_command,
             "safety": explanation.get("safety"),
             "enabled": next_enabled,
@@ -133,6 +133,22 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "requires_explicit_user": explanation.get("requires_explicit_user"),
         "controls": controls,
     }
+
+
+def _leader_chat_next_control_label(next_command: object) -> str:
+    command = str(next_command or "")
+    if command == "agentdeck agent refresh":
+        return "Refresh runtime"
+    spawn_match = re.fullmatch(r"agentdeck agent spawn --agent ([^\s]+)", command)
+    if spawn_match:
+        return f"Spawn {spawn_match.group(1)}"
+    send_match = re.fullmatch(r"agentdeck agent send --agent ([^\s]+) --text .+", command)
+    if send_match:
+        return f"Send input to {send_match.group(1)}"
+    stop_match = re.fullmatch(r"agentdeck agent stop --agent ([^\s]+)", command)
+    if stop_match:
+        return f"Stop {stop_match.group(1)}"
+    return "Next command"
 
 
 def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str, object]) -> str | None:

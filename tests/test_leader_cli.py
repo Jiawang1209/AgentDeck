@@ -728,7 +728,7 @@ def test_leader_chat_suggests_runtime_refresh_without_reconciling_state(tmp_path
     assert payload["intent_card"]["embedded_card"] == "runtime_card"
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
-        "label": "Next command",
+        "label": "Refresh runtime",
         "command": "agentdeck agent refresh",
         "safety": "explicit_runtime",
         "enabled": True,
@@ -786,7 +786,7 @@ def test_leader_chat_suggests_agent_spawn_without_mutating_runtime(tmp_path, mon
     assert payload["intent_card"]["requires_explicit_user"] is True
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
-        "label": "Next command",
+        "label": "Spawn planner",
         "command": "agentdeck agent spawn --agent planner",
         "safety": "explicit_runtime",
         "enabled": True,
@@ -867,7 +867,7 @@ def test_leader_chat_suggests_agent_send_without_sending_input(tmp_path, monkeyp
     assert payload["intent_card"]["embedded_card"] == "runtime_card"
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
-        "label": "Next command",
+        "label": "Send input to planner",
         "command": "agentdeck agent send --agent planner --text '继续 实现测试'",
         "safety": "explicit_runtime",
         "enabled": True,
@@ -931,7 +931,7 @@ def test_leader_chat_suggests_agent_stop_without_killing_pane(tmp_path, monkeypa
     assert payload["intent_card"]["embedded_card"] == "runtime_card"
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
-        "label": "Next command",
+        "label": "Stop planner",
         "command": "agentdeck agent stop --agent planner",
         "safety": "explicit_runtime",
         "enabled": True,
