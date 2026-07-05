@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Discover and validate Leader actions queue contract
+
+- 新增 `LEADER_ACTIONS_LIST_FIELDS`、`leader_actions_contract_payload()`、`leader_actions_contract_response()`、`leader_actions_example()` 和 `validate_leader_actions_contract()`，为 Leader action queue 建立可复用契约。
+- 新增 `agentdeck contract leader-actions` 和 `agentdeck contract leader-actions --example`，供 GUI、自然语言壳或外部集成发现 action queue 字段。
+- `agentdeck leader actions` 现在每个 action item 都包含 `can_apply`、`apply_command`、`explicit_command`、`apply_blocker` 和 `is_recommended`，并在输出前通过 `validate_leader_actions_contract()` 自校验。
+- 新增 `docs/contracts/leader-actions-schema.md`，记录队列 shape、ProjectView `leader_actions.items[]` 字段复用关系和只读边界。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 Leader actions queue contract discovery 与输出自校验规则。
+- 保持安全边界：本轮只增加只读 contract discovery、队列字段补齐与输出校验，不 apply action、不创建 approval、不 dispatch、不发送 tmux 输入、不改变 state mutation 语义。
+- 完整验证：`conda run -n agentdeck pytest tests/test_contracts.py -q` 32 项通过；leader-actions 相关 CLI 目标测试 4 项通过；`conda run -n agentdeck pytest -q` 121 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `agentdeck contract leader-actions --example` 返回 `contract-ok`，`agentdeck leader actions` 返回 `queue-ok` 且队列推荐项包含 `can_apply/apply_command`。
+
 ### Current - Discover and validate Leader action detail contract
 
 - 新增 `LEADER_ACTION_DETAIL_FIELDS`、`leader_action_contract_payload()`、`leader_action_contract_response()`、`leader_action_example()` 和 `validate_leader_action_contract()`，为单个 Leader action 详情建立可复用契约。

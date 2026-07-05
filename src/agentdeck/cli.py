@@ -9,11 +9,13 @@ import sys
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
 from .contracts import (
     continue_contract_response,
+    leader_actions_contract_response,
     leader_action_contract_response,
     leader_chat_contract_response,
     project_view_contract_response,
     trace_contract_response,
     validate_continue_contract,
+    validate_leader_actions_contract,
     validate_leader_action_contract,
     validate_leader_chat_contract,
     validate_project_view_contract,
@@ -209,6 +211,13 @@ def contract_continue_command(args: argparse.Namespace) -> int:
 def contract_leader_action_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-action-schema.md"
     payload = leader_action_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_leader_actions_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-actions-schema.md"
+    payload = leader_actions_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -707,6 +716,7 @@ def leader_next_command(args: argparse.Namespace) -> int:
 
 
 def _leader_action_summary(action: dict[str, object], recommended_action_id: object = None) -> dict[str, object]:
+    detail_fields = StateStore._leader_action_detail_fields(action)
     return {
         "action_id": action.get("action_id"),
         "kind": action.get("kind"),
@@ -719,6 +729,10 @@ def _leader_action_summary(action: dict[str, object], recommended_action_id: obj
         "command": action.get("command"),
         "reason": action.get("reason"),
         "created_at": action.get("created_at"),
+        "can_apply": detail_fields["can_apply"],
+        "apply_command": detail_fields["apply_command"],
+        "explicit_command": detail_fields["explicit_command"],
+        "apply_blocker": detail_fields["apply_blocker"],
         "is_recommended": action.get("action_id") == recommended_action_id,
     }
 
@@ -734,13 +748,18 @@ def leader_actions_command(_args: argparse.Namespace) -> int:
     recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
     recommended_action_id = recommended_action.get("target_id") if isinstance(recommended_action, dict) else None
     actions = [_leader_action_summary(action, recommended_action_id) for action in store.list_leader_actions()]
-    _print_json(
-        {
-            "count": len(actions),
-            "recommended_action_id": recommended_action_id,
-            "actions": actions,
-        }
-    )
+    payload = {
+        "count": len(actions),
+        "recommended_action_id": recommended_action_id,
+        "actions": actions,
+    }
+    validation = validate_leader_actions_contract(payload)
+    if not validation["ok"]:
+        print("Leader actions contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
 
 
@@ -1432,6 +1451,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include a GUI-ready Leader action detail example",
     )
     contract_leader_action.set_defaults(func=contract_leader_action_command)
+    contract_leader_actions = contract_subparsers.add_parser(
+        "leader-actions",
+        help="Show Leader action queue contract discovery metadata",
+    )
+    contract_leader_actions.add_argument(
+        "--example",
+        action="store_true",
+        help="Include a GUI-ready Leader action queue example",
+    )
+    contract_leader_actions.set_defaults(func=contract_leader_actions_command)
     contract_trace = contract_subparsers.add_parser(
         "trace",
         help="Show communication trace contract discovery metadata",

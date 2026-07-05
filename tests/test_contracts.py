@@ -5,6 +5,7 @@ from pathlib import Path
 from agentdeck.contracts import (
     CONTINUE_CARD_FIELDS,
     LEADER_ACTION_DETAIL_FIELDS,
+    LEADER_ACTIONS_LIST_FIELDS,
     LEADER_CHAT_EXPLANATION_FIELDS,
     LEADER_CHAT_RESPONSE_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
@@ -28,6 +29,9 @@ from agentdeck.contracts import (
     leader_action_contract_payload,
     leader_action_contract_response,
     leader_action_example,
+    leader_actions_contract_payload,
+    leader_actions_contract_response,
+    leader_actions_example,
     continue_contract_payload,
     continue_contract_response,
     continue_example,
@@ -39,6 +43,7 @@ from agentdeck.contracts import (
     trace_example,
     validate_continue_contract,
     validate_leader_action_contract,
+    validate_leader_actions_contract,
     validate_leader_chat_contract,
     validate_project_view_contract,
     validate_trace_contract,
@@ -304,6 +309,57 @@ def test_validate_leader_action_contract_requires_embedded_recovery_contract() -
     assert result == {
         "ok": False,
         "errors": ["recovery: missing recovery pending field: leader_errors"],
+    }
+
+
+def test_leader_actions_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-actions-schema.md"
+    contract_path.write_text("# Leader Actions Contract\n", encoding="utf-8")
+
+    payload = leader_actions_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["actions_command"] == "agentdeck leader actions"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["list_fields"] == list(LEADER_ACTIONS_LIST_FIELDS)
+    assert payload["action_item_fields"] == list(PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS)
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+
+
+def test_leader_actions_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-actions-schema.md"
+    contract_path.write_text("# Leader Actions Contract\n", encoding="utf-8")
+
+    payload = leader_actions_contract_response(contract_path, include_example=True)
+    example = leader_actions_example()
+
+    assert payload["example"] is True
+    assert payload["example_leader_actions"] == example
+    assert payload["example_list_fields"] == payload["list_fields"]
+    assert set(payload["example_list_fields"]) == set(example)
+    assert payload["example_action_item_fields"] == payload["action_item_fields"]
+    assert set(payload["example_action_item_fields"]) == set(example["actions"][0])
+    assert example["recommended_action_id"] == "act_example"
+    assert example["actions"][0]["can_apply"] is True
+    assert example["actions"][0]["is_recommended"] is True
+
+
+def test_validate_leader_actions_contract_accepts_example() -> None:
+    result = validate_leader_actions_contract(leader_actions_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_leader_actions_contract_requires_applyability_fields() -> None:
+    payload = leader_actions_example()
+    del payload["actions"][0]["apply_blocker"]
+
+    result = validate_leader_actions_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing leader action item field: apply_blocker"],
     }
 
 

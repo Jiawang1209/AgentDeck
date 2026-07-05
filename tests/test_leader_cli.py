@@ -529,7 +529,34 @@ def test_leader_actions_lists_persisted_actions(tmp_path, monkeypatch, capsys) -
     assert payload["actions"][0]["action_id"] == first["action_id"]
     assert payload["actions"][0]["kind"] == "create_approvals"
     assert payload["actions"][0]["status"] == "pending"
+    assert payload["actions"][0]["can_apply"] is True
+    assert payload["actions"][0]["apply_command"] == f"agentdeck leader apply-action --action-id {first['action_id']}"
+    assert payload["actions"][0]["explicit_command"] == first["command"]
+    assert payload["actions"][0]["apply_blocker"] is None
     assert payload["actions"][0]["is_recommended"] is True
+
+
+def test_leader_actions_refuses_contract_violation(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "坏 actions 队列不能输出"])
+    capsys.readouterr()
+    cli.main(["leader", "next"])
+    capsys.readouterr()
+
+    def broken_validation(_payload):
+        return {"ok": False, "errors": ["missing leader action item field: apply_blocker"]}
+
+    monkeypatch.setattr(cli, "validate_leader_actions_contract", broken_validation)
+
+    exit_code = cli.main(["leader", "actions"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "Leader actions contract validation failed" in captured.err
+    assert "missing leader action item field: apply_blocker" in captured.err
+    state = StateStore(root).load()
+    assert state["leader_actions"][0]["status"] == "pending"
 
 
 def test_leader_action_show_outputs_full_action_with_applyability(tmp_path, monkeypatch, capsys) -> None:

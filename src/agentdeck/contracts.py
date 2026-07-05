@@ -160,6 +160,12 @@ LEADER_ACTION_DETAIL_FIELDS = (
     "matches_recommended_action",
 )
 
+LEADER_ACTIONS_LIST_FIELDS = (
+    "count",
+    "recommended_action_id",
+    "actions",
+)
+
 LEADER_CHAT_EXPLANATION_FIELDS = (
     "mode",
     "summary",
@@ -343,6 +349,30 @@ def leader_action_contract_response(contract_path: Path, include_example: bool =
     return payload
 
 
+def leader_actions_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "actions_command": "agentdeck leader actions",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "list_fields": list(LEADER_ACTIONS_LIST_FIELDS),
+        "action_item_fields": list(PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def leader_actions_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = leader_actions_contract_payload(contract_path)
+    if include_example:
+        example = leader_actions_example()
+        payload["example"] = True
+        payload["example_list_fields"] = list(example)
+        payload["example_action_item_fields"] = list(example["actions"][0])
+        payload["example_leader_actions"] = example
+    return payload
+
+
 def trace_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -496,6 +526,26 @@ def validate_leader_action_contract(payload: dict[str, object]) -> dict[str, obj
         errors.append("recommended_action must be an object")
     if not isinstance(payload.get("matches_recommended_action"), bool):
         errors.append("matches_recommended_action must be a boolean")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_leader_actions_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in LEADER_ACTIONS_LIST_FIELDS:
+        if field not in payload:
+            errors.append(f"missing leader_actions field: {field}")
+    actions = payload.get("actions")
+    if isinstance(actions, list):
+        if actions:
+            first_action = actions[0]
+            if isinstance(first_action, dict):
+                for field in PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS:
+                    if field not in first_action:
+                        errors.append(f"missing leader action item field: {field}")
+            else:
+                errors.append("leader actions items must be objects")
+    elif "actions" in payload:
+        errors.append("actions must be a list")
     return {"ok": not errors, "errors": errors}
 
 
@@ -830,6 +880,16 @@ def leader_action_example() -> dict[str, object]:
         "matches_recommended_action": True,
     }
     return {field: action_detail.get(field) for field in LEADER_ACTION_DETAIL_FIELDS}
+
+
+def leader_actions_example() -> dict[str, object]:
+    project_view = project_view_example()
+    action = project_view["leader_actions"]["items"][0]
+    return {
+        "count": 1,
+        "recommended_action_id": "act_example",
+        "actions": [{field: action.get(field) for field in PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS}],
+    }
 
 
 def trace_example() -> dict[str, object]:
