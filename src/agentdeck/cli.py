@@ -109,7 +109,9 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
                 "blocker": None,
             }
         )
-    next_blocker = leader_chat_intent_placeholder_blocker(next_command)
+    next_blocker = leader_chat_intent_placeholder_blocker(next_command) or _leader_chat_intent_card_blocker(
+        embedded_card, payload
+    )
     next_enabled = next_command is not None and next_blocker is None
     controls.append(
         {
@@ -172,6 +174,14 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return f"agentdeck inbox --agent {agent_id}" if agent_id else None
     if embedded_card == "capability_card":
         return "agentdeck workbench"
+    return None
+
+
+def _leader_chat_intent_card_blocker(embedded_card: object, payload: dict[str, object]) -> str | None:
+    if embedded_card == "dispatch_preview_card":
+        dispatch_preview_card = payload.get("dispatch_preview_card")
+        blocker = dispatch_preview_card.get("blocker") if isinstance(dispatch_preview_card, dict) else None
+        return str(blocker) if blocker else None
     return None
 
 

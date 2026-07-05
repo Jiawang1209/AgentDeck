@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Block dispatch preview controls when runtime is missing
+
+- 扩展 `dispatch_preview_card` 的 GUI 控制语义：当 approved approval 的目标 agent 没有 running pane 时，preview 仍展示显式 dispatch 命令和 blocker，但 `intent_card.controls[]` 的 next control 会 disabled，并复用同一个 blocker。
+- 该行为避免自然语言壳或 GUI 把必然失败的 `agentdeck approval dispatch --approval-id <id>` 渲染成可确认按钮，同时仍保留命令和 blocker 供人类理解下一步要先 spawn/refresh runtime。
+- 保持安全边界：本轮不执行 dispatch，不创建 message/job/inbox，不发送 tmux 输入，只调整 chat response 的可执行控制状态。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试，记录 `dispatch_preview_card.blocker` 与 intent next control 的一致性。
+- 完整验证：已先确认红测失败，未 spawn agent 时 `dispatch_preview_card.blocker=agent is not spawned: planner` 但 intent next control 仍 enabled；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching -q` 2 项通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching tests/test_leader_cli.py::test_leader_chat_suggests_approve_for_pending_approval_without_approving tests/test_leader_cli.py::test_leader_chat_suggests_reject_for_pending_approval_without_rejecting tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 8 项通过；`conda run -n agentdeck pytest -q` 246 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-dispatch-blocker-smoke-ok blocked_enabled=False blocked=agent is not spawned: planner ready_enabled=True pane=%42 messages=0 jobs=0`。
+
 ### Current - Preview approved dispatch through Leader chat
 
 - 扩展 `agentdeck leader chat --message "派发当前审批"`：当存在 approved approval 时，approval-mode 响应现在会嵌入 `dispatch_preview_card`，作为 GUI-ready 的 explicit-runtime 执行前确认卡。

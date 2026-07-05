@@ -457,7 +457,7 @@ When approval-mode recommends dispatching an already approved item, it may also 
 }
 ```
 
-`dispatch_preview_card` is not dispatch execution. It is an execution-before-confirmation surface for humans and GUI clients: it shows the target agent, role, pane, task, dispatch command, and mailbox command before the human runs the explicit command. If runtime is missing, `blocker` should explain why the explicit command is not ready.
+`dispatch_preview_card` is not dispatch execution. It is an execution-before-confirmation surface for humans and GUI clients: it shows the target agent, role, pane, task, dispatch command, and mailbox command before the human runs the explicit command. If runtime is missing, `blocker` should explain why the explicit command is not ready, and the `intent_card.controls[]` `next` control must be disabled with the same blocker.
 
 Setup-mode responses are returned when the human asks to inspect `doctor`, provider setup, API key, or local environment readiness. They are read-only and do not call the configured Leader provider:
 
@@ -523,7 +523,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat direct trace responses must embed `trace_card`, reusing the `agentdeck trace` contract for the requested communication id.
 - Chat capture-mode responses must embed `capture_card`, using the leader-chat `capture_card_fields` for the requested visible agent pane.
 - Chat approval-mode responses and safe apply-action responses that create approvals must reuse the `agentdeck approval list` queue contract through `approval_card`.
-- Chat approval dispatch recommendations may embed `dispatch_preview_card`, using `dispatch_preview_card_fields` to show the explicit runtime command target before any dispatch runs.
+- Chat approval dispatch recommendations may embed `dispatch_preview_card`, using `dispatch_preview_card_fields` to show the explicit runtime command target before any dispatch runs; when `dispatch_preview_card.blocker` is set, the intent next control must be disabled with the same blocker.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.
 - Chat queue-mode responses must reuse the workbench queue and operator cards through `queue_card` and `operator_card`.
 - Chat role-mode responses must reuse the workbench role card through `role_card`.
