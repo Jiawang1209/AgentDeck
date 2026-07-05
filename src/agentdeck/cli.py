@@ -685,6 +685,8 @@ def _workbench_runtime_card(project_view: dict[str, object]) -> dict[str, object
                     "cwd": runtime.get("cwd"),
                     "spawn_command": f"agentdeck agent spawn --agent {agent_id}",
                     "stop_command": f"agentdeck agent stop --agent {agent_id}",
+                    "capture_command": f"agentdeck agent capture --agent {agent_id} --lines 200",
+                    "send_command_template": f"agentdeck agent send --agent {agent_id} --text <text>",
                     "inbox_command": f"agentdeck inbox --agent {agent_id}",
                 }
             )

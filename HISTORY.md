@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add workbench runtime pane commands
+
+- 扩展 `agentdeck workbench` 的 `runtime_card.agents[]`：新增 `capture_command` 和 `send_command_template`，让 GUI/TUI 可以从可见 tmux runtime 面板直接渲染“查看输出”和“显式发送输入”控制入口。
+- 扩展 workbench contract：`WORKBENCH_RUNTIME_AGENT_FIELDS` 和 `agentdeck contract workbench` 的 `runtime_agent_fields` 现在包含 `capture_command` 与 `send_command_template`；`workbench_example()` 同步输出稳定示例。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 `capture_command` 是只读观察命令，`send_command_template` 必须由人类显式填入文本并执行，不得自动发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 最初因 `runtime_agent_fields` 缺少 `capture_command`/`send_command_template` 且 runtime agent payload 缺字段失败；实现后目标测试通过；`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_runtime_agent_fields -q` 4 项通过；`conda run -n agentdeck pytest -q` 184 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `workbench-runtime-commands-ok`。
+
 ### Current - Add workbench contract discovery card
 
 - 扩展 `agentdeck workbench`：新增顶层 `contracts_card`，让 GUI/TUI 从单次 workbench 快照即可发现 `agentdeck contract list`、contract index schema、workbench/project-view/events/doctor contract 入口。

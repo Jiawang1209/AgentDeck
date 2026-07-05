@@ -431,6 +431,8 @@ WORKBENCH_RUNTIME_AGENT_FIELDS = (
     "cwd",
     "spawn_command",
     "stop_command",
+    "capture_command",
+    "send_command_template",
     "inbox_command",
 )
 
@@ -1746,6 +1748,8 @@ def workbench_example() -> dict[str, object]:
                     "cwd": "/workspace/agentdeck-example",
                     "spawn_command": "agentdeck agent spawn --agent planner",
                     "stop_command": "agentdeck agent stop --agent planner",
+                    "capture_command": "agentdeck agent capture --agent planner --lines 200",
+                    "send_command_template": "agentdeck agent send --agent planner --text <text>",
                     "inbox_command": "agentdeck inbox --agent planner",
                 },
                 {
@@ -1759,6 +1763,8 @@ def workbench_example() -> dict[str, object]:
                     "cwd": None,
                     "spawn_command": "agentdeck agent spawn --agent coder",
                     "stop_command": "agentdeck agent stop --agent coder",
+                    "capture_command": "agentdeck agent capture --agent coder --lines 200",
+                    "send_command_template": "agentdeck agent send --agent coder --text <text>",
                     "inbox_command": "agentdeck inbox --agent coder",
                 },
                 {
@@ -1772,6 +1778,8 @@ def workbench_example() -> dict[str, object]:
                     "cwd": None,
                     "spawn_command": "agentdeck agent spawn --agent reviewer",
                     "stop_command": "agentdeck agent stop --agent reviewer",
+                    "capture_command": "agentdeck agent capture --agent reviewer --lines 200",
+                    "send_command_template": "agentdeck agent send --agent reviewer --text <text>",
                     "inbox_command": "agentdeck inbox --agent reviewer",
                 },
             ],

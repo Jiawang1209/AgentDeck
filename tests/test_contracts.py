@@ -470,6 +470,12 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert set(example["provider_health"]) == set(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)
+    assert example["runtime_card"]["agents"][0]["capture_command"] == (
+        "agentdeck agent capture --agent planner --lines 200"
+    )
+    assert example["runtime_card"]["agents"][0]["send_command_template"] == (
+        "agentdeck agent send --agent planner --text <text>"
+    )
     assert set(example["role_card"]) == set(WORKBENCH_ROLE_CARD_FIELDS)
     assert set(example["role_card"]["agents"][0]) == set(WORKBENCH_ROLE_AGENT_FIELDS)
     assert set(example["ledger_card"]) == set(WORKBENCH_LEDGER_CARD_FIELDS)

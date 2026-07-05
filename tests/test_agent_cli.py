@@ -598,6 +598,8 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "cwd",
         "spawn_command",
         "stop_command",
+        "capture_command",
+        "send_command_template",
         "inbox_command",
     ]
     assert payload["role_card_fields"] == ["count", "agents", "assign_command_template"]
@@ -802,6 +804,8 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert planner_runtime["cwd"] == str(root)
     assert planner_runtime["spawn_command"] == "agentdeck agent spawn --agent planner"
     assert planner_runtime["stop_command"] == "agentdeck agent stop --agent planner"
+    assert planner_runtime["capture_command"] == "agentdeck agent capture --agent planner --lines 200"
+    assert planner_runtime["send_command_template"] == "agentdeck agent send --agent planner --text <text>"
     assert planner_runtime["inbox_command"] == "agentdeck inbox --agent planner"
     assert payload["ledger_card"]["messages"]["count"] == 1
     assert payload["ledger_card"]["messages"]["items"][0]["trace_command"] == "agentdeck trace --id msg_workbench"
