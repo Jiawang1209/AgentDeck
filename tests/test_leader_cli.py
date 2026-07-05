@@ -875,6 +875,23 @@ def test_leader_chat_continue_embeds_trace_card_for_reply_waiting(
     assert payload["trace_card"]["inbox_items"][0]["inbox_id"] == inbox_id
     assert payload["trace_card"]["inbox_items"][0]["status"] == "acked"
     assert payload["trace_card"]["replies"] == []
+    assert payload["intent_card"]["embedded_card"] == "trace_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect trace_card",
+        "command": f"agentdeck trace --id {message_id}",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Capture reply",
+        "command": expected_command,
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
     assert payload["inbox_card"] is None
     assert payload["approval_card"] is None
     assert payload["runtime_card"] is None

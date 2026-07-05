@@ -77,7 +77,15 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     mode = str(payload.get("mode"))
     explanation = payload.get("leader_explanation") if isinstance(payload.get("leader_explanation"), dict) else {}
     embedded_card = None
-    for card_name in (
+    recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
+    recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+    prefer_trace_card = (
+        mode == "continue"
+        and isinstance(recommended_action, dict)
+        and recommended_action.get("source") == "reply"
+        and payload.get("trace_card") is not None
+    )
+    card_names = (
         "workbench_card",
         "continue_card",
         "capture_card",
@@ -96,7 +104,11 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "control_mode_card",
         "provider_health",
         "capability_card",
-    ):
+    )
+    if prefer_trace_card:
+        card_names = tuple(card for card in card_names if card != "trace_card")
+        card_names = ("trace_card",) + card_names
+    for card_name in card_names:
         if payload.get(card_name) is not None:
             embedded_card = card_name
             break
