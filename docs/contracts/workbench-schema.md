@@ -102,7 +102,11 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
 
 ```json
 {
+  "agent_id": "leader",
   "provider": "deepseek",
+  "model": "deepseek-chat",
+  "approval_mode": "confirm",
+  "api_backed": true,
   "supported": true,
   "ready": false,
   "missing_env": ["DEEPSEEK_API_KEY"],
@@ -111,7 +115,7 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
 }
 ```
 
-The card never exposes API key values and never calls the provider. It only reports whether AgentDeck recognizes the provider and whether the required local environment variable is present. GUI clients can render `doctor_command` as the next diagnostic action.
+The card never exposes API key values and never calls the provider. It includes the configured Leader identity and model so GUI clients can render provider setup next to the Leader card without joining another state source. It only reports whether AgentDeck recognizes the provider and whether the required local environment variable is present. GUI clients can render `doctor_command` as the next diagnostic action.
 
 ## Runtime Card
 

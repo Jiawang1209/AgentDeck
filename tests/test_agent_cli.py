@@ -397,7 +397,11 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "status_command",
     ]
     assert payload["provider_health_fields"] == [
+        "agent_id",
         "provider",
+        "model",
+        "approval_mode",
+        "api_backed",
         "supported",
         "ready",
         "missing_env",
@@ -560,7 +564,11 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "status_command": "agentdeck status",
     }
     assert payload["provider_health"] == {
+        "agent_id": "leader",
         "provider": "deepseek",
+        "model": "deepseek-chat",
+        "approval_mode": "confirm",
+        "api_backed": True,
         "supported": True,
         "ready": False,
         "missing_env": ["DEEPSEEK_API_KEY"],

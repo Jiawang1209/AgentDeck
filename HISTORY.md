@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add natural-language setup diagnostics
+
+- 扩展 `agentdeck leader chat`：当人类输入 `doctor`、`检查 Leader provider 配置`、`诊断环境变量` 等 setup/diagnostics 意图时，进入只读 `mode=setup`。
+- `mode=setup` 返回 `provider_health`、`recovery`、`next_command=agentdeck doctor` 和 `leader_explanation`；它只记录 chat turn，不调用配置的 Leader provider，不创建 plan、leader action、approval、message、job 或 inbox，也不发送 tmux 输入。
+- 增强 workbench/provider health 字段：在 provider readiness 之外加入 agent_id、model、approval_mode 和 api_backed，使 GUI 可以把 provider setup 直接渲染为当前 Leader 的诊断卡片。
+- 收窄 setup 意图识别，避免 `用配置 Leader 对话` 这类普通自然语言请求误判为 setup；普通请求仍会按配置 provider/model 进入 plan。
+- 更新 `README.md`、`docs/contracts/leader-chat-schema.md`、`docs/contracts/workbench-schema.md`、`CLAUDE.md` 与 `AGENT.md`，明确 setup-mode 是自然语言诊断入口，不能泄露密钥值或绕过人类控制。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning -q` 最初因 chat 尝试调用缺少 `DEEPSEEK_API_KEY` 的 provider 而失败；实现后目标测试通过；相关 `tests/test_leader_cli.py` 55 项通过，workbench/contract 目标测试 4 项通过；`conda run -n agentdeck pytest -q` 165 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `leader-chat-setup-diagnostics-ok` 与 `leader-chat-setup-history-ok`。
+
 ### Current - Add configured Leader readiness to doctor
 
 - 扩展 `agentdeck doctor`：新增 `configured_leader`，从 `.agentdeck/config.toml` 的 `[leader]` 派生当前 Leader provider/model/approval_mode 的 readiness 摘要。

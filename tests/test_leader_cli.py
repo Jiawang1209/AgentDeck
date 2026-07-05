@@ -379,6 +379,67 @@ def test_leader_chat_refuses_invalid_project_view_before_planning(tmp_path, monk
     assert state.get("inbox", {}) == {}
 
 
+def test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project_with_default_leader(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    exit_code = cli.main(["leader", "chat", "--message", "检查 Leader provider 配置"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "setup"
+    assert payload["message"] == "检查 Leader provider 配置"
+    assert payload["plan_id"] is None
+    assert payload["review"] is None
+    assert payload["next_command"] == "agentdeck doctor"
+    assert payload["recovery"]["status"] == "provider_setup_required"
+    assert payload["leader_action"] is None
+    assert payload["continue_card"] is None
+    assert payload["inbox_card"] is None
+    assert payload["approval_card"] is None
+    assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
+    assert payload["provider_health"] == {
+        "agent_id": "leader",
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "approval_mode": "confirm",
+        "api_backed": True,
+        "supported": True,
+        "ready": False,
+        "missing_env": ["DEEPSEEK_API_KEY"],
+        "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+        "doctor_command": "agentdeck doctor",
+    }
+    assert payload["leader_explanation"] == {
+        "mode": "setup",
+        "summary": "Leader recommends inspecting provider setup before planning or dispatching work.",
+        "reason": "human asked to inspect Leader provider setup",
+        "next_command": "agentdeck doctor",
+        "recommended_action_id": "deepseek",
+        "action_kind": "provider_health",
+        "action_status": "provider_setup_required",
+        "safety": "inspect",
+        "requires_explicit_user": False,
+    }
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+
+    state = StateStore(root).load()
+    assert state["plans"] == []
+    assert state["leader_actions"] == []
+    assert state["chat_turns"][0]["mode"] == "setup"
+    assert state["chat_turns"][0]["next_command"] == "agentdeck doctor"
+    assert state["chat_turns"][0]["action_id"] is None
+    assert state["chat_turns"][0]["action_kind"] == "provider_health"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state.get("inbox", {}) == {}
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "leader_chat_turn"' in events
+
+
 def test_leader_chat_continue_returns_recovery_card_without_creating_action(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "已有计划"])

@@ -227,7 +227,11 @@ WORKBENCH_LEADER_CARD_FIELDS = (
 )
 
 WORKBENCH_PROVIDER_HEALTH_FIELDS = (
+    "agent_id",
     "provider",
+    "model",
+    "approval_mode",
+    "api_backed",
     "supported",
     "ready",
     "missing_env",
@@ -1382,7 +1386,11 @@ def workbench_example() -> dict[str, object]:
             "status_command": "agentdeck status",
         },
         "provider_health": {
+            "agent_id": "leader",
             "provider": "fake",
+            "model": "fake-plan",
+            "approval_mode": "confirm",
+            "api_backed": False,
             "supported": True,
             "ready": True,
             "missing_env": [],

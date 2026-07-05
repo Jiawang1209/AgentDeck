@@ -291,13 +291,20 @@ def _workbench_leader_card(project_view: dict[str, object]) -> dict[str, object]
 def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, object]:
     leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
     provider = str(leader.get("provider", ""))
+    base = {
+        "agent_id": leader.get("agent_id"),
+        "provider": provider,
+        "model": leader.get("model"),
+        "approval_mode": leader.get("approval_mode"),
+        "api_backed": provider not in ("", "fake"),
+    }
     provider_env = {
         "deepseek": "DEEPSEEK_API_KEY",
         "openai-compatible": "AGENTDECK_LEADER_API_KEY",
     }
     if provider == "fake":
         return {
-            "provider": provider,
+            **base,
             "supported": True,
             "ready": True,
             "missing_env": [],
@@ -307,7 +314,7 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
     required_env = provider_env.get(provider)
     if required_env is None:
         return {
-            "provider": provider,
+            **base,
             "supported": False,
             "ready": False,
             "missing_env": [],
@@ -318,7 +325,7 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
     ready = not missing_env
     detail = f"{required_env} is set" if ready else f"{required_env} is not set; provider calls are disabled"
     return {
-        "provider": provider,
+        **base,
         "supported": True,
         "ready": ready,
         "missing_env": missing_env,
@@ -1317,6 +1324,25 @@ def _is_continue_chat_message(message: str) -> bool:
     return normalized in {"继续", "继续吧", "/continue", "continue"}
 
 
+def _chat_wants_setup(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(
+        token in normalized
+        for token in [
+            "doctor",
+            "诊断",
+            "检查",
+            "setup",
+            "provider",
+            "api key",
+            "apikey",
+            "环境变量",
+            "不能调度",
+            "为什么不能",
+        ]
+    )
+
+
 def _chat_inbox_agent_id(message: str, config: ProjectConfig) -> str | None:
     normalized = message.strip().lower()
     mentions_inbox = any(token in normalized for token in ["inbox", "收件箱", "消息", "mailbox"])
@@ -1447,6 +1473,20 @@ def _leader_chat_explanation(
             "requires_explicit_user": recovery_action.get("requires_explicit_user")
             if isinstance(recovery_action, dict)
             else None,
+        }
+    if mode == "setup":
+        leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
+        provider = leader.get("provider")
+        return {
+            "mode": mode,
+            "summary": "Leader recommends inspecting provider setup before planning or dispatching work.",
+            "reason": "human asked to inspect Leader provider setup",
+            "next_command": next_command,
+            "recommended_action_id": provider,
+            "action_kind": "provider_health",
+            "action_status": recovery.get("status") if isinstance(recovery, dict) else None,
+            "safety": "inspect",
+            "requires_explicit_user": False,
         }
     if mode == "inbox":
         head = _inbox_head_item(inbox_card) if isinstance(inbox_card, dict) else None
@@ -1634,6 +1674,56 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": continue_card,
             "inbox_card": inbox_card,
             "approval_card": approval_card,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_setup(args.message):
+        next_command = "agentdeck doctor"
+        turn = store.record_chat_turn(
+            mode="setup",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="provider_health",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "setup",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        recovery = refreshed_project_view.get("recovery", {})
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "setup",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "setup",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": recovery,
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "provider_health": _workbench_provider_health(refreshed_project_view),
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

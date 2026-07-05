@@ -115,6 +115,29 @@ Approval-mode responses include `approval_card`, which reuses the same queue sha
 
 When `approval_card` is present, `validate_leader_chat_contract()` reuses `validate_approval_contract()` and prefixes nested errors with `approval_card:`. Approval-mode is read-only: it may recommend `agentdeck approval list`, the first pending approval's `approve_command`, or the first approved approval's `dispatch_command`, but it must not approve, reject, dispatch work, or send tmux input.
 
+Setup-mode responses are returned when the human asks to inspect `doctor`, provider setup, API key, or local environment readiness. They are read-only and do not call the configured Leader provider:
+
+```json
+{
+  "mode": "setup",
+  "next_command": "agentdeck doctor",
+  "provider_health": {
+    "agent_id": "leader",
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "approval_mode": "confirm",
+    "api_backed": true,
+    "supported": true,
+    "ready": false,
+    "missing_env": ["DEEPSEEK_API_KEY"],
+    "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+    "doctor_command": "agentdeck doctor"
+  }
+}
+```
+
+`provider_health` is a GUI-ready convenience field for setup-mode responses. It mirrors the workbench provider health card and never exposes API key values. Setup-mode records a chat turn for history, but it must not create a plan, leader action, approval, message, job, inbox item, or tmux input.
+
 ## Explanation
 
 `leader_explanation` is a GUI-ready explanation derived from the same ProjectView, review, action, and result payloads:
@@ -144,5 +167,6 @@ When `approval_card` is present, `validate_leader_chat_contract()` reuses `valid
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Chat continue-mode responses may embed `inbox_card` or `approval_card` when `recovery.recommended_action.source` points at those queues.
+- Chat setup-mode responses may include `provider_health` and must recommend `agentdeck doctor` without calling the provider.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, and `leader_explanation` as explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as explanation.
