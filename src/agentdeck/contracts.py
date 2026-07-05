@@ -76,6 +76,33 @@ APPROVAL_ITEM_FIELDS = (
     "dispatch_blocker",
 )
 
+INBOX_QUEUE_FIELDS = (
+    "agent_id",
+    "count",
+    "head_inbox_id",
+    "items",
+)
+
+INBOX_ITEM_FIELDS = (
+    "inbox_id",
+    "event_type",
+    "message_id",
+    "attempt_id",
+    "job_id",
+    "reply_id",
+    "from_actor",
+    "from_agent",
+    "to_agent",
+    "task",
+    "status",
+    "created_at",
+    "trace_command",
+    "ack_command",
+    "is_head",
+    "can_ack",
+    "ack_blocker",
+)
+
 PROJECT_VIEW_LEADER_ACTIONS_FIELDS = (
     "count",
     "by_kind",
@@ -374,6 +401,31 @@ def approval_contract_response(contract_path: Path, include_example: bool = Fals
     return payload
 
 
+def inbox_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "inbox_command": "agentdeck inbox --agent <id>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "queue_fields": list(INBOX_QUEUE_FIELDS),
+        "inbox_item_fields": list(INBOX_ITEM_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+        "trace_contract": "agentdeck contract trace",
+    }
+
+
+def inbox_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = inbox_contract_payload(contract_path)
+    if include_example:
+        example = inbox_example()
+        payload["example"] = True
+        payload["example_queue_fields"] = list(example)
+        payload["example_inbox_item_fields"] = list(example["items"][0])
+        payload["example_inbox"] = example
+    return payload
+
+
 def leader_action_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -573,6 +625,30 @@ def validate_approval_contract(payload: dict[str, object]) -> dict[str, object]:
                 errors.append("approval items must be objects")
     elif "approvals" in payload:
         errors.append("approvals must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_inbox_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in INBOX_QUEUE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing inbox queue field: {field}")
+    items = payload.get("items")
+    if isinstance(items, list):
+        if items:
+            first_item = items[0]
+            if isinstance(first_item, dict):
+                for field in INBOX_ITEM_FIELDS:
+                    if field not in first_item:
+                        errors.append(f"missing inbox item field: {field}")
+                if not isinstance(first_item.get("is_head"), bool):
+                    errors.append("is_head must be a boolean")
+                if not isinstance(first_item.get("can_ack"), bool):
+                    errors.append("can_ack must be a boolean")
+            else:
+                errors.append("inbox items must be objects")
+    elif "items" in payload:
+        errors.append("items must be a list")
     return {"ok": not errors, "errors": errors}
 
 
@@ -974,6 +1050,64 @@ def _approval_example_item(approval_id: str, status: str, reason: object) -> dic
         "dispatch_blocker": None if status == "approved" else "approval is not approved",
     }
     return {field: item.get(field) for field in APPROVAL_ITEM_FIELDS}
+
+
+def inbox_example() -> dict[str, object]:
+    items = [
+        _inbox_example_item(
+            inbox_id="inb_task",
+            event_type="task_request",
+            is_head=True,
+            reply_id=None,
+            from_actor="leader",
+            from_agent=None,
+        ),
+        _inbox_example_item(
+            inbox_id="inb_reply",
+            event_type="task_reply",
+            is_head=False,
+            reply_id="rep_example",
+            from_actor=None,
+            from_agent="coder",
+        ),
+    ]
+    return {
+        "agent_id": "planner",
+        "count": len(items),
+        "head_inbox_id": "inb_task",
+        "items": items,
+    }
+
+
+def _inbox_example_item(
+    *,
+    inbox_id: str,
+    event_type: str,
+    is_head: bool,
+    reply_id: object,
+    from_actor: object,
+    from_agent: object,
+) -> dict[str, object]:
+    item = {
+        "inbox_id": inbox_id,
+        "event_type": event_type,
+        "message_id": "msg_example",
+        "attempt_id": "att_example",
+        "job_id": "job_example",
+        "reply_id": reply_id,
+        "from_actor": from_actor,
+        "from_agent": from_agent,
+        "to_agent": "planner",
+        "task": "Review the implementation plan",
+        "status": "pending",
+        "created_at": "2026-07-04T00:00:00+00:00",
+        "trace_command": f"agentdeck trace --id {inbox_id}",
+        "ack_command": f"agentdeck ack --agent planner --inbox-id {inbox_id}",
+        "is_head": is_head,
+        "can_ack": is_head,
+        "ack_blocker": None if is_head else "inbox item is not head",
+    }
+    return {field: item.get(field) for field in INBOX_ITEM_FIELDS}
 
 
 def leader_action_example() -> dict[str, object]:

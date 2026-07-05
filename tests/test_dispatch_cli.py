@@ -142,6 +142,35 @@ def test_inbox_lists_task_requests_for_agent(tmp_path, monkeypatch, capsys) -> N
     assert payload["items"][0]["event_type"] == "task_request"
     assert payload["items"][0]["task"] == "设计消息账本"
     assert payload["items"][0]["status"] == "pending"
+    assert payload["head_inbox_id"] == payload["items"][0]["inbox_id"]
+    assert payload["items"][0]["is_head"] is True
+    assert payload["items"][0]["can_ack"] is True
+    assert payload["items"][0]["ack_blocker"] is None
+    assert payload["items"][0]["ack_command"] == f"agentdeck ack --agent planner --inbox-id {payload['head_inbox_id']}"
+    assert payload["items"][0]["trace_command"] == f"agentdeck trace --id {payload['head_inbox_id']}"
+
+
+def test_inbox_refuses_contract_violation(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_planner(root)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "planner", "--task", "坏 inbox 不能输出"])
+    capsys.readouterr()
+
+    def broken_validation(_payload):
+        return {"ok": False, "errors": ["missing inbox item field: ack_blocker"]}
+
+    monkeypatch.setattr(cli, "validate_inbox_contract", broken_validation)
+
+    exit_code = cli.main(["inbox", "--agent", "planner"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "Inbox contract validation failed" in captured.err
+    assert "missing inbox item field: ack_blocker" in captured.err
+    assert StateStore(root).load()["inbox"]["planner"][0]["status"] == "pending"
 
 
 def test_reply_records_result_and_delivers_task_reply_to_sender_inbox(tmp_path, monkeypatch, capsys) -> None:

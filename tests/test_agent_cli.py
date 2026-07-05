@@ -10,6 +10,8 @@ from agentdeck.contracts import (
     approval_contract_response,
     continue_contract_payload,
     continue_contract_response,
+    inbox_contract_payload,
+    inbox_contract_response,
     leader_actions_contract_payload,
     leader_actions_contract_response,
     leader_action_contract_payload,
@@ -318,6 +320,37 @@ def test_contract_approvals_example_exports_gui_ready_queue(capsys) -> None:
     assert set(payload["example_approval_item_fields"]) == set(example["approvals"][0])
     assert example["approvals"][0]["approve_command"] == "agentdeck approval approve --approval-id apv_pending"
     assert example["approvals"][1]["dispatch_command"] == "agentdeck approval dispatch --approval-id apv_approved"
+
+
+def test_contract_inbox_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "inbox"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = inbox_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["inbox_command"] == "agentdeck inbox --agent <id>"
+    assert payload["contract_path"].endswith("docs/contracts/inbox-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["queue_fields"] == expected["queue_fields"]
+    assert payload["inbox_item_fields"] == expected["inbox_item_fields"]
+    assert payload["trace_contract"] == "agentdeck contract trace"
+
+
+def test_contract_inbox_example_exports_gui_ready_queue(capsys) -> None:
+    exit_code = cli.main(["contract", "inbox", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = inbox_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_inbox"]
+    assert payload["example_queue_fields"] == payload["queue_fields"]
+    assert set(payload["example_queue_fields"]) == set(example)
+    assert payload["example_inbox_item_fields"] == payload["inbox_item_fields"]
+    assert set(payload["example_inbox_item_fields"]) == set(example["items"][0])
+    assert example["items"][0]["ack_command"] == "agentdeck ack --agent planner --inbox-id inb_task"
+    assert example["items"][0]["trace_command"] == "agentdeck trace --id inb_task"
 
 
 def test_contract_leader_action_discovers_schema_for_gui_clients(capsys) -> None:

@@ -10,6 +10,7 @@ from .config import config_path, load_config, project_root, update_agent_role, w
 from .contracts import (
     approval_contract_response,
     continue_contract_response,
+    inbox_contract_response,
     leader_actions_contract_response,
     leader_action_contract_response,
     leader_chat_contract_response,
@@ -17,6 +18,7 @@ from .contracts import (
     trace_contract_response,
     validate_approval_contract,
     validate_continue_contract,
+    validate_inbox_contract,
     validate_leader_actions_contract,
     validate_leader_action_contract,
     validate_leader_chat_contract,
@@ -213,6 +215,13 @@ def contract_continue_command(args: argparse.Namespace) -> int:
 def contract_approvals_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "approvals-schema.md"
     payload = approval_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_inbox_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "inbox-schema.md"
+    payload = inbox_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -472,9 +481,44 @@ def inbox_command(args: argparse.Namespace) -> int:
     if _agent_by_id(config, args.agent) is None:
         print(f"unknown agent: {args.agent}", file=sys.stderr)
         return 1
-    items = store.inbox_items(args.agent)
-    _print_json({"agent_id": args.agent, "count": len(items), "items": items})
+    raw_items = store.inbox_items(args.agent)
+    head = next((item for item in raw_items if item.get("status") == "pending"), None)
+    head_inbox_id = head.get("inbox_id") if isinstance(head, dict) else None
+    items = [_inbox_queue_item(args.agent, item, head_inbox_id) for item in raw_items]
+    payload = {"agent_id": args.agent, "count": len(items), "head_inbox_id": head_inbox_id, "items": items}
+    validation = validate_inbox_contract(payload)
+    if not validation["ok"]:
+        print("Inbox contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
+
+
+def _inbox_queue_item(agent_id: str, item: dict[str, object], head_inbox_id: object) -> dict[str, object]:
+    inbox_id = item.get("inbox_id")
+    is_head = inbox_id == head_inbox_id
+    can_ack = item.get("status") == "pending" and is_head
+    return {
+        "inbox_id": inbox_id,
+        "event_type": item.get("event_type"),
+        "message_id": item.get("message_id"),
+        "attempt_id": item.get("attempt_id"),
+        "job_id": item.get("job_id"),
+        "reply_id": item.get("reply_id"),
+        "from_actor": item.get("from_actor"),
+        "from_agent": item.get("from_agent"),
+        "to_agent": item.get("to_agent"),
+        "task": item.get("task"),
+        "status": item.get("status"),
+        "created_at": item.get("created_at"),
+        "trace_command": _trace_command(inbox_id),
+        "ack_command": f"agentdeck ack --agent {agent_id} --inbox-id {inbox_id}",
+        "is_head": is_head,
+        "can_ack": can_ack,
+        "ack_blocker": None if can_ack else "inbox item is not head",
+    }
 
 
 def reply_command(args: argparse.Namespace) -> int:
@@ -1477,6 +1521,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_approvals.add_argument("--example", action="store_true", help="Include a GUI-ready approval queue example")
     contract_approvals.set_defaults(func=contract_approvals_command)
+    contract_inbox = contract_subparsers.add_parser(
+        "inbox",
+        help="Show agent inbox contract discovery metadata",
+    )
+    contract_inbox.add_argument("--example", action="store_true", help="Include a GUI-ready inbox example")
+    contract_inbox.set_defaults(func=contract_inbox_command)
     contract_leader_action = contract_subparsers.add_parser(
         "leader-action",
         help="Show Leader action detail contract discovery metadata",

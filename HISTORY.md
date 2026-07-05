@@ -4,6 +4,17 @@
 
 ## 2026-07-05
 
+### Current - Discover and validate inbox queue contract
+
+- 新增 `INBOX_QUEUE_FIELDS`、`INBOX_ITEM_FIELDS`、`inbox_contract_payload()`、`inbox_contract_response()`、`inbox_example()` 和 `validate_inbox_contract()`，为单 agent mailbox 建立可复用契约。
+- 新增 `agentdeck contract inbox` 和 `agentdeck contract inbox --example`，供 GUI、自然语言壳或外部集成发现 inbox queue 字段。
+- `agentdeck inbox --agent <id>` 现在会把 raw inbox item 标准化为固定字段，并为每项补充 `trace_command`、`ack_command`、`is_head`、`can_ack` 和 `ack_blocker`。
+- `agentdeck inbox --agent <id>` 输出前会通过 `validate_inbox_contract()` 自校验；校验失败时返回非 0 且不输出半坏 inbox queue。
+- 新增 `docs/contracts/inbox-schema.md`，记录 inbox queue shape、head-only ack 语义和只读边界。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 inbox contract discovery 与输出自校验规则。
+- 保持安全边界：本轮只增加只读 contract discovery、inbox 字段标准化与输出校验，不 ack inbox、不 dispatch、不 capture reply、不发送 tmux 输入、不改变 state mutation 语义。
+- 完整验证：`conda run -n agentdeck pytest tests/test_contracts.py::test_inbox_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_inbox_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_inbox_contract_accepts_example tests/test_contracts.py::test_validate_inbox_contract_requires_head_ack_fields -q` 4 项通过；inbox contract/CLI 目标测试 4 项通过；`conda run -n agentdeck pytest -q` 135 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `agentdeck contract inbox --example` 返回 `contract-ok`，`agentdeck inbox --agent planner` 返回 `inbox-ok` 且 pending item 包含正确的 `trace_command` 与 `ack_command`。
+
 ### Current - Discover and validate approval queue contract
 
 - 新增 `APPROVAL_QUEUE_FIELDS`、`APPROVAL_ITEM_FIELDS`、`approval_contract_payload()`、`approval_contract_response()`、`approval_example()` 和 `validate_approval_contract()`，为人类审批队列建立可复用契约。

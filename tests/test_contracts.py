@@ -6,6 +6,8 @@ from agentdeck.contracts import (
     APPROVAL_ITEM_FIELDS,
     APPROVAL_QUEUE_FIELDS,
     CONTINUE_CARD_FIELDS,
+    INBOX_ITEM_FIELDS,
+    INBOX_QUEUE_FIELDS,
     LEADER_ACTION_DETAIL_FIELDS,
     LEADER_ACTIONS_LIST_FIELDS,
     LEADER_CHAT_EXPLANATION_FIELDS,
@@ -28,6 +30,9 @@ from agentdeck.contracts import (
     approval_contract_payload,
     approval_contract_response,
     approval_example,
+    inbox_contract_payload,
+    inbox_contract_response,
+    inbox_example,
     leader_chat_contract_payload,
     leader_chat_contract_response,
     leader_chat_example,
@@ -48,6 +53,7 @@ from agentdeck.contracts import (
     trace_example,
     validate_approval_contract,
     validate_continue_contract,
+    validate_inbox_contract,
     validate_leader_action_contract,
     validate_leader_actions_contract,
     validate_leader_chat_contract,
@@ -317,6 +323,57 @@ def test_validate_approval_contract_requires_gui_action_fields() -> None:
     assert result == {
         "ok": False,
         "errors": ["missing approval item field: dispatch_blocker"],
+    }
+
+
+def test_inbox_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "inbox-schema.md"
+    contract_path.write_text("# Inbox Contract\n", encoding="utf-8")
+
+    payload = inbox_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["inbox_command"] == "agentdeck inbox --agent <id>"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["queue_fields"] == list(INBOX_QUEUE_FIELDS)
+    assert payload["inbox_item_fields"] == list(INBOX_ITEM_FIELDS)
+    assert payload["trace_contract"] == "agentdeck contract trace"
+
+
+def test_inbox_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "inbox-schema.md"
+    contract_path.write_text("# Inbox Contract\n", encoding="utf-8")
+
+    payload = inbox_contract_response(contract_path, include_example=True)
+    example = inbox_example()
+
+    assert payload["example"] is True
+    assert payload["example_inbox"] == example
+    assert payload["example_queue_fields"] == payload["queue_fields"]
+    assert set(payload["example_queue_fields"]) == set(example)
+    assert payload["example_inbox_item_fields"] == payload["inbox_item_fields"]
+    assert set(payload["example_inbox_item_fields"]) == set(example["items"][0])
+    assert example["head_inbox_id"] == "inb_task"
+    assert example["items"][0]["can_ack"] is True
+    assert example["items"][1]["can_ack"] is False
+
+
+def test_validate_inbox_contract_accepts_example() -> None:
+    result = validate_inbox_contract(inbox_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_inbox_contract_requires_head_ack_fields() -> None:
+    payload = inbox_example()
+    del payload["items"][0]["ack_blocker"]
+
+    result = validate_inbox_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing inbox item field: ack_blocker"],
     }
 
 

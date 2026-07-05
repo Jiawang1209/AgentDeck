@@ -99,6 +99,7 @@ Worker 不应该：
 - Leader actions queue contract 见 `docs/contracts/leader-actions-schema.md`；`agentdeck contract leader-actions --example` 会返回稳定队列示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Leader action detail contract 见 `docs/contracts/leader-action-schema.md`；`agentdeck contract leader-action --example` 会返回稳定 action detail 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Approval queue contract 见 `docs/contracts/approvals-schema.md`；`agentdeck contract approvals --example` 会返回稳定 approval queue 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
+- Inbox queue contract 见 `docs/contracts/inbox-schema.md`；`agentdeck contract inbox --example` 会返回稳定 inbox 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Trace contract 见 `docs/contracts/trace-schema.md`；`agentdeck contract trace --example` 会返回稳定通信 lineage 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - `validate_project_view_contract(payload)` 可校验任意 ProjectView-like payload 是否满足 v1 基础契约。
 - `agentdeck status` 输出 JSON 前必须先用 `validate_project_view_contract()` 自校验；失败时只能返回错误，不输出半坏 ProjectView。
@@ -108,12 +109,14 @@ Worker 不应该：
 - `agentdeck contract leader-actions` 返回 Leader action queue 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定队列示例，供 GUI 原型使用。
 - `agentdeck contract leader-action` 返回单个 Leader action 详情契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 action detail 示例，供 GUI 原型使用。
 - `agentdeck contract approvals` 返回人类审批队列契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 approval queue 示例，供 GUI 原型使用。
+- `agentdeck contract inbox` 返回单 agent mailbox 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 inbox 示例，供 GUI 原型使用。
 - `agentdeck contract trace` 返回通信 lineage 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 trace 示例，供 GUI 原型使用。
 - `agentdeck trace --id <id>` 输出前必须通过 `validate_trace_contract()` 自校验；失败时只能返回错误，不输出半坏 trace。
 - `agentdeck leader chat` 输出 JSON 前必须通过 `validate_leader_chat_contract()` 自校验；校验失败时只能返回错误，不输出半坏 chat response，并必须写入 `leader_errors[]` 和 `leader_chat_contract_failed` 事件。
 - `agentdeck leader actions` 输出 JSON 前必须通过 `validate_leader_actions_contract()` 自校验；校验失败时只能返回错误，不输出半坏 action queue。
 - `agentdeck leader action --action-id <id>` 输出 JSON 前必须通过 `validate_leader_action_contract()` 自校验；校验失败时只能返回错误，不输出半坏 action detail。
 - `agentdeck approval list` 输出 JSON 前必须通过 `validate_approval_contract()` 自校验；校验失败时只能返回错误，不输出半坏 approval queue。
+- `agentdeck inbox --agent <id>` 输出 JSON 前必须通过 `validate_inbox_contract()` 自校验；校验失败时只能返回错误，不输出半坏 inbox queue。
 - `status.recovery` 是当前恢复入口，包含 status/reason/next_command/recommended_action/pending/leader_action/latest_event/recent_events，用来判断下一步该继续什么；`recommended_action` 可直接驱动 GUI 的下一步按钮或检查入口，并通过 target_id 关联 action、approval 或 inbox item。
 - 当没有 pending action、approval 或 inbox item 但存在 `leader_errors[]` 时，`status.recovery` 会返回 `status=leader_error`，并推荐 inspect 型 `agentdeck status`。
 - `status.recovery.pending` 包含 `leader_errors` 计数，供 GUI 统一展示 Leader 错误数量。
