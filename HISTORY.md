@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Harden Leader capability control discovery
+
+- 扩展 `agentdeck contract leader-chat`：新增 `capability_control_fields` 和 `example_capability_control_fields`，让 GUI 命令面板能发现 capability control 的稳定字段，而不是复用或猜测 intent control shape。
+- 加强 `validate_leader_chat_contract()`：capability control 的 `command` 和 `safety` 必须与所属 capability item 保持一致，避免 GUI 渲染出与能力项语义不一致的按钮。
+- 新增契约红测覆盖 discovery 字段缺失、control safety 漂移和 command 漂移；更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`。
+- 完整验证：已先确认红测失败，contract discovery 最初缺少 `capability_control_fields`，validator 最初未拒绝 capability control safety/command 漂移；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_requires_capability_control_safety_match tests/test_contracts.py::test_validate_leader_chat_contract_requires_capability_control_command_match -q` 3 项通过；leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 137 项通过；`conda run -n agentdeck pytest -q` 209 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-chat-capability-control-discovery-smoke-ok`。
+
 ### Current - Add Leader capability controls
 
 - 扩展 `capability_card.capabilities[]`：每个 capability item 现在都带 GUI-ready `controls[]`，复用 `kind`、`label`、`command`、`safety`、`enabled` 和 `blocker` 字段，方便未来 GUI 命令面板直接渲染按钮或模板输入入口。

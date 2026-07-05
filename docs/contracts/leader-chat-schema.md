@@ -26,6 +26,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "workbench_card_fields": [],
   "capability_card_fields": [],
   "capability_item_fields": [],
+  "capability_control_fields": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view"
 }
@@ -139,7 +140,7 @@ Help-mode responses include `capability_card`, a read-only capability map for na
 
 The real card also includes Leader scheduling entries for `plan`, `review`, and `apply_action`. `plan` must use `safety=plan_only`; `review` and `apply_action` must use `safety=safe_apply`; read-only views such as `workbench`, `continue`, `runtime`, `role`, `ledger`, `queue`, `approval`, `inbox`, and `setup` use `safety=inspect` unless the downstream mode explicitly recommends an explicit runtime command.
 
-Every capability item includes `controls[]` using the same `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` shape as intent controls. Direct read-only commands such as `agentdeck workbench` are enabled. Template commands with placeholders such as `<goal>`, `<action_id>`, or `<agent_id>` are disabled and must include a blocker such as `requires goal text`, `requires action_id`, or `requires agent_id`.
+Every capability item includes `controls[]` using the same `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` shape as intent controls; `agentdeck contract leader-chat` exposes the same shape as `capability_control_fields`. Direct read-only commands such as `agentdeck workbench` are enabled. Template commands with placeholders such as `<goal>`, `<action_id>`, or `<agent_id>` are disabled and must include a blocker such as `requires goal text`, `requires action_id`, or `requires agent_id`. Capability controls must keep `command` and `safety` aligned with their parent capability item.
 
 Help-mode is returned when the human asks `帮助`, `help`, `/help`, `你能做什么`, `有哪些能力`, `命令面板`, `commands`, or `capabilities`. It records a chat turn, recommends `agentdeck workbench`, embeds `capability_card`, and must not create a plan, leader action, approval, message, job, inbox item, inspect tmux panes, call the provider, or send tmux input. The capability entries and their controls describe available commands; they are not permission to auto-run those commands.
 
@@ -371,7 +372,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Chat responses must include `intent_card`, and `intent_card.next_command` must describe the same next action as the top-level response.
 - Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; `validate_leader_chat_contract()` rejects disabled controls without a blocker and rejects `kind=inspect` controls unless `safety=inspect`.
-- Chat help-mode responses must include `capability_card`; `validate_leader_chat_contract()` rejects capability cards whose `capability_count` does not match `capabilities[]`, rejects capability items or controls with missing fields, rejects disabled capability controls without blockers, and rejects `plan`, `review`, or `apply_action` entries whose safety does not match their scheduling semantics.
+- Chat help-mode responses must include `capability_card`; `validate_leader_chat_contract()` rejects capability cards whose `capability_count` does not match `capabilities[]`, rejects capability items or controls with missing fields, rejects capability controls whose `command` or `safety` drift from the parent capability item, rejects disabled capability controls without blockers, and rejects `plan`, `review`, or `apply_action` entries whose safety does not match their scheduling semantics.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.

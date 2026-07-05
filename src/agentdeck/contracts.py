@@ -771,6 +771,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "workbench_card_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "capability_card_fields": list(LEADER_CHAT_CAPABILITY_CARD_FIELDS),
         "capability_item_fields": list(LEADER_CHAT_CAPABILITY_ITEM_FIELDS),
+        "capability_control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -795,6 +796,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_workbench_card_fields"] = list(example["workbench_card"])
         payload["example_capability_card_fields"] = list(example["capability_card"])
         payload["example_capability_item_fields"] = list(example["capability_card"]["capabilities"][0])
+        payload["example_capability_control_fields"] = list(example["capability_card"]["capabilities"][0]["controls"][0])
         payload["example_leader_chat"] = example
     return payload
 
@@ -1718,6 +1720,10 @@ def _validate_capability_controls(errors: list[str], item: dict[str, object]) ->
                 for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
                     if field not in control:
                         errors.append(f"capability_card.capabilities.controls: missing control field: {field}")
+                if control.get("command") != item.get("command"):
+                    errors.append("capability_card.capabilities.controls: command must match capability command")
+                if control.get("safety") != item.get("safety"):
+                    errors.append("capability_card.capabilities.controls: safety must match capability safety")
                 if control.get("enabled") is False and not control.get("blocker"):
                     errors.append("capability_card.capabilities.controls: disabled controls must include blocker")
             else:
