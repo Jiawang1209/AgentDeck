@@ -1054,6 +1054,17 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_workbench_card_fields"] == list(example["workbench_card"])
     assert payload["example_capability_card_fields"] == payload["capability_card_fields"]
     assert payload["example_capability_card_fields"] == list(example["capability_card"])
+    assert "controls" in payload["capability_item_fields"]
+    assert payload["example_capability_item_fields"] == payload["capability_item_fields"]
+    assert payload["example_capability_item_fields"] == list(example["capability_card"]["capabilities"][0])
+    assert example["capability_card"]["capabilities"][0]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Open workbench",
+        "command": "agentdeck workbench",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
     assert example["leader_explanation"]["recommended_action_id"] == "act_example"
     assert example["leader_explanation"]["safety"] == "safe_apply"
     assert example["mode"] == "continue"
@@ -1181,6 +1192,16 @@ def test_validate_leader_chat_contract_requires_apply_capability_safety() -> Non
             "safety": "inspect",
             "requires_explicit_user": False,
             "card": "leader_action",
+            "controls": [
+                {
+                    "kind": "apply",
+                    "label": "Apply safe Leader action",
+                    "command": "agentdeck leader apply-action --action-id <action_id>",
+                    "safety": "inspect",
+                    "enabled": False,
+                    "blocker": "requires action_id",
+                }
+            ],
         }
     )
     payload["capability_card"]["capability_count"] += 1
@@ -1190,6 +1211,18 @@ def test_validate_leader_chat_contract_requires_apply_capability_safety() -> Non
     assert result == {
         "ok": False,
         "errors": ["capability_card.capabilities: apply_action must use safety=safe_apply"],
+    }
+
+
+def test_validate_leader_chat_contract_requires_capability_control_fields() -> None:
+    payload = leader_chat_example()
+    del payload["capability_card"]["capabilities"][0]["controls"][0]["enabled"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["capability_card.capabilities.controls: missing control field: enabled"],
     }
 
 

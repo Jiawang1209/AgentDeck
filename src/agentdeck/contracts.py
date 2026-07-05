@@ -647,6 +647,7 @@ LEADER_CHAT_CAPABILITY_ITEM_FIELDS = (
     "safety",
     "requires_explicit_user",
     "card",
+    "controls",
 )
 
 TRACE_TOP_LEVEL_FIELDS = (
@@ -799,7 +800,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
 
 
 def leader_chat_capability_card() -> dict[str, object]:
-    capabilities = [
+    capability_specs = [
         {
             "mode": "workbench",
             "label": "Open workbench",
@@ -921,6 +922,7 @@ def leader_chat_capability_card() -> dict[str, object]:
             "card": "provider_health",
         },
     ]
+    capabilities = [_capability_item_with_controls(item) for item in capability_specs]
     return {
         "mode": "help",
         "title": "Leader chat capabilities",
@@ -928,6 +930,35 @@ def leader_chat_capability_card() -> dict[str, object]:
         "default_command": "agentdeck workbench",
         "capability_count": len(capabilities),
         "capabilities": capabilities,
+    }
+
+
+def _capability_item_with_controls(item: dict[str, object]) -> dict[str, object]:
+    return {**item, "controls": [_capability_item_control(item)]}
+
+
+def _capability_item_control(item: dict[str, object]) -> dict[str, object]:
+    mode = str(item["mode"])
+    command = str(item["command"])
+    kind = {
+        "plan": "plan",
+        "review": "review",
+        "apply_action": "apply",
+    }.get(mode, "inspect")
+    blocker = None
+    if "<goal>" in command:
+        blocker = "requires goal text"
+    elif "<action_id>" in command:
+        blocker = "requires action_id"
+    elif "<agent_id>" in command:
+        blocker = "requires agent_id"
+    return {
+        "kind": kind,
+        "label": item["label"],
+        "command": command,
+        "safety": item["safety"],
+        "enabled": blocker is None,
+        "blocker": blocker,
     }
 
 
@@ -1672,10 +1703,27 @@ def _validate_capability_card_contract(errors: list[str], capability_card: dict[
                     errors.append("capability_card.capabilities: plan must use safety=plan_only")
                 if item.get("mode") in {"review", "apply_action"} and item.get("safety") != "safe_apply":
                     errors.append(f"capability_card.capabilities: {item.get('mode')} must use safety=safe_apply")
+                _validate_capability_controls(errors, item)
             else:
                 errors.append("capability_card.capabilities items must be objects")
     elif "capabilities" in capability_card:
         errors.append("capability_card.capabilities must be a list")
+
+
+def _validate_capability_controls(errors: list[str], item: dict[str, object]) -> None:
+    controls = item.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if isinstance(control, dict):
+                for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                    if field not in control:
+                        errors.append(f"capability_card.capabilities.controls: missing control field: {field}")
+                if control.get("enabled") is False and not control.get("blocker"):
+                    errors.append("capability_card.capabilities.controls: disabled controls must include blocker")
+            else:
+                errors.append("capability_card.capabilities.controls items must be objects")
+    elif "controls" in item:
+        errors.append("capability_card.capabilities.controls must be a list")
 
 
 def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]:

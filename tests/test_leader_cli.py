@@ -947,10 +947,38 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
     capabilities = {item["mode"]: item for item in payload["capability_card"]["capabilities"]}
     assert capabilities["plan"]["safety"] == "plan_only"
     assert capabilities["plan"]["requires_explicit_user"] is False
+    assert capabilities["plan"]["controls"] == [
+        {
+            "kind": "plan",
+            "label": "Create Leader plan",
+            "command": "agentdeck leader chat --message <goal>",
+            "safety": "plan_only",
+            "enabled": False,
+            "blocker": "requires goal text",
+        }
+    ]
     assert capabilities["review"]["command"] == "agentdeck leader chat --message <goal>"
     assert capabilities["review"]["safety"] == "safe_apply"
     assert capabilities["apply_action"]["command"] == "agentdeck leader apply-action --action-id <action_id>"
     assert capabilities["apply_action"]["safety"] == "safe_apply"
+    assert capabilities["apply_action"]["controls"][0] == {
+        "kind": "apply",
+        "label": "Apply safe Leader action",
+        "command": "agentdeck leader apply-action --action-id <action_id>",
+        "safety": "safe_apply",
+        "enabled": False,
+        "blocker": "requires action_id",
+    }
+    assert capabilities["inbox"]["controls"][0]["enabled"] is False
+    assert capabilities["inbox"]["controls"][0]["blocker"] == "requires agent_id"
+    assert capabilities["workbench"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Open workbench",
+        "command": "agentdeck workbench",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
     assert payload["capability_card"]["capabilities"][0]["safety"] == "inspect"
     assert payload["next_command"] == "agentdeck workbench"
     assert payload["leader_explanation"]["mode"] == "help"

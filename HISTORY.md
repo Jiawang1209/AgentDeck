@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add Leader capability controls
+
+- 扩展 `capability_card.capabilities[]`：每个 capability item 现在都带 GUI-ready `controls[]`，复用 `kind`、`label`、`command`、`safety`、`enabled` 和 `blocker` 字段，方便未来 GUI 命令面板直接渲染按钮或模板输入入口。
+- 对带 `<goal>`、`<action_id>` 或 `<agent_id>` 的模板命令，control 会 disabled，并返回 `requires goal text`、`requires action_id` 或 `requires agent_id` blocker；直接可检查的只读命令保持 enabled。
+- 加强 `validate_leader_chat_contract()`：会拒绝缺少 capability control 字段、非 list controls、非对象 control，以及 disabled control 缺 blocker。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 capability controls 只是命令发现和 GUI 渲染描述，不代表自动执行许可。
+- 完整验证：已先确认红测失败，capability item 最初缺少 `controls` 字段；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_requires_capability_control_fields -q` 3 项通过；leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 135 项通过；`conda run -n agentdeck pytest -q` 207 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `leader-chat-capability-controls-smoke-ok`。
+
 ### Current - Expand Leader capability map for scheduling
 
 - 扩展 `capability_card`：在 help mode 能力发现中补齐 `plan`、`review` 和 `apply_action`，让未来 GUI 命令面板能看到 API-backed Leader 调度、状态 review 和 safe apply 主线。
