@@ -637,6 +637,15 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "review_command_template",
         "actions_command",
         "status_command",
+        "controls",
+    ]
+    assert payload["leader_control_fields"] == [
+        "kind",
+        "label",
+        "command",
+        "safety",
+        "enabled",
+        "blocker",
     ]
     assert payload["provider_health_fields"] == [
         "agent_id",
@@ -837,6 +846,48 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "review_command_template": "agentdeck leader review --plan-id <plan_id>",
         "actions_command": "agentdeck leader actions",
         "status_command": "agentdeck status",
+        "controls": [
+            {
+                "kind": "chat",
+                "label": "Ask Leader",
+                "command": "agentdeck leader chat --message <text>",
+                "safety": "explicit_user",
+                "enabled": False,
+                "blocker": "requires message text",
+            },
+            {
+                "kind": "continue",
+                "label": "Continue",
+                "command": "agentdeck continue",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "review",
+                "label": "Review plan",
+                "command": "agentdeck leader review --plan-id <plan_id>",
+                "safety": "inspect",
+                "enabled": False,
+                "blocker": "requires plan_id",
+            },
+            {
+                "kind": "actions",
+                "label": "Leader actions",
+                "command": "agentdeck leader actions",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "status",
+                "label": "Project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
     }
     assert payload["provider_health"] == {
         "agent_id": "leader",

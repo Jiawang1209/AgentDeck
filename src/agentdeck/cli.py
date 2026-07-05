@@ -451,6 +451,27 @@ def _workbench_leader_card(project_view: dict[str, object]) -> dict[str, object]
         "review_command_template": "agentdeck leader review --plan-id <plan_id>",
         "actions_command": "agentdeck leader actions",
         "status_command": "agentdeck status",
+        "controls": [
+            _control(
+                kind="chat",
+                label="Ask Leader",
+                command="agentdeck leader chat --message <text>",
+                safety="explicit_user",
+                enabled=False,
+                blocker="requires message text",
+            ),
+            _control(kind="continue", label="Continue", command="agentdeck continue", safety="inspect"),
+            _control(
+                kind="review",
+                label="Review plan",
+                command="agentdeck leader review --plan-id <plan_id>",
+                safety="inspect",
+                enabled=False,
+                blocker="requires plan_id",
+            ),
+            _control(kind="actions", label="Leader actions", command="agentdeck leader actions", safety="inspect"),
+            _control(kind="status", label="Project status", command="agentdeck status", safety="inspect"),
+        ],
     }
 
 

@@ -418,6 +418,16 @@ WORKBENCH_LEADER_CARD_FIELDS = (
     "review_command_template",
     "actions_command",
     "status_command",
+    "controls",
+)
+
+WORKBENCH_LEADER_CONTROL_FIELDS = (
+    "kind",
+    "label",
+    "command",
+    "safety",
+    "enabled",
+    "blocker",
 )
 
 WORKBENCH_PROVIDER_HEALTH_FIELDS = (
@@ -1090,6 +1100,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "leader_card_fields": list(WORKBENCH_LEADER_CARD_FIELDS),
+        "leader_control_fields": list(WORKBENCH_LEADER_CONTROL_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
@@ -1895,6 +1906,21 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
                 errors.append(f"missing leader_card field: {field}")
         if "api_backed" in leader_card and not isinstance(leader_card.get("api_backed"), bool):
             errors.append("leader_card.api_backed must be a boolean")
+        controls = leader_card.get("controls")
+        if isinstance(controls, list):
+            for control in controls:
+                if not isinstance(control, dict):
+                    errors.append("leader controls must be objects")
+                    continue
+                for field in WORKBENCH_LEADER_CONTROL_FIELDS:
+                    if field not in control:
+                        errors.append(f"missing leader control field: {field}")
+                if "enabled" in control and not isinstance(control.get("enabled"), bool):
+                    errors.append("leader control enabled must be a boolean")
+                if control.get("enabled") is False and not control.get("blocker"):
+                    errors.append("disabled leader control requires blocker")
+        elif "controls" in leader_card:
+            errors.append("leader_card.controls must be a list")
     elif "leader_card" in payload:
         errors.append("leader_card must be an object")
     provider_health = payload.get("provider_health")
@@ -2496,6 +2522,48 @@ def workbench_example() -> dict[str, object]:
             "review_command_template": "agentdeck leader review --plan-id <plan_id>",
             "actions_command": "agentdeck leader actions",
             "status_command": "agentdeck status",
+            "controls": [
+                {
+                    "kind": "chat",
+                    "label": "Ask Leader",
+                    "command": "agentdeck leader chat --message <text>",
+                    "safety": "explicit_user",
+                    "enabled": False,
+                    "blocker": "requires message text",
+                },
+                {
+                    "kind": "continue",
+                    "label": "Continue",
+                    "command": "agentdeck continue",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "review",
+                    "label": "Review plan",
+                    "command": "agentdeck leader review --plan-id <plan_id>",
+                    "safety": "inspect",
+                    "enabled": False,
+                    "blocker": "requires plan_id",
+                },
+                {
+                    "kind": "actions",
+                    "label": "Leader actions",
+                    "command": "agentdeck leader actions",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "status",
+                    "label": "Project status",
+                    "command": "agentdeck status",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
         },
         "provider_health": {
             "agent_id": "leader",

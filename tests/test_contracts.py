@@ -44,6 +44,7 @@ from agentdeck.contracts import (
     WORKBENCH_CHANGE_SUMMARY_FIELDS,
     WORKBENCH_CONTRACTS_CARD_FIELDS,
     WORKBENCH_LEADER_CARD_FIELDS,
+    WORKBENCH_LEADER_CONTROL_FIELDS,
     WORKBENCH_LEDGER_CARD_FIELDS,
     WORKBENCH_OPERATOR_CARD_FIELDS,
     WORKBENCH_PROVIDER_HEALTH_FIELDS,
@@ -526,6 +527,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["workbench_command"] == "agentdeck workbench"
     assert payload["snapshot_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
     assert payload["leader_card_fields"] == list(WORKBENCH_LEADER_CARD_FIELDS)
+    assert payload["leader_control_fields"] == list(WORKBENCH_LEADER_CONTROL_FIELDS)
     assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
@@ -546,6 +548,18 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
     assert set(example["leader_card"]) == set(WORKBENCH_LEADER_CARD_FIELDS)
     assert example["leader_card"]["review_command_template"] == "agentdeck leader review --plan-id <plan_id>"
+    assert [control["kind"] for control in example["leader_card"]["controls"]] == [
+        "chat",
+        "continue",
+        "review",
+        "actions",
+        "status",
+    ]
+    assert set(example["leader_card"]["controls"][0]) == set(WORKBENCH_LEADER_CONTROL_FIELDS)
+    assert example["leader_card"]["controls"][0]["enabled"] is False
+    assert example["leader_card"]["controls"][0]["blocker"] == "requires message text"
+    assert example["leader_card"]["controls"][2]["enabled"] is False
+    assert example["leader_card"]["controls"][2]["blocker"] == "requires plan_id"
     assert set(example["provider_health"]) == set(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)
@@ -622,6 +636,15 @@ def test_validate_workbench_contract_requires_leader_fields() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing leader_card field: api_backed"]}
+
+
+def test_validate_workbench_contract_requires_leader_control_fields() -> None:
+    payload = workbench_example()
+    del payload["leader_card"]["controls"][0]["safety"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing leader control field: safety"]}
 
 
 def test_validate_workbench_contract_requires_provider_health_fields() -> None:

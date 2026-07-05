@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add Leader controls to workbench leader card
+
+- 扩展 workbench `leader_card`：新增 GUI-ready `controls[]`，覆盖 chat、continue、review、actions、status 五类 Leader 入口。
+- `chat` 与 `review` controls 是带 `<text>` / `<plan_id>` 的模板命令，默认 disabled 并返回 blocker，避免 GUI 直接运行缺参命令；continue/actions/status 保持只读 inspect controls。
+- `agentdeck contract workbench` 新增 `leader_control_fields`，并同步 workbench example、live `_workbench_leader_card()`、validator、README、workbench schema、CLAUDE.md、AGENT.md 和测试。
+- 完整验证：已先确认红测失败，`WORKBENCH_LEADER_CONTROL_FIELDS` 最初不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_leader_control_fields -q` 4 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 144 项通过；`conda run -n agentdeck pytest -q` 224 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `workbench-leader-controls-smoke-ok`。
+
 ### Current - Add Leader review template to workbench leader card
 
 - 扩展 workbench `leader_card`：新增 `review_command_template=agentdeck leader review --plan-id <plan_id>`，让 GUI/TUI 能从 Leader 主卡直接渲染 plan review 入口模板。

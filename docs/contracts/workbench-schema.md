@@ -139,11 +139,21 @@ Without `--since-event`, `since_event_id` is `null`, `latest_event_id` still ref
   "continue_command": "agentdeck continue",
   "review_command_template": "agentdeck leader review --plan-id <plan_id>",
   "actions_command": "agentdeck leader actions",
-  "status_command": "agentdeck status"
+  "status_command": "agentdeck status",
+  "controls": [
+    {
+      "kind": "chat",
+      "label": "Ask Leader",
+      "command": "agentdeck leader chat --message <text>",
+      "safety": "explicit_user",
+      "enabled": false,
+      "blocker": "requires message text"
+    }
+  ]
 }
 ```
 
-The card never exposes API keys and does not call the provider. `api_backed` only indicates that the configured provider is not the local `fake` provider. `review_command_template` requires a concrete plan id and must not be treated as permission to review, approve, dispatch, or capture automatically.
+The card never exposes API keys and does not call the provider. `api_backed` only indicates that the configured provider is not the local `fake` provider. `controls[]` uses `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` so GUI clients can render Leader entry points without deriving buttons from command strings. `chat` and `review` controls are disabled templates until a GUI or user supplies message text or a plan id; `continue`, `actions`, and `status` are read-only inspect controls. `review_command_template` requires a concrete plan id and must not be treated as permission to review, approve, dispatch, or capture automatically.
 
 ## Provider Health
 
