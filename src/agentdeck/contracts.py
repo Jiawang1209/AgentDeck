@@ -139,6 +139,27 @@ CONTINUE_CARD_FIELDS = (
     "action_detail_command",
 )
 
+LEADER_ACTION_DETAIL_FIELDS = (
+    "action_id",
+    "kind",
+    "status",
+    "requires_confirmation",
+    "plan_id",
+    "approval_id",
+    "agent_id",
+    "message_id",
+    "command",
+    "reason",
+    "created_at",
+    "can_apply",
+    "apply_command",
+    "explicit_command",
+    "apply_blocker",
+    "recovery",
+    "recommended_action",
+    "matches_recommended_action",
+)
+
 LEADER_CHAT_EXPLANATION_FIELDS = (
     "mode",
     "summary",
@@ -300,6 +321,28 @@ def continue_contract_response(contract_path: Path, include_example: bool = Fals
     return payload
 
 
+def leader_action_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "action_command": "agentdeck leader action --action-id <id>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "action_fields": list(LEADER_ACTION_DETAIL_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def leader_action_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = leader_action_contract_payload(contract_path)
+    if include_example:
+        example = leader_action_example()
+        payload["example"] = True
+        payload["example_action_fields"] = list(example)
+        payload["example_leader_action"] = example
+    return payload
+
+
 def trace_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -432,6 +475,48 @@ def validate_continue_contract(payload: dict[str, object]) -> dict[str, object]:
     elif "pending" in payload and pending is not None:
         errors.append("pending must be an object")
     return {"ok": not errors, "errors": errors}
+
+
+def validate_leader_action_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in LEADER_ACTION_DETAIL_FIELDS:
+        if field not in payload:
+            errors.append(f"missing leader_action field: {field}")
+    recovery = payload.get("recovery")
+    if isinstance(recovery, dict):
+        _validate_recovery_contract(errors, recovery, prefix="recovery")
+    elif "recovery" in payload:
+        errors.append("recovery must be an object")
+    recommended_action = payload.get("recommended_action")
+    if isinstance(recommended_action, dict):
+        for field in PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS:
+            if field not in recommended_action:
+                errors.append(f"missing recommended_action field: {field}")
+    elif "recommended_action" in payload and recommended_action is not None:
+        errors.append("recommended_action must be an object")
+    if not isinstance(payload.get("matches_recommended_action"), bool):
+        errors.append("matches_recommended_action must be a boolean")
+    return {"ok": not errors, "errors": errors}
+
+
+def _validate_recovery_contract(errors: list[str], recovery: dict[str, object], *, prefix: str) -> None:
+    for field in PROJECT_VIEW_RECOVERY_FIELDS:
+        if field not in recovery:
+            errors.append(f"{prefix}: missing recovery field: {field}")
+    pending = recovery.get("pending")
+    if isinstance(pending, dict):
+        for field in PROJECT_VIEW_RECOVERY_PENDING_FIELDS:
+            if field not in pending:
+                errors.append(f"{prefix}: missing recovery pending field: {field}")
+    elif "pending" in recovery:
+        errors.append(f"{prefix}: recovery pending must be an object")
+    recommended_action = recovery.get("recommended_action")
+    if isinstance(recommended_action, dict):
+        for field in PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS:
+            if field not in recommended_action:
+                errors.append(f"{prefix}: missing recommended_action field: {field}")
+    elif "recommended_action" in recovery and recommended_action is not None:
+        errors.append(f"{prefix}: recommended_action must be an object")
 
 
 def validate_trace_contract(payload: dict[str, object]) -> dict[str, object]:
@@ -731,6 +816,20 @@ def continue_example() -> dict[str, object]:
         "leader_action": leader_action,
         "action_detail_command": "agentdeck leader action --action-id act_example",
     }
+
+
+def leader_action_example() -> dict[str, object]:
+    project_view = project_view_example()
+    leader_action = dict(project_view["leader_actions"]["items"][0])
+    leader_action.pop("is_recommended", None)
+    recovery = project_view["recovery"]
+    action_detail = {
+        **leader_action,
+        "recovery": recovery,
+        "recommended_action": recovery["recommended_action"],
+        "matches_recommended_action": True,
+    }
+    return {field: action_detail.get(field) for field in LEADER_ACTION_DETAIL_FIELDS}
 
 
 def trace_example() -> dict[str, object]:

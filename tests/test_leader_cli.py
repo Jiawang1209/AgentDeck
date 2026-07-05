@@ -584,6 +584,29 @@ def test_leader_action_show_includes_recovery_recommended_action_match(tmp_path,
     assert state["jobs"] == []
 
 
+def test_leader_action_show_refuses_contract_violation(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "坏 action 详情不能输出"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["leader", "next", "--plan-id", plan_id])
+    action_id = json.loads(capsys.readouterr().out)["action_id"]
+
+    def broken_validation(_payload):
+        return {"ok": False, "errors": ["missing leader_action field: recovery"]}
+
+    monkeypatch.setattr(cli, "validate_leader_action_contract", broken_validation)
+
+    exit_code = cli.main(["leader", "action", "--action-id", action_id])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "Leader action contract validation failed" in captured.err
+    assert "missing leader_action field: recovery" in captured.err
+    state = StateStore(root).load()
+    assert state["leader_actions"][0]["status"] == "pending"
+
+
 def test_leader_action_show_marks_dispatch_action_as_not_applyable(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "查看 dispatch action"])

@@ -9,10 +9,12 @@ import sys
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
 from .contracts import (
     continue_contract_response,
+    leader_action_contract_response,
     leader_chat_contract_response,
     project_view_contract_response,
     trace_contract_response,
     validate_continue_contract,
+    validate_leader_action_contract,
     validate_leader_chat_contract,
     validate_project_view_contract,
     validate_trace_contract,
@@ -200,6 +202,13 @@ def contract_leader_chat_command(args: argparse.Namespace) -> int:
 def contract_continue_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "continue-card-schema.md"
     payload = continue_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_leader_action_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-action-schema.md"
+    payload = leader_action_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -752,14 +761,19 @@ def leader_action_command(args: argparse.Namespace) -> int:
     matches_recommended_action = (
         isinstance(recommended_action, dict) and recommended_action.get("target_id") == args.action_id
     )
-    _print_json(
-        {
-            **action,
-            "recovery": recovery,
-            "recommended_action": recommended_action,
-            "matches_recommended_action": matches_recommended_action,
-        }
-    )
+    payload = {
+        **action,
+        "recovery": recovery,
+        "recommended_action": recommended_action,
+        "matches_recommended_action": matches_recommended_action,
+    }
+    validation = validate_leader_action_contract(payload)
+    if not validation["ok"]:
+        print("Leader action contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
 
 
@@ -1408,6 +1422,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_continue.add_argument("--example", action="store_true", help="Include a GUI-ready continue card example")
     contract_continue.set_defaults(func=contract_continue_command)
+    contract_leader_action = contract_subparsers.add_parser(
+        "leader-action",
+        help="Show Leader action detail contract discovery metadata",
+    )
+    contract_leader_action.add_argument(
+        "--example",
+        action="store_true",
+        help="Include a GUI-ready Leader action detail example",
+    )
+    contract_leader_action.set_defaults(func=contract_leader_action_command)
     contract_trace = contract_subparsers.add_parser(
         "trace",
         help="Show communication trace contract discovery metadata",

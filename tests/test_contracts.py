@@ -4,6 +4,7 @@ from pathlib import Path
 
 from agentdeck.contracts import (
     CONTINUE_CARD_FIELDS,
+    LEADER_ACTION_DETAIL_FIELDS,
     LEADER_CHAT_EXPLANATION_FIELDS,
     LEADER_CHAT_RESPONSE_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
@@ -24,6 +25,9 @@ from agentdeck.contracts import (
     leader_chat_contract_payload,
     leader_chat_contract_response,
     leader_chat_example,
+    leader_action_contract_payload,
+    leader_action_contract_response,
+    leader_action_example,
     continue_contract_payload,
     continue_contract_response,
     continue_example,
@@ -34,6 +38,7 @@ from agentdeck.contracts import (
     trace_contract_response,
     trace_example,
     validate_continue_contract,
+    validate_leader_action_contract,
     validate_leader_chat_contract,
     validate_project_view_contract,
     validate_trace_contract,
@@ -252,6 +257,54 @@ def test_validate_continue_contract_reports_missing_field() -> None:
     result = validate_continue_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing continue_card field: next_command"]}
+
+
+def test_leader_action_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-action-schema.md"
+    contract_path.write_text("# Leader Action Contract\n", encoding="utf-8")
+
+    payload = leader_action_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["action_command"] == "agentdeck leader action --action-id <id>"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["action_fields"] == list(LEADER_ACTION_DETAIL_FIELDS)
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+
+
+def test_leader_action_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-action-schema.md"
+    contract_path.write_text("# Leader Action Contract\n", encoding="utf-8")
+
+    payload = leader_action_contract_response(contract_path, include_example=True)
+    example = leader_action_example()
+
+    assert payload["example"] is True
+    assert payload["example_leader_action"] == example
+    assert payload["example_action_fields"] == payload["action_fields"]
+    assert set(payload["example_action_fields"]) == set(example)
+    assert example["action_id"] == "act_example"
+    assert example["recovery"]["recommended_action"]["target_id"] == "act_example"
+    assert example["matches_recommended_action"] is True
+
+
+def test_validate_leader_action_contract_accepts_example() -> None:
+    result = validate_leader_action_contract(leader_action_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_leader_action_contract_requires_embedded_recovery_contract() -> None:
+    payload = leader_action_example()
+    del payload["recovery"]["pending"]["leader_errors"]
+
+    result = validate_leader_action_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["recovery: missing recovery pending field: leader_errors"],
+    }
 
 
 def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: Path) -> None:

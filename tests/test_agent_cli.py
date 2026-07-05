@@ -8,6 +8,8 @@ from agentdeck.config import write_default_config
 from agentdeck.contracts import (
     continue_contract_payload,
     continue_contract_response,
+    leader_action_contract_payload,
+    leader_action_contract_response,
     leader_chat_contract_payload,
     leader_chat_contract_response,
     project_view_contract_payload,
@@ -281,6 +283,34 @@ def test_contract_continue_example_exports_gui_ready_card(capsys) -> None:
     assert set(payload["example_continue_card_fields"]) == set(example)
     assert example["mode"] == "continue"
     assert example["next_command"] == "agentdeck leader apply-action --action-id act_example"
+
+
+def test_contract_leader_action_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "leader-action"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = leader_action_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["action_command"] == "agentdeck leader action --action-id <id>"
+    assert payload["contract_path"].endswith("docs/contracts/leader-action-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["action_fields"] == expected["action_fields"]
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+
+
+def test_contract_leader_action_example_exports_gui_ready_detail(capsys) -> None:
+    exit_code = cli.main(["contract", "leader-action", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = leader_action_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_leader_action"]
+    assert payload["example_action_fields"] == payload["action_fields"]
+    assert set(payload["example_action_fields"]) == set(example)
+    assert example["matches_recommended_action"] is True
+    assert example["recovery"]["recommended_action"]["target_id"] == "act_example"
 
 
 def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None:

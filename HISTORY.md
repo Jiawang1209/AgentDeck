@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Discover and validate Leader action detail contract
+
+- 新增 `LEADER_ACTION_DETAIL_FIELDS`、`leader_action_contract_payload()`、`leader_action_contract_response()`、`leader_action_example()` 和 `validate_leader_action_contract()`，为单个 Leader action 详情建立可复用契约。
+- 新增 `agentdeck contract leader-action` 和 `agentdeck contract leader-action --example`，供 GUI、自然语言壳或外部集成发现 action detail 字段。
+- `agentdeck leader action --action-id <id>` 现在输出前会通过 `validate_leader_action_contract()` 自校验；校验失败时返回非 0 且不输出半坏 action detail。
+- 新增 `docs/contracts/leader-action-schema.md`，记录 action detail shape、recovery/recommended_action 关系、`matches_recommended_action` 语义和只读边界。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 Leader action detail contract discovery 与输出自校验规则。
+- 保持安全边界：本轮只增加只读 contract discovery 与输出校验，不 apply action、不创建 approval、不 dispatch、不发送 tmux 输入、不改变 state mutation 语义。
+- 完整验证：`conda run -n agentdeck pytest tests/test_contracts.py -q` 28 项通过；leader-action 相关 CLI 目标测试 3 项通过；`conda run -n agentdeck pytest -q` 114 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `agentdeck contract leader-action --example` 返回 `contract-ok`，`agentdeck leader action --action-id <id>` 返回 `detail-ok` 且匹配当前 recovery 推荐 action。
+
 ### Current - Reuse continue card validator in Leader chat
 
 - `validate_leader_chat_contract()` 现在会对嵌入的 `continue_card` 复用 `validate_continue_contract()`，并把嵌套错误前缀为 `continue_card:`。

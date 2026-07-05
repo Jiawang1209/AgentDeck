@@ -48,6 +48,8 @@ agentdeck contract leader-chat
 agentdeck contract leader-chat --example
 agentdeck contract continue
 agentdeck contract continue --example
+agentdeck contract leader-action
+agentdeck contract leader-action --example
 agentdeck contract trace
 agentdeck contract trace --example
 agentdeck agent list
@@ -224,7 +226,7 @@ agentdeck trace --id inb_xxx
 
 `agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、leader_errors、leader_actions、inbox、recovery 的轻量摘要。
 
-详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，`--example` 会附带包含 `leader_explanation` 的稳定响应示例。`agentdeck contract trace` 会发现通信 lineage 的 message/attempt/job/reply/inbox 字段，`--example` 会附带稳定 trace 示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck status`、`agentdeck leader chat` 和 `agentdeck trace`，不要把 tmux pane 或 state 文件当成第二套状态源。
+详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，`--example` 会附带包含 `leader_explanation` 的稳定响应示例。`agentdeck contract leader-action` 会发现单个 Leader action 详情字段，`--example` 会附带稳定 action detail 示例。`agentdeck contract trace` 会发现通信 lineage 的 message/attempt/job/reply/inbox 字段，`--example` 会附带稳定 trace 示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck status`、`agentdeck leader chat`、`agentdeck leader action` 和 `agentdeck trace`，不要把 tmux pane 或 state 文件当成第二套状态源。
 
 `status.messages.items[]`、`status.jobs.items[]` 和 `status.replies.items[]` 会包含 `trace_command`，GUI 可以直接把摘要行链接到 `agentdeck trace --id <id>`，不用散读 state 或拼接命令。
 
@@ -286,7 +288,7 @@ agentdeck plan status --plan-id pln_xxx
 
 `leader next` 会先校验 ProjectView，再把下一步建议持久化到 `leader_actions[]`，例如创建 approvals 或派发 approved step 的命令。它只记录 pending action，不执行命令；如果相同 pending action 已存在，会复用原 action_id，不重复污染 queue。`leader actions` 可查看已记录的 action queue，并通过 `recommended_action_id` 与每项 `is_recommended` 标记当前 recovery 推荐项。
 
-`leader action --action-id <id>` 返回单个 action 的详情，包括 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`。它会附带当前 `recovery`、`recommended_action` 和 `matches_recommended_action`，方便 GUI 判断这个 action 是否就是当前恢复入口推荐的下一步。它是只读入口，适合 GUI、自然语言 Leader 或人类在执行前确认当前 action 为什么能或不能安全应用。
+`leader action --action-id <id>` 返回单个 action 的详情，包括 `can_apply`、`apply_command`、`explicit_command` 和 `apply_blocker`。它会附带当前 `recovery`、`recommended_action` 和 `matches_recommended_action`，方便 GUI 判断这个 action 是否就是当前恢复入口推荐的下一步。它是只读入口，输出前会通过 `validate_leader_action_contract()` 自校验；契约见 `docs/contracts/leader-action-schema.md`，可用 `agentdeck contract leader-action --example` 发现。适合 GUI、自然语言 Leader 或人类在执行前确认当前 action 为什么能或不能安全应用。
 
 `leader apply-action --action-id <id>` 是显式确认入口。它会先校验 ProjectView；当前只允许应用 `create_approvals`，会创建 approval queue 并把 action 标记为 `applied`。`dispatch_approved`、`wait_for_reply` 等 action 仍会被拒绝，必须由人类运行对应的 `approval dispatch` 或 `capture-reply` 命令。
 
