@@ -444,6 +444,9 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["role_agent_fields"] == list(WORKBENCH_ROLE_AGENT_FIELDS)
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
     assert payload["workbench_card_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
+    assert payload["control_mode_card_fields"] == list(WORKBENCH_CONTROL_MODE_CARD_FIELDS)
+    assert payload["control_mode_option_fields"] == list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS)
+    assert payload["control_mode_control_fields"] == list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS)
     assert payload["workbench_control_registry_item_fields"] == list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
     assert payload["control_registry_card_fields"] == [
         "mode",
@@ -1297,6 +1300,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_ledger_card_fields"] == list(example["ledger_card"])
     assert payload["example_workbench_card_fields"] == payload["workbench_card_fields"]
     assert payload["example_workbench_card_fields"] == list(example["workbench_card"])
+    assert payload["example_control_mode_card_fields"] == payload["control_mode_card_fields"]
+    assert payload["example_control_mode_card_fields"] == list(example["control_mode_card"])
     assert payload["example_workbench_control_registry_item_fields"] == (
         payload["workbench_control_registry_item_fields"]
     )
@@ -1322,6 +1327,7 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
         {"placeholder": "<plan_id>", "blocker": "requires plan_id"},
         {"placeholder": "<action_id>", "blocker": "requires action_id"},
         {"placeholder": "<agent_id>", "blocker": "requires agent_id"},
+        {"placeholder": "<mode>", "blocker": "requires control mode"},
     ]
     assert example["capability_card"]["capabilities"][0]["controls"][0] == {
         "kind": "inspect",

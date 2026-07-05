@@ -372,6 +372,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "role_card",
     "ledger_card",
     "workbench_card",
+    "control_mode_card",
     "capability_card",
     "control_registry_card",
 )
@@ -781,6 +782,7 @@ LEADER_CHAT_CAPABILITY_PLACEHOLDERS = (
     {"placeholder": "<plan_id>", "blocker": "requires plan_id"},
     {"placeholder": "<action_id>", "blocker": "requires action_id"},
     {"placeholder": "<agent_id>", "blocker": "requires agent_id"},
+    {"placeholder": "<mode>", "blocker": "requires control mode"},
 )
 
 LEADER_CHAT_INTENT_PLACEHOLDERS = (
@@ -907,6 +909,9 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "workbench_card_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
+        "control_mode_card_fields": list(WORKBENCH_CONTROL_MODE_CARD_FIELDS),
+        "control_mode_option_fields": list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS),
+        "control_mode_control_fields": list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS),
         "workbench_control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
         "control_registry_card_fields": list(LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS),
         "capability_card_fields": list(LEADER_CHAT_CAPABILITY_CARD_FIELDS),
@@ -937,6 +942,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_role_agent_fields"] = list(example["role_card"]["agents"][0])
         payload["example_ledger_card_fields"] = list(example["ledger_card"])
         payload["example_workbench_card_fields"] = list(example["workbench_card"])
+        payload["example_control_mode_card_fields"] = list(example["control_mode_card"])
         payload["example_workbench_control_registry_item_fields"] = list(
             example["workbench_card"]["control_registry"][0]
         )
@@ -1062,6 +1068,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "card": "inbox_card",
         },
         {
+            "mode": "policy",
+            "label": "Set control mode",
+            "description": "Suggest an explicit ask or approval-gated control mode command.",
+            "example_messages": ["切换到审批模式", "回到 ask 模式"],
+            "command": "agentdeck policy set-mode --mode <mode>",
+            "safety": "explicit_user",
+            "requires_explicit_user": True,
+            "card": "control_mode_card",
+        },
+        {
             "mode": "setup",
             "label": "Inspect provider setup",
             "description": "Inspect Leader provider readiness and missing environment names.",
@@ -1127,6 +1143,7 @@ def _capability_item_control(item: dict[str, object]) -> dict[str, object]:
         "plan": "plan",
         "review": "review",
         "apply_action": "apply",
+        "policy": "set",
     }.get(mode, "inspect")
     blocker = _placeholder_blocker(command)
     return {
@@ -2589,6 +2606,7 @@ def leader_chat_example() -> dict[str, object]:
     role_card = workbench_example()["role_card"]
     ledger_card = workbench_example()["ledger_card"]
     workbench_card = workbench_example()
+    control_mode_card = workbench_card["control_mode_card"]
     capability_card = leader_chat_capability_card()
     control_registry_card = leader_chat_control_registry_card(workbench_card)
     leader_action_card = leader_chat_action_card(leader_action)
@@ -2644,6 +2662,7 @@ def leader_chat_example() -> dict[str, object]:
         "role_card": role_card,
         "ledger_card": ledger_card,
         "workbench_card": workbench_card,
+        "control_mode_card": control_mode_card,
         "capability_card": capability_card,
         "control_registry_card": control_registry_card,
     }

@@ -933,6 +933,103 @@ def test_leader_chat_opens_workbench_snapshot_without_mutating_state(tmp_path, m
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_suggests_policy_mode_change_without_mutating_config(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_before = config_path.read_text(encoding="utf-8")
+
+    exit_code = cli.main(["leader", "chat", "--message", "切换到审批模式"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "policy"
+    assert payload["message"] == "切换到审批模式"
+    assert payload["next_command"] == "agentdeck policy set-mode --mode approve"
+    assert payload["control_mode_card"]["mode"] == "control_mode"
+    assert payload["control_mode_card"]["current_mode"] == "ask"
+    assert payload["control_mode_card"]["approval_mode"] == "confirm"
+    assert payload["leader_explanation"] == {
+        "mode": "policy",
+        "summary": "Leader recommends an explicit control mode command without mutating policy.",
+        "reason": "human asked to change control mode",
+        "next_command": "agentdeck policy set-mode --mode approve",
+        "recommended_action_id": "approve",
+        "action_kind": "policy_mode",
+        "action_status": "suggested",
+        "safety": "explicit_user",
+        "requires_explicit_user": True,
+    }
+    assert payload["intent_card"]["embedded_card"] == "control_mode_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect control_mode_card",
+        "command": "agentdeck workbench",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["intent_card"]["controls"][1] == {
+        "kind": "next",
+        "label": "Next command",
+        "command": "agentdeck policy set-mode --mode approve",
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert config_path.read_text(encoding="utf-8") == config_before
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "policy"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck policy set-mode --mode approve"
+    assert state_after["chat_turns"][0]["action_kind"] == "policy_mode"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["approvals"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
+def test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_before = config_path.read_text(encoding="utf-8")
+
+    exit_code = cli.main(["leader", "chat", "--message", "开启 autonomous 完全放权"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "policy"
+    assert payload["next_command"] == "agentdeck policy set-mode --mode autonomous"
+    assert payload["control_mode_card"]["available_modes"][2]["mode"] == "autonomous"
+    assert payload["control_mode_card"]["available_modes"][2]["enabled"] is False
+    assert payload["control_mode_card"]["available_modes"][2]["blocker"] == (
+        "autonomous execution policy is not implemented"
+    )
+    assert payload["leader_explanation"]["recommended_action_id"] == "autonomous"
+    assert payload["leader_explanation"]["action_status"] == "blocked"
+    assert payload["leader_explanation"]["safety"] == "explicit_user"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert payload["intent_card"]["controls"][1] == {
+        "kind": "next",
+        "label": "Next command",
+        "command": "agentdeck policy set-mode --mode autonomous",
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert config_path.read_text(encoding="utf-8") == config_before
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "policy"
+    assert state_after["chat_turns"][0]["action_kind"] == "policy_mode"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+
+
 def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
 
@@ -994,6 +1091,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "queue",
         "approval",
         "inbox",
+        "policy",
     } <= capability_modes
     capabilities = {item["mode"]: item for item in payload["capability_card"]["capabilities"]}
     assert capabilities["plan"]["safety"] == "plan_only"
@@ -1030,6 +1128,17 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
     }
     assert capabilities["inbox"]["controls"][0]["enabled"] is False
     assert capabilities["inbox"]["controls"][0]["blocker"] == "requires agent_id"
+    assert capabilities["policy"]["command"] == "agentdeck policy set-mode --mode <mode>"
+    assert capabilities["policy"]["safety"] == "explicit_user"
+    assert capabilities["policy"]["requires_explicit_user"] is True
+    assert capabilities["policy"]["controls"][0] == {
+        "kind": "set",
+        "label": "Set control mode",
+        "command": "agentdeck policy set-mode --mode <mode>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires control mode",
+    }
     assert capabilities["workbench"]["controls"][0] == {
         "kind": "inspect",
         "label": "Open workbench",

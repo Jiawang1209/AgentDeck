@@ -83,6 +83,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "queue_card",
         "role_card",
         "ledger_card",
+        "control_mode_card",
         "capability_card",
     ):
         if payload.get(card_name) is not None:
@@ -141,6 +142,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck workbench"
     if embedded_card == "queue_card" or embedded_card == "operator_card":
         return "agentdeck workbench"
+    if embedded_card == "control_mode_card":
+        return "agentdeck workbench"
     if embedded_card == "approval_card":
         return "agentdeck approval list"
     if embedded_card == "inbox_card":
@@ -171,6 +174,7 @@ def _print_leader_chat_payload_or_error(
 ) -> int:
     payload.setdefault("capability_card", None)
     payload.setdefault("control_registry_card", None)
+    payload.setdefault("control_mode_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -2046,6 +2050,38 @@ def _chat_wants_setup(message: str) -> bool:
     )
 
 
+def _chat_policy_mode(message: str) -> str | None:
+    normalized = message.strip().lower()
+    mentions_policy = any(
+        token in normalized
+        for token in [
+            "policy",
+            "control mode",
+            "控制模式",
+            "授权模式",
+            "策略",
+            "放权",
+            "审批模式",
+            "ask 模式",
+            "ask模式",
+            "approve 模式",
+            "approve模式",
+            "autonomous",
+            "自主模式",
+            "自动模式",
+        ]
+    )
+    if not mentions_policy:
+        return None
+    if any(token in normalized for token in ["autonomous", "完全放权", "全自动", "自主模式", "自动模式"]):
+        return "autonomous"
+    if any(token in normalized for token in ["ask", "询问", "只问", "回到问", "观察模式"]):
+        return "ask"
+    if any(token in normalized for token in ["approve", "approval", "审批模式", "批准模式", "安全应用"]):
+        return "approve"
+    return None
+
+
 def _chat_wants_workbench(message: str) -> bool:
     normalized = message.strip().lower()
     return any(
@@ -2299,6 +2335,19 @@ def _leader_chat_explanation(
             "action_status": "ready",
             "safety": "inspect",
             "requires_explicit_user": False,
+        }
+    if mode == "policy":
+        target_mode = str(next_command).rsplit(" ", 1)[-1] if next_command else None
+        return {
+            "mode": mode,
+            "summary": "Leader recommends an explicit control mode command without mutating policy.",
+            "reason": "human asked to change control mode",
+            "next_command": next_command,
+            "recommended_action_id": target_mode,
+            "action_kind": "policy_mode",
+            "action_status": "blocked" if target_mode == "autonomous" else "suggested",
+            "safety": "explicit_user",
+            "requires_explicit_user": True,
         }
     if mode == "runtime":
         runtime_card = _workbench_runtime_card(project_view)
@@ -2640,6 +2689,62 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "role_card": None,
             "ledger_card": None,
             "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    policy_mode = _chat_policy_mode(args.message)
+    if policy_mode is not None:
+        next_command = f"agentdeck policy set-mode --mode {policy_mode}"
+        turn = store.record_chat_turn(
+            mode="policy",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="policy_mode",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "policy",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "policy",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "policy",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
+            "control_mode_card": _workbench_control_mode_card(refreshed_project_view),
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

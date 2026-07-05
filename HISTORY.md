@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Route control mode through Leader chat
+
+- 扩展 `agentdeck leader chat` 自然语言入口：`"切换到审批模式"`、`"回到 ask 模式"`、`"开启 autonomous"` 等控制模式意图现在进入 `mode=policy`，嵌入 workbench 同源 `control_mode_card`，并返回显式 `agentdeck policy set-mode --mode <mode>` 作为 `next_command`。
+- 保持人类显式控制边界：policy chat 只记录 chat turn，不修改 `.agentdeck/config.toml`、不调用 provider、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入；`autonomous` 只作为会被策略命令拒绝的下一步建议。
+- 扩展 `agentdeck contract leader-chat` 和 help `capability_card`：新增 `control_mode_card` 响应字段、control mode 字段 discovery、policy capability，以及 `<mode>` placeholder / `requires control mode` blocker，供 GUI 或自然语言壳渲染模式切换表单。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试；本轮把“可以通过对话让 Leader 建议 ask/approve/autonomous，但不能绕过显式策略命令”的约束落到契约。
+- 完整验证：已先确认红测失败，`切换到审批模式` 最初误路由到 `mode=approval`，`autonomous` 最初误路由到 `mode=plan`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_policy_mode_change_without_mutating_config tests/test_leader_cli.py::test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked -q` 2 项通过；相关 help/contract 测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_policy_mode_change_without_mutating_config tests/test_leader_cli.py::test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning -q` 3 项通过，`conda run -n agentdeck pytest tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 4 项通过；`conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_agent_cli.py tests/test_contracts.py -q` 225 项通过；`conda run -n agentdeck pytest -q` 240 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `chat_mode=policy`、`chat_next=agentdeck policy set-mode --mode approve`、`config_after_chat=confirm`、`config_after_policy=approve`、`autonomous_status=blocked`。
+
 ### Current - Add explicit control mode policy command
 
 - 新增 `agentdeck policy set-mode --mode ask|approve|autonomous`：`ask` 会把 `leader.approval_mode` 写回 `confirm`，`approve` 会写回 `approve`，并在成功时追加 `policy_mode_updated` 审计事件。
