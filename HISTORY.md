@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Suggest guarded Leader provider switches from chat
+
+- 扩展 `agentdeck leader chat` 的 provider switch 意图：当用户说 `"切换 Leader 到 Claude CLI，要求可用"`、`"切到 Codex CLI 先预检"` 或类似 require-ready 语义时，`next_command` 会建议 `agentdeck leader set-provider --provider <provider> --model <model> --require-ready`。
+- 保持自然语言入口的人类控制边界：chat 仍只记录 setup chat turn、嵌入同源 `provider_health`、生成 `intent_card` 和 `leader_explanation`，不修改 `.agentdeck/config.toml`、不调用当前或目标 provider、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入。
+- 扩展 provider switch command 识别：`intent_card` next label 和 `leader_explanation.recommended_action_id` 都能识别带 `--require-ready` 的 set-provider 命令，避免 GUI 解释卡把目标 provider 错显示为当前 provider。
+- 同步 README、CLAUDE.md 和 AGENT.md，明确自然语言 provider switch 的 require-ready 触发语义。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "切换 Leader 到 Claude CLI，要求可用"` 最初只返回普通 `set-provider`，随后发现 `leader_explanation.recommended_action_id` 对带 `--require-ready` 命令仍错误回落到当前 provider；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_command_without_mutating_config -q` 通过；聚焦回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 6 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 310 项通过。
+
 ### Current - Preflight Leader provider switches
 
 - 扩展 `agentdeck leader set-provider` 响应：切换默认 Leader provider 后会直接返回 `ready`、`supported`、`missing_env`、`detail`、`command_path` 和 `setup_commands`，让终端/GUI 能在同一次显式切换后展示 backend readiness。

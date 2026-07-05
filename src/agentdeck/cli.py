@@ -184,7 +184,7 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Request autonomous mode"
     if re.fullmatch(r"agentdeck agent assign-role --agent [^\s]+ --role .+ --role-prompt .+", command):
         return "Assign role"
-    if re.fullmatch(r"agentdeck leader set-provider --provider [^\s]+ --model [^\s]+", command):
+    if re.fullmatch(r"agentdeck leader set-provider --provider [^\s]+ --model [^\s]+(?: --require-ready)?", command):
         return "Switch Leader provider"
     approval_match = re.fullmatch(
         r"agentdeck approval (approve|reject|dispatch) --approval-id [^\s]+(?: --reason .+)?", command
@@ -2944,7 +2944,7 @@ def _chat_wants_setup(message: str) -> bool:
     )
 
 
-def _chat_provider_switch_intent(message: str) -> tuple[str, str] | None:
+def _chat_provider_switch_intent(message: str) -> tuple[str, str, bool] | None:
     normalized = message.strip().lower()
     mentions_switch = any(
         token in normalized
@@ -2962,6 +2962,23 @@ def _chat_provider_switch_intent(message: str) -> tuple[str, str] | None:
     )
     if not mentions_switch:
         return None
+    require_ready = any(
+        token in normalized
+        for token in [
+            "require-ready",
+            "require ready",
+            "ready first",
+            "ready-only",
+            "先预检",
+            "预检",
+            "要求可用",
+            "必须可用",
+            "确保可用",
+            "不可用就拒绝",
+            "可用再切",
+            "ready 再切",
+        ]
+    )
     aliases: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("codex-cli", ("codex cli", "codex-cli", "codex")),
         ("claude-cli", ("claude code", "claude cli", "claude-cli", "claude")),
@@ -2973,7 +2990,7 @@ def _chat_provider_switch_intent(message: str) -> tuple[str, str] | None:
         if any(alias in normalized for alias in provider_aliases):
             for switch_provider, switch_model, _label in LEADER_PROVIDER_SWITCHES:
                 if switch_provider == provider:
-                    return switch_provider, switch_model
+                    return switch_provider, switch_model, require_ready
     return None
 
 
@@ -3641,7 +3658,7 @@ def _leader_chat_explanation(
         leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
         provider = leader.get("provider")
         provider_switch_match = re.fullmatch(
-            r"agentdeck leader set-provider --provider ([^\s]+) --model [^\s]+",
+            r"agentdeck leader set-provider --provider ([^\s]+) --model [^\s]+(?: --require-ready)?",
             str(next_command or ""),
         )
         if provider_switch_match:
@@ -4286,8 +4303,10 @@ def leader_chat_command(args: argparse.Namespace) -> int:
 
     provider_switch_intent = _chat_provider_switch_intent(args.message)
     if provider_switch_intent is not None:
-        target_provider, target_model = provider_switch_intent
+        target_provider, target_model, require_ready = provider_switch_intent
         next_command = f"agentdeck leader set-provider --provider {target_provider} --model {target_model}"
+        if require_ready:
+            next_command = f"{next_command} --require-ready"
         turn = store.record_chat_turn(
             mode="setup",
             message=args.message,

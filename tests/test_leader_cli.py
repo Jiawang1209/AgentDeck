@@ -585,6 +585,52 @@ def test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mu
     assert state.get("inbox", {}) == {}
 
 
+def test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_command_without_mutating_config(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project_with_default_leader(tmp_path, monkeypatch)
+    config_before = (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    exit_code = cli.main(["leader", "chat", "--message", "切换 Leader 到 Claude CLI，要求可用"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected_command = (
+        "agentdeck leader set-provider --provider claude-cli --model claude-default --require-ready"
+    )
+    assert payload["mode"] == "setup"
+    assert payload["message"] == "切换 Leader 到 Claude CLI，要求可用"
+    assert payload["next_command"] == expected_command
+    assert payload["leader_explanation"]["next_command"] == expected_command
+    assert payload["leader_explanation"]["recommended_action_id"] == "claude-cli"
+    assert payload["leader_explanation"]["action_kind"] == "provider_switch"
+    assert payload["leader_explanation"]["safety"] == "explicit_user"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert payload["intent_card"]["embedded_card"] == "provider_health"
+    assert payload["intent_card"]["next_command"] == expected_command
+    assert payload["intent_card"]["controls"][1] == {
+        "kind": "next",
+        "label": "Switch Leader provider",
+        "command": expected_command,
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+    assert (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8") == config_before
+
+    state = StateStore(root).load()
+    assert state["plans"] == []
+    assert state["leader_actions"] == []
+    assert state["chat_turns"][0]["mode"] == "setup"
+    assert state["chat_turns"][0]["next_command"] == expected_command
+    assert state["chat_turns"][0]["action_kind"] == "provider_switch"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state.get("inbox", {}) == {}
+
+
 def test_leader_chat_continue_returns_recovery_card_without_creating_action(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "已有计划"])
