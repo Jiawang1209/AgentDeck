@@ -655,6 +655,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "runtime_card",
         "role_card",
         "ledger_card",
+        "lineage_card",
         "queue_card",
         "operator_card",
         "audit_card",
@@ -1067,6 +1068,30 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "agentdeck trace --id rep_workbench",
         "agentdeck trace --id inb_workbench_head",
     ]
+    assert payload["lineage_card"] == {
+        "mode": "lineage",
+        "title": "Communication lineage",
+        "message_count": 1,
+        "job_count": 1,
+        "reply_count": 1,
+        "inbox_count": 1,
+        "trace_command_template": "agentdeck trace --id <id>",
+        "recent_paths": [
+            {
+                "message_id": "msg_workbench",
+                "job_id": "job_workbench",
+                "reply_id": "rep_workbench",
+                "inbox_id": "inb_workbench_head",
+                "from_actor": "leader",
+                "to_agent": "planner",
+                "from_agent": "planner",
+                "to_actor": "leader",
+                "task": "展示工作台 inbox",
+                "status": "reply_pending_ack",
+                "trace_command": "agentdeck trace --id msg_workbench",
+            }
+        ],
+    }
     assert payload["queue_card"] == {
         "active_queue_source": "inbox",
         "next_command": "agentdeck inbox --agent planner",

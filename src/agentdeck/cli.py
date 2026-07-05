@@ -409,6 +409,7 @@ def _workbench_snapshot_payload(
     runtime_card = _workbench_runtime_card(project_view)
     role_card = _workbench_role_card(project_view)
     ledger_card = _workbench_ledger_card(project_view)
+    lineage_card = _workbench_lineage_card(project_view, inbox_card, leader_inbox_card)
     queue_card = _workbench_queue_card(project_view, continue_card, active_queue_source)
     operator_card = _workbench_operator_card(project_view, continue_card, active_queue_source)
     audit_card = _workbench_audit_card(project_view)
@@ -425,6 +426,7 @@ def _workbench_snapshot_payload(
         "runtime_card": runtime_card,
         "role_card": role_card,
         "ledger_card": ledger_card,
+        "lineage_card": lineage_card,
         "queue_card": queue_card,
         "operator_card": operator_card,
         "audit_card": audit_card,
@@ -934,6 +936,117 @@ def _workbench_ledger_card(project_view: dict[str, object]) -> dict[str, object]
         "inbox": inbox,
         "trace_commands": trace_commands,
     }
+
+
+def _workbench_lineage_card(
+    project_view: dict[str, object],
+    inbox_card: dict[str, object] | None,
+    leader_inbox_card: dict[str, object] | None,
+) -> dict[str, object]:
+    messages = project_view.get("messages") if isinstance(project_view.get("messages"), dict) else {}
+    jobs = project_view.get("jobs") if isinstance(project_view.get("jobs"), dict) else {}
+    replies = project_view.get("replies") if isinstance(project_view.get("replies"), dict) else {}
+    inbox = project_view.get("inbox") if isinstance(project_view.get("inbox"), dict) else {}
+    job_items = _summary_items_by("message_id", jobs)
+    reply_items = _summary_items_by("message_id", replies)
+    inbox_items = _workbench_lineage_inbox_items(inbox, inbox_card, leader_inbox_card)
+    inbox_items_by_message = _items_by("message_id", inbox_items)
+    recent_paths = []
+    for message in _summary_items(messages)[-5:]:
+        if not isinstance(message, dict):
+            continue
+        message_id = message.get("message_id")
+        job = job_items.get(message_id, {})
+        reply = reply_items.get(message_id, {})
+        inbox_item = _workbench_lineage_inbox_item_for_message(message_id, reply.get("reply_id"), inbox_items_by_message)
+        trace_id = message_id or job.get("job_id") or reply.get("reply_id") or inbox_item.get("inbox_id")
+        recent_paths.append(
+            {
+                "message_id": message_id,
+                "job_id": job.get("job_id"),
+                "reply_id": reply.get("reply_id"),
+                "inbox_id": inbox_item.get("inbox_id"),
+                "from_actor": message.get("from_actor"),
+                "to_agent": message.get("to_agent"),
+                "from_agent": reply.get("from_agent"),
+                "to_actor": reply.get("to_actor"),
+                "task": message.get("task") or inbox_item.get("task"),
+                "status": _workbench_lineage_status(message, job, reply, inbox_item),
+                "trace_command": _trace_command(trace_id) if trace_id else None,
+            }
+        )
+    return {
+        "mode": "lineage",
+        "title": "Communication lineage",
+        "message_count": int(messages.get("count", 0)),
+        "job_count": int(jobs.get("count", 0)),
+        "reply_count": int(replies.get("count", 0)),
+        "inbox_count": int(inbox.get("total", 0)),
+        "trace_command_template": "agentdeck trace --id <id>",
+        "recent_paths": recent_paths,
+    }
+
+
+def _summary_items(summary: dict[str, object]) -> list[object]:
+    items = summary.get("items")
+    return items if isinstance(items, list) else []
+
+
+def _summary_items_by(key: str, summary: dict[str, object]) -> dict[object, dict[str, object]]:
+    return _items_by(key, _summary_items(summary))
+
+
+def _items_by(key: str, items: list[object]) -> dict[object, dict[str, object]]:
+    indexed: dict[object, dict[str, object]] = {}
+    for item in items:
+        if isinstance(item, dict) and item.get(key) is not None:
+            indexed[item.get(key)] = item
+    return indexed
+
+
+def _workbench_lineage_inbox_items(
+    inbox: dict[str, object],
+    inbox_card: dict[str, object] | None,
+    leader_inbox_card: dict[str, object] | None,
+) -> list[object]:
+    items: list[object] = []
+    heads = inbox.get("heads")
+    if isinstance(heads, dict):
+        items.extend(head for head in heads.values() if isinstance(head, dict))
+    for card in (inbox_card, leader_inbox_card):
+        if isinstance(card, dict) and isinstance(card.get("items"), list):
+            items.extend(card["items"])
+    return items
+
+
+def _workbench_lineage_inbox_item_for_message(
+    message_id: object,
+    reply_id: object,
+    inbox_items_by_message: dict[object, dict[str, object]],
+) -> dict[str, object]:
+    item = inbox_items_by_message.get(message_id)
+    if not reply_id or not item:
+        return item or {}
+    if item.get("reply_id") == reply_id:
+        return item
+    return item
+
+
+def _workbench_lineage_status(
+    message: dict[str, object],
+    job: dict[str, object],
+    reply: dict[str, object],
+    inbox_item: dict[str, object],
+) -> str:
+    if reply and inbox_item:
+        return "reply_pending_ack"
+    if reply:
+        return "replied"
+    if inbox_item:
+        return "inbox_pending"
+    if job:
+        return str(job.get("status") or message.get("status") or "dispatched")
+    return str(message.get("status") or "unknown")
 
 
 def _workbench_trace_commands(*summaries: dict[str, object]) -> list[str]:

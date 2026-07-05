@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Surface communication lineage in workbench
+
+- 扩展 `agentdeck workbench` 一屏快照：新增只读 `lineage_card`，从 ProjectView 的 messages/jobs/replies/inbox 摘要以及可见 inbox cards 派生最近通信路径，让 GUI 可以直接画出 Leader -> Worker -> Reply -> Inbox 的链路。
+- `lineage_card.recent_paths[]` 保留 message/job/reply/inbox id、from_actor/to_agent/from_agent/to_actor、task、status 和 `trace_command`；它只是 ledger 的投影，不成为第二套通信账本，也不 ack、不 capture reply、不读取 tmux pane、不发送 tmux 输入。
+- 同步 `agentdeck contract workbench` 的 `lineage_card_fields` / `lineage_path_fields`、稳定 workbench example、validator、README、`docs/contracts/workbench-schema.md`、CLAUDE.md、AGENT.md 和测试。
+- 完整验证：已先确认红测失败，当前 workbench snapshot、contract payload/example 和 validator 最初缺少 `lineage_card` / `lineage_card_fields`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_lineage_card_fields -q` 4 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_lineage_card_fields tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 6 项通过；`conda run -n agentdeck pytest -q` 241 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `workbench-lineage-card-smoke-ok message_count=1 path_status=reply_pending_ack trace=agentdeck trace --id msg_smoke`。
+
 ### Current - Expose concrete control mode buttons
 
 - 扩展 `control_mode_card.active_controls[]`：不再只暴露 `agentdeck policy set-mode --mode <mode>` 模板，而是直接给出 ask、approve、autonomous 三个具体 `set_mode` 控件，供 GUI/TUI 和自然语言壳渲染真实按钮。

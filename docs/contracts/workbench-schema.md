@@ -28,6 +28,8 @@ The contract command returns:
   "role_card_fields": [],
   "role_agent_fields": [],
   "ledger_card_fields": [],
+  "lineage_card_fields": [],
+  "lineage_path_fields": [],
   "queue_card_fields": [],
   "operator_card_fields": [],
   "audit_card_fields": [],
@@ -55,6 +57,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "runtime_card": {},
   "role_card": {},
   "ledger_card": {},
+  "lineage_card": {},
   "queue_card": {},
   "operator_card": {},
   "audit_card": {},
@@ -80,6 +83,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `runtime_card` is derived from `project_view.runtime_backend` and `project_view.agents[]`.
 `role_card` is derived from `project_view.agents[]` role configuration.
 `ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, and `project_view.inbox`.
+`lineage_card` is a read-only path projection derived from the same ledger summaries plus visible inbox cards.
 `queue_card` is derived from `project_view.leader_actions`, `project_view.approvals`, `project_view.inbox`, and the recovery-driven next command.
 `operator_card` is derived from `recovery.recommended_action` and the active queue card. It is a renderable human-control descriptor, not an execution result.
 `audit_card` is derived from `recovery.latest_event` and `recovery.recent_events`.
@@ -300,6 +304,39 @@ The card is configuration-only. It does not dispatch work or mutate roles; GUI c
 ```
 
 `messages`, `jobs`, and `replies` reuse the ProjectView summary shapes and must retain `trace_command` on each item. `inbox` reuses the ProjectView inbox summary so GUI clients can show mailbox heads without scanning per-agent inbox arrays. `trace_commands` is a de-duplicated convenience list for quick trace navigation; the detail source remains `agentdeck trace --id <id>`.
+
+## Lineage Card
+
+`lineage_card` turns ledger summaries into GUI-ready communication paths:
+
+```json
+{
+  "mode": "lineage",
+  "title": "Communication lineage",
+  "message_count": 1,
+  "job_count": 1,
+  "reply_count": 1,
+  "inbox_count": 1,
+  "trace_command_template": "agentdeck trace --id <id>",
+  "recent_paths": [
+    {
+      "message_id": "msg_xxx",
+      "job_id": "job_xxx",
+      "reply_id": "rep_xxx",
+      "inbox_id": "inb_xxx",
+      "from_actor": "leader",
+      "to_agent": "planner",
+      "from_agent": "planner",
+      "to_actor": "leader",
+      "task": "Prepare an implementation plan",
+      "status": "reply_pending_ack",
+      "trace_command": "agentdeck trace --id msg_xxx"
+    }
+  ]
+}
+```
+
+`recent_paths[]` is a convenience projection, not a new ledger. It links message, job, reply, and inbox ids when they are visible in ProjectView or embedded inbox cards. `trace_command` is always the detail entry point; clients must still use `agentdeck trace --id <id>` for full lineage details. The card does not create messages, acknowledge inbox items, capture replies, read tmux panes, or send tmux input.
 
 ## Queue Card
 

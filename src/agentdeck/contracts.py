@@ -428,6 +428,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "runtime_card",
     "role_card",
     "ledger_card",
+    "lineage_card",
     "queue_card",
     "operator_card",
     "audit_card",
@@ -611,6 +612,31 @@ WORKBENCH_LEDGER_CARD_FIELDS = (
     "replies",
     "inbox",
     "trace_commands",
+)
+
+WORKBENCH_LINEAGE_CARD_FIELDS = (
+    "mode",
+    "title",
+    "message_count",
+    "job_count",
+    "reply_count",
+    "inbox_count",
+    "trace_command_template",
+    "recent_paths",
+)
+
+WORKBENCH_LINEAGE_PATH_FIELDS = (
+    "message_id",
+    "job_id",
+    "reply_id",
+    "inbox_id",
+    "from_actor",
+    "to_agent",
+    "from_agent",
+    "to_actor",
+    "task",
+    "status",
+    "trace_command",
 )
 
 WORKBENCH_QUEUE_CARD_FIELDS = (
@@ -1250,6 +1276,8 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
+        "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
+        "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
@@ -2305,6 +2333,27 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("ledger_card.trace_commands must be a list")
     elif "ledger_card" in payload:
         errors.append("ledger_card must be an object")
+    lineage_card = payload.get("lineage_card")
+    if isinstance(lineage_card, dict):
+        for field in WORKBENCH_LINEAGE_CARD_FIELDS:
+            if field not in lineage_card:
+                errors.append(f"missing lineage_card field: {field}")
+        for count_field in ("message_count", "job_count", "reply_count", "inbox_count"):
+            if count_field in lineage_card and not isinstance(lineage_card.get(count_field), int):
+                errors.append(f"lineage_card.{count_field} must be an integer")
+        recent_paths = lineage_card.get("recent_paths")
+        if isinstance(recent_paths, list):
+            for path in recent_paths:
+                if not isinstance(path, dict):
+                    errors.append("lineage paths must be objects")
+                    continue
+                for field in WORKBENCH_LINEAGE_PATH_FIELDS:
+                    if field not in path:
+                        errors.append(f"missing lineage path field: {field}")
+        elif "recent_paths" in lineage_card:
+            errors.append("lineage_card.recent_paths must be a list")
+    elif "lineage_card" in payload:
+        errors.append("lineage_card must be an object")
     queue_card = payload.get("queue_card")
     if isinstance(queue_card, dict):
         for field in WORKBENCH_QUEUE_CARD_FIELDS:
@@ -3056,6 +3105,30 @@ def workbench_example() -> dict[str, object]:
                 "agentdeck trace --id msg_example",
                 "agentdeck trace --id job_example",
                 "agentdeck trace --id rep_example",
+            ],
+        },
+        "lineage_card": {
+            "mode": "lineage",
+            "title": "Communication lineage",
+            "message_count": project_view["messages"]["count"],
+            "job_count": project_view["jobs"]["count"],
+            "reply_count": project_view["replies"]["count"],
+            "inbox_count": 1,
+            "trace_command_template": "agentdeck trace --id <id>",
+            "recent_paths": [
+                {
+                    "message_id": "msg_example",
+                    "job_id": "job_example",
+                    "reply_id": "rep_example",
+                    "inbox_id": "inb_leader_example",
+                    "from_actor": "leader",
+                    "to_agent": "planner",
+                    "from_agent": "planner",
+                    "to_actor": "leader",
+                    "task": "Build a GUI-ready recovery panel",
+                    "status": "reply_pending_ack",
+                    "trace_command": "agentdeck trace --id msg_example",
+                }
             ],
         },
         "queue_card": {

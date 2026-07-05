@@ -600,6 +600,29 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
 
     payload = workbench_contract_response(contract_path, include_example=True)
     example = workbench_example()
+    lineage_card_fields = [
+        "mode",
+        "title",
+        "message_count",
+        "job_count",
+        "reply_count",
+        "inbox_count",
+        "trace_command_template",
+        "recent_paths",
+    ]
+    lineage_path_fields = [
+        "message_id",
+        "job_id",
+        "reply_id",
+        "inbox_id",
+        "from_actor",
+        "to_agent",
+        "from_agent",
+        "to_actor",
+        "task",
+        "status",
+        "trace_command",
+    ]
 
     assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
     assert payload["workbench_command"] == "agentdeck workbench"
@@ -617,6 +640,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
     assert payload["role_agent_fields"] == list(WORKBENCH_ROLE_AGENT_FIELDS)
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
+    assert payload["lineage_card_fields"] == lineage_card_fields
+    assert payload["lineage_path_fields"] == lineage_path_fields
     assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
     assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert payload["audit_card_fields"] == list(WORKBENCH_AUDIT_CARD_FIELDS)
@@ -714,6 +739,21 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert set(example["role_card"]) == set(WORKBENCH_ROLE_CARD_FIELDS)
     assert set(example["role_card"]["agents"][0]) == set(WORKBENCH_ROLE_AGENT_FIELDS)
     assert set(example["ledger_card"]) == set(WORKBENCH_LEDGER_CARD_FIELDS)
+    assert set(example["lineage_card"]) == set(lineage_card_fields)
+    assert set(example["lineage_card"]["recent_paths"][0]) == set(lineage_path_fields)
+    assert example["lineage_card"]["recent_paths"][0] == {
+        "message_id": "msg_example",
+        "job_id": "job_example",
+        "reply_id": "rep_example",
+        "inbox_id": "inb_leader_example",
+        "from_actor": "leader",
+        "to_agent": "planner",
+        "from_agent": "planner",
+        "to_actor": "leader",
+        "task": "Build a GUI-ready recovery panel",
+        "status": "reply_pending_ack",
+        "trace_command": "agentdeck trace --id msg_example",
+    }
     assert set(example["queue_card"]) == set(WORKBENCH_QUEUE_CARD_FIELDS)
     assert set(example["operator_card"]) == set(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert example["operator_card"]["controls"][0]["command"] == example["operator_card"]["preview_command"]
@@ -801,6 +841,15 @@ def test_validate_workbench_contract_requires_control_registry_item_fields() -> 
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing control_registry item field: scope"]}
+
+
+def test_validate_workbench_contract_requires_lineage_card_fields() -> None:
+    payload = workbench_example()
+    del payload["lineage_card"]["recent_paths"][0]["trace_command"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing lineage path field: trace_command"]}
 
 
 def test_validate_workbench_contract_requires_provider_health_fields() -> None:
