@@ -634,6 +634,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "api_backed",
         "chat_command",
         "continue_command",
+        "review_command_template",
         "actions_command",
         "status_command",
     ]
@@ -833,6 +834,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "api_backed": True,
         "chat_command": "agentdeck leader chat --message <text>",
         "continue_command": "agentdeck continue",
+        "review_command_template": "agentdeck leader review --plan-id <plan_id>",
         "actions_command": "agentdeck leader actions",
         "status_command": "agentdeck status",
     }

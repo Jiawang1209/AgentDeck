@@ -415,6 +415,7 @@ WORKBENCH_LEADER_CARD_FIELDS = (
     "api_backed",
     "chat_command",
     "continue_command",
+    "review_command_template",
     "actions_command",
     "status_command",
 )
@@ -2492,6 +2493,7 @@ def workbench_example() -> dict[str, object]:
             "api_backed": False,
             "chat_command": "agentdeck leader chat --message <text>",
             "continue_command": "agentdeck continue",
+            "review_command_template": "agentdeck leader review --plan-id <plan_id>",
             "actions_command": "agentdeck leader actions",
             "status_command": "agentdeck status",
         },

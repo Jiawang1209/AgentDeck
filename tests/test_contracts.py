@@ -545,6 +545,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
     assert set(example["leader_card"]) == set(WORKBENCH_LEADER_CARD_FIELDS)
+    assert example["leader_card"]["review_command_template"] == "agentdeck leader review --plan-id <plan_id>"
     assert set(example["provider_health"]) == set(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)

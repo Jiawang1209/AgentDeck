@@ -137,12 +137,13 @@ Without `--since-event`, `since_event_id` is `null`, `latest_event_id` still ref
   "api_backed": true,
   "chat_command": "agentdeck leader chat --message <text>",
   "continue_command": "agentdeck continue",
+  "review_command_template": "agentdeck leader review --plan-id <plan_id>",
   "actions_command": "agentdeck leader actions",
   "status_command": "agentdeck status"
 }
 ```
 
-The card never exposes API keys and does not call the provider. `api_backed` only indicates that the configured provider is not the local `fake` provider.
+The card never exposes API keys and does not call the provider. `api_backed` only indicates that the configured provider is not the local `fake` provider. `review_command_template` requires a concrete plan id and must not be treated as permission to review, approve, dispatch, or capture automatically.
 
 ## Provider Health
 

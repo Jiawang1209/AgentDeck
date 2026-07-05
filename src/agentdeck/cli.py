@@ -448,6 +448,7 @@ def _workbench_leader_card(project_view: dict[str, object]) -> dict[str, object]
         "api_backed": provider not in ("", "fake"),
         "chat_command": "agentdeck leader chat --message <text>",
         "continue_command": "agentdeck continue",
+        "review_command_template": "agentdeck leader review --plan-id <plan_id>",
         "actions_command": "agentdeck leader actions",
         "status_command": "agentdeck status",
     }
