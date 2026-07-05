@@ -200,6 +200,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "runtime_card",
     "role_card",
     "ledger_card",
+    "queue_card",
     "operator_card",
     "audit_card",
     "recovery",
@@ -253,6 +254,15 @@ WORKBENCH_LEDGER_CARD_FIELDS = (
     "replies",
     "inbox",
     "trace_commands",
+)
+
+WORKBENCH_QUEUE_CARD_FIELDS = (
+    "active_queue_source",
+    "next_command",
+    "leader_actions",
+    "approvals",
+    "inbox",
+    "refresh_command",
 )
 
 WORKBENCH_OPERATOR_CARD_FIELDS = (
@@ -481,6 +491,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
+        "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -1014,6 +1025,22 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("ledger_card.trace_commands must be a list")
     elif "ledger_card" in payload:
         errors.append("ledger_card must be an object")
+    queue_card = payload.get("queue_card")
+    if isinstance(queue_card, dict):
+        for field in WORKBENCH_QUEUE_CARD_FIELDS:
+            if field not in queue_card:
+                errors.append(f"missing queue_card field: {field}")
+        if "active_queue_source" in queue_card and payload.get("active_queue_source") != queue_card.get(
+            "active_queue_source"
+        ):
+            errors.append("active_queue_source must match queue_card.active_queue_source")
+        if "next_command" in queue_card and payload.get("next_command") != queue_card.get("next_command"):
+            errors.append("next_command must match queue_card.next_command")
+        for section in ("leader_actions", "approvals", "inbox"):
+            if section in queue_card and not isinstance(queue_card.get(section), dict):
+                errors.append(f"queue_card.{section} must be an object")
+    elif "queue_card" in payload:
+        errors.append("queue_card must be an object")
     operator_card = payload.get("operator_card")
     if isinstance(operator_card, dict):
         for field in WORKBENCH_OPERATOR_CARD_FIELDS:
@@ -1393,6 +1420,28 @@ def workbench_example() -> dict[str, object]:
                 "agentdeck trace --id job_example",
                 "agentdeck trace --id rep_example",
             ],
+        },
+        "queue_card": {
+            "active_queue_source": "leader_action",
+            "next_command": recovery["next_command"],
+            "leader_actions": {
+                "count": project_view["leader_actions"]["count"],
+                "pending": project_view["leader_actions"]["by_status"]["pending"],
+                "recommended_action_id": project_view["leader_actions"]["recommended_action_id"],
+                "command": "agentdeck leader actions",
+            },
+            "approvals": {
+                "count": project_view["approvals"]["count"],
+                "pending": project_view["approvals"]["pending"],
+                "approved": project_view["approvals"]["approved"],
+                "command": "agentdeck approval list",
+            },
+            "inbox": {
+                "total": project_view["inbox"]["total"],
+                "by_agent": project_view["inbox"]["by_agent"],
+                "command_template": "agentdeck inbox --agent <agent_id>",
+            },
+            "refresh_command": "agentdeck workbench",
         },
         "operator_card": {
             "status": recovery["status"],

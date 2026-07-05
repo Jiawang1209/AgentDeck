@@ -309,6 +309,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "runtime_card",
         "role_card",
         "ledger_card",
+        "queue_card",
         "operator_card",
         "audit_card",
         "recovery",
@@ -348,6 +349,14 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "replies",
         "inbox",
         "trace_commands",
+    ]
+    assert payload["queue_card_fields"] == [
+        "active_queue_source",
+        "next_command",
+        "leader_actions",
+        "approvals",
+        "inbox",
+        "refresh_command",
     ]
     assert payload["operator_card_fields"] == [
         "status",
@@ -497,6 +506,28 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "agentdeck trace --id rep_workbench",
         "agentdeck trace --id inb_workbench_head",
     ]
+    assert payload["queue_card"] == {
+        "active_queue_source": "inbox",
+        "next_command": "agentdeck inbox --agent planner",
+        "leader_actions": {
+            "count": 0,
+            "pending": 0,
+            "recommended_action_id": None,
+            "command": "agentdeck leader actions",
+        },
+        "approvals": {
+            "count": 0,
+            "pending": 0,
+            "approved": 0,
+            "command": "agentdeck approval list",
+        },
+        "inbox": {
+            "total": 1,
+            "by_agent": {"planner": 1},
+            "command_template": "agentdeck inbox --agent <agent_id>",
+        },
+        "refresh_command": "agentdeck workbench",
+    }
     assert payload["next_command"] == "agentdeck inbox --agent planner"
     assert payload["operator_card"] == {
         "status": "inbox_pending",

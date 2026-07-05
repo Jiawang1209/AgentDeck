@@ -23,6 +23,7 @@ The contract command returns:
   "role_card_fields": [],
   "role_agent_fields": [],
   "ledger_card_fields": [],
+  "queue_card_fields": [],
   "operator_card_fields": [],
   "audit_card_fields": []
 }
@@ -44,6 +45,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "runtime_card": {},
   "role_card": {},
   "ledger_card": {},
+  "queue_card": {},
   "operator_card": {},
   "audit_card": {},
   "recovery": {},
@@ -61,6 +63,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `runtime_card` is derived from `project_view.runtime_backend` and `project_view.agents[]`.
 `role_card` is derived from `project_view.agents[]` role configuration.
 `ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, and `project_view.inbox`.
+`queue_card` is derived from `project_view.leader_actions`, `project_view.approvals`, `project_view.inbox`, and the recovery-driven next command.
 `operator_card` is derived from `recovery.recommended_action` and the active queue card. It is a renderable human-control descriptor, not an execution result.
 `audit_card` is derived from `recovery.latest_event` and `recovery.recent_events`.
 `recovery` must equal `project_view.recovery`.
@@ -139,6 +142,37 @@ The card is configuration-only. It does not dispatch work or mutate roles; GUI c
 ```
 
 `messages`, `jobs`, and `replies` reuse the ProjectView summary shapes and must retain `trace_command` on each item. `inbox` reuses the ProjectView inbox summary so GUI clients can show mailbox heads without scanning per-agent inbox arrays. `trace_commands` is a de-duplicated convenience list for quick trace navigation; the detail source remains `agentdeck trace --id <id>`.
+
+## Queue Card
+
+`queue_card` is a compact queue overview for GUI status bars:
+
+```json
+{
+  "active_queue_source": "inbox",
+  "next_command": "agentdeck inbox --agent planner",
+  "leader_actions": {
+    "count": 0,
+    "pending": 0,
+    "recommended_action_id": null,
+    "command": "agentdeck leader actions"
+  },
+  "approvals": {
+    "count": 0,
+    "pending": 0,
+    "approved": 0,
+    "command": "agentdeck approval list"
+  },
+  "inbox": {
+    "total": 1,
+    "by_agent": {"planner": 1},
+    "command_template": "agentdeck inbox --agent <agent_id>"
+  },
+  "refresh_command": "agentdeck workbench"
+}
+```
+
+The card summarizes queues only. GUI clients should use `leader_action`, `approval_card`, `inbox_card`, or the listed commands for details and explicit execution.
 
 ## Operator Card
 

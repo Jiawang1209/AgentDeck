@@ -219,6 +219,7 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "runtime_card": _workbench_runtime_card(project_view),
         "role_card": _workbench_role_card(project_view),
         "ledger_card": _workbench_ledger_card(project_view),
+        "queue_card": _workbench_queue_card(project_view, continue_card, active_queue_source),
         "operator_card": _workbench_operator_card(project_view, continue_card, active_queue_source),
         "audit_card": _workbench_audit_card(project_view),
         "recovery": recovery,
@@ -228,6 +229,37 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "inbox_card": inbox_card,
         "approval_card": approval_card,
         "leader_action": leader_action if isinstance(leader_action, dict) else None,
+    }
+
+
+def _workbench_queue_card(
+    project_view: dict[str, object], continue_card: dict[str, object], active_queue_source: str
+) -> dict[str, object]:
+    leader_actions = project_view.get("leader_actions") if isinstance(project_view.get("leader_actions"), dict) else {}
+    approvals = project_view.get("approvals") if isinstance(project_view.get("approvals"), dict) else {}
+    inbox = project_view.get("inbox") if isinstance(project_view.get("inbox"), dict) else {}
+    leader_status = leader_actions.get("by_status") if isinstance(leader_actions.get("by_status"), dict) else {}
+    return {
+        "active_queue_source": active_queue_source,
+        "next_command": continue_card.get("next_command"),
+        "leader_actions": {
+            "count": int(leader_actions.get("count", 0)),
+            "pending": int(leader_status.get("pending", 0)),
+            "recommended_action_id": leader_actions.get("recommended_action_id"),
+            "command": "agentdeck leader actions",
+        },
+        "approvals": {
+            "count": int(approvals.get("count", 0)),
+            "pending": int(approvals.get("pending", 0)),
+            "approved": int(approvals.get("approved", 0)),
+            "command": "agentdeck approval list",
+        },
+        "inbox": {
+            "total": int(inbox.get("total", 0)),
+            "by_agent": inbox.get("by_agent", {}),
+            "command_template": "agentdeck inbox --agent <agent_id>",
+        },
+        "refresh_command": "agentdeck workbench",
     }
 
 

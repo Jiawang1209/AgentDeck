@@ -30,6 +30,7 @@ from agentdeck.contracts import (
     WORKBENCH_AUDIT_CARD_FIELDS,
     WORKBENCH_LEDGER_CARD_FIELDS,
     WORKBENCH_OPERATOR_CARD_FIELDS,
+    WORKBENCH_QUEUE_CARD_FIELDS,
     WORKBENCH_ROLE_AGENT_FIELDS,
     WORKBENCH_ROLE_CARD_FIELDS,
     WORKBENCH_RUNTIME_AGENT_FIELDS,
@@ -303,6 +304,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
     assert payload["role_agent_fields"] == list(WORKBENCH_ROLE_AGENT_FIELDS)
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
+    assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
     assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert payload["audit_card_fields"] == list(WORKBENCH_AUDIT_CARD_FIELDS)
     assert payload["example"] is True
@@ -316,6 +318,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert set(example["role_card"]) == set(WORKBENCH_ROLE_CARD_FIELDS)
     assert set(example["role_card"]["agents"][0]) == set(WORKBENCH_ROLE_AGENT_FIELDS)
     assert set(example["ledger_card"]) == set(WORKBENCH_LEDGER_CARD_FIELDS)
+    assert set(example["queue_card"]) == set(WORKBENCH_QUEUE_CARD_FIELDS)
     assert set(example["operator_card"]) == set(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert set(example["audit_card"]) == set(WORKBENCH_AUDIT_CARD_FIELDS)
     assert example["ledger_card"]["trace_commands"] == [
@@ -376,6 +379,15 @@ def test_validate_workbench_contract_requires_ledger_trace_commands() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing message item field: trace_command"]}
+
+
+def test_validate_workbench_contract_requires_queue_fields() -> None:
+    payload = workbench_example()
+    del payload["queue_card"]["refresh_command"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing queue_card field: refresh_command"]}
 
 
 def test_validate_workbench_contract_requires_operator_fields() -> None:
