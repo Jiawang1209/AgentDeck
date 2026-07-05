@@ -947,15 +947,7 @@ def _capability_item_control(item: dict[str, object]) -> dict[str, object]:
         "review": "review",
         "apply_action": "apply",
     }.get(mode, "inspect")
-    blocker = None
-    if "<goal>" in command:
-        blocker = "requires goal text"
-    elif "<plan_id>" in command:
-        blocker = "requires plan_id"
-    elif "<action_id>" in command:
-        blocker = "requires action_id"
-    elif "<agent_id>" in command:
-        blocker = "requires agent_id"
+    blocker = _placeholder_blocker(command)
     return {
         "kind": kind,
         "label": item["label"],
@@ -1726,8 +1718,12 @@ def _validate_capability_controls(errors: list[str], item: dict[str, object]) ->
                     errors.append("capability_card.capabilities.controls: command must match capability command")
                 if control.get("safety") != item.get("safety"):
                     errors.append("capability_card.capabilities.controls: safety must match capability safety")
-                if _command_has_placeholder(control.get("command")) and control.get("enabled") is not False:
+                placeholder_enabled = _command_has_placeholder(control.get("command")) and control.get("enabled") is not False
+                if placeholder_enabled:
                     errors.append("capability_card.capabilities.controls: placeholder commands must be disabled")
+                expected_blocker = _placeholder_blocker(control.get("command"))
+                if not placeholder_enabled and expected_blocker is not None and control.get("blocker") != expected_blocker:
+                    errors.append("capability_card.capabilities.controls: blocker must match placeholder")
                 if control.get("enabled") is False and not control.get("blocker"):
                     errors.append("capability_card.capabilities.controls: disabled controls must include blocker")
             else:
@@ -1738,6 +1734,20 @@ def _validate_capability_controls(errors: list[str], item: dict[str, object]) ->
 
 def _command_has_placeholder(command: object) -> bool:
     return isinstance(command, str) and "<" in command and ">" in command
+
+
+def _placeholder_blocker(command: object) -> str | None:
+    if not isinstance(command, str):
+        return None
+    if "<goal>" in command:
+        return "requires goal text"
+    if "<plan_id>" in command:
+        return "requires plan_id"
+    if "<action_id>" in command:
+        return "requires action_id"
+    if "<agent_id>" in command:
+        return "requires agent_id"
+    return None
 
 
 def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]:

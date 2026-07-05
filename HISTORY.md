@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Match Leader capability placeholder blockers
+
+- 加强 `validate_leader_chat_contract()`：placeholder capability control 的 blocker 必须与占位符类型匹配，例如 `<goal>` 对应 `requires goal text`，`<plan_id>` 对应 `requires plan_id`。
+- 复用 `_placeholder_blocker()` 生成和校验 blocker，避免 capability helper 与 validator 维护两套缺参提示规则。
+- 新增契约红测覆盖 `<plan_id>` control 使用错误 blocker 的情况；更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`。
+- 完整验证：已先确认红测失败，validator 最初允许 placeholder control 使用错误 blocker；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_placeholder_blocker_match -q` 1 项通过；placeholder 回归测试 2 项通过；leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 139 项通过；`conda run -n agentdeck pytest -q` 211 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-help-placeholder-blockers-match-smoke-ok`。
+
 ### Current - Guard Leader capability placeholder controls
 
 - 加强 `validate_leader_chat_contract()`：capability control 的命令只要包含 `<...>` 模板占位符，就必须保持 disabled，避免 GUI 把缺少参数的模板命令渲染成可直接执行按钮。

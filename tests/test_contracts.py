@@ -1267,6 +1267,19 @@ def test_validate_leader_chat_contract_requires_placeholder_controls_disabled() 
     }
 
 
+def test_validate_leader_chat_contract_requires_placeholder_blocker_match() -> None:
+    payload = leader_chat_example()
+    review = next(item for item in payload["capability_card"]["capabilities"] if item["mode"] == "review")
+    review["controls"][0]["blocker"] = "requires goal text"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["capability_card.capabilities.controls: blocker must match placeholder"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_embedded_project_view_contract() -> None:
     payload = leader_chat_example()
     del payload["project_view"]["leader_actions"]["recommended_action_id"]
