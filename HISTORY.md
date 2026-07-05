@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Surface Leader inbox in workbench
+
+- 扩展 `agentdeck workbench` 一屏快照：新增固定 `leader_inbox_card`，始终复用 `agentdeck inbox --agent leader` 队列形状，让 GUI/TUI 或自然语言壳直接看到 worker 回流给 Leader 的 `task_reply`、trace 和 ack 入口。
+- 保持 `inbox_card` 的 recovery-driven 语义不变；`leader_inbox_card` 只是同源 Leader mailbox 投影，不成为第二套 inbox 状态源。
+- 同步 `agentdeck contract workbench`、`docs/contracts/workbench-schema.md`、README、CLAUDE.md、AGENT.md 和测试；本轮推进“worker 输出 -> Leader inbox -> workbench 一屏可见 -> 可恢复 review”的北极星主线。
+- 结合用户反馈，README 明确控制模式应保持类似 Codex 的梯度：默认 ask/inspect，由人类显式审批或授权后再进入更高自治度执行。
+- 完整验证：已先确认红测失败，workbench snapshot、contract payload/example 和 validator 最初缺少 `leader_inbox_card`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_leader_inbox_card_when_worker_reply_returns_to_leader tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_leader_inbox_card_contract -q` 4 项通过；`conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 155 项通过；`conda run -n agentdeck pytest -q` 235 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时项目 in-process smoke 确认 `leader_inbox_count=1`、`event_type=task_reply`，且仅显式 dispatch 触发 1 次 tmux send。
+
 ### Current - Embed inbox card after agent reply
 
 - 扩展 `agentdeck reply` 和 `agentdeck capture-reply` 成功响应：当 worker reply 回流到某个 agent inbox（例如 `leader`）时，同步嵌入接收方 `inbox_card`，让 GUI/TUI 或自然语言壳立即看到 `task_reply`、trace 和 ack 入口。

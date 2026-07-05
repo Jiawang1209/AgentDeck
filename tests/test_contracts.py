@@ -598,6 +598,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
     assert payload["workbench_command"] == "agentdeck workbench"
     assert payload["snapshot_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
+    assert "leader_inbox_card" in payload["snapshot_fields"]
     assert payload["leader_card_fields"] == list(WORKBENCH_LEADER_CARD_FIELDS)
     assert payload["leader_control_fields"] == list(WORKBENCH_LEADER_CONTROL_FIELDS)
     assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
@@ -617,6 +618,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["example_workbench"] == example
     assert payload["example_snapshot_fields"] == payload["snapshot_fields"]
     assert set(payload["example_snapshot_fields"]) == set(example)
+    assert example["leader_inbox_card"]["agent_id"] == "leader"
+    assert example["leader_inbox_card"]["items"][0]["event_type"] == "task_reply"
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
     assert set(example["leader_card"]) == set(WORKBENCH_LEADER_CARD_FIELDS)
@@ -709,6 +712,15 @@ def test_validate_workbench_contract_accepts_example() -> None:
     result = validate_workbench_contract(workbench_example())
 
     assert result == {"ok": True, "errors": []}
+
+
+def test_validate_workbench_contract_requires_leader_inbox_card_contract() -> None:
+    payload = workbench_example()
+    del payload["leader_inbox_card"]["items"][0]["ack_command"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["leader_inbox_card: missing inbox item field: ack_command"]}
 
 
 def test_validate_workbench_contract_reuses_continue_card_validator() -> None:

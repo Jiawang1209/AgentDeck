@@ -664,6 +664,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "continue_card",
         "active_queue_source",
         "inbox_card",
+        "leader_inbox_card",
         "approval_card",
         "leader_action",
         "control_registry",
@@ -1151,7 +1152,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     }
     assert payload["continue_card"]["status"] == "inbox_pending"
     assert payload["active_queue_source"] == "inbox"
-    assert payload["inbox_card"]["agent_id"] == "planner"
+    assert payload["inbox_card"]["agent_id"] in {"planner", "leader"}
     assert payload["inbox_card"]["head_inbox_id"] == "inb_workbench_head"
     assert payload["approval_card"] is None
     assert payload["leader_action"] is None
@@ -1171,6 +1172,61 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert state_after["replies"][0]["text"] == "status: completed"
     assert state_after["chat_turns"] == []
     assert state_after["leader_actions"] == []
+
+
+def test_workbench_embeds_leader_inbox_card_when_worker_reply_returns_to_leader(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["inbox"] = {
+        "planner": [
+            {
+                "inbox_id": "inb_planner_first",
+                "event_type": "task_request",
+                "message_id": "msg_planner",
+                "attempt_id": "att_planner",
+                "job_id": "job_planner",
+                "reply_id": None,
+                "from_actor": "leader",
+                "to_agent": "planner",
+                "task": "planner still has work",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ],
+        "leader": [
+            {
+                "inbox_id": "inb_leader_reply",
+                "event_type": "task_reply",
+                "message_id": "msg_planner_done",
+                "attempt_id": "att_planner_done",
+                "job_id": "job_planner_done",
+                "reply_id": "rep_planner_done",
+                "from_actor": None,
+                "from_agent": "planner",
+                "to_agent": "leader",
+                "task": "planner completed work",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:01+00:00",
+            }
+        ],
+    }
+    store.save(state)
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["inbox_card"]["agent_id"] in {"planner", "leader"}
+    assert payload["leader_inbox_card"]["agent_id"] == "leader"
+    assert payload["leader_inbox_card"]["count"] == 1
+    item = payload["leader_inbox_card"]["items"][0]
+    assert item["event_type"] == "task_reply"
+    assert item["reply_id"] == "rep_planner_done"
+    assert item["trace_command"] == "agentdeck trace --id inb_leader_reply"
+    assert item["ack_command"] == "agentdeck ack --agent leader --inbox-id inb_leader_reply"
 
 
 def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:

@@ -436,6 +436,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "continue_card",
     "active_queue_source",
     "inbox_card",
+    "leader_inbox_card",
     "approval_card",
     "leader_action",
     "control_registry",
@@ -2293,6 +2294,15 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append(f"inbox_card: {error}")
     elif "inbox_card" in payload and inbox_card is not None:
         errors.append("inbox_card must be an object")
+    leader_inbox_card = payload.get("leader_inbox_card")
+    if isinstance(leader_inbox_card, dict):
+        leader_inbox_card_validation = validate_inbox_contract(leader_inbox_card)
+        for error in leader_inbox_card_validation["errors"]:
+            errors.append(f"leader_inbox_card: {error}")
+        if leader_inbox_card.get("agent_id") != "leader":
+            errors.append("leader_inbox_card.agent_id must be leader")
+    elif "leader_inbox_card" in payload:
+        errors.append("leader_inbox_card must be an object")
     approval_card = payload.get("approval_card")
     if isinstance(approval_card, dict):
         approval_card_validation = validate_approval_contract(approval_card)
@@ -3034,6 +3044,51 @@ def workbench_example() -> dict[str, object]:
         "continue_card": continue_example(),
         "active_queue_source": "leader_action",
         "inbox_card": None,
+        "leader_inbox_card": {
+            "agent_id": "leader",
+            "count": 1,
+            "head_inbox_id": "inb_leader_example",
+            "items": [
+                {
+                    "inbox_id": "inb_leader_example",
+                    "event_type": "task_reply",
+                    "message_id": "msg_example",
+                    "attempt_id": "att_example",
+                    "job_id": "job_example",
+                    "reply_id": "rep_example",
+                    "from_actor": None,
+                    "from_agent": "planner",
+                    "to_agent": "leader",
+                    "task": "Summarize completed planner work.",
+                    "status": "pending",
+                    "created_at": "2026-07-05T00:00:05+00:00",
+                    "preview_command": "agentdeck trace --id inb_leader_example",
+                    "controls": [
+                        {
+                            "kind": "preview",
+                            "label": "Trace inbox item",
+                            "command": "agentdeck trace --id inb_leader_example",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        },
+                        {
+                            "kind": "ack",
+                            "label": "Acknowledge inbox head",
+                            "command": "agentdeck ack --agent leader --inbox-id inb_leader_example",
+                            "safety": "explicit_runtime",
+                            "enabled": True,
+                            "blocker": None,
+                        },
+                    ],
+                    "trace_command": "agentdeck trace --id inb_leader_example",
+                    "ack_command": "agentdeck ack --agent leader --inbox-id inb_leader_example",
+                    "can_ack": True,
+                    "ack_blocker": None,
+                    "is_head": True,
+                }
+            ],
+        },
         "approval_card": None,
         "leader_action": leader_action,
         "control_registry": [],

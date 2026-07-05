@@ -64,8 +64,10 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "continue_card": {},
   "active_queue_source": "none",
   "inbox_card": null,
+  "leader_inbox_card": {},
   "approval_card": null,
   "leader_action": null,
+  "control_registry": [],
   "change_summary": {}
 }
 ```
@@ -407,6 +409,7 @@ When `recovery.recommended_action.source` is:
 
 - `leader_action`: `active_queue_source` is `leader_action`, and `leader_action` contains the current recovery action detail when available.
 - `inbox`: `active_queue_source` is `inbox`, and `inbox_card` reuses the `agentdeck inbox --agent <id>` queue contract.
+- `leader_inbox_card` always reuses the `agentdeck inbox --agent leader` queue contract so GUI clients can see worker `task_reply` items returning to Leader even when the active recovery queue points elsewhere.
 - `approval`: `active_queue_source` is `approval`, and `approval_card` reuses the `agentdeck approval list` queue contract.
 - `provider_health`: `active_queue_source` is `provider_health`, and `operator_card` points at `agentdeck doctor` so GUI clients can surface missing Leader provider setup before users trigger a failing plan/chat call.
 - `runtime`: `active_queue_source` is `runtime`, and `operator_card` points at `agentdeck agent refresh` so GUI clients can surface stale pane bindings before users continue runtime-dependent work.

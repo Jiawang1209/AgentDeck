@@ -389,6 +389,7 @@ def _workbench_snapshot_payload(
 ) -> dict[str, object]:
     continue_card = _continue_card_payload(project_view, store)
     inbox_card, approval_card = _leader_chat_recovery_cards(project_view, store)
+    leader_inbox_card = _inbox_queue_payload("leader", store)
     recovery = project_view.get("recovery", {})
     active_queue_source = _active_queue_source(project_view)
     leader_action = continue_card.get("leader_action")
@@ -421,6 +422,7 @@ def _workbench_snapshot_payload(
         "continue_card": continue_card,
         "active_queue_source": active_queue_source,
         "inbox_card": inbox_card,
+        "leader_inbox_card": leader_inbox_card,
         "approval_card": approval_card,
         "leader_action": leader_action if isinstance(leader_action, dict) else None,
         "control_registry": [],
