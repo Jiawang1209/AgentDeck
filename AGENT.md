@@ -192,7 +192,7 @@ Worker 不应该：
 - `agentdeck leader set-provider --provider <provider> --model <model>` 是持久切换默认 Leader provider 的显式命令；它只修改 `.agentdeck/config.toml` 的 `[leader] provider/model` 并追加 `leader_provider_updated` 事件，不调用 provider、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入；未知 provider 必须失败且不得修改配置。
 - `deepseek` provider 通过 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 调用 OpenAI-compatible `/chat/completions`，但仍然只生成 plan。
 - `openai-compatible` provider 通过 `AGENTDECK_LEADER_API_KEY`、`AGENTDECK_LEADER_BASE_URL` 和 `AGENTDECK_LEADER_MODEL` 调用 `/chat/completions`，但仍然只生成 plan。
-- `codex-cli` / `claude-cli` provider 是 CLI-backed Leader provider：它们通过本地 `codex exec` / `claude --print` 非交互调用为 `agent_id=leader` 生成同一 JSON plan schema；不得复用 worker tmux pane 作为 Leader，也不得自动创建 approval、dispatch 或发送 tmux 输入。
+- `codex-cli` / `claude-cli` provider 是 CLI-backed Leader provider：它们通过本地 `codex exec` / `claude --print` 非交互调用为 `agent_id=leader` 生成同一 JSON plan schema；stdout 可以是纯 JSON plan，也可以把唯一 JSON plan 包在 Markdown fenced `json` block 中；不得复用 worker tmux pane 作为 Leader，也不得自动创建 approval、dispatch 或发送 tmux 输入。
 - CLI-backed Leader readiness 只检查本地命令是否存在并提供 `codex login` / `codex doctor` 或 `claude auth` / `claude doctor` setup commands；不得要求或暴露 API key。
 - chat/plan-only 阶段不会写入 `messages`、`jobs` 或 `inbox`，也不会发送 tmux 输入。
 - 后续其他 API-backed provider 必须复用 DeepSeek/OpenAI-compatible 的同一 plan schema。

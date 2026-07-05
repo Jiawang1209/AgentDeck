@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from json import JSONDecodeError
@@ -59,12 +60,26 @@ class CliLeaderProvider:
 
     def _parse_plan(self, stdout: str) -> dict[str, object]:
         text = stdout.strip()
-        try:
-            plan = json.loads(text)
-        except JSONDecodeError as exc:
-            raise RuntimeError("provider plan content is not valid JSON") from exc
+        plan = self._load_json_plan(text)
         self._validate_plan(plan)
         return plan
+
+    def _load_json_plan(self, text: str) -> object:
+        try:
+            return json.loads(text)
+        except JSONDecodeError:
+            pass
+        fenced_plans = []
+        for match in re.finditer(r"```(?:json)?\s*(?P<body>.*?)\s*```", text, re.IGNORECASE | re.DOTALL):
+            try:
+                fenced_plans.append(json.loads(match.group("body").strip()))
+            except JSONDecodeError:
+                continue
+        if len(fenced_plans) == 1:
+            return fenced_plans[0]
+        if len(fenced_plans) > 1:
+            raise RuntimeError("provider plan content contains multiple JSON plans")
+        raise RuntimeError("provider plan content is not valid JSON")
 
     def _validate_plan(self, plan: object) -> None:
         if not isinstance(plan, dict):

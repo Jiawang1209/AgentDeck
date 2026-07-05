@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Tolerate fenced JSON from CLI-backed Leaders
+
+- 增强 `codex-cli` / `claude-cli` Leader provider 的 plan 解析：本地 CLI stdout 可以是纯 JSON plan，也可以把唯一 JSON plan 包在 Markdown fenced `json` block 中。
+- 保持安全边界：解析出的对象仍必须通过同一 plan schema 校验，`steps[]` 必须非空且每个 step 必须 `requires_approval=true`；非法 JSON、多个 fenced JSON plan、非对象、空 steps 或无审批 step 仍会失败并进入现有 provider failure 诊断路径。
+- 同步 README、CLAUDE.md 和 AGENT.md，明确 CLI-backed Leader 可以容忍 fenced JSON 输出，但不会放松审批门或复用 worker tmux pane。
+- 验证记录：已先确认红测失败，`conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_cli_provider_extracts_fenced_json_plan_from_local_cli_output -q` 最初因 `provider plan content is not valid JSON` 失败；随后确认多个 fenced JSON 红测最初会误取第一份 plan；实现后目标回归 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_cli_provider_extracts_fenced_json_plan_from_local_cli_output tests/test_provider_openai_compatible.py::test_cli_provider_rejects_multiple_fenced_json_plans tests/test_provider_openai_compatible.py::test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_claude_cli_provider_runs_print_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_cli_provider_reports_subprocess_failure -q` 5 项通过。
+
 ### Current - Resolve current inbox from recovery in Leader chat
 
 - 扩展 `agentdeck leader chat` inbox intent：当用户输入 `"查看当前 inbox"`、`"追踪当前 inbox"` 或 `"确认当前 inbox"` 且 ProjectView recovery 指向 pending inbox 时，chat 会从 recovery `target_id` 反查 mailbox owner，并复用同源 `agentdeck inbox --agent <id>` queue shape。

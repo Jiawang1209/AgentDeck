@@ -200,6 +200,56 @@ def test_claude_cli_provider_runs_print_command_and_parses_json_plan(tmp_path, m
     assert plan["goal"] == "CLI Leader"
 
 
+def test_cli_provider_extracts_fenced_json_plan_from_local_cli_output(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"Here is the plan:\n```json\n{cli_plan_stdout()}\n```\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    provider = CodexCliProvider()
+    plan = provider.plan(LeaderPlanRequest(task="解析 CLI fenced JSON", config=config))
+
+    assert plan["goal"] == "CLI Leader"
+    assert plan["steps"][0]["requires_approval"] is True
+
+
+def test_cli_provider_rejects_multiple_fenced_json_plans(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+
+    def fake_run(command, **_kwargs):
+        plan = cli_plan_stdout()
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"```json\n{plan}\n```\n```json\n{plan}\n```\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    provider = CodexCliProvider()
+
+    try:
+        provider.plan(LeaderPlanRequest(task="多个 JSON plan", config=config))
+    except RuntimeError as exc:
+        assert str(exc) == "provider plan content contains multiple JSON plans"
+    else:
+        raise AssertionError("provider should reject ambiguous fenced JSON plans")
+
+
 def test_cli_provider_reports_subprocess_failure(tmp_path, monkeypatch) -> None:
     root = tmp_path / "repo"
     root.mkdir()
