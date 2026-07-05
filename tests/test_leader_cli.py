@@ -1809,6 +1809,21 @@ def test_leader_chat_applies_create_approvals_action_when_explicitly_requested(t
     assert payload["recovery"]["recommended_action"]["command"] == "agentdeck approval list"
     assert payload["next_command"] == payload["recovery"]["next_command"]
     assert payload["next_command"] == "agentdeck approval list"
+    assert payload["approval_card"]["count"] == 3
+    assert [item["agent_id"] for item in payload["approval_card"]["approvals"]] == [
+        "planner",
+        "coder",
+        "reviewer",
+    ]
+    assert [item["status"] for item in payload["approval_card"]["approvals"]] == [
+        "pending",
+        "pending",
+        "pending",
+    ]
+    assert payload["approval_card"]["approvals"][0]["preview_command"] == "agentdeck approval list"
+    assert payload["approval_card"]["approvals"][0]["approve_command"].startswith("agentdeck approval approve")
+    assert payload["approval_card"]["approvals"][0]["can_dispatch"] is False
+    assert payload["approval_card"]["approvals"][0]["dispatch_blocker"] == "approval is not approved"
     assert payload["leader_explanation"]["mode"] == "apply_action"
     assert payload["leader_explanation"]["recommended_action_id"] is None
     assert payload["leader_explanation"]["action_kind"] == "create_approvals"

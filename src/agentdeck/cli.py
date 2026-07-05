@@ -2360,6 +2360,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         refreshed_project_view = _project_view_payload_or_error(config, store)
         if refreshed_project_view is None:
             return 1
+        approval_card = _approval_queue_payload(store)
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -2381,7 +2382,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "leader_action": action_detail,
             "continue_card": None,
             "inbox_card": None,
-            "approval_card": None,
+            "approval_card": approval_card,
             "runtime_card": None,
             "queue_card": None,
             "operator_card": None,

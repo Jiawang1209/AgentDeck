@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Embed approval card after chat safe apply
+
+- 扩展 `agentdeck leader chat --message "apply action <id>"` 的 safe apply 响应：应用 `create_approvals` 后，同一响应现在会嵌入同源 `approval_card`，让 GUI/TUI 或自然语言壳立即展示刚创建的人类审批队列。
+- 保持安全边界不变：该模式仍只允许 safe `create_approvals`，不会自动 approve、reject、dispatch、capture reply、发送 tmux 输入或扩大 runtime action 白名单。
+- 同步 `docs/contracts/leader-chat-schema.md`、README、CLAUDE.md、AGENT.md 和测试；`approval_card` 继续复用 `agentdeck approval list` 队列契约和 `validate_approval_contract()`，不成为第二套 approval 状态源。
+- 完整验证：已先确认红测失败，chat safe apply 响应最初的 `approval_card` 为 `None`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_applies_create_approvals_action_when_explicitly_requested -q` 1 项通过；`conda run -n agentdeck pytest tests/test_leader_cli.py -q` 65 项通过；`conda run -n agentdeck pytest -q` 233 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `chat-safe-apply-approval-card-smoke-ok`。
+
 ### Current - Add Leader action card to chat responses
 
 - 扩展 `agentdeck leader chat` 响应：当响应包含顶层 `leader_action` 时，同步派生 `leader_action_card`，暴露 mode/title/action_id/kind/status/reason/preview_command/can_apply/apply_command/explicit_command/apply_blocker/controls，供 GUI/TUI 或自然语言壳直接渲染下一步动作卡。

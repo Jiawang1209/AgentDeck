@@ -366,7 +366,7 @@ Approval-mode responses include `approval_card`, which reuses the same queue sha
 }
 ```
 
-When `approval_card` is present, `validate_leader_chat_contract()` reuses `validate_approval_contract()` and prefixes nested errors with `approval_card:`. Approval-mode is read-only: it may recommend `agentdeck approval list`, the first pending approval's `approve_command`, the first pending approval's `reject_command`, or the first approved approval's `dispatch_command`, but it must not approve, reject, dispatch work, or send tmux input.
+When `approval_card` is present, `validate_leader_chat_contract()` reuses `validate_approval_contract()` and prefixes nested errors with `approval_card:`. Approval-mode is read-only: it may recommend `agentdeck approval list`, the first pending approval's `approve_command`, the first pending approval's `reject_command`, or the first approved approval's `dispatch_command`, but it must not approve, reject, dispatch work, or send tmux input. Apply-action mode may also embed `approval_card` after a safe `create_approvals` action succeeds, so the same response can show the newly created human approval queue without approving or dispatching it.
 
 Setup-mode responses are returned when the human asks to inspect `doctor`, provider setup, API key, or local environment readiness. They are read-only and do not call the configured Leader provider:
 
@@ -428,7 +428,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; `validate_leader_chat_contract()` rejects disabled controls without a blocker, rejects `kind=inspect` controls unless `safety=inspect`, and rejects enabled placeholder commands or placeholder blockers that do not match.
 - Chat help-mode responses must include `capability_card`; `validate_leader_chat_contract()` rejects capability cards whose `capability_count` does not match `capabilities[]`, rejects capability items or controls with missing fields, rejects capability controls whose `command` or `safety` drift from the parent capability item, rejects placeholder capability controls that use unknown placeholders, are enabled, or use the wrong blocker, rejects disabled capability controls without blockers, and rejects `plan`, `review`, or `apply_action` entries whose safety does not match their scheduling semantics.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
-- Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
+- Chat approval-mode responses and safe apply-action responses that create approvals must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.
 - Chat queue-mode responses must reuse the workbench queue and operator cards through `queue_card` and `operator_card`.
 - Chat role-mode responses must reuse the workbench role card through `role_card`.
