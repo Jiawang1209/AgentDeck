@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Expose Leader capability placeholder discovery
+
+- 扩展 `agentdeck contract leader-chat`：新增 `capability_placeholder_fields` 和 `capability_placeholders`，让 GUI 能机器发现 placeholder 白名单及其 blocker，而不是解析 Markdown 文档。
+- 新增 `LEADER_CHAT_CAPABILITY_PLACEHOLDERS` 常量，并让 `_placeholder_blocker()` 复用同一份数据，避免 discovery、helper 和 validator 的 placeholder 规则漂移。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md`、`AGENT.md` 和契约 drift guard 测试。
+- 完整验证：已先确认红测失败，contract discovery 最初缺少 `capability_placeholder_fields`；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 1 项通过；leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 140 项通过；`conda run -n agentdeck pytest -q` 212 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-chat-placeholder-discovery-smoke-ok`。
+
 ### Current - Reject unknown Leader capability placeholders
 
 - 加强 `validate_leader_chat_contract()`：capability control 的 placeholder 必须来自已知白名单，当前仅支持 `<goal>`、`<plan_id>`、`<action_id>` 和 `<agent_id>`，避免 GUI 接收到无法安全填参的未知模板。

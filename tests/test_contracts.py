@@ -1060,6 +1060,14 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["capability_control_fields"] == payload["intent_control_fields"]
     assert payload["example_capability_control_fields"] == payload["capability_control_fields"]
     assert payload["example_capability_control_fields"] == list(example["capability_card"]["capabilities"][0]["controls"][0])
+    assert payload["capability_placeholder_fields"] == ["placeholder", "blocker"]
+    assert payload["example_capability_placeholder_fields"] == payload["capability_placeholder_fields"]
+    assert payload["capability_placeholders"] == [
+        {"placeholder": "<goal>", "blocker": "requires goal text"},
+        {"placeholder": "<plan_id>", "blocker": "requires plan_id"},
+        {"placeholder": "<action_id>", "blocker": "requires action_id"},
+        {"placeholder": "<agent_id>", "blocker": "requires agent_id"},
+    ]
     assert example["capability_card"]["capabilities"][0]["controls"][0] == {
         "kind": "inspect",
         "label": "Open workbench",

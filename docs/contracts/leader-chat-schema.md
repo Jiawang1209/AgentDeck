@@ -27,6 +27,8 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "capability_card_fields": [],
   "capability_item_fields": [],
   "capability_control_fields": [],
+  "capability_placeholder_fields": [],
+  "capability_placeholders": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view"
 }
@@ -140,7 +142,7 @@ Help-mode responses include `capability_card`, a read-only capability map for na
 
 The real card also includes Leader scheduling entries for `plan`, `review`, and `apply_action`. `plan` must use `safety=plan_only` and its control command should point at the explicit `agentdeck leader plan --task <goal>` planning entrypoint; `review` and `apply_action` must use `safety=safe_apply`, with review pointing at `agentdeck leader review --plan-id <plan_id>` and apply_action pointing at `agentdeck leader apply-action --action-id <action_id>`; read-only views such as `workbench`, `continue`, `runtime`, `role`, `ledger`, `queue`, `approval`, `inbox`, and `setup` use `safety=inspect` unless the downstream mode explicitly recommends an explicit runtime command.
 
-Every capability item includes `controls[]` using the same `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` shape as intent controls; `agentdeck contract leader-chat` exposes the same shape as `capability_control_fields`. Direct read-only commands such as `agentdeck workbench` are enabled. Template commands may only use known placeholders: `<goal>`, `<plan_id>`, `<action_id>`, or `<agent_id>`. Template commands with those placeholders must be disabled and must include a matching blocker such as `requires goal text`, `requires plan_id`, `requires action_id`, or `requires agent_id`. Capability controls must keep `command` and `safety` aligned with their parent capability item.
+Every capability item includes `controls[]` using the same `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` shape as intent controls; `agentdeck contract leader-chat` exposes the same shape as `capability_control_fields`. Direct read-only commands such as `agentdeck workbench` are enabled. Template commands may only use known placeholders: `<goal>`, `<plan_id>`, `<action_id>`, or `<agent_id>`. `capability_placeholders[]` exposes that whitelist with the matching blocker for each placeholder so GUI clients can render template inputs without parsing this Markdown document. Template commands with those placeholders must be disabled and must include a matching blocker such as `requires goal text`, `requires plan_id`, `requires action_id`, or `requires agent_id`. Capability controls must keep `command` and `safety` aligned with their parent capability item.
 
 Help-mode is returned when the human asks `帮助`, `help`, `/help`, `你能做什么`, `有哪些能力`, `命令面板`, `commands`, or `capabilities`. It records a chat turn, recommends `agentdeck workbench`, embeds `capability_card`, and must not create a plan, leader action, approval, message, job, inbox item, inspect tmux panes, call the provider, or send tmux input. The capability entries and their controls describe available commands; they are not permission to auto-run those commands.
 

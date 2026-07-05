@@ -650,6 +650,18 @@ LEADER_CHAT_CAPABILITY_ITEM_FIELDS = (
     "controls",
 )
 
+LEADER_CHAT_CAPABILITY_PLACEHOLDER_FIELDS = (
+    "placeholder",
+    "blocker",
+)
+
+LEADER_CHAT_CAPABILITY_PLACEHOLDERS = (
+    {"placeholder": "<goal>", "blocker": "requires goal text"},
+    {"placeholder": "<plan_id>", "blocker": "requires plan_id"},
+    {"placeholder": "<action_id>", "blocker": "requires action_id"},
+    {"placeholder": "<agent_id>", "blocker": "requires agent_id"},
+)
+
 TRACE_TOP_LEVEL_FIELDS = (
     "schema_version",
     "query_id",
@@ -772,6 +784,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "capability_card_fields": list(LEADER_CHAT_CAPABILITY_CARD_FIELDS),
         "capability_item_fields": list(LEADER_CHAT_CAPABILITY_ITEM_FIELDS),
         "capability_control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
+        "capability_placeholder_fields": list(LEADER_CHAT_CAPABILITY_PLACEHOLDER_FIELDS),
+        "capability_placeholders": [dict(item) for item in LEADER_CHAT_CAPABILITY_PLACEHOLDERS],
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -797,6 +811,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_capability_card_fields"] = list(example["capability_card"])
         payload["example_capability_item_fields"] = list(example["capability_card"]["capabilities"][0])
         payload["example_capability_control_fields"] = list(example["capability_card"]["capabilities"][0]["controls"][0])
+        payload["example_capability_placeholder_fields"] = list(LEADER_CHAT_CAPABILITY_PLACEHOLDER_FIELDS)
         payload["example_leader_chat"] = example
     return payload
 
@@ -1741,14 +1756,9 @@ def _command_has_placeholder(command: object) -> bool:
 def _placeholder_blocker(command: object) -> str | None:
     if not isinstance(command, str):
         return None
-    if "<goal>" in command:
-        return "requires goal text"
-    if "<plan_id>" in command:
-        return "requires plan_id"
-    if "<action_id>" in command:
-        return "requires action_id"
-    if "<agent_id>" in command:
-        return "requires agent_id"
+    for item in LEADER_CHAT_CAPABILITY_PLACEHOLDERS:
+        if item["placeholder"] in command:
+            return str(item["blocker"])
     return None
 
 
