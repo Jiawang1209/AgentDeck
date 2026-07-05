@@ -1256,6 +1256,49 @@ def test_leader_chat_suggests_trace_for_current_inbox_head(tmp_path, monkeypatch
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)
     state = store.load()
+    state["messages"] = [
+        {
+            "message_id": "msg_trace",
+            "from_actor": "leader",
+            "to_agent": "planner",
+            "task": "代码实现完成",
+            "prompt": "# AgentDeck dispatch\n\nAgent: planner\n\n当前任务:\n代码实现完成",
+            "status": "replied",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["attempts"] = [
+        {
+            "attempt_id": "att_trace",
+            "message_id": "msg_trace",
+            "agent_id": "planner",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["jobs"] = [
+        {
+            "job_id": "job_trace",
+            "message_id": "msg_trace",
+            "attempt_id": "att_trace",
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["replies"] = [
+        {
+            "reply_id": "rep_trace",
+            "message_id": "msg_trace",
+            "attempt_id": "att_trace",
+            "job_id": "job_trace",
+            "from_agent": "coder",
+            "to_actor": "leader",
+            "text": "status: completed\nsummary: 已完成实现。",
+            "created_at": "2026-07-04T00:00:01+00:00",
+        }
+    ]
     state["inbox"] = {
         "planner": [
             {
@@ -1284,9 +1327,23 @@ def test_leader_chat_suggests_trace_for_current_inbox_head(tmp_path, monkeypatch
     assert payload["inbox_card"]["agent_id"] == "planner"
     assert payload["inbox_card"]["items"][0]["event_type"] == "task_reply"
     assert payload["inbox_card"]["items"][0]["trace_command"] == payload["next_command"]
+    assert payload["trace_card"]["query_id"] == "inb_trace_me"
+    assert payload["trace_card"]["message"]["message_id"] == "msg_trace"
+    assert payload["trace_card"]["jobs"][0]["job_id"] == "job_trace"
+    assert payload["trace_card"]["replies"][0]["reply_id"] == "rep_trace"
+    assert payload["trace_card"]["inbox_items"][0]["inbox_id"] == "inb_trace_me"
     assert payload["leader_explanation"]["action_kind"] == "inbox_trace"
     assert payload["leader_explanation"]["recommended_action_id"] == "inb_trace_me"
     assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["intent_card"]["embedded_card"] == "trace_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect trace_card",
+        "command": "agentdeck trace --id inb_trace_me",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
     assert StateStore(root).load()["inbox"]["planner"][0]["status"] == "pending"
 
 

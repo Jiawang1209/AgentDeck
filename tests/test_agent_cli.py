@@ -534,6 +534,9 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == expected["response_fields"]
     assert payload["explanation_fields"] == expected["explanation_fields"]
+    assert payload["trace_card_fields"] == expected["trace_card_fields"]
+    assert payload["trace_message_fields"] == expected["trace_message_fields"]
+    assert payload["trace_inbox_item_fields"] == expected["trace_inbox_item_fields"]
     assert payload["workbench_control_registry_item_fields"] == expected["workbench_control_registry_item_fields"]
     assert payload["control_registry_card_fields"] == expected["control_registry_card_fields"]
 
@@ -1802,6 +1805,7 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     )
     assert payload["example_control_registry_card_fields"] == payload["control_registry_card_fields"]
     assert set(payload["example_control_registry_card_fields"]) == set(example["control_registry_card"])
+    assert example["trace_card"] is None
     assert example["leader_explanation"]["safety"] == "safe_apply"
     assert example["leader_explanation"]["recommended_action_id"] == example["leader_action"]["action_id"]
     assert example["leader_actions"] == example["project_view"]["leader_actions"]

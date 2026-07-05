@@ -26,6 +26,12 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "ledger_card_fields": [],
   "lineage_card_fields": [],
   "lineage_path_fields": [],
+  "trace_card_fields": [],
+  "trace_message_fields": [],
+  "trace_attempt_fields": [],
+  "trace_job_fields": [],
+  "trace_reply_fields": [],
+  "trace_inbox_item_fields": [],
   "workbench_card_fields": [],
   "workbench_control_registry_item_fields": [],
   "control_registry_card_fields": [],
@@ -65,6 +71,7 @@ The review-mode response shape is:
   "leader_action_card": {},
   "continue_card": null,
   "inbox_card": null,
+  "trace_card": null,
   "approval_card": null,
   "runtime_card": null,
   "queue_card": null,
@@ -354,7 +361,20 @@ Inbox-mode responses include `inbox_card`, which reuses the same queue shape as 
 }
 ```
 
-When `inbox_card` is present, `validate_leader_chat_contract()` reuses `validate_inbox_contract()` and prefixes nested errors with `inbox_card:`. Inbox-mode is read-only: it may recommend `agentdeck inbox --agent <id>`, `agentdeck trace --id <inbox_id>`, or the head item `ack_command`, but it must not execute ack, dispatch work, capture replies, or send tmux input.
+When the inbox message asks to `trace`, `追踪`, `溯源`, or inspect `lineage`, the response may also include `trace_card`, which reuses the same shape as `agentdeck trace --id <id>` for the current pending inbox head:
+
+```json
+{
+  "query_id": "inb_xxx",
+  "message": {},
+  "attempts": [],
+  "jobs": [],
+  "replies": [],
+  "inbox_items": []
+}
+```
+
+When `inbox_card` is present, `validate_leader_chat_contract()` reuses `validate_inbox_contract()` and prefixes nested errors with `inbox_card:`. When `trace_card` is present, the validator reuses `validate_trace_contract()` and prefixes nested errors with `trace_card:`. Inbox-mode is read-only: it may recommend `agentdeck inbox --agent <id>`, `agentdeck trace --id <inbox_id>`, or the head item `ack_command`, but it must not execute ack, dispatch work, capture replies, or send tmux input. A trace intent should set `intent_card.embedded_card` to `trace_card` when the card is available, so GUI and natural-language shells can render the actual communication evidence rather than only a command string.
 
 Approval-mode responses include `approval_card`, which reuses the same queue shape as `agentdeck approval list`:
 
@@ -437,6 +457,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; `validate_leader_chat_contract()` rejects disabled controls without a blocker, rejects `kind=inspect` controls unless `safety=inspect`, and rejects enabled placeholder commands or placeholder blockers that do not match.
 - Chat help-mode responses must include `capability_card`; `validate_leader_chat_contract()` rejects capability cards whose `capability_count` does not match `capabilities[]`, rejects capability items or controls with missing fields, rejects capability controls whose `command` or `safety` drift from the parent capability item, rejects placeholder capability controls that use unknown placeholders, are enabled, or use the wrong blocker, rejects disabled capability controls without blockers, and rejects `plan`, `review`, or `apply_action` entries whose safety does not match their scheduling semantics.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
+- Chat inbox trace responses may embed `trace_card`, reusing the `agentdeck trace` contract for the current pending inbox head.
 - Chat approval-mode responses and safe apply-action responses that create approvals must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.
 - Chat queue-mode responses must reuse the workbench queue and operator cards through `queue_card` and `operator_card`.
@@ -447,4 +468,4 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, or `runtime_card` when `recovery.recommended_action.source` points at those queues or runtime recovery.
 - Chat setup-mode responses may include `provider_health` and must recommend `agentdeck doctor` without calling the provider.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as safety/reason explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `trace_card` as the selected inbox/message lineage evidence surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as safety/reason explanation.

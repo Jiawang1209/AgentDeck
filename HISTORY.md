@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Embed trace card in Leader chat inbox trace mode
+
+- 扩展 `agentdeck leader chat --message "追踪 planner 当前 inbox"`：inbox trace 意图现在仍保持只读 `mode=inbox`，但在能解析 pending head lineage 时会嵌入同源 `trace_card`。
+- `trace_card` 复用 `agentdeck trace --id <id>` 的契约形状，包含 message、attempts、jobs、replies 和 inbox_items；`intent_card.embedded_card` 会优先指向 `trace_card`，让 GUI/自然语言壳直接展示通信证据链，而不是只显示 trace 命令。
+- 同步 `agentdeck contract leader-chat` 的 `trace_card_fields` / trace nested fields、leader-chat validator、README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试。
+- 保持安全边界：本轮只读嵌入 trace 证据，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture reply、不读取 tmux pane、不发送 tmux 输入。
+- 完整验证：已先确认红测失败，inbox trace chat 最初缺少 `trace_card`，leader-chat contract 最初缺少 trace card 字段发现；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_trace_for_current_inbox_head tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 5 项通过；`conda run -n agentdeck pytest -q` 241 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-trace-card-smoke-ok mode=inbox embedded=trace_card query=inb_smoke_trace message=msg_smoke_trace next=agentdeck trace --id inb_smoke_trace`。
+
 ### Current - Embed lineage card in Leader chat ledger mode
 
 - 扩展 `agentdeck leader chat --message "查看账本"` / `"查看通信"`：ledger-mode 响应现在同时嵌入 workbench 同源的 `ledger_card` 和 `lineage_card`，让自然语言入口也能直接展示最近通信路径。

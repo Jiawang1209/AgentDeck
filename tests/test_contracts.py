@@ -447,6 +447,12 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
     assert payload["lineage_card_fields"] == list(WORKBENCH_LINEAGE_CARD_FIELDS)
     assert payload["lineage_path_fields"] == list(WORKBENCH_LINEAGE_PATH_FIELDS)
+    assert payload["trace_card_fields"] == list(TRACE_TOP_LEVEL_FIELDS)
+    assert payload["trace_message_fields"] == list(TRACE_MESSAGE_FIELDS)
+    assert payload["trace_attempt_fields"] == list(TRACE_ATTEMPT_FIELDS)
+    assert payload["trace_job_fields"] == list(TRACE_JOB_FIELDS)
+    assert payload["trace_reply_fields"] == list(TRACE_REPLY_FIELDS)
+    assert payload["trace_inbox_item_fields"] == list(TRACE_INBOX_ITEM_FIELDS)
     assert payload["workbench_card_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
     assert payload["control_mode_card_fields"] == list(WORKBENCH_CONTROL_MODE_CARD_FIELDS)
     assert payload["control_mode_option_fields"] == list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS)
@@ -1370,6 +1376,7 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_lineage_card_fields"] == list(example["lineage_card"])
     assert payload["example_lineage_path_fields"] == payload["lineage_path_fields"]
     assert payload["example_lineage_path_fields"] == list(example["lineage_card"]["recent_paths"][0])
+    assert example["trace_card"] is None
     assert payload["example_workbench_card_fields"] == payload["workbench_card_fields"]
     assert payload["example_workbench_card_fields"] == list(example["workbench_card"])
     assert payload["example_control_mode_card_fields"] == payload["control_mode_card_fields"]

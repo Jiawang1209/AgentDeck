@@ -76,6 +76,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     for card_name in (
         "workbench_card",
         "continue_card",
+        "trace_card",
         "inbox_card",
         "approval_card",
         "runtime_card",
@@ -138,6 +139,10 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck agent list"
     if embedded_card == "ledger_card":
         return "agentdeck workbench"
+    if embedded_card == "trace_card":
+        trace_card = payload.get("trace_card")
+        query_id = trace_card.get("query_id") if isinstance(trace_card, dict) else None
+        return _trace_command(query_id) if query_id else None
     if embedded_card == "role_card":
         return "agentdeck workbench"
     if embedded_card == "queue_card" or embedded_card == "operator_card":
@@ -176,6 +181,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("control_registry_card", None)
     payload.setdefault("control_mode_card", None)
     payload.setdefault("lineage_card", None)
+    payload.setdefault("trace_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -1816,6 +1822,19 @@ def trace_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _trace_card_for_query(store: StateStore, query_id: object) -> dict[str, object] | None:
+    if query_id is None:
+        return None
+    try:
+        trace = store.trace(str(query_id))
+    except KeyError:
+        return None
+    validation = validate_trace_contract(trace)
+    if not validation["ok"]:
+        return None
+    return trace
+
+
 def _record_leader_provider_failure(
     store: StateStore,
     mode: str,
@@ -3355,6 +3374,11 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             if wants_trace and isinstance(head, dict)
             else "inbox"
         )
+        trace_card = (
+            _trace_card_for_query(store, head.get("inbox_id"))
+            if inbox_action_kind == "inbox_trace" and isinstance(head, dict)
+            else None
+        )
         turn = store.record_chat_turn(
             mode="inbox",
             message=args.message,
@@ -3399,6 +3423,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "leader_action": None,
             "continue_card": None,
             "inbox_card": inbox_card,
+            "trace_card": trace_card,
             "approval_card": None,
             "runtime_card": None,
             "queue_card": None,

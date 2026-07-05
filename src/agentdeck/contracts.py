@@ -365,6 +365,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "leader_action_card",
     "continue_card",
     "inbox_card",
+    "trace_card",
     "approval_card",
     "runtime_card",
     "queue_card",
@@ -937,6 +938,12 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
+        "trace_card_fields": list(TRACE_TOP_LEVEL_FIELDS),
+        "trace_message_fields": list(TRACE_MESSAGE_FIELDS),
+        "trace_attempt_fields": list(TRACE_ATTEMPT_FIELDS),
+        "trace_job_fields": list(TRACE_JOB_FIELDS),
+        "trace_reply_fields": list(TRACE_REPLY_FIELDS),
+        "trace_inbox_item_fields": list(TRACE_INBOX_ITEM_FIELDS),
         "workbench_card_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "control_mode_card_fields": list(WORKBENCH_CONTROL_MODE_CARD_FIELDS),
         "control_mode_option_fields": list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS),
@@ -2023,6 +2030,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_lineage_card_contract(errors, lineage_card, prefix="lineage_card")
     elif "lineage_card" in payload and lineage_card is not None:
         errors.append("lineage_card must be an object")
+    trace_card = payload.get("trace_card")
+    if isinstance(trace_card, dict):
+        trace_card_validation = validate_trace_contract(trace_card)
+        for error in trace_card_validation["errors"]:
+            errors.append(f"trace_card: {error}")
+    elif "trace_card" in payload and trace_card is not None:
+        errors.append("trace_card must be an object")
     workbench_card = payload.get("workbench_card")
     if isinstance(workbench_card, dict):
         workbench_validation = validate_workbench_contract(workbench_card)
@@ -2735,6 +2749,7 @@ def leader_chat_example() -> dict[str, object]:
         "leader_action_card": leader_action_card,
         "continue_card": continue_card,
         "inbox_card": None,
+        "trace_card": None,
         "approval_card": None,
         "runtime_card": runtime_card,
         "queue_card": queue_card,
