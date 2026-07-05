@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add event timeline cursor queries
+
+- 扩展 `agentdeck events`：新增 `--since <event_id>`，让 GUI/TUI 在 `workbench.change_summary.has_new_events=true` 后，可以拉取 cursor 之后的完整审计事件详情。
+- `events --since` 返回 `since_event_id`、`latest_event_id`、`cursor_found` 和受 `--limit` 限制的 `events`；当 cursor 不存在时返回 `cursor_found=false` 并回退到事件尾部。
+- 保持兼容：不带 `--since` 的 `agentdeck events --limit <n>` 输出形状不变；cursor 由 GUI/调用方持有，不写入 AgentDeck state。
+- 更新 `README.md`、`docs/contracts/project-view-schema.md`、`CLAUDE.md` 和 `AGENT.md`，明确事件游标是只读查询，不改变审计账本。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_events_since_returns_events_after_cursor_with_metadata tests/test_agent_cli.py::test_events_since_missing_cursor_returns_limited_tail_and_marks_cursor_missing -q` 最初因 argparse 不认识 `--since` 失败；实现后目标事件测试通过；`conda run -n agentdeck pytest tests/test_agent_cli.py::test_events_lists_recent_event_tail tests/test_agent_cli.py::test_events_since_returns_events_after_cursor_with_metadata tests/test_agent_cli.py::test_events_since_missing_cursor_returns_limited_tail_and_marks_cursor_missing tests/test_agent_cli.py::test_events_returns_empty_list_when_log_is_missing tests/test_agent_cli.py::test_workbench_since_event_summarizes_new_audit_events_without_mutating_state -q` 通过；`conda run -n agentdeck pytest -q` 177 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `events-since-ok` 和 `events-since-missing-ok`。
+
 ### Current - Add workbench event cursor summary
 
 - 扩展 `agentdeck workbench`：新增 `--since-event <event_id>` 和顶层 `change_summary`，让 GUI/TUI 可以用审计事件游标判断当前快照相对上一帧是否有新事件。

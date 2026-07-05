@@ -337,7 +337,20 @@ Only the earliest pending item is the actionable mailbox head for an agent. Use 
 }
 ```
 
-ProjectView embeds compact `latest_event` and `recent_events` summaries for recovery. Use `events` when a GUI needs a timeline panel.
+`agentdeck events --since <event_id>` returns raw audit events after a GUI-held cursor, plus cursor metadata:
+
+```json
+{
+  "count": 1,
+  "limit": 20,
+  "since_event_id": "evt_old",
+  "latest_event_id": "evt_new",
+  "cursor_found": true,
+  "events": []
+}
+```
+
+If `cursor_found` is false, the cursor is stale or unknown and the response falls back to the limited event tail. ProjectView embeds compact `latest_event` and `recent_events` summaries for recovery. Workbench embeds `change_summary` for cheap change detection. Use `events --since` when a GUI needs timeline details after detecting new events.
 
 ## Consumer Rules
 

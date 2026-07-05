@@ -173,6 +173,50 @@ def test_events_lists_recent_event_tail(tmp_path, monkeypatch, capsys) -> None:
     assert [item["payload"]["index"] for item in payload["events"]] == [2, 3]
 
 
+def test_events_since_returns_events_after_cursor_with_metadata(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    first = cli.EventRecord.create("first_event", {"index": 1})
+    second = cli.EventRecord.create("second_event", {"index": 2})
+    third = cli.EventRecord.create("third_event", {"index": 3})
+    store.append_event(first)
+    store.append_event(second)
+    store.append_event(third)
+
+    exit_code = cli.main(["events", "--since", first.event_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 2
+    assert payload["limit"] == 20
+    assert payload["since_event_id"] == first.event_id
+    assert payload["latest_event_id"] == third.event_id
+    assert payload["cursor_found"] is True
+    assert [item["event_id"] for item in payload["events"]] == [second.event_id, third.event_id]
+    assert [item["payload"]["index"] for item in payload["events"]] == [2, 3]
+
+
+def test_events_since_missing_cursor_returns_limited_tail_and_marks_cursor_missing(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    store.append_event(cli.EventRecord.create("first_event", {"index": 1}))
+    second = cli.EventRecord.create("second_event", {"index": 2})
+    store.append_event(second)
+
+    exit_code = cli.main(["events", "--since", "evt_missing", "--limit", "1"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 1
+    assert payload["limit"] == 1
+    assert payload["since_event_id"] == "evt_missing"
+    assert payload["latest_event_id"] == second.event_id
+    assert payload["cursor_found"] is False
+    assert [item["event_id"] for item in payload["events"]] == [second.event_id]
+
+
 def test_events_returns_empty_list_when_log_is_missing(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
 

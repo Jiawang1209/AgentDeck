@@ -190,8 +190,33 @@ def events_command(args: argparse.Namespace) -> int:
     _config, store, exit_code = _load_project_or_error()
     if store is None:
         return exit_code
-    events = store.list_events(args.limit)
-    _print_json({"count": len(events), "limit": args.limit, "events": events})
+    all_events = store.list_events(1000000)
+    latest_event = all_events[-1] if all_events else None
+    latest_event_id = latest_event.get("event_id") if isinstance(latest_event, dict) else None
+    cursor_found = None
+    if args.since:
+        cursor_index = next(
+            (index for index, event in enumerate(all_events) if event.get("event_id") == args.since),
+            -1,
+        )
+        cursor_found = cursor_index >= 0
+        events = all_events[cursor_index + 1 :] if cursor_found else all_events
+        if args.limit > 0:
+            events = events[-args.limit:]
+        else:
+            events = []
+    else:
+        events = store.list_events(args.limit)
+    payload = {"count": len(events), "limit": args.limit, "events": events}
+    if args.since:
+        payload.update(
+            {
+                "since_event_id": args.since,
+                "latest_event_id": latest_event_id,
+                "cursor_found": cursor_found,
+            }
+        )
+    _print_json(payload)
     return 0
 
 
@@ -2466,6 +2491,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     events = subparsers.add_parser("events", help="Show recent audit events")
     events.add_argument("--limit", type=int, default=20, help="Number of recent events to show")
+    events.add_argument("--since", default=None, help="Show audit events after this event id")
     events.set_defaults(func=events_command)
 
     continue_parser = subparsers.add_parser("continue", help="Show the current recovery-driven next step")

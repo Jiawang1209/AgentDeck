@@ -140,7 +140,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck leader action --action-id <id>` 输出 JSON 前必须通过 `validate_leader_action_contract()` 自校验；校验失败时返回非 0 且不得输出半坏 action detail；detail 必须公开 `preview_command`、can_apply、apply_command、explicit_command 和 apply_blocker。
 - `agentdeck approval list` 输出 JSON 前必须通过 `validate_approval_contract()` 自校验；校验失败时返回非 0 且不得输出半坏 approval queue；每个 approval item 必须公开 `controls[]`、`preview_command`、approve/reject/dispatch commands、can_dispatch 和 dispatch_blocker。
 - `agentdeck inbox --agent <id>` 输出 JSON 前必须通过 `validate_inbox_contract()` 自校验；校验失败时返回非 0 且不得输出半坏 inbox queue；每个 inbox item 必须公开 `controls[]`、`preview_command`、trace_command、ack_command、is_head、can_ack 和 ack_blocker。
-- `agentdeck events --limit <n>` 是只读事件时间线入口，用于审计和 GUI 最近事件列表。
+- `agentdeck events --limit <n>` 是只读事件时间线入口，用于审计和 GUI 最近事件列表；`agentdeck events --since <event_id>` 返回 cursor 之后的审计事件和 cursor metadata，cursor 由 GUI/调用方持有，不得写入 AgentDeck state。
 - `agentdeck status` 的 `recovery` 是默认恢复入口，必须保持只读，并暴露 status/reason/next_command/recommended_action/pending/leader_action/latest_event/recent_events；`recommended_action` 必须说明 label/command/safety/requires_explicit_user/source/target_id。
 - 当没有 pending action、approval 或 inbox item 但存在 `leader_errors[]` 时，`agentdeck status.recovery` 必须返回 `status=leader_error` 和 inspect 型 recommended_action。
 - `agentdeck status.recovery.pending` 必须包含 `leader_errors` 计数，供 GUI 统一展示 Leader 错误数量。
