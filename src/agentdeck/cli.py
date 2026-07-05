@@ -16,6 +16,7 @@ from .contracts import (
     leader_chat_contract_response,
     project_view_contract_response,
     trace_contract_response,
+    workbench_contract_response,
     validate_approval_contract,
     validate_continue_contract,
     validate_inbox_contract,
@@ -24,6 +25,7 @@ from .contracts import (
     validate_leader_chat_contract,
     validate_project_view_contract,
     validate_trace_contract,
+    validate_workbench_contract,
 )
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
 from .orchestration.leader import LeaderOrchestrator
@@ -199,6 +201,30 @@ def _leader_chat_recovery_cards(
     return None, None
 
 
+def _workbench_snapshot_payload(project_view: dict[str, object], store: StateStore) -> dict[str, object]:
+    continue_card = _continue_card_payload(project_view, store)
+    inbox_card, approval_card = _leader_chat_recovery_cards(project_view, store)
+    recovery = project_view.get("recovery", {})
+    recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+    source = recommended_action.get("source") if isinstance(recommended_action, dict) else None
+    active_queue_source = source if source in ("leader_action", "inbox", "approval") else "none"
+    leader_action = continue_card.get("leader_action")
+    return {
+        "ok": True,
+        "mode": "workbench",
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view": project_view,
+        "leader_actions": project_view.get("leader_actions"),
+        "recovery": recovery,
+        "next_command": continue_card.get("next_command"),
+        "continue_card": continue_card,
+        "active_queue_source": active_queue_source,
+        "inbox_card": inbox_card,
+        "approval_card": approval_card,
+        "leader_action": leader_action if isinstance(leader_action, dict) else None,
+    }
+
+
 def continue_command(_args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -210,6 +236,24 @@ def continue_command(_args: argparse.Namespace) -> int:
     validation = validate_continue_contract(payload)
     if not validation["ok"]:
         print("Continue card contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def workbench_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    payload = _workbench_snapshot_payload(project_view, store)
+    validation = validate_workbench_contract(payload)
+    if not validation["ok"]:
+        print("Workbench contract validation failed", file=sys.stderr)
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
         return 1
@@ -234,6 +278,13 @@ def contract_leader_chat_command(args: argparse.Namespace) -> int:
 def contract_continue_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "continue-card-schema.md"
     payload = continue_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_workbench_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "workbench-schema.md"
+    payload = workbench_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -1792,6 +1843,9 @@ def build_parser() -> argparse.ArgumentParser:
     continue_parser = subparsers.add_parser("continue", help="Show the current recovery-driven next step")
     continue_parser.set_defaults(func=continue_command)
 
+    workbench = subparsers.add_parser("workbench", help="Show a GUI-ready read-only workbench snapshot")
+    workbench.set_defaults(func=workbench_command)
+
     contract = subparsers.add_parser("contract", help="Discover machine-readable AgentDeck contracts")
     contract_subparsers = contract.add_subparsers(dest="contract_command")
     contract_project_view = contract_subparsers.add_parser(
@@ -1812,6 +1866,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_continue.add_argument("--example", action="store_true", help="Include a GUI-ready continue card example")
     contract_continue.set_defaults(func=contract_continue_command)
+    contract_workbench = contract_subparsers.add_parser(
+        "workbench",
+        help="Show workbench snapshot contract discovery metadata",
+    )
+    contract_workbench.add_argument("--example", action="store_true", help="Include a GUI-ready workbench example")
+    contract_workbench.set_defaults(func=contract_workbench_command)
     contract_approvals = contract_subparsers.add_parser(
         "approvals",
         help="Show approval queue contract discovery metadata",

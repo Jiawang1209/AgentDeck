@@ -96,6 +96,7 @@ Worker 不应该：
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`。
 - ProjectView contract payload 和 example fixture 维护在 `src/agentdeck/contracts.py`，需要复用时优先 import 该模块。
 - Leader chat response contract 见 `docs/contracts/leader-chat-schema.md`；`agentdeck contract leader-chat --example` 会返回包含 `leader_explanation` 的稳定响应示例。
+- Workbench snapshot contract 见 `docs/contracts/workbench-schema.md`；`agentdeck contract workbench --example` 会返回稳定一屏工作台示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Leader actions queue contract 见 `docs/contracts/leader-actions-schema.md`；`agentdeck contract leader-actions --example` 会返回稳定队列示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Leader action detail contract 见 `docs/contracts/leader-action-schema.md`；`agentdeck contract leader-action --example` 会返回稳定 action detail 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Approval queue contract 见 `docs/contracts/approvals-schema.md`；`agentdeck contract approvals --example` 会返回稳定 approval queue 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
@@ -106,6 +107,7 @@ Worker 不应该：
 - `agentdeck contract project-view` 返回 ProjectView 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定示例，供 GUI 原型使用。
 - `agentdeck contract leader-chat` 返回自然语言 Leader chat 响应契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定响应示例，供 GUI 原型使用。
 - `agentdeck contract continue` 返回顶层 continue 恢复卡片契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定恢复卡片示例，供 GUI 原型使用。
+- `agentdeck contract workbench` 返回工作台快照契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定一屏 workbench 示例，供 GUI/TUI 原型使用。
 - `agentdeck contract leader-actions` 返回 Leader action queue 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定队列示例，供 GUI 原型使用。
 - `agentdeck contract leader-action` 返回单个 Leader action 详情契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 action detail 示例，供 GUI 原型使用。
 - `agentdeck contract approvals` 返回人类审批队列契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 approval queue 示例，供 GUI 原型使用。
@@ -125,6 +127,7 @@ Worker 不应该：
 - `status.leader_actions` 包含 recommended_action_id，`items[]` 包含 can_apply/apply_command/explicit_command/apply_blocker/is_recommended，可直接驱动 GUI action 按钮、阻塞提示和当前推荐项高亮。
 - `status.messages.items[]`、`status.jobs.items[]` 和 `status.replies.items[]` 包含 `trace_command`；ProjectView contract discovery 会公开对应 item field lists，缺少 trace 入口的 summary item 应被 validator 拒绝。
 - `agentdeck continue` 是顶层只读恢复入口；它必须先通过 ProjectView contract 守门，再通过 `validate_continue_contract()` 自校验，最后返回 recovery-driven 下一步卡片；不得写 state、创建 action、apply action、dispatch 或发送 tmux 输入；`agentdeck contract continue` 会公开 `continue_card_fields`。
+- `agentdeck workbench` 是 GUI/TUI 优先的一屏只读快照；它必须先通过 ProjectView contract 守门，再组合 project_view、leader_actions、recovery、continue_card、active_queue_source、inbox_card、approval_card 和 leader_action，并通过 `validate_workbench_contract()` 自校验；不得写 state、创建 chat turn、ack、approve、dispatch、capture reply 或发送 tmux 输入；`agentdeck contract workbench` 会公开 `snapshot_fields`。
 - `status.recovery.status=inbox_pending` 时，`next_command` 和 `recommended_action.command` 指向具体 `agentdeck inbox --agent <id>`，供 GUI/continue 直接打开对应 mailbox。
 - `status.inbox.heads` 按 agent 暴露最早 pending inbox item；GUI/Leader 应优先用它判断当前可处理或可 ack 的 mailbox head。
 - 后续升级为更严格的 reply block 标记。

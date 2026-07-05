@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add read-only workbench snapshot for GUI/TUI recovery
+
+- 新增 `agentdeck workbench`：面向未来 GUI/TUI 的只读一屏快照，组合 ProjectView、leader_actions、recovery、continue_card、active_queue_source、inbox_card、approval_card 和 leader_action。
+- 新增 workbench contract：`WORKBENCH_SNAPSHOT_FIELDS`、`workbench_contract_payload()`、`workbench_contract_response()`、`workbench_example()` 和 `validate_workbench_contract()`，并新增 `agentdeck contract workbench --example`。
+- 新增 `docs/contracts/workbench-schema.md`，明确 workbench 是 ProjectView 的组合投影，不是第二套状态源，也不是执行入口。
+- 补充 CLI 与 contract 测试，覆盖 workbench contract discovery、inbox recovery 快照、example 防漂移、validator 复用 continue_card 校验和 ProjectView summary 一致性。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，将 workbench 记录为 GUI/TUI 优先的一屏只读入口。
+- 保持安全边界：本轮只读快照不创建 plan、不记录 chat turn、不 ack、不 approve、不 dispatch、不 capture reply、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_active_inbox_card_without_mutating_state -q` 最初因 `workbench` / `contract workbench` 未注册失败；实现后 workbench 目标测试 6 项通过；`conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 83 项通过；`conda run -n agentdeck pytest -q` 148 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `contract-workbench-ok` 与 `workbench-inbox-ok`。
+
 ### Current - Embed recovery queue cards in Leader continue chat
 
 - 扩展 `leader chat --message "继续"` 的 recovery-first 响应：当 `status.recovery.recommended_action.source=inbox` 时，同时嵌入对应 agent 的 `inbox_card`；当 source 为 `approval` 时，同时嵌入 `approval_card`。

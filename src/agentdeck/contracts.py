@@ -191,6 +191,21 @@ CONTINUE_CARD_FIELDS = (
     "action_detail_command",
 )
 
+WORKBENCH_SNAPSHOT_FIELDS = (
+    "ok",
+    "mode",
+    "schema_version",
+    "project_view",
+    "leader_actions",
+    "recovery",
+    "next_command",
+    "continue_card",
+    "active_queue_source",
+    "inbox_card",
+    "approval_card",
+    "leader_action",
+)
+
 LEADER_ACTION_DETAIL_FIELDS = (
     "action_id",
     "kind",
@@ -376,6 +391,32 @@ def continue_contract_response(contract_path: Path, include_example: bool = Fals
         payload["example"] = True
         payload["example_continue_card_fields"] = list(example)
         payload["example_continue_card"] = example
+    return payload
+
+
+def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "workbench_command": "agentdeck workbench",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+        "continue_contract": "agentdeck contract continue",
+        "leader_actions_contract": "agentdeck contract leader-actions",
+        "inbox_contract": "agentdeck contract inbox",
+        "approvals_contract": "agentdeck contract approvals",
+    }
+
+
+def workbench_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = workbench_contract_payload(contract_path)
+    if include_example:
+        example = workbench_example()
+        payload["example"] = True
+        payload["example_snapshot_fields"] = list(example)
+        payload["example_workbench"] = example
     return payload
 
 
@@ -806,6 +847,59 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
     return {"ok": not errors, "errors": errors}
 
 
+def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in WORKBENCH_SNAPSHOT_FIELDS:
+        if field not in payload:
+            errors.append(f"missing workbench field: {field}")
+    if payload.get("mode") != "workbench":
+        errors.append("mode must be workbench")
+    project_view = payload.get("project_view")
+    if isinstance(project_view, dict):
+        project_view_validation = validate_project_view_contract(project_view)
+        for error in project_view_validation["errors"]:
+            errors.append(f"project_view: {error}")
+        if payload.get("leader_actions") != project_view.get("leader_actions"):
+            errors.append("leader_actions must match project_view.leader_actions")
+        if payload.get("recovery") != project_view.get("recovery"):
+            errors.append("recovery must match project_view.recovery")
+    elif "project_view" in payload:
+        errors.append("project_view must be an object")
+    continue_card = payload.get("continue_card")
+    if isinstance(continue_card, dict):
+        continue_card_validation = validate_continue_contract(continue_card)
+        for error in continue_card_validation["errors"]:
+            errors.append(f"continue_card: {error}")
+        if payload.get("next_command") != continue_card.get("next_command"):
+            errors.append("next_command must match continue_card.next_command")
+    elif "continue_card" in payload:
+        errors.append("continue_card must be an object")
+    inbox_card = payload.get("inbox_card")
+    if isinstance(inbox_card, dict):
+        inbox_card_validation = validate_inbox_contract(inbox_card)
+        for error in inbox_card_validation["errors"]:
+            errors.append(f"inbox_card: {error}")
+    elif "inbox_card" in payload and inbox_card is not None:
+        errors.append("inbox_card must be an object")
+    approval_card = payload.get("approval_card")
+    if isinstance(approval_card, dict):
+        approval_card_validation = validate_approval_contract(approval_card)
+        for error in approval_card_validation["errors"]:
+            errors.append(f"approval_card: {error}")
+    elif "approval_card" in payload and approval_card is not None:
+        errors.append("approval_card must be an object")
+    source = payload.get("active_queue_source")
+    if source not in ("none", "leader_action", "inbox", "approval"):
+        errors.append("active_queue_source must be none, leader_action, inbox, or approval")
+    if source == "inbox" and not isinstance(inbox_card, dict):
+        errors.append("inbox active queue requires inbox_card")
+    if source == "approval" and not isinstance(approval_card, dict):
+        errors.append("approval active queue requires approval_card")
+    if source == "leader_action" and not isinstance(payload.get("leader_action"), dict):
+        errors.append("leader_action active queue requires leader_action")
+    return {"ok": not errors, "errors": errors}
+
+
 def project_view_example() -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -1009,6 +1103,26 @@ def leader_chat_example() -> dict[str, object]:
         "continue_card": continue_card,
         "inbox_card": None,
         "approval_card": None,
+    }
+
+
+def workbench_example() -> dict[str, object]:
+    project_view = project_view_example()
+    leader_action = project_view["leader_actions"]["items"][0]
+    recovery = project_view["recovery"]
+    return {
+        "ok": True,
+        "mode": "workbench",
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view": project_view,
+        "leader_actions": project_view["leader_actions"],
+        "recovery": recovery,
+        "next_command": recovery["next_command"],
+        "continue_card": continue_example(),
+        "active_queue_source": "leader_action",
+        "inbox_card": None,
+        "approval_card": None,
+        "leader_action": leader_action,
     }
 
 

@@ -27,6 +27,7 @@ from agentdeck.contracts import (
     TRACE_MESSAGE_FIELDS,
     TRACE_REPLY_FIELDS,
     TRACE_TOP_LEVEL_FIELDS,
+    WORKBENCH_SNAPSHOT_FIELDS,
     approval_contract_payload,
     approval_contract_response,
     approval_example,
@@ -51,6 +52,9 @@ from agentdeck.contracts import (
     trace_contract_payload,
     trace_contract_response,
     trace_example,
+    workbench_contract_payload,
+    workbench_contract_response,
+    workbench_example,
     validate_approval_contract,
     validate_continue_contract,
     validate_inbox_contract,
@@ -59,6 +63,7 @@ from agentdeck.contracts import (
     validate_leader_chat_contract,
     validate_project_view_contract,
     validate_trace_contract,
+    validate_workbench_contract,
 )
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
 
@@ -274,6 +279,53 @@ def test_validate_continue_contract_reports_missing_field() -> None:
     result = validate_continue_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing continue_card field: next_command"]}
+
+
+def test_workbench_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "workbench-schema.md"
+    contract_path.write_text("# Workbench Snapshot Contract\n", encoding="utf-8")
+
+    payload = workbench_contract_response(contract_path, include_example=True)
+    example = workbench_example()
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["workbench_command"] == "agentdeck workbench"
+    assert payload["snapshot_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
+    assert payload["example"] is True
+    assert payload["example_workbench"] == example
+    assert payload["example_snapshot_fields"] == payload["snapshot_fields"]
+    assert set(payload["example_snapshot_fields"]) == set(example)
+    assert example["mode"] == "workbench"
+    assert example["leader_actions"] == example["project_view"]["leader_actions"]
+    assert example["recovery"] == example["project_view"]["recovery"]
+    assert example["next_command"] == example["continue_card"]["next_command"]
+
+
+def test_validate_workbench_contract_accepts_example() -> None:
+    result = validate_workbench_contract(workbench_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_workbench_contract_reuses_continue_card_validator() -> None:
+    payload = workbench_example()
+    del payload["continue_card"]["pending"]["approvals"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["continue_card: missing pending field: approvals"],
+    }
+
+
+def test_validate_workbench_contract_requires_matching_project_view_summaries() -> None:
+    payload = workbench_example()
+    payload["leader_actions"] = {"count": 0, "by_kind": {}, "by_status": {}, "recommended_action_id": None, "items": []}
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["leader_actions must match project_view.leader_actions"]}
 
 
 def test_approval_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:

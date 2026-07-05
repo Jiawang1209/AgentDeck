@@ -116,6 +116,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`；不要在 Python 源码里重复手写版本字符串。
 - ProjectView contract discovery payload 和 example fixture 的源码入口是 `src/agentdeck/contracts.py`；CLI 只负责调用它。
 - Leader chat response contract 维护在 `docs/contracts/leader-chat-schema.md`，发现入口是 `agentdeck contract leader-chat`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。
+- Workbench snapshot contract 维护在 `docs/contracts/workbench-schema.md`，发现入口是 `agentdeck contract workbench`；payload、example fixture 和 `validate_workbench_contract()` 也在 `src/agentdeck/contracts.py`。
 - Leader actions queue contract 维护在 `docs/contracts/leader-actions-schema.md`，发现入口是 `agentdeck contract leader-actions`；payload、example fixture 和 `validate_leader_actions_contract()` 也在 `src/agentdeck/contracts.py`。
 - Leader action detail contract 维护在 `docs/contracts/leader-action-schema.md`，发现入口是 `agentdeck contract leader-action`；payload、example fixture 和 `validate_leader_action_contract()` 也在 `src/agentdeck/contracts.py`。
 - Approval queue contract 维护在 `docs/contracts/approvals-schema.md`，发现入口是 `agentdeck contract approvals`；payload、example fixture 和 `validate_approval_contract()` 也在 `src/agentdeck/contracts.py`。
@@ -126,6 +127,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck contract project-view` 是只读契约发现入口，供 GUI 或外部集成读取 schema version、契约文档路径和关键字段列表；`--example` 会返回稳定 ProjectView 示例，不代表 live state。
 - `agentdeck contract leader-chat` 是只读契约发现入口，供 GUI 或外部集成读取 `leader chat` 响应字段和 `leader_explanation` 字段；`--example` 会返回稳定 chat 响应示例，不读取或修改 live state。
 - `agentdeck contract continue` 是只读契约发现入口，供 GUI 或外部集成读取 `agentdeck continue` 的恢复卡片字段；`--example` 会返回稳定 continue card 示例，不读取或修改 live state。
+- `agentdeck contract workbench` 是只读契约发现入口，供 GUI 或外部集成读取 `agentdeck workbench` 的一屏快照字段；`--example` 会返回稳定 workbench 示例，不读取或修改 live state。
 - `agentdeck contract leader-actions` 是只读契约发现入口，供 GUI 或外部集成读取 Leader action queue 字段；`--example` 会返回稳定队列示例，不读取或修改 live state。
 - `agentdeck contract leader-action` 是只读契约发现入口，供 GUI 或外部集成读取单个 Leader action 详情字段；`--example` 会返回稳定 action detail 示例，不读取或修改 live state。
 - `agentdeck contract approvals` 是只读契约发现入口，供 GUI 或外部集成读取人类审批队列字段；`--example` 会返回稳定 approval queue 示例，不读取或修改 live state。
@@ -146,6 +148,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck status` 的 `leader_actions` 必须保留 recommended_action_id，`items[]` 必须保留 can_apply/apply_command/explicit_command/apply_blocker/is_recommended，供 GUI 和对话层展示安全动作与当前推荐项。
 - `agentdeck status` 的 `messages.items[]`、`jobs.items[]` 和 `replies.items[]` 必须保留 `trace_command`；`agentdeck contract project-view` 必须公开对应 item field lists，validator 必须拒绝缺失 trace 入口的 summary item。
 - `agentdeck continue` 是顶层只读恢复入口；它必须先通过 ProjectView contract 守门，再通过 `validate_continue_contract()` 自校验，最后返回 recovery-driven 下一步卡片；不得写 state、创建 action、apply action、dispatch 或发送 tmux 输入；`agentdeck contract continue` 必须公开 `continue_card_fields`。
+- `agentdeck workbench` 是 GUI/TUI 优先的一屏只读快照；它必须先通过 ProjectView contract 守门，再组合 project_view、leader_actions、recovery、continue_card、active_queue_source、inbox_card、approval_card 和 leader_action，并通过 `validate_workbench_contract()` 自校验；不得写 state、创建 chat turn、ack、approve、dispatch、capture reply 或发送 tmux 输入；`agentdeck contract workbench` 必须公开 `snapshot_fields`。
 - `agentdeck status.recovery.status=inbox_pending` 时，`next_command` 和 `recommended_action.command` 必须指向具体 `agentdeck inbox --agent <id>`，供 GUI/continue 直接打开对应 mailbox。
 - `agentdeck status` 的 `inbox.heads` 是 mailbox head-only 语义的只读入口；显示或 ack inbox 前优先读取它。
 - `agentdeck leader chat --message <text>` 是当前自然语言入口 MVP：它读取 ProjectView 前必须通过 `validate_project_view_contract()` 守门；无 plan 时创建 plan-only 记录、持久化一条 safe `create_approvals` Leader action，并在响应前重新读取 ProjectView，使同次响应包含刚创建的 plan、chat turn 和 action queue；有 plan 时 review 最新 plan，并持久化或复用一条 `leader_actions[]` 建议；chat 输出必须包含顶层 `leader_actions`，且它必须等于同次响应的 `project_view.leader_actions`；chat 输出还必须包含 `leader_explanation`，说明 mode、summary、reason、next_command、recommended_action_id、action_kind、action_status、safety 和 requires_explicit_user；plan/review 输出必须包含 `recovery`，且 `next_command` 必须来自 `status.recovery.next_command`；每轮会写入 `chat_turns[]`，可用 `agentdeck leader chat-history` 查看。

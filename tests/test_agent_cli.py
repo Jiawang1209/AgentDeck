@@ -291,6 +291,82 @@ def test_contract_continue_example_exports_gui_ready_card(capsys) -> None:
     assert example["next_command"] == "agentdeck leader apply-action --action-id act_example"
 
 
+def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["workbench_command"] == "agentdeck workbench"
+    assert payload["contract_path"].endswith("docs/contracts/workbench-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["snapshot_fields"] == [
+        "ok",
+        "mode",
+        "schema_version",
+        "project_view",
+        "leader_actions",
+        "recovery",
+        "next_command",
+        "continue_card",
+        "active_queue_source",
+        "inbox_card",
+        "approval_card",
+        "leader_action",
+    ]
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["continue_contract"] == "agentdeck contract continue"
+
+
+def test_workbench_embeds_active_inbox_card_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["inbox"] = {
+        "planner": [
+            {
+                "inbox_id": "inb_workbench_head",
+                "event_type": "task_request",
+                "message_id": "msg_workbench",
+                "attempt_id": "att_workbench",
+                "job_id": "job_workbench",
+                "reply_id": None,
+                "from_actor": "leader",
+                "to_agent": "planner",
+                "task": "展示工作台 inbox",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "workbench"
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["project_view"]["recovery"]["status"] == "inbox_pending"
+    assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
+    assert payload["recovery"] == payload["project_view"]["recovery"]
+    assert payload["next_command"] == "agentdeck inbox --agent planner"
+    assert payload["continue_card"]["status"] == "inbox_pending"
+    assert payload["active_queue_source"] == "inbox"
+    assert payload["inbox_card"]["agent_id"] == "planner"
+    assert payload["inbox_card"]["head_inbox_id"] == "inb_workbench_head"
+    assert payload["approval_card"] is None
+    assert payload["leader_action"] is None
+
+    state_after = StateStore(root).load()
+    assert state_after["inbox"]["planner"][0]["status"] == "pending"
+    assert state_after["chat_turns"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_contract_approvals_discovers_schema_for_gui_clients(capsys) -> None:
     exit_code = cli.main(["contract", "approvals"])
 
