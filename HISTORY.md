@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Suggest inbox ack commands through Leader chat
+
+- 新增 `leader chat` inbox ack 意图识别：`确认 planner 当前 inbox` 会复用 `inbox_card.items[0].ack_command` 作为 `next_command`。
+- ack 意图仍保持 `mode=inbox`，并在 `leader_explanation` 中标记 `action_kind=inbox_ack`、`safety=explicit_runtime`、`requires_explicit_user=true`。
+- `leader chat` 只建议当前 head 的 ack 命令，不执行 `ack`，不修改 inbox item 状态，不创建 plan 或 leader action，不 dispatch、不 capture reply、不发送 tmux 输入。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 inbox chat 可以推荐 `ack_command`，但执行仍必须由人显式运行。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging -q` 最初因 `next_command` 仍为 `agentdeck inbox --agent planner` 失败；实现后 inbox chat 目标测试 3 项通过；leader-chat contract 目标测试 2 项通过；`conda run -n agentdeck pytest -q` 138 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `agentdeck leader chat --message "确认 planner 当前 inbox"` 返回 `ack-chat-ok`，并确认 inbox item 仍为 pending。
+
 ### Current - Route natural-language inbox inspection through Leader chat
 
 - 扩展 `leader chat` response contract，新增正式 `inbox_card` 字段，并在 `validate_leader_chat_contract()` 中复用 `validate_inbox_contract()` 校验嵌入 inbox queue。

@@ -67,6 +67,7 @@ agentdeck agent assign-role --agent planner --role "architecture planning" --rol
 agentdeck leader chat --message "帮我设计自动 reply extraction"
 agentdeck leader chat --message "查看 planner inbox"
 agentdeck leader chat --message "追踪 planner 当前 inbox"
+agentdeck leader chat --message "确认 planner 当前 inbox"
 agentdeck leader chat-history
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
@@ -267,6 +268,7 @@ agentdeck leader chat --message "帮我设计自动 reply extraction"
 agentdeck leader chat --message "继续"
 agentdeck leader chat --message "查看 planner inbox"
 agentdeck leader chat --message "追踪 planner 当前 inbox"
+agentdeck leader chat --message "确认 planner 当前 inbox"
 agentdeck leader chat-history
 agentdeck continue
 agentdeck leader plan --task "设计自动 reply extraction"
@@ -290,7 +292,7 @@ agentdeck plan status --plan-id pln_xxx
 
 当人类输入 `agentdeck leader chat --message "继续"`、`"继续吧"` 或 `"/continue"` 时，chat 会进入 recovery-first 的 `mode=continue`：它复用 `agentdeck continue` 的下一步卡片，返回 `continue_card`、`recovery`、`next_command` 和解释信息，只记录一条 chat turn，不创建新的 `leader_actions[]`，也不执行任何 action。需要让 Leader 重新 review 并排队 action 时，可以输入更具体的目标或继续使用 `agentdeck leader next`。
 
-当人类输入 `agentdeck leader chat --message "查看 planner inbox"` 这类 inbox 意图时，chat 会进入只读 `mode=inbox`：它复用 `agentdeck inbox --agent <id>` 的队列 shape 返回 `inbox_card`，并建议 `agentdeck inbox --agent <id>`；当输入包含 `追踪`、`trace` 或 `lineage` 时，且该 agent 有 pending head，`next_command` 会变成该 head 的 `agentdeck trace --id <inbox_id>`。该模式只记录 chat turn，不 ack inbox、不 dispatch、不 capture reply、不发送 tmux 输入。
+当人类输入 `agentdeck leader chat --message "查看 planner inbox"` 这类 inbox 意图时，chat 会进入只读 `mode=inbox`：它复用 `agentdeck inbox --agent <id>` 的队列 shape 返回 `inbox_card`，并建议 `agentdeck inbox --agent <id>`；当输入包含 `追踪`、`trace` 或 `lineage` 时，且该 agent 有 pending head，`next_command` 会变成该 head 的 `agentdeck trace --id <inbox_id>`；当输入包含 `确认`、`ack` 或 `acknowledge` 且该 head 可 ack 时，`next_command` 会变成该 head 的 `ack_command`，并标记 `safety=explicit_runtime` 与 `requires_explicit_user=true`。该模式只记录 chat turn，不执行 ack、不 dispatch、不 capture reply、不发送 tmux 输入。
 
 `agentdeck contract leader-chat` 会公开 `continue_card_fields`，`--example` 会返回稳定的 continue-mode 示例和 `example_continue_card_fields`，供 GUI 或自然语言壳发现 `continue_card` 字段。chat 响应里的 `continue_card` 必须复用 `validate_continue_contract()` 校验，避免自然语言“继续”和独立 `agentdeck continue` 出现两套恢复卡片规则。chat 响应里的 `inbox_card` 必须复用 `validate_inbox_contract()` 校验，避免自然语言 inbox 视图和独立 `agentdeck inbox` 出现两套 mailbox 规则。
 

@@ -930,6 +930,11 @@ def _chat_wants_inbox_trace(message: str) -> bool:
     return any(token in normalized for token in ["trace", "追踪", "溯源", "lineage"])
 
 
+def _chat_wants_inbox_ack(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(token in normalized for token in ["ack", "acknowledge", "确认", "标记已读", "已处理"])
+
+
 def _inbox_head_item(inbox_card: dict[str, object]) -> dict[str, object] | None:
     head_inbox_id = inbox_card.get("head_inbox_id")
     items = inbox_card.get("items")
@@ -1006,6 +1011,7 @@ def _leader_chat_explanation(
     if mode == "inbox":
         head = _inbox_head_item(inbox_card) if isinstance(inbox_card, dict) else None
         head_inbox_id = head.get("inbox_id") if isinstance(head, dict) else None
+        safety = "explicit_runtime" if inbox_action_kind == "inbox_ack" else "inspect"
         return {
             "mode": mode,
             "summary": f"Leader recommends inspecting {inbox_card.get('agent_id') if isinstance(inbox_card, dict) else None} inbox without mutating runtime state.",
@@ -1014,8 +1020,8 @@ def _leader_chat_explanation(
             "recommended_action_id": head_inbox_id,
             "action_kind": inbox_action_kind or "inbox",
             "action_status": head.get("status") if isinstance(head, dict) else "empty",
-            "safety": "inspect",
-            "requires_explicit_user": False,
+            "safety": safety,
+            "requires_explicit_user": safety != "inspect",
         }
     return {
         "mode": mode,
@@ -1182,12 +1188,22 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             return 1
         head = _inbox_head_item(inbox_card)
         wants_trace = _chat_wants_inbox_trace(args.message)
+        wants_ack = _chat_wants_inbox_ack(args.message)
+        can_ack_head = isinstance(head, dict) and bool(head.get("can_ack"))
         next_command = (
-            head.get("trace_command")
+            head.get("ack_command")
+            if wants_ack and can_ack_head and head.get("ack_command")
+            else head.get("trace_command")
             if wants_trace and isinstance(head, dict) and head.get("trace_command")
             else f"agentdeck inbox --agent {inbox_agent_id}"
         )
-        inbox_action_kind = "inbox_trace" if wants_trace and isinstance(head, dict) else "inbox"
+        inbox_action_kind = (
+            "inbox_ack"
+            if wants_ack and can_ack_head
+            else "inbox_trace"
+            if wants_trace and isinstance(head, dict)
+            else "inbox"
+        )
         turn = store.record_chat_turn(
             mode="inbox",
             message=args.message,

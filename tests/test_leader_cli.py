@@ -421,6 +421,56 @@ def test_leader_chat_suggests_trace_for_current_inbox_head(tmp_path, monkeypatch
     assert StateStore(root).load()["inbox"]["planner"][0]["status"] == "pending"
 
 
+def test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["inbox"] = {
+        "planner": [
+            {
+                "inbox_id": "inb_ack_me",
+                "event_type": "task_request",
+                "message_id": "msg_ack",
+                "attempt_id": "att_ack",
+                "job_id": "job_ack",
+                "reply_id": None,
+                "from_actor": "leader",
+                "to_agent": "planner",
+                "task": "确认后继续",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "确认 planner 当前 inbox"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "inbox"
+    assert payload["next_command"] == "agentdeck ack --agent planner --inbox-id inb_ack_me"
+    assert payload["inbox_card"]["items"][0]["ack_command"] == payload["next_command"]
+    assert payload["inbox_card"]["items"][0]["can_ack"] is True
+    assert payload["leader_explanation"]["action_kind"] == "inbox_ack"
+    assert payload["leader_explanation"]["recommended_action_id"] == "inb_ack_me"
+    assert payload["leader_explanation"]["action_status"] == "pending"
+    assert payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+
+    state_after = StateStore(root).load()
+    assert state_after["inbox"]["planner"][0]["status"] == "pending"
+    assert state_after["chat_turns"][0]["mode"] == "inbox"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck ack --agent planner --inbox-id inb_ack_me"
+    assert state_after["chat_turns"][0]["action_kind"] == "inbox_ack"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_persists_create_approvals_action_for_existing_plan(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "已有计划但未审批"])
