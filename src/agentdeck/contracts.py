@@ -1722,6 +1722,8 @@ def _validate_capability_controls(errors: list[str], item: dict[str, object]) ->
                 if placeholder_enabled:
                     errors.append("capability_card.capabilities.controls: placeholder commands must be disabled")
                 expected_blocker = _placeholder_blocker(control.get("command"))
+                if _command_has_placeholder(control.get("command")) and expected_blocker is None:
+                    errors.append("capability_card.capabilities.controls: unsupported placeholder")
                 if not placeholder_enabled and expected_blocker is not None and control.get("blocker") != expected_blocker:
                     errors.append("capability_card.capabilities.controls: blocker must match placeholder")
                 if control.get("enabled") is False and not control.get("blocker"):

@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Reject unknown Leader capability placeholders
+
+- 加强 `validate_leader_chat_contract()`：capability control 的 placeholder 必须来自已知白名单，当前仅支持 `<goal>`、`<plan_id>`、`<action_id>` 和 `<agent_id>`，避免 GUI 接收到无法安全填参的未知模板。
+- 新增契约红测覆盖未知 `<run_id>` placeholder 即使 disabled 且带 blocker 也会被拒绝，确保新增模板前必须同步 contract 规则。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 placeholder 白名单是 contract gate。
+- 完整验证：已先确认红测失败，validator 最初允许未知 placeholder control；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_rejects_unknown_placeholder_controls -q` 1 项通过；leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 140 项通过；`conda run -n agentdeck pytest -q` 212 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-help-placeholder-whitelist-smoke-ok`。
+
 ### Current - Match Leader capability placeholder blockers
 
 - 加强 `validate_leader_chat_contract()`：placeholder capability control 的 blocker 必须与占位符类型匹配，例如 `<goal>` 对应 `requires goal text`，`<plan_id>` 对应 `requires plan_id`。

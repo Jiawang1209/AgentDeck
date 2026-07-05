@@ -1280,6 +1280,22 @@ def test_validate_leader_chat_contract_requires_placeholder_blocker_match() -> N
     }
 
 
+def test_validate_leader_chat_contract_rejects_unknown_placeholder_controls() -> None:
+    payload = leader_chat_example()
+    plan = next(item for item in payload["capability_card"]["capabilities"] if item["mode"] == "plan")
+    plan["command"] = "agentdeck run --run-id <run_id>"
+    plan["controls"][0]["command"] = "agentdeck run --run-id <run_id>"
+    plan["controls"][0]["enabled"] = False
+    plan["controls"][0]["blocker"] = "requires run_id"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["capability_card.capabilities.controls: unsupported placeholder"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_embedded_project_view_contract() -> None:
     payload = leader_chat_example()
     del payload["project_view"]["leader_actions"]["recommended_action_id"]
