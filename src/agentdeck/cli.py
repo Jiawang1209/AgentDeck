@@ -173,6 +173,32 @@ def _continue_card_payload(project_view: dict[str, object], store: StateStore) -
     }
 
 
+def _inbox_agent_id_for_item(store: StateStore, inbox_id: object) -> str | None:
+    if not inbox_id:
+        return None
+    state = store.load()
+    for agent_id, items in state.get("inbox", {}).items():
+        if any(isinstance(item, dict) and item.get("inbox_id") == inbox_id for item in items):
+            return str(agent_id)
+    return None
+
+
+def _leader_chat_recovery_cards(
+    project_view: dict[str, object], store: StateStore
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+    recovery = project_view.get("recovery", {})
+    recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+    source = recommended_action.get("source") if isinstance(recommended_action, dict) else None
+    target_id = recommended_action.get("target_id") if isinstance(recommended_action, dict) else None
+    if source == "inbox":
+        agent_id = _inbox_agent_id_for_item(store, target_id)
+        if agent_id:
+            return _inbox_queue_payload(agent_id, store), None
+    if source == "approval":
+        return None, _approval_queue_payload(store)
+    return None, None
+
+
 def continue_command(_args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -1208,6 +1234,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         recovery = refreshed_project_view.get("recovery", {})
         next_command = recovery.get("next_command") if isinstance(recovery, dict) else next_command
         continue_card = _continue_card_payload(refreshed_project_view, store)
+        inbox_card, approval_card = _leader_chat_recovery_cards(refreshed_project_view, store)
         leader_action = continue_card.get("leader_action")
         payload = {
             "ok": True,
@@ -1228,8 +1255,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "next_command": next_command,
             "leader_action": leader_action,
             "continue_card": continue_card,
-            "inbox_card": None,
-            "approval_card": None,
+            "inbox_card": inbox_card,
+            "approval_card": approval_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

@@ -296,6 +296,10 @@ def test_leader_chat_continue_returns_recovery_card_without_creating_action(tmp_
     assert payload["continue_card"]["recommended_action"]["safety"] == "explicit_runtime"
     assert payload["continue_card"]["project_view_command"] == "agentdeck status"
     assert payload["continue_card"]["leader_action"] is None
+    assert payload["approval_card"]["count"] == 3
+    assert payload["approval_card"]["approvals"][0]["approval_id"] == approval_id
+    assert payload["approval_card"]["approvals"][0]["dispatch_command"] == payload["next_command"]
+    assert payload["inbox_card"] is None
     assert payload["leader_action"] is None
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
     assert payload["leader_actions"]["count"] == 0
@@ -322,6 +326,57 @@ def test_leader_chat_continue_returns_recovery_card_without_creating_action(tmp_
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "leader_chat_turn"' in events
+
+
+def test_leader_chat_continue_embeds_inbox_card_for_pending_inbox(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["inbox"] = {
+        "planner": [
+            {
+                "inbox_id": "inb_continue_head",
+                "event_type": "task_request",
+                "message_id": "msg_continue",
+                "attempt_id": "att_continue",
+                "job_id": "job_continue",
+                "reply_id": None,
+                "from_actor": "leader",
+                "to_agent": "planner",
+                "task": "继续时展示 mailbox",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "继续"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "continue"
+    assert payload["recovery"]["status"] == "inbox_pending"
+    assert payload["next_command"] == "agentdeck inbox --agent planner"
+    assert payload["continue_card"]["status"] == "inbox_pending"
+    assert payload["continue_card"]["next_command"] == payload["next_command"]
+    assert payload["inbox_card"]["agent_id"] == "planner"
+    assert payload["inbox_card"]["count"] == 1
+    assert payload["inbox_card"]["head_inbox_id"] == "inb_continue_head"
+    assert payload["inbox_card"]["items"][0]["inbox_id"] == "inb_continue_head"
+    assert payload["inbox_card"]["items"][0]["ack_command"] == (
+        "agentdeck ack --agent planner --inbox-id inb_continue_head"
+    )
+    assert payload["approval_card"] is None
+    assert payload["leader_action"] is None
+    assert payload["leader_actions"]["count"] == 0
+
+    state_after = StateStore(root).load()
+    assert state_after["inbox"]["planner"][0]["status"] == "pending"
+    assert state_after["chat_turns"][0]["mode"] == "continue"
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
 
 
 def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:

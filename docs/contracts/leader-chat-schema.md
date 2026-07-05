@@ -70,6 +70,7 @@ Continue-mode responses include `continue_card`, which reuses the same recovery 
 
 `agentdeck contract leader-chat --example` exposes `example_continue_card_fields` and a stable continue-mode example so GUI clients can build recovery cards without guessing fields.
 When `continue_card` is present, `validate_leader_chat_contract()` reuses `validate_continue_contract()` and prefixes nested errors with `continue_card:`.
+When continue-mode recovery points at a pending inbox item, the response also includes that agent's `inbox_card`; when recovery points at approvals, the response also includes `approval_card`. Continue-mode remains read-only: embedded queue cards are display/action affordances, not automatic ack, approve, dispatch, or tmux input.
 
 Inbox-mode responses include `inbox_card`, which reuses the same queue shape as `agentdeck inbox --agent <id>`:
 
@@ -142,5 +143,6 @@ When `approval_card` is present, `validate_leader_chat_contract()` reuses `valid
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
+- Chat continue-mode responses may embed `inbox_card` or `approval_card` when `recovery.recommended_action.source` points at those queues.
 - Runtime actions still require explicit commands or approval flow.
 - GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, and `leader_explanation` as explanation.

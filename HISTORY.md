@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Embed recovery queue cards in Leader continue chat
+
+- 扩展 `leader chat --message "继续"` 的 recovery-first 响应：当 `status.recovery.recommended_action.source=inbox` 时，同时嵌入对应 agent 的 `inbox_card`；当 source 为 `approval` 时，同时嵌入 `approval_card`。
+- 新增 `_leader_chat_recovery_cards()` 与 `_inbox_agent_id_for_item()`，复用既有 `agentdeck inbox --agent <id>` 和 `agentdeck approval list` 的 queue payload shape，不新增第二套 GUI contract。
+- 补充 continue-mode 测试，覆盖 approval dispatch-ready 与 inbox pending 两条恢复路径，并确认只记录 chat turn，不 ack inbox、不 approve/dispatch、不创建 message/job、不发送 tmux 输入。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确自然语言“继续”可直接携带可渲染队列卡片，同时仍保持显式人类执行边界。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_continue_returns_recovery_card_without_creating_action tests/test_leader_cli.py::test_leader_chat_continue_embeds_inbox_card_for_pending_inbox -q` 最初因 `approval_card` / `inbox_card` 仍为 `None` 失败；实现后目标 leader-chat/contract 测试 3 项通过；`conda run -n agentdeck pytest -q` 142 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认自然语言 `继续` 分别返回 `continue-approval-card-ok` 与 `continue-inbox-card-ok`。
+
 ### Current - Point inbox recovery at concrete mailbox commands
 
 - 调整 `status.recovery.status=inbox_pending` 的下一步命令：从宽泛的 `agentdeck status` 改为具体 `agentdeck inbox --agent <id>`。
