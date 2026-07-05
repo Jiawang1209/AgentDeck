@@ -309,6 +309,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "runtime_card",
         "ledger_card",
         "operator_card",
+        "audit_card",
         "recovery",
         "next_command",
         "continue_card",
@@ -355,6 +356,12 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "apply_command",
         "explicit_command",
         "blocker",
+    ]
+    assert payload["audit_card_fields"] == [
+        "latest_event",
+        "recent_events",
+        "event_count",
+        "events_command",
     ]
     assert payload["project_view_contract"] == "agentdeck contract project-view"
     assert payload["continue_contract"] == "agentdeck contract continue"
@@ -425,6 +432,8 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         }
     ]
     store.save(state)
+    store.append_event(cli.EventRecord.create("workbench_first_event", {"index": 1}))
+    store.append_event(cli.EventRecord.create("workbench_second_event", {"index": 2}))
 
     exit_code = cli.main(["workbench"])
 
@@ -484,6 +493,11 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "explicit_command": "agentdeck inbox --agent planner",
         "blocker": None,
     }
+    assert payload["audit_card"]["latest_event"] == payload["recovery"]["latest_event"]
+    assert payload["audit_card"]["latest_event"]["event_type"] == "workbench_second_event"
+    assert payload["audit_card"]["recent_events"] == payload["recovery"]["recent_events"]
+    assert payload["audit_card"]["event_count"] == len(payload["recovery"]["recent_events"])
+    assert payload["audit_card"]["events_command"] == "agentdeck events --limit 20"
     assert payload["continue_card"]["status"] == "inbox_pending"
     assert payload["active_queue_source"] == "inbox"
     assert payload["inbox_card"]["agent_id"] == "planner"

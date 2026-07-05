@@ -27,6 +27,7 @@ from agentdeck.contracts import (
     TRACE_MESSAGE_FIELDS,
     TRACE_REPLY_FIELDS,
     TRACE_TOP_LEVEL_FIELDS,
+    WORKBENCH_AUDIT_CARD_FIELDS,
     WORKBENCH_LEDGER_CARD_FIELDS,
     WORKBENCH_OPERATOR_CARD_FIELDS,
     WORKBENCH_RUNTIME_AGENT_FIELDS,
@@ -299,6 +300,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
     assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
+    assert payload["audit_card_fields"] == list(WORKBENCH_AUDIT_CARD_FIELDS)
     assert payload["example"] is True
     assert payload["example_workbench"] == example
     assert payload["example_snapshot_fields"] == payload["snapshot_fields"]
@@ -309,12 +311,15 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert set(example["ledger_card"]) == set(WORKBENCH_LEDGER_CARD_FIELDS)
     assert set(example["operator_card"]) == set(WORKBENCH_OPERATOR_CARD_FIELDS)
+    assert set(example["audit_card"]) == set(WORKBENCH_AUDIT_CARD_FIELDS)
     assert example["ledger_card"]["trace_commands"] == [
         "agentdeck trace --id msg_example",
         "agentdeck trace --id job_example",
         "agentdeck trace --id rep_example",
     ]
     assert example["recovery"] == example["project_view"]["recovery"]
+    assert example["audit_card"]["latest_event"] == example["recovery"]["latest_event"]
+    assert example["audit_card"]["recent_events"] == example["recovery"]["recent_events"]
     assert example["next_command"] == example["continue_card"]["next_command"]
 
 
@@ -365,6 +370,15 @@ def test_validate_workbench_contract_requires_operator_fields() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing operator_card field: preview_command"]}
+
+
+def test_validate_workbench_contract_requires_audit_fields() -> None:
+    payload = workbench_example()
+    del payload["audit_card"]["events_command"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing audit_card field: events_command"]}
 
 
 def test_validate_workbench_contract_requires_matching_project_view_summaries() -> None:

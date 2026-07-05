@@ -218,6 +218,7 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "runtime_card": _workbench_runtime_card(project_view),
         "ledger_card": _workbench_ledger_card(project_view),
         "operator_card": _workbench_operator_card(project_view, continue_card, active_queue_source),
+        "audit_card": _workbench_audit_card(project_view),
         "recovery": recovery,
         "next_command": continue_card.get("next_command"),
         "continue_card": continue_card,
@@ -225,6 +226,17 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "inbox_card": inbox_card,
         "approval_card": approval_card,
         "leader_action": leader_action if isinstance(leader_action, dict) else None,
+    }
+
+
+def _workbench_audit_card(project_view: dict[str, object]) -> dict[str, object]:
+    recovery = project_view.get("recovery") if isinstance(project_view.get("recovery"), dict) else {}
+    recent_events = recovery.get("recent_events") if isinstance(recovery.get("recent_events"), list) else []
+    return {
+        "latest_event": recovery.get("latest_event"),
+        "recent_events": recent_events,
+        "event_count": len(recent_events),
+        "events_command": "agentdeck events --limit 20",
     }
 
 

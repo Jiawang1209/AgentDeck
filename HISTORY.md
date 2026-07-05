@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add audit card to workbench snapshot
+
+- 扩展 `agentdeck workbench`：新增 `audit_card`，从 ProjectView recovery 的 latest_event 和 recent_events 派生 GUI/TUI 可渲染的最近审计卡。
+- `audit_card` 公开 latest_event、recent_events、event_count 和 `events_command=agentdeck events --limit 20`，供 GUI 从一屏状态进入完整事件时间线。
+- 扩展 workbench contract：新增 `WORKBENCH_AUDIT_CARD_FIELDS`，并在 `agentdeck contract workbench` 暴露 `audit_card_fields`。
+- 补充 CLI 与 contract 测试，覆盖 audit card discovery、recent event 投影、example 防漂移、validator 缺字段拒绝和只读状态不变性。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 audit_card 只来自 ProjectView recovery 事件摘要，不读取 pane、不写 state。
+- 保持安全边界：本轮仍只读，不写 state、不创建 chat turn、不 ack、不 approve、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_workbench_contract_requires_audit_fields -q` 最初因 `WORKBENCH_AUDIT_CARD_FIELDS` 未出现在 contract 中失败；实现后 audit_card 目标测试 5 项通过；`conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 87 项通过；`conda run -n agentdeck pytest -q` 152 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `contract-audit-ok` 与 `workbench-audit-ok`。
+
 ### Current - Add preview command to workbench operator card
 
 - 扩展 `agentdeck workbench` 的 `operator_card`：新增 `preview_command`，为 GUI/TUI 提供执行前的只读预览入口。

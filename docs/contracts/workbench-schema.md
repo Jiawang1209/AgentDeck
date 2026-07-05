@@ -21,7 +21,8 @@ The contract command returns:
   "runtime_card_fields": [],
   "runtime_agent_fields": [],
   "ledger_card_fields": [],
-  "operator_card_fields": []
+  "operator_card_fields": [],
+  "audit_card_fields": []
 }
 ```
 
@@ -41,6 +42,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "runtime_card": {},
   "ledger_card": {},
   "operator_card": {},
+  "audit_card": {},
   "recovery": {},
   "next_command": "agentdeck continue",
   "continue_card": {},
@@ -56,6 +58,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `runtime_card` is derived from `project_view.runtime_backend` and `project_view.agents[]`.
 `ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, and `project_view.inbox`.
 `operator_card` is derived from `recovery.recommended_action` and the active queue card. It is a renderable human-control descriptor, not an execution result.
+`audit_card` is derived from `recovery.latest_event` and `recovery.recent_events`.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `next_command` must equal `continue_card.next_command`.
@@ -136,6 +139,25 @@ The card does not capture pane output and does not prove task completion. It onl
 ```
 
 GUI clients may render `preview_command` as the safest first click before rendering `command`, `apply_command`, or `explicit_command` as explicit action buttons. Execution still belongs to the user or a later explicit approval flow. The card must not be treated as permission to auto-dispatch, auto-ack, auto-approve, or send tmux input.
+
+## Audit Card
+
+`audit_card` is the GUI/TUI-ready recent audit surface:
+
+```json
+{
+  "latest_event": {
+    "event_id": "evt_xxx",
+    "event_type": "leader_chat_turn",
+    "created_at": "2026-07-04T00:00:00+00:00"
+  },
+  "recent_events": [],
+  "event_count": 1,
+  "events_command": "agentdeck events --limit 20"
+}
+```
+
+The card intentionally uses compact ProjectView recovery event summaries. Use `events_command` when a GUI needs the raw JSONL timeline.
 
 When `recovery.recommended_action.source` is:
 
