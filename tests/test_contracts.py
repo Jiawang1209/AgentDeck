@@ -462,6 +462,7 @@ def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> No
     assert set(payload["message_item_fields"]) == set(example["messages"]["items"][0])
     assert set(payload["job_item_fields"]) == set(example["jobs"]["items"][0])
     assert set(payload["reply_item_fields"]) == set(example["replies"]["items"][0])
+    assert set(payload["artifact_item_fields"]) == set(example["artifacts"]["items"][0])
     assert example["leader_actions"]["recommended_action_id"] == "act_example"
     assert example["leader_actions"]["items"][0]["is_recommended"] is True
     assert example["recovery"]["recommended_action"]["target_id"] == "act_example"
@@ -503,6 +504,8 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
     assert set(payload["example_job_item_fields"]) == set(example["jobs"]["items"][0])
     assert payload["example_reply_item_fields"] == payload["reply_item_fields"]
     assert set(payload["example_reply_item_fields"]) == set(example["replies"]["items"][0])
+    assert payload["example_artifact_item_fields"] == payload["artifact_item_fields"]
+    assert set(payload["example_artifact_item_fields"]) == set(example["artifacts"]["items"][0])
 
 
 def test_validate_project_view_contract_accepts_example() -> None:
@@ -565,6 +568,7 @@ def test_validate_project_view_contract_reports_missing_trace_commands() -> None
     del payload["messages"]["items"][0]["trace_command"]
     del payload["jobs"]["items"][0]["trace_command"]
     del payload["replies"]["items"][0]["trace_command"]
+    del payload["artifacts"]["items"][0]["trace_command"]
 
     result = validate_project_view_contract(payload)
 
@@ -574,6 +578,7 @@ def test_validate_project_view_contract_reports_missing_trace_commands() -> None
             "missing message item field: trace_command",
             "missing job item field: trace_command",
             "missing reply item field: trace_command",
+            "missing artifact item field: trace_command",
         ],
     }
 

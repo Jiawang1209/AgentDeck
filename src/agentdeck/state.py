@@ -25,6 +25,7 @@ class StateStore:
                 "messages": [],
                 "jobs": [],
                 "replies": [],
+                "artifacts": [],
                 "plans": [],
                 "approvals": [],
                 "chat_turns": [],
@@ -896,6 +897,34 @@ class StateStore:
             ],
         }
 
+    def _artifact_summaries(self, artifacts: list[dict[str, Any]]) -> dict[str, Any]:
+        by_kind: dict[str, int] = {}
+        for artifact in artifacts:
+            kind = str(artifact.get("kind", "unknown"))
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+        return {
+            "count": len(artifacts),
+            "by_status": self._status_counts(artifacts),
+            "by_kind": by_kind,
+            "items": [
+                {
+                    "artifact_id": artifact.get("artifact_id"),
+                    "message_id": artifact.get("message_id"),
+                    "job_id": artifact.get("job_id"),
+                    "reply_id": artifact.get("reply_id"),
+                    "from_agent": artifact.get("from_agent"),
+                    "path": artifact.get("path"),
+                    "kind": artifact.get("kind"),
+                    "status": artifact.get("status"),
+                    "created_at": artifact.get("created_at"),
+                    "trace_command": self._trace_command(
+                        artifact.get("message_id") or artifact.get("job_id") or artifact.get("reply_id")
+                    ),
+                }
+                for artifact in artifacts
+            ],
+        }
+
     @staticmethod
     def _trace_command(trace_id: Any) -> str | None:
         if trace_id is None:
@@ -1307,6 +1336,7 @@ class StateStore:
             messages=self._message_summaries(state.get("messages", [])),
             jobs=self._job_summaries(state.get("jobs", [])),
             replies=self._reply_summaries(state.get("replies", [])),
+            artifacts=self._artifact_summaries(state.get("artifacts", [])),
             chat_turns=self._chat_turn_summaries(state.get("chat_turns", [])),
             leader_errors=self._leader_error_summaries(state.get("leader_errors", [])),
             leader_actions=self._leader_action_summaries(state.get("leader_actions", [])),

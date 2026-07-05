@@ -82,7 +82,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `provider_health` is derived from `project_view.leader.provider` and local environment availability.
 `runtime_card` is derived from `project_view.runtime_backend` and `project_view.agents[]`.
 `role_card` is derived from `project_view.agents[]` role configuration.
-`ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, and `project_view.inbox`.
+`ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, `project_view.artifacts`, and `project_view.inbox`.
 `lineage_card` is a read-only path projection derived from the same ledger summaries plus visible inbox cards.
 `queue_card` is derived from `project_view.leader_actions`, `project_view.approvals`, `project_view.inbox`, and the recovery-driven next command.
 `operator_card` is derived from `recovery.recommended_action` and the active queue card. It is a renderable human-control descriptor, not an execution result.
@@ -331,6 +331,7 @@ The card is configuration-only. It does not dispatch work or mutate roles; GUI c
   "messages": {},
   "jobs": {},
   "replies": {},
+  "artifacts": {},
   "inbox": {},
   "trace_commands": [
     "agentdeck trace --id msg_xxx",
@@ -341,7 +342,7 @@ The card is configuration-only. It does not dispatch work or mutate roles; GUI c
 }
 ```
 
-`messages`, `jobs`, and `replies` reuse the ProjectView summary shapes and must retain `trace_command` on each item. `inbox` reuses the ProjectView inbox summary so GUI clients can show mailbox heads without scanning per-agent inbox arrays. `trace_commands` is a de-duplicated convenience list for quick trace navigation; the detail source remains `agentdeck trace --id <id>`.
+`messages`, `jobs`, `replies`, and `artifacts` reuse the ProjectView summary shapes and must retain `trace_command` on each item. `artifacts` is the recoverable output summary for files or other deliverables produced by worker agents; it carries `artifact_id`, linked message/job/reply ids, `from_agent`, `path`, `kind`, `status`, and `created_at` without reading file contents. `inbox` reuses the ProjectView inbox summary so GUI clients can show mailbox heads without scanning per-agent inbox arrays. `trace_commands` is a de-duplicated convenience list for quick trace navigation; the detail source remains `agentdeck trace --id <id>`.
 
 ## Lineage Card
 

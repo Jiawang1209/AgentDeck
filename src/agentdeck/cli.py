@@ -1404,12 +1404,14 @@ def _workbench_ledger_card(project_view: dict[str, object]) -> dict[str, object]
     messages = project_view.get("messages") if isinstance(project_view.get("messages"), dict) else {}
     jobs = project_view.get("jobs") if isinstance(project_view.get("jobs"), dict) else {}
     replies = project_view.get("replies") if isinstance(project_view.get("replies"), dict) else {}
+    artifacts = project_view.get("artifacts") if isinstance(project_view.get("artifacts"), dict) else {}
     inbox = project_view.get("inbox") if isinstance(project_view.get("inbox"), dict) else {}
-    trace_commands = _workbench_trace_commands(messages, jobs, replies, inbox)
+    trace_commands = _workbench_trace_commands(messages, jobs, replies, artifacts, inbox)
     return {
         "messages": messages,
         "jobs": jobs,
         "replies": replies,
+        "artifacts": artifacts,
         "inbox": inbox,
         "trace_commands": trace_commands,
     }

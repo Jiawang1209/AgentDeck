@@ -124,6 +124,7 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "messages",
     "jobs",
     "replies",
+    "artifacts",
     "chat_turns",
     "leader_errors",
     "leader_actions",
@@ -313,6 +314,19 @@ PROJECT_VIEW_REPLY_ITEM_FIELDS = (
     "job_id",
     "from_agent",
     "to_actor",
+    "created_at",
+    "trace_command",
+)
+
+PROJECT_VIEW_ARTIFACT_ITEM_FIELDS = (
+    "artifact_id",
+    "message_id",
+    "job_id",
+    "reply_id",
+    "from_agent",
+    "path",
+    "kind",
+    "status",
     "created_at",
     "trace_command",
 )
@@ -746,6 +760,7 @@ WORKBENCH_LEDGER_CARD_FIELDS = (
     "messages",
     "jobs",
     "replies",
+    "artifacts",
     "inbox",
     "trace_commands",
 )
@@ -1033,6 +1048,7 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "message_item_fields": list(PROJECT_VIEW_MESSAGE_ITEM_FIELDS),
         "job_item_fields": list(PROJECT_VIEW_JOB_ITEM_FIELDS),
         "reply_item_fields": list(PROJECT_VIEW_REPLY_ITEM_FIELDS),
+        "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
     }
 
 
@@ -1050,6 +1066,7 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_message_item_fields"] = list(example["messages"]["items"][0])
         payload["example_job_item_fields"] = list(example["jobs"]["items"][0])
         payload["example_reply_item_fields"] = list(example["replies"]["items"][0])
+        payload["example_artifact_item_fields"] = list(example["artifacts"]["items"][0])
         payload["example_project_view"] = example
     return payload
 
@@ -1748,6 +1765,7 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     _validate_project_view_summary_items(errors, payload, "messages", PROJECT_VIEW_MESSAGE_ITEM_FIELDS, "message")
     _validate_project_view_summary_items(errors, payload, "jobs", PROJECT_VIEW_JOB_ITEM_FIELDS, "job")
     _validate_project_view_summary_items(errors, payload, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
+    _validate_project_view_summary_items(errors, payload, "artifacts", PROJECT_VIEW_ARTIFACT_ITEM_FIELDS, "artifact")
     return {"ok": not errors, "errors": errors}
 
 
@@ -2147,7 +2165,7 @@ def _validate_ledger_card_contract(errors: list[str], ledger_card: dict[str, obj
     for field in WORKBENCH_LEDGER_CARD_FIELDS:
         if field not in ledger_card:
             errors.append(f"{prefix}: missing ledger_card field: {field}")
-    for section in ("messages", "jobs", "replies", "inbox"):
+    for section in ("messages", "jobs", "replies", "artifacts", "inbox"):
         if section in ledger_card and not isinstance(ledger_card.get(section), dict):
             errors.append(f"{prefix}: ledger_card.{section} must be an object")
     trace_commands = ledger_card.get("trace_commands")
@@ -2880,6 +2898,13 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             _validate_project_view_summary_items(errors, ledger_card, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
         elif "replies" in ledger_card:
             errors.append("ledger_card.replies must be an object")
+        artifacts = ledger_card.get("artifacts")
+        if isinstance(artifacts, dict):
+            _validate_project_view_summary_items(
+                errors, ledger_card, "artifacts", PROJECT_VIEW_ARTIFACT_ITEM_FIELDS, "artifact"
+            )
+        elif "artifacts" in ledger_card:
+            errors.append("ledger_card.artifacts must be an object")
         trace_commands = ledger_card.get("trace_commands")
         if not isinstance(trace_commands, list):
             errors.append("ledger_card.trace_commands must be a list")
@@ -3125,6 +3150,25 @@ def project_view_example() -> dict[str, object]:
                     "to_actor": "leader",
                     "created_at": "2026-07-04T00:00:01+00:00",
                     "trace_command": "agentdeck trace --id rep_example",
+                }
+            ],
+        },
+        "artifacts": {
+            "count": 1,
+            "by_status": {"created": 1},
+            "by_kind": {"markdown": 1},
+            "items": [
+                {
+                    "artifact_id": "art_example",
+                    "message_id": "msg_example",
+                    "job_id": "job_example",
+                    "reply_id": "rep_example",
+                    "from_agent": "planner",
+                    "path": "docs/example-plan.md",
+                    "kind": "markdown",
+                    "status": "created",
+                    "created_at": "2026-07-04T00:00:02+00:00",
+                    "trace_command": "agentdeck trace --id msg_example",
                 }
             ],
         },
@@ -3841,6 +3885,7 @@ def workbench_example() -> dict[str, object]:
             "messages": project_view["messages"],
             "jobs": project_view["jobs"],
             "replies": project_view["replies"],
+            "artifacts": project_view["artifacts"],
             "inbox": project_view["inbox"],
             "trace_commands": [
                 "agentdeck trace --id msg_example",

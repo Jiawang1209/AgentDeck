@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add artifact summaries to the communication ledger
+
+- 扩展 ProjectView：`agentdeck status` 现在会返回顶层 `artifacts` 摘要，包含 `count`、`by_status`、`by_kind` 和 `items[]`；每个 artifact item 暴露 `artifact_id`、关联 message/job/reply id、`from_agent`、`path`、`kind`、`status`、`created_at` 和 `trace_command`，供 GUI/TUI 从产物行跳回通信 lineage。
+- 扩展 workbench `ledger_card`：现在从 ProjectView 同源嵌入 `messages`、`jobs`、`replies`、`artifacts` 和 `inbox`，并把 artifact 的 trace command 纳入去重后的 `trace_commands`，让“查看账本/查看通信”后续可以展示 worker 产物索引。
+- 同步契约层：新增 `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`，更新 `agentdeck contract project-view --example`、`agentdeck contract workbench --example`、`validate_project_view_contract()` 和 `validate_workbench_contract()`，保证 GUI discovery 能发现 artifacts 字段。
+- 同步 README、`docs/contracts/project-view-schema.md`、`docs/contracts/workbench-schema.md`、CLAUDE.md 和 AGENT.md，明确 artifacts 是可恢复产物摘要，不读取文件内容，也不是第二套 workflow state。
+- 验证记录：已先确认红测失败，`agentdeck status` 最初缺少 `payload["artifacts"]`，`agentdeck workbench` 的 `ledger_card` 最初缺少 `artifacts`；实现后目标测试 `conda run -n agentdeck pytest -q tests/test_agent_cli.py::test_status_includes_project_state_summaries tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state` 2 项通过；契约聚焦测试 `conda run -n agentdeck pytest -q tests/test_contracts.py::test_project_view_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_project_view_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_project_view_contract_accepts_example tests/test_contracts.py::test_validate_project_view_contract_reports_missing_trace_commands tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_agent_cli.py::test_status_matches_project_view_contract_for_gui_clients` 6 项通过；补充修正 workbench contract 字段发现测试后，`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 312 项通过。
+
 ### Current - Expose guarded provider switch controls
 
 - 扩展 workbench `provider_health.controls[]`：每个 Leader provider 现在同时暴露 `kind=set_provider` 普通切换和 `kind=guarded_set_provider` 预检切换，guarded 命令追加 `--require-ready`，供 GUI/TUI 直接渲染“切换”和“可用才切换”两个显式按钮。

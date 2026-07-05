@@ -8,7 +8,7 @@ The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in 
 
 Reusable contract response, payload, and example fixture helpers live in `src/agentdeck/contracts.py`. The CLI discovery command uses `project_view_contract_response()` directly so command output and reusable module output stay identical.
 
-Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, and `PROJECT_VIEW_REPLY_ITEM_FIELDS`.
+Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
 
 Use `validate_project_view_contract(payload)` from `src/agentdeck/contracts.py` to check any ProjectView-like payload against the v1 baseline contract.
 
@@ -38,6 +38,7 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
   "messages": {},
   "jobs": {},
   "replies": {},
+  "artifacts": {},
   "chat_turns": {},
   "leader_errors": {},
   "leader_actions": {},
@@ -72,7 +73,8 @@ Use `agentdeck contract project-view` to discover this contract from tools or GU
   "leader_action_item_fields": [],
   "message_item_fields": [],
   "job_item_fields": [],
-  "reply_item_fields": []
+  "reply_item_fields": [],
+  "artifact_item_fields": []
 }
 ```
 
@@ -90,6 +92,7 @@ Use `agentdeck contract project-view --example` to include a stable GUI-ready Pr
   "example_message_item_fields": [],
   "example_job_item_fields": [],
   "example_reply_item_fields": [],
+  "example_artifact_item_fields": [],
   "example_project_view": {
     "schema_version": "project-view/v1",
     "leader_actions": {
@@ -149,13 +152,14 @@ The following blocks use a consistent summary pattern:
 - `messages`: `count`, `by_status`, `items[]`
 - `jobs`: `count`, `by_status`, `items[]`
 - `replies`: `count`, `items[]`
+- `artifacts`: `count`, `by_status`, `by_kind`, `items[]`
 - `chat_turns`: `count`, `by_mode`, `items[]`
 - `leader_errors`: `count`, `by_mode`, `items[]`
 - `leader_actions`: `count`, `by_kind`, `by_status`, `items[]`
 
 Summary items intentionally omit long prompts and pane output. Use detail commands such as `agentdeck plan show --plan-id <id>`, `agentdeck plan status --plan-id <id>`, `agentdeck trace --id <id>`, and `agentdeck events --limit <n>` when a client needs more context.
 
-`messages.items[]`, `jobs.items[]`, and `replies.items[]` must include `trace_command`. This gives GUI clients, natural-language shells, and humans a stable one-click path from summary rows to the full communication lineage while keeping `agentdeck trace --id <id>` as the detail source.
+`messages.items[]`, `jobs.items[]`, `replies.items[]`, and `artifacts.items[]` must include `trace_command`. This gives GUI clients, natural-language shells, and humans a stable one-click path from summary rows to the full communication lineage while keeping `agentdeck trace --id <id>` as the detail source. Artifact trace commands should point at the closest linked message/job/reply lineage id, so the artifact remains recoverable without making filesystem paths a workflow source of truth.
 
 ## Leader Actions
 

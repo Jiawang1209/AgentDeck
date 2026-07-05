@@ -1225,6 +1225,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "messages",
         "jobs",
         "replies",
+        "artifacts",
         "inbox",
         "trace_commands",
     ]
@@ -1357,6 +1358,19 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             "to_actor": "leader",
             "text": "status: completed",
             "created_at": "2026-07-04T00:00:02+00:00",
+        }
+    ]
+    state["artifacts"] = [
+        {
+            "artifact_id": "art_workbench",
+            "message_id": "msg_workbench",
+            "job_id": "job_workbench",
+            "reply_id": "rep_workbench",
+            "from_agent": "planner",
+            "path": "docs/workbench-plan.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:03+00:00",
         }
     ]
     store.save(state)
@@ -1648,6 +1662,10 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert payload["ledger_card"]["jobs"]["items"][0]["trace_command"] == "agentdeck trace --id job_workbench"
     assert payload["ledger_card"]["replies"]["count"] == 1
     assert payload["ledger_card"]["replies"]["items"][0]["trace_command"] == "agentdeck trace --id rep_workbench"
+    assert payload["ledger_card"]["artifacts"]["count"] == 1
+    assert payload["ledger_card"]["artifacts"]["items"][0]["artifact_id"] == "art_workbench"
+    assert payload["ledger_card"]["artifacts"]["items"][0]["path"] == "docs/workbench-plan.md"
+    assert payload["ledger_card"]["artifacts"]["items"][0]["trace_command"] == "agentdeck trace --id msg_workbench"
     assert payload["ledger_card"]["inbox"]["total"] == 1
     assert payload["ledger_card"]["inbox"]["heads"]["planner"]["inbox_id"] == "inb_workbench_head"
     assert payload["ledger_card"]["trace_commands"] == [
@@ -2913,6 +2931,19 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
             "created_at": "2026-07-04T00:00:00+00:00",
         }
     )
+    state["artifacts"] = [
+        {
+            "artifact_id": "art_demo",
+            "message_id": "msg_demo",
+            "job_id": "job_demo",
+            "reply_id": "rep_demo",
+            "from_agent": "planner",
+            "path": "docs/plan.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:03+00:00",
+        }
+    ]
     state["chat_turns"] = [
         {
             "turn_id": "cht_demo",
@@ -3025,6 +3056,25 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
     assert payload["jobs"]["items"][0]["trace_command"] == "agentdeck trace --id job_demo"
     assert payload["replies"]["items"][0]["reply_id"] == "rep_demo"
     assert payload["replies"]["items"][0]["trace_command"] == "agentdeck trace --id rep_demo"
+    assert payload["artifacts"] == {
+        "count": 1,
+        "by_status": {"created": 1},
+        "by_kind": {"markdown": 1},
+        "items": [
+            {
+                "artifact_id": "art_demo",
+                "message_id": "msg_demo",
+                "job_id": "job_demo",
+                "reply_id": "rep_demo",
+                "from_agent": "planner",
+                "path": "docs/plan.md",
+                "kind": "markdown",
+                "status": "created",
+                "created_at": "2026-07-04T00:00:03+00:00",
+                "trace_command": "agentdeck trace --id msg_demo",
+            }
+        ],
+    }
     assert payload["chat_turns"] == {
         "count": 1,
         "by_mode": {"review": 1},
