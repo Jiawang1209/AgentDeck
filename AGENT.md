@@ -99,7 +99,7 @@ Worker 不应该：
 - Contract index 见 `docs/contracts/contract-index-schema.md`；`agentdeck contract list` 会返回所有 GUI 可消费契约的 discovery command、example command 和 schema 文档路径。新增契约命令时必须同步 `CONTRACT_INDEX_SPECS`、该文档和测试。
 - Doctor diagnostics contract 见 `docs/contracts/doctor-schema.md`；`agentdeck contract doctor --example` 会返回稳定 doctor diagnostics 示例，字段常量和 example fixture 都在 `src/agentdeck/contracts.py`。doctor contract discovery 必须公开 workbench、Leader chat 和 Leader review contract 入口，供 GUI setup 面板跳转到主控制面契约。
 - Events timeline contract 见 `docs/contracts/events-schema.md`；`agentdeck contract events --example` 会返回稳定 events timeline 示例，字段常量和 example fixture 都在 `src/agentdeck/contracts.py`。
-- Leader chat response contract 见 `docs/contracts/leader-chat-schema.md`；`agentdeck contract leader-chat --example` 会返回包含 `leader_explanation` 的稳定响应示例。
+- Leader chat response contract 见 `docs/contracts/leader-chat-schema.md`；`agentdeck contract leader-chat --example` 会返回包含 `leader_explanation` 的稳定响应示例。自然语言 summary mode 必须嵌入 `leader_summary_card` 并复用 `validate_leader_summary_contract()`；修改 summary intent、summary card 嵌入或 `intent_card` 控件时必须同步 leader-chat contract、README、HISTORY 和测试。
 - Workbench snapshot contract 见 `docs/contracts/workbench-schema.md`；`agentdeck contract workbench --example` 会返回稳定一屏工作台示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Controls contract 见 `docs/contracts/controls-schema.md`；`agentdeck contract controls --example` 会返回稳定命令面板 card 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Agent runtime contract 见 `docs/contracts/agent-runtime-schema.md`；`agentdeck contract agent-runtime --example` 会返回稳定可见 tmux runtime 示例，包含 ready/spawn-ready/terminal/capture/refresh 响应字段，字段常量和 example fixture 都在 `src/agentdeck/contracts.py`。

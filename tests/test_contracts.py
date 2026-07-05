@@ -668,6 +668,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
         "apply_blocker",
         "controls",
     ]
+    assert payload["leader_summary_card_fields"] == list(LEADER_SUMMARY_RESPONSE_FIELDS)
     assert payload["continue_card_fields"] == list(CONTINUE_CARD_FIELDS)
     assert payload["capture_card_fields"] == list(LEADER_CHAT_CAPTURE_CARD_FIELDS)
     assert payload["terminal_card_fields"] == list(LEADER_CHAT_TERMINAL_CARD_FIELDS)
@@ -1794,6 +1795,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_leader_action_card_fields"] == list(example["leader_action_card"])
     assert example["leader_action_card"]["action_id"] == example["leader_action"]["action_id"]
     assert example["leader_action_card"]["controls"] == example["leader_action"]["controls"]
+    assert payload["example_leader_summary_card_fields"] == payload["leader_summary_card_fields"]
+    assert payload["example_leader_summary_card_fields"] == list(example["leader_summary_card"])
     assert payload["example_continue_card_fields"] == payload["continue_card_fields"]
     assert set(payload["example_continue_card_fields"]) == set(example["continue_card"])
     assert payload["example_terminal_card_fields"] == payload["terminal_card_fields"]
@@ -1893,6 +1896,18 @@ def test_validate_leader_chat_contract_requires_action_card_when_action_is_prese
     assert result == {
         "ok": False,
         "errors": ["leader_action_card is required when leader_action is present"],
+    }
+
+
+def test_validate_leader_chat_contract_reuses_leader_summary_card_validator() -> None:
+    payload = leader_chat_example()
+    del payload["leader_summary_card"]["summary"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["leader_summary_card: missing leader_summary field: summary"],
     }
 
 

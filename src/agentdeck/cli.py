@@ -92,6 +92,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     card_names = (
         "workbench_card",
         "continue_card",
+        "leader_summary_card",
         "capture_card",
         "terminal_card",
         "dispatch_preview_card",
@@ -116,7 +117,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         if payload.get(card_name) is not None:
             embedded_card = card_name
             break
-    route_source = "provider_plan" if mode == "plan" else "state_review" if mode == "review" else "local_rule"
+    route_source = "provider_plan" if mode == "plan" else "state_review" if mode in {"review", "summary"} else "local_rule"
     action_kind = explanation.get("action_kind")
     read_only = mode not in {"plan", "review", "apply_action"} and action_kind != "approval_create"
     next_command = payload.get("next_command")
@@ -210,6 +211,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Open inbox"
     if re.fullmatch(r"agentdeck trace --id [^\s]+", command):
         return "Inspect trace"
+    if re.fullmatch(r"agentdeck leader summary --plan-id [^\s]+", command):
+        return "Summarize plan"
     return "Next command"
 
 
@@ -218,6 +221,14 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck workbench"
     if embedded_card == "continue_card":
         return "agentdeck continue"
+    if embedded_card == "leader_summary_card":
+        summary_card = payload.get("leader_summary_card")
+        command = (
+            summary_card.get("review_command")
+            if isinstance(summary_card, dict)
+            else None
+        )
+        return str(command) if command else None
     if embedded_card == "runtime_card":
         return "agentdeck agent list"
     if embedded_card == "agent_ready_card":
@@ -318,6 +329,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("dispatch_preview_card", None)
     payload.setdefault("dispatch_batch_preview_card", None)
     payload.setdefault("agent_ready_card", None)
+    payload.setdefault("leader_summary_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -3350,6 +3362,21 @@ def _chat_wants_queue(message: str) -> bool:
     )
 
 
+def _chat_wants_summary(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(
+        token in normalized
+        for token in [
+            "summary",
+            "summarize",
+            "final summary",
+            "总结",
+            "汇总",
+            "最终总结",
+        ]
+    )
+
+
 def _chat_wants_role(message: str) -> bool:
     normalized = message.strip().lower()
     return any(
@@ -3831,6 +3858,19 @@ def _leader_chat_explanation(
             "requires_explicit_user": recovery_action.get("requires_explicit_user")
             if isinstance(recovery_action, dict)
             else None,
+        }
+    if mode == "summary":
+        summary_match = re.fullmatch(r"agentdeck leader summary --plan-id ([^\s]+)", str(next_command or ""))
+        return {
+            "mode": mode,
+            "summary": "Leader is showing a deterministic reply and artifact summary without mutating state.",
+            "reason": reason or "human asked to summarize the current plan",
+            "next_command": next_command,
+            "recommended_action_id": summary_match.group(1) if summary_match else None,
+            "action_kind": "leader_summary",
+            "action_status": "ready",
+            "safety": "inspect",
+            "requires_explicit_user": False,
         }
     if mode == "setup":
         leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
@@ -4418,6 +4458,74 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "trace_card": trace_card,
+            "ledger_card": None,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_summary(args.message):
+        plans = store.list_plans()
+        if not plans:
+            print("no saved plans to summarize", file=sys.stderr)
+            return 1
+        latest_plan = plans[-1]
+        plan_id = str(latest_plan["plan_id"])
+        review = _leader_review_payload(store.leader_review(plan_id))
+        if review.get("next_action") != "summarize":
+            reason = review.get("reason") or "plan is not ready to summarize"
+            print(f"plan is not ready to summarize: {reason}", file=sys.stderr)
+            return 1
+        next_command = f"agentdeck leader summary --plan-id {plan_id}"
+        summary_card = _leader_summary_payload(store, plan_id)
+        turn = store.record_chat_turn(
+            mode="summary",
+            message=args.message,
+            plan_id=plan_id,
+            next_command=next_command,
+            review=review,
+            action_id=None,
+            action_kind="leader_summary",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "summary",
+                    "plan_id": plan_id,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "summary",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "summary",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                review=review,
+            ),
+            "plan_id": plan_id,
+            "review": review,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "leader_summary_card": summary_card,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
             "ledger_card": None,
             "workbench_card": None,
         }

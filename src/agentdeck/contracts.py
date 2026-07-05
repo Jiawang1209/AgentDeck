@@ -433,6 +433,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "next_command",
     "leader_action",
     "leader_action_card",
+    "leader_summary_card",
     "continue_card",
     "capture_card",
     "terminal_card",
@@ -1169,6 +1170,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "intent_card_fields": list(LEADER_CHAT_INTENT_CARD_FIELDS),
         "intent_control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
         "leader_action_card_fields": list(LEADER_CHAT_ACTION_CARD_FIELDS),
+        "leader_summary_card_fields": list(LEADER_SUMMARY_RESPONSE_FIELDS),
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "capture_card_fields": list(LEADER_CHAT_CAPTURE_CARD_FIELDS),
         "terminal_card_fields": list(LEADER_CHAT_TERMINAL_CARD_FIELDS),
@@ -1217,6 +1219,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_intent_card_fields"] = list(example["intent_card"])
         payload["example_intent_control_fields"] = list(example["intent_card"]["controls"][0])
         payload["example_leader_action_card_fields"] = list(example["leader_action_card"])
+        payload["example_leader_summary_card_fields"] = list(example["leader_summary_card"])
         payload["example_continue_card_fields"] = list(example["continue_card"])
         payload["example_terminal_card_fields"] = list(example["terminal_card"])
         payload["example_dispatch_preview_card_fields"] = list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
@@ -2546,6 +2549,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("leader_action_card is required when leader_action is present")
     elif "leader_action_card" in payload and leader_action_card is not None:
         errors.append("leader_action_card must be an object")
+    leader_summary_card = payload.get("leader_summary_card")
+    if isinstance(leader_summary_card, dict):
+        summary_validation = validate_leader_summary_contract(leader_summary_card)
+        for error in summary_validation["errors"]:
+            errors.append(f"leader_summary_card: {error}")
+    elif "leader_summary_card" in payload and leader_summary_card is not None:
+        errors.append("leader_summary_card must be an object")
     inbox_card = payload.get("inbox_card")
     if isinstance(inbox_card, dict):
         inbox_card_validation = validate_inbox_contract(inbox_card)
@@ -3511,6 +3521,7 @@ def leader_chat_example() -> dict[str, object]:
     capability_card = leader_chat_capability_card()
     control_registry_card = leader_chat_control_registry_card(workbench_card)
     leader_action_card = leader_chat_action_card(leader_action)
+    leader_summary_card = leader_summary_example()
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -3554,6 +3565,7 @@ def leader_chat_example() -> dict[str, object]:
         "next_command": next_command,
         "leader_action": leader_action,
         "leader_action_card": leader_action_card,
+        "leader_summary_card": leader_summary_card,
         "continue_card": continue_card,
         "capture_card": None,
         "terminal_card": terminal_card,

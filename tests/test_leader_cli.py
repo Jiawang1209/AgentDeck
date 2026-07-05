@@ -4358,6 +4358,83 @@ def test_leader_summary_returns_replies_and_artifacts_without_mutating_state(
     assert StateStore(root).load() == state
 
 
+def test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--task", "review completed"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    cli.main(
+        [
+            "reply",
+            "--agent",
+            "planner",
+            "--message-id",
+            message_id,
+            "--text",
+            "status: completed\nsummary: done\nfull_output_path: docs/done.md",
+        ]
+    )
+    reply_payload = json.loads(capsys.readouterr().out)
+    inbox_id = reply_payload["inbox_card"]["items"][0]["inbox_id"]
+    cli.main(["ack", "--agent", "leader", "--inbox-id", inbox_id])
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+    sent_before = list(fake.sent)
+    captured_before = list(fake.captured)
+
+    exit_code = cli.main(["leader", "chat", "--message", "总结当前计划"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "summary"
+    assert payload["plan_id"] == plan_id
+    assert payload["next_command"] == f"agentdeck leader summary --plan-id {plan_id}"
+    assert payload["review"]["next_action"] == "summarize"
+    assert payload["leader_summary_card"]["plan_id"] == plan_id
+    assert payload["leader_summary_card"]["reply_count"] == 1
+    assert payload["leader_summary_card"]["artifact_count"] == 1
+    assert payload["leader_summary_card"]["steps"][0]["message_id"] == message_id
+    assert payload["leader_summary_card"]["steps"][0]["reply_text"].startswith("status: completed")
+    assert payload["leader_summary_card"]["steps"][0]["artifacts"][0]["path"] == "docs/done.md"
+    assert payload["intent_card"]["embedded_card"] == "leader_summary_card"
+    assert payload["intent_card"]["read_only"] is True
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Summarize plan",
+        "command": f"agentdeck leader summary --plan-id {plan_id}",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["leader_explanation"]["action_kind"] == "leader_summary"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+
+    state_after = StateStore(root).load()
+    assert state_after["leader_actions"] == state_before["leader_actions"]
+    assert state_after["approvals"] == state_before["approvals"]
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["jobs"] == state_before["jobs"]
+    assert state_after["replies"] == state_before["replies"]
+    assert state_after["artifacts"] == state_before["artifacts"]
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert state_after["chat_turns"][-1]["mode"] == "summary"
+    assert state_after["chat_turns"][-1]["next_command"] == f"agentdeck leader summary --plan-id {plan_id}"
+    assert fake.sent == sent_before
+    assert fake.captured == captured_before
+
+
 def test_leader_summary_refuses_contract_violation(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "坏 summary 不能输出"])

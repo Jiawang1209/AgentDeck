@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Route summary intent through Leader chat
+
+- 扩展 `agentdeck leader chat --message "总结当前计划"` / `"汇总结果"` / `"summary"` / `"summarize"`：当最新 plan 的本地 review 已经是 `next_action=summarize` 时，chat 进入只读 `mode=summary`，嵌入同源 `leader_summary_card`，并把 `next_command` 对齐到 `agentdeck leader summary --plan-id <id>`。
+- 保持人类控制边界：summary intent 只记录 chat turn 和审计事件，不创建新的 `leader_actions[]`，不调用 provider，不创建 approval/message/job/reply/artifact/inbox，不读取 tmux pane，不 capture reply，不 dispatch，不 ack，不发送 tmux 输入；未准备好 summarize 时返回明确错误，不落入 provider-backed planning。
+- 扩展 `agentdeck contract leader-chat`：新增 `leader_summary_card_fields`、example 中的 `leader_summary_card` 和 `example_leader_summary_card_fields`，并让 `validate_leader_chat_contract()` 复用 `validate_leader_summary_contract()` 校验嵌入 summary card。
+- 同步 `docs/contracts/leader-chat-schema.md`、README、AGENT.md 和 CLAUDE.md，明确自然语言 summary mode 和 GUI 消费 `leader_summary_card` 的契约。
+- 验证记录：已先确认红测失败，`agentdeck contract leader-chat` 最初缺少 `leader_summary_card_fields` / example 字段，`validate_leader_chat_contract()` 不校验 `leader_summary_card`，`agentdeck leader chat --message "总结当前计划"` 最初落到旧 `mode=review`；实现后目标测试 `conda run -n agentdeck pytest -q tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_reuses_leader_summary_card_validator tests/test_leader_cli.py::test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions` 4 项通过；聚焦回归 `conda run -n agentdeck pytest -q tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_reuses_leader_summary_card_validator tests/test_leader_cli.py::test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response` 7 项通过；相关回归 `conda run -n agentdeck pytest -q tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py` 314 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 335 项通过。
+
 ### Current - Add a GUI-ready Leader summary surface
 
 - 新增 `agentdeck leader summary --plan-id <id>` 只读入口：当 `leader review` 进入 `next_action=summarize` 后，可聚合已派发 step 的 replies、artifacts、trace commands 和 plan status counters，返回 GUI-ready summary card。
