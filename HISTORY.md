@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add controls contract discovery
+
+- 新增 `agentdeck contract controls` / `--example`，公开独立命令面板 `control_registry_card` 字段和 `control_registry_item_fields`，让 GUI/TUI 能通过 contract index 发现 `agentdeck controls` 的稳定响应形状。
+- 将 `controls` 纳入 `agentdeck contract list`，新增 `docs/contracts/controls-schema.md`，并将通用 `CONTROL_REGISTRY_CARD_FIELDS` 作为 Leader chat 嵌入卡片和独立 controls contract 的共享字段来源。
+- 同步 README、CLAUDE.md、AGENT.md 和测试；该 contract 只做 discovery，不读取 live state、不调用 provider、不读取 pane、不执行任何 control。
+- 完整验证：已先确认红测失败，`CONTROL_REGISTRY_CARD_FIELDS`、`controls_contract_payload()` 和 `agentdeck contract controls` 最初不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli tests/test_contracts.py::test_controls_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_control_registry_card_contract_accepts_example tests/test_agent_cli.py::test_contract_list_discovers_all_gui_contracts tests/test_agent_cli.py::test_contract_controls_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_controls_example_exports_gui_ready_response -q` 7 项通过；相关测试 `conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py tests/test_leader_cli.py -q` 217 项通过；`conda run -n agentdeck pytest -q` 232 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `controls-contract-smoke-ok`。
+
 ### Current - Add standalone controls command
 
 - 新增 `agentdeck controls`：从同一次 `agentdeck workbench` snapshot 派生 `control_registry_card`，为 GUI/TUI 或自然语言壳提供独立只读命令面板入口。

@@ -17,6 +17,8 @@ from agentdeck.contracts import (
     contract_index_response,
     continue_contract_payload,
     continue_contract_response,
+    controls_contract_payload,
+    controls_contract_response,
     doctor_contract_payload,
     doctor_contract_response,
     events_contract_payload,
@@ -357,6 +359,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "doctor",
         "events",
         "workbench",
+        "controls",
         "agent-runtime",
         "leader-chat",
         "leader-actions",
@@ -370,6 +373,43 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
     assert payload["contracts"][0]["command"] == "agentdeck contract project-view"
     assert payload["contracts"][0]["example_command"] == "agentdeck contract project-view --example"
     assert payload["contracts"][0]["contract_path"].endswith("docs/contracts/project-view-schema.md")
+
+
+def test_contract_controls_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "controls"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = controls_contract_payload(Path(payload["contract_path"]))
+    assert payload == expected
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["controls_command"] == "agentdeck controls"
+    assert payload["contract_path"].endswith("docs/contracts/controls-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["leader_chat_contract"] == "agentdeck contract leader-chat"
+
+
+def test_contract_controls_example_exports_gui_ready_response(capsys) -> None:
+    exit_code = cli.main(["contract", "controls", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = controls_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_control_registry_card"]
+    assert example["mode"] == "control_registry"
+    assert example["item_count"] == len(example["items"])
+    assert payload["example_control_registry_card_fields"] == payload["control_registry_card_fields"]
+    assert set(payload["example_control_registry_item_fields"]) == set(payload["control_registry_item_fields"])
+    assert {
+        (item["scope"], item["card"], item["kind"], item["agent_id"])
+        for item in example["items"]
+    } >= {
+        ("leader", "leader_card", "continue", "leader"),
+        ("runtime", "runtime_card", "capture", "planner"),
+        ("operator", "operator_card", "apply", None),
+    }
 
 
 def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None:

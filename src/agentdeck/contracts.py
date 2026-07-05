@@ -55,6 +55,12 @@ CONTRACT_INDEX_SPECS = (
         "workbench-schema.md",
     ),
     (
+        "controls",
+        "agentdeck contract controls",
+        "agentdeck contract controls --example",
+        "controls-schema.md",
+    ),
+    (
         "agent-runtime",
         "agentdeck contract agent-runtime",
         "agentdeck contract agent-runtime --example",
@@ -369,7 +375,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "control_registry_card",
 )
 
-LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS = (
+CONTROL_REGISTRY_CARD_FIELDS = (
     "mode",
     "title",
     "source_command",
@@ -377,6 +383,8 @@ LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS = (
     "item_count",
     "items",
 )
+
+LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS = CONTROL_REGISTRY_CARD_FIELDS
 
 CONTINUE_CARD_FIELDS = (
     "ok",
@@ -1035,6 +1043,10 @@ def leader_chat_control_registry_card(workbench_card: dict[str, object]) -> dict
     }
 
 
+def controls_example() -> dict[str, object]:
+    return leader_chat_control_registry_card(workbench_example())
+
+
 def _capability_item_with_controls(item: dict[str, object]) -> dict[str, object]:
     return {**item, "controls": [_capability_item_control(item)]}
 
@@ -1171,6 +1183,30 @@ def workbench_contract_response(contract_path: Path, include_example: bool = Fal
         payload["example"] = True
         payload["example_snapshot_fields"] = list(example)
         payload["example_workbench"] = example
+    return payload
+
+
+def controls_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "controls_command": "agentdeck controls",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "control_registry_card_fields": list(CONTROL_REGISTRY_CARD_FIELDS),
+        "control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
+        "workbench_contract": "agentdeck contract workbench",
+        "leader_chat_contract": "agentdeck contract leader-chat",
+    }
+
+
+def controls_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = controls_contract_payload(contract_path)
+    if include_example:
+        example = controls_example()
+        payload["example"] = True
+        payload["example_control_registry_card_fields"] = list(example)
+        payload["example_control_registry_item_fields"] = list(example["items"][0])
+        payload["example_control_registry_card"] = example
     return payload
 
 

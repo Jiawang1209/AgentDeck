@@ -12,6 +12,7 @@ from agentdeck.contracts import (
     CONTRACT_INDEX_ITEM_FIELDS,
     CONTRACT_INDEX_RESPONSE_FIELDS,
     CONTINUE_CARD_FIELDS,
+    CONTROL_REGISTRY_CARD_FIELDS,
     EVENTS_CURSOR_FIELDS,
     EVENTS_EVENT_ITEM_FIELDS,
     EVENTS_RESPONSE_FIELDS,
@@ -63,6 +64,9 @@ from agentdeck.contracts import (
     approval_contract_response,
     approval_example,
     contract_index_response,
+    controls_contract_payload,
+    controls_contract_response,
+    controls_example,
     inbox_contract_payload,
     inbox_contract_response,
     inbox_example,
@@ -98,6 +102,7 @@ from agentdeck.contracts import (
     workbench_example,
     validate_approval_contract,
     validate_continue_contract,
+    validate_control_registry_card_contract,
     validate_inbox_contract,
     validate_leader_action_contract,
     validate_leader_actions_contract,
@@ -117,6 +122,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "doctor-schema.md",
         "events-schema.md",
         "workbench-schema.md",
+        "controls-schema.md",
         "agent-runtime-schema.md",
         "leader-chat-schema.md",
         "leader-actions-schema.md",
@@ -136,7 +142,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 13
+    assert payload["count"] == 14
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -144,6 +150,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "doctor",
         "events",
         "workbench",
+        "controls",
         "agent-runtime",
         "leader-chat",
         "leader-actions",
@@ -158,6 +165,46 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         assert contract["contract_exists"] is True
         assert contract["command"].startswith("agentdeck contract ")
         assert contract["example_command"].endswith(" --example")
+
+
+def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "controls-schema.md"
+    contract_path.write_text("# Controls Contract\n", encoding="utf-8")
+
+    payload = controls_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["controls_command"] == "agentdeck controls"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["control_registry_card_fields"] == list(CONTROL_REGISTRY_CARD_FIELDS)
+    assert payload["control_registry_item_fields"] == list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["leader_chat_contract"] == "agentdeck contract leader-chat"
+
+
+def test_controls_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "controls-schema.md"
+    contract_path.write_text("# Controls Contract\n", encoding="utf-8")
+
+    payload = controls_contract_response(contract_path, include_example=True)
+    example = controls_example()
+
+    assert payload["example"] is True
+    assert payload["example_control_registry_card"] == example
+    assert payload["example_control_registry_card_fields"] == list(example)
+    assert payload["example_control_registry_item_fields"] == list(example["items"][0])
+    assert set(payload["example_control_registry_card_fields"]) == set(CONTROL_REGISTRY_CARD_FIELDS)
+    assert set(payload["example_control_registry_item_fields"]) == set(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
+    assert example["mode"] == "control_registry"
+    assert example["source_command"] == "agentdeck workbench"
+    assert example["item_count"] == len(example["items"])
+
+
+def test_validate_control_registry_card_contract_accepts_example() -> None:
+    result = validate_control_registry_card_contract(controls_example())
+
+    assert result == {"ok": True, "errors": []}
 
 
 def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:

@@ -15,6 +15,7 @@ from .contracts import (
     approval_contract_response,
     contract_index_response,
     continue_contract_response,
+    controls_contract_response,
     doctor_contract_response,
     events_contract_response,
     inbox_contract_response,
@@ -1016,6 +1017,13 @@ def contract_events_command(args: argparse.Namespace) -> int:
 def contract_workbench_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "workbench-schema.md"
     payload = workbench_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_controls_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "controls-schema.md"
+    payload = controls_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -3545,6 +3553,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_workbench.add_argument("--example", action="store_true", help="Include a GUI-ready workbench example")
     contract_workbench.set_defaults(func=contract_workbench_command)
+    contract_controls = contract_subparsers.add_parser(
+        "controls",
+        help="Show command palette contract discovery metadata",
+    )
+    contract_controls.add_argument("--example", action="store_true", help="Include a GUI-ready controls example")
+    contract_controls.set_defaults(func=contract_controls_command)
     contract_agent_runtime = contract_subparsers.add_parser(
         "agent-runtime",
         help="Show agent runtime command contract discovery metadata",
