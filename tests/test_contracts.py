@@ -1753,6 +1753,67 @@ def test_validate_leader_chat_contract_requires_intent_next_command_match() -> N
     }
 
 
+def test_validate_leader_chat_contract_requires_reply_waiting_trace_intent_card() -> None:
+    payload = leader_chat_example()
+    trace = trace_example()
+    message_id = trace["message"]["message_id"]
+    next_command = f"agentdeck capture-reply --agent planner --message-id {message_id}"
+    recommended_action = {
+        "label": "Capture pending reply",
+        "command": next_command,
+        "safety": "explicit_runtime",
+        "requires_explicit_user": True,
+        "source": "reply",
+        "target_id": message_id,
+    }
+    payload["trace_card"] = trace
+    payload["queue_card"] = None
+    payload["operator_card"] = None
+    payload["next_command"] = next_command
+    payload["recovery"]["status"] = "reply_waiting"
+    payload["recovery"]["reason"] = "dispatched step has no reply yet"
+    payload["recovery"]["next_command"] = next_command
+    payload["recovery"]["recommended_action"] = recommended_action
+    payload["continue_card"]["status"] = "reply_waiting"
+    payload["continue_card"]["reason"] = "dispatched step has no reply yet"
+    payload["continue_card"]["next_command"] = next_command
+    payload["continue_card"]["recommended_action"] = recommended_action
+    payload["leader_explanation"]["next_command"] = next_command
+    payload["leader_explanation"]["recommended_action_id"] = message_id
+    payload["leader_explanation"]["action_kind"] = "reply"
+    payload["leader_explanation"]["action_status"] = "reply_waiting"
+    payload["leader_explanation"]["safety"] = "explicit_runtime"
+    payload["leader_explanation"]["requires_explicit_user"] = True
+    payload["intent_card"]["embedded_card"] = "continue_card"
+    payload["intent_card"]["next_command"] = next_command
+    payload["intent_card"]["requires_explicit_user"] = True
+    payload["intent_card"]["controls"] = [
+        {
+            "kind": "inspect",
+            "label": "Inspect continue_card",
+            "command": "agentdeck continue",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "next",
+            "label": "Capture reply",
+            "command": next_command,
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card: reply_waiting continue must embed trace_card"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_intent_control_fields() -> None:
     payload = leader_chat_example()
     del payload["intent_card"]["controls"][0]["enabled"]

@@ -2197,6 +2197,16 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append(f"missing intent_card field: {field}")
         if intent_card.get("next_command") != payload.get("next_command"):
             errors.append("intent_card: next_command must match response next_command")
+        recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
+        recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+        if (
+            payload.get("mode") == "continue"
+            and isinstance(recommended_action, dict)
+            and recommended_action.get("source") == "reply"
+            and payload.get("trace_card") is not None
+            and intent_card.get("embedded_card") != "trace_card"
+        ):
+            errors.append("intent_card: reply_waiting continue must embed trace_card")
         controls = intent_card.get("controls")
         if isinstance(controls, list):
             for control in controls:
