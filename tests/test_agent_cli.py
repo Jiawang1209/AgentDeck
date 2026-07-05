@@ -870,11 +870,65 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "approvals",
         "inbox",
         "trace",
+        "artifacts",
     ]
     assert all(item["contract_exists"] for item in payload["contracts"])
     assert payload["contracts"][0]["command"] == "agentdeck contract project-view"
     assert payload["contracts"][0]["example_command"] == "agentdeck contract project-view --example"
     assert payload["contracts"][0]["contract_path"].endswith("docs/contracts/project-view-schema.md")
+
+
+def test_contract_artifacts_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "artifacts"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["artifacts_command"] == "agentdeck artifacts"
+    assert payload["trace_command_template"] == "agentdeck trace --id <id>"
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["trace_contract"] == "agentdeck contract trace"
+    assert payload["contract_path"].endswith("docs/contracts/artifacts-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == [
+        "schema_version",
+        "artifacts_command",
+        "project_view_contract",
+        "trace_contract",
+        "trace_command_template",
+        "artifacts",
+    ]
+    assert payload["artifact_summary_fields"] == ["count", "by_status", "by_kind", "items"]
+    assert payload["artifact_item_fields"] == [
+        "artifact_id",
+        "message_id",
+        "job_id",
+        "reply_id",
+        "from_agent",
+        "path",
+        "kind",
+        "status",
+        "created_at",
+        "trace_command",
+    ]
+
+
+def test_contract_artifacts_example_exports_gui_ready_response(capsys) -> None:
+    exit_code = cli.main(["contract", "artifacts", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["example"] is True
+    example = payload["example_artifacts"]
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_artifact_summary_fields"] == payload["artifact_summary_fields"]
+    assert set(payload["example_artifact_summary_fields"]) == set(example["artifacts"])
+    assert payload["example_artifact_item_fields"] == payload["artifact_item_fields"]
+    assert set(payload["example_artifact_item_fields"]) == set(example["artifacts"]["items"][0])
+    assert example["artifacts"]["items"][0]["artifact_id"] == "art_example"
+    assert example["artifacts"]["items"][0]["trace_command"] == "agentdeck trace --id msg_example"
 
 
 def test_contract_controls_discovers_schema_for_gui_clients(capsys) -> None:
@@ -1364,6 +1418,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "project_view_contract",
         "events_contract",
         "doctor_contract",
+        "artifacts_contract",
     ]
     assert payload["change_summary_fields"] == [
         "since_event_id",
@@ -1946,6 +2001,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "project_view_contract": "agentdeck contract project-view",
         "events_contract": "agentdeck contract events",
         "doctor_contract": "agentdeck contract doctor",
+        "artifacts_contract": "agentdeck contract artifacts",
     }
     assert payload["control_mode_card"] == {
         "mode": "control_mode",
@@ -3048,6 +3104,60 @@ def test_trace_accepts_artifact_id_and_returns_artifacts(tmp_path, monkeypatch, 
         }
     ]
     assert validate_trace_contract(payload) == {"ok": True, "errors": []}
+
+
+def test_artifacts_outputs_project_view_artifact_summary_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["artifacts"] = [
+        {
+            "artifact_id": "art_index",
+            "message_id": "msg_index",
+            "job_id": "job_index",
+            "reply_id": "rep_index",
+            "from_agent": "planner",
+            "path": "docs/architecture/index.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    store.save(state)
+
+    exit_code = cli.main(["artifacts"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "schema_version": cli.PROJECT_VIEW_SCHEMA_VERSION,
+        "artifacts_command": "agentdeck artifacts",
+        "project_view_contract": "agentdeck contract project-view",
+        "trace_contract": "agentdeck contract trace",
+        "trace_command_template": "agentdeck trace --id <id>",
+        "artifacts": {
+            "count": 1,
+            "by_status": {"created": 1},
+            "by_kind": {"markdown": 1},
+            "items": [
+                {
+                    "artifact_id": "art_index",
+                    "message_id": "msg_index",
+                    "job_id": "job_index",
+                    "reply_id": "rep_index",
+                    "from_agent": "planner",
+                    "path": "docs/architecture/index.md",
+                    "kind": "markdown",
+                    "status": "created",
+                    "created_at": "2026-07-04T00:00:00+00:00",
+                    "trace_command": "agentdeck trace --id msg_index",
+                }
+            ],
+        },
+    }
+    assert StateStore(root).load() == state
 
 
 def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:

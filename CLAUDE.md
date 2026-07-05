@@ -154,6 +154,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - Approval queue contract 维护在 `docs/contracts/approvals-schema.md`，发现入口是 `agentdeck contract approvals`；payload、approval queue example、dispatch-ready example、`validate_approval_contract()` 和 `validate_approval_dispatch_ready_contract()` 也在 `src/agentdeck/contracts.py`。
 - Inbox queue contract 维护在 `docs/contracts/inbox-schema.md`，发现入口是 `agentdeck contract inbox`；payload、example fixture 和 `validate_inbox_contract()` 也在 `src/agentdeck/contracts.py`。
 - Trace contract 维护在 `docs/contracts/trace-schema.md`，发现入口是 `agentdeck contract trace`；payload、example fixture 和 `validate_trace_contract()` 也在 `src/agentdeck/contracts.py`。
+- Artifacts contract 维护在 `docs/contracts/artifacts-schema.md`，发现入口是 `agentdeck contract artifacts`；payload、example fixture 和 `validate_artifacts_contract()` 也在 `src/agentdeck/contracts.py`。
 - `src/agentdeck/contracts.py::validate_project_view_contract()` 是 ProjectView-like payload 的 v1 基础契约校验入口。
 - `agentdeck status` 必须在输出 JSON 前调用 `validate_project_view_contract()` 自校验；校验失败时返回非 0 且不得输出半坏的 ProjectView。
 - `agentdeck contract list` 是只读契约总目录，供 GUI/TUI 启动时读取所有 contract discovery 命令、example 命令和文档路径；不得读取或修改 live state。
@@ -167,8 +168,10 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck contract leader-action` 是只读契约发现入口，供 GUI 或外部集成读取单个 Leader action 详情字段；`--example` 会返回稳定 action detail 示例，不读取或修改 live state。
 - `agentdeck contract approvals` 是只读契约发现入口，供 GUI 或外部集成读取人类审批队列字段和 dispatch-ready 响应字段；`--example` 会返回稳定 approval queue 与 dispatch-ready 示例，不读取或修改 live state。
 - `agentdeck contract inbox` 是只读契约发现入口，供 GUI 或外部集成读取单 agent mailbox 字段；`--example` 会返回稳定 inbox 示例，不读取或修改 live state。
-- `agentdeck contract trace` 是只读契约发现入口，供 GUI 或外部集成读取通信 lineage 的 message/attempt/job/reply/inbox 字段；`--example` 会返回稳定 trace 示例，不读取或修改 live state。
+- `agentdeck contract trace` 是只读契约发现入口，供 GUI 或外部集成读取通信 lineage 的 message/attempt/job/reply/artifact/inbox 字段；`--example` 会返回稳定 trace 示例，不读取或修改 live state。
+- `agentdeck contract artifacts` 是只读契约发现入口，供 GUI 或外部集成读取产物索引字段；`--example` 会返回稳定 artifacts 示例，不读取或修改 live state。
 - `agentdeck trace --id <id>` 输出 JSON 前必须通过 `validate_trace_contract()` 自校验；失败时返回非 0 且不得输出半坏 trace。
+- `agentdeck artifacts` 输出 JSON 前必须通过 `validate_artifacts_contract()` 自校验；它只返回同源 ProjectView artifact 摘要和 trace 契约入口，不读取产物文件内容、不读取 pane、不调用 provider、不写 state。
 - `agentdeck leader chat` 输出 JSON 前必须通过 `validate_leader_chat_contract()` 自校验；校验失败时返回非 0、不得输出半坏 chat response，并必须写入 `leader_errors[]` 和 `leader_chat_contract_failed` 事件。
 - `agentdeck leader actions` 输出 JSON 前必须通过 `validate_leader_actions_contract()` 自校验；校验失败时返回非 0 且不得输出半坏 action queue；每个 action item 必须公开 `controls[]`、`preview_command`、can_apply、apply_command、explicit_command、apply_blocker 和 is_recommended。
 - `agentdeck leader action --action-id <id>` 输出 JSON 前必须通过 `validate_leader_action_contract()` 自校验；校验失败时返回非 0 且不得输出半坏 action detail；detail 必须公开 `preview_command`、can_apply、apply_command、explicit_command 和 apply_blocker。

@@ -46,5 +46,6 @@ The index currently lists these contract names in order:
 - `approvals`
 - `inbox`
 - `trace`
+- `artifacts`
 
 When a new GUI-consumable contract command is added, update `CONTRACT_INDEX_SPECS` in `src/agentdeck/contracts.py`, this document, and the contract index tests in the same commit.

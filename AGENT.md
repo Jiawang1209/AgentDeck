@@ -92,6 +92,7 @@ Worker 不应该：
 - `agentdeck trace --id <id>` 可用 message/attempt/job/reply/artifact/inbox 任意 ID 还原通信链路；artifact trace 只返回路径摘要，不读取文件内容。
 - `agentdeck events --limit <n>` 返回最近审计事件，不修改 state；`agentdeck events --since <event_id>` 返回 cursor 之后的审计事件和 cursor metadata，cursor 由 GUI/调用方持有，不得写入 AgentDeck state。
 - `agentdeck status` 返回 ProjectView 只读摘要，包含 agents、plans、approvals、messages、jobs、replies、artifacts、chat_turns、leader_actions、inbox 和 recovery，适合作为 GUI 与 Leader chat loop 的默认状态入口。
+- `agentdeck artifacts` 返回同源 ProjectView artifact 摘要和 trace 契约入口；它只读 state，不读取产物文件内容、不读取 pane、不调用 provider、不写 state，输出前必须通过 `validate_artifacts_contract()` 自校验。
 - ProjectView 详细字段契约见 `docs/contracts/project-view-schema.md`；当前 `schema_version` 是 `project-view/v1`，修改 status、recovery、GUI 或自然语言入口时必须同步该文档。
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`。
 - ProjectView contract payload 和 example fixture 维护在 `src/agentdeck/contracts.py`，需要复用时优先 import 该模块。
@@ -108,6 +109,7 @@ Worker 不应该：
 - Approval queue contract 见 `docs/contracts/approvals-schema.md`；`agentdeck contract approvals --example` 会返回稳定 approval queue 和 dispatch-ready 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Inbox queue contract 见 `docs/contracts/inbox-schema.md`；`agentdeck contract inbox --example` 会返回稳定 inbox 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Trace contract 见 `docs/contracts/trace-schema.md`；`agentdeck contract trace --example` 会返回稳定通信 lineage 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
+- Artifacts contract 见 `docs/contracts/artifacts-schema.md`；`agentdeck contract artifacts --example` 会返回稳定产物索引示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - `validate_project_view_contract(payload)` 可校验任意 ProjectView-like payload 是否满足 v1 基础契约。
 - `agentdeck status` 输出 JSON 前必须先用 `validate_project_view_contract()` 自校验；失败时只能返回错误，不输出半坏 ProjectView。
 - `agentdeck contract project-view` 返回 ProjectView 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定示例，供 GUI 原型使用。
@@ -145,7 +147,9 @@ Worker 不应该：
 - `agentdeck contract approvals` 返回人类审批队列和 dispatch-ready 响应契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 approval queue 和 dispatch-ready 示例，供 GUI 原型使用。
 - `agentdeck contract inbox` 返回单 agent mailbox 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 inbox 示例，供 GUI 原型使用。
 - `agentdeck contract trace` 返回通信 lineage 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 trace 示例，供 GUI 原型使用。
+- `agentdeck contract artifacts` 返回只读产物索引契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 artifacts 示例，供 GUI 原型使用。
 - `agentdeck trace --id <id>` 输出前必须通过 `validate_trace_contract()` 自校验；失败时只能返回错误，不输出半坏 trace。
+- `agentdeck artifacts` 输出前必须通过 `validate_artifacts_contract()` 自校验；失败时只能返回错误，不输出半坏 artifacts response。
 - `agentdeck leader chat` 输出 JSON 前必须通过 `validate_leader_chat_contract()` 自校验；校验失败时只能返回错误，不输出半坏 chat response，并必须写入 `leader_errors[]` 和 `leader_chat_contract_failed` 事件。
 - `agentdeck leader actions` 输出 JSON 前必须通过 `validate_leader_actions_contract()` 自校验；校验失败时只能返回错误，不输出半坏 action queue；每个 action item 必须公开 `controls[]`、`preview_command`、can_apply、apply_command、explicit_command、apply_blocker 和 is_recommended。
 - `agentdeck leader action --action-id <id>` 输出 JSON 前必须通过 `validate_leader_action_contract()` 自校验；校验失败时只能返回错误，不输出半坏 action detail；detail 必须公开 `preview_command`、can_apply、apply_command、explicit_command 和 apply_blocker。

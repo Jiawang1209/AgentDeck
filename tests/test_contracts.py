@@ -13,6 +13,8 @@ from agentdeck.contracts import (
     APPROVAL_DISPATCH_READY_RESULT_FIELDS,
     APPROVAL_ITEM_FIELDS,
     APPROVAL_QUEUE_FIELDS,
+    ARTIFACTS_RESPONSE_FIELDS,
+    ARTIFACTS_SUMMARY_FIELDS,
     CONTRACT_INDEX_ITEM_FIELDS,
     CONTRACT_INDEX_RESPONSE_FIELDS,
     CONTINUE_CARD_FIELDS,
@@ -37,6 +39,7 @@ from agentdeck.contracts import (
     PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS,
     PROJECT_VIEW_JOB_ITEM_FIELDS,
     PROJECT_VIEW_MESSAGE_ITEM_FIELDS,
+    PROJECT_VIEW_ARTIFACT_ITEM_FIELDS,
     PROJECT_VIEW_RECOVERY_PENDING_FIELDS,
     PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS,
     PROJECT_VIEW_REPLY_ITEM_FIELDS,
@@ -74,6 +77,9 @@ from agentdeck.contracts import (
     agent_runtime_contract_response,
     agent_runtime_example,
     approval_dispatch_ready_example,
+    artifacts_contract_payload,
+    artifacts_contract_response,
+    artifacts_example,
     approval_contract_payload,
     approval_contract_response,
     approval_example,
@@ -116,6 +122,7 @@ from agentdeck.contracts import (
     workbench_example,
     validate_approval_contract,
     validate_approval_dispatch_ready_contract,
+    validate_artifacts_contract,
     validate_continue_contract,
     validate_control_registry_card_contract,
     validate_inbox_contract,
@@ -146,6 +153,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "approvals-schema.md",
         "inbox-schema.md",
         "trace-schema.md",
+        "artifacts-schema.md",
     }
     for filename in docs:
         (tmp_path / filename).write_text(f"# {filename}\n", encoding="utf-8")
@@ -157,7 +165,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 14
+    assert payload["count"] == 15
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -174,6 +182,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "approvals",
         "inbox",
         "trace",
+        "artifacts",
     ]
     for contract in payload["contracts"]:
         assert set(contract) == set(CONTRACT_INDEX_ITEM_FIELDS)
@@ -446,6 +455,43 @@ def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -
     assert payload["message_item_fields"] == list(PROJECT_VIEW_MESSAGE_ITEM_FIELDS)
     assert payload["job_item_fields"] == list(PROJECT_VIEW_JOB_ITEM_FIELDS)
     assert payload["reply_item_fields"] == list(PROJECT_VIEW_REPLY_ITEM_FIELDS)
+    assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
+
+
+def test_artifacts_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "artifacts-schema.md"
+    contract_path.write_text("# Artifacts Contract\n", encoding="utf-8")
+
+    payload = artifacts_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["artifacts_command"] == "agentdeck artifacts"
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["trace_contract"] == "agentdeck contract trace"
+    assert payload["trace_command_template"] == "agentdeck trace --id <id>"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == list(ARTIFACTS_RESPONSE_FIELDS)
+    assert payload["artifact_summary_fields"] == list(ARTIFACTS_SUMMARY_FIELDS)
+    assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
+
+
+def test_artifacts_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "artifacts-schema.md"
+    contract_path.write_text("# Artifacts Contract\n", encoding="utf-8")
+
+    payload = artifacts_contract_response(contract_path, include_example=True)
+    example = artifacts_example()
+
+    assert payload["example"] is True
+    assert payload["example_artifacts"] == example
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_artifact_summary_fields"] == payload["artifact_summary_fields"]
+    assert set(payload["example_artifact_summary_fields"]) == set(example["artifacts"])
+    assert payload["example_artifact_item_fields"] == payload["artifact_item_fields"]
+    assert set(payload["example_artifact_item_fields"]) == set(example["artifacts"]["items"][0])
+    assert validate_artifacts_contract(example) == {"ok": True, "errors": []}
 
 
 def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> None:
@@ -979,6 +1025,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["contracts_card"]["controls_contract"] == "agentdeck contract controls"
     assert example["contracts_card"]["leader_chat_contract"] == "agentdeck contract leader-chat"
     assert example["contracts_card"]["leader_review_contract"] == "agentdeck contract leader-review"
+    assert example["contracts_card"]["artifacts_contract"] == "agentdeck contract artifacts"
     assert set(example["change_summary"]) == set(WORKBENCH_CHANGE_SUMMARY_FIELDS)
     assert example["ledger_card"]["trace_commands"] == [
         "agentdeck trace --id msg_example",
@@ -2363,3 +2410,12 @@ def test_validate_trace_contract_reports_missing_artifact_field() -> None:
     result = validate_trace_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing artifact field: artifact_id"]}
+
+
+def test_validate_artifacts_contract_reports_missing_artifact_field() -> None:
+    payload = artifacts_example()
+    del payload["artifacts"]["items"][0]["trace_command"]
+
+    result = validate_artifacts_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing artifact item field: trace_command"]}

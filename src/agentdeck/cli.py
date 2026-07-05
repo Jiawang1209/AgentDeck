@@ -23,6 +23,7 @@ from .config import (
 from .contracts import (
     agent_runtime_contract_response,
     approval_contract_response,
+    artifacts_contract_response,
     contract_index_response,
     continue_contract_response,
     controls_contract_response,
@@ -43,6 +44,7 @@ from .contracts import (
     workbench_contract_response,
     validate_approval_contract,
     validate_approval_dispatch_ready_contract,
+    validate_artifacts_contract,
     validate_continue_contract,
     validate_control_registry_card_contract,
     validate_inbox_contract,
@@ -515,6 +517,31 @@ def status_command(_args: argparse.Namespace) -> int:
     store = StateStore(root)
     payload = _project_view_payload_or_error(config, store)
     if payload is None:
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def artifacts_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    payload = {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "artifacts_command": "agentdeck artifacts",
+        "project_view_contract": "agentdeck contract project-view",
+        "trace_contract": "agentdeck contract trace",
+        "trace_command_template": "agentdeck trace --id <id>",
+        "artifacts": project_view.get("artifacts"),
+    }
+    validation = validate_artifacts_contract(payload)
+    if not validation["ok"]:
+        print("Artifacts contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
         return 1
     _print_json(payload)
     return 0
@@ -1197,6 +1224,7 @@ def _workbench_contracts_card() -> dict[str, object]:
         "project_view_contract": "agentdeck contract project-view",
         "events_contract": "agentdeck contract events",
         "doctor_contract": "agentdeck contract doctor",
+        "artifacts_contract": "agentdeck contract artifacts",
     }
 
 
@@ -1860,6 +1888,13 @@ def contract_leader_review_command(args: argparse.Namespace) -> int:
 def contract_trace_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "trace-schema.md"
     payload = trace_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_artifacts_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "artifacts-schema.md"
+    payload = artifacts_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -6151,6 +6186,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_trace.add_argument("--example", action="store_true", help="Include a GUI-ready trace example")
     contract_trace.set_defaults(func=contract_trace_command)
+    contract_artifacts = contract_subparsers.add_parser(
+        "artifacts",
+        help="Show artifact index contract discovery metadata",
+    )
+    contract_artifacts.add_argument("--example", action="store_true", help="Include a GUI-ready artifacts example")
+    contract_artifacts.set_defaults(func=contract_artifacts_command)
 
     project = subparsers.add_parser("project", help="Project management commands")
     project_subparsers = project.add_subparsers(dest="project_command")
@@ -6333,6 +6374,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="message_id, attempt_id, job_id, reply_id, artifact_id, or inbox_id",
     )
     trace.set_defaults(func=trace_command)
+
+    artifacts = subparsers.add_parser("artifacts", help="List recoverable worker artifacts")
+    artifacts.set_defaults(func=artifacts_command)
 
     return parser
 

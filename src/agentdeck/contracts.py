@@ -108,6 +108,12 @@ CONTRACT_INDEX_SPECS = (
         "agentdeck contract trace --example",
         "trace-schema.md",
     ),
+    (
+        "artifacts",
+        "agentdeck contract artifacts",
+        "agentdeck contract artifacts --example",
+        "artifacts-schema.md",
+    ),
 )
 
 
@@ -329,6 +335,22 @@ PROJECT_VIEW_ARTIFACT_ITEM_FIELDS = (
     "status",
     "created_at",
     "trace_command",
+)
+
+ARTIFACTS_RESPONSE_FIELDS = (
+    "schema_version",
+    "artifacts_command",
+    "project_view_contract",
+    "trace_contract",
+    "trace_command_template",
+    "artifacts",
+)
+
+ARTIFACTS_SUMMARY_FIELDS = (
+    "count",
+    "by_status",
+    "by_kind",
+    "items",
 )
 
 
@@ -837,6 +859,7 @@ WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "project_view_contract",
     "events_contract",
     "doctor_contract",
+    "artifacts_contract",
 )
 
 WORKBENCH_CHANGE_SUMMARY_FIELDS = (
@@ -1738,6 +1761,33 @@ def trace_contract_response(contract_path: Path, include_example: bool = False) 
     return payload
 
 
+def artifacts_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "artifacts_command": "agentdeck artifacts",
+        "project_view_contract": "agentdeck contract project-view",
+        "trace_contract": "agentdeck contract trace",
+        "trace_command_template": "agentdeck trace --id <id>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(ARTIFACTS_RESPONSE_FIELDS),
+        "artifact_summary_fields": list(ARTIFACTS_SUMMARY_FIELDS),
+        "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
+    }
+
+
+def artifacts_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = artifacts_contract_payload(contract_path)
+    if include_example:
+        example = artifacts_example()
+        payload["example"] = True
+        payload["example_response_fields"] = list(example)
+        payload["example_artifact_summary_fields"] = list(example["artifacts"])
+        payload["example_artifact_item_fields"] = list(example["artifacts"]["items"][0])
+        payload["example_artifacts"] = example
+    return payload
+
+
 def validate_project_view_contract(payload: dict[str, object]) -> dict[str, object]:
     errors: list[str] = []
     schema_version = payload.get("schema_version")
@@ -2056,6 +2106,33 @@ def validate_trace_contract(payload: dict[str, object]) -> dict[str, object]:
     _validate_trace_items(errors, payload, "replies", TRACE_REPLY_FIELDS, "reply")
     _validate_trace_items(errors, payload, "artifacts", TRACE_ARTIFACT_FIELDS, "artifact")
     _validate_trace_items(errors, payload, "inbox_items", TRACE_INBOX_ITEM_FIELDS, "inbox item")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_artifacts_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    schema_version = payload.get("schema_version")
+    if schema_version != PROJECT_VIEW_SCHEMA_VERSION:
+        errors.append(f"schema_version mismatch: expected {PROJECT_VIEW_SCHEMA_VERSION}, got {schema_version}")
+    for field in ARTIFACTS_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing artifacts response field: {field}")
+    if payload.get("artifacts_command") != "agentdeck artifacts":
+        errors.append("artifacts_command must be agentdeck artifacts")
+    if payload.get("project_view_contract") != "agentdeck contract project-view":
+        errors.append("project_view_contract must be agentdeck contract project-view")
+    if payload.get("trace_contract") != "agentdeck contract trace":
+        errors.append("trace_contract must be agentdeck contract trace")
+    if payload.get("trace_command_template") != "agentdeck trace --id <id>":
+        errors.append("trace_command_template must be agentdeck trace --id <id>")
+    artifacts = payload.get("artifacts")
+    if isinstance(artifacts, dict):
+        for field in ARTIFACTS_SUMMARY_FIELDS:
+            if field not in artifacts:
+                errors.append(f"missing artifacts summary field: {field}")
+    elif "artifacts" in payload:
+        errors.append("artifacts must be an object")
+    _validate_project_view_summary_items(errors, payload, "artifacts", PROJECT_VIEW_ARTIFACT_ITEM_FIELDS, "artifact")
     return {"ok": not errors, "errors": errors}
 
 
@@ -4018,6 +4095,7 @@ def workbench_example() -> dict[str, object]:
             "project_view_contract": "agentdeck contract project-view",
             "events_contract": "agentdeck contract events",
             "doctor_contract": "agentdeck contract doctor",
+            "artifacts_contract": "agentdeck contract artifacts",
         },
         "control_mode_card": {
             "mode": "control_mode",
@@ -4670,4 +4748,15 @@ def trace_example() -> dict[str, object]:
                 "created_at": "2026-07-04T00:00:01+00:00",
             },
         ],
+    }
+
+
+def artifacts_example() -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "artifacts_command": "agentdeck artifacts",
+        "project_view_contract": "agentdeck contract project-view",
+        "trace_contract": "agentdeck contract trace",
+        "trace_command_template": "agentdeck trace --id <id>",
+        "artifacts": project_view_example()["artifacts"],
     }

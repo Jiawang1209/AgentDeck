@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add a GUI-ready artifacts index
+
+- 新增 `agentdeck artifacts` 只读入口：输出同源 ProjectView `artifacts` 摘要、ProjectView/trace 契约入口和 `trace_command_template`，供 GUI/TUI 直接渲染 worker 产物索引。
+- 新增 `agentdeck contract artifacts` / `--example`：提供稳定 artifacts response、summary 和 item 字段发现，并加入 `agentdeck contract list`；workbench `contracts_card` 也公开 `artifacts_contract`。
+- 新增 `validate_artifacts_contract()`：`agentdeck artifacts` 输出前自校验，失败时拒绝打印半坏 JSON；该命令不读取产物文件内容、不读取 tmux pane、不调用 provider、不写 state。
+- 同步 README、AGENT.md、CLAUDE.md、`docs/contracts/artifacts-schema.md`、`docs/contracts/contract-index-schema.md` 和 `docs/contracts/workbench-schema.md`，明确 artifacts 是 ProjectView 派生索引，不是第二套 workflow state。
+- 验证记录：已先确认红测失败，`agentdeck contract list` 最初缺少 `artifacts`，`agentdeck contract artifacts` 与 `agentdeck artifacts` 最初都是 argparse unknown command；实现后目标测试 `conda run -n agentdeck pytest -q tests/test_agent_cli.py::test_contract_list_discovers_all_gui_contracts tests/test_agent_cli.py::test_contract_artifacts_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_artifacts_outputs_project_view_artifact_summary_without_mutating_state` 3 项通过；聚焦回归 `conda run -n agentdeck pytest -q tests/test_agent_cli.py::test_contract_list_discovers_all_gui_contracts tests/test_agent_cli.py::test_contract_artifacts_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_artifacts_example_exports_gui_ready_response tests/test_agent_cli.py::test_artifacts_outputs_project_view_artifact_summary_without_mutating_state tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli tests/test_contracts.py::test_artifacts_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_artifacts_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_artifacts_contract_reports_missing_artifact_field tests/test_contracts.py::test_validate_workbench_contract_accepts_example` 11 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 323 项通过。
+
 ### Current - Route artifact trace intents through Leader chat
 
 - 扩展 `agentdeck leader chat --message "追踪 art_xxx"`：自然语言 direct trace intent 现在会识别 artifact id，进入只读 `mode=trace`，嵌入同源 `trace_card`，并建议显式 `agentdeck trace --id art_xxx`。
