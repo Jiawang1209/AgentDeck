@@ -100,6 +100,7 @@ Worker 不应该：
 - Events timeline contract 见 `docs/contracts/events-schema.md`；`agentdeck contract events --example` 会返回稳定 events timeline 示例，字段常量和 example fixture 都在 `src/agentdeck/contracts.py`。
 - Leader chat response contract 见 `docs/contracts/leader-chat-schema.md`；`agentdeck contract leader-chat --example` 会返回包含 `leader_explanation` 的稳定响应示例。
 - Workbench snapshot contract 见 `docs/contracts/workbench-schema.md`；`agentdeck contract workbench --example` 会返回稳定一屏工作台示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
+- Agent runtime contract 见 `docs/contracts/agent-runtime-schema.md`；`agentdeck contract agent-runtime --example` 会返回稳定可见 tmux runtime 示例，字段常量和 example fixture 都在 `src/agentdeck/contracts.py`。
 - Leader actions queue contract 见 `docs/contracts/leader-actions-schema.md`；`agentdeck contract leader-actions --example` 会返回稳定队列示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Leader action detail contract 见 `docs/contracts/leader-action-schema.md`；`agentdeck contract leader-action --example` 会返回稳定 action detail 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Approval queue contract 见 `docs/contracts/approvals-schema.md`；`agentdeck contract approvals --example` 会返回稳定 approval queue 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
@@ -112,6 +113,7 @@ Worker 不应该：
 - `agentdeck contract leader-chat` 返回自然语言 Leader chat 响应契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定响应示例，供 GUI 原型使用。
 - `agentdeck contract continue` 返回顶层 continue 恢复卡片契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定恢复卡片示例，供 GUI 原型使用。
 - `agentdeck contract workbench` 返回工作台快照契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定一屏 workbench 示例，供 GUI/TUI 原型使用。
+- `agentdeck contract agent-runtime` 返回 agent runtime 命令模板与 capture 响应字段，不读取 state、不 inspect tmux pane、不发送输入；`--example` 会附带稳定 runtime 示例，供 GUI/TUI 原型使用。
 - `agentdeck contract leader-actions` 返回 Leader action queue 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定队列示例，供 GUI 原型使用。
 - `agentdeck contract leader-action` 返回单个 Leader action 详情契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 action detail 示例，供 GUI 原型使用。
 - `agentdeck contract approvals` 返回人类审批队列契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 approval queue 示例，供 GUI 原型使用。

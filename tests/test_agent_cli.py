@@ -6,8 +6,12 @@ from pathlib import Path
 from agentdeck import cli
 from agentdeck.config import write_default_config
 from agentdeck.contracts import (
+    AGENT_RUNTIME_AGENT_ITEM_FIELDS,
+    AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
     approval_contract_payload,
     approval_contract_response,
+    agent_runtime_contract_payload,
+    agent_runtime_contract_response,
     contract_index_response,
     continue_contract_payload,
     continue_contract_response,
@@ -343,6 +347,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "doctor",
         "events",
         "workbench",
+        "agent-runtime",
         "leader-chat",
         "leader-actions",
         "leader-action",
@@ -354,6 +359,45 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
     assert payload["contracts"][0]["command"] == "agentdeck contract project-view"
     assert payload["contracts"][0]["example_command"] == "agentdeck contract project-view --example"
     assert payload["contracts"][0]["contract_path"].endswith("docs/contracts/project-view-schema.md")
+
+
+def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "agent-runtime"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = agent_runtime_contract_payload(Path(payload["contract_path"]))
+    assert payload == expected
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["list_command"] == "agentdeck agent list"
+    assert payload["spawn_command_template"] == "agentdeck agent spawn --agent <id>"
+    assert payload["capture_command_template"] == "agentdeck agent capture --agent <id> --lines 200"
+    assert payload["send_command_template"] == "agentdeck agent send --agent <id> --text <text>"
+    assert payload["stop_command_template"] == "agentdeck agent stop --agent <id>"
+    assert payload["contract_path"].endswith("docs/contracts/agent-runtime-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["agent_item_fields"] == list(AGENT_RUNTIME_AGENT_ITEM_FIELDS)
+    assert payload["capture_response_fields"] == list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+
+
+def test_contract_agent_runtime_example_exports_gui_ready_runtime_contract(capsys) -> None:
+    exit_code = cli.main(["contract", "agent-runtime", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = agent_runtime_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    assert payload["example"] is True
+    example = payload["example_agent_runtime"]
+    assert payload["example_agent_item_fields"] == payload["agent_item_fields"]
+    assert payload["example_capture_response_fields"] == payload["capture_response_fields"]
+    assert payload["example_control_fields"] == payload["runtime_control_fields"]
+    assert set(example["agents"][0]) == set(payload["agent_item_fields"])
+    assert set(example["capture"]) == set(payload["capture_response_fields"])
+    assert set(example["controls"][0]) == set(payload["runtime_control_fields"])
+    assert example["agents"][0]["runtime"]["pane_id"] == "%42"
+    assert example["capture"]["output"] == "status: completed\n"
 
 
 def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
@@ -664,6 +708,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "contracts_command",
         "contract_index_contract",
         "workbench_contract",
+        "agent_runtime_contract",
         "project_view_contract",
         "events_contract",
         "doctor_contract",
@@ -945,6 +990,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "contracts_command": "agentdeck contract list",
         "contract_index_contract": "docs/contracts/contract-index-schema.md",
         "workbench_contract": "agentdeck contract workbench",
+        "agent_runtime_contract": "agentdeck contract agent-runtime",
         "project_view_contract": "agentdeck contract project-view",
         "events_contract": "agentdeck contract events",
         "doctor_contract": "agentdeck contract doctor",

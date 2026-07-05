@@ -55,6 +55,12 @@ CONTRACT_INDEX_SPECS = (
         "workbench-schema.md",
     ),
     (
+        "agent-runtime",
+        "agentdeck contract agent-runtime",
+        "agentdeck contract agent-runtime --example",
+        "agent-runtime-schema.md",
+    ),
+    (
         "leader-chat",
         "agentdeck contract leader-chat",
         "agentdeck contract leader-chat --example",
@@ -446,6 +452,20 @@ WORKBENCH_RUNTIME_CONTROL_FIELDS = (
     "blocker",
 )
 
+AGENT_RUNTIME_AGENT_ITEM_FIELDS = (
+    "agent_id",
+    "role",
+    "provider",
+    "workspace_mode",
+    "runtime",
+)
+
+AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS = (
+    "agent_id",
+    "pane_id",
+    "output",
+)
+
 WORKBENCH_ROLE_CARD_FIELDS = (
     "count",
     "agents",
@@ -509,6 +529,7 @@ WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "contracts_command",
     "contract_index_contract",
     "workbench_contract",
+    "agent_runtime_contract",
     "project_view_contract",
     "events_contract",
     "doctor_contract",
@@ -799,6 +820,37 @@ def workbench_contract_response(contract_path: Path, include_example: bool = Fal
         payload["example"] = True
         payload["example_snapshot_fields"] = list(example)
         payload["example_workbench"] = example
+    return payload
+
+
+def agent_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "list_command": "agentdeck agent list",
+        "spawn_command_template": "agentdeck agent spawn --agent <id>",
+        "capture_command_template": "agentdeck agent capture --agent <id> --lines 200",
+        "send_command_template": "agentdeck agent send --agent <id> --text <text>",
+        "stop_command_template": "agentdeck agent stop --agent <id>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "agent_item_fields": list(AGENT_RUNTIME_AGENT_ITEM_FIELDS),
+        "capture_response_fields": list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS),
+        "runtime_control_fields": list(WORKBENCH_RUNTIME_CONTROL_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+        "workbench_contract": "agentdeck contract workbench",
+    }
+
+
+def agent_runtime_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = agent_runtime_contract_payload(contract_path)
+    if include_example:
+        example = agent_runtime_example()
+        payload["example"] = True
+        payload["example_agent_item_fields"] = list(example["agents"][0])
+        payload["example_capture_response_fields"] = list(example["capture"])
+        payload["example_control_fields"] = list(example["controls"][0])
+        payload["example_agent_runtime"] = example
     return payload
 
 
@@ -2018,6 +2070,7 @@ def workbench_example() -> dict[str, object]:
             "contracts_command": "agentdeck contract list",
             "contract_index_contract": "docs/contracts/contract-index-schema.md",
             "workbench_contract": "agentdeck contract workbench",
+            "agent_runtime_contract": "agentdeck contract agent-runtime",
             "project_view_contract": "agentdeck contract project-view",
             "events_contract": "agentdeck contract events",
             "doctor_contract": "agentdeck contract doctor",
@@ -2036,6 +2089,32 @@ def workbench_example() -> dict[str, object]:
             "new_event_count": 0,
             "new_events": [],
         },
+    }
+
+
+def agent_runtime_example() -> dict[str, object]:
+    agent_id = "planner"
+    return {
+        "agents": [
+            {
+                "agent_id": agent_id,
+                "role": "planning",
+                "provider": "codex",
+                "workspace_mode": "shared",
+                "runtime": {
+                    "pane_id": "%42",
+                    "session_name": "agentdeck",
+                    "cwd": "/workspace/project",
+                    "status": "running",
+                },
+            }
+        ],
+        "capture": {
+            "agent_id": agent_id,
+            "pane_id": "%42",
+            "output": "status: completed\n",
+        },
+        "controls": runtime_agent_controls(agent_id, True),
     }
 
 

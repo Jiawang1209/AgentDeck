@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from agentdeck.contracts import (
+    AGENT_RUNTIME_AGENT_ITEM_FIELDS,
+    AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
     APPROVAL_ITEM_FIELDS,
     APPROVAL_QUEUE_FIELDS,
     CONTRACT_INDEX_ITEM_FIELDS,
@@ -46,6 +48,9 @@ from agentdeck.contracts import (
     WORKBENCH_RUNTIME_CARD_FIELDS,
     WORKBENCH_RUNTIME_CONTROL_FIELDS,
     WORKBENCH_SNAPSHOT_FIELDS,
+    agent_runtime_contract_payload,
+    agent_runtime_contract_response,
+    agent_runtime_example,
     approval_contract_payload,
     approval_contract_response,
     approval_example,
@@ -100,6 +105,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "doctor-schema.md",
         "events-schema.md",
         "workbench-schema.md",
+        "agent-runtime-schema.md",
         "leader-chat-schema.md",
         "leader-actions-schema.md",
         "leader-action-schema.md",
@@ -117,7 +123,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 11
+    assert payload["count"] == 12
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -125,6 +131,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "doctor",
         "events",
         "workbench",
+        "agent-runtime",
         "leader-chat",
         "leader-actions",
         "leader-action",
@@ -137,6 +144,44 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         assert contract["contract_exists"] is True
         assert contract["command"].startswith("agentdeck contract ")
         assert contract["example_command"].endswith(" --example")
+
+
+def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "agent-runtime-schema.md"
+    contract_path.write_text("# Agent Runtime Contract\n", encoding="utf-8")
+
+    payload = agent_runtime_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["list_command"] == "agentdeck agent list"
+    assert payload["spawn_command_template"] == "agentdeck agent spawn --agent <id>"
+    assert payload["capture_command_template"] == "agentdeck agent capture --agent <id> --lines 200"
+    assert payload["send_command_template"] == "agentdeck agent send --agent <id> --text <text>"
+    assert payload["stop_command_template"] == "agentdeck agent stop --agent <id>"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["agent_item_fields"] == list(AGENT_RUNTIME_AGENT_ITEM_FIELDS)
+    assert payload["capture_response_fields"] == list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
+    assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+
+
+def test_agent_runtime_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "agent-runtime-schema.md"
+    contract_path.write_text("# Agent Runtime Contract\n", encoding="utf-8")
+
+    payload = agent_runtime_contract_response(contract_path, include_example=True)
+    example = agent_runtime_example()
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["example"] is True
+    assert payload["example_agent_runtime"] == example
+    assert payload["example_agent_item_fields"] == payload["agent_item_fields"]
+    assert payload["example_capture_response_fields"] == payload["capture_response_fields"]
+    assert payload["example_control_fields"] == payload["runtime_control_fields"]
+    assert set(example["agents"][0]) == set(AGENT_RUNTIME_AGENT_ITEM_FIELDS)
+    assert set(example["capture"]) == set(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
+    assert set(example["controls"][0]) == set(WORKBENCH_RUNTIME_CONTROL_FIELDS)
 
 
 def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:

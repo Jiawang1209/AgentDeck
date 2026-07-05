@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add agent runtime contract discovery
+
+- 新增 `agentdeck contract agent-runtime` 和 `agentdeck contract agent-runtime --example`，为 GUI/TUI/自然语言入口发现 `agent list/spawn/capture/send/stop` 命令模板、capture 响应字段和 runtime control 字段。
+- 在 `src/agentdeck/contracts.py` 中新增 `AGENT_RUNTIME_AGENT_ITEM_FIELDS`、`AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS`、`agent_runtime_contract_payload()`、`agent_runtime_contract_response()` 和 `agent_runtime_example()`，复用 workbench runtime control 字段，避免可见 tmux runtime 出现两套按钮语义。
+- 扩展 contract index 和 workbench `contracts_card`：`agent-runtime` 进入 `agentdeck contract list`，`agentdeck workbench` 也会暴露 `agent_runtime_contract`，让 GUI 可以从一屏快照继续发现 agent runtime 命令契约。
+- 新增 `docs/contracts/agent-runtime-schema.md`，并同步更新 `docs/contracts/contract-index-schema.md`、`docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确该 contract 只做 discovery，不读取 state、不 inspect tmux pane、不发送输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_contracts.py::test_agent_runtime_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_agent_runtime_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_agent_runtime_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_agent_runtime_example_exports_gui_ready_runtime_contract -q` 最初因 `AGENT_RUNTIME_AGENT_ITEM_FIELDS` 等新 helper 不存在失败；实现后目标测试组 7 项通过；`conda run -n agentdeck pytest -q` 190 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `agent-runtime-contract-smoke-ok`。
+
 ### Current - Add workbench runtime control fields
 
 - 扩展 workbench contract discovery：新增 `WORKBENCH_RUNTIME_CONTROL_FIELDS`，并在 `agentdeck contract workbench` 输出 `runtime_control_fields`，让 GUI/TUI 可以发现 runtime `controls[]` item 的稳定字段列表。

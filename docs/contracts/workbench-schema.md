@@ -374,13 +374,14 @@ The card intentionally uses compact ProjectView recovery event summaries. Use `e
   "contracts_command": "agentdeck contract list",
   "contract_index_contract": "docs/contracts/contract-index-schema.md",
   "workbench_contract": "agentdeck contract workbench",
+  "agent_runtime_contract": "agentdeck contract agent-runtime",
   "project_view_contract": "agentdeck contract project-view",
   "events_contract": "agentdeck contract events",
   "doctor_contract": "agentdeck contract doctor"
 }
 ```
 
-This card lets GUI/TUI clients bootstrap from a single workbench snapshot and then discover the full machine-readable contract index on demand. It is static metadata and does not read state, inspect tmux panes, call providers, or execute any contract command.
+This card lets GUI/TUI clients bootstrap from a single workbench snapshot and then discover the full machine-readable contract index on demand, including the dedicated `agent-runtime` command contract for visible tmux pane controls. It is static metadata and does not read state, inspect tmux panes, call providers, or execute any contract command.
 
 When `recovery.recommended_action.source` is:
 

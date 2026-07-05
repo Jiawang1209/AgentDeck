@@ -11,6 +11,7 @@ import time
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
 from .contracts import (
+    agent_runtime_contract_response,
     approval_contract_response,
     contract_index_response,
     continue_contract_response,
@@ -516,6 +517,7 @@ def _workbench_contracts_card() -> dict[str, object]:
         "contracts_command": "agentdeck contract list",
         "contract_index_contract": "docs/contracts/contract-index-schema.md",
         "workbench_contract": "agentdeck contract workbench",
+        "agent_runtime_contract": "agentdeck contract agent-runtime",
         "project_view_contract": "agentdeck contract project-view",
         "events_contract": "agentdeck contract events",
         "doctor_contract": "agentdeck contract doctor",
@@ -800,6 +802,13 @@ def contract_events_command(args: argparse.Namespace) -> int:
 def contract_workbench_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "workbench-schema.md"
     payload = workbench_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_agent_runtime_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "agent-runtime-schema.md"
+    payload = agent_runtime_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -2584,6 +2593,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_workbench.add_argument("--example", action="store_true", help="Include a GUI-ready workbench example")
     contract_workbench.set_defaults(func=contract_workbench_command)
+    contract_agent_runtime = contract_subparsers.add_parser(
+        "agent-runtime",
+        help="Show agent runtime command contract discovery metadata",
+    )
+    contract_agent_runtime.add_argument(
+        "--example",
+        action="store_true",
+        help="Include a GUI-ready agent runtime example",
+    )
+    contract_agent_runtime.set_defaults(func=contract_agent_runtime_command)
     contract_approvals = contract_subparsers.add_parser(
         "approvals",
         help="Show approval queue contract discovery metadata",

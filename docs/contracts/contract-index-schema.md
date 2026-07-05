@@ -37,6 +37,7 @@ The index currently lists these contract names in order:
 - `doctor`
 - `events`
 - `workbench`
+- `agent-runtime`
 - `leader-chat`
 - `leader-actions`
 - `leader-action`
