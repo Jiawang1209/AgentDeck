@@ -457,6 +457,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "role_card",
     "ledger_card",
     "lineage_card",
+    "audit_card",
     "workbench_card",
     "control_mode_card",
     "capability_card",
@@ -1245,6 +1246,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
+        "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
         "trace_card_fields": list(TRACE_TOP_LEVEL_FIELDS),
         "trace_message_fields": list(TRACE_MESSAGE_FIELDS),
         "trace_attempt_fields": list(TRACE_ATTEMPT_FIELDS),
@@ -1299,6 +1301,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_ledger_card_fields"] = list(example["ledger_card"])
         payload["example_lineage_card_fields"] = list(example["lineage_card"])
         payload["example_lineage_path_fields"] = list(example["lineage_card"]["recent_paths"][0])
+        payload["example_audit_card_fields"] = list(example["audit_card"])
         payload["example_workbench_card_fields"] = list(example["workbench_card"])
         payload["example_control_mode_card_fields"] = list(example["control_mode_card"])
         payload["example_workbench_control_registry_item_fields"] = list(
@@ -1404,6 +1407,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "safety": "inspect",
             "requires_explicit_user": False,
             "card": "ledger_card",
+        },
+        {
+            "mode": "audit",
+            "label": "Inspect audit events",
+            "description": "Inspect recent audit events and the events timeline command.",
+            "example_messages": ["查看审计", "最近事件"],
+            "command": "agentdeck events --limit 20",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "audit_card",
         },
         {
             "mode": "queue",
@@ -2575,6 +2588,16 @@ def _validate_lineage_card_contract(errors: list[str], lineage_card: dict[str, o
         errors.append(f"{prefix}: lineage_card.recent_paths must be a list")
 
 
+def _validate_audit_card_contract(errors: list[str], audit_card: dict[str, object], *, prefix: str) -> None:
+    for field in WORKBENCH_AUDIT_CARD_FIELDS:
+        if field not in audit_card:
+            errors.append(f"{prefix}: missing audit_card field: {field}")
+    if "recent_events" in audit_card and not isinstance(audit_card.get("recent_events"), list):
+        errors.append(f"{prefix}: audit_card.recent_events must be a list")
+    if "event_count" in audit_card and not isinstance(audit_card.get("event_count"), int):
+        errors.append(f"{prefix}: audit_card.event_count must be an integer")
+
+
 def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, object]:
     errors: list[str] = []
     for field in LEADER_CHAT_RESPONSE_FIELDS:
@@ -2777,6 +2800,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_lineage_card_contract(errors, lineage_card, prefix="lineage_card")
     elif "lineage_card" in payload and lineage_card is not None:
         errors.append("lineage_card must be an object")
+    audit_card = payload.get("audit_card")
+    if isinstance(audit_card, dict):
+        _validate_audit_card_contract(errors, audit_card, prefix="audit_card")
+    elif "audit_card" in payload and audit_card is not None:
+        errors.append("audit_card must be an object")
     trace_card = payload.get("trace_card")
     if isinstance(trace_card, dict):
         trace_card_validation = validate_trace_contract(trace_card)
@@ -3408,13 +3436,7 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         errors.append("run_progress_card must be an object")
     audit_card = payload.get("audit_card")
     if isinstance(audit_card, dict):
-        for field in WORKBENCH_AUDIT_CARD_FIELDS:
-            if field not in audit_card:
-                errors.append(f"missing audit_card field: {field}")
-        if "recent_events" in audit_card and not isinstance(audit_card.get("recent_events"), list):
-            errors.append("audit_card.recent_events must be a list")
-        if "event_count" in audit_card and not isinstance(audit_card.get("event_count"), int):
-            errors.append("audit_card.event_count must be an integer")
+        _validate_audit_card_contract(errors, audit_card, prefix="audit_card")
     elif "audit_card" in payload:
         errors.append("audit_card must be an object")
     contracts_card = payload.get("contracts_card")
@@ -3697,6 +3719,7 @@ def leader_chat_example() -> dict[str, object]:
     ledger_card = workbench_example()["ledger_card"]
     lineage_card = workbench_example()["lineage_card"]
     workbench_card = workbench_example()
+    audit_card = workbench_card["audit_card"]
     control_mode_card = workbench_card["control_mode_card"]
     capability_card = leader_chat_capability_card()
     control_registry_card = leader_chat_control_registry_card(workbench_card)
@@ -3765,6 +3788,7 @@ def leader_chat_example() -> dict[str, object]:
         "role_card": role_card,
         "ledger_card": ledger_card,
         "lineage_card": lineage_card,
+        "audit_card": audit_card,
         "workbench_card": workbench_card,
         "control_mode_card": control_mode_card,
         "capability_card": capability_card,

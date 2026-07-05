@@ -110,6 +110,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "queue_card",
         "role_card",
         "ledger_card",
+        "audit_card",
         "control_mode_card",
         "provider_health",
         "capability_card",
@@ -269,6 +270,10 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return str(command) if command else None
     if embedded_card == "ledger_card":
         return "agentdeck workbench"
+    if embedded_card == "audit_card":
+        audit_card = payload.get("audit_card")
+        command = audit_card.get("events_command") if isinstance(audit_card, dict) else None
+        return str(command) if command else "agentdeck events --limit 20"
     if embedded_card == "trace_card":
         trace_card = payload.get("trace_card")
         query_id = trace_card.get("query_id") if isinstance(trace_card, dict) else None
@@ -333,6 +338,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("control_registry_card", None)
     payload.setdefault("control_mode_card", None)
     payload.setdefault("lineage_card", None)
+    payload.setdefault("audit_card", None)
     payload.setdefault("trace_card", None)
     payload.setdefault("capture_card", None)
     payload.setdefault("terminal_card", None)
@@ -3484,6 +3490,24 @@ def _chat_wants_workbench(message: str) -> bool:
     )
 
 
+def _chat_wants_audit(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(
+        token in normalized
+        for token in [
+            "audit",
+            "events",
+            "event log",
+            "recent events",
+            "审计",
+            "事件",
+            "事件日志",
+            "最近事件",
+            "操作记录",
+        ]
+    )
+
+
 def _chat_wants_runtime(message: str) -> bool:
     normalized = message.strip().lower()
     return any(
@@ -4350,6 +4374,21 @@ def _leader_chat_explanation(
             "recommended_action_id": None,
             "action_kind": "workbench",
             "action_status": "ready",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
+    if mode == "audit":
+        recovery = project_view.get("recovery") if isinstance(project_view.get("recovery"), dict) else {}
+        recent_events = recovery.get("recent_events") if isinstance(recovery.get("recent_events"), list) else []
+        latest_event = recovery.get("latest_event") if isinstance(recovery.get("latest_event"), dict) else None
+        return {
+            "mode": mode,
+            "summary": "Leader recommends inspecting the audit timeline without mutating state.",
+            "reason": "human asked to inspect recent audit events",
+            "next_command": next_command,
+            "recommended_action_id": latest_event.get("event_id") if isinstance(latest_event, dict) else None,
+            "action_kind": "audit",
+            "action_status": "has_events" if recent_events else "empty",
             "safety": "inspect",
             "requires_explicit_user": False,
         }
@@ -5549,6 +5588,62 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "role_card": None,
             "ledger_card": None,
             "workbench_card": workbench_card,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_audit(args.message):
+        next_command = "agentdeck events --limit 20"
+        turn = store.record_chat_turn(
+            mode="audit",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="audit",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "audit",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        audit_card = _workbench_audit_card(refreshed_project_view)
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "audit",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "audit",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "audit_card": audit_card,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

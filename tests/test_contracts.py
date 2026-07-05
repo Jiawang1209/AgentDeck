@@ -1367,7 +1367,7 @@ def test_validate_workbench_contract_requires_audit_fields() -> None:
 
     result = validate_workbench_contract(payload)
 
-    assert result == {"ok": False, "errors": ["missing audit_card field: events_command"]}
+    assert result == {"ok": False, "errors": ["audit_card: missing audit_card field: events_command"]}
 
 
 def test_validate_workbench_contract_requires_change_summary_fields() -> None:
@@ -1906,6 +1906,9 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_lineage_card_fields"] == list(example["lineage_card"])
     assert payload["example_lineage_path_fields"] == payload["lineage_path_fields"]
     assert payload["example_lineage_path_fields"] == list(example["lineage_card"]["recent_paths"][0])
+    assert payload["example_audit_card_fields"] == payload["audit_card_fields"]
+    assert payload["example_audit_card_fields"] == list(example["audit_card"])
+    assert example["audit_card"] == example["workbench_card"]["audit_card"]
     assert example["trace_card"] is None
     assert payload["example_workbench_card_fields"] == payload["workbench_card_fields"]
     assert payload["example_workbench_card_fields"] == list(example["workbench_card"])

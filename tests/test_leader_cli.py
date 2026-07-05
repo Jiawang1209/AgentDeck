@@ -2399,6 +2399,66 @@ def test_leader_chat_inspects_ledger_without_mutating_state(tmp_path, monkeypatc
     assert state_after["leader_actions"] == []
 
 
+def test_leader_chat_inspects_audit_events_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    initial_event = cli.EventRecord.create("manual_checkpoint", {"note": "before audit chat"})
+    store.append_event(initial_event)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看审计"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "audit"
+    assert payload["message"] == "查看审计"
+    assert payload["plan_id"] is None
+    assert payload["review"] is None
+    assert payload["leader_action"] is None
+    assert payload["leader_action_card"] is None
+    assert payload["continue_card"] is None
+    assert payload["inbox_card"] is None
+    assert payload["approval_card"] is None
+    assert payload["runtime_card"] is None
+    assert payload["queue_card"] is None
+    assert payload["operator_card"] is None
+    assert payload["role_card"] is None
+    assert payload["ledger_card"] is None
+    assert payload["workbench_card"] is None
+    assert payload["next_command"] == "agentdeck events --limit 20"
+    assert payload["audit_card"]["events_command"] == payload["next_command"]
+    assert payload["audit_card"]["latest_event"]["event_type"] == "leader_chat_turn"
+    assert payload["audit_card"]["recent_events"][0]["event_type"] == "manual_checkpoint"
+    assert payload["audit_card"]["event_count"] == len(payload["audit_card"]["recent_events"])
+    assert payload["leader_explanation"]["mode"] == "audit"
+    assert payload["leader_explanation"]["action_kind"] == "audit"
+    assert payload["leader_explanation"]["action_status"] == "has_events"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["intent_card"]["embedded_card"] == "audit_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect audit_card",
+        "command": "agentdeck events --limit 20",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    state_after = StateStore(root).load()
+    assert state_after["plans"] == state_before["plans"]
+    assert state_after["approvals"] == state_before["approvals"]
+    assert state_after["leader_actions"] == state_before["leader_actions"]
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["jobs"] == state_before["jobs"]
+    assert state_after["replies"] == state_before["replies"]
+    assert state_after.get("inbox", {}) == state_before.get("inbox", {})
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert state_after["chat_turns"][-1]["mode"] == "audit"
+    assert state_after["chat_turns"][-1]["next_command"] == "agentdeck events --limit 20"
+    assert state_after["chat_turns"][-1]["action_kind"] == "audit"
+
+
 def test_leader_chat_opens_workbench_snapshot_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%42")
