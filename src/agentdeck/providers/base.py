@@ -10,6 +10,7 @@ from agentdeck.models import ProjectConfig
 class LeaderPlanRequest:
     task: str
     config: ProjectConfig
+    model: str | None = None
 
 
 class LeaderProvider(Protocol):

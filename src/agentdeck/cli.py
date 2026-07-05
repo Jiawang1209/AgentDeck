@@ -2700,7 +2700,7 @@ def leader_plan_command(args: argparse.Namespace) -> int:
         return 1
     orchestrator = LeaderOrchestrator(config, provider)
     try:
-        plan = orchestrator.plan(args.task)
+        plan = orchestrator.plan(args.task, model_label)
     except RuntimeError as exc:
         _record_leader_provider_failure(store, "plan", provider.name, model_label, args.task, exc)
         print(f"leader provider failed: {exc}", file=sys.stderr)
@@ -5791,7 +5791,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         return 1
     orchestrator = LeaderOrchestrator(config, provider)
     try:
-        plan = orchestrator.plan(args.message)
+        plan = orchestrator.plan(args.message, model_label)
     except RuntimeError as exc:
         _record_leader_provider_failure(store, "chat", provider.name, model_label, args.message, exc)
         print(f"leader provider failed: {exc}", file=sys.stderr)

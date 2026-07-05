@@ -23,7 +23,7 @@ class CliLeaderProvider:
     def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
         prompt = self._prompt(request)
         result = subprocess.run(
-            self.command,
+            self._command_for_request(request),
             input=prompt,
             text=True,
             capture_output=True,
@@ -35,6 +35,14 @@ class CliLeaderProvider:
             detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
             raise RuntimeError(f"{self.name} failed: {detail}")
         return self._parse_plan(result.stdout)
+
+    def _command_for_request(self, request: LeaderPlanRequest) -> list[str]:
+        if not request.model:
+            return list(self.command)
+        return self._command_with_model(request.model)
+
+    def _command_with_model(self, model: str) -> list[str]:
+        return [*self.command[:1], "--model", model, *self.command[1:]]
 
     def _prompt(self, request: LeaderPlanRequest) -> str:
         workers = [

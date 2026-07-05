@@ -24,7 +24,7 @@ class LeaderOrchestrator:
             "workers": [asdict(agent) for agent in self.config.agents],
         }
 
-    def plan(self, task: str) -> dict[str, object]:
+    def plan(self, task: str, model: str | None = None) -> dict[str, object]:
         if self.provider is None:
             raise RuntimeError("leader provider is not configured")
-        return self.provider.plan(LeaderPlanRequest(task=task, config=self.config))
+        return self.provider.plan(LeaderPlanRequest(task=task, config=self.config, model=model))

@@ -376,7 +376,7 @@ agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
 ```
 
-`agentdeck leader plan` 和 `agentdeck leader chat` 默认读取 `.agentdeck/config.toml` 的 `[leader] provider/model`；新项目默认是 `deepseek` / `deepseek-chat`。也可以显式使用 `--provider fake --model fake-plan` 做本地 dry-run，用 `--provider openai-compatible` 调用通用 OpenAI-compatible `/chat/completions` API，或用 `--provider codex-cli` / `--provider claude-cli` 调用本地已登录的 Codex CLI / Claude Code CLI 作为 Leader 推理后端。CLI-backed Leader stdout 可以是纯 JSON plan，也可以是唯一 Markdown fenced `json` block；解析后会归一化同一 plan schema 的 `approval_required` 和 `dispatch_ready` 控制字段，并继续要求每个 step 都 `requires_approval=true`。所有模式都不会 dispatch、不会发送 tmux 输入。
+`agentdeck leader plan` 和 `agentdeck leader chat` 默认读取 `.agentdeck/config.toml` 的 `[leader] provider/model`；新项目默认是 `deepseek` / `deepseek-chat`。也可以显式使用 `--provider fake --model fake-plan` 做本地 dry-run，用 `--provider openai-compatible` 调用通用 OpenAI-compatible `/chat/completions` API，或用 `--provider codex-cli` / `--provider claude-cli` 调用本地已登录的 Codex CLI / Claude Code CLI 作为 Leader 推理后端。真实 provider 会把 `--model <model>` 透传给 backend：API-backed provider 写入请求体 `model`，CLI-backed Leader 写入本地 `codex` / `claude` 的 `--model` 参数，而不是只记录在 state；stdout 可以是纯 JSON plan，也可以是唯一 Markdown fenced `json` block；解析后会归一化同一 plan schema 的 `approval_required` 和 `dispatch_ready` 控制字段，并继续要求每个 step 都 `requires_approval=true`。所有模式都不会 dispatch、不会发送 tmux 输入。
 
 `agentdeck continue` 是顶层只读恢复入口。它会先校验 ProjectView，再把 `status.recovery` 整理成一张下一步卡片，并在输出前通过 `validate_continue_contract()` 自校验。卡片包含 status、reason、next_command、recommended_action、pending 计数、project_view_command，以及可选的 `leader_action` 详情和 `action_detail_command`；当存在多条 approved approvals 时，continue card 会把卡片级 `next_command` 和 `recommended_action.command` 提升为显式 `agentdeck approval dispatch-ready --confirm`，与 workbench/operator 的批量派发入口对齐。它不创建 plan、不写入 `leader_actions[]`、不 apply action、不 dispatch、不发送 tmux 输入，适合终端用户、自然语言壳和 GUI 在任何时刻询问“现在该继续什么”。
 
@@ -515,7 +515,7 @@ agentdeck doctor
 
 `leader set-provider` 会回显目标 Leader backend 的 `ready`、`supported`、`missing_env`、`detail`、`command_path` 和 `setup_commands`，方便终端或 GUI 立即展示切换后的可用性。默认情况下它仍允许人类显式切换到暂未 ready 的 provider，然后通过 `agentdeck doctor` / `setup_commands` 修复环境；如果加上 `--require-ready`，目标 provider 不可用时会拒绝写入配置、追加 `leader_provider_update_rejected` 审计事件，并保持 `.agentdeck/config.toml` 不变。该命令不调用 provider、不创建 plan、不审批、不派发。
 
-真实 provider 仍然只生成 plan 或 chat turn，不会自动创建 approval 或派发任务。Leader planning prompt 会把每个 worker 的 `agent_id`、`role`、`role_prompt`、provider 和 workspace mode 一起交给 provider，让 DeepSeek、OpenAI-compatible、Codex CLI 或 Claude CLI 都能按角色职责拆分任务。`codex-cli` / `claude-cli` 是 `agent_id=leader` 这个逻辑 Leader 的本地推理后端，不会复用 `planner`、`coder` 或 `reviewer` 的 worker pane，也不会让 Leader 自动拥有一个 tmux pane。CLI-backed Leader 可以解析纯 JSON stdout，或解析 Markdown fenced `json` block 中的 JSON plan；解析后仍必须通过同一审批 plan schema。
+真实 provider 仍然只生成 plan 或 chat turn，不会自动创建 approval 或派发任务。Leader planning prompt 会把每个 worker 的 `agent_id`、`role`、`role_prompt`、provider 和 workspace mode 一起交给 provider，让 DeepSeek、OpenAI-compatible、Codex CLI 或 Claude CLI 都能按角色职责拆分任务。`codex-cli` / `claude-cli` 是 `agent_id=leader` 这个逻辑 Leader 的本地推理后端，不会复用 `planner`、`coder` 或 `reviewer` 的 worker pane，也不会让 Leader 自动拥有一个 tmux pane。`agentdeck leader plan/chat --model <model>` 或 `.agentdeck/config.toml` 中的 `[leader].model` 会进入真实 backend：API-backed provider 使用请求体 `model`，CLI-backed Leader 使用本地 `codex` / `claude` 的 `--model` 参数；CLI-backed Leader 可以解析纯 JSON stdout，或解析 Markdown fenced `json` block 中的 JSON plan；解析后仍必须通过同一审批 plan schema。
 
 ## 设计原则
 

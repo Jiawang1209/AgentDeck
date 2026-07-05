@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Pass Leader model to provider backends
+
+- 加强真实 Leader provider：`LeaderPlanRequest` 现在携带 `model`，`agentdeck leader plan/chat --model <model>` 或配置中的 `[leader].model` 会进入实际 backend，而不是只写入 plan record。
+- API-backed provider 会把显式 model 写入 `/chat/completions` 请求体 `model`，优先于环境变量默认值；CLI-backed provider 会把 model 透传给本地 `codex` / `claude` 的 `--model` 参数。
+- 保持 CLI-backed Leader 边界：本地 CLI 仍然只为逻辑 `agent_id=leader` 生成同一 JSON plan schema，不复用 worker tmux pane，不创建 approval/message/job/inbox，不 dispatch，不发送 tmux 输入；每个 step 仍必须 `requires_approval=true`。
+- 同步 README、CLAUDE.md 和 AGENT.md，明确真实 Leader provider 的 model 选择是真实 backend 参数，不是仅用于展示的标签。
+- 验证记录：已先确认红测失败，`LeaderPlanRequest` 最初不接受 `model` 字段，因此 `codex-cli` / `claude-cli` provider 无法把用户指定模型传给本地命令；随后确认 OpenAI-compatible provider 最初会忽略 request model 并使用环境变量 model；实现后目标测试 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_codex_cli_provider_passes_requested_model_to_local_command tests/test_provider_openai_compatible.py::test_claude_cli_provider_passes_requested_model_to_local_command tests/test_leader_cli.py::test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching -q` 3 项通过；相关回归 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py tests/test_leader_cli.py -q` 113 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 339 项通过。
+
 ### Current - Route summary intent through Leader chat
 
 - 扩展 `agentdeck leader chat --message "总结当前计划"` / `"汇总结果"` / `"summary"` / `"summarize"`：当最新 plan 的本地 review 已经是 `next_action=summarize` 时，chat 进入只读 `mode=summary`，嵌入同源 `leader_summary_card`，并把 `next_command` 对齐到 `agentdeck leader summary --plan-id <id>`。

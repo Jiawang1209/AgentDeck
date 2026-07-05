@@ -195,6 +195,33 @@ def test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan(
     assert plan["steps"][0]["requires_approval"] is True
 
 
+def test_codex_cli_provider_passes_requested_model_to_local_command(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    seen: dict[str, object] = {}
+
+    def fake_run(command, **_kwargs):
+        seen["command"] = command
+        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout(), stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    provider = CodexCliProvider()
+    provider.plan(LeaderPlanRequest(task="指定 Codex 模型", config=config, model="gpt-5-codex"))
+
+    assert seen["command"] == [
+        "codex",
+        "--model",
+        "gpt-5-codex",
+        "exec",
+        "--sandbox",
+        "read-only",
+        "-",
+    ]
+
+
 def test_claude_cli_provider_runs_print_command_and_parses_json_plan(tmp_path, monkeypatch) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -221,6 +248,34 @@ def test_claude_cli_provider_runs_print_command_and_parses_json_plan(tmp_path, m
     assert "让 Claude 做 Leader" in str(seen["input"])
     assert seen["cwd"] == str(root)
     assert plan["goal"] == "CLI Leader"
+
+
+def test_claude_cli_provider_passes_requested_model_to_local_command(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    seen: dict[str, object] = {}
+
+    def fake_run(command, **_kwargs):
+        seen["command"] = command
+        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout(), stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    provider = ClaudeCliProvider()
+    provider.plan(LeaderPlanRequest(task="指定 Claude 模型", config=config, model="claude-sonnet-4-5"))
+
+    assert seen["command"] == [
+        "claude",
+        "--model",
+        "claude-sonnet-4-5",
+        "--print",
+        "--output-format",
+        "text",
+        "--permission-mode",
+        "plan",
+    ]
 
 
 def test_cli_provider_extracts_fenced_json_plan_from_local_cli_output(tmp_path, monkeypatch) -> None:
@@ -346,6 +401,27 @@ def test_openai_compatible_provider_posts_chat_completion_and_parses_json_plan(t
     assert plan["goal"] == "构建 provider"
     assert plan["steps"][0]["agent_id"] == "planner"
     assert plan["dispatch_ready"] is False
+
+
+def test_openai_compatible_provider_uses_requested_model_over_environment(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    seen: dict[str, object] = {}
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+    monkeypatch.setenv("AGENTDECK_LEADER_MODEL", "env-model")
+
+    def fake_urlopen(request, timeout):
+        seen["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr("agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen)
+
+    provider = OpenAICompatibleProvider()
+    provider.plan(LeaderPlanRequest(task="指定 API 模型", config=config, model="explicit-model"))
+
+    assert seen["body"]["model"] == "explicit-model"
 
 
 def test_openai_compatible_provider_reports_invalid_json_plan(tmp_path, monkeypatch) -> None:

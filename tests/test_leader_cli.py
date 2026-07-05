@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 
 from agentdeck import cli
 from agentdeck.config import write_default_config
@@ -136,6 +137,77 @@ def test_leader_plan_defaults_to_configured_leader_provider_and_model(
     assert state["plans"][0]["model"] == "deepseek-chat"
     assert state["messages"] == []
     assert state["jobs"] == []
+
+
+def test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    seen: dict[str, object] = {}
+
+    def fake_run(command, **_kwargs):
+        seen["command"] = command
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "goal": "Codex CLI Leader",
+                    "summary": "plan from codex cli",
+                    "steps": [
+                        {
+                            "step": 1,
+                            "agent_id": "planner",
+                            "role": "planning",
+                            "task": "Plan via local Codex CLI",
+                            "risk": "requires human review before dispatch",
+                            "requires_approval": True,
+                        }
+                    ],
+                    "approval_required": True,
+                    "dispatch_ready": False,
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    exit_code = cli.main(
+        [
+            "leader",
+            "plan",
+            "--provider",
+            "codex-cli",
+            "--model",
+            "gpt-5-codex",
+            "--task",
+            "让 Codex CLI 作为 Leader",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert seen["command"] == [
+        "codex",
+        "--model",
+        "gpt-5-codex",
+        "exec",
+        "--sandbox",
+        "read-only",
+        "-",
+    ]
+    assert payload["provider"] == "codex-cli"
+    assert payload["model"] == "gpt-5-codex"
+    assert payload["plan"]["goal"] == "Codex CLI Leader"
+
+    state = StateStore(root).load()
+    assert state["plans"][0]["provider"] == "codex-cli"
+    assert state["plans"][0]["model"] == "gpt-5-codex"
+    assert state["approvals"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state.get("inbox", {}) == {}
 
 
 def test_leader_chat_defaults_to_configured_leader_provider_and_model(

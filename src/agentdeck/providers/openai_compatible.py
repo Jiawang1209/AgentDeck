@@ -30,7 +30,7 @@ class OpenAICompatibleProvider:
         if not api_key:
             raise RuntimeError(f"{self.api_key_env} is not set")
         payload = {
-            "model": self.model,
+            "model": plan_request.model or self.model,
             "response_format": {"type": "json_object"},
             "messages": [
                 {
