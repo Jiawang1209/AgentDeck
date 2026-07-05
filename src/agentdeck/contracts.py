@@ -364,6 +364,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "leader_action",
     "leader_action_card",
     "continue_card",
+    "capture_card",
     "inbox_card",
     "trace_card",
     "approval_card",
@@ -392,6 +393,14 @@ LEADER_CHAT_ACTION_CARD_FIELDS = (
     "explicit_command",
     "apply_blocker",
     "controls",
+)
+
+LEADER_CHAT_CAPTURE_CARD_FIELDS = (
+    "agent_id",
+    "pane_id",
+    "lines",
+    "capture_command",
+    "output",
 )
 
 CONTROL_REGISTRY_CARD_FIELDS = (
@@ -930,6 +939,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "intent_control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
         "leader_action_card_fields": list(LEADER_CHAT_ACTION_CARD_FIELDS),
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
+        "capture_card_fields": list(LEADER_CHAT_CAPTURE_CARD_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
@@ -1972,6 +1982,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append(f"continue_card: {error}")
     elif "continue_card" in payload and continue_card is not None:
         errors.append("continue_card must be an object")
+    capture_card = payload.get("capture_card")
+    if isinstance(capture_card, dict):
+        _validate_leader_chat_capture_card_contract(errors, capture_card)
+    elif "capture_card" in payload and capture_card is not None:
+        errors.append("capture_card must be an object")
     leader_action_card = payload.get("leader_action_card")
     leader_action = payload.get("leader_action")
     if isinstance(leader_action_card, dict):
@@ -2084,6 +2099,16 @@ def _validate_leader_chat_action_card_contract(errors: list[str], action_card: d
                 errors.append("leader_action_card.controls items must be objects")
     elif "controls" in action_card:
         errors.append("leader_action_card.controls must be a list")
+
+
+def _validate_leader_chat_capture_card_contract(errors: list[str], capture_card: dict[str, object]) -> None:
+    for field in LEADER_CHAT_CAPTURE_CARD_FIELDS:
+        if field not in capture_card:
+            errors.append(f"missing capture_card field: {field}")
+    if "lines" in capture_card and not isinstance(capture_card.get("lines"), int):
+        errors.append("capture_card.lines must be an integer")
+    if "output" in capture_card and not isinstance(capture_card.get("output"), str):
+        errors.append("capture_card.output must be a string")
 
 
 def _validate_control_registry_card_contract(errors: list[str], control_registry_card: dict[str, object]) -> None:
@@ -2748,6 +2773,7 @@ def leader_chat_example() -> dict[str, object]:
         "leader_action": leader_action,
         "leader_action_card": leader_action_card,
         "continue_card": continue_card,
+        "capture_card": None,
         "inbox_card": None,
         "trace_card": None,
         "approval_card": None,

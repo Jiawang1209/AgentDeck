@@ -534,6 +534,7 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == expected["response_fields"]
     assert payload["explanation_fields"] == expected["explanation_fields"]
+    assert payload["capture_card_fields"] == expected["capture_card_fields"]
     assert payload["trace_card_fields"] == expected["trace_card_fields"]
     assert payload["trace_message_fields"] == expected["trace_message_fields"]
     assert payload["trace_inbox_item_fields"] == expected["trace_inbox_item_fields"]

@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Capture visible agent pane through Leader chat
+
+- 扩展 `agentdeck leader chat --message "查看 planner 输出"` / `"capture planner output"`：自然语言入口现在会进入只读 `mode=capture`，读取已 spawn agent 的 visible tmux pane，并嵌入 GUI-ready `capture_card`。
+- `capture_card` 包含 agent_id、pane_id、lines、capture_command 和 output；`intent_card.embedded_card=capture_card`，并建议同一条显式 `agentdeck agent capture --agent <id> --lines 200`。
+- 新增未 spawn 保护：当请求的 agent 没有 runtime binding 时返回 `agent is not spawned: <agent_id>`，不会误落入 provider-backed planning，也不会创建 chat turn 或 plan。
+- 保持安全边界：capture-mode 只记录 chat turn 和读取 pane 输出，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture reply、不发送 tmux 输入。
+- 同步 `agentdeck contract leader-chat` 的 `capture_card_fields`、validator、README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试，让未来 GUI 可直接消费 pane snapshot。
+- 完整验证：已先确认红测失败，`查看 planner 输出` 最初误走 `mode=plan`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_captures_agent_output_as_read_only_card tests/test_leader_cli.py::test_leader_chat_rejects_capture_for_unspawned_agent_without_planning -q` 2 项通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_captures_agent_output_as_read_only_card tests/test_leader_cli.py::test_leader_chat_rejects_capture_for_unspawned_agent_without_planning tests/test_leader_cli.py::test_leader_chat_inspects_runtime_without_mutating_state tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 7 项通过；`conda run -n agentdeck pytest -q` 245 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-capture-smoke-ok mode=capture embedded=capture_card pane=%42 captured=[('%42', 200)] bad=agent is not spawned: coder`。
+
 ### Current - Route direct trace IDs through Leader chat
 
 - 扩展 `agentdeck leader chat --message "追踪 msg_xxx"` / `"trace job_xxx"` / `"查看 rep_xxx 链路"`：自然语言入口现在会进入只读 `mode=trace`，嵌入同源 `trace_card`，并建议显式 `agentdeck trace --id <id>`。

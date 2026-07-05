@@ -20,6 +20,7 @@ from agentdeck.contracts import (
     INBOX_QUEUE_FIELDS,
     LEADER_ACTION_DETAIL_FIELDS,
     LEADER_ACTIONS_LIST_FIELDS,
+    LEADER_CHAT_CAPTURE_CARD_FIELDS,
     LEADER_REVIEW_CONTROL_FIELDS,
     LEADER_REVIEW_RESPONSE_FIELDS,
     LEADER_CHAT_EXPLANATION_FIELDS,
@@ -439,6 +440,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
         "controls",
     ]
     assert payload["continue_card_fields"] == list(CONTINUE_CARD_FIELDS)
+    assert payload["capture_card_fields"] == list(LEADER_CHAT_CAPTURE_CARD_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
     assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)

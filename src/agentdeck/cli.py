@@ -77,6 +77,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     for card_name in (
         "workbench_card",
         "continue_card",
+        "capture_card",
         "trace_card",
         "inbox_card",
         "approval_card",
@@ -138,6 +139,10 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck continue"
     if embedded_card == "runtime_card":
         return "agentdeck agent list"
+    if embedded_card == "capture_card":
+        capture_card = payload.get("capture_card")
+        command = capture_card.get("capture_command") if isinstance(capture_card, dict) else None
+        return str(command) if command else None
     if embedded_card == "ledger_card":
         return "agentdeck workbench"
     if embedded_card == "trace_card":
@@ -183,6 +188,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("control_mode_card", None)
     payload.setdefault("lineage_card", None)
     payload.setdefault("trace_card", None)
+    payload.setdefault("capture_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -2339,6 +2345,29 @@ def _chat_trace_query_id(message: str) -> str | None:
     return match.group(0) if match else None
 
 
+def _chat_capture_agent_id(message: str, config: ProjectConfig) -> str | None:
+    normalized = message.strip().lower()
+    wants_capture = any(
+        token in normalized
+        for token in [
+            "capture",
+            "output",
+            "pane output",
+            "terminal output",
+            "输出",
+            "终端输出",
+            "面板输出",
+            "屏幕",
+        ]
+    )
+    if not wants_capture:
+        return None
+    for agent in config.agents:
+        if agent.agent_id.lower() in normalized:
+            return agent.agent_id
+    return None
+
+
 def _chat_inbox_agent_id(message: str, config: ProjectConfig) -> str | None:
     normalized = message.strip().lower()
     mentions_inbox = any(token in normalized for token in ["inbox", "收件箱", "消息", "mailbox"])
@@ -2421,6 +2450,7 @@ def _leader_chat_explanation(
     result: dict[str, object] | None = None,
     inbox_card: dict[str, object] | None = None,
     inbox_action_kind: str | None = None,
+    capture_card: dict[str, object] | None = None,
     trace_card: dict[str, object] | None = None,
     approval_card: dict[str, object] | None = None,
     approval_action_kind: str | None = None,
@@ -2529,6 +2559,19 @@ def _leader_chat_explanation(
             "recommended_action_id": None,
             "action_kind": "runtime",
             "action_status": action_status,
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
+    if mode == "capture":
+        agent_id = capture_card.get("agent_id") if isinstance(capture_card, dict) else None
+        return {
+            "mode": mode,
+            "summary": "Leader captured a visible agent pane as a read-only terminal snapshot.",
+            "reason": "human asked to inspect one agent pane output",
+            "next_command": next_command,
+            "recommended_action_id": agent_id,
+            "action_kind": "capture",
+            "action_status": "captured" if agent_id else "missing",
             "safety": "inspect",
             "requires_explicit_user": False,
         }
@@ -2980,6 +3023,77 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "workbench_card": None,
             "provider_health": _workbench_provider_health(refreshed_project_view),
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    capture_agent_id = _chat_capture_agent_id(args.message, config)
+    if capture_agent_id is not None:
+        binding, exit_code = _running_binding_or_error(store, capture_agent_id)
+        if binding is None:
+            return exit_code
+        pane_id = str(binding["pane_id"])
+        lines = 200
+        next_command = f"agentdeck agent capture --agent {capture_agent_id} --lines {lines}"
+        output = TmuxBackend().capture_output(config.runtime, pane_id, lines)
+        capture_card = {
+            "agent_id": capture_agent_id,
+            "pane_id": pane_id,
+            "lines": lines,
+            "capture_command": next_command,
+            "output": output,
+        }
+        turn = store.record_chat_turn(
+            mode="capture",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="capture",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "capture",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "capture",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "capture",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                capture_card=capture_card,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "capture_card": capture_card,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "lineage_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

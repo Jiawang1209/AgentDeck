@@ -12,9 +12,14 @@ from agentdeck.state import StateStore
 class FakeTmuxBackend:
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []
+        self.captured: list[tuple[str, int]] = []
 
     def send_input(self, _config, pane_id: str, text: str) -> None:
         self.sent.append((pane_id, text))
+
+    def capture_output(self, _config, pane_id: str, lines: int = 200) -> str:
+        self.captured.append((pane_id, lines))
+        return "status: running\nsummary: planner is thinking\n"
 
 
 def prepare_project(tmp_path: Path, monkeypatch) -> Path:
@@ -680,6 +685,79 @@ def test_leader_chat_inspects_runtime_without_mutating_state(tmp_path, monkeypat
     assert state_after["chat_turns"][0]["mode"] == "runtime"
     assert state_after["chat_turns"][0]["next_command"] == "agentdeck agent list"
     assert state_after["agents"]["planner"]["status"] == "running"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
+def test_leader_chat_captures_agent_output_as_read_only_card(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看 planner 输出"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "capture"
+    assert payload["message"] == "查看 planner 输出"
+    assert payload["next_command"] == "agentdeck agent capture --agent planner --lines 200"
+    assert payload["runtime_card"] is None
+    assert payload["capture_card"] == {
+        "agent_id": "planner",
+        "pane_id": "%42",
+        "lines": 200,
+        "capture_command": "agentdeck agent capture --agent planner --lines 200",
+        "output": "status: running\nsummary: planner is thinking\n",
+    }
+    assert payload["leader_explanation"] == {
+        "mode": "capture",
+        "summary": "Leader captured a visible agent pane as a read-only terminal snapshot.",
+        "reason": "human asked to inspect one agent pane output",
+        "next_command": "agentdeck agent capture --agent planner --lines 200",
+        "recommended_action_id": "planner",
+        "action_kind": "capture",
+        "action_status": "captured",
+        "safety": "inspect",
+        "requires_explicit_user": False,
+    }
+    assert payload["intent_card"]["embedded_card"] == "capture_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect capture_card",
+        "command": "agentdeck agent capture --agent planner --lines 200",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert fake.captured == [("%42", 200)]
+    assert fake.sent == []
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "capture"
+    assert state_after["chat_turns"][0]["next_command"] == payload["next_command"]
+    assert state_after["chat_turns"][0]["action_kind"] == "capture"
+    assert state_after["agents"]["planner"]["status"] == "running"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["approvals"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
+def test_leader_chat_rejects_capture_for_unspawned_agent_without_planning(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看 planner 输出"])
+
+    assert exit_code == 1
+    assert capsys.readouterr().err == "agent is not spawned: planner\n"
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"] == []
     assert state_after["plans"] == []
     assert state_after["leader_actions"] == []
     assert state_after["messages"] == []
