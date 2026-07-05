@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Enable DeepSeek provider planning
+
+- 将 `deepseek` 从仅 doctor/health 可见的 provider 边界推进为真实 plan-only Leader provider：`leader_provider("deepseek")` 现在返回 `DeepSeekProvider`。
+- `DeepSeekProvider` 复用 OpenAI-compatible `/chat/completions` plan schema，使用 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL`，默认 base URL 为 `https://api.deepseek.com/v1`，默认 model 为 `deepseek-chat`。
+- 扩展 provider 与 CLI 测试，覆盖 DeepSeek env、请求 URL/header/body、JSON plan 解析、`agentdeck leader plan --provider deepseek` 只生成 plan 不 dispatch，以及未知 provider 仍明确失败。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 DeepSeek 与 OpenAI-compatible 都只能生成 plan/chat turn，不得绕过 approval 或发送 tmux 输入。
+- 保持安全边界：真实 DeepSeek provider 失败仍走 `leader_errors[]` 和 `leader_provider_failed`，成功也只写 plan，不写 approval/message/job/inbox，不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_deepseek_provider_uses_deepseek_env_and_openai_compatible_plan_shape tests/test_leader_cli.py::test_leader_plan_uses_deepseek_provider_without_dispatching tests/test_leader_cli.py::test_leader_plan_rejects_unknown_provider -q` 最初因 `leader_provider("deepseek")` unsupported 失败；随后补充 `DEEPSEEK_BASE_URL` 红测并确认默认 URL 覆盖 env 的失败；实现后 provider/leader 目标测试 7 项通过；`conda run -n agentdeck pytest -q` 159 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `deepseek-plan-smoke-ok`。
+
 ### Current - Add provider health to workbench snapshot
 
 - 扩展 `agentdeck workbench`：新增 `provider_health`，从 ProjectView leader provider 与本地环境变量派生 GUI/TUI 可渲染的 Leader provider 健康卡。

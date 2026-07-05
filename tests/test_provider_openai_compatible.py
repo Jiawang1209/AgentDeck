@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from agentdeck.config import write_default_config, load_config
-from agentdeck.providers import LeaderPlanRequest, OpenAICompatibleProvider, leader_provider
+from agentdeck.providers import DeepSeekProvider, LeaderPlanRequest, OpenAICompatibleProvider, leader_provider
 
 
 class FakeResponse:
@@ -71,6 +71,41 @@ def test_openai_compatible_provider_requires_api_key(monkeypatch) -> None:
     provider = OpenAICompatibleProvider()
 
     assert provider.doctor() == (False, "AGENTDECK_LEADER_API_KEY is not set; provider calls are disabled")
+
+
+def test_deepseek_provider_uses_deepseek_env_and_openai_compatible_plan_shape(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    seen: dict[str, object] = {}
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://deepseek.example/v1")
+
+    def fake_urlopen(request, timeout):
+        seen["url"] = request.full_url
+        seen["timeout"] = timeout
+        seen["headers"] = dict(request.header_items())
+        seen["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr("agentdeck.providers.openai_compatible.request.urlopen", fake_urlopen)
+
+    provider = leader_provider("deepseek")
+    plan = provider.plan(LeaderPlanRequest(task="DeepSeek 规划", config=config))
+
+    assert isinstance(provider, DeepSeekProvider)
+    assert provider.doctor() == (True, "DEEPSEEK_API_KEY is set")
+    assert seen["url"] == "https://deepseek.example/v1/chat/completions"
+    assert seen["timeout"] == 60
+    assert seen["headers"]["Authorization"] == "Bearer deepseek-key"
+    body = seen["body"]
+    assert body["model"] == "deepseek-chat"
+    assert body["response_format"] == {"type": "json_object"}
+    assert body["messages"][0]["role"] == "system"
+    assert body["messages"][1]["content"] == "DeepSeek 规划"
+    assert plan["goal"] == "构建 provider"
+    assert plan["dispatch_ready"] is False
 
 
 def test_openai_compatible_provider_posts_chat_completion_and_parses_json_plan(tmp_path, monkeypatch) -> None:

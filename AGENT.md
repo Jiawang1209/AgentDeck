@@ -151,9 +151,10 @@ Worker 不应该：
 - `agentdeck plan status --plan-id <id>` 返回 plan step、approval 状态和 dispatch lineage 汇总。
 - Provider 失败会写入 `leader_errors[]`，并通过 `agentdeck status` 暴露摘要；失败不能创建 plan、approval、message、job 或 inbox。
 - 默认 `fake` provider 是本地 dry-run provider，不调用外部 LLM。
+- `deepseek` provider 通过 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 调用 OpenAI-compatible `/chat/completions`，但仍然只生成 plan。
 - `openai-compatible` provider 通过 `AGENTDECK_LEADER_API_KEY`、`AGENTDECK_LEADER_BASE_URL` 和 `AGENTDECK_LEADER_MODEL` 调用 `/chat/completions`，但仍然只生成 plan。
 - chat/plan-only 阶段不会写入 `messages`、`jobs` 或 `inbox`，也不会发送 tmux 输入。
-- 后续 DeepSeek/OpenAI-compatible 或其他 API-backed provider 必须复用同一 plan schema。
+- 后续其他 API-backed provider 必须复用 DeepSeek/OpenAI-compatible 的同一 plan schema。
 
 ## 审批规则
 

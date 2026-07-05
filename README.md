@@ -22,7 +22,7 @@ AgentDeck 是一个正在搭建中的本地多智能体终端工作台。它的�
 - tmux 作为第一 runtime backend
 - TOML 配置
 - JSON/JSONL 初始状态存储，后续迁移到 SQLite
-- API-backed LLM provider adapter，支持本地 `fake` 和 OpenAI-compatible plan provider
+- API-backed LLM provider adapter，支持本地 `fake`、DeepSeek 和 OpenAI-compatible plan provider
 
 未来可扩展：
 
@@ -293,7 +293,7 @@ agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
 ```
 
-当前默认使用本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。也可以显式使用 `--provider openai-compatible` 调用 OpenAI-compatible `/chat/completions` API。两种模式都不会 dispatch、不会发送 tmux 输入。
+当前默认使用本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。也可以显式使用 `--provider deepseek` 或 `--provider openai-compatible` 调用 OpenAI-compatible `/chat/completions` API。所有模式都不会 dispatch、不会发送 tmux 输入。
 
 `agentdeck continue` 是顶层只读恢复入口。它会先校验 ProjectView，再把 `status.recovery` 整理成一张下一步卡片，并在输出前通过 `validate_continue_contract()` 自校验。卡片包含 status、reason、next_command、recommended_action、pending 计数、project_view_command，以及可选的 `leader_action` 详情和 `action_detail_command`。它不创建 plan、不写入 `leader_actions[]`、不 apply action、不 dispatch、不发送 tmux 输入，适合终端用户、自然语言壳和 GUI 在任何时刻询问“现在该继续什么”。
 
@@ -345,13 +345,19 @@ agentdeck approval dispatch --approval-id apv_xxx
 - `plan.goal`
 - `plan.steps[]`
 
-OpenAI-compatible provider 使用同一个 provider 抽象和 plan schema，并要求模型返回 JSON object plan。
+DeepSeek 和 OpenAI-compatible provider 使用同一个 provider 抽象和 plan schema，并要求模型返回 JSON object plan。
 
 如果真实 provider 返回非法 JSON、缺少 steps 或某个 step 没有 `requires_approval: true`，CLI 会明确失败并把错误写入 `.agentdeck/state/state.json` 的 `leader_errors[]`。失败不会创建 plan、approval、message、job 或 inbox。
 
 配置环境变量：
 
 ```bash
+export DEEPSEEK_API_KEY="..."
+# 可选：
+export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"
+export DEEPSEEK_MODEL="deepseek-chat"
+
+# 或使用通用 OpenAI-compatible provider：
 export AGENTDECK_LEADER_API_KEY="..."
 export AGENTDECK_LEADER_BASE_URL="https://api.deepseek.com/v1"
 export AGENTDECK_LEADER_MODEL="deepseek-chat"
@@ -360,6 +366,9 @@ export AGENTDECK_LEADER_MODEL="deepseek-chat"
 示例：
 
 ```bash
+agentdeck leader plan --provider deepseek --model deepseek-chat --task "规划下一步开发"
+agentdeck leader chat --provider deepseek --model deepseek-chat --message "帮我规划下一步"
+
 agentdeck leader plan --provider openai-compatible --model "$AGENTDECK_LEADER_MODEL" --task "规划下一步开发"
 agentdeck leader chat --provider openai-compatible --model "$AGENTDECK_LEADER_MODEL" --message "帮我规划下一步"
 ```

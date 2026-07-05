@@ -1,22 +1,19 @@
 from __future__ import annotations
 
-import os
+from .openai_compatible import OpenAICompatibleProvider
 
 
-class DeepSeekProvider:
-    """OpenAI-compatible DeepSeek adapter boundary.
+class DeepSeekProvider(OpenAICompatibleProvider):
+    """DeepSeek adapter using the OpenAI-compatible chat completions contract."""
 
-    The MVP only validates configuration. Network calls will be added after the
-    Leader/Worker message contract and approval gate are in place.
-    """
-
+    name = "deepseek"
     api_key_env = "DEEPSEEK_API_KEY"
-    base_url = "https://api.deepseek.com"
+    base_url_env = "DEEPSEEK_BASE_URL"
+    model_env = "DEEPSEEK_MODEL"
 
-    def __init__(self, model: str = "deepseek-chat") -> None:
-        self.model = model
-
-    def doctor(self) -> tuple[bool, str]:
-        if os.environ.get(self.api_key_env):
-            return True, f"{self.api_key_env} is set"
-        return False, f"{self.api_key_env} is not set; provider calls are disabled"
+    def __init__(self, model: str | None = None, base_url: str | None = None, timeout: int = 60) -> None:
+        super().__init__(
+            model=model,
+            base_url=base_url,
+            timeout=timeout,
+        )

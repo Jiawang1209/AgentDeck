@@ -80,15 +80,50 @@ def test_leader_plan_creates_structured_plan_without_dispatching(tmp_path, monke
     assert '"event_type": "leader_plan_created"' in events
 
 
-def test_leader_plan_rejects_unsupported_provider(tmp_path, monkeypatch, capsys) -> None:
+def test_leader_plan_rejects_unknown_provider(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
 
-    exit_code = cli.main(["leader", "plan", "--provider", "deepseek", "--task", "真实 provider 尚未接入"])
+    exit_code = cli.main(["leader", "plan", "--provider", "unknown-llm", "--task", "未知 provider"])
 
     assert exit_code == 1
-    assert "unsupported leader provider: deepseek" in capsys.readouterr().err
+    assert "unsupported leader provider: unknown-llm" in capsys.readouterr().err
     state = StateStore(root).load()
     assert state.get("plans", []) == []
+
+
+def test_leader_plan_uses_deepseek_provider_without_dispatching(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    class StubProvider(FakeLeaderProvider):
+        name = "deepseek"
+
+    monkeypatch.setattr(cli, "leader_provider", lambda name: StubProvider())
+
+    exit_code = cli.main(
+        [
+            "leader",
+            "plan",
+            "--provider",
+            "deepseek",
+            "--model",
+            "deepseek-chat",
+            "--task",
+            "DeepSeek 计划",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["provider"] == "deepseek"
+    assert payload["model"] == "deepseek-chat"
+    assert payload["dispatch_ready"] is False
+
+    state = StateStore(root).load()
+    assert state["plans"][0]["provider"] == "deepseek"
+    assert state["plans"][0]["model"] == "deepseek-chat"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state.get("inbox", {}) == {}
 
 
 def test_leader_plan_uses_openai_compatible_provider_without_dispatching(tmp_path, monkeypatch, capsys) -> None:
