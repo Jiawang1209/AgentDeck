@@ -365,7 +365,7 @@ class StateStore:
         elif next_action == "wait_for_reply" and review.get("agent_id") and review.get("message_id"):
             command = f"agentdeck capture-reply --agent {review['agent_id']} --message-id {review['message_id']}"
         elif next_action == "summarize" and review.get("plan_id"):
-            command = f"agentdeck plan status --plan-id {review['plan_id']}"
+            command = f"agentdeck leader summary --plan-id {review['plan_id']}"
         elif next_action == "wait_for_approval" and review.get("plan_id"):
             command = f"agentdeck approval list"
         return {

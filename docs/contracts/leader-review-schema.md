@@ -49,6 +49,6 @@ Each control item uses:
 
 For `next_action=wait_for_reply`, review may expose a read-only trace preview control plus a `capture_reply` control whose command is `agentdeck capture-reply --agent <agent_id> --message-id <message_id>`. The review command itself must not capture pane output, create replies, mutate inbox state, or persist a Leader action.
 
-For `next_action=summarize`, review may expose a read-only plan status command. It must not synthesize or write the final summary.
+For `next_action=summarize`, review may expose `agentdeck leader summary --plan-id <plan_id>` as the next read-only command. Review itself must not synthesize or write the final summary; the summary command deterministically aggregates existing replies and artifacts without calling a provider or mutating state.
 
 GUI/TUI clients should discover this shape through `agentdeck contract leader-review --example` instead of hard-coding `next_command` or `controls[]` fields.

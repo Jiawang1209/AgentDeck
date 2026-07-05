@@ -34,6 +34,8 @@ from agentdeck.contracts import (
     leader_chat_contract_response,
     leader_review_contract_payload,
     leader_review_contract_response,
+    leader_summary_contract_payload,
+    leader_summary_contract_response,
     project_view_contract_payload,
     project_view_contract_response,
     trace_contract_payload,
@@ -866,6 +868,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "leader-chat",
         "leader-actions",
         "leader-review",
+        "leader-summary",
         "leader-action",
         "approvals",
         "inbox",
@@ -1148,6 +1151,74 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["control_registry_card_fields"] == expected["control_registry_card_fields"]
 
 
+def test_contract_leader_summary_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "leader-summary"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = leader_summary_contract_payload(Path(payload["contract_path"]))
+    assert payload == expected
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["summary_command"] == "agentdeck leader summary --plan-id <id>"
+    assert payload["contract_path"].endswith("docs/contracts/leader-summary-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["leader_review_contract"] == "agentdeck contract leader-review"
+    assert payload["trace_contract"] == "agentdeck contract trace"
+    assert payload["response_fields"] == [
+        "schema_version",
+        "plan_id",
+        "task",
+        "status",
+        "provider",
+        "model",
+        "counts",
+        "reply_count",
+        "artifact_count",
+        "summary",
+        "plan_status_command",
+        "review_command",
+        "steps",
+        "controls",
+    ]
+    assert payload["step_fields"] == [
+        "step",
+        "agent_id",
+        "role",
+        "task",
+        "approval_id",
+        "message_id",
+        "attempt_id",
+        "job_id",
+        "reply_id",
+        "reply_text",
+        "artifact_count",
+        "artifacts",
+        "trace_command",
+    ]
+    assert payload["artifact_fields"] == ["artifact_id", "path", "kind", "status", "trace_command"]
+    assert payload["control_fields"] == ["kind", "label", "command", "safety", "enabled", "blocker"]
+
+
+def test_contract_leader_summary_example_exports_gui_ready_response(capsys) -> None:
+    exit_code = cli.main(["contract", "leader-summary", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = leader_summary_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_leader_summary"]
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_step_fields"] == payload["step_fields"]
+    assert set(payload["example_step_fields"]) == set(example["steps"][0])
+    assert payload["example_artifact_fields"] == payload["artifact_fields"]
+    assert set(payload["example_artifact_fields"]) == set(example["steps"][0]["artifacts"][0])
+    assert payload["example_control_fields"] == payload["control_fields"]
+    assert set(payload["example_control_fields"]) == set(example["controls"][0])
+    assert example["controls"][2]["command"] == "agentdeck trace --id msg_example"
+
+
 def test_contract_continue_discovers_schema_for_gui_clients(capsys) -> None:
     exit_code = cli.main(["contract", "continue"])
 
@@ -1415,6 +1486,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "agent_runtime_contract",
         "leader_chat_contract",
         "leader_review_contract",
+        "leader_summary_contract",
         "project_view_contract",
         "events_contract",
         "doctor_contract",
@@ -1998,6 +2070,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "controls_contract": "agentdeck contract controls",
         "leader_chat_contract": "agentdeck contract leader-chat",
         "leader_review_contract": "agentdeck contract leader-review",
+        "leader_summary_contract": "agentdeck contract leader-summary",
         "project_view_contract": "agentdeck contract project-view",
         "events_contract": "agentdeck contract events",
         "doctor_contract": "agentdeck contract doctor",

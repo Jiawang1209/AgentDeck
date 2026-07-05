@@ -30,6 +30,10 @@ from agentdeck.contracts import (
     LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS,
     LEADER_REVIEW_CONTROL_FIELDS,
     LEADER_REVIEW_RESPONSE_FIELDS,
+    LEADER_SUMMARY_ARTIFACT_FIELDS,
+    LEADER_SUMMARY_CONTROL_FIELDS,
+    LEADER_SUMMARY_RESPONSE_FIELDS,
+    LEADER_SUMMARY_STEP_FIELDS,
     LEADER_CHAT_EXPLANATION_FIELDS,
     LEADER_CHAT_INTENT_CARD_FIELDS,
     LEADER_CHAT_INTENT_CONTROL_FIELDS,
@@ -102,6 +106,9 @@ from agentdeck.contracts import (
     leader_review_contract_payload,
     leader_review_contract_response,
     leader_review_example,
+    leader_summary_contract_payload,
+    leader_summary_contract_response,
+    leader_summary_example,
     continue_contract_payload,
     continue_contract_response,
     continue_example,
@@ -130,6 +137,7 @@ from agentdeck.contracts import (
     validate_leader_actions_contract,
     validate_leader_chat_contract,
     validate_leader_review_contract,
+    validate_leader_summary_contract,
     validate_project_view_contract,
     validate_trace_contract,
     validate_workbench_contract,
@@ -150,6 +158,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "leader-actions-schema.md",
         "leader-action-schema.md",
         "leader-review-schema.md",
+        "leader-summary-schema.md",
         "approvals-schema.md",
         "inbox-schema.md",
         "trace-schema.md",
@@ -165,7 +174,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 15
+    assert payload["count"] == 16
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -178,6 +187,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "leader-chat",
         "leader-actions",
         "leader-review",
+        "leader-summary",
         "leader-action",
         "approvals",
         "inbox",
@@ -1602,6 +1612,87 @@ def test_validate_leader_review_contract_rejects_non_list_controls() -> None:
     result = validate_leader_review_contract(payload)
 
     assert result == {"ok": False, "errors": ["controls must be a list"]}
+
+
+def test_leader_summary_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-summary-schema.md"
+    contract_path.write_text("# Leader Summary Contract\n", encoding="utf-8")
+
+    payload = leader_summary_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["summary_command"] == "agentdeck leader summary --plan-id <id>"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == list(LEADER_SUMMARY_RESPONSE_FIELDS)
+    assert payload["step_fields"] == list(LEADER_SUMMARY_STEP_FIELDS)
+    assert payload["artifact_fields"] == list(LEADER_SUMMARY_ARTIFACT_FIELDS)
+    assert payload["control_fields"] == list(LEADER_SUMMARY_CONTROL_FIELDS)
+    assert payload["leader_review_contract"] == "agentdeck contract leader-review"
+    assert payload["trace_contract"] == "agentdeck contract trace"
+
+
+def test_leader_summary_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-summary-schema.md"
+    contract_path.write_text("# Leader Summary Contract\n", encoding="utf-8")
+
+    payload = leader_summary_contract_response(contract_path, include_example=True)
+    example = leader_summary_example()
+
+    assert payload["example"] is True
+    assert payload["example_leader_summary"] == example
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_step_fields"] == payload["step_fields"]
+    assert set(payload["example_step_fields"]) == set(example["steps"][0])
+    assert payload["example_artifact_fields"] == payload["artifact_fields"]
+    assert set(payload["example_artifact_fields"]) == set(example["steps"][0]["artifacts"][0])
+    assert payload["example_control_fields"] == payload["control_fields"]
+    assert set(payload["example_control_fields"]) == set(example["controls"][0])
+    assert example["plan_status_command"] == "agentdeck plan status --plan-id pln_example"
+    assert example["review_command"] == "agentdeck leader review --plan-id pln_example"
+
+
+def test_validate_leader_summary_contract_accepts_example() -> None:
+    result = validate_leader_summary_contract(leader_summary_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_leader_summary_contract_requires_response_step_artifact_and_control_fields() -> None:
+    payload = leader_summary_example()
+    del payload["summary"]
+    del payload["steps"][0]["reply_text"]
+    del payload["steps"][0]["artifacts"][0]["trace_command"]
+    del payload["controls"][0]["safety"]
+
+    result = validate_leader_summary_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "missing leader_summary field: summary",
+            "missing leader summary step field: reply_text",
+            "missing leader summary artifact field: trace_command",
+            "missing leader summary control field: safety",
+        ],
+    }
+
+
+def test_validate_leader_summary_contract_rejects_mismatched_plan_commands() -> None:
+    payload = leader_summary_example()
+    payload["plan_status_command"] = "agentdeck plan status --plan-id other"
+    payload["review_command"] = "agentdeck leader review --plan-id other"
+
+    result = validate_leader_summary_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "plan_status_command must match plan_id",
+            "review_command must match plan_id",
+        ],
+    }
 
 
 def test_leader_actions_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:

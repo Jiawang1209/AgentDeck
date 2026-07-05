@@ -4174,17 +4174,218 @@ def test_leader_review_summarizes_when_all_dispatched_steps_have_replies(tmp_pat
     assert payload["next_action"] == "summarize"
     assert payload["reason"] == "all dispatched steps have replies"
     assert payload["replies"] == [{"agent_id": "planner", "message_id": message_id, "reply_id": reply_id}]
-    assert payload["next_command"] == f"agentdeck plan status --plan-id {plan_id}"
+    assert payload["next_command"] == f"agentdeck leader summary --plan-id {plan_id}"
     assert payload["controls"] == [
         {
             "kind": "next",
             "label": "Next command",
-            "command": f"agentdeck plan status --plan-id {plan_id}",
+            "command": f"agentdeck leader summary --plan-id {plan_id}",
             "safety": "inspect",
             "enabled": True,
             "blocker": None,
         },
     ]
+
+
+def test_leader_summary_returns_replies_and_artifacts_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["plans"] = [
+        {
+            "plan_id": "pln_summary",
+            "task": "总结多 agent 结果",
+            "provider": "fake",
+            "model": "fake-plan",
+            "status": "planned",
+            "dispatch_ready": False,
+            "created_at": "2026-07-04T00:00:00+00:00",
+            "plan": {
+                "goal": "总结多 agent 结果",
+                "summary": "Need planner output.",
+                "steps": [
+                    {
+                        "step": 1,
+                        "agent_id": "planner",
+                        "role": "planning",
+                        "task": "整理方案",
+                        "requires_approval": True,
+                    }
+                ],
+            },
+        }
+    ]
+    state["approvals"] = [
+        {
+            "approval_id": "apv_summary",
+            "plan_id": "pln_summary",
+            "step": 1,
+            "step_index": 0,
+            "agent_id": "planner",
+            "role": "planning",
+            "task": "整理方案",
+            "status": "dispatched",
+            "message_id": "msg_summary",
+            "attempt_id": "att_summary",
+            "job_id": "job_summary",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["messages"] = [
+        {
+            "message_id": "msg_summary",
+            "from_actor": "leader",
+            "to_agent": "planner",
+            "task": "整理方案",
+            "prompt": "prompt",
+            "status": "replied",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["attempts"] = [
+        {
+            "attempt_id": "att_summary",
+            "message_id": "msg_summary",
+            "agent_id": "planner",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["jobs"] = [
+        {
+            "job_id": "job_summary",
+            "message_id": "msg_summary",
+            "attempt_id": "att_summary",
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["replies"] = [
+        {
+            "reply_id": "rep_summary",
+            "message_id": "msg_summary",
+            "attempt_id": "att_summary",
+            "job_id": "job_summary",
+            "from_agent": "planner",
+            "to_actor": "leader",
+            "text": "status: completed\nsummary: planner delivered.\nfull_output_path: docs/summary.md",
+            "created_at": "2026-07-04T00:00:01+00:00",
+        }
+    ]
+    state["artifacts"] = [
+        {
+            "artifact_id": "art_summary",
+            "message_id": "msg_summary",
+            "attempt_id": "att_summary",
+            "job_id": "job_summary",
+            "reply_id": "rep_summary",
+            "from_agent": "planner",
+            "path": "docs/summary.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:02+00:00",
+        }
+    ]
+    store.save(state)
+
+    exit_code = cli.main(["leader", "summary", "--plan-id", "pln_summary"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["plan_id"] == "pln_summary"
+    assert payload["status"] == "ready"
+    assert payload["reply_count"] == 1
+    assert payload["artifact_count"] == 1
+    assert payload["summary"] == "1 dispatched step has replies; 1 artifact recorded."
+    assert payload["plan_status_command"] == "agentdeck plan status --plan-id pln_summary"
+    assert payload["review_command"] == "agentdeck leader review --plan-id pln_summary"
+    assert payload["steps"] == [
+        {
+            "step": 1,
+            "agent_id": "planner",
+            "role": "planning",
+            "task": "整理方案",
+            "approval_id": "apv_summary",
+            "message_id": "msg_summary",
+            "attempt_id": "att_summary",
+            "job_id": "job_summary",
+            "reply_id": "rep_summary",
+            "reply_text": "status: completed\nsummary: planner delivered.\nfull_output_path: docs/summary.md",
+            "artifact_count": 1,
+            "artifacts": [
+                {
+                    "artifact_id": "art_summary",
+                    "path": "docs/summary.md",
+                    "kind": "markdown",
+                    "status": "created",
+                    "trace_command": "agentdeck trace --id art_summary",
+                }
+            ],
+            "trace_command": "agentdeck trace --id msg_summary",
+        }
+    ]
+    assert payload["controls"] == [
+        {
+            "kind": "plan_status",
+            "label": "Plan status",
+            "command": "agentdeck plan status --plan-id pln_summary",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "review",
+            "label": "Review plan",
+            "command": "agentdeck leader review --plan-id pln_summary",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "trace",
+            "label": "Trace step",
+            "command": "agentdeck trace --id msg_summary",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+    assert StateStore(root).load() == state
+
+
+def test_leader_summary_refuses_contract_violation(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "坏 summary 不能输出"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    state_before = StateStore(root).load()
+
+    def broken_validation(_payload):
+        return {"ok": False, "errors": ["missing leader_summary field: summary"]}
+
+    monkeypatch.setattr(cli, "validate_leader_summary_contract", broken_validation)
+
+    exit_code = cli.main(["leader", "summary", "--plan-id", plan_id])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "Leader summary contract validation failed" in captured.err
+    assert "missing leader_summary field: summary" in captured.err
+    assert StateStore(root).load() == state_before
+
+
+def test_leader_summary_rejects_unknown_plan_id(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "summary", "--plan-id", "pln_missing"])
+
+    assert exit_code == 1
+    assert "unknown plan: pln_missing" in capsys.readouterr().err
 
 
 def test_leader_review_rejects_unknown_plan_id(tmp_path, monkeypatch, capsys) -> None:

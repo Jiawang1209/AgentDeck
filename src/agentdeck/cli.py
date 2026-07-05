@@ -38,6 +38,7 @@ from .contracts import (
     leader_chat_contract_response,
     leader_chat_intent_placeholder_blocker,
     leader_review_contract_response,
+    leader_summary_contract_response,
     project_view_contract_response,
     runtime_agent_controls,
     trace_contract_response,
@@ -52,6 +53,7 @@ from .contracts import (
     validate_leader_action_contract,
     validate_leader_chat_contract,
     validate_leader_review_contract,
+    validate_leader_summary_contract,
     validate_project_view_contract,
     validate_trace_contract,
     validate_workbench_contract,
@@ -1221,6 +1223,7 @@ def _workbench_contracts_card() -> dict[str, object]:
         "agent_runtime_contract": "agentdeck contract agent-runtime",
         "leader_chat_contract": "agentdeck contract leader-chat",
         "leader_review_contract": "agentdeck contract leader-review",
+        "leader_summary_contract": "agentdeck contract leader-summary",
         "project_view_contract": "agentdeck contract project-view",
         "events_contract": "agentdeck contract events",
         "doctor_contract": "agentdeck contract doctor",
@@ -1881,6 +1884,13 @@ def contract_leader_actions_command(args: argparse.Namespace) -> int:
 def contract_leader_review_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-review-schema.md"
     payload = leader_review_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_leader_summary_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-summary-schema.md"
+    payload = leader_summary_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -2731,6 +2741,119 @@ def leader_review_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def leader_summary_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if _project_view_payload_or_error(config, store) is None:
+        return 1
+    try:
+        payload = _leader_summary_payload(store, args.plan_id)
+    except KeyError:
+        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    validation = validate_leader_summary_contract(payload)
+    if not validation["ok"]:
+        print("Leader summary contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def _leader_summary_payload(store: StateStore, plan_id: str) -> dict[str, object]:
+    plan = store.plan_by_id(plan_id)
+    plan_status = store.plan_status(plan_id)
+    state = store.load()
+    replies_by_message = {reply.get("message_id"): reply for reply in state.get("replies", [])}
+    artifacts_by_message: dict[object, list[dict[str, object]]] = {}
+    for artifact in state.get("artifacts", []):
+        artifacts_by_message.setdefault(artifact.get("message_id"), []).append(artifact)
+    steps = []
+    reply_count = 0
+    artifact_count = 0
+    for step in plan_status.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        message_id = step.get("message_id")
+        reply = replies_by_message.get(message_id)
+        artifacts = artifacts_by_message.get(message_id, [])
+        if reply is not None:
+            reply_count += 1
+        artifact_count += len(artifacts)
+        trace_id = message_id or step.get("job_id") or step.get("approval_id")
+        steps.append(
+            {
+                "step": step.get("step"),
+                "agent_id": step.get("agent_id"),
+                "role": step.get("role"),
+                "task": step.get("task"),
+                "approval_id": step.get("approval_id"),
+                "message_id": message_id,
+                "attempt_id": step.get("attempt_id"),
+                "job_id": step.get("job_id"),
+                "reply_id": reply.get("reply_id") if isinstance(reply, dict) else None,
+                "reply_text": reply.get("text") if isinstance(reply, dict) else None,
+                "artifact_count": len(artifacts),
+                "artifacts": [_leader_summary_artifact(item) for item in artifacts],
+                "trace_command": _trace_command(trace_id) if trace_id else None,
+            }
+        )
+    controls = [
+        _control(
+            kind="plan_status",
+            label="Plan status",
+            command=f"agentdeck plan status --plan-id {plan_id}",
+            safety="inspect",
+        ),
+        _control(
+            kind="review",
+            label="Review plan",
+            command=f"agentdeck leader review --plan-id {plan_id}",
+            safety="inspect",
+        ),
+    ]
+    for step in steps:
+        if step.get("trace_command"):
+            controls.append(
+                _control(
+                    kind="trace",
+                    label="Trace step",
+                    command=step.get("trace_command"),
+                    safety="inspect",
+                )
+            )
+            break
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "plan_id": plan_id,
+        "task": plan.get("task"),
+        "status": "ready" if reply_count else "waiting",
+        "provider": plan.get("provider"),
+        "model": plan.get("model"),
+        "counts": plan_status.get("counts"),
+        "reply_count": reply_count,
+        "artifact_count": artifact_count,
+        "summary": f"{reply_count} dispatched step has replies; {artifact_count} artifact recorded.",
+        "plan_status_command": f"agentdeck plan status --plan-id {plan_id}",
+        "review_command": f"agentdeck leader review --plan-id {plan_id}",
+        "steps": steps,
+        "controls": controls,
+    }
+
+
+def _leader_summary_artifact(artifact: dict[str, object]) -> dict[str, object]:
+    artifact_id = artifact.get("artifact_id")
+    return {
+        "artifact_id": artifact_id,
+        "path": artifact.get("path"),
+        "kind": artifact.get("kind"),
+        "status": artifact.get("status"),
+        "trace_command": _trace_command(artifact_id) if artifact_id else None,
+    }
+
+
 def _leader_review_payload(review: dict[str, object]) -> dict[str, object]:
     next_command = _leader_review_next_command(review)
     return {
@@ -2751,7 +2874,7 @@ def _leader_review_next_command(review: dict[str, object]) -> str | None:
     if next_action == "wait_for_reply" and review.get("agent_id") and review.get("message_id"):
         return f"agentdeck capture-reply --agent {review['agent_id']} --message-id {review['message_id']}"
     if next_action == "summarize" and review.get("plan_id"):
-        return f"agentdeck plan status --plan-id {review['plan_id']}"
+        return f"agentdeck leader summary --plan-id {review['plan_id']}"
     if next_action == "wait_for_approval":
         return "agentdeck approval list"
     return None
@@ -2941,7 +3064,7 @@ def _next_command_for_review(review: dict[str, object]) -> str | None:
     if action == "wait_for_approval" and review.get("plan_id"):
         return f"agentdeck approval create-from-plan --plan-id {review['plan_id']}"
     if action == "summarize" and review.get("plan_id"):
-        return f"agentdeck plan status --plan-id {review['plan_id']}"
+        return f"agentdeck leader summary --plan-id {review['plan_id']}"
     return None
 
 
@@ -6180,6 +6303,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include a GUI-ready Leader review response example",
     )
     contract_leader_review.set_defaults(func=contract_leader_review_command)
+    contract_leader_summary = contract_subparsers.add_parser(
+        "leader-summary",
+        help="Show Leader summary response contract discovery metadata",
+    )
+    contract_leader_summary.add_argument(
+        "--example",
+        action="store_true",
+        help="Include a GUI-ready Leader summary response example",
+    )
+    contract_leader_summary.set_defaults(func=contract_leader_summary_command)
     contract_trace = contract_subparsers.add_parser(
         "trace",
         help="Show communication trace contract discovery metadata",
@@ -6280,6 +6413,9 @@ def build_parser() -> argparse.ArgumentParser:
     leader_review = leader_subparsers.add_parser("review", help="Review plan progress and recommend next action")
     leader_review.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
     leader_review.set_defaults(func=leader_review_command)
+    leader_summary = leader_subparsers.add_parser("summary", help="Summarize replied steps for a saved Leader plan")
+    leader_summary.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
+    leader_summary.set_defaults(func=leader_summary_command)
     leader_next = leader_subparsers.add_parser("next", help="Suggest and persist the next approval-gated action")
     leader_next.add_argument("--plan-id", help="Plan id to inspect; defaults to latest saved plan")
     leader_next.set_defaults(func=leader_next_command)

@@ -85,6 +85,12 @@ CONTRACT_INDEX_SPECS = (
         "leader-review-schema.md",
     ),
     (
+        "leader-summary",
+        "agentdeck contract leader-summary",
+        "agentdeck contract leader-summary --example",
+        "leader-summary-schema.md",
+    ),
+    (
         "leader-action",
         "agentdeck contract leader-action",
         "agentdeck contract leader-action --example",
@@ -856,6 +862,7 @@ WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "agent_runtime_contract",
     "leader_chat_contract",
     "leader_review_contract",
+    "leader_summary_contract",
     "project_view_contract",
     "events_contract",
     "doctor_contract",
@@ -918,6 +925,49 @@ LEADER_REVIEW_CONTROL_FIELDS = (
     "enabled",
     "blocker",
 )
+
+LEADER_SUMMARY_RESPONSE_FIELDS = (
+    "schema_version",
+    "plan_id",
+    "task",
+    "status",
+    "provider",
+    "model",
+    "counts",
+    "reply_count",
+    "artifact_count",
+    "summary",
+    "plan_status_command",
+    "review_command",
+    "steps",
+    "controls",
+)
+
+LEADER_SUMMARY_STEP_FIELDS = (
+    "step",
+    "agent_id",
+    "role",
+    "task",
+    "approval_id",
+    "message_id",
+    "attempt_id",
+    "job_id",
+    "reply_id",
+    "reply_text",
+    "artifact_count",
+    "artifacts",
+    "trace_command",
+)
+
+LEADER_SUMMARY_ARTIFACT_FIELDS = (
+    "artifact_id",
+    "path",
+    "kind",
+    "status",
+    "trace_command",
+)
+
+LEADER_SUMMARY_CONTROL_FIELDS = LEADER_REVIEW_CONTROL_FIELDS
 
 LEADER_CHAT_EXPLANATION_FIELDS = (
     "mode",
@@ -1729,6 +1779,36 @@ def leader_review_contract_response(contract_path: Path, include_example: bool =
     return payload
 
 
+def leader_summary_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "summary_command": "agentdeck leader summary --plan-id <id>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(LEADER_SUMMARY_RESPONSE_FIELDS),
+        "step_fields": list(LEADER_SUMMARY_STEP_FIELDS),
+        "artifact_fields": list(LEADER_SUMMARY_ARTIFACT_FIELDS),
+        "control_fields": list(LEADER_SUMMARY_CONTROL_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+        "leader_review_contract": "agentdeck contract leader-review",
+        "trace_contract": "agentdeck contract trace",
+    }
+
+
+def leader_summary_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = leader_summary_contract_payload(contract_path)
+    if include_example:
+        example = leader_summary_example()
+        payload["example"] = True
+        payload["example_response_fields"] = list(example)
+        payload["example_step_fields"] = list(example["steps"][0])
+        payload["example_artifact_fields"] = list(example["steps"][0]["artifacts"][0])
+        payload["example_control_fields"] = list(example["controls"][0])
+        payload["example_leader_summary"] = example
+    return payload
+
+
 def trace_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -2021,6 +2101,55 @@ def validate_leader_review_contract(payload: dict[str, object]) -> dict[str, obj
         )
         if not has_capture_reply:
             errors.append("wait_for_reply requires capture_reply control")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_leader_summary_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in LEADER_SUMMARY_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing leader_summary field: {field}")
+    plan_id = payload.get("plan_id")
+    if plan_id:
+        if payload.get("plan_status_command") != f"agentdeck plan status --plan-id {plan_id}":
+            errors.append("plan_status_command must match plan_id")
+        if payload.get("review_command") != f"agentdeck leader review --plan-id {plan_id}":
+            errors.append("review_command must match plan_id")
+    steps = payload.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict):
+                errors.append("leader summary steps must be objects")
+                continue
+            for field in LEADER_SUMMARY_STEP_FIELDS:
+                if field not in step:
+                    errors.append(f"missing leader summary step field: {field}")
+            artifacts = step.get("artifacts")
+            if isinstance(artifacts, list):
+                for artifact in artifacts:
+                    if not isinstance(artifact, dict):
+                        errors.append("leader summary artifacts must be objects")
+                        continue
+                    for field in LEADER_SUMMARY_ARTIFACT_FIELDS:
+                        if field not in artifact:
+                            errors.append(f"missing leader summary artifact field: {field}")
+            elif "artifacts" in step:
+                errors.append("leader summary step artifacts must be a list")
+    elif "steps" in payload:
+        errors.append("steps must be a list")
+    controls = payload.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("leader summary controls must be objects")
+                continue
+            for field in LEADER_SUMMARY_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"missing leader summary control field: {field}")
+            if "enabled" in control and not isinstance(control.get("enabled"), bool):
+                errors.append("leader summary control enabled must be a boolean")
+    elif "controls" in payload:
+        errors.append("controls must be a list")
     return {"ok": not errors, "errors": errors}
 
 
@@ -4092,6 +4221,7 @@ def workbench_example() -> dict[str, object]:
             "agent_runtime_contract": "agentdeck contract agent-runtime",
             "leader_chat_contract": "agentdeck contract leader-chat",
             "leader_review_contract": "agentdeck contract leader-review",
+            "leader_summary_contract": "agentdeck contract leader-summary",
             "project_view_contract": "agentdeck contract project-view",
             "events_contract": "agentdeck contract events",
             "doctor_contract": "agentdeck contract doctor",
@@ -4652,6 +4782,81 @@ def leader_review_example() -> dict[str, object]:
                 "label": "Capture reply",
                 "command": "agentdeck capture-reply --agent planner --message-id msg_example",
                 "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+
+
+def leader_summary_example() -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "plan_id": "pln_example",
+        "task": "Build a GUI-ready recovery panel",
+        "status": "ready",
+        "provider": "fake",
+        "model": "fake-plan",
+        "counts": {
+            "steps": 1,
+            "approvals": 1,
+            "pending": 0,
+            "approved": 0,
+            "rejected": 0,
+            "dispatched": 1,
+        },
+        "reply_count": 1,
+        "artifact_count": 1,
+        "summary": "1 dispatched step has replies; 1 artifact recorded.",
+        "plan_status_command": "agentdeck plan status --plan-id pln_example",
+        "review_command": "agentdeck leader review --plan-id pln_example",
+        "steps": [
+            {
+                "step": 1,
+                "agent_id": "planner",
+                "role": "Planner",
+                "task": "Draft the recovery panel plan.",
+                "approval_id": "apv_example",
+                "message_id": "msg_example",
+                "attempt_id": "att_example",
+                "job_id": "job_example",
+                "reply_id": "rep_example",
+                "reply_text": "status: completed\nsummary: planner delivered.",
+                "artifact_count": 1,
+                "artifacts": [
+                    {
+                        "artifact_id": "art_example",
+                        "path": "docs/recovery-panel.md",
+                        "kind": "markdown",
+                        "status": "ready",
+                        "trace_command": "agentdeck trace --id art_example",
+                    }
+                ],
+                "trace_command": "agentdeck trace --id msg_example",
+            }
+        ],
+        "controls": [
+            {
+                "kind": "plan_status",
+                "label": "Plan status",
+                "command": "agentdeck plan status --plan-id pln_example",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "review",
+                "label": "Review plan",
+                "command": "agentdeck leader review --plan-id pln_example",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "trace",
+                "label": "Trace step",
+                "command": "agentdeck trace --id msg_example",
+                "safety": "inspect",
                 "enabled": True,
                 "blocker": None,
             },

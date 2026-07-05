@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add a GUI-ready Leader summary surface
+
+- 新增 `agentdeck leader summary --plan-id <id>` 只读入口：当 `leader review` 进入 `next_action=summarize` 后，可聚合已派发 step 的 replies、artifacts、trace commands 和 plan status counters，返回 GUI-ready summary card。
+- 调整 `leader review` / `leader next` 的 summarize 下一步：不再回退到 `agentdeck plan status --plan-id <id>`，而是指向 `agentdeck leader summary --plan-id <id>`；该 summary 命令不调用 provider、不读取 tmux pane、不 capture reply、不创建 approval/action/message/job/inbox、不写 state。
+- 新增 `agentdeck contract leader-summary` / `--example`，并加入 `agentdeck contract list` 与 workbench `contracts_card`；新增 `docs/contracts/leader-summary-schema.md`，同步 contract index、workbench schema、leader-review schema、README、AGENT.md 和 CLAUDE.md。
+- 新增 `validate_leader_summary_contract()`：校验 response、steps、artifacts、controls 字段，以及 `plan_status_command` / `review_command` 与 `plan_id` 对齐；live `leader summary` 输出前自校验，失败时拒绝打印半坏 JSON。
+- 验证记录：已先确认红测失败，`agentdeck leader summary` 最初是 argparse unknown command，随后 `agentdeck contract leader-summary` 和 contract index 也缺失；实现后目标测试 `conda run -n agentdeck pytest -q tests/test_agent_cli.py::test_contract_list_discovers_all_gui_contracts tests/test_agent_cli.py::test_contract_leader_summary_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_summary_example_exports_gui_ready_response tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli tests/test_contracts.py::test_leader_summary_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_summary_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_summary_contract_accepts_example tests/test_contracts.py::test_validate_leader_summary_contract_requires_response_step_artifact_and_control_fields tests/test_contracts.py::test_validate_leader_summary_contract_rejects_mismatched_plan_commands tests/test_leader_cli.py::test_leader_summary_returns_replies_and_artifacts_without_mutating_state tests/test_leader_cli.py::test_leader_summary_refuses_contract_violation tests/test_leader_cli.py::test_leader_summary_rejects_unknown_plan_id` 12 项通过；聚焦回归 `conda run -n agentdeck pytest -q tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py` 312 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 333 项通过。
+
 ### Current - Add a GUI-ready artifacts index
 
 - 新增 `agentdeck artifacts` 只读入口：输出同源 ProjectView `artifacts` 摘要、ProjectView/trace 契约入口和 `trace_command_template`，供 GUI/TUI 直接渲染 worker 产物索引。

@@ -42,6 +42,7 @@ The index currently lists these contract names in order:
 - `leader-chat`
 - `leader-actions`
 - `leader-review`
+- `leader-summary`
 - `leader-action`
 - `approvals`
 - `inbox`

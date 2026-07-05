@@ -493,6 +493,7 @@ The card intentionally uses compact ProjectView recovery event summaries. Use `e
   "agent_runtime_contract": "agentdeck contract agent-runtime",
   "leader_chat_contract": "agentdeck contract leader-chat",
   "leader_review_contract": "agentdeck contract leader-review",
+  "leader_summary_contract": "agentdeck contract leader-summary",
   "project_view_contract": "agentdeck contract project-view",
   "events_contract": "agentdeck contract events",
   "doctor_contract": "agentdeck contract doctor",
@@ -500,7 +501,7 @@ The card intentionally uses compact ProjectView recovery event summaries. Use `e
 }
 ```
 
-This card lets GUI/TUI clients bootstrap from a single workbench snapshot and then discover the full machine-readable contract index on demand, including the dedicated `controls` command palette contract, the `agent-runtime` command contract for visible tmux pane controls, the `leader-chat` response contract for natural-language Leader interactions, and the `artifacts` contract for the read-only worker output index. It is static metadata and does not read state, inspect tmux panes, call providers, or execute any contract command.
+This card lets GUI/TUI clients bootstrap from a single workbench snapshot and then discover the full machine-readable contract index on demand, including the dedicated `controls` command palette contract, the `agent-runtime` command contract for visible tmux pane controls, the `leader-chat` response contract for natural-language Leader interactions, the `leader-summary` response contract for deterministic reply/artifact aggregation, and the `artifacts` contract for the read-only worker output index. It is static metadata and does not read state, inspect tmux panes, call providers, or execute any contract command.
 
 When `recovery.recommended_action.source` is:
 
