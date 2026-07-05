@@ -102,6 +102,7 @@ Worker 不应该：
 - Workbench snapshot contract 见 `docs/contracts/workbench-schema.md`；`agentdeck contract workbench --example` 会返回稳定一屏工作台示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Agent runtime contract 见 `docs/contracts/agent-runtime-schema.md`；`agentdeck contract agent-runtime --example` 会返回稳定可见 tmux runtime 示例，包含 capture/refresh 响应字段，字段常量和 example fixture 都在 `src/agentdeck/contracts.py`。
 - Leader actions queue contract 见 `docs/contracts/leader-actions-schema.md`；`agentdeck contract leader-actions --example` 会返回稳定队列示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
+- Leader review response contract 见 `docs/contracts/leader-review-schema.md`；`agentdeck contract leader-review --example` 会返回稳定 review 响应示例，字段常量和 example fixture 都在 `src/agentdeck/contracts.py`。修改 `leader review` 的 `next_command` 或 `controls[]` 时必须同步该 contract。
 - Leader action detail contract 见 `docs/contracts/leader-action-schema.md`；`agentdeck contract leader-action --example` 会返回稳定 action detail 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Approval queue contract 见 `docs/contracts/approvals-schema.md`；`agentdeck contract approvals --example` 会返回稳定 approval queue 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Inbox queue contract 见 `docs/contracts/inbox-schema.md`；`agentdeck contract inbox --example` 会返回稳定 inbox 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。

@@ -29,6 +29,8 @@ from agentdeck.contracts import (
     leader_action_contract_response,
     leader_chat_contract_payload,
     leader_chat_contract_response,
+    leader_review_contract_payload,
+    leader_review_contract_response,
     project_view_contract_payload,
     project_view_contract_response,
     trace_contract_payload,
@@ -358,6 +360,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "agent-runtime",
         "leader-chat",
         "leader-actions",
+        "leader-review",
         "leader-action",
         "approvals",
         "inbox",
@@ -1325,6 +1328,37 @@ def test_contract_leader_actions_example_exports_gui_ready_queue(capsys) -> None
     assert example["actions"][0]["controls"][0]["command"] == example["actions"][0]["preview_command"]
     assert example["actions"][0]["controls"][1]["command"] == example["actions"][0]["apply_command"]
     assert example["actions"][0]["apply_command"] == "agentdeck leader apply-action --action-id act_example"
+
+
+def test_contract_leader_review_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "leader-review"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = leader_review_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["review_command"] == "agentdeck leader review --plan-id <id>"
+    assert payload["contract_path"].endswith("docs/contracts/leader-review-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == expected["response_fields"]
+    assert payload["control_fields"] == expected["control_fields"]
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+
+
+def test_contract_leader_review_example_exports_gui_ready_response(capsys) -> None:
+    exit_code = cli.main(["contract", "leader-review", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = leader_review_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_leader_review"]
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_control_fields"] == payload["control_fields"]
+    assert set(payload["example_control_fields"]) == set(example["controls"][0])
+    assert example["next_command"] == "agentdeck capture-reply --agent planner --message-id msg_example"
+    assert example["controls"][1]["command"] == example["next_command"]
 
 
 def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None:

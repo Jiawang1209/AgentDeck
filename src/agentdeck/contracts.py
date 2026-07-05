@@ -73,6 +73,12 @@ CONTRACT_INDEX_SPECS = (
         "leader-actions-schema.md",
     ),
     (
+        "leader-review",
+        "agentdeck contract leader-review",
+        "agentdeck contract leader-review --example",
+        "leader-review-schema.md",
+    ),
+    (
         "leader-action",
         "agentdeck contract leader-action",
         "agentdeck contract leader-action --example",
@@ -596,6 +602,27 @@ LEADER_ACTIONS_LIST_FIELDS = (
     "count",
     "recommended_action_id",
     "actions",
+)
+
+LEADER_REVIEW_RESPONSE_FIELDS = (
+    "plan_id",
+    "next_action",
+    "reason",
+    "approval_id",
+    "agent_id",
+    "message_id",
+    "replies",
+    "next_command",
+    "controls",
+)
+
+LEADER_REVIEW_CONTROL_FIELDS = (
+    "kind",
+    "label",
+    "command",
+    "safety",
+    "enabled",
+    "blocker",
 )
 
 LEADER_CHAT_EXPLANATION_FIELDS = (
@@ -1219,6 +1246,30 @@ def leader_actions_contract_response(contract_path: Path, include_example: bool 
         payload["example_list_fields"] = list(example)
         payload["example_action_item_fields"] = list(example["actions"][0])
         payload["example_leader_actions"] = example
+    return payload
+
+
+def leader_review_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "review_command": "agentdeck leader review --plan-id <id>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(LEADER_REVIEW_RESPONSE_FIELDS),
+        "control_fields": list(LEADER_REVIEW_CONTROL_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def leader_review_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = leader_review_contract_payload(contract_path)
+    if include_example:
+        example = leader_review_example()
+        payload["example"] = True
+        payload["example_response_fields"] = list(example)
+        payload["example_control_fields"] = list(example["controls"][0])
+        payload["example_leader_review"] = example
     return payload
 
 
@@ -2902,6 +2953,37 @@ def leader_actions_example() -> dict[str, object]:
         "count": 1,
         "recommended_action_id": "act_example",
         "actions": [{field: action.get(field) for field in PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS}],
+    }
+
+
+def leader_review_example() -> dict[str, object]:
+    return {
+        "plan_id": "pln_example",
+        "next_action": "wait_for_reply",
+        "reason": "dispatched step has no reply yet",
+        "approval_id": None,
+        "agent_id": "planner",
+        "message_id": "msg_example",
+        "replies": [],
+        "next_command": "agentdeck capture-reply --agent planner --message-id msg_example",
+        "controls": [
+            {
+                "kind": "preview",
+                "label": "Preview message lineage",
+                "command": "agentdeck trace --id msg_example",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "capture_reply",
+                "label": "Capture reply",
+                "command": "agentdeck capture-reply --agent planner --message-id msg_example",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
     }
 
 

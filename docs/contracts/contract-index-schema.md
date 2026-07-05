@@ -40,6 +40,7 @@ The index currently lists these contract names in order:
 - `agent-runtime`
 - `leader-chat`
 - `leader-actions`
+- `leader-review`
 - `leader-action`
 - `approvals`
 - `inbox`

@@ -19,6 +19,8 @@ from agentdeck.contracts import (
     INBOX_QUEUE_FIELDS,
     LEADER_ACTION_DETAIL_FIELDS,
     LEADER_ACTIONS_LIST_FIELDS,
+    LEADER_REVIEW_CONTROL_FIELDS,
+    LEADER_REVIEW_RESPONSE_FIELDS,
     LEADER_CHAT_EXPLANATION_FIELDS,
     LEADER_CHAT_INTENT_CARD_FIELDS,
     LEADER_CHAT_INTENT_CONTROL_FIELDS,
@@ -71,6 +73,9 @@ from agentdeck.contracts import (
     leader_actions_contract_payload,
     leader_actions_contract_response,
     leader_actions_example,
+    leader_review_contract_payload,
+    leader_review_contract_response,
+    leader_review_example,
     continue_contract_payload,
     continue_contract_response,
     continue_example,
@@ -113,6 +118,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "leader-chat-schema.md",
         "leader-actions-schema.md",
         "leader-action-schema.md",
+        "leader-review-schema.md",
         "approvals-schema.md",
         "inbox-schema.md",
         "trace-schema.md",
@@ -127,7 +133,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 12
+    assert payload["count"] == 13
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -138,6 +144,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "agent-runtime",
         "leader-chat",
         "leader-actions",
+        "leader-review",
         "leader-action",
         "approvals",
         "inbox",
@@ -940,6 +947,41 @@ def test_validate_leader_action_contract_requires_embedded_recovery_contract() -
         "ok": False,
         "errors": ["recovery: missing recovery pending field: leader_errors"],
     }
+
+
+def test_leader_review_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-review-schema.md"
+    contract_path.write_text("# Leader Review Contract\n", encoding="utf-8")
+
+    payload = leader_review_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["review_command"] == "agentdeck leader review --plan-id <id>"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == list(LEADER_REVIEW_RESPONSE_FIELDS)
+    assert payload["control_fields"] == list(LEADER_REVIEW_CONTROL_FIELDS)
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+
+
+def test_leader_review_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-review-schema.md"
+    contract_path.write_text("# Leader Review Contract\n", encoding="utf-8")
+
+    payload = leader_review_contract_response(contract_path, include_example=True)
+    example = leader_review_example()
+
+    assert payload["example"] is True
+    assert payload["example_leader_review"] == example
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_control_fields"] == payload["control_fields"]
+    assert set(payload["example_control_fields"]) == set(example["controls"][0])
+    assert example["next_action"] == "wait_for_reply"
+    assert example["next_command"] == "agentdeck capture-reply --agent planner --message-id msg_example"
+    assert example["controls"][0]["command"] == "agentdeck trace --id msg_example"
+    assert example["controls"][1]["command"] == example["next_command"]
+    assert example["controls"][1]["safety"] == "explicit_runtime"
 
 
 def test_leader_actions_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:

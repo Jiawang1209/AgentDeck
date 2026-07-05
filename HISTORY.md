@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add Leader review contract discovery
+
+- 新增 `agentdeck contract leader-review` / `--example`，公开 `agentdeck leader review --plan-id <id>` 的 `response_fields` 和 `control_fields`，让 GUI/TUI 能发现 review `next_command` 与 `controls[]` 的形状。
+- 将 `leader-review` 纳入 contract index，并新增 `docs/contracts/leader-review-schema.md`。
+- 同步 `README.md`、`CLAUDE.md`、`AGENT.md` 和测试。
+- 完整验证：已先确认红测失败，leader-review contract helper/CLI 子命令最初不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli tests/test_contracts.py::test_leader_review_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_review_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_review_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_review_example_exports_gui_ready_response -q` 5 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 204 项通过；`conda run -n agentdeck pytest -q` 219 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-review-contract-smoke-ok`。
+
 ### Current - Add Leader review controls for reply capture
 
 - 扩展 `agentdeck leader review --plan-id <id>` 输出：新增 `next_command` 和 GUI-ready `controls[]`，让 GUI/自然语言壳能直接渲染 review 建议而不必解析 `next_action`。

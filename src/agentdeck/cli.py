@@ -23,6 +23,7 @@ from .contracts import (
     leader_chat_capability_card,
     leader_chat_contract_response,
     leader_chat_intent_placeholder_blocker,
+    leader_review_contract_response,
     project_view_contract_response,
     runtime_agent_controls,
     trace_contract_response,
@@ -933,6 +934,13 @@ def contract_leader_action_command(args: argparse.Namespace) -> int:
 def contract_leader_actions_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-actions-schema.md"
     payload = leader_actions_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_leader_review_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-review-schema.md"
+    payload = leader_review_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -3446,6 +3454,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include a GUI-ready Leader action queue example",
     )
     contract_leader_actions.set_defaults(func=contract_leader_actions_command)
+    contract_leader_review = contract_subparsers.add_parser(
+        "leader-review",
+        help="Show Leader review response contract discovery metadata",
+    )
+    contract_leader_review.add_argument(
+        "--example",
+        action="store_true",
+        help="Include a GUI-ready Leader review response example",
+    )
+    contract_leader_review.set_defaults(func=contract_leader_review_command)
     contract_trace = contract_subparsers.add_parser(
         "trace",
         help="Show communication trace contract discovery metadata",
