@@ -70,6 +70,7 @@ agentdeck leader chat --message "追踪 planner 当前 inbox"
 agentdeck leader chat --message "确认 planner 当前 inbox"
 agentdeck leader chat --message "查看审批"
 agentdeck leader chat --message "批准当前审批"
+agentdeck leader chat --message "派发当前审批"
 agentdeck leader chat-history
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
@@ -273,6 +274,7 @@ agentdeck leader chat --message "追踪 planner 当前 inbox"
 agentdeck leader chat --message "确认 planner 当前 inbox"
 agentdeck leader chat --message "查看审批"
 agentdeck leader chat --message "批准当前审批"
+agentdeck leader chat --message "派发当前审批"
 agentdeck leader chat-history
 agentdeck continue
 agentdeck leader plan --task "设计自动 reply extraction"
@@ -298,7 +300,7 @@ agentdeck plan status --plan-id pln_xxx
 
 当人类输入 `agentdeck leader chat --message "查看 planner inbox"` 这类 inbox 意图时，chat 会进入只读 `mode=inbox`：它复用 `agentdeck inbox --agent <id>` 的队列 shape 返回 `inbox_card`，并建议 `agentdeck inbox --agent <id>`；当输入包含 `追踪`、`trace` 或 `lineage` 时，且该 agent 有 pending head，`next_command` 会变成该 head 的 `agentdeck trace --id <inbox_id>`；当输入包含 `确认`、`ack` 或 `acknowledge` 且该 head 可 ack 时，`next_command` 会变成该 head 的 `ack_command`，并标记 `safety=explicit_runtime` 与 `requires_explicit_user=true`。该模式只记录 chat turn，不执行 ack、不 dispatch、不 capture reply、不发送 tmux 输入。
 
-当人类输入 `agentdeck leader chat --message "查看审批"` 这类 approval 意图时，chat 会进入只读 `mode=approval`：它复用 `agentdeck approval list` 的队列 shape 返回 `approval_card`，并建议 `agentdeck approval list`；当输入包含 `批准` 或 `approve` 且存在 pending approval 时，`next_command` 会变成第一条 pending approval 的 `approve_command`，并标记 `safety=explicit_runtime` 与 `requires_explicit_user=true`。该模式只记录 chat turn，不执行 approve/reject/dispatch、不发送 tmux 输入。
+当人类输入 `agentdeck leader chat --message "查看审批"` 这类 approval 意图时，chat 会进入只读 `mode=approval`：它复用 `agentdeck approval list` 的队列 shape 返回 `approval_card`，并建议 `agentdeck approval list`；当输入包含 `批准` 或 `approve` 且存在 pending approval 时，`next_command` 会变成第一条 pending approval 的 `approve_command`；当输入包含 `派发` 或 `dispatch` 且存在 approved approval 时，`next_command` 会变成第一条 approved approval 的 `dispatch_command`。approve/dispatch 建议都会标记 `safety=explicit_runtime` 与 `requires_explicit_user=true`。该模式只记录 chat turn，不执行 approve/reject/dispatch、不发送 tmux 输入。
 
 `agentdeck contract leader-chat` 会公开 `continue_card_fields`，`--example` 会返回稳定的 continue-mode 示例和 `example_continue_card_fields`，供 GUI 或自然语言壳发现 `continue_card` 字段。chat 响应里的 `continue_card` 必须复用 `validate_continue_contract()` 校验，避免自然语言“继续”和独立 `agentdeck continue` 出现两套恢复卡片规则。chat 响应里的 `inbox_card` 必须复用 `validate_inbox_contract()` 校验，避免自然语言 inbox 视图和独立 `agentdeck inbox` 出现两套 mailbox 规则。chat 响应里的 `approval_card` 必须复用 `validate_approval_contract()` 校验，避免自然语言审批视图和独立 `agentdeck approval list` 出现两套 approval 规则。
 

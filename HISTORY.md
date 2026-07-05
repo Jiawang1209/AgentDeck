@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Suggest approved approval dispatch through Leader chat
+
+- 新增 `leader chat` approval dispatch 意图识别：`派发当前审批` 会在存在 approved approval 时建议第一条 approved approval 的 `dispatch_command`。
+- dispatch 意图仍保持 `mode=approval`，并在 `leader_explanation` 中标记 `action_kind=approval_dispatch`、`safety=explicit_runtime`、`requires_explicit_user=true`。
+- `leader chat` 只建议 approved approval 的 dispatch 命令，不执行 `approval dispatch`，不创建 message/job/inbox，不发送 tmux 输入。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 approval chat 可以推荐 `dispatch_command`，但执行仍必须由人显式运行。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching -q` 最初因 `next_command` 仍为 `agentdeck approval list` 失败；实现后 approval dispatch/inspect/approve 目标测试 3 项通过；leader-chat contract 目标测试 2 项通过；`conda run -n agentdeck pytest -q` 141 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `派发当前审批` 返回 `approval-dispatch-ok`，并确认 dispatch 未执行、message/job/inbox 仍为空。
+
 ### Current - Route approval intents through Leader chat
 
 - 扩展 `leader chat` response contract，新增正式 `approval_card` 字段，并在 `validate_leader_chat_contract()` 中复用 `validate_approval_contract()` 校验嵌入 approval queue。

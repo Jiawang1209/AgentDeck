@@ -112,7 +112,7 @@ Approval-mode responses include `approval_card`, which reuses the same queue sha
 }
 ```
 
-When `approval_card` is present, `validate_leader_chat_contract()` reuses `validate_approval_contract()` and prefixes nested errors with `approval_card:`. Approval-mode is read-only: it may recommend `agentdeck approval list` or the first pending approval's `approve_command`, but it must not approve, reject, dispatch work, or send tmux input.
+When `approval_card` is present, `validate_leader_chat_contract()` reuses `validate_approval_contract()` and prefixes nested errors with `approval_card:`. Approval-mode is read-only: it may recommend `agentdeck approval list`, the first pending approval's `approve_command`, or the first approved approval's `dispatch_command`, but it must not approve, reject, dispatch work, or send tmux input.
 
 ## Explanation
 
@@ -132,7 +132,7 @@ When `approval_card` is present, `validate_leader_chat_contract()` reuses `valid
 }
 ```
 
-`safety=plan_only` means the Leader only created a plan record. `safety=safe_apply` means the action can be applied through `agentdeck leader apply-action`. `safety=explicit_runtime` means the user must run the explicit command, such as dispatch, capture, inbox ack, or approval approve. `safety=safe_apply_completed` means a safe apply action already completed and the response may include `result_count`. `safety=inspect` means the response is only recommending a read-only inspection command.
+`safety=plan_only` means the Leader only created a plan record. `safety=safe_apply` means the action can be applied through `agentdeck leader apply-action`. `safety=explicit_runtime` means the user must run the explicit command, such as dispatch, capture, inbox ack, approval approve, or approval dispatch. `safety=safe_apply_completed` means a safe apply action already completed and the response may include `result_count`. `safety=inspect` means the response is only recommending a read-only inspection command.
 
 ## Boundaries
 
