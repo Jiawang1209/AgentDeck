@@ -53,6 +53,28 @@ PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS = (
     "target_id",
 )
 
+EVENTS_RESPONSE_FIELDS = (
+    "count",
+    "limit",
+    "since_event_id",
+    "latest_event_id",
+    "cursor_found",
+    "events",
+)
+
+EVENTS_CURSOR_FIELDS = (
+    "since_event_id",
+    "latest_event_id",
+    "cursor_found",
+)
+
+EVENTS_EVENT_ITEM_FIELDS = (
+    "event_id",
+    "event_type",
+    "created_at",
+    "payload",
+)
+
 APPROVAL_QUEUE_FIELDS = (
     "count",
     "approvals",
@@ -577,6 +599,32 @@ def doctor_contract_response(contract_path: Path, include_example: bool = False)
         payload["example_configured_leader_fields"] = list(example["configured_leader"])
         payload["example_provider_check_fields"] = list(example["deepseek"])
         payload["example_doctor"] = example
+    return payload
+
+
+def events_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "events_command": "agentdeck events",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(EVENTS_RESPONSE_FIELDS),
+        "cursor_fields": list(EVENTS_CURSOR_FIELDS),
+        "event_item_fields": list(EVENTS_EVENT_ITEM_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+        "workbench_contract": "agentdeck contract workbench",
+    }
+
+
+def events_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = events_contract_payload(contract_path)
+    if include_example:
+        example = events_example()
+        payload["example"] = True
+        payload["example_response_fields"] = list(example)
+        payload["example_event_item_fields"] = list(example["events"][0])
+        payload["example_events"] = example
     return payload
 
 
@@ -1494,6 +1542,24 @@ def doctor_example() -> dict[str, object]:
             "ok": False,
             "detail": "AGENTDECK_LEADER_API_KEY is not set; provider calls are disabled",
         },
+    }
+
+
+def events_example() -> dict[str, object]:
+    return {
+        "count": 1,
+        "limit": 20,
+        "since_event_id": "evt_old",
+        "latest_event_id": "evt_new",
+        "cursor_found": True,
+        "events": [
+            {
+                "event_id": "evt_new",
+                "event_type": "leader_plan_created",
+                "created_at": "2026-07-05T00:00:00+00:00",
+                "payload": {"plan_id": "pln_example"},
+            }
+        ],
     }
 
 

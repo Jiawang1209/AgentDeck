@@ -12,6 +12,8 @@ from agentdeck.contracts import (
     continue_contract_response,
     doctor_contract_payload,
     doctor_contract_response,
+    events_contract_payload,
+    events_contract_response,
     inbox_contract_payload,
     inbox_contract_response,
     leader_actions_contract_payload,
@@ -460,6 +462,39 @@ def test_contract_doctor_example_exports_gui_ready_diagnostics(capsys) -> None:
     assert set(payload["example_provider_check_fields"]) == set(example["deepseek"])
     assert example["doctor_command"] == "agentdeck doctor"
     assert example["configured_leader"]["setup_commands"][0].startswith("export DEEPSEEK_API_KEY=")
+
+
+def test_contract_events_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "events"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = events_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["events_command"] == "agentdeck events"
+    assert payload["contract_path"].endswith("docs/contracts/events-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == expected["response_fields"]
+    assert payload["cursor_fields"] == expected["cursor_fields"]
+    assert payload["event_item_fields"] == expected["event_item_fields"]
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+
+
+def test_contract_events_example_exports_gui_ready_timeline(capsys) -> None:
+    exit_code = cli.main(["contract", "events", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = events_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_events"]
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_event_item_fields"] == payload["event_item_fields"]
+    assert set(payload["example_event_item_fields"]) == set(example["events"][0])
+    assert example["since_event_id"] == "evt_old"
+    assert example["cursor_found"] is True
 
 
 def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:

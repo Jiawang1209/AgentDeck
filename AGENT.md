@@ -96,6 +96,7 @@ Worker 不应该：
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`。
 - ProjectView contract payload 和 example fixture 维护在 `src/agentdeck/contracts.py`，需要复用时优先 import 该模块。
 - Doctor diagnostics contract 见 `docs/contracts/doctor-schema.md`；`agentdeck contract doctor --example` 会返回稳定 doctor diagnostics 示例，字段常量和 example fixture 都在 `src/agentdeck/contracts.py`。
+- Events timeline contract 见 `docs/contracts/events-schema.md`；`agentdeck contract events --example` 会返回稳定 events timeline 示例，字段常量和 example fixture 都在 `src/agentdeck/contracts.py`。
 - Leader chat response contract 见 `docs/contracts/leader-chat-schema.md`；`agentdeck contract leader-chat --example` 会返回包含 `leader_explanation` 的稳定响应示例。
 - Workbench snapshot contract 见 `docs/contracts/workbench-schema.md`；`agentdeck contract workbench --example` 会返回稳定一屏工作台示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Leader actions queue contract 见 `docs/contracts/leader-actions-schema.md`；`agentdeck contract leader-actions --example` 会返回稳定队列示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。

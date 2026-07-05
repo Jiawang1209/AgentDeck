@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add events contract discovery
+
+- 新增 `agentdeck contract events` 和 `agentdeck contract events --example`，为 GUI/TUI 暴露审计事件时间线的 response、cursor metadata 和 event item 字段。
+- 新增 `docs/contracts/events-schema.md`，明确 `agentdeck events --limit`、`agentdeck events --since`、`cursor_found=false` fallback、以及 cursor 由 GUI/调用方持有且不写入 AgentDeck state。
+- 在 `src/agentdeck/contracts.py` 中新增 `EVENTS_RESPONSE_FIELDS`、`EVENTS_CURSOR_FIELDS`、`EVENTS_EVENT_ITEM_FIELDS`、`events_contract_payload()`、`events_contract_response()` 和 `events_example()`，让 CLI discovery 和可复用模块输出一致。
+- 更新 `README.md`、`CLAUDE.md` 和 `AGENT.md`，把 events timeline 纳入正式 contract discovery 清单。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_events_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_events_example_exports_gui_ready_timeline tests/test_contracts.py::test_events_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_events_contract_response_includes_example_without_drift -q` 最初因 `events_contract_payload` 和 `EVENTS_CURSOR_FIELDS` 不存在失败；实现后目标测试通过；`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_events_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_events_example_exports_gui_ready_timeline tests/test_contracts.py::test_events_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_events_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_events_since_returns_events_after_cursor_with_metadata -q` 通过；`conda run -n agentdeck pytest -q` 181 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `events-contract-example-ok` 和 `events-contract-live-ok`。
+
 ### Current - Add event timeline cursor queries
 
 - 扩展 `agentdeck events`：新增 `--since <event_id>`，让 GUI/TUI 在 `workbench.change_summary.has_new_events=true` 后，可以拉取 cursor 之后的完整审计事件详情。

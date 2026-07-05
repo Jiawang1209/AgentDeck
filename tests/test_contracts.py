@@ -6,6 +6,9 @@ from agentdeck.contracts import (
     APPROVAL_ITEM_FIELDS,
     APPROVAL_QUEUE_FIELDS,
     CONTINUE_CARD_FIELDS,
+    EVENTS_CURSOR_FIELDS,
+    EVENTS_EVENT_ITEM_FIELDS,
+    EVENTS_RESPONSE_FIELDS,
     INBOX_ITEM_FIELDS,
     INBOX_QUEUE_FIELDS,
     LEADER_ACTION_DETAIL_FIELDS,
@@ -60,6 +63,9 @@ from agentdeck.contracts import (
     doctor_contract_payload,
     doctor_contract_response,
     doctor_example,
+    events_contract_payload,
+    events_contract_response,
+    events_example,
     project_view_contract_payload,
     project_view_contract_response,
     project_view_example,
@@ -333,6 +339,38 @@ def test_doctor_contract_response_includes_example_without_drift(tmp_path: Path)
     assert example["configured_leader"]["setup_commands"][0] == (
         'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"'
     )
+
+
+def test_events_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "events-schema.md"
+    contract_path.write_text("# Events Contract\n", encoding="utf-8")
+
+    payload = events_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["events_command"] == "agentdeck events"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == list(EVENTS_RESPONSE_FIELDS)
+    assert payload["cursor_fields"] == list(EVENTS_CURSOR_FIELDS)
+    assert payload["event_item_fields"] == list(EVENTS_EVENT_ITEM_FIELDS)
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+
+
+def test_events_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "events-schema.md"
+    contract_path.write_text("# Events Contract\n", encoding="utf-8")
+
+    payload = events_contract_response(contract_path, include_example=True)
+    example = events_example()
+
+    assert payload["example"] is True
+    assert payload["example_events"] == example
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_event_item_fields"] == payload["event_item_fields"]
+    assert set(payload["example_event_item_fields"]) == set(example["events"][0])
 
 
 def test_validate_continue_contract_accepts_example() -> None:

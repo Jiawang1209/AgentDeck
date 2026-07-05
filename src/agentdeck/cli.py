@@ -14,6 +14,7 @@ from .contracts import (
     approval_contract_response,
     continue_contract_response,
     doctor_contract_response,
+    events_contract_response,
     inbox_contract_response,
     leader_actions_contract_response,
     leader_action_contract_response,
@@ -761,6 +762,13 @@ def contract_continue_command(args: argparse.Namespace) -> int:
 def contract_doctor_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "doctor-schema.md"
     payload = doctor_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_events_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "events-schema.md"
+    payload = events_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -2535,6 +2543,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_doctor.add_argument("--example", action="store_true", help="Include a GUI-ready doctor example")
     contract_doctor.set_defaults(func=contract_doctor_command)
+    contract_events = contract_subparsers.add_parser(
+        "events",
+        help="Show event timeline contract discovery metadata",
+    )
+    contract_events.add_argument("--example", action="store_true", help="Include a GUI-ready events example")
+    contract_events.set_defaults(func=contract_events_command)
     contract_workbench = contract_subparsers.add_parser(
         "workbench",
         help="Show workbench snapshot contract discovery metadata",
