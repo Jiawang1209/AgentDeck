@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Resolve current inbox from recovery in Leader chat
+
+- 扩展 `agentdeck leader chat` inbox intent：当用户输入 `"查看当前 inbox"`、`"追踪当前 inbox"` 或 `"确认当前 inbox"` 且 ProjectView recovery 指向 pending inbox 时，chat 会从 recovery `target_id` 反查 mailbox owner，并复用同源 `agentdeck inbox --agent <id>` queue shape。
+- 保持显式优先级和安全边界：`"查看 planner inbox"` / `"查看 leader inbox"` 仍优先按文本里的 agent 解析；只有 recovery source 是 inbox 时才解析未点名的“当前 inbox”，否则不猜目标 agent；自然语言 ack 仍只建议显式 `agentdeck ack ...`，不自动执行。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "查看当前 inbox"` 最初落入 `mode=plan`；实现后新增测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_resolves_current_inbox_from_recovery_without_agent_mention -q` 通过；相关回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_resolves_current_inbox_from_recovery_without_agent_mention tests/test_leader_cli.py::test_leader_chat_inspects_agent_inbox_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging tests/test_leader_cli.py::test_leader_chat_inspects_and_acknowledges_leader_inbox_without_provider_or_runtime tests/test_leader_cli.py::test_leader_chat_continue_embeds_inbox_card_for_pending_inbox tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 7 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 288 项通过。
+
 ### Current - Index inbox controls in workbench command registry
 
 - 扩展 `workbench.control_registry[]` 和 `agentdeck controls`：现在会索引当前可见 `inbox_card.items[].controls[]` 和固定 `leader_inbox_card.items[].controls[]`，以 `scope=inbox` 暴露 `kind=preview` / `kind=ack` 命令面板项。

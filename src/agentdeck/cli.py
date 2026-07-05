@@ -3230,6 +3230,27 @@ def _chat_inbox_agent_id(message: str, config: ProjectConfig) -> str | None:
     return None
 
 
+def _chat_recovery_inbox_agent_id(
+    message: str,
+    config: ProjectConfig,
+    store: StateStore,
+    project_view: dict[str, object],
+) -> str | None:
+    explicit_agent_id = _chat_inbox_agent_id(message, config)
+    if explicit_agent_id:
+        return explicit_agent_id
+    normalized = message.strip().lower()
+    mentions_inbox = any(token in normalized for token in ["inbox", "收件箱", "消息", "mailbox"])
+    wants_current = any(token in normalized for token in ["current", "当前", "现在", "this"])
+    if not mentions_inbox or not wants_current:
+        return None
+    recovery = project_view.get("recovery") if isinstance(project_view.get("recovery"), dict) else {}
+    recommended_action = recovery.get("recommended_action") if isinstance(recovery.get("recommended_action"), dict) else {}
+    if recommended_action.get("source") != "inbox":
+        return None
+    return _inbox_agent_id_for_item(store, recommended_action.get("target_id"))
+
+
 def _chat_wants_inbox_trace(message: str) -> bool:
     normalized = message.strip().lower()
     return any(token in normalized for token in ["trace", "追踪", "溯源", "lineage"])
@@ -5095,7 +5116,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
-    inbox_agent_id = _chat_inbox_agent_id(args.message, config)
+    inbox_agent_id = _chat_recovery_inbox_agent_id(args.message, config, store, project_view)
     if inbox_agent_id:
         inbox_card = _inbox_queue_payload(inbox_agent_id, store)
         validation = validate_inbox_contract(inbox_card)

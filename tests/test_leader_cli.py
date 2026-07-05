@@ -2271,6 +2271,75 @@ def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, mon
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_resolves_current_inbox_from_recovery_without_agent_mention(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["inbox"] = {
+        "planner": [
+            {
+                "inbox_id": "inb_current_head",
+                "event_type": "task_request",
+                "message_id": "msg_current",
+                "attempt_id": "att_current",
+                "job_id": "job_current",
+                "reply_id": None,
+                "from_actor": "leader",
+                "to_agent": "planner",
+                "task": "当前 recovery inbox",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看当前 inbox"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+    assert payload["mode"] == "inbox"
+    assert payload["next_command"] == "agentdeck inbox --agent planner"
+    assert payload["inbox_card"]["agent_id"] == "planner"
+    assert payload["inbox_card"]["head_inbox_id"] == "inb_current_head"
+    assert payload["leader_explanation"]["recommended_action_id"] == "inb_current_head"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["intent_card"]["controls"][-1]["label"] == "Open inbox"
+
+    exit_code = cli.main(["leader", "chat", "--message", "确认当前 inbox"])
+
+    assert exit_code == 0
+    ack_payload = json.loads(capsys.readouterr().out)
+    assert cli.validate_leader_chat_contract(ack_payload) == {"ok": True, "errors": []}
+    assert ack_payload["mode"] == "inbox"
+    assert ack_payload["next_command"] == "agentdeck ack --agent planner --inbox-id inb_current_head"
+    assert ack_payload["leader_explanation"]["action_kind"] == "inbox_ack"
+    assert ack_payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert ack_payload["leader_explanation"]["requires_explicit_user"] is True
+    assert ack_payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Acknowledge inbox item",
+        "command": "agentdeck ack --agent planner --inbox-id inb_current_head",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    state_after = StateStore(root).load()
+    assert state_after["inbox"]["planner"][0]["status"] == "pending"
+    assert [turn["next_command"] for turn in state_after["chat_turns"]] == [
+        "agentdeck inbox --agent planner",
+        "agentdeck ack --agent planner --inbox-id inb_current_head",
+    ]
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_suggests_trace_for_current_inbox_head(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)
