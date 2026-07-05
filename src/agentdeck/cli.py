@@ -188,6 +188,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Acknowledge inbox item"
     if re.fullmatch(r"agentdeck agent capture --agent [^\s]+ --lines \d+", command):
         return "Capture agent output"
+    if re.fullmatch(r"agentdeck capture-reply --agent [^\s]+ --message-id [^\s]+(?: --lines \d+)?", command):
+        return "Capture reply"
     if re.fullmatch(r"agentdeck inbox --agent [^\s]+", command):
         return "Open inbox"
     if re.fullmatch(r"agentdeck trace --id [^\s]+", command):
@@ -3122,6 +3124,35 @@ def _chat_capture_agent_id(message: str, config: ProjectConfig) -> str | None:
     return None
 
 
+def _chat_capture_reply_intent(message: str, config: ProjectConfig) -> tuple[str, str] | None:
+    normalized = message.strip().lower()
+    wants_capture_reply = any(
+        token in normalized
+        for token in [
+            "capture-reply",
+            "capture reply",
+            "capture the reply",
+            "捕获回复",
+            "捕获",
+            "回收",
+            "回收回复",
+            "收取",
+            "收取回复",
+            "提取",
+            "提取回复",
+        ]
+    ) and any(token in normalized for token in ["reply", "回复", "结果"])
+    if not wants_capture_reply:
+        return None
+    message_match = re.search(r"\bmsg_[A-Za-z0-9][A-Za-z0-9_-]*\b", message)
+    if not message_match:
+        return None
+    for agent in config.agents:
+        if agent.agent_id.lower() in normalized:
+            return agent.agent_id, message_match.group(0)
+    return None
+
+
 def _chat_terminal_agent_id(message: str, config: ProjectConfig) -> str | None:
     normalized = message.strip().lower()
     wants_terminal = any(
@@ -3558,6 +3589,22 @@ def _leader_chat_explanation(
             "requires_explicit_user": False,
         }
     if mode == "capture":
+        capture_reply_match = re.fullmatch(
+            r"agentdeck capture-reply --agent ([^\s]+) --message-id ([^\s]+)(?: --lines \d+)?",
+            str(next_command or ""),
+        )
+        if capture_reply_match:
+            return {
+                "mode": mode,
+                "summary": "Leader recommends explicitly capturing a structured reply without reading the pane in chat.",
+                "reason": "human asked to capture an agent reply for a message",
+                "next_command": next_command,
+                "recommended_action_id": capture_reply_match.group(2),
+                "action_kind": "capture_reply",
+                "action_status": "suggested",
+                "safety": "explicit_runtime",
+                "requires_explicit_user": True,
+            }
         agent_id = capture_card.get("agent_id") if isinstance(capture_card, dict) else None
         return {
             "mode": mode,
@@ -4196,6 +4243,70 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": None,
             "capture_card": None,
             "terminal_card": terminal_card,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "lineage_card": None,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    capture_reply_intent = _chat_capture_reply_intent(args.message, config)
+    if capture_reply_intent is not None:
+        capture_reply_agent_id, capture_reply_message_id = capture_reply_intent
+        trace_card = _trace_card_for_query(store, capture_reply_message_id)
+        if trace_card is None:
+            print(f"unknown trace id: {capture_reply_message_id}", file=sys.stderr)
+            return 1
+        next_command = f"agentdeck capture-reply --agent {capture_reply_agent_id} --message-id {capture_reply_message_id}"
+        turn = store.record_chat_turn(
+            mode="capture",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="capture_reply",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "capture",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "capture",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "capture",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "capture_card": None,
+            "terminal_card": None,
+            "trace_card": trace_card,
             "inbox_card": None,
             "approval_card": None,
             "runtime_card": None,

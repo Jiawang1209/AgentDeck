@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add natural-language capture-reply suggestion
+
+- 扩展 `agentdeck leader chat`：当用户输入 `"捕获 planner 对 msg_xxx 的回复"`、`"回收 planner 对 msg_xxx 的结果"` 或 `"capture reply from planner for msg_xxx"` 这类 capture-reply 意图时，进入 `mode=capture`，嵌入同源 `trace_card`，并返回显式 `agentdeck capture-reply --agent <id> --message-id <msg_id>` 作为 `next_command`。
+- 保持 reply 回收边界：自然语言 capture-reply 只记录 chat turn，不读取 tmux pane、不写 reply、不创建 message/job/inbox、不 ack、不 dispatch；真正从 pane 捕获结构化回复并入账仍必须由人类显式运行返回的 `capture-reply` 命令。
+- 扩展 `leader_explanation` / `intent_card`：capture-reply 建议标记 `action_kind=capture_reply`、`safety=explicit_runtime`、`requires_explicit_user=true`，并让 GUI-ready next control 使用 `Capture reply` label；同一响应的 inspect control 指向 `agentdeck trace --id <msg_id>`。
+- 路由顺序明确：capture-reply intent 在普通 pane capture 和 plan/review fallback 之前处理，未知 message id 返回 `unknown trace id: <id>`，不落入 provider-backed planning。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "捕获 planner 对 msg_xxx 的回复"` 最初落入 `mode=review`；实现后又用红测捕获 `"回收 planner 对 msg_xxx 的结果"` 仍会落入 `mode=review` 的触发词缺口，并补齐中文 capture-reply 触发词；目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_capture_reply_intent_suggests_explicit_command_without_capturing -q` 通过；相邻回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_capture_reply_intent_suggests_explicit_command_without_capturing tests/test_leader_cli.py::test_leader_review_recommends_waiting_for_dispatched_reply tests/test_leader_cli.py::test_leader_chat_captures_agent_output_as_read_only_card tests/test_leader_cli.py::test_leader_chat_traces_specific_communication_id_without_mutating_runtime tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 6 项通过；聚焦 contract 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_capture_reply_intent_suggests_explicit_command_without_capturing tests/test_leader_cli.py::test_leader_review_recommends_waiting_for_dispatched_reply tests/test_leader_cli.py::test_leader_chat_captures_agent_output_as_read_only_card tests/test_leader_cli.py::test_leader_chat_traces_specific_communication_id_without_mutating_runtime tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 8 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 285 项通过。
+
 ### Current - Add natural-language task assignment approvals
 
 - 扩展 `agentdeck leader chat`：当用户输入 `"让 planner 规划 README 更新"`、`"指派 coder 修复测试"` 或 `"ask reviewer to review docs"` 这类明确给某个 agent 分配任务的自然语言时，进入 `mode=approval`，创建一条 pending approval，并嵌入同源 `approval_card`。

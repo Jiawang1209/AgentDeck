@@ -334,6 +334,8 @@ Capture-mode responses are returned when the human asks to inspect one spawned a
 
 When `capture_card` is present, `validate_leader_chat_contract()` checks `capture_card_fields`. Capture-mode records a chat turn and reads the requested tmux pane through the runtime backend, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, dispatch work, capture replies into the ledger, or send tmux input. If the requested agent is not spawned, the response must fail with `agent is not spawned: <agent_id>` rather than falling through to provider-backed planning.
 
+Natural-language capture-reply suggestions, such as `捕获 planner 对 msg_xxx 的回复` or `capture reply from planner for msg_xxx`, also return `mode=capture`, but they do not include `capture_card` and do not read the pane. They embed `trace_card` for the referenced message, set `next_command` to `agentdeck capture-reply --agent <agent_id> --message-id <message_id>`, and mark `leader_explanation.action_kind=capture_reply`, `safety=explicit_runtime`, and `requires_explicit_user=true`. Unknown message ids must fail with `unknown trace id: <id>` rather than falling through to provider-backed planning.
+
 Trace-mode responses are returned when the human asks to inspect one concrete communication id such as `msg_xxx`, `att_xxx`, `job_xxx`, `rep_xxx`, or `inb_xxx`. They return `trace_card`, reusing the same shape as `agentdeck trace --id <id>`:
 
 ```json
