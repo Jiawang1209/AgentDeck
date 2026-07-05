@@ -186,6 +186,7 @@ Worker 不应该：
 - Provider 失败会写入 `leader_errors[]`，并通过 `agentdeck status` 暴露摘要；失败不能创建 plan、approval、message、job 或 inbox。
 - `agentdeck doctor` 必须返回当前配置 Leader 的 `configured_leader` readiness 摘要，并让顶层 `ok` 受配置 provider readiness 影响；`configured_leader.setup_commands` 只能包含 placeholder export 命令，只能暴露缺失 env 名称，不能暴露密钥值。
 - `agentdeck leader plan` 和 `agentdeck leader chat` 默认读取 `.agentdeck/config.toml` 的 `[leader] provider/model`；`fake` provider 是显式 dry-run provider，不调用外部 LLM。
+- `agentdeck leader set-provider --provider <provider> --model <model>` 是持久切换默认 Leader provider 的显式命令；它只修改 `.agentdeck/config.toml` 的 `[leader] provider/model` 并追加 `leader_provider_updated` 事件，不调用 provider、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入；未知 provider 必须失败且不得修改配置。
 - `deepseek` provider 通过 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 调用 OpenAI-compatible `/chat/completions`，但仍然只生成 plan。
 - `openai-compatible` provider 通过 `AGENTDECK_LEADER_API_KEY`、`AGENTDECK_LEADER_BASE_URL` 和 `AGENTDECK_LEADER_MODEL` 调用 `/chat/completions`，但仍然只生成 plan。
 - `codex-cli` / `claude-cli` provider 是 CLI-backed Leader provider：它们通过本地 `codex exec` / `claude --print` 非交互调用为 `agent_id=leader` 生成同一 JSON plan schema；不得复用 worker tmux pane 作为 Leader，也不得自动创建 approval、dispatch 或发送 tmux 输入。

@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add explicit Leader provider switch command
+
+- 新增 `agentdeck leader set-provider --provider <provider> --model <model>`：用于把 `deepseek`、`openai-compatible`、`codex-cli`、`claude-cli` 或 `fake` 持久设为项目默认 Leader provider。
+- 命令只修改 `.agentdeck/config.toml` 的 `[leader] provider/model`，保留现有 `agent_id` 和 `approval_mode`，并追加 `leader_provider_updated` 审计事件；不会调用 provider、创建 plan/action/approval/message/job/inbox，也不会发送 tmux 输入。
+- 未知 provider 会明确失败并保持配置不变，避免把拼写错误写进默认 Leader 配置。
+- 扩展 ProjectView recovery：当默认 Leader 是 `codex-cli` / `claude-cli` 且本地命令不在 PATH 上时，`agentdeck continue` 会进入 `provider_setup_required`，推荐 `agentdeck doctor`，与 API key 缺失的 DeepSeek/OpenAI-compatible setup 流程一致。
+- 同步 README、CLAUDE.md 和 AGENT.md，明确临时试用 provider 用 `--provider`，持久切换默认 Leader 用 `leader set-provider`。
+- 验证记录：已先确认红测失败，`leader set-provider` 最初不是合法子命令，CLI-backed provider 命令缺失时 recovery 最初仍为 `idle`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_set_provider_updates_default_leader_config_and_records_event tests/test_agent_cli.py::test_leader_set_provider_rejects_unknown_provider_without_mutating_config tests/test_agent_cli.py::test_continue_surfaces_cli_provider_setup_when_command_is_missing -q` 3 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_set_provider_updates_default_leader_config_and_records_event tests/test_agent_cli.py::test_leader_set_provider_rejects_unknown_provider_without_mutating_config tests/test_agent_cli.py::test_continue_surfaces_cli_provider_setup_when_command_is_missing tests/test_agent_cli.py::test_doctor_reports_codex_cli_leader_ready_from_local_command tests/test_agent_cli.py::test_workbench_marks_codex_cli_leader_as_local_cli_backed tests/test_leader_cli.py::test_leader_plan_defaults_to_configured_leader_provider_and_model -q` 6 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 281 项通过。
+
 ### Current - Add CLI-backed Leader providers
 
 - 新增 `codex-cli` / `claude-cli` Leader provider：Leader 仍然是 `agent_id=leader` 这个逻辑调度者，但推理后端可以切换到本地 Codex CLI 或 Claude Code CLI。

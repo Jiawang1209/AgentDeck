@@ -175,6 +175,22 @@ def update_leader_approval_mode(root: Path, approval_mode: str) -> LeaderConfig:
     return load_config(root).leader
 
 
+def update_leader_provider(root: Path, provider: str, model: str | None = None) -> LeaderConfig:
+    path = config_path(root)
+    if not path.exists():
+        raise FileNotFoundError(f"missing config: {path}")
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    leader = raw.setdefault("leader", {})
+    if not isinstance(leader, dict):
+        leader = {}
+        raw["leader"] = leader
+    leader["provider"] = provider
+    if model is not None:
+        leader["model"] = model
+    path.write_text(_dump_config(raw), encoding="utf-8")
+    return load_config(root).leader
+
+
 def _quote_toml(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 

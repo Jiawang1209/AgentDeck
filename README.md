@@ -476,6 +476,16 @@ agentdeck leader plan --provider codex-cli --model codex-default --task "规划�
 agentdeck leader chat --provider claude-cli --model claude-default --message "帮我规划下一步"
 ```
 
+临时试用某个 provider 时使用 `--provider`；要把它持久设为项目默认 Leader，使用：
+
+```bash
+agentdeck leader set-provider --provider codex-cli --model codex-default
+agentdeck leader set-provider --provider claude-cli --model claude-default
+agentdeck doctor
+```
+
+`leader set-provider` 只修改 `.agentdeck/config.toml` 的 `[leader] provider/model` 并追加审计事件，不调用 provider、不创建 plan、不审批、不派发。
+
 真实 provider 仍然只生成 plan 或 chat turn，不会自动创建 approval 或派发任务。`codex-cli` / `claude-cli` 是 `agent_id=leader` 这个逻辑 Leader 的本地推理后端，不会复用 `planner`、`coder` 或 `reviewer` 的 worker pane，也不会让 Leader 自动拥有一个 tmux pane。
 
 ## 设计原则

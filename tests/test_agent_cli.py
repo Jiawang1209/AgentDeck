@@ -252,6 +252,58 @@ def test_doctor_reports_codex_cli_leader_ready_from_local_command(
     assert exit_code == (0 if payload["tmux"]["ok"] else 1)
 
 
+def test_leader_set_provider_updates_default_leader_config_and_records_event(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(
+        [
+            "leader",
+            "set-provider",
+            "--provider",
+            "codex-cli",
+            "--model",
+            "codex-default",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "ok": True,
+        "agent_id": "leader",
+        "provider": "codex-cli",
+        "model": "codex-default",
+        "approval_mode": "confirm",
+        "config_path": str(root / ".agentdeck" / "config.toml"),
+        "doctor_command": "agentdeck doctor",
+        "workbench_command": "agentdeck workbench",
+    }
+    config_text = (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
+    assert 'provider = "codex-cli"' in config_text
+    assert 'model = "codex-default"' in config_text
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "leader_provider_updated"' in events
+    assert '"provider": "codex-cli"' in events
+    assert '"model": "codex-default"' in events
+
+
+def test_leader_set_provider_rejects_unknown_provider_without_mutating_config(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_before = (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
+
+    exit_code = cli.main(["leader", "set-provider", "--provider", "unknown"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unsupported leader provider: unknown" in captured.err
+    assert (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8") == config_before
+
+
 def test_events_lists_recent_event_tail(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)
@@ -374,6 +426,31 @@ def test_continue_surfaces_provider_setup_when_configured_leader_is_not_ready(
         "source": "provider_health",
         "target_id": "deepseek",
     }
+    assert payload["leader_action"] is None
+    assert StateStore(root).load() == state_before
+
+
+def test_continue_surfaces_cli_provider_setup_when_command_is_missing(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_text = config_text.replace('provider = "deepseek"', 'provider = "claude-cli"', 1)
+    config_text = config_text.replace('model = "deepseek-chat"', 'model = "claude-default"', 1)
+    config_path.write_text(config_text, encoding="utf-8")
+    monkeypatch.setattr("agentdeck.state.shutil.which", lambda _command: None)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["continue"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "provider_setup_required"
+    assert payload["reason"] == "configured Leader provider is not ready: claude-cli"
+    assert payload["next_command"] == "agentdeck doctor"
+    assert payload["recommended_action"]["source"] == "provider_health"
+    assert payload["recommended_action"]["target_id"] == "claude-cli"
     assert payload["leader_action"] is None
     assert StateStore(root).load() == state_before
 

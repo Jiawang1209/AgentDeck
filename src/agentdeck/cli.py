@@ -17,6 +17,7 @@ from .config import (
     project_root,
     update_agent_role,
     update_leader_approval_mode,
+    update_leader_provider,
     write_default_config,
 )
 from .contracts import (
@@ -1728,6 +1729,42 @@ def policy_set_mode_command(args: argparse.Namespace) -> int:
             "mode": mode,
             "approval_mode": leader.approval_mode,
             "policy_source": ".agentdeck/config.toml:leader.approval_mode",
+            "workbench_command": "agentdeck workbench",
+        }
+    )
+    return 0
+
+
+def leader_set_provider_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    provider_name = str(args.provider)
+    try:
+        leader_provider(provider_name)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    leader = update_leader_provider(project_root(), provider_name, args.model)
+    store.append_event(
+        EventRecord.create(
+            "leader_provider_updated",
+            {
+                "provider": leader.provider,
+                "model": leader.model,
+                "config_source": ".agentdeck/config.toml:leader",
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "agent_id": leader.agent_id,
+            "provider": leader.provider,
+            "model": leader.model,
+            "approval_mode": leader.approval_mode,
+            "config_path": str(config_path(project_root())),
+            "doctor_command": "agentdeck doctor",
             "workbench_command": "agentdeck workbench",
         }
     )
@@ -5358,6 +5395,17 @@ def build_parser() -> argparse.ArgumentParser:
     leader_plan.add_argument("--provider", help="Leader provider to use; defaults to .agentdeck/config.toml")
     leader_plan.add_argument("--model", help="Provider model label recorded with the plan; defaults to config")
     leader_plan.set_defaults(func=leader_plan_command)
+    leader_set_provider = leader_subparsers.add_parser(
+        "set-provider",
+        help="Set the default Leader provider in .agentdeck/config.toml",
+    )
+    leader_set_provider.add_argument(
+        "--provider",
+        required=True,
+        help="Leader provider: fake, deepseek, openai-compatible, codex-cli, or claude-cli",
+    )
+    leader_set_provider.add_argument("--model", help="Default model label to record for new Leader plans")
+    leader_set_provider.set_defaults(func=leader_set_provider_command)
     leader_review = leader_subparsers.add_parser("review", help="Review plan progress and recommend next action")
     leader_review.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
     leader_review.set_defaults(func=leader_review_command)

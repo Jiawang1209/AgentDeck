@@ -4,6 +4,7 @@ from dataclasses import asdict
 import json
 import os
 from pathlib import Path
+import shutil
 from typing import Any
 
 from .config import CONFIG_DIR, ensure_project_layout, project_root
@@ -1160,6 +1161,14 @@ class StateStore:
             "deepseek": "DEEPSEEK_API_KEY",
             "openai-compatible": "AGENTDECK_LEADER_API_KEY",
         }.get(config.leader.provider)
+        cli_command = {
+            "codex-cli": "codex",
+            "claude-cli": "claude",
+        }.get(config.leader.provider)
+        if cli_command is not None:
+            if shutil.which(cli_command):
+                return None
+            return {"command": "agentdeck doctor", "missing_command": cli_command}
         if required_env is None or os.environ.get(required_env):
             return None
         return {"command": "agentdeck doctor", "missing_env": required_env}
