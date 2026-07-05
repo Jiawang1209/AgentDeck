@@ -1455,9 +1455,27 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "blocker": None,
             },
             {
+                "kind": "guarded_set_provider",
+                "label": "Use fake if ready",
+                "command": "agentdeck leader set-provider --provider fake --model fake-plan --require-ready",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
                 "kind": "set_provider",
                 "label": "Use DeepSeek",
                 "command": "agentdeck leader set-provider --provider deepseek --model deepseek-chat",
+                "safety": "explicit_user",
+                "enabled": False,
+                "blocker": "already current provider",
+            },
+            {
+                "kind": "guarded_set_provider",
+                "label": "Use DeepSeek if ready",
+                "command": (
+                    "agentdeck leader set-provider --provider deepseek --model deepseek-chat --require-ready"
+                ),
                 "safety": "explicit_user",
                 "enabled": False,
                 "blocker": "already current provider",
@@ -1471,6 +1489,17 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "blocker": None,
             },
             {
+                "kind": "guarded_set_provider",
+                "label": "Use OpenAI-compatible if ready",
+                "command": (
+                    "agentdeck leader set-provider --provider openai-compatible "
+                    "--model openai-compatible-default --require-ready"
+                ),
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
                 "kind": "set_provider",
                 "label": "Use Codex CLI",
                 "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
@@ -1479,9 +1508,29 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "blocker": None,
             },
             {
+                "kind": "guarded_set_provider",
+                "label": "Use Codex CLI if ready",
+                "command": (
+                    "agentdeck leader set-provider --provider codex-cli --model codex-default --require-ready"
+                ),
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
                 "kind": "set_provider",
                 "label": "Use Claude CLI",
                 "command": "agentdeck leader set-provider --provider claude-cli --model claude-default",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "guarded_set_provider",
+                "label": "Use Claude CLI if ready",
+                "command": (
+                    "agentdeck leader set-provider --provider claude-cli --model claude-default --require-ready"
+                ),
                 "safety": "explicit_user",
                 "enabled": True,
                 "blocker": None,
@@ -1718,6 +1767,17 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "agent_id": "leader",
     }
     assert any(item["command"].endswith("--provider codex-cli --model codex-default") for item in provider_controls)
+    guarded_provider_controls = [
+        item
+        for item in payload["control_registry"]
+        if item["scope"] == "provider" and item["kind"] == "guarded_set_provider"
+    ]
+    assert any(
+        item["command"] == (
+            "agentdeck leader set-provider --provider codex-cli --model codex-default --require-ready"
+        )
+        for item in guarded_provider_controls
+    )
     role_controls = [
         item
         for item in payload["control_registry"]
@@ -2227,6 +2287,13 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
     assert approve_item["safety"] == "explicit_user"
     provider_items = [item for item in payload["items"] if item["scope"] == "provider"]
     assert any(item["kind"] == "set_provider" and "codex-cli" in item["command"] for item in provider_items)
+    assert any(
+        item["kind"] == "guarded_set_provider"
+        and item["command"] == (
+            "agentdeck leader set-provider --provider codex-cli --model codex-default --require-ready"
+        )
+        for item in provider_items
+    )
     role_items = [item for item in payload["items"] if item["scope"] == "role"]
     assert role_items[0] == {
         "scope": "role",

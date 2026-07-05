@@ -235,6 +235,23 @@ def test_validate_control_registry_card_contract_requires_provider_switch_comman
     }
 
 
+def test_validate_control_registry_card_contract_requires_guarded_provider_switch_command() -> None:
+    payload = controls_example()
+    provider_item = next(
+        item for item in payload["items"] if item["scope"] == "provider" and item["kind"] == "guarded_set_provider"
+    )
+    provider_item["command"] = "agentdeck leader set-provider --provider codex-cli --model codex-default"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "control_registry_card.items: provider guarded_set_provider command must use --require-ready"
+        ],
+    }
+
+
 def test_validate_control_registry_card_contract_requires_disabled_provider_blocker() -> None:
     payload = controls_example()
     provider_item = next(
@@ -1081,6 +1098,19 @@ def test_validate_workbench_contract_requires_provider_switch_command() -> None:
     assert result == {
         "ok": False,
         "errors": ["provider_health.controls: set_provider command must use leader set-provider"],
+    }
+
+
+def test_validate_workbench_contract_requires_guarded_provider_switch_command() -> None:
+    payload = workbench_example()
+    guarded = next(item for item in payload["provider_health"]["controls"] if item["kind"] == "guarded_set_provider")
+    guarded["command"] = "agentdeck leader set-provider --provider codex-cli --model codex-default"
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["provider_health.controls: guarded_set_provider command must use --require-ready"],
     }
 
 

@@ -780,14 +780,26 @@ def _leader_provider_controls(current_provider: str) -> list[dict[str, object]]:
     controls: list[dict[str, object]] = []
     for provider, model, label in LEADER_PROVIDER_SWITCHES:
         enabled = provider != current_provider
+        command = f"agentdeck leader set-provider --provider {provider} --model {model}"
+        blocker = None if enabled else "already current provider"
         controls.append(
             _control(
                 kind="set_provider",
                 label=label,
-                command=f"agentdeck leader set-provider --provider {provider} --model {model}",
+                command=command,
                 safety="explicit_user",
                 enabled=enabled,
-                blocker=None if enabled else "already current provider",
+                blocker=blocker,
+            )
+        )
+        controls.append(
+            _control(
+                kind="guarded_set_provider",
+                label=f"{label} if ready",
+                command=f"{command} --require-ready",
+                safety="explicit_user",
+                enabled=enabled,
+                blocker=blocker,
             )
         )
     return controls

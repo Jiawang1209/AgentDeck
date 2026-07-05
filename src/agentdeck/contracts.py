@@ -2545,11 +2545,17 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
             for field in WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS:
                 if field not in item:
                     errors.append(f"control_registry_card.items: missing item field: {field}")
-            if item.get("scope") == "provider" and item.get("kind") == "set_provider":
+            if item.get("scope") == "provider" and item.get("kind") in {"set_provider", "guarded_set_provider"}:
                 if item.get("safety") != "explicit_user":
                     errors.append("control_registry_card.items: provider set_provider must use safety=explicit_user")
                 if not str(item.get("command") or "").startswith("agentdeck leader set-provider --provider "):
                     errors.append("control_registry_card.items: provider set_provider command must use leader set-provider")
+                if item.get("kind") == "guarded_set_provider" and not str(item.get("command") or "").endswith(
+                    " --require-ready"
+                ):
+                    errors.append(
+                        "control_registry_card.items: provider guarded_set_provider command must use --require-ready"
+                    )
                 if item.get("enabled") is False and not item.get("blocker"):
                     errors.append("control_registry_card.items: disabled provider set_provider controls must include blocker")
             if item.get("scope") == "policy" and item.get("kind") == "set_mode":
@@ -2767,13 +2773,19 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         if isinstance(controls, list):
             for control in controls:
                 if isinstance(control, dict):
-                    if control.get("kind") == "set_provider":
+                    if control.get("kind") in {"set_provider", "guarded_set_provider"}:
                         if control.get("safety") != "explicit_user":
                             errors.append("provider_health.controls: set_provider controls must use safety=explicit_user")
                         if not str(control.get("command") or "").startswith(
                             "agentdeck leader set-provider --provider "
                         ):
                             errors.append("provider_health.controls: set_provider command must use leader set-provider")
+                        if control.get("kind") == "guarded_set_provider" and not str(
+                            control.get("command") or ""
+                        ).endswith(" --require-ready"):
+                            errors.append(
+                                "provider_health.controls: guarded_set_provider command must use --require-ready"
+                            )
                     if control.get("enabled") is False and not control.get("blocker"):
                         errors.append("provider_health.controls: disabled controls must include blocker")
                 else:
@@ -3616,14 +3628,26 @@ def leader_provider_controls(current_provider: str) -> list[dict[str, object]]:
     controls: list[dict[str, object]] = []
     for provider, model, label in LEADER_PROVIDER_SWITCHES:
         enabled = provider != current_provider
+        command = f"agentdeck leader set-provider --provider {provider} --model {model}"
+        blocker = None if enabled else "already current provider"
         controls.append(
             {
                 "kind": "set_provider",
                 "label": label,
-                "command": f"agentdeck leader set-provider --provider {provider} --model {model}",
+                "command": command,
                 "safety": "explicit_user",
                 "enabled": enabled,
-                "blocker": None if enabled else "already current provider",
+                "blocker": blocker,
+            }
+        )
+        controls.append(
+            {
+                "kind": "guarded_set_provider",
+                "label": f"{label} if ready",
+                "command": f"{command} --require-ready",
+                "safety": "explicit_user",
+                "enabled": enabled,
+                "blocker": blocker,
             }
         )
     return controls
