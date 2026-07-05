@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Suggest runtime refresh through Leader chat
+
+- 扩展 `agentdeck leader chat --message "刷新 runtime"` / `"runtime refresh"`：自然语言入口现在会进入 `mode=runtime`，嵌入同源 `runtime_card`，并把 `next_command` 指向显式 `agentdeck agent refresh`。
+- `leader_explanation` 和 `intent_card.controls[]` 会标记 `safety=explicit_runtime` 与 `requires_explicit_user=true`，让 GUI 或自然语言壳可以渲染刷新按钮，但不会自动检查 tmux pane 或修改 runtime state。
+- 保持安全边界：该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，不执行 refresh/spawn/stop/capture/send，不读取 pane 输出。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md、capability card 和测试，让 refresh/spawn/send/stop 四类 runtime 操作都能通过自然语言建议显式命令。
+- 完整验证：已先确认红测失败，`刷新 runtime` 最初只建议 `agentdeck agent list`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_runtime_refresh_without_reconciling_state -q` 1 项通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_runtime_refresh_without_reconciling_state tests/test_leader_cli.py::test_leader_chat_suggests_agent_stop_without_killing_pane tests/test_leader_cli.py::test_leader_chat_suggests_agent_send_without_sending_input tests/test_leader_cli.py::test_leader_chat_suggests_agent_spawn_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_inspects_runtime_without_mutating_state tests/test_leader_cli.py::test_leader_chat_continue_embeds_runtime_card_for_stale_runtime tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 10 项通过；`conda run -n agentdeck pytest -q` 254 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-refresh-suggestion-smoke-ok mode=runtime next=agentdeck agent refresh safety=explicit_runtime requires=True status=running messages=0 jobs=0`。
+
 ### Current - Suggest agent stop through Leader chat
 
 - 扩展 `agentdeck leader chat --message "停止 planner"` / `"stop coder"`：自然语言入口现在会进入 `mode=runtime`，嵌入同源 `runtime_card`，并把 `next_command` 指向显式 `agentdeck agent stop --agent <id>`。

@@ -2390,6 +2390,11 @@ def _chat_runtime_stop_agent_id(message: str, project_view: dict[str, object]) -
     return None
 
 
+def _chat_wants_runtime_refresh(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(token in normalized for token in ["refresh runtime", "runtime refresh", "刷新 runtime", "刷新运行时", "刷新终端"])
+
+
 def _agent_send_command(agent_id: str, text: str) -> str:
     return " ".join(
         [
@@ -2702,6 +2707,18 @@ def _leader_chat_explanation(
             "requires_explicit_user": True,
         }
     if mode == "runtime":
+        if next_command == "agentdeck agent refresh":
+            return {
+                "mode": mode,
+                "summary": "Leader recommends explicitly refreshing runtime bindings without mutating runtime state.",
+                "reason": "human asked to refresh runtime bindings",
+                "next_command": next_command,
+                "recommended_action_id": None,
+                "action_kind": "runtime_refresh",
+                "action_status": "suggested",
+                "safety": "explicit_runtime",
+                "requires_explicit_user": True,
+            }
         stop_match = re.fullmatch(r"agentdeck agent stop --agent ([^\s]+)", str(next_command or ""))
         if stop_match:
             agent_id = stop_match.group(1)
@@ -3438,7 +3455,14 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if binding is None:
             return exit_code
     runtime_spawn_agent_id = _chat_runtime_spawn_agent_id(args.message, project_view)
-    if runtime_send_intent is not None or runtime_stop_agent_id or runtime_spawn_agent_id or _chat_wants_runtime(args.message):
+    runtime_refresh = _chat_wants_runtime_refresh(args.message)
+    if (
+        runtime_send_intent is not None
+        or runtime_stop_agent_id
+        or runtime_spawn_agent_id
+        or runtime_refresh
+        or _chat_wants_runtime(args.message)
+    ):
         next_command = (
             _agent_send_command(str(send_agent_id), str(send_text))
             if runtime_send_intent is not None
@@ -3446,6 +3470,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             if runtime_stop_agent_id
             else f"agentdeck agent spawn --agent {runtime_spawn_agent_id}"
             if runtime_spawn_agent_id
+            else "agentdeck agent refresh"
+            if runtime_refresh
             else "agentdeck agent list"
         )
         action_kind = (
@@ -3455,6 +3481,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             if runtime_stop_agent_id
             else "runtime_spawn"
             if runtime_spawn_agent_id
+            else "runtime_refresh"
+            if runtime_refresh
             else "runtime"
         )
         turn = store.record_chat_turn(

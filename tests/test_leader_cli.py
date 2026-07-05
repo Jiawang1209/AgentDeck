@@ -14,6 +14,7 @@ class FakeTmuxBackend:
         self.sent: list[tuple[str, str]] = []
         self.captured: list[tuple[str, int]] = []
         self.killed: list[str] = []
+        self.checked_panes: list[str] = []
 
     def send_input(self, _config, pane_id: str, text: str) -> None:
         self.sent.append((pane_id, text))
@@ -24,6 +25,10 @@ class FakeTmuxBackend:
 
     def kill_pane(self, _config, pane_id: str) -> None:
         self.killed.append(pane_id)
+
+    def pane_exists(self, _config, pane_id: str) -> bool:
+        self.checked_panes.append(pane_id)
+        return True
 
 
 def prepare_project(tmp_path: Path, monkeypatch) -> Path:
@@ -693,6 +698,56 @@ def test_leader_chat_inspects_runtime_without_mutating_state(tmp_path, monkeypat
     assert state_after["leader_actions"] == []
     assert state_after["messages"] == []
     assert state_after["jobs"] == []
+
+
+def test_leader_chat_suggests_runtime_refresh_without_reconciling_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["leader", "chat", "--message", "刷新 runtime"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "runtime"
+    assert payload["message"] == "刷新 runtime"
+    assert payload["next_command"] == "agentdeck agent refresh"
+    assert payload["runtime_card"]["agents"][0]["agent_id"] == "planner"
+    assert payload["runtime_card"]["agents"][0]["status"] == "running"
+    assert payload["leader_explanation"]["mode"] == "runtime"
+    assert payload["leader_explanation"]["summary"] == (
+        "Leader recommends explicitly refreshing runtime bindings without mutating runtime state."
+    )
+    assert payload["leader_explanation"]["reason"] == "human asked to refresh runtime bindings"
+    assert payload["leader_explanation"]["recommended_action_id"] is None
+    assert payload["leader_explanation"]["action_kind"] == "runtime_refresh"
+    assert payload["leader_explanation"]["action_status"] == "suggested"
+    assert payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert payload["intent_card"]["embedded_card"] == "runtime_card"
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Next command",
+        "command": "agentdeck agent refresh",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "runtime"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck agent refresh"
+    assert state_after["agents"]["planner"]["status"] == "running"
+    assert state_after["agents"]["planner"]["pane_id"] == "%42"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+    assert fake.checked_panes == []
+    assert fake.sent == []
+    assert fake.captured == []
+    assert fake.killed == []
 
 
 def test_leader_chat_suggests_agent_spawn_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:
