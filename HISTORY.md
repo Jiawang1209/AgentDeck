@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Label observation intent controls by action
+
+- 调整 `agentdeck leader chat` 的只读 observation `intent_card.controls[]`：`查看 planner 输出`、`查看 planner inbox`、`追踪 planner 当前 inbox`、`追踪 msg_xxx` 的 next control 现在分别使用 `Capture agent output`、`Open inbox`、`Inspect trace`、`Inspect trace`。
+- 保持安全边界：该变化只影响 GUI/自然语言壳可渲染的 `label`；capture/trace/inbox 仍保持只读，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture reply、不发送 tmux 输入。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试，明确 GUI 可以直接渲染终端观察、mailbox 查看和通信链路追踪按钮，而不用解析命令字符串。
+- 验证记录：已先确认红测失败，capture/inbox/trace next control label 最初仍是 `Next command`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_captures_agent_output_as_read_only_card tests/test_leader_cli.py::test_leader_chat_inspects_agent_inbox_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_suggests_trace_for_current_inbox_head tests/test_leader_cli.py::test_leader_chat_traces_specific_communication_id_without_mutating_runtime -q` 4 项通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_captures_agent_output_as_read_only_card tests/test_leader_cli.py::test_leader_chat_inspects_agent_inbox_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_suggests_trace_for_current_inbox_head tests/test_leader_cli.py::test_leader_chat_traces_specific_communication_id_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 8 项通过；`conda run -n agentdeck pytest -q` 254 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-observation-label-smoke-ok labels=Open inbox|Inspect trace|Inspect trace inbox_status=pending messages=1 jobs=1`，capture label 由 fake tmux backend 单元测试覆盖。
+
 ### Current - Label approval and inbox intent controls by human action
 
 - 调整 `agentdeck leader chat` 的 approval/inbox `intent_card.controls[]`：`批准当前审批`、`拒绝当前审批`、`派发当前审批`、`确认 planner 当前 inbox` 的 next control 现在分别使用 `Approve approval`、`Reject approval`、`Dispatch approval`、`Acknowledge inbox item`。

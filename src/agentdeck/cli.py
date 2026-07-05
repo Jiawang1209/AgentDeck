@@ -168,6 +168,12 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Dispatch approval"
     if re.fullmatch(r"agentdeck ack --agent [^\s]+ --inbox-id [^\s]+", command):
         return "Acknowledge inbox item"
+    if re.fullmatch(r"agentdeck agent capture --agent [^\s]+ --lines \d+", command):
+        return "Capture agent output"
+    if re.fullmatch(r"agentdeck inbox --agent [^\s]+", command):
+        return "Open inbox"
+    if re.fullmatch(r"agentdeck trace --id [^\s]+", command):
+        return "Inspect trace"
     return "Next command"
 
 

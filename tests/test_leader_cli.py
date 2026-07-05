@@ -1010,6 +1010,14 @@ def test_leader_chat_captures_agent_output_as_read_only_card(tmp_path, monkeypat
         "enabled": True,
         "blocker": None,
     }
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Capture agent output",
+        "command": payload["next_command"],
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
     assert fake.captured == [("%42", 200)]
     assert fake.sent == []
 
@@ -1595,6 +1603,14 @@ def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, mon
     assert payload["leader_explanation"]["action_status"] == "pending"
     assert payload["leader_explanation"]["safety"] == "inspect"
     assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Open inbox",
+        "command": payload["next_command"],
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
     assert payload["project_view"]["chat_turns"]["items"][0]["mode"] == "inbox"
 
@@ -1696,6 +1712,14 @@ def test_leader_chat_suggests_trace_for_current_inbox_head(tmp_path, monkeypatch
         "kind": "inspect",
         "label": "Inspect trace_card",
         "command": "agentdeck trace --id inb_trace_me",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Inspect trace",
+        "command": payload["next_command"],
         "safety": "inspect",
         "enabled": True,
         "blocker": None,
@@ -1802,6 +1826,14 @@ def test_leader_chat_traces_specific_communication_id_without_mutating_runtime(
         "kind": "inspect",
         "label": "Inspect trace_card",
         "command": "agentdeck trace --id msg_trace_direct",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Inspect trace",
+        "command": payload["next_command"],
         "safety": "inspect",
         "enabled": True,
         "blocker": None,
