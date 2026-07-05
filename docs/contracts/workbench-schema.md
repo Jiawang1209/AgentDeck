@@ -20,6 +20,8 @@ The contract command returns:
   "snapshot_fields": [],
   "runtime_card_fields": [],
   "runtime_agent_fields": [],
+  "role_card_fields": [],
+  "role_agent_fields": [],
   "ledger_card_fields": [],
   "operator_card_fields": [],
   "audit_card_fields": []
@@ -40,6 +42,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "project_view": {},
   "leader_actions": {},
   "runtime_card": {},
+  "role_card": {},
   "ledger_card": {},
   "operator_card": {},
   "audit_card": {},
@@ -56,6 +59,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `project_view` remains the source of truth and must pass `validate_project_view_contract()`.
 `leader_actions` must equal `project_view.leader_actions`.
 `runtime_card` is derived from `project_view.runtime_backend` and `project_view.agents[]`.
+`role_card` is derived from `project_view.agents[]` role configuration.
 `ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, and `project_view.inbox`.
 `operator_card` is derived from `recovery.recommended_action` and the active queue card. It is a renderable human-control descriptor, not an execution result.
 `audit_card` is derived from `recovery.latest_event` and `recovery.recent_events`.
@@ -91,6 +95,29 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 ```
 
 The card does not capture pane output and does not prove task completion. It only surfaces the configured agent identity, role, provider, workspace mode, and current runtime binding already present in ProjectView.
+
+## Role Card
+
+`role_card` is a GUI-ready projection of configured agent roles:
+
+```json
+{
+  "count": 3,
+  "assign_command_template": "agentdeck agent assign-role --agent <agent_id> --role <role> --role-prompt <role_prompt>",
+  "agents": [
+    {
+      "agent_id": "planner",
+      "role": "planning",
+      "provider": "codex",
+      "workspace_mode": "shared",
+      "role_prompt": "Break down goals and prepare implementation steps.",
+      "assign_command": "agentdeck agent assign-role --agent planner --role planning --role-prompt 'Break down goals and prepare implementation steps.'"
+    }
+  ]
+}
+```
+
+The card is configuration-only. It does not dispatch work or mutate roles; GUI clients must run `assign_command` explicitly when a human changes a role.
 
 ## Ledger Card
 

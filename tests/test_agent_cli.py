@@ -307,6 +307,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "project_view",
         "leader_actions",
         "runtime_card",
+        "role_card",
         "ledger_card",
         "operator_card",
         "audit_card",
@@ -331,6 +332,15 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "spawn_command",
         "stop_command",
         "inbox_command",
+    ]
+    assert payload["role_card_fields"] == ["count", "agents", "assign_command_template"]
+    assert payload["role_agent_fields"] == [
+        "agent_id",
+        "role",
+        "provider",
+        "workspace_mode",
+        "role_prompt",
+        "assign_command",
     ]
     assert payload["ledger_card_fields"] == [
         "messages",
@@ -448,6 +458,19 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert payload["runtime_card"]["backend"] == "tmux"
     assert payload["runtime_card"]["count"] == 3
     assert payload["runtime_card"]["by_status"] == {"configured": 2, "running": 1}
+    assert payload["role_card"]["count"] == 3
+    assert payload["role_card"]["assign_command_template"] == (
+        "agentdeck agent assign-role --agent <agent_id> --role <role> --role-prompt <role_prompt>"
+    )
+    planner_role = payload["role_card"]["agents"][0]
+    assert planner_role["agent_id"] == "planner"
+    assert planner_role["role"] == "planning"
+    assert planner_role["provider"] == "codex"
+    assert planner_role["workspace_mode"] == "shared"
+    assert "任务拆解" in planner_role["role_prompt"]
+    assert planner_role["assign_command"].startswith("agentdeck agent assign-role --agent planner")
+    assert "--role planning" in planner_role["assign_command"]
+    assert "--role-prompt" in planner_role["assign_command"]
     planner_runtime = payload["runtime_card"]["agents"][0]
     assert planner_runtime["agent_id"] == "planner"
     assert planner_runtime["role"] == "planning"

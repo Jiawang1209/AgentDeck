@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add role card to workbench snapshot
+
+- 扩展 `agentdeck workbench`：新增 `role_card`，从 ProjectView agents 派生 GUI/TUI 可渲染的角色化多 Agent 配置卡。
+- `role_card` 公开 count、assign_command_template 和 agents[]；每个 agent 包含 agent_id、role、provider、workspace_mode、role_prompt 和可复制的 `assign_command`。
+- 扩展 workbench contract：新增 `WORKBENCH_ROLE_CARD_FIELDS` 与 `WORKBENCH_ROLE_AGENT_FIELDS`，并在 `agentdeck contract workbench` 暴露 `role_card_fields` 与 `role_agent_fields`。
+- 补充 CLI 与 contract 测试，覆盖 role card discovery、planner 角色投影、example 防漂移、validator 缺字段拒绝和只读状态不变性。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 role_card 只来自 ProjectView agents 配置，不读取 pane、不 dispatch、不写角色配置。
+- 保持安全边界：本轮仍只读，不写 state、不创建 chat turn、不 ack、不 approve、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_workbench_contract_requires_role_agent_fields -q` 最初因 `WORKBENCH_ROLE_AGENT_FIELDS` 未出现在 contract 中失败；实现后 role_card 目标测试 5 项通过；`conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 88 项通过；`conda run -n agentdeck pytest -q` 153 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `contract-role-ok` 与 `workbench-role-ok`。
+
 ### Current - Add audit card to workbench snapshot
 
 - 扩展 `agentdeck workbench`：新增 `audit_card`，从 ProjectView recovery 的 latest_event 和 recent_events 派生 GUI/TUI 可渲染的最近审计卡。

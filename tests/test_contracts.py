@@ -30,6 +30,8 @@ from agentdeck.contracts import (
     WORKBENCH_AUDIT_CARD_FIELDS,
     WORKBENCH_LEDGER_CARD_FIELDS,
     WORKBENCH_OPERATOR_CARD_FIELDS,
+    WORKBENCH_ROLE_AGENT_FIELDS,
+    WORKBENCH_ROLE_CARD_FIELDS,
     WORKBENCH_RUNTIME_AGENT_FIELDS,
     WORKBENCH_RUNTIME_CARD_FIELDS,
     WORKBENCH_SNAPSHOT_FIELDS,
@@ -298,6 +300,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["snapshot_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
+    assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
+    assert payload["role_agent_fields"] == list(WORKBENCH_ROLE_AGENT_FIELDS)
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
     assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert payload["audit_card_fields"] == list(WORKBENCH_AUDIT_CARD_FIELDS)
@@ -309,6 +313,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
     assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)
+    assert set(example["role_card"]) == set(WORKBENCH_ROLE_CARD_FIELDS)
+    assert set(example["role_card"]["agents"][0]) == set(WORKBENCH_ROLE_AGENT_FIELDS)
     assert set(example["ledger_card"]) == set(WORKBENCH_LEDGER_CARD_FIELDS)
     assert set(example["operator_card"]) == set(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert set(example["audit_card"]) == set(WORKBENCH_AUDIT_CARD_FIELDS)
@@ -348,6 +354,15 @@ def test_validate_workbench_contract_requires_runtime_agent_fields() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing runtime agent field: pane_id"]}
+
+
+def test_validate_workbench_contract_requires_role_agent_fields() -> None:
+    payload = workbench_example()
+    del payload["role_card"]["agents"][0]["assign_command"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing role agent field: assign_command"]}
 
 
 def test_validate_workbench_contract_requires_ledger_trace_commands() -> None:

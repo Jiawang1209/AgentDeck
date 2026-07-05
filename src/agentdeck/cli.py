@@ -4,6 +4,7 @@ from dataclasses import asdict
 import argparse
 import json
 from pathlib import Path
+import shlex
 import sys
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
@@ -216,6 +217,7 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "project_view": project_view,
         "leader_actions": project_view.get("leader_actions"),
         "runtime_card": _workbench_runtime_card(project_view),
+        "role_card": _workbench_role_card(project_view),
         "ledger_card": _workbench_ledger_card(project_view),
         "operator_card": _workbench_operator_card(project_view, continue_card, active_queue_source),
         "audit_card": _workbench_audit_card(project_view),
@@ -227,6 +229,51 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "approval_card": approval_card,
         "leader_action": leader_action if isinstance(leader_action, dict) else None,
     }
+
+
+def _workbench_role_card(project_view: dict[str, object]) -> dict[str, object]:
+    agents = project_view.get("agents", [])
+    role_agents = []
+    if isinstance(agents, list):
+        for agent in agents:
+            if not isinstance(agent, dict):
+                continue
+            agent_id = str(agent.get("agent_id"))
+            role = str(agent.get("role", ""))
+            role_prompt = str(agent.get("role_prompt", ""))
+            role_agents.append(
+                {
+                    "agent_id": agent_id,
+                    "role": role,
+                    "provider": agent.get("provider"),
+                    "workspace_mode": agent.get("workspace_mode"),
+                    "role_prompt": role_prompt,
+                    "assign_command": _agent_assign_role_command(agent_id, role, role_prompt),
+                }
+            )
+    return {
+        "count": len(role_agents),
+        "agents": role_agents,
+        "assign_command_template": (
+            "agentdeck agent assign-role --agent <agent_id> --role <role> --role-prompt <role_prompt>"
+        ),
+    }
+
+
+def _agent_assign_role_command(agent_id: str, role: str, role_prompt: str) -> str:
+    return " ".join(
+        [
+            "agentdeck",
+            "agent",
+            "assign-role",
+            "--agent",
+            shlex.quote(agent_id),
+            "--role",
+            shlex.quote(role),
+            "--role-prompt",
+            shlex.quote(role_prompt),
+        ]
+    )
 
 
 def _workbench_audit_card(project_view: dict[str, object]) -> dict[str, object]:

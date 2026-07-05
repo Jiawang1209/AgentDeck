@@ -198,6 +198,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "project_view",
     "leader_actions",
     "runtime_card",
+    "role_card",
     "ledger_card",
     "operator_card",
     "audit_card",
@@ -229,6 +230,21 @@ WORKBENCH_RUNTIME_AGENT_FIELDS = (
     "spawn_command",
     "stop_command",
     "inbox_command",
+)
+
+WORKBENCH_ROLE_CARD_FIELDS = (
+    "count",
+    "agents",
+    "assign_command_template",
+)
+
+WORKBENCH_ROLE_AGENT_FIELDS = (
+    "agent_id",
+    "role",
+    "provider",
+    "workspace_mode",
+    "role_prompt",
+    "assign_command",
 )
 
 WORKBENCH_LEDGER_CARD_FIELDS = (
@@ -462,6 +478,8 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
+        "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
+        "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
@@ -948,6 +966,27 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("runtime_card.agents must be a list")
     elif "runtime_card" in payload:
         errors.append("runtime_card must be an object")
+    role_card = payload.get("role_card")
+    if isinstance(role_card, dict):
+        for field in WORKBENCH_ROLE_CARD_FIELDS:
+            if field not in role_card:
+                errors.append(f"missing role_card field: {field}")
+        if "count" in role_card and not isinstance(role_card.get("count"), int):
+            errors.append("role_card.count must be an integer")
+        role_agents = role_card.get("agents")
+        if isinstance(role_agents, list):
+            if role_agents:
+                first_agent = role_agents[0]
+                if isinstance(first_agent, dict):
+                    for field in WORKBENCH_ROLE_AGENT_FIELDS:
+                        if field not in first_agent:
+                            errors.append(f"missing role agent field: {field}")
+                else:
+                    errors.append("role_card.agents items must be objects")
+        elif "agents" in role_card:
+            errors.append("role_card.agents must be a list")
+    elif "role_card" in payload:
+        errors.append("role_card must be an object")
     ledger_card = payload.get("ledger_card")
     if isinstance(ledger_card, dict):
         for field in WORKBENCH_LEDGER_CARD_FIELDS:
@@ -1300,6 +1339,47 @@ def workbench_example() -> dict[str, object]:
                     "spawn_command": "agentdeck agent spawn --agent reviewer",
                     "stop_command": "agentdeck agent stop --agent reviewer",
                     "inbox_command": "agentdeck inbox --agent reviewer",
+                },
+            ],
+        },
+        "role_card": {
+            "count": 3,
+            "assign_command_template": (
+                "agentdeck agent assign-role --agent <agent_id> --role <role> --role-prompt <role_prompt>"
+            ),
+            "agents": [
+                {
+                    "agent_id": "planner",
+                    "role": "planner",
+                    "provider": "codex",
+                    "workspace_mode": "shared",
+                    "role_prompt": "Break down goals and prepare implementation steps.",
+                    "assign_command": (
+                        "agentdeck agent assign-role --agent planner --role planner "
+                        "--role-prompt 'Break down goals and prepare implementation steps.'"
+                    ),
+                },
+                {
+                    "agent_id": "coder",
+                    "role": "coder",
+                    "provider": "claude",
+                    "workspace_mode": "worktree",
+                    "role_prompt": "Implement approved tasks and report verification evidence.",
+                    "assign_command": (
+                        "agentdeck agent assign-role --agent coder --role coder "
+                        "--role-prompt 'Implement approved tasks and report verification evidence.'"
+                    ),
+                },
+                {
+                    "agent_id": "reviewer",
+                    "role": "reviewer",
+                    "provider": "codex",
+                    "workspace_mode": "shared",
+                    "role_prompt": "Review implementation risks, tests, and missing requirements.",
+                    "assign_command": (
+                        "agentdeck agent assign-role --agent reviewer --role reviewer "
+                        "--role-prompt 'Review implementation risks, tests, and missing requirements.'"
+                    ),
                 },
             ],
         },
