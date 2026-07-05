@@ -823,6 +823,27 @@ def test_workbench_surfaces_provider_setup_as_active_operator_source(
     }
 
 
+def test_workbench_watch_outputs_jsonl_snapshots_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    before = StateStore(root).load()
+
+    exit_code = cli.main(["workbench", "--watch", "--iterations", "2", "--interval", "0"])
+
+    assert exit_code == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 2
+    snapshots = [json.loads(line) for line in lines]
+    assert [snapshot["mode"] for snapshot in snapshots] == ["workbench", "workbench"]
+    assert [snapshot["ok"] for snapshot in snapshots] == [True, True]
+    assert [snapshot["active_queue_source"] for snapshot in snapshots] == ["provider_health", "provider_health"]
+    assert snapshots[0]["operator_card"]["controls"][0]["command"] == "agentdeck doctor"
+    assert snapshots[1]["operator_card"]["controls"][0]["command"] == "agentdeck doctor"
+    assert StateStore(root).load() == before
+
+
 def test_contract_approvals_discovers_schema_for_gui_clients(capsys) -> None:
     exit_code = cli.main(["contract", "approvals"])
 

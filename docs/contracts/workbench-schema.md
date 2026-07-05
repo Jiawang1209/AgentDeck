@@ -4,6 +4,8 @@
 
 It does not create plans, record chat turns, acknowledge inbox items, approve approvals, dispatch work, capture replies, or send tmux input. It composes already validated surfaces into one response so a terminal UI or GUI can render the current workspace without issuing several commands.
 
+For GUI/TUI clients that need a live local state feed, `agentdeck workbench --watch --interval <seconds>` emits the same validated snapshot shape as newline-delimited JSON. Each line is a complete workbench snapshot. Use `--iterations <n>` for bounded scripts, tests, and smoke checks.
+
 ## Discovery
 
 ```bash
@@ -75,6 +77,22 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `next_command` must equal `continue_card.next_command`.
+
+## Watch Stream
+
+```bash
+agentdeck workbench --watch --interval 1
+agentdeck workbench --watch --iterations 3 --interval 0
+```
+
+Watch mode emits compact JSONL:
+
+```json
+{"mode":"workbench","ok":true}
+{"mode":"workbench","ok":true}
+```
+
+Each emitted line must pass `validate_workbench_contract()` before printing. Watch mode reloads ProjectView on every iteration, so clients can render state changes without reading `.agentdeck/state/` directly. It remains read-only and must not acknowledge inbox items, approve or dispatch work, apply leader actions, capture pane output, or send tmux input.
 
 ## Leader Card
 

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shlex
 import sys
+import time
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
 from .contracts import (
@@ -39,6 +40,10 @@ from .state import StateStore, agentdeck_dir
 
 def _print_json(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _print_json_line(payload: object) -> None:
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
 
 
 def _trace_command(trace_id: object) -> str:
@@ -638,21 +643,40 @@ def continue_command(_args: argparse.Namespace) -> int:
     return 0
 
 
-def workbench_command(_args: argparse.Namespace) -> int:
+def workbench_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
-    project_view = _project_view_payload_or_error(config, store)
-    if project_view is None:
+
+    if args.iterations is not None and args.iterations < 1:
+        print("--iterations must be greater than 0", file=sys.stderr)
         return 1
-    payload = _workbench_snapshot_payload(project_view, store)
-    validation = validate_workbench_contract(payload)
-    if not validation["ok"]:
-        print("Workbench contract validation failed", file=sys.stderr)
-        for error in validation["errors"]:
-            print(f"- {error}", file=sys.stderr)
-        return 1
-    _print_json(payload)
+
+    iteration = 0
+    while True:
+        project_view = _project_view_payload_or_error(config, store)
+        if project_view is None:
+            return 1
+        payload = _workbench_snapshot_payload(project_view, store)
+        validation = validate_workbench_contract(payload)
+        if not validation["ok"]:
+            print("Workbench contract validation failed", file=sys.stderr)
+            for error in validation["errors"]:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        if args.watch:
+            _print_json_line(payload)
+        else:
+            _print_json(payload)
+            return 0
+        iteration += 1
+        if args.iterations is not None and iteration >= args.iterations:
+            return 0
+        if args.interval > 0:
+            try:
+                time.sleep(args.interval)
+            except KeyboardInterrupt:
+                return 130
     return 0
 
 
@@ -2416,6 +2440,14 @@ def build_parser() -> argparse.ArgumentParser:
     continue_parser.set_defaults(func=continue_command)
 
     workbench = subparsers.add_parser("workbench", help="Show a GUI-ready read-only workbench snapshot")
+    workbench.add_argument("--watch", action="store_true", help="Stream validated workbench snapshots as JSONL")
+    workbench.add_argument(
+        "--iterations",
+        type=int,
+        default=None,
+        help="Number of snapshots to emit; with --watch omitted this still emits once",
+    )
+    workbench.add_argument("--interval", type=float, default=1.0, help="Seconds between --watch snapshots")
     workbench.set_defaults(func=workbench_command)
 
     contract = subparsers.add_parser("contract", help="Discover machine-readable AgentDeck contracts")

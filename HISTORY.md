@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add workbench watch stream
+
+- 扩展 `agentdeck workbench`：新增 `--watch`、`--iterations <n>` 和 `--interval <seconds>`，让未来 GUI/TUI 可以订阅连续的一屏工作台快照 JSONL。
+- watch 模式每轮重新读取 ProjectView、组合 workbench snapshot，并通过 `validate_workbench_contract()` 校验后输出一行紧凑 JSON；默认单次 `agentdeck workbench` 仍输出 pretty JSON，保持兼容。
+- `--watch` 仍严格只读：不写 state、不创建 chat turn、不创建/应用 leader action、不 ack、不 approve/dispatch、不 capture reply、不读取 pane、不发送 tmux 输入；`--iterations` 便于测试、脚本和 GUI smoke 有界退出。
+- 更新 `README.md`、`docs/contracts/workbench-schema.md`、`CLAUDE.md` 和 `AGENT.md`，明确 GUI 应使用 `agentdeck workbench --watch --interval <seconds>` 作为状态流入口。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_watch_outputs_jsonl_snapshots_without_mutating_state -q` 最初因 argparse 不认识 `--watch --iterations --interval` 失败；实现后目标测试通过；`conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_watch_outputs_jsonl_snapshots_without_mutating_state tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_workbench_surfaces_provider_setup_as_active_operator_source -q` 通过；`conda run -n agentdeck pytest -q` 172 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `workbench-watch-jsonl-ok`。
+
 ### Current - Add workbench operator controls
 
 - 扩展 `agentdeck workbench` 的 `operator_card`：新增 `controls[]`，让一屏主操作区与 leader action / approval / inbox 队列 item 共用同一套 GUI 按钮描述模型。
