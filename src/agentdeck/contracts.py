@@ -198,6 +198,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "project_view",
     "leader_actions",
     "leader_card",
+    "provider_health",
     "runtime_card",
     "role_card",
     "ledger_card",
@@ -223,6 +224,15 @@ WORKBENCH_LEADER_CARD_FIELDS = (
     "continue_command",
     "actions_command",
     "status_command",
+)
+
+WORKBENCH_PROVIDER_HEALTH_FIELDS = (
+    "provider",
+    "supported",
+    "ready",
+    "missing_env",
+    "detail",
+    "doctor_command",
 )
 
 WORKBENCH_RUNTIME_CARD_FIELDS = (
@@ -500,6 +510,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "leader_card_fields": list(WORKBENCH_LEADER_CARD_FIELDS),
+        "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
@@ -981,6 +992,19 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("leader_card.api_backed must be a boolean")
     elif "leader_card" in payload:
         errors.append("leader_card must be an object")
+    provider_health = payload.get("provider_health")
+    if isinstance(provider_health, dict):
+        for field in WORKBENCH_PROVIDER_HEALTH_FIELDS:
+            if field not in provider_health:
+                errors.append(f"missing provider_health field: {field}")
+        if "supported" in provider_health and not isinstance(provider_health.get("supported"), bool):
+            errors.append("provider_health.supported must be a boolean")
+        if "ready" in provider_health and not isinstance(provider_health.get("ready"), bool):
+            errors.append("provider_health.ready must be a boolean")
+        if "missing_env" in provider_health and not isinstance(provider_health.get("missing_env"), list):
+            errors.append("provider_health.missing_env must be a list")
+    elif "provider_health" in payload:
+        errors.append("provider_health must be an object")
     runtime_card = payload.get("runtime_card")
     if isinstance(runtime_card, dict):
         for field in WORKBENCH_RUNTIME_CARD_FIELDS:
@@ -1356,6 +1380,14 @@ def workbench_example() -> dict[str, object]:
             "continue_command": "agentdeck continue",
             "actions_command": "agentdeck leader actions",
             "status_command": "agentdeck status",
+        },
+        "provider_health": {
+            "provider": "fake",
+            "supported": True,
+            "ready": True,
+            "missing_env": [],
+            "detail": "fake provider is local and ready",
+            "doctor_command": "agentdeck doctor",
         },
         "runtime_card": {
             "backend": "tmux",

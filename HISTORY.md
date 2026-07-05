@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add provider health to workbench snapshot
+
+- 扩展 `agentdeck workbench`：新增 `provider_health`，从 ProjectView leader provider 与本地环境变量派生 GUI/TUI 可渲染的 Leader provider 健康卡。
+- `provider_health` 公开 provider、supported、ready、missing_env、detail 和 doctor_command，帮助 GUI 显示当前 API-backed Leader 是否已经具备本地调用条件。
+- 扩展 workbench contract：新增 `WORKBENCH_PROVIDER_HEALTH_FIELDS`，并在 `agentdeck contract workbench` 暴露 `provider_health_fields`。
+- 补充 CLI 与 contract 测试，覆盖 provider health discovery、默认 deepseek 缺失 `DEEPSEEK_API_KEY` 的 ready=false 投影、example 防漂移、validator 缺字段拒绝和 boolean 类型拒绝。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 provider_health 只暴露缺失 env 名称，不暴露密钥值、不调用 provider。
+- 保持安全边界：本轮仍只读，不写 state、不创建 chat turn、不 ack、不 approve、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_workbench_contract_requires_provider_health_fields tests/test_contracts.py::test_validate_workbench_contract_requires_provider_health_booleans -q` 最初因 `WORKBENCH_PROVIDER_HEALTH_FIELDS` 未出现在 contract 中失败；实现后 provider_health 目标测试 6 项通过；`conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 92 项通过；`conda run -n agentdeck pytest -q` 157 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `contract-provider-health-ok` 与 `workbench-provider-health-ok`。
+
 ### Current - Add leader card to workbench snapshot
 
 - 扩展 `agentdeck workbench`：新增 `leader_card`，从 ProjectView leader 配置派生 GUI/TUI 可渲染的 API-backed Leader LLM 配置卡。

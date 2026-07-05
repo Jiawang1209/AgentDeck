@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import argparse
 import json
+import os
 from pathlib import Path
 import shlex
 import sys
@@ -217,6 +218,7 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "project_view": project_view,
         "leader_actions": project_view.get("leader_actions"),
         "leader_card": _workbench_leader_card(project_view),
+        "provider_health": _workbench_provider_health(project_view),
         "runtime_card": _workbench_runtime_card(project_view),
         "role_card": _workbench_role_card(project_view),
         "ledger_card": _workbench_ledger_card(project_view),
@@ -246,6 +248,45 @@ def _workbench_leader_card(project_view: dict[str, object]) -> dict[str, object]
         "continue_command": "agentdeck continue",
         "actions_command": "agentdeck leader actions",
         "status_command": "agentdeck status",
+    }
+
+
+def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, object]:
+    leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
+    provider = str(leader.get("provider", ""))
+    provider_env = {
+        "deepseek": "DEEPSEEK_API_KEY",
+        "openai-compatible": "AGENTDECK_LEADER_API_KEY",
+    }
+    if provider == "fake":
+        return {
+            "provider": provider,
+            "supported": True,
+            "ready": True,
+            "missing_env": [],
+            "detail": "fake provider is local and ready",
+            "doctor_command": "agentdeck doctor",
+        }
+    required_env = provider_env.get(provider)
+    if required_env is None:
+        return {
+            "provider": provider,
+            "supported": False,
+            "ready": False,
+            "missing_env": [],
+            "detail": f"unsupported leader provider: {provider}",
+            "doctor_command": "agentdeck doctor",
+        }
+    missing_env = [] if os.environ.get(required_env) else [required_env]
+    ready = not missing_env
+    detail = f"{required_env} is set" if ready else f"{required_env} is not set; provider calls are disabled"
+    return {
+        "provider": provider,
+        "supported": True,
+        "ready": ready,
+        "missing_env": missing_env,
+        "detail": detail,
+        "doctor_command": "agentdeck doctor",
     }
 
 

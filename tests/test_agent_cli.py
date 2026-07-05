@@ -307,6 +307,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "project_view",
         "leader_actions",
         "leader_card",
+        "provider_health",
         "runtime_card",
         "role_card",
         "ledger_card",
@@ -331,6 +332,14 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "continue_command",
         "actions_command",
         "status_command",
+    ]
+    assert payload["provider_health_fields"] == [
+        "provider",
+        "supported",
+        "ready",
+        "missing_env",
+        "detail",
+        "doctor_command",
     ]
     assert payload["runtime_card_fields"] == ["backend", "count", "by_status", "agents"]
     assert payload["runtime_agent_fields"] == [
@@ -486,6 +495,14 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "continue_command": "agentdeck continue",
         "actions_command": "agentdeck leader actions",
         "status_command": "agentdeck status",
+    }
+    assert payload["provider_health"] == {
+        "provider": "deepseek",
+        "supported": True,
+        "ready": False,
+        "missing_env": ["DEEPSEEK_API_KEY"],
+        "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+        "doctor_command": "agentdeck doctor",
     }
     assert payload["runtime_card"]["backend"] == "tmux"
     assert payload["runtime_card"]["count"] == 3

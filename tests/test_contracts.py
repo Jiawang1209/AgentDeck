@@ -31,6 +31,7 @@ from agentdeck.contracts import (
     WORKBENCH_LEADER_CARD_FIELDS,
     WORKBENCH_LEDGER_CARD_FIELDS,
     WORKBENCH_OPERATOR_CARD_FIELDS,
+    WORKBENCH_PROVIDER_HEALTH_FIELDS,
     WORKBENCH_QUEUE_CARD_FIELDS,
     WORKBENCH_ROLE_AGENT_FIELDS,
     WORKBENCH_ROLE_CARD_FIELDS,
@@ -301,6 +302,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["workbench_command"] == "agentdeck workbench"
     assert payload["snapshot_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
     assert payload["leader_card_fields"] == list(WORKBENCH_LEADER_CARD_FIELDS)
+    assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
@@ -316,6 +318,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
     assert set(example["leader_card"]) == set(WORKBENCH_LEADER_CARD_FIELDS)
+    assert set(example["provider_health"]) == set(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert set(example["role_card"]) == set(WORKBENCH_ROLE_CARD_FIELDS)
@@ -360,6 +363,24 @@ def test_validate_workbench_contract_requires_leader_fields() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing leader_card field: api_backed"]}
+
+
+def test_validate_workbench_contract_requires_provider_health_fields() -> None:
+    payload = workbench_example()
+    del payload["provider_health"]["ready"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing provider_health field: ready"]}
+
+
+def test_validate_workbench_contract_requires_provider_health_booleans() -> None:
+    payload = workbench_example()
+    payload["provider_health"]["ready"] = "yes"
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["provider_health.ready must be a boolean"]}
 
 
 def test_validate_workbench_contract_requires_runtime_agent_fields() -> None:
