@@ -431,6 +431,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "operator_card",
     "audit_card",
     "contracts_card",
+    "control_mode_card",
     "recovery",
     "next_command",
     "continue_card",
@@ -458,6 +459,37 @@ WORKBENCH_LEADER_CARD_FIELDS = (
 )
 
 WORKBENCH_LEADER_CONTROL_FIELDS = (
+    "kind",
+    "label",
+    "command",
+    "safety",
+    "enabled",
+    "blocker",
+)
+
+WORKBENCH_CONTROL_MODE_CARD_FIELDS = (
+    "mode",
+    "title",
+    "current_mode",
+    "approval_mode",
+    "default_safety",
+    "available_modes",
+    "active_controls",
+    "set_mode_command_template",
+    "policy_source",
+)
+
+WORKBENCH_CONTROL_MODE_OPTION_FIELDS = (
+    "mode",
+    "label",
+    "description",
+    "enabled",
+    "requires_explicit_user",
+    "safety",
+    "blocker",
+)
+
+WORKBENCH_CONTROL_MODE_CONTROL_FIELDS = (
     "kind",
     "label",
     "command",
@@ -1191,6 +1223,9 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "leader_card_fields": list(WORKBENCH_LEADER_CARD_FIELDS),
         "leader_control_fields": list(WORKBENCH_LEADER_CONTROL_FIELDS),
+        "control_mode_card_fields": list(WORKBENCH_CONTROL_MODE_CARD_FIELDS),
+        "control_mode_option_fields": list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS),
+        "control_mode_control_fields": list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
@@ -2103,6 +2138,47 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("leader_card.controls must be a list")
     elif "leader_card" in payload:
         errors.append("leader_card must be an object")
+    control_mode_card = payload.get("control_mode_card")
+    if isinstance(control_mode_card, dict):
+        for field in WORKBENCH_CONTROL_MODE_CARD_FIELDS:
+            if field not in control_mode_card:
+                errors.append(f"missing control_mode_card field: {field}")
+        available_modes = control_mode_card.get("available_modes")
+        if isinstance(available_modes, list):
+            for option in available_modes:
+                if not isinstance(option, dict):
+                    errors.append("control mode options must be objects")
+                    continue
+                for field in WORKBENCH_CONTROL_MODE_OPTION_FIELDS:
+                    if field not in option:
+                        errors.append(f"missing control mode option field: {field}")
+                if "enabled" in option and not isinstance(option.get("enabled"), bool):
+                    errors.append("control mode option enabled must be a boolean")
+                if "requires_explicit_user" in option and not isinstance(
+                    option.get("requires_explicit_user"), bool
+                ):
+                    errors.append("control mode option requires_explicit_user must be a boolean")
+                if option.get("enabled") is False and not option.get("blocker"):
+                    errors.append("disabled control mode option requires blocker")
+        elif "available_modes" in control_mode_card:
+            errors.append("control_mode_card.available_modes must be a list")
+        active_controls = control_mode_card.get("active_controls")
+        if isinstance(active_controls, list):
+            for control in active_controls:
+                if not isinstance(control, dict):
+                    errors.append("control mode controls must be objects")
+                    continue
+                for field in WORKBENCH_CONTROL_MODE_CONTROL_FIELDS:
+                    if field not in control:
+                        errors.append(f"missing control mode control field: {field}")
+                if "enabled" in control and not isinstance(control.get("enabled"), bool):
+                    errors.append("control mode control enabled must be a boolean")
+                if control.get("enabled") is False and not control.get("blocker"):
+                    errors.append("disabled control mode control requires blocker")
+        elif "active_controls" in control_mode_card:
+            errors.append("control_mode_card.active_controls must be a list")
+    elif "control_mode_card" in payload:
+        errors.append("control_mode_card must be an object")
     control_registry = payload.get("control_registry")
     if isinstance(control_registry, list):
         for item in control_registry:
@@ -3038,6 +3114,62 @@ def workbench_example() -> dict[str, object]:
             "project_view_contract": "agentdeck contract project-view",
             "events_contract": "agentdeck contract events",
             "doctor_contract": "agentdeck contract doctor",
+        },
+        "control_mode_card": {
+            "mode": "control_mode",
+            "title": "Control mode",
+            "current_mode": "ask",
+            "approval_mode": "confirm",
+            "default_safety": "inspect",
+            "available_modes": [
+                {
+                    "mode": "ask",
+                    "label": "Ask / inspect",
+                    "description": "Plan, inspect, and suggest commands without mutating runtime state.",
+                    "enabled": True,
+                    "requires_explicit_user": False,
+                    "safety": "inspect",
+                    "blocker": None,
+                },
+                {
+                    "mode": "approve",
+                    "label": "Approval gated",
+                    "description": "Allow safe apply after explicit human approval while runtime actions remain explicit.",
+                    "enabled": True,
+                    "requires_explicit_user": True,
+                    "safety": "safe_apply",
+                    "blocker": None,
+                },
+                {
+                    "mode": "autonomous",
+                    "label": "Autonomous bounded",
+                    "description": "Reserved for future scoped delegation with budgets, allowlists, and audit gates.",
+                    "enabled": False,
+                    "requires_explicit_user": True,
+                    "safety": "delegated",
+                    "blocker": "autonomous execution policy is not implemented",
+                },
+            ],
+            "active_controls": [
+                {
+                    "kind": "inspect",
+                    "label": "Inspect policy",
+                    "command": "agentdeck workbench",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "set_mode",
+                    "label": "Set control mode",
+                    "command": "agentdeck policy set-mode --mode <mode>",
+                    "safety": "explicit_user",
+                    "enabled": False,
+                    "blocker": "policy mutation command is not implemented",
+                },
+            ],
+            "set_mode_command_template": "agentdeck policy set-mode --mode <mode>",
+            "policy_source": ".agentdeck/config.toml:leader.approval_mode",
         },
         "recovery": recovery,
         "next_command": recovery["next_command"],

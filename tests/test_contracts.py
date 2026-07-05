@@ -44,6 +44,9 @@ from agentdeck.contracts import (
     WORKBENCH_AUDIT_CARD_FIELDS,
     WORKBENCH_CHANGE_SUMMARY_FIELDS,
     WORKBENCH_CONTRACTS_CARD_FIELDS,
+    WORKBENCH_CONTROL_MODE_CARD_FIELDS,
+    WORKBENCH_CONTROL_MODE_CONTROL_FIELDS,
+    WORKBENCH_CONTROL_MODE_OPTION_FIELDS,
     WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS,
     WORKBENCH_LEADER_CARD_FIELDS,
     WORKBENCH_LEADER_CONTROL_FIELDS,
@@ -601,6 +604,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert "leader_inbox_card" in payload["snapshot_fields"]
     assert payload["leader_card_fields"] == list(WORKBENCH_LEADER_CARD_FIELDS)
     assert payload["leader_control_fields"] == list(WORKBENCH_LEADER_CONTROL_FIELDS)
+    assert payload["control_mode_card_fields"] == list(WORKBENCH_CONTROL_MODE_CARD_FIELDS)
+    assert payload["control_mode_option_fields"] == list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS)
+    assert payload["control_mode_control_fields"] == list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS)
     assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
@@ -636,6 +642,11 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["leader_card"]["controls"][0]["blocker"] == "requires message text"
     assert example["leader_card"]["controls"][2]["enabled"] is False
     assert example["leader_card"]["controls"][2]["blocker"] == "requires plan_id"
+    assert set(example["control_mode_card"]) == set(WORKBENCH_CONTROL_MODE_CARD_FIELDS)
+    assert set(example["control_mode_card"]["available_modes"][0]) == set(WORKBENCH_CONTROL_MODE_OPTION_FIELDS)
+    assert set(example["control_mode_card"]["active_controls"][0]) == set(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS)
+    assert example["control_mode_card"]["current_mode"] == "ask"
+    assert example["control_mode_card"]["available_modes"][2]["enabled"] is False
     assert set(example["control_registry"][0]) == set(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
     assert example["control_registry"][0] == {
         "scope": "leader",
@@ -751,6 +762,18 @@ def test_validate_workbench_contract_requires_leader_control_fields() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing leader control field: safety"]}
+
+
+def test_validate_workbench_contract_requires_control_mode_fields() -> None:
+    payload = workbench_example()
+    del payload["control_mode_card"]["available_modes"][0]["requires_explicit_user"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing control mode option field: requires_explicit_user"],
+    }
 
 
 def test_validate_workbench_contract_requires_control_registry_item_fields() -> None:

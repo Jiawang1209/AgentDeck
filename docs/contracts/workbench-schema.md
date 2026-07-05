@@ -59,6 +59,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "operator_card": {},
   "audit_card": {},
   "contracts_card": {},
+  "control_mode_card": {},
   "recovery": {},
   "next_command": "agentdeck continue",
   "continue_card": {},
@@ -157,6 +158,23 @@ Without `--since-event`, `since_event_id` is `null`, `latest_event_id` still ref
 ```
 
 The card never exposes API keys and does not call the provider. `api_backed` only indicates that the configured provider is not the local `fake` provider. `controls[]` uses `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` so GUI clients can render Leader entry points without deriving buttons from command strings. `chat` and `review` controls are disabled templates until a GUI or user supplies message text or a plan id; `continue`, `actions`, and `status` are read-only inspect controls. `review_command_template` requires a concrete plan id and must not be treated as permission to review, approve, dispatch, or capture automatically.
+
+## Control Mode
+
+`control_mode_card` is a read-only policy projection for Codex-like control levels:
+
+```json
+{
+  "mode": "control_mode",
+  "current_mode": "ask",
+  "approval_mode": "confirm",
+  "default_safety": "inspect",
+  "available_modes": [],
+  "active_controls": []
+}
+```
+
+`current_mode=ask` means AgentDeck may plan, inspect, and suggest commands without mutating runtime state. `approve` describes the existing approval-gated safe-apply path. `autonomous` is advertised as disabled until scoped delegation, budgets, allowlists, and audit gates exist. This card does not grant permission by itself and does not execute, approve, dispatch, acknowledge, or send tmux input.
 
 ## Control Registry
 

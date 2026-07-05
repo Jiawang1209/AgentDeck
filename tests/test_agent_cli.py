@@ -659,6 +659,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "operator_card",
         "audit_card",
         "contracts_card",
+        "control_mode_card",
         "recovery",
         "next_command",
         "continue_card",
@@ -690,6 +691,17 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "safety",
         "enabled",
         "blocker",
+    ]
+    assert payload["control_mode_card_fields"] == [
+        "mode",
+        "title",
+        "current_mode",
+        "approval_mode",
+        "default_safety",
+        "available_modes",
+        "active_controls",
+        "set_mode_command_template",
+        "policy_source",
     ]
     assert payload["provider_health_fields"] == [
         "agent_id",
@@ -1149,6 +1161,62 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "project_view_contract": "agentdeck contract project-view",
         "events_contract": "agentdeck contract events",
         "doctor_contract": "agentdeck contract doctor",
+    }
+    assert payload["control_mode_card"] == {
+        "mode": "control_mode",
+        "title": "Control mode",
+        "current_mode": "ask",
+        "approval_mode": "confirm",
+        "default_safety": "inspect",
+        "available_modes": [
+            {
+                "mode": "ask",
+                "label": "Ask / inspect",
+                "description": "Plan, inspect, and suggest commands without mutating runtime state.",
+                "enabled": True,
+                "requires_explicit_user": False,
+                "safety": "inspect",
+                "blocker": None,
+            },
+            {
+                "mode": "approve",
+                "label": "Approval gated",
+                "description": "Allow safe apply after explicit human approval while runtime actions remain explicit.",
+                "enabled": True,
+                "requires_explicit_user": True,
+                "safety": "safe_apply",
+                "blocker": None,
+            },
+            {
+                "mode": "autonomous",
+                "label": "Autonomous bounded",
+                "description": "Reserved for future scoped delegation with budgets, allowlists, and audit gates.",
+                "enabled": False,
+                "requires_explicit_user": True,
+                "safety": "delegated",
+                "blocker": "autonomous execution policy is not implemented",
+            },
+        ],
+        "active_controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect policy",
+                "command": "agentdeck workbench",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "set_mode",
+                "label": "Set control mode",
+                "command": "agentdeck policy set-mode --mode <mode>",
+                "safety": "explicit_user",
+                "enabled": False,
+                "blocker": "policy mutation command is not implemented",
+            },
+        ],
+        "set_mode_command_template": "agentdeck policy set-mode --mode <mode>",
+        "policy_source": ".agentdeck/config.toml:leader.approval_mode",
     }
     assert payload["continue_card"]["status"] == "inbox_pending"
     assert payload["active_queue_source"] == "inbox"

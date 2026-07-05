@@ -402,6 +402,7 @@ def _workbench_snapshot_payload(
     operator_card = _workbench_operator_card(project_view, continue_card, active_queue_source)
     audit_card = _workbench_audit_card(project_view)
     contracts_card = _workbench_contracts_card()
+    control_mode_card = _workbench_control_mode_card(project_view)
     payload = {
         "ok": True,
         "mode": "workbench",
@@ -417,6 +418,7 @@ def _workbench_snapshot_payload(
         "operator_card": operator_card,
         "audit_card": audit_card,
         "contracts_card": contracts_card,
+        "control_mode_card": control_mode_card,
         "recovery": recovery,
         "next_command": continue_card.get("next_command"),
         "continue_card": continue_card,
@@ -430,6 +432,65 @@ def _workbench_snapshot_payload(
     }
     payload["control_registry"] = _workbench_control_registry(payload)
     return payload
+
+
+def _control_mode_from_approval_mode(approval_mode: object) -> str:
+    return "approve" if approval_mode in {"auto_approve", "approve"} else "ask"
+
+
+def _workbench_control_mode_card(project_view: dict[str, object]) -> dict[str, object]:
+    leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
+    approval_mode = str(leader.get("approval_mode", "confirm"))
+    current_mode = _control_mode_from_approval_mode(approval_mode)
+    return {
+        "mode": "control_mode",
+        "title": "Control mode",
+        "current_mode": current_mode,
+        "approval_mode": approval_mode,
+        "default_safety": "inspect" if current_mode == "ask" else "safe_apply",
+        "available_modes": [
+            {
+                "mode": "ask",
+                "label": "Ask / inspect",
+                "description": "Plan, inspect, and suggest commands without mutating runtime state.",
+                "enabled": True,
+                "requires_explicit_user": False,
+                "safety": "inspect",
+                "blocker": None,
+            },
+            {
+                "mode": "approve",
+                "label": "Approval gated",
+                "description": "Allow safe apply after explicit human approval while runtime actions remain explicit.",
+                "enabled": True,
+                "requires_explicit_user": True,
+                "safety": "safe_apply",
+                "blocker": None,
+            },
+            {
+                "mode": "autonomous",
+                "label": "Autonomous bounded",
+                "description": "Reserved for future scoped delegation with budgets, allowlists, and audit gates.",
+                "enabled": False,
+                "requires_explicit_user": True,
+                "safety": "delegated",
+                "blocker": "autonomous execution policy is not implemented",
+            },
+        ],
+        "active_controls": [
+            _control(kind="inspect", label="Inspect policy", command="agentdeck workbench", safety="inspect"),
+            _control(
+                kind="set_mode",
+                label="Set control mode",
+                command="agentdeck policy set-mode --mode <mode>",
+                safety="explicit_user",
+                enabled=False,
+                blocker="policy mutation command is not implemented",
+            ),
+        ],
+        "set_mode_command_template": "agentdeck policy set-mode --mode <mode>",
+        "policy_source": ".agentdeck/config.toml:leader.approval_mode",
+    }
 
 
 def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, object]]:

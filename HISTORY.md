@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Surface control mode in workbench
+
+- 扩展 `agentdeck workbench` 一屏快照：新增只读 `control_mode_card`，把类似 Codex 的 ask/approve/autonomous 控制梯度显式暴露给 GUI/TUI 和自然语言壳。
+- 当前默认从 `leader.approval_mode=confirm` 映射为 `current_mode=ask`，只允许计划、观察和建议命令；`approve` 描述已有审批 gated safe apply 路径；`autonomous` 作为未来带预算、allowlist、审计门的放权模式占位并保持 disabled。
+- 保持安全边界不变：本轮不新增 `policy set-mode` 实现，不自动修改策略、不 ack、不 approve、不 dispatch、不发送 tmux 输入。
+- 同步 `agentdeck contract workbench`、`docs/contracts/workbench-schema.md`、README、CLAUDE.md、AGENT.md 和测试；本轮把“可以 ask，也可以授权放权”的产品语义先落到可消费 contract 上。
+- 完整验证：已先确认红测失败，`WORKBENCH_CONTROL_MODE_*` 字段常量和 workbench card 最初不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_control_mode_fields -q` 4 项通过；`conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 156 项通过；`conda run -n agentdeck pytest -q` 236 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时项目 in-process smoke 确认 `current_mode=ask`、`autonomous_enabled=false`，且 `agentdeck workbench` 不修改 state。
+
 ### Current - Surface Leader inbox in workbench
 
 - 扩展 `agentdeck workbench` 一屏快照：新增固定 `leader_inbox_card`，始终复用 `agentdeck inbox --agent leader` 队列形状，让 GUI/TUI 或自然语言壳直接看到 worker 回流给 Leader 的 `task_reply`、trace 和 ack 入口。
