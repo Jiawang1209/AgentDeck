@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add leader card to workbench snapshot
+
+- 扩展 `agentdeck workbench`：新增 `leader_card`，从 ProjectView leader 配置派生 GUI/TUI 可渲染的 API-backed Leader LLM 配置卡。
+- `leader_card` 公开 agent_id、provider、model、approval_mode、api_backed，以及 chat/continue/actions/status 入口命令，帮助 GUI 展示当前 Leader 调度入口。
+- 扩展 workbench contract：新增 `WORKBENCH_LEADER_CARD_FIELDS`，并在 `agentdeck contract workbench` 暴露 `leader_card_fields`。
+- 补充 CLI 与 contract 测试，覆盖 leader card discovery、默认 deepseek Leader 投影、example 防漂移、validator 缺字段拒绝和只读状态不变性。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 leader_card 不暴露 API key、不调用 provider、不创建 plan 或 action。
+- 保持安全边界：本轮仍只读，不写 state、不创建 chat turn、不 ack、不 approve、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_workbench_contract_requires_leader_fields -q` 最初因 `WORKBENCH_LEADER_CARD_FIELDS` 未出现在 contract 中失败；实现后 leader_card 目标测试 5 项通过；`conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 90 项通过；`conda run -n agentdeck pytest -q` 155 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `contract-leader-ok` 与 `workbench-leader-ok`。
+
 ### Current - Add queue card to workbench snapshot
 
 - 扩展 `agentdeck workbench`：新增 `queue_card`，从 ProjectView 的 leader_actions、approvals、inbox 和 recovery next_command 派生 GUI/TUI 可渲染的待处理队列总览。

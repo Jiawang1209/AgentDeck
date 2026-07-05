@@ -197,6 +197,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "schema_version",
     "project_view",
     "leader_actions",
+    "leader_card",
     "runtime_card",
     "role_card",
     "ledger_card",
@@ -210,6 +211,18 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "inbox_card",
     "approval_card",
     "leader_action",
+)
+
+WORKBENCH_LEADER_CARD_FIELDS = (
+    "agent_id",
+    "provider",
+    "model",
+    "approval_mode",
+    "api_backed",
+    "chat_command",
+    "continue_command",
+    "actions_command",
+    "status_command",
 )
 
 WORKBENCH_RUNTIME_CARD_FIELDS = (
@@ -486,6 +499,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
+        "leader_card_fields": list(WORKBENCH_LEADER_CARD_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
@@ -958,6 +972,15 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("recovery must match project_view.recovery")
     elif "project_view" in payload:
         errors.append("project_view must be an object")
+    leader_card = payload.get("leader_card")
+    if isinstance(leader_card, dict):
+        for field in WORKBENCH_LEADER_CARD_FIELDS:
+            if field not in leader_card:
+                errors.append(f"missing leader_card field: {field}")
+        if "api_backed" in leader_card and not isinstance(leader_card.get("api_backed"), bool):
+            errors.append("leader_card.api_backed must be a boolean")
+    elif "leader_card" in payload:
+        errors.append("leader_card must be an object")
     runtime_card = payload.get("runtime_card")
     if isinstance(runtime_card, dict):
         for field in WORKBENCH_RUNTIME_CARD_FIELDS:
@@ -1323,6 +1346,17 @@ def workbench_example() -> dict[str, object]:
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view": project_view,
         "leader_actions": project_view["leader_actions"],
+        "leader_card": {
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "approval_mode": "confirm",
+            "api_backed": False,
+            "chat_command": "agentdeck leader chat --message <text>",
+            "continue_command": "agentdeck continue",
+            "actions_command": "agentdeck leader actions",
+            "status_command": "agentdeck status",
+        },
         "runtime_card": {
             "backend": "tmux",
             "count": 3,

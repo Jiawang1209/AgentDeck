@@ -306,6 +306,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "schema_version",
         "project_view",
         "leader_actions",
+        "leader_card",
         "runtime_card",
         "role_card",
         "ledger_card",
@@ -319,6 +320,17 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "inbox_card",
         "approval_card",
         "leader_action",
+    ]
+    assert payload["leader_card_fields"] == [
+        "agent_id",
+        "provider",
+        "model",
+        "approval_mode",
+        "api_backed",
+        "chat_command",
+        "continue_command",
+        "actions_command",
+        "status_command",
     ]
     assert payload["runtime_card_fields"] == ["backend", "count", "by_status", "agents"]
     assert payload["runtime_agent_fields"] == [
@@ -464,6 +476,17 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert payload["project_view"]["recovery"]["status"] == "inbox_pending"
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
     assert payload["recovery"] == payload["project_view"]["recovery"]
+    assert payload["leader_card"] == {
+        "agent_id": "leader",
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "approval_mode": "confirm",
+        "api_backed": True,
+        "chat_command": "agentdeck leader chat --message <text>",
+        "continue_command": "agentdeck continue",
+        "actions_command": "agentdeck leader actions",
+        "status_command": "agentdeck status",
+    }
     assert payload["runtime_card"]["backend"] == "tmux"
     assert payload["runtime_card"]["count"] == 3
     assert payload["runtime_card"]["by_status"] == {"configured": 2, "running": 1}

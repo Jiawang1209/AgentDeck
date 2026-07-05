@@ -216,6 +216,7 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view": project_view,
         "leader_actions": project_view.get("leader_actions"),
+        "leader_card": _workbench_leader_card(project_view),
         "runtime_card": _workbench_runtime_card(project_view),
         "role_card": _workbench_role_card(project_view),
         "ledger_card": _workbench_ledger_card(project_view),
@@ -229,6 +230,22 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "inbox_card": inbox_card,
         "approval_card": approval_card,
         "leader_action": leader_action if isinstance(leader_action, dict) else None,
+    }
+
+
+def _workbench_leader_card(project_view: dict[str, object]) -> dict[str, object]:
+    leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
+    provider = str(leader.get("provider", ""))
+    return {
+        "agent_id": leader.get("agent_id"),
+        "provider": provider,
+        "model": leader.get("model"),
+        "approval_mode": leader.get("approval_mode"),
+        "api_backed": provider not in ("", "fake"),
+        "chat_command": "agentdeck leader chat --message <text>",
+        "continue_command": "agentdeck continue",
+        "actions_command": "agentdeck leader actions",
+        "status_command": "agentdeck status",
     }
 
 

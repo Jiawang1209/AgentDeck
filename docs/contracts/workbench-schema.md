@@ -18,6 +18,7 @@ The contract command returns:
   "schema_version": "project-view/v1",
   "workbench_command": "agentdeck workbench",
   "snapshot_fields": [],
+  "leader_card_fields": [],
   "runtime_card_fields": [],
   "runtime_agent_fields": [],
   "role_card_fields": [],
@@ -42,6 +43,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "schema_version": "project-view/v1",
   "project_view": {},
   "leader_actions": {},
+  "leader_card": {},
   "runtime_card": {},
   "role_card": {},
   "ledger_card": {},
@@ -60,6 +62,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 
 `project_view` remains the source of truth and must pass `validate_project_view_contract()`.
 `leader_actions` must equal `project_view.leader_actions`.
+`leader_card` is derived from `project_view.leader`.
 `runtime_card` is derived from `project_view.runtime_backend` and `project_view.agents[]`.
 `role_card` is derived from `project_view.agents[]` role configuration.
 `ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, and `project_view.inbox`.
@@ -69,6 +72,26 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `next_command` must equal `continue_card.next_command`.
+
+## Leader Card
+
+`leader_card` is a GUI-ready projection of the configured Leader LLM:
+
+```json
+{
+  "agent_id": "leader",
+  "provider": "deepseek",
+  "model": "deepseek-chat",
+  "approval_mode": "confirm",
+  "api_backed": true,
+  "chat_command": "agentdeck leader chat --message <text>",
+  "continue_command": "agentdeck continue",
+  "actions_command": "agentdeck leader actions",
+  "status_command": "agentdeck status"
+}
+```
+
+The card never exposes API keys and does not call the provider. `api_backed` only indicates that the configured provider is not the local `fake` provider.
 
 ## Runtime Card
 
