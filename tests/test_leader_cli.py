@@ -2009,6 +2009,29 @@ def test_leader_review_recommends_waiting_for_dispatched_reply(tmp_path, monkeyp
     assert payload["message_id"] == message_id
     assert payload["agent_id"] == "planner"
     assert payload["reason"] == "dispatched step has no reply yet"
+    assert payload["next_command"] == f"agentdeck capture-reply --agent planner --message-id {message_id}"
+    assert payload["controls"] == [
+        {
+            "kind": "preview",
+            "label": "Preview message lineage",
+            "command": f"agentdeck trace --id {message_id}",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "capture_reply",
+            "label": "Capture reply",
+            "command": f"agentdeck capture-reply --agent planner --message-id {message_id}",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+
+    state_after = StateStore(root).load()
+    assert state_after["replies"] == []
+    assert state_after["leader_actions"] == []
 
 
 def test_leader_review_summarizes_when_all_dispatched_steps_have_replies(tmp_path, monkeypatch, capsys) -> None:
@@ -2034,6 +2057,17 @@ def test_leader_review_summarizes_when_all_dispatched_steps_have_replies(tmp_pat
     assert payload["next_action"] == "summarize"
     assert payload["reason"] == "all dispatched steps have replies"
     assert payload["replies"] == [{"agent_id": "planner", "message_id": message_id, "reply_id": reply_id}]
+    assert payload["next_command"] == f"agentdeck plan status --plan-id {plan_id}"
+    assert payload["controls"] == [
+        {
+            "kind": "next",
+            "label": "Next command",
+            "command": f"agentdeck plan status --plan-id {plan_id}",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
 
 
 def test_leader_review_rejects_unknown_plan_id(tmp_path, monkeypatch, capsys) -> None:

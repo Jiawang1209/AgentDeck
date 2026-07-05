@@ -1503,8 +1503,65 @@ def leader_review_command(args: argparse.Namespace) -> int:
     except KeyError:
         print(f"unknown plan: {args.plan_id}", file=sys.stderr)
         return 1
-    _print_json(review)
+    _print_json(_leader_review_payload(review))
     return 0
+
+
+def _leader_review_payload(review: dict[str, object]) -> dict[str, object]:
+    next_command = _leader_review_next_command(review)
+    return {
+        **review,
+        "next_command": next_command,
+        "controls": _leader_review_controls(review, next_command),
+    }
+
+
+def _leader_review_next_command(review: dict[str, object]) -> str | None:
+    next_action = review.get("next_action")
+    if next_action == "dispatch_approved" and review.get("approval_id"):
+        return f"agentdeck approval dispatch --approval-id {review['approval_id']}"
+    if next_action == "wait_for_reply" and review.get("agent_id") and review.get("message_id"):
+        return f"agentdeck capture-reply --agent {review['agent_id']} --message-id {review['message_id']}"
+    if next_action == "summarize" and review.get("plan_id"):
+        return f"agentdeck plan status --plan-id {review['plan_id']}"
+    if next_action == "wait_for_approval":
+        return "agentdeck approval list"
+    return None
+
+
+def _leader_review_controls(review: dict[str, object], next_command: str | None) -> list[dict[str, object]]:
+    controls: list[dict[str, object]] = []
+    message_id = review.get("message_id")
+    if message_id:
+        controls.append(
+            _control(
+                kind="preview",
+                label="Preview message lineage",
+                command=_trace_command(message_id),
+                safety="inspect",
+            )
+        )
+    if review.get("next_action") == "wait_for_reply":
+        controls.append(
+            _control(
+                kind="capture_reply",
+                label="Capture reply",
+                command=next_command,
+                safety="explicit_runtime",
+                enabled=next_command is not None,
+                blocker=None if next_command is not None else "capture reply command unavailable",
+            )
+        )
+    elif next_command is not None:
+        controls.append(
+            _control(
+                kind="next",
+                label="Next command",
+                command=next_command,
+                safety="inspect" if review.get("next_action") in {"summarize", "wait_for_approval"} else "explicit_runtime",
+            )
+        )
+    return controls
 
 
 def leader_next_command(args: argparse.Namespace) -> int:

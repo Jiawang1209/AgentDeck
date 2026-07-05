@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add Leader review controls for reply capture
+
+- 扩展 `agentdeck leader review --plan-id <id>` 输出：新增 `next_command` 和 GUI-ready `controls[]`，让 GUI/自然语言壳能直接渲染 review 建议而不必解析 `next_action`。
+- `wait_for_reply` 现在会暴露只读 trace preview control 和 `capture_reply` control，命令为 `agentdeck capture-reply --agent <id> --message-id <id>`，标记 `safety=explicit_runtime`，但 review 本身仍不 capture pane、不写 reply、不创建 leader action。
+- `summarize` 路径会暴露只读 `agentdeck plan status --plan-id <id>` next control。
+- 同步 `README.md`、`CLAUDE.md`、`AGENT.md` 和测试。
+- 完整验证：已先确认红测失败，leader review wait_for_reply 最初缺少 `next_command`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_review_recommends_waiting_for_dispatched_reply tests/test_leader_cli.py::test_leader_review_summarizes_when_all_dispatched_steps_have_replies -q` 2 项通过；leader/dispatch 相关测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_dispatch_cli.py -q` 75 项通过；`conda run -n agentdeck pytest -q` 215 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-review-controls-smoke-ok` 且 review 未写 reply/leader action。
+
 ### Current - Guard Leader intent placeholder controls
 
 - 加强 `intent_card.controls[]`：当 `next_command` 仍包含 `<reason>` 这类模板输入时，next control 会 disabled，并返回 `requires reason` blocker，避免 GUI 把缺参命令渲染成可直接执行按钮。
