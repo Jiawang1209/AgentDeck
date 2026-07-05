@@ -874,6 +874,14 @@ def test_leader_chat_opens_workbench_snapshot_without_mutating_state(tmp_path, m
         "requires_explicit_user": False,
         "controls": [
             {
+                "kind": "inspect",
+                "label": "Inspect workbench_card",
+                "command": "agentdeck workbench",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
                 "kind": "next",
                 "label": "Next command",
                 "command": payload["next_command"],

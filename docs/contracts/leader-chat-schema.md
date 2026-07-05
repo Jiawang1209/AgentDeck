@@ -79,6 +79,14 @@ The review-mode response shape is:
   "requires_explicit_user": false,
   "controls": [
     {
+      "kind": "inspect",
+      "label": "Inspect workbench_card",
+      "command": "agentdeck workbench",
+      "safety": "inspect",
+      "enabled": true,
+      "blocker": null
+    },
+    {
       "kind": "next",
       "label": "Next command",
       "command": "agentdeck continue",
@@ -90,7 +98,7 @@ The review-mode response shape is:
 }
 ```
 
-`route_source` is `local_rule` for local intent routing, `provider_plan` for first-time provider-backed planning, and `state_review` for review of an existing plan. `embedded_card` names the primary top-level card the GUI should render for that route, or `null` when there is no embedded card. `read_only=false` marks routes that create or apply state, such as `plan`, `review`, or `apply_action`. `controls[]` are renderable command descriptors only; they must not be executed automatically.
+`route_source` is `local_rule` for local intent routing, `provider_plan` for first-time provider-backed planning, and `state_review` for review of an existing plan. `embedded_card` names the primary top-level card the GUI should render for that route, or `null` when there is no embedded card. `read_only=false` marks routes that create or apply state, such as `plan`, `review`, or `apply_action`. `controls[]` are renderable command descriptors only; they must not be executed automatically. When an embedded card has a safe read-only command, `controls[]` should include an `inspect` control before the `next` control.
 
 Continue-mode responses include `continue_card`, which reuses the same recovery card shape as `agentdeck continue`:
 
@@ -319,7 +327,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat responses must pass `validate_leader_chat_contract()` before printing JSON.
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Chat responses must include `intent_card`, and `intent_card.next_command` must describe the same next action as the top-level response.
-- Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; disabled controls must explain the blocker.
+- Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; disabled controls must explain the blocker, and inspect controls must remain read-only.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.

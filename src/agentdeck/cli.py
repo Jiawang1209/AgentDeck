@@ -75,6 +75,29 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     route_source = "provider_plan" if mode == "plan" else "state_review" if mode == "review" else "local_rule"
     read_only = mode not in {"plan", "review", "apply_action"}
     next_command = payload.get("next_command")
+    controls: list[dict[str, object]] = []
+    inspect_command = _leader_chat_intent_inspect_command(embedded_card, payload)
+    if inspect_command is not None:
+        controls.append(
+            {
+                "kind": "inspect",
+                "label": f"Inspect {embedded_card}",
+                "command": inspect_command,
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            }
+        )
+    controls.append(
+        {
+            "kind": "next",
+            "label": "Next command",
+            "command": next_command,
+            "safety": explanation.get("safety"),
+            "enabled": next_command is not None,
+            "blocker": None if next_command is not None else "next command unavailable",
+        }
+    )
     return {
         "mode": mode,
         "matched_intent": mode,
@@ -83,17 +106,30 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "read_only": read_only,
         "next_command": next_command,
         "requires_explicit_user": explanation.get("requires_explicit_user"),
-        "controls": [
-            {
-                "kind": "next",
-                "label": "Next command",
-                "command": next_command,
-                "safety": explanation.get("safety"),
-                "enabled": next_command is not None,
-                "blocker": None if next_command is not None else "next command unavailable",
-            }
-        ],
+        "controls": controls,
     }
+
+
+def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str, object]) -> str | None:
+    if embedded_card == "workbench_card":
+        return "agentdeck workbench"
+    if embedded_card == "continue_card":
+        return "agentdeck continue"
+    if embedded_card == "runtime_card":
+        return "agentdeck agent list"
+    if embedded_card == "ledger_card":
+        return "agentdeck workbench"
+    if embedded_card == "role_card":
+        return "agentdeck workbench"
+    if embedded_card == "queue_card" or embedded_card == "operator_card":
+        return "agentdeck workbench"
+    if embedded_card == "approval_card":
+        return "agentdeck approval list"
+    if embedded_card == "inbox_card":
+        inbox_card = payload.get("inbox_card")
+        agent_id = inbox_card.get("agent_id") if isinstance(inbox_card, dict) else None
+        return f"agentdeck inbox --agent {agent_id}" if agent_id else None
+    return None
 
 
 def _project_view_payload_or_error(config: ProjectConfig, store: StateStore) -> dict[str, object] | None:
