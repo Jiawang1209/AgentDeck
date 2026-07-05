@@ -27,6 +27,8 @@ from agentdeck.contracts import (
     TRACE_MESSAGE_FIELDS,
     TRACE_REPLY_FIELDS,
     TRACE_TOP_LEVEL_FIELDS,
+    WORKBENCH_RUNTIME_AGENT_FIELDS,
+    WORKBENCH_RUNTIME_CARD_FIELDS,
     WORKBENCH_SNAPSHOT_FIELDS,
     approval_contract_payload,
     approval_contract_response,
@@ -291,12 +293,16 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
     assert payload["workbench_command"] == "agentdeck workbench"
     assert payload["snapshot_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
+    assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
+    assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert payload["example"] is True
     assert payload["example_workbench"] == example
     assert payload["example_snapshot_fields"] == payload["snapshot_fields"]
     assert set(payload["example_snapshot_fields"]) == set(example)
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
+    assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
+    assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert example["recovery"] == example["project_view"]["recovery"]
     assert example["next_command"] == example["continue_card"]["next_command"]
 
@@ -317,6 +323,15 @@ def test_validate_workbench_contract_reuses_continue_card_validator() -> None:
         "ok": False,
         "errors": ["continue_card: missing pending field: approvals"],
     }
+
+
+def test_validate_workbench_contract_requires_runtime_agent_fields() -> None:
+    payload = workbench_example()
+    del payload["runtime_card"]["agents"][0]["pane_id"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing runtime agent field: pane_id"]}
 
 
 def test_validate_workbench_contract_requires_matching_project_view_summaries() -> None:

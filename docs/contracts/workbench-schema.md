@@ -17,7 +17,9 @@ The contract command returns:
 {
   "schema_version": "project-view/v1",
   "workbench_command": "agentdeck workbench",
-  "snapshot_fields": []
+  "snapshot_fields": [],
+  "runtime_card_fields": [],
+  "runtime_agent_fields": []
 }
 ```
 
@@ -34,6 +36,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "schema_version": "project-view/v1",
   "project_view": {},
   "leader_actions": {},
+  "runtime_card": {},
   "recovery": {},
   "next_command": "agentdeck continue",
   "continue_card": {},
@@ -46,9 +49,39 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 
 `project_view` remains the source of truth and must pass `validate_project_view_contract()`.
 `leader_actions` must equal `project_view.leader_actions`.
+`runtime_card` is derived from `project_view.runtime_backend` and `project_view.agents[]`.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `next_command` must equal `continue_card.next_command`.
+
+## Runtime Card
+
+`runtime_card` is a GUI-ready projection of visible tmux runtime bindings:
+
+```json
+{
+  "backend": "tmux",
+  "count": 3,
+  "by_status": {"running": 1, "configured": 2},
+  "agents": [
+    {
+      "agent_id": "planner",
+      "role": "planning",
+      "provider": "codex",
+      "workspace_mode": "shared",
+      "status": "running",
+      "pane_id": "%42",
+      "session_name": "agentdeck",
+      "cwd": "/workspace/project",
+      "spawn_command": "agentdeck agent spawn --agent planner",
+      "stop_command": "agentdeck agent stop --agent planner",
+      "inbox_command": "agentdeck inbox --agent planner"
+    }
+  ]
+}
+```
+
+The card does not capture pane output and does not prove task completion. It only surfaces the configured agent identity, role, provider, workspace mode, and current runtime binding already present in ProjectView.
 
 When `recovery.recommended_action.source` is:
 

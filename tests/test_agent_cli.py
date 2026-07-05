@@ -306,6 +306,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "schema_version",
         "project_view",
         "leader_actions",
+        "runtime_card",
         "recovery",
         "next_command",
         "continue_card",
@@ -314,14 +315,37 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "approval_card",
         "leader_action",
     ]
+    assert payload["runtime_card_fields"] == ["backend", "count", "by_status", "agents"]
+    assert payload["runtime_agent_fields"] == [
+        "agent_id",
+        "role",
+        "provider",
+        "workspace_mode",
+        "status",
+        "pane_id",
+        "session_name",
+        "cwd",
+        "spawn_command",
+        "stop_command",
+        "inbox_command",
+    ]
     assert payload["project_view_contract"] == "agentdeck contract project-view"
     assert payload["continue_contract"] == "agentdeck contract continue"
 
 
-def test_workbench_embeds_active_inbox_card_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+def test_workbench_embeds_runtime_and_active_inbox_cards_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)
     state = store.load()
+    state["agents"] = {
+        "planner": {
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "session_name": "agentdeck",
+            "cwd": str(root),
+            "status": "running",
+        }
+    }
     state["inbox"] = {
         "planner": [
             {
@@ -351,6 +375,21 @@ def test_workbench_embeds_active_inbox_card_without_mutating_state(tmp_path, mon
     assert payload["project_view"]["recovery"]["status"] == "inbox_pending"
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
     assert payload["recovery"] == payload["project_view"]["recovery"]
+    assert payload["runtime_card"]["backend"] == "tmux"
+    assert payload["runtime_card"]["count"] == 3
+    assert payload["runtime_card"]["by_status"] == {"configured": 2, "running": 1}
+    planner_runtime = payload["runtime_card"]["agents"][0]
+    assert planner_runtime["agent_id"] == "planner"
+    assert planner_runtime["role"] == "planning"
+    assert planner_runtime["provider"] == "codex"
+    assert planner_runtime["workspace_mode"] == "shared"
+    assert planner_runtime["status"] == "running"
+    assert planner_runtime["pane_id"] == "%42"
+    assert planner_runtime["session_name"] == "agentdeck"
+    assert planner_runtime["cwd"] == str(root)
+    assert planner_runtime["spawn_command"] == "agentdeck agent spawn --agent planner"
+    assert planner_runtime["stop_command"] == "agentdeck agent stop --agent planner"
+    assert planner_runtime["inbox_command"] == "agentdeck inbox --agent planner"
     assert payload["next_command"] == "agentdeck inbox --agent planner"
     assert payload["continue_card"]["status"] == "inbox_pending"
     assert payload["active_queue_source"] == "inbox"
@@ -360,6 +399,7 @@ def test_workbench_embeds_active_inbox_card_without_mutating_state(tmp_path, mon
     assert payload["leader_action"] is None
 
     state_after = StateStore(root).load()
+    assert state_after["agents"]["planner"]["status"] == "running"
     assert state_after["inbox"]["planner"][0]["status"] == "pending"
     assert state_after["chat_turns"] == []
     assert state_after["leader_actions"] == []

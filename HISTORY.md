@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add runtime card to workbench snapshot
+
+- 扩展 `agentdeck workbench`：新增 `runtime_card`，从 ProjectView 的 `runtime_backend` 和 `agents[]` 派生可渲染的 tmux runtime 投影。
+- `runtime_card.agents[]` 公开 agent_id、role、provider、workspace_mode、status、pane_id、session_name、cwd，以及 `spawn_command`、`stop_command`、`inbox_command`，供 GUI/TUI 直接渲染 agent runtime 控制面。
+- 扩展 workbench contract：新增 `WORKBENCH_RUNTIME_CARD_FIELDS`、`WORKBENCH_RUNTIME_AGENT_FIELDS`，并在 `agentdeck contract workbench` 暴露 `runtime_card_fields` 与 `runtime_agent_fields`。
+- 补充 CLI 与 contract 测试，覆盖 runtime card discovery、running/configured 状态统计、agent runtime 字段、命令建议和 validator 缺字段拒绝。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 runtime_card 只来自 ProjectView，不读取 pane 输出，不把 tmux pane 当业务事实源。
+- 保持安全边界：本轮不写 state、不创建 chat turn、不 ack、不 approve、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_runtime_and_active_inbox_cards_without_mutating_state -q` 最初因 `runtime_card` 未出现在 contract/workbench payload 中失败；实现后 runtime card 目标测试 5 项通过；`conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 84 项通过；`conda run -n agentdeck pytest -q` 149 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `contract-workbench-runtime-ok` 与 `workbench-runtime-ok`。
+
 ### Current - Add read-only workbench snapshot for GUI/TUI recovery
 
 - 新增 `agentdeck workbench`：面向未来 GUI/TUI 的只读一屏快照，组合 ProjectView、leader_actions、recovery、continue_card、active_queue_source、inbox_card、approval_card 和 leader_action。

@@ -197,6 +197,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "schema_version",
     "project_view",
     "leader_actions",
+    "runtime_card",
     "recovery",
     "next_command",
     "continue_card",
@@ -204,6 +205,27 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "inbox_card",
     "approval_card",
     "leader_action",
+)
+
+WORKBENCH_RUNTIME_CARD_FIELDS = (
+    "backend",
+    "count",
+    "by_status",
+    "agents",
+)
+
+WORKBENCH_RUNTIME_AGENT_FIELDS = (
+    "agent_id",
+    "role",
+    "provider",
+    "workspace_mode",
+    "status",
+    "pane_id",
+    "session_name",
+    "cwd",
+    "spawn_command",
+    "stop_command",
+    "inbox_command",
 )
 
 LEADER_ACTION_DETAIL_FIELDS = (
@@ -401,6 +423,8 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
+        "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
+        "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
         "continue_contract": "agentdeck contract continue",
@@ -865,6 +889,25 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("recovery must match project_view.recovery")
     elif "project_view" in payload:
         errors.append("project_view must be an object")
+    runtime_card = payload.get("runtime_card")
+    if isinstance(runtime_card, dict):
+        for field in WORKBENCH_RUNTIME_CARD_FIELDS:
+            if field not in runtime_card:
+                errors.append(f"missing runtime_card field: {field}")
+        agents = runtime_card.get("agents")
+        if isinstance(agents, list):
+            if agents:
+                first_agent = agents[0]
+                if isinstance(first_agent, dict):
+                    for field in WORKBENCH_RUNTIME_AGENT_FIELDS:
+                        if field not in first_agent:
+                            errors.append(f"missing runtime agent field: {field}")
+                else:
+                    errors.append("runtime_card.agents items must be objects")
+        elif "agents" in runtime_card:
+            errors.append("runtime_card.agents must be a list")
+    elif "runtime_card" in payload:
+        errors.append("runtime_card must be an object")
     continue_card = payload.get("continue_card")
     if isinstance(continue_card, dict):
         continue_card_validation = validate_continue_contract(continue_card)
@@ -1116,6 +1159,52 @@ def workbench_example() -> dict[str, object]:
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view": project_view,
         "leader_actions": project_view["leader_actions"],
+        "runtime_card": {
+            "backend": "tmux",
+            "count": 3,
+            "by_status": {"configured": 2, "running": 1},
+            "agents": [
+                {
+                    "agent_id": "planner",
+                    "role": "planner",
+                    "provider": "codex",
+                    "workspace_mode": "shared",
+                    "status": "running",
+                    "pane_id": "%42",
+                    "session_name": "agentdeck",
+                    "cwd": "/workspace/agentdeck-example",
+                    "spawn_command": "agentdeck agent spawn --agent planner",
+                    "stop_command": "agentdeck agent stop --agent planner",
+                    "inbox_command": "agentdeck inbox --agent planner",
+                },
+                {
+                    "agent_id": "coder",
+                    "role": "coder",
+                    "provider": "claude",
+                    "workspace_mode": "worktree",
+                    "status": "configured",
+                    "pane_id": None,
+                    "session_name": None,
+                    "cwd": None,
+                    "spawn_command": "agentdeck agent spawn --agent coder",
+                    "stop_command": "agentdeck agent stop --agent coder",
+                    "inbox_command": "agentdeck inbox --agent coder",
+                },
+                {
+                    "agent_id": "reviewer",
+                    "role": "reviewer",
+                    "provider": "codex",
+                    "workspace_mode": "shared",
+                    "status": "configured",
+                    "pane_id": None,
+                    "session_name": None,
+                    "cwd": None,
+                    "spawn_command": "agentdeck agent spawn --agent reviewer",
+                    "stop_command": "agentdeck agent stop --agent reviewer",
+                    "inbox_command": "agentdeck inbox --agent reviewer",
+                },
+            ],
+        },
         "recovery": recovery,
         "next_command": recovery["next_command"],
         "continue_card": continue_example(),

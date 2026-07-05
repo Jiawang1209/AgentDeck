@@ -215,6 +215,7 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view": project_view,
         "leader_actions": project_view.get("leader_actions"),
+        "runtime_card": _workbench_runtime_card(project_view),
         "recovery": recovery,
         "next_command": continue_card.get("next_command"),
         "continue_card": continue_card,
@@ -222,6 +223,41 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "inbox_card": inbox_card,
         "approval_card": approval_card,
         "leader_action": leader_action if isinstance(leader_action, dict) else None,
+    }
+
+
+def _workbench_runtime_card(project_view: dict[str, object]) -> dict[str, object]:
+    agents = project_view.get("agents", [])
+    runtime_agents = []
+    by_status: dict[str, int] = {}
+    if isinstance(agents, list):
+        for agent in agents:
+            if not isinstance(agent, dict):
+                continue
+            runtime = agent.get("runtime") if isinstance(agent.get("runtime"), dict) else {}
+            agent_id = str(agent.get("agent_id"))
+            status = str(runtime.get("status", "unknown"))
+            by_status[status] = by_status.get(status, 0) + 1
+            runtime_agents.append(
+                {
+                    "agent_id": agent_id,
+                    "role": agent.get("role"),
+                    "provider": agent.get("provider"),
+                    "workspace_mode": agent.get("workspace_mode"),
+                    "status": status,
+                    "pane_id": runtime.get("pane_id"),
+                    "session_name": runtime.get("session_name"),
+                    "cwd": runtime.get("cwd"),
+                    "spawn_command": f"agentdeck agent spawn --agent {agent_id}",
+                    "stop_command": f"agentdeck agent stop --agent {agent_id}",
+                    "inbox_command": f"agentdeck inbox --agent {agent_id}",
+                }
+            )
+    return {
+        "backend": project_view.get("runtime_backend"),
+        "count": len(runtime_agents),
+        "by_status": by_status,
+        "agents": runtime_agents,
     }
 
 
