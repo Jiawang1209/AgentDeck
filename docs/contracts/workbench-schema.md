@@ -303,13 +303,23 @@ The card does not capture pane output and does not prove task completion. It onl
       "provider": "codex",
       "workspace_mode": "shared",
       "role_prompt": "Break down goals and prepare implementation steps.",
-      "assign_command": "agentdeck agent assign-role --agent planner --role planning --role-prompt 'Break down goals and prepare implementation steps.'"
+      "assign_command": "agentdeck agent assign-role --agent planner --role planning --role-prompt 'Break down goals and prepare implementation steps.'",
+      "controls": [
+        {
+          "kind": "assign_role",
+          "label": "Assign role",
+          "command": "agentdeck agent assign-role --agent planner --role <role> --role-prompt <role_prompt>",
+          "safety": "explicit_user",
+          "enabled": false,
+          "blocker": "requires role and role_prompt"
+        }
+      ]
     }
   ]
 }
 ```
 
-The card is configuration-only. It does not dispatch work or mutate roles; GUI clients must run `assign_command` explicitly when a human changes a role.
+The card is configuration-only. It does not dispatch work or mutate roles; GUI clients must run `assign_command` or a completed `assign_role` control explicitly when a human changes a role. `controls[]` are intentionally disabled templates until the GUI supplies concrete `role` and `role_prompt` values, and they must be preserved as `scope=role` / `kind=assign_role` items in `control_registry[]`.
 
 ## Ledger Card
 

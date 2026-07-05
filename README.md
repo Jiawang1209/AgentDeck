@@ -237,6 +237,8 @@ agentdeck agent assign-role \
 agentdeck dispatch --agent planner --task "设计消息账本"
 ```
 
+`agentdeck workbench` 的 `role_card.agents[]` 会同时暴露每个 agent 的 `assign_command` 和 disabled `controls[]` 模板；`agentdeck controls` 会把它们索引为 `scope=role` / `kind=assign_role`。GUI 可以把这个 control 渲染成角色编辑表单，但必须先由人类填写具体 `role` 和 `role_prompt`，再显式运行完成后的 `agentdeck agent assign-role ...` 命令。
+
 当前通信路径是 MVP 形态：
 
 ```text
@@ -363,7 +365,7 @@ agentdeck plan status --plan-id pln_xxx
 
 `agentdeck contract continue` 会公开这张恢复卡片的 `continue_card_fields`；`--example` 会返回稳定 `example_continue_card`，供 GUI 或外部集成发现 `agentdeck continue` 的响应形状。
 
-`agentdeck controls` 是独立只读命令面板入口。它从同一次 `agentdeck workbench` snapshot 派生 `control_registry_card`，输出 mode、title、source_command、default_command、item_count 和 items[]；其中 `source_command=agentdeck workbench` 表示命令面板来自 workbench 快照，`default_command=agentdeck controls` 表示 GUI/TUI 可以直接刷新独立命令面板。每个 item 保留 leader/provider/policy/runtime/operator controls 的 scope、card、kind、label、command、safety、enabled、blocker 和 agent_id；provider scope 来自 `provider_health.controls[]`，用于渲染具体的 `agentdeck leader set-provider --provider <provider> --model <model>` 入口，当前 provider disabled，其他 provider 需要 `explicit_user`；policy scope 来自 `control_mode_card.active_controls[]`，用于渲染具体的 `agentdeck policy set-mode --mode ask|approve|autonomous` 入口，当前模式 disabled，autonomous blocked；runtime scope 中的打开终端入口使用 `kind=terminal`，GUI 应优先使用该 kind 识别动作，而不是解析 `Open terminal` 文案；operator scope 中的批量审批派发入口使用 `kind=dispatch_ready`，GUI 应优先使用该 kind 识别动作，而不是解析 `Dispatch ready approvals` 文案。它不创建 chat turn、不写 state、不调用 provider、不读取 pane，也不执行任何 control，适合 GUI/TUI 或自然语言壳直接渲染命令面板。
+`agentdeck controls` 是独立只读命令面板入口。它从同一次 `agentdeck workbench` snapshot 派生 `control_registry_card`，输出 mode、title、source_command、default_command、item_count 和 items[]；其中 `source_command=agentdeck workbench` 表示命令面板来自 workbench 快照，`default_command=agentdeck controls` 表示 GUI/TUI 可以直接刷新独立命令面板。每个 item 保留 leader/provider/policy/role/runtime/operator controls 的 scope、card、kind、label、command、safety、enabled、blocker 和 agent_id；provider scope 来自 `provider_health.controls[]`，用于渲染具体的 `agentdeck leader set-provider --provider <provider> --model <model>` 入口，当前 provider disabled，其他 provider 需要 `explicit_user`；policy scope 来自 `control_mode_card.active_controls[]`，用于渲染具体的 `agentdeck policy set-mode --mode ask|approve|autonomous` 入口，当前模式 disabled，autonomous blocked；role scope 来自 `role_card.agents[].controls[]`，用于渲染 `kind=assign_role` 的角色编辑表单，模板命令在缺少 role/role_prompt 时 disabled；runtime scope 中的打开终端入口使用 `kind=terminal`，GUI 应优先使用该 kind 识别动作，而不是解析 `Open terminal` 文案；operator scope 中的批量审批派发入口使用 `kind=dispatch_ready`，GUI 应优先使用该 kind 识别动作，而不是解析 `Dispatch ready approvals` 文案。它不创建 chat turn、不写 state、不调用 provider、不读取 pane，也不执行任何 control，适合 GUI/TUI 或自然语言壳直接渲染命令面板。
 
 `agentdeck contract controls` 会公开独立命令面板的 `control_registry_card_fields` 和 `control_registry_item_fields`，并指向 `agentdeck contract workbench` 与 `agentdeck contract leader-chat`，说明 live 命令和 help-mode 嵌入卡片都复用同一份 control registry 形状；`--example` 会返回稳定 `example_control_registry_card`。
 
@@ -383,7 +385,7 @@ agentdeck plan status --plan-id pln_xxx
 
 当人类输入 `agentdeck leader chat --message "追踪 msg_xxx"`、`"trace job_xxx"` 或 `"查看 rep_xxx 链路"` 这类具体通信 ID 追踪意图时，chat 会进入只读 `mode=trace`：它复用 `agentdeck trace --id <id>` 的 `trace_card`，返回该 message lineage 下的 message、attempts、jobs、replies 和 inbox_items，`intent_card.controls[]` next label 会使用 `Inspect trace`。该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入；未知 ID 会返回错误，不会落到 provider-backed planning。
 
-当人类输入 `agentdeck leader chat --message "查看角色"`、`"查看分工"`、`"roles"` 或 `"assign-role"` 这类 role 意图时，chat 会进入只读 `mode=role`：它复用 workbench 的 `role_card`，返回每个 agent 的 role、provider、workspace_mode、role_prompt 和可复制的 `assign_command`。该模式只记录 chat turn，不创建 plan、leader action、approval、message、job、inbox，不修改配置，也不发送 tmux 输入；真正修改角色仍必须由人类显式运行 `agentdeck agent assign-role ...`。
+当人类输入 `agentdeck leader chat --message "查看角色"`、`"查看分工"`、`"roles"` 或 `"assign-role"` 这类 role 意图时，chat 会进入只读 `mode=role`：它复用 workbench 的 `role_card`，返回每个 agent 的 role、provider、workspace_mode、role_prompt、可复制的 `assign_command` 和 GUI-ready `controls[]`。该模式只记录 chat turn，不创建 plan、leader action、approval、message、job、inbox，不修改配置，也不发送 tmux 输入；真正修改角色仍必须由人类显式运行 `agentdeck agent assign-role ...`。
 
 当人类输入 `agentdeck leader chat --message "查看队列"`、`"查看 actions"`、`"查看控制面"` 或 `"下一步按钮"` 这类 queue/operator 意图时，chat 会进入只读 `mode=queue`：它复用 workbench 的 `queue_card` 和 `operator_card`，返回当前 active queue、pending 统计、next_command、preview/apply/explicit controls 和 blocker。该模式会把顶层 `next_command` 对齐到 operator 的主命令；因此多条 approvals 已 approved 时，自然语言控制面也会推荐 `agentdeck approval dispatch-ready --confirm`，并在 `operator_card.controls[]` 中暴露 `kind=dispatch_ready`、label=`Dispatch ready approvals`。该模式只记录 chat turn，不创建新的 `leader_actions[]`，不 apply action、不 approve/reject/dispatch、不 ack、不 refresh runtime、不发送 tmux 输入；按钮是否能安全 apply 仍由 `operator_card.controls[]` 和 `leader_explanation.safety` 显式表达。
 

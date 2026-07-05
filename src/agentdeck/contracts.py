@@ -732,6 +732,7 @@ WORKBENCH_ROLE_AGENT_FIELDS = (
     "workspace_mode",
     "role_prompt",
     "assign_command",
+    "controls",
 )
 
 WORKBENCH_LEDGER_CARD_FIELDS = (
@@ -2117,6 +2118,18 @@ def _validate_role_card_contract(errors: list[str], role_card: dict[str, object]
                 for field in WORKBENCH_ROLE_AGENT_FIELDS:
                     if field not in first_agent:
                         errors.append(f"{prefix}: missing role agent field: {field}")
+                controls = first_agent.get("controls")
+                if isinstance(controls, list):
+                    if controls:
+                        first_control = controls[0]
+                        if isinstance(first_control, dict):
+                            for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                                if field not in first_control:
+                                    errors.append(f"{prefix}: missing role control field: {field}")
+                        else:
+                            errors.append(f"{prefix}: role agent controls items must be objects")
+                elif "controls" in first_agent:
+                    errors.append(f"{prefix}: role agent controls must be a list")
             else:
                 errors.append(f"{prefix}: role_card.agents items must be objects")
     elif "agents" in role_card:
@@ -2732,6 +2745,18 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
                     for field in WORKBENCH_ROLE_AGENT_FIELDS:
                         if field not in first_agent:
                             errors.append(f"missing role agent field: {field}")
+                    controls = first_agent.get("controls")
+                    if isinstance(controls, list):
+                        if controls:
+                            first_control = controls[0]
+                            if isinstance(first_control, dict):
+                                for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                                    if field not in first_control:
+                                        errors.append(f"missing role control field: {field}")
+                            else:
+                                errors.append("role agent controls items must be objects")
+                    elif "controls" in first_agent:
+                        errors.append("role agent controls must be a list")
                 else:
                     errors.append("role_card.agents items must be objects")
         elif "agents" in role_card:
@@ -3336,6 +3361,19 @@ def runtime_agent_controls(agent_id: str, running: bool) -> list[dict[str, objec
     ]
 
 
+def role_agent_controls(agent_id: str) -> list[dict[str, object]]:
+    return [
+        {
+            "kind": "assign_role",
+            "label": "Assign role",
+            "command": f"agentdeck agent assign-role --agent {agent_id} --role <role> --role-prompt <role_prompt>",
+            "safety": "explicit_user",
+            "enabled": False,
+            "blocker": "requires role and role_prompt",
+        }
+    ]
+
+
 def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, object]]:
     registry: list[dict[str, object]] = []
     leader_card = payload.get("leader_card") if isinstance(payload.get("leader_card"), dict) else {}
@@ -3370,6 +3408,17 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
                 registry,
                 scope="runtime",
                 card="runtime_card",
+                agent_id=agent.get("agent_id"),
+                controls=agent.get("controls"),
+            )
+    role_card = payload.get("role_card") if isinstance(payload.get("role_card"), dict) else {}
+    role_agents = role_card.get("agents") if isinstance(role_card.get("agents"), list) else []
+    for agent in role_agents:
+        if isinstance(agent, dict):
+            _append_control_registry_items(
+                registry,
+                scope="role",
+                card="role_card",
                 agent_id=agent.get("agent_id"),
                 controls=agent.get("controls"),
             )
@@ -3593,6 +3642,7 @@ def workbench_example() -> dict[str, object]:
                         "agentdeck agent assign-role --agent planner --role planner "
                         "--role-prompt 'Break down goals and prepare implementation steps.'"
                     ),
+                    "controls": role_agent_controls("planner"),
                 },
                 {
                     "agent_id": "coder",
@@ -3604,6 +3654,7 @@ def workbench_example() -> dict[str, object]:
                         "agentdeck agent assign-role --agent coder --role coder "
                         "--role-prompt 'Implement approved tasks and report verification evidence.'"
                     ),
+                    "controls": role_agent_controls("coder"),
                 },
                 {
                     "agent_id": "reviewer",
@@ -3615,6 +3666,7 @@ def workbench_example() -> dict[str, object]:
                         "agentdeck agent assign-role --agent reviewer --role reviewer "
                         "--role-prompt 'Review implementation risks, tests, and missing requirements.'"
                     ),
+                    "controls": role_agent_controls("reviewer"),
                 },
             ],
         },

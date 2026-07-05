@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Expose role assignment controls
+
+- 扩展 workbench `role_card.agents[]`：每个 configured agent 现在公开 `controls[]`，其中包含 disabled `kind=assign_role` 模板命令 `agentdeck agent assign-role --agent <id> --role <role> --role-prompt <role_prompt>`。
+- 扩展 workbench `control_registry[]` 和 `agentdeck controls`：新增 `scope=role` / `card=role_card` / `kind=assign_role` 命令面板条目，供未来 GUI/TUI 直接渲染角色编辑表单，不需要解析 `assign_command` 字符串。
+- 保持人类控制边界：role controls 因缺少具体 `role` / `role_prompt` 默认 disabled，并带 `requires role and role_prompt` blocker；`agentdeck workbench`、`agentdeck controls` 和 role-mode chat 都不会修改 `.agentdeck/config.toml`、创建 plan/action/approval/message/job/inbox 或发送 tmux 输入。
+- 同步 `agentdeck contract workbench --example`、contract validator、README、`docs/contracts/workbench-schema.md`、`docs/contracts/controls-schema.md`、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md。
+- 验证记录：已先确认红测失败，workbench role agent 最初缺少 `controls`，`agentdeck controls` 最初没有 role scope，contract discovery 最初未公开 role agent `controls` 字段；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 4 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_leader_cli.py::test_leader_chat_inspects_roles_without_mutating_state -q` 5 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 282 项通过。
+
 ### Current - Add natural-language Leader provider switch
 
 - 扩展 `agentdeck leader chat`：当用户输入 `"切换 Leader 到 Codex CLI"`、`"使用 Claude Code 做 Leader"`、`"换成 DeepSeek Leader"` 等 provider switch 意图时，进入只读 `mode=setup`，嵌入同源 `provider_health`，并返回具体 `agentdeck leader set-provider --provider <provider> --model <model>` 作为 `next_command`。

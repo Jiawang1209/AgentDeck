@@ -761,6 +761,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     } >= {
         ("leader", "leader_card", "continue", "leader"),
         ("policy", "control_mode_card", "set_mode", None),
+        ("role", "role_card", "assign_role", "planner"),
         ("runtime", "runtime_card", "terminal", "planner"),
         ("runtime", "runtime_card", "capture", "planner"),
         ("operator", "operator_card", "apply", None),
@@ -818,6 +819,14 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert set(example["runtime_card"]["agents"][0]["controls"][0]) == set(WORKBENCH_RUNTIME_CONTROL_FIELDS)
     assert set(example["role_card"]) == set(WORKBENCH_ROLE_CARD_FIELDS)
     assert set(example["role_card"]["agents"][0]) == set(WORKBENCH_ROLE_AGENT_FIELDS)
+    assert example["role_card"]["agents"][0]["controls"][0] == {
+        "kind": "assign_role",
+        "label": "Assign role",
+        "command": "agentdeck agent assign-role --agent planner --role <role> --role-prompt <role_prompt>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires role and role_prompt",
+    }
     assert set(example["ledger_card"]) == set(WORKBENCH_LEDGER_CARD_FIELDS)
     assert set(example["lineage_card"]) == set(lineage_card_fields)
     assert set(example["lineage_card"]["recent_paths"][0]) == set(lineage_path_fields)

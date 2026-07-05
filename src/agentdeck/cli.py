@@ -753,6 +753,17 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
                 agent_id=agent.get("agent_id"),
                 controls=agent.get("controls"),
             )
+    role_card = payload.get("role_card") if isinstance(payload.get("role_card"), dict) else {}
+    role_agents = role_card.get("agents") if isinstance(role_card.get("agents"), list) else []
+    for agent in role_agents:
+        if isinstance(agent, dict):
+            _append_workbench_control_registry_items(
+                registry,
+                scope="role",
+                card="role_card",
+                agent_id=agent.get("agent_id"),
+                controls=agent.get("controls"),
+            )
     operator_card = payload.get("operator_card") if isinstance(payload.get("operator_card"), dict) else {}
     _append_workbench_control_registry_items(
         registry,
@@ -993,6 +1004,7 @@ def _workbench_role_card(project_view: dict[str, object]) -> dict[str, object]:
                     "workspace_mode": agent.get("workspace_mode"),
                     "role_prompt": role_prompt,
                     "assign_command": _agent_assign_role_command(agent_id, role, role_prompt),
+                    "controls": _role_agent_controls(agent_id),
                 }
             )
     return {
@@ -1002,6 +1014,19 @@ def _workbench_role_card(project_view: dict[str, object]) -> dict[str, object]:
             "agentdeck agent assign-role --agent <agent_id> --role <role> --role-prompt <role_prompt>"
         ),
     }
+
+
+def _role_agent_controls(agent_id: str) -> list[dict[str, object]]:
+    return [
+        _control(
+            kind="assign_role",
+            label="Assign role",
+            command=f"agentdeck agent assign-role --agent {agent_id} --role <role> --role-prompt <role_prompt>",
+            safety="explicit_user",
+            enabled=False,
+            blocker="requires role and role_prompt",
+        )
+    ]
 
 
 def _agent_assign_role_command(agent_id: str, role: str, role_prompt: str) -> str:

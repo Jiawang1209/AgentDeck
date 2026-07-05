@@ -1031,6 +1031,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "workspace_mode",
         "role_prompt",
         "assign_command",
+        "controls",
     ]
     assert payload["ledger_card_fields"] == [
         "messages",
@@ -1315,6 +1316,16 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert planner_role["assign_command"].startswith("agentdeck agent assign-role --agent planner")
     assert "--role planning" in planner_role["assign_command"]
     assert "--role-prompt" in planner_role["assign_command"]
+    assert planner_role["controls"] == [
+        {
+            "kind": "assign_role",
+            "label": "Assign role",
+            "command": "agentdeck agent assign-role --agent planner --role <role> --role-prompt <role_prompt>",
+            "safety": "explicit_user",
+            "enabled": False,
+            "blocker": "requires role and role_prompt",
+        }
+    ]
     planner_runtime = payload["runtime_card"]["agents"][0]
     assert planner_runtime["agent_id"] == "planner"
     assert planner_runtime["role"] == "planning"
@@ -1518,11 +1529,28 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "agent_id": "leader",
     }
     assert any(item["command"].endswith("--provider codex-cli --model codex-default") for item in provider_controls)
+    role_controls = [
+        item
+        for item in payload["control_registry"]
+        if item["scope"] == "role" and item["kind"] == "assign_role"
+    ]
+    assert role_controls[0] == {
+        "scope": "role",
+        "card": "role_card",
+        "kind": "assign_role",
+        "label": "Assign role",
+        "command": "agentdeck agent assign-role --agent planner --role <role> --role-prompt <role_prompt>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires role and role_prompt",
+        "agent_id": "planner",
+    }
     assert {
         (item["scope"], item["card"], item["kind"], item["agent_id"])
         for item in payload["control_registry"]
     } >= {
         ("leader", "leader_card", "continue", "leader"),
+        ("role", "role_card", "assign_role", "planner"),
         ("runtime", "runtime_card", "capture", "planner"),
         ("operator", "operator_card", "explicit", None),
     }
@@ -1949,6 +1977,7 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
     } >= {
         ("leader", "leader_card", "continue", "leader"),
         ("policy", "control_mode_card", "set_mode", None),
+        ("role", "role_card", "assign_role", "planner"),
         ("runtime", "runtime_card", "spawn", "planner"),
         ("operator", "operator_card", "explicit", None),
     }
@@ -1973,6 +2002,18 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
     assert approve_item["safety"] == "explicit_user"
     provider_items = [item for item in payload["items"] if item["scope"] == "provider"]
     assert any(item["kind"] == "set_provider" and "codex-cli" in item["command"] for item in provider_items)
+    role_items = [item for item in payload["items"] if item["scope"] == "role"]
+    assert role_items[0] == {
+        "scope": "role",
+        "card": "role_card",
+        "kind": "assign_role",
+        "label": "Assign role",
+        "command": "agentdeck agent assign-role --agent planner --role <role> --role-prompt <role_prompt>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires role and role_prompt",
+        "agent_id": "planner",
+    }
     assert StateStore(root).load() == before
 
 
