@@ -169,6 +169,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         if mode == "approve":
             return "Switch to approval mode"
         return "Request autonomous mode"
+    if re.fullmatch(r"agentdeck agent assign-role --agent [^\s]+ --role .+ --role-prompt .+", command):
+        return "Assign role"
     if re.fullmatch(r"agentdeck leader set-provider --provider [^\s]+ --model [^\s]+", command):
         return "Switch Leader provider"
     approval_match = re.fullmatch(
@@ -1036,13 +1038,19 @@ def _agent_assign_role_command(agent_id: str, role: str, role_prompt: str) -> st
             "agent",
             "assign-role",
             "--agent",
-            shlex.quote(agent_id),
+            _quote_assign_role_arg(agent_id),
             "--role",
-            shlex.quote(role),
+            _quote_assign_role_arg(role),
             "--role-prompt",
-            shlex.quote(role_prompt),
+            _quote_assign_role_arg(role_prompt),
         ]
     )
+
+
+def _quote_assign_role_arg(value: str) -> str:
+    if re.fullmatch(r"[\w@%+=:,./-]+", value):
+        return value
+    return shlex.quote(value)
 
 
 def _workbench_audit_card(project_view: dict[str, object]) -> dict[str, object]:
@@ -3013,6 +3021,32 @@ def _chat_wants_role(message: str) -> bool:
     )
 
 
+def _chat_role_assignment_intent(message: str, config: ProjectConfig) -> tuple[str, str, str] | None:
+    normalized = message.strip()
+    if not normalized:
+        return None
+    known_agent_ids = {agent.agent_id.lower(): agent.agent_id for agent in config.agents}
+    patterns = [
+        r"(?:把|将)\s*(?P<agent>[A-Za-z0-9_.-]+)\s*(?:设为|设置为|改为|指派为|指定为)\s*(?P<role>.+)",
+        r"(?:让|请让)\s*(?P<agent>[A-Za-z0-9_.-]+)\s*(?:作为|担任|负责|扮演)\s*(?P<role>.+)",
+        r"(?:set|assign)\s+(?P<agent>[A-Za-z0-9_.-]+)\s+(?:role\s+)?(?:to|as)\s+(?P<role>.+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            continue
+        requested_agent = match.group("agent").lower()
+        agent_id = known_agent_ids.get(requested_agent)
+        if agent_id is None:
+            return None
+        role = match.group("role").strip(" \t\r\n\"'`：:，,。.!！?")
+        if not role:
+            return None
+        role_prompt = f"你负责{role}。"
+        return agent_id, role, role_prompt
+    return None
+
+
 def _chat_wants_ledger(message: str) -> bool:
     normalized = message.strip().lower()
     return any(
@@ -3552,6 +3586,22 @@ def _leader_chat_explanation(
             "requires_explicit_user": bool(recovery_action.get("requires_explicit_user")),
         }
     if mode == "role":
+        role_assign_match = re.fullmatch(
+            r"agentdeck agent assign-role --agent ([^\s]+) --role .+ --role-prompt .+",
+            str(next_command or ""),
+        )
+        if role_assign_match:
+            return {
+                "mode": mode,
+                "summary": "Leader recommends an explicit role assignment command without mutating role config.",
+                "reason": "human asked to assign an agent role",
+                "next_command": next_command,
+                "recommended_action_id": role_assign_match.group(1),
+                "action_kind": "role_assign",
+                "action_status": "suggested",
+                "safety": "explicit_user",
+                "requires_explicit_user": True,
+            }
         role_card = _workbench_role_card(project_view)
         return {
             "mode": mode,
@@ -4482,6 +4532,63 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "role_card": None,
             "ledger_card": ledger_card,
             "lineage_card": lineage_card,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    role_assignment_intent = _chat_role_assignment_intent(args.message, config)
+    if role_assignment_intent is not None:
+        role_agent_id, role, role_prompt = role_assignment_intent
+        next_command = _agent_assign_role_command(role_agent_id, role, role_prompt)
+        turn = store.record_chat_turn(
+            mode="role",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="role_assign",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "role",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        role_card = _workbench_role_card(refreshed_project_view)
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "role",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "role",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": role_card,
+            "ledger_card": None,
             "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)

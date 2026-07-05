@@ -1524,6 +1524,86 @@ def test_leader_chat_inspects_roles_without_mutating_state(tmp_path, monkeypatch
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_role_assignment_intent_suggests_explicit_command_without_mutating_config(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_before = (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
+
+    exit_code = cli.main(["leader", "chat", "--message", "把 planner 设为 架构师"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "role"
+    assert payload["message"] == "把 planner 设为 架构师"
+    assert payload["next_command"] == (
+        "agentdeck agent assign-role --agent planner --role 架构师 --role-prompt '你负责架构师。'"
+    )
+    assert payload["plan_id"] is None
+    assert payload["review"] is None
+    assert payload["leader_action"] is None
+    assert payload["continue_card"] is None
+    assert payload["inbox_card"] is None
+    assert payload["approval_card"] is None
+    assert payload["runtime_card"] is None
+    assert payload["queue_card"] is None
+    assert payload["operator_card"] is None
+    assert payload["role_card"]["agents"][0]["agent_id"] == "planner"
+    assert payload["role_card"]["agents"][0]["role"] == "planning"
+    assert payload["leader_explanation"] == {
+        "mode": "role",
+        "summary": "Leader recommends an explicit role assignment command without mutating role config.",
+        "reason": "human asked to assign an agent role",
+        "next_command": "agentdeck agent assign-role --agent planner --role 架构师 --role-prompt '你负责架构师。'",
+        "recommended_action_id": "planner",
+        "action_kind": "role_assign",
+        "action_status": "suggested",
+        "safety": "explicit_user",
+        "requires_explicit_user": True,
+    }
+    assert payload["intent_card"] == {
+        "mode": "role",
+        "matched_intent": "role",
+        "route_source": "local_rule",
+        "embedded_card": "role_card",
+        "read_only": True,
+        "next_command": "agentdeck agent assign-role --agent planner --role 架构师 --role-prompt '你负责架构师。'",
+        "requires_explicit_user": True,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect role_card",
+                "command": "agentdeck workbench",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "next",
+                "label": "Assign role",
+                "command": "agentdeck agent assign-role --agent planner --role 架构师 --role-prompt '你负责架构师。'",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+    assert (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8") == config_before
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "role"
+    assert state_after["chat_turns"][0]["next_command"] == (
+        "agentdeck agent assign-role --agent planner --role 架构师 --role-prompt '你负责架构师。'"
+    )
+    assert state_after["chat_turns"][0]["action_kind"] == "role_assign"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["approvals"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_inspects_ledger_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%42")

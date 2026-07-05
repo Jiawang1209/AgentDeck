@@ -369,6 +369,8 @@ Role-mode responses are returned when the human asks to inspect roles, role prom
 
 When `role_card` is present, `validate_leader_chat_contract()` checks the same role card and role agent field lists exposed by `agentdeck contract workbench`. Role-mode records a chat turn for history, but it must not edit `.agentdeck/config.toml`, create plans/actions/approvals/messages/jobs/inbox items, or send tmux input.
 
+Natural-language role assignment, such as `把 planner 设为 架构师` or `set reviewer role to QA`, also returns `mode=role`; however, `next_command` is a concrete `agentdeck agent assign-role --agent <id> --role <role> --role-prompt <prompt>` command, `leader_explanation.action_kind` is `role_assign`, and the `intent_card.controls[]` next control uses label `Assign role`, `safety=explicit_user`, and `requires_explicit_user=true`. This intent suggests the explicit command only; it must not mutate role config automatically.
+
 Each role agent may include disabled `controls[]` with `kind=assign_role`, pointing at `agentdeck agent assign-role --agent <agent_id> --role <role> --role-prompt <role_prompt>`. GUI clients should render this as an explicit role-edit form and keep it disabled until concrete `role` and `role_prompt` values replace the placeholders. Role-mode must not fill placeholders or execute the command automatically.
 
 Queue-mode responses are returned when the human asks to inspect the queue, Leader actions, operator controls, or next-step buttons. They return `queue_card` and `operator_card`, reusing the same control projection as `agentdeck workbench`:

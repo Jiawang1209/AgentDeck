@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add natural-language role assignment suggestion
+
+- 扩展 `agentdeck leader chat`：当用户输入 `"把 planner 设为 架构师"`、`"让 coder 担任 实现工程师"` 或 `"set reviewer role to QA"` 这类角色指派意图时，进入 `mode=role`，嵌入同源 `role_card`，并返回具体 `agentdeck agent assign-role --agent <id> --role <role> --role-prompt <prompt>` 作为 `next_command`。
+- 保持人类控制边界：自然语言角色指派只记录 chat turn，不修改 `.agentdeck/config.toml`、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入；真正修改角色仍必须由人类显式运行返回的 `assign-role` 命令。
+- 扩展 `leader_explanation` / `intent_card`：role assignment 建议标记 `action_kind=role_assign`、`safety=explicit_user`、`requires_explicit_user=true`，并让 GUI-ready next control 使用 `Assign role` label。
+- 调整 assign-role 命令参数 quoting：纯中文/英文单词角色名保持可读的未加引号形式，有空格或标点的参数继续 shell quote，避免自然语言建议命令过度转义。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "把 planner 设为 架构师"` 最初落入 provider-backed plan；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_role_assignment_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_inspects_roles_without_mutating_state -q` 2 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_role_assignment_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_inspects_roles_without_mutating_state tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 4 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 283 项通过。
+
 ### Current - Expose role assignment controls
 
 - 扩展 workbench `role_card.agents[]`：每个 configured agent 现在公开 `controls[]`，其中包含 disabled `kind=assign_role` 模板命令 `agentdeck agent assign-role --agent <id> --role <role> --role-prompt <role_prompt>`。
