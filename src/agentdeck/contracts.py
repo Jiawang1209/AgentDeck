@@ -3422,6 +3422,18 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
                 agent_id=agent.get("agent_id"),
                 controls=agent.get("controls"),
             )
+    inbox_card = payload.get("inbox_card") if isinstance(payload.get("inbox_card"), dict) else {}
+    _append_inbox_control_registry_items(
+        registry,
+        card="inbox_card",
+        inbox_card=inbox_card,
+    )
+    leader_inbox_card = payload.get("leader_inbox_card") if isinstance(payload.get("leader_inbox_card"), dict) else {}
+    _append_inbox_control_registry_items(
+        registry,
+        card="leader_inbox_card",
+        inbox_card=leader_inbox_card,
+    )
     operator_card = payload.get("operator_card") if isinstance(payload.get("operator_card"), dict) else {}
     _append_control_registry_items(
         registry,
@@ -3431,6 +3443,25 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         controls=operator_card.get("controls"),
     )
     return registry
+
+
+def _append_inbox_control_registry_items(
+    registry: list[dict[str, object]],
+    *,
+    card: str,
+    inbox_card: dict[str, object],
+) -> None:
+    agent_id = inbox_card.get("agent_id")
+    items = inbox_card.get("items") if isinstance(inbox_card.get("items"), list) else []
+    for item in items:
+        if isinstance(item, dict):
+            _append_control_registry_items(
+                registry,
+                scope="inbox",
+                card=card,
+                agent_id=agent_id,
+                controls=item.get("controls"),
+            )
 
 
 def _append_control_registry_items(

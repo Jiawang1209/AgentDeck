@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Index inbox controls in workbench command registry
+
+- 扩展 `workbench.control_registry[]` 和 `agentdeck controls`：现在会索引当前可见 `inbox_card.items[].controls[]` 和固定 `leader_inbox_card.items[].controls[]`，以 `scope=inbox` 暴露 `kind=preview` / `kind=ack` 命令面板项。
+- 保持 GUI/TUI 消费边界：active recovery inbox 使用 `card=inbox_card`，worker reply 回流 Leader 使用 `card=leader_inbox_card` 且 `agent_id=leader`；`kind=ack` 仍只是显式 `agentdeck ack ...` 命令入口，不会由 workbench 或 controls 自动执行。
+- 同步 README、`docs/contracts/workbench-schema.md`、`docs/contracts/controls-schema.md`、CLAUDE.md 和 AGENT.md，明确 control registry 包含 inbox scope，且不得成为第二套状态源或绕过 safety/blocker。
+- 验证记录：已先确认红测失败，workbench `control_registry[]` 最初缺少 `scope=inbox` 的 active inbox 和 Leader inbox controls；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_workbench_embeds_leader_inbox_card_when_worker_reply_returns_to_leader -q` 2 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_workbench_embeds_leader_inbox_card_when_worker_reply_returns_to_leader tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_controls_example_exports_gui_ready_response tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_control_registry_card_contract_accepts_example -q` 9 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 287 项通过。
+
 ### Current - Add natural-language Leader inbox controls
 
 - 扩展 `agentdeck leader chat`：当用户输入 `"查看 leader inbox"` 时，进入只读 `mode=inbox`，复用 `agentdeck inbox --agent leader` 的 queue shape 返回逻辑 Leader mailbox 的 `inbox_card`，用于查看 worker reply 回流。

@@ -1550,9 +1550,27 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         for item in payload["control_registry"]
     } >= {
         ("leader", "leader_card", "continue", "leader"),
+        ("inbox", "inbox_card", "preview", "planner"),
+        ("inbox", "inbox_card", "ack", "planner"),
         ("role", "role_card", "assign_role", "planner"),
         ("runtime", "runtime_card", "capture", "planner"),
         ("operator", "operator_card", "explicit", None),
+    }
+    inbox_ack_control = next(
+        item
+        for item in payload["control_registry"]
+        if item["scope"] == "inbox" and item["card"] == "inbox_card" and item["kind"] == "ack"
+    )
+    assert inbox_ack_control == {
+        "scope": "inbox",
+        "card": "inbox_card",
+        "kind": "ack",
+        "label": "Acknowledge inbox head",
+        "command": "agentdeck ack --agent planner --inbox-id inb_workbench_head",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": "planner",
     }
     assert payload["audit_card"]["latest_event"] == payload["recovery"]["latest_event"]
     assert payload["audit_card"]["latest_event"]["event_type"] == "workbench_second_event"
@@ -1944,6 +1962,23 @@ def test_workbench_embeds_leader_inbox_card_when_worker_reply_returns_to_leader(
     assert item["reply_id"] == "rep_planner_done"
     assert item["trace_command"] == "agentdeck trace --id inb_leader_reply"
     assert item["ack_command"] == "agentdeck ack --agent leader --inbox-id inb_leader_reply"
+    leader_inbox_controls = [
+        item
+        for item in payload["control_registry"]
+        if item["scope"] == "inbox" and item["card"] == "leader_inbox_card" and item["agent_id"] == "leader"
+    ]
+    assert [item["kind"] for item in leader_inbox_controls] == ["preview", "ack"]
+    assert leader_inbox_controls[-1] == {
+        "scope": "inbox",
+        "card": "leader_inbox_card",
+        "kind": "ack",
+        "label": "Acknowledge inbox head",
+        "command": "agentdeck ack --agent leader --inbox-id inb_leader_reply",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": "leader",
+    }
 
 
 def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
