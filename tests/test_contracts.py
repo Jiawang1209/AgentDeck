@@ -1749,7 +1749,23 @@ def test_validate_leader_chat_contract_requires_intent_next_command_match() -> N
 
     assert result == {
         "ok": False,
-        "errors": ["intent_card: next_command must match response next_command"],
+        "errors": [
+            "intent_card: next_command must match response next_command",
+            "intent_card.controls: next control command must match intent next_command",
+        ],
+    }
+
+
+def test_validate_leader_chat_contract_requires_next_control_command_match() -> None:
+    payload = leader_chat_example()
+    payload["intent_card"]["controls"][-1]["kind"] = "next"
+    payload["intent_card"]["controls"][-1]["command"] = "agentdeck workbench"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card.controls: next control command must match intent next_command"],
     }
 
 

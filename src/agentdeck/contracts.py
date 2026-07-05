@@ -2229,6 +2229,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                             errors.append(f"intent_card.controls: missing control field: {field}")
                     if control.get("kind") == "inspect" and control.get("safety") != "inspect":
                         errors.append("intent_card.controls: inspect controls must use safety=inspect")
+                    if control.get("kind") == "next" and control.get("command") != intent_card.get("next_command"):
+                        errors.append("intent_card.controls: next control command must match intent next_command")
                     if (
                         expected_reply_waiting_trace_command is not None
                         and control.get("kind") == "inspect"
