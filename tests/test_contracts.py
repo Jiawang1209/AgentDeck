@@ -971,6 +971,18 @@ def test_validate_workbench_contract_requires_provider_switch_control_safety() -
     }
 
 
+def test_validate_workbench_contract_requires_provider_switch_command() -> None:
+    payload = workbench_example()
+    payload["provider_health"]["controls"][0]["command"] = "agentdeck doctor"
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["provider_health.controls: set_provider command must use leader set-provider"],
+    }
+
+
 def test_validate_workbench_contract_requires_runtime_agent_fields() -> None:
     payload = workbench_example()
     del payload["runtime_card"]["agents"][0]["pane_id"]

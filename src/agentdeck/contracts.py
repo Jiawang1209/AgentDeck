@@ -2736,8 +2736,13 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         if isinstance(controls, list):
             for control in controls:
                 if isinstance(control, dict):
-                    if control.get("kind") == "set_provider" and control.get("safety") != "explicit_user":
-                        errors.append("provider_health.controls: set_provider controls must use safety=explicit_user")
+                    if control.get("kind") == "set_provider":
+                        if control.get("safety") != "explicit_user":
+                            errors.append("provider_health.controls: set_provider controls must use safety=explicit_user")
+                        if not str(control.get("command") or "").startswith(
+                            "agentdeck leader set-provider --provider "
+                        ):
+                            errors.append("provider_health.controls: set_provider command must use leader set-provider")
                     if control.get("enabled") is False and not control.get("blocker"):
                         errors.append("provider_health.controls: disabled controls must include blocker")
                 else:
