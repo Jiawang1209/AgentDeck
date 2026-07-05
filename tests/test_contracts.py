@@ -971,6 +971,22 @@ def test_validate_workbench_contract_requires_dispatch_ready_operator_command() 
     }
 
 
+def test_validate_workbench_contract_requires_dispatch_ready_operator_control_kind() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["action_kind"] = "approval_dispatch_ready"
+    payload["operator_card"]["command"] = "agentdeck approval dispatch-ready --confirm"
+    payload["operator_card"]["explicit_command"] = "agentdeck approval dispatch-ready --confirm"
+    payload["operator_card"]["controls"][-1]["command"] = "agentdeck approval dispatch-ready --confirm"
+    payload["operator_card"]["controls"][-1]["kind"] = "explicit"
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card approval_dispatch_ready control kind must be dispatch_ready"],
+    }
+
+
 def test_validate_workbench_contract_requires_audit_fields() -> None:
     payload = workbench_example()
     del payload["audit_card"]["events_command"]

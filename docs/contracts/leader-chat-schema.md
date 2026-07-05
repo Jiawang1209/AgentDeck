@@ -383,7 +383,7 @@ Queue-mode responses are returned when the human asks to inspect the queue, Lead
 }
 ```
 
-When `queue_card` or `operator_card` is present, `validate_leader_chat_contract()` checks the same field lists exposed by `agentdeck contract workbench` and requires `next_command` to match both cards' `next_command`. Queue-mode aligns `next_command` with the operator's primary command, so when the operator promotes multiple approved approvals to `action_kind=approval_dispatch_ready`, the natural-language response also recommends `agentdeck approval dispatch-ready --confirm` and labels the next control as `Dispatch ready approvals`. Queue-mode records a chat turn for history, but it must not create or apply Leader actions, approve/reject/dispatch work, acknowledge inbox items, refresh runtime, or send tmux input.
+When `queue_card` or `operator_card` is present, `validate_leader_chat_contract()` checks the same field lists exposed by `agentdeck contract workbench` and requires `next_command` to match both cards' `next_command`. Queue-mode aligns `next_command` with the operator's primary command, so when the operator promotes multiple approved approvals to `action_kind=approval_dispatch_ready`, the natural-language response also recommends `agentdeck approval dispatch-ready --confirm`; the embedded `operator_card.controls[]` must expose the batch action as `kind=dispatch_ready` with label `Dispatch ready approvals`. Queue-mode records a chat turn for history, but it must not create or apply Leader actions, approve/reject/dispatch work, acknowledge inbox items, refresh runtime, or send tmux input.
 
 Inbox-mode responses include `inbox_card`, which reuses the same queue shape as `agentdeck inbox --agent <id>`:
 

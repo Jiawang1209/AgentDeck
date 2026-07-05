@@ -1146,6 +1146,7 @@ def test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching(
     assert payload["queue_card"]["next_command"] == payload["next_command"]
     assert payload["operator_card"]["action_kind"] == "approval_dispatch_ready"
     assert payload["operator_card"]["command"] == payload["next_command"]
+    assert payload["operator_card"]["controls"][-1]["kind"] == "dispatch_ready"
     assert payload["operator_card"]["controls"][-1]["label"] == "Dispatch ready approvals"
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",

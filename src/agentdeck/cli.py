@@ -932,11 +932,13 @@ def _workbench_operator_card(
     command = recommended_action.get("command")
     explicit_command = leader_action.get("explicit_command") or recommended_action.get("command")
     explicit_label = "Run explicit command"
+    explicit_kind = "explicit"
     if action_kind == "approval" and _workbench_approved_approval_count(project_view) > 1:
         action_kind = "approval_dispatch_ready"
         command = "agentdeck approval dispatch-ready --confirm"
         explicit_command = "agentdeck approval dispatch-ready --confirm"
         explicit_label = "Dispatch ready approvals"
+        explicit_kind = "dispatch_ready"
     preview_command = _workbench_operator_preview_command(action_kind, target_id)
     action_blocker = leader_action.get("apply_blocker") or _workbench_operator_action_blocker(
         project_view, action_kind, target_id
@@ -960,6 +962,7 @@ def _workbench_operator_card(
             can_apply=can_apply,
             blocker=action_blocker,
             explicit_label=explicit_label,
+            explicit_kind=explicit_kind,
         ),
         "active_queue_source": active_queue_source,
         "action_kind": action_kind,
@@ -984,6 +987,7 @@ def _workbench_operator_controls(
     can_apply: bool,
     blocker: object,
     explicit_label: str = "Run explicit command",
+    explicit_kind: str = "explicit",
 ) -> list[dict[str, object]]:
     controls = [
         {
@@ -1008,7 +1012,7 @@ def _workbench_operator_controls(
         )
     controls.append(
         {
-            "kind": "explicit",
+            "kind": explicit_kind,
             "label": explicit_label,
             "command": explicit_command,
             "safety": safety,

@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Expose dispatch-ready control kind
+
+- 调整 `agentdeck workbench` 的 `operator_card.controls[]`：当多条 approved approvals 被提升为 `approval_dispatch_ready` 时，对应显式 control 现在使用 `kind=dispatch_ready`，而不是通用 `explicit`。
+- `agentdeck controls` 的 operator scope command palette 会保留同一个 `kind=dispatch_ready`，方便未来 GUI/TUI 机器识别批量审批派发入口，不需要解析 `Dispatch ready approvals` 文案或命令字符串。
+- 加强 `validate_workbench_contract()`：当 `operator_card.action_kind=approval_dispatch_ready` 时，必须存在 `agentdeck approval dispatch-ready --confirm` control，且该 control 的 `kind` 必须是 `dispatch_ready`。
+- 同步 README、`docs/contracts/workbench-schema.md`、`docs/contracts/controls-schema.md`、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md，明确 dispatch-ready control kind 是契约语义，不代表自动执行许可。
+- 验证记录：已先确认红测失败，workbench/controls 最初仍输出 `kind=explicit`，validator 也允许旧 shape；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_surfaces_dispatch_ready_operator_for_multiple_approved_items tests/test_agent_cli.py::test_controls_surfaces_dispatch_ready_operator_kind tests/test_leader_cli.py::test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching tests/test_contracts.py::test_validate_workbench_contract_requires_dispatch_ready_operator_control_kind -q` 4 项通过；`conda run -n agentdeck pytest -q` 265 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `controls-dispatch-ready-kind-smoke-ok code=0 kind=dispatch_ready enabled=True messages=0 jobs=0`。
+
 ### Current - Align queue chat with dispatch-ready operator
 
 - 调整 `agentdeck leader chat --message "查看队列"` / `"查看控制面"`：queue-mode 现在会把顶层 `next_command`、`queue_card.next_command` 和 `operator_card.next_command` 对齐到 `operator_card.command`，因此多条 approved approvals 时自然语言控制面也会推荐显式 `agentdeck approval dispatch-ready --confirm`。

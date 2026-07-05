@@ -2682,14 +2682,31 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         if "can_apply" in operator_card and not isinstance(operator_card.get("can_apply"), bool):
             errors.append("operator_card.can_apply must be a boolean")
         if operator_card.get("action_kind") == "approval_dispatch_ready":
-            if operator_card.get("command") != "agentdeck approval dispatch-ready --confirm":
+            dispatch_ready_command_valid = operator_card.get("command") == "agentdeck approval dispatch-ready --confirm"
+            dispatch_ready_explicit_valid = (
+                operator_card.get("explicit_command") == "agentdeck approval dispatch-ready --confirm"
+            )
+            if not dispatch_ready_command_valid:
                 errors.append(
                     "operator_card approval_dispatch_ready command must be agentdeck approval dispatch-ready --confirm"
                 )
-            if operator_card.get("explicit_command") != "agentdeck approval dispatch-ready --confirm":
+            if not dispatch_ready_explicit_valid:
                 errors.append(
                     "operator_card approval_dispatch_ready explicit_command must be agentdeck approval dispatch-ready --confirm"
                 )
+            controls = operator_card.get("controls")
+            if dispatch_ready_command_valid and dispatch_ready_explicit_valid and isinstance(controls, list):
+                dispatch_controls = [
+                    control
+                    for control in controls
+                    if isinstance(control, dict)
+                    and control.get("command") == "agentdeck approval dispatch-ready --confirm"
+                ]
+                if not dispatch_controls:
+                    errors.append("operator_card approval_dispatch_ready control is required")
+                for control in dispatch_controls:
+                    if control.get("kind") != "dispatch_ready":
+                        errors.append("operator_card approval_dispatch_ready control kind must be dispatch_ready")
     elif "operator_card" in payload:
         errors.append("operator_card must be an object")
     audit_card = payload.get("audit_card")
