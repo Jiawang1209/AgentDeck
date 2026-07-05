@@ -1120,6 +1120,41 @@ def test_validate_leader_chat_contract_requires_intent_control_fields() -> None:
     }
 
 
+def test_validate_leader_chat_contract_requires_inspect_control_safety() -> None:
+    payload = leader_chat_example()
+    payload["intent_card"]["controls"].insert(
+        0,
+        {
+            "kind": "inspect",
+            "label": "Inspect",
+            "command": "agentdeck workbench",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+    )
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card.controls: inspect controls must use safety=inspect"],
+    }
+
+
+def test_validate_leader_chat_contract_requires_disabled_control_blocker() -> None:
+    payload = leader_chat_example()
+    payload["intent_card"]["controls"][0]["enabled"] = False
+    payload["intent_card"]["controls"][0]["blocker"] = None
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card.controls: disabled controls must include blocker"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_embedded_project_view_contract() -> None:
     payload = leader_chat_example()
     del payload["project_view"]["leader_actions"]["recommended_action_id"]

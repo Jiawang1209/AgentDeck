@@ -327,7 +327,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat responses must pass `validate_leader_chat_contract()` before printing JSON.
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Chat responses must include `intent_card`, and `intent_card.next_command` must describe the same next action as the top-level response.
-- Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; disabled controls must explain the blocker, and inspect controls must remain read-only.
+- Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; `validate_leader_chat_contract()` rejects disabled controls without a blocker and rejects `kind=inspect` controls unless `safety=inspect`.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.

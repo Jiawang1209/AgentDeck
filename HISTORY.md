@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Harden Leader intent control validation
+
+- 加强 `validate_leader_chat_contract()` 对 `intent_card.controls[]` 的语义校验：`kind=inspect` 必须使用 `safety=inspect`，disabled control 必须提供 blocker。
+- 新增契约红测覆盖 inspect control 错误 safety 和 disabled control 缺 blocker，避免 GUI 或自然语言壳渲染出安全语义不明的按钮。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 intent controls 的安全字段和 blocker 是 contract gate，不只是展示建议。
+- 完整验证：已先确认红测失败，两个目标测试最初都返回 `ok=True`；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_inspect_control_safety tests/test_contracts.py::test_validate_leader_chat_contract_requires_disabled_control_blocker -q` 通过；leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 131 项通过；`conda run -n agentdeck pytest -q` 203 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；smoke 确认 `leader-chat-intent-control-validation-smoke-ok`。
+
 ### Current - Add Leader intent controls
 
 - 扩展 `intent_card`：新增 `controls[]`，为 GUI/自然语言壳提供统一的下一步按钮描述，字段为 `kind`、`label`、`command`、`safety`、`enabled` 和 `blocker`。

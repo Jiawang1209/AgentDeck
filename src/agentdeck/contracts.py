@@ -1420,6 +1420,10 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                     for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
                         if field not in control:
                             errors.append(f"intent_card.controls: missing control field: {field}")
+                    if control.get("kind") == "inspect" and control.get("safety") != "inspect":
+                        errors.append("intent_card.controls: inspect controls must use safety=inspect")
+                    if control.get("enabled") is False and not control.get("blocker"):
+                        errors.append("intent_card.controls: disabled controls must include blocker")
                 else:
                     errors.append("intent_card.controls items must be objects")
         elif "controls" in intent_card:
