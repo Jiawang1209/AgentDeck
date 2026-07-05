@@ -38,7 +38,7 @@ Use `agentdeck contract continue --example` to include a stable GUI-ready contin
 }
 ```
 
-`recommended_action` and `pending` come from `ProjectView.recovery`. `leader_action` is populated only when the recommended action source is `leader_action`; otherwise it is `null`.
+`pending` comes from `ProjectView.recovery`. `recommended_action` usually mirrors `ProjectView.recovery.recommended_action`; when recovery reports more than one approved approval, `agentdeck continue` promotes the card-level `next_command` and `recommended_action.command` to the explicit batch entrypoint `agentdeck approval dispatch-ready --confirm`. This keeps the recovery card aligned with workbench/operator batch controls while preserving ProjectView as the state source. `leader_action` is populated only when the recommended action source is `leader_action`; otherwise it is `null`.
 
 ## Boundaries
 
@@ -48,3 +48,4 @@ Use `agentdeck contract continue --example` to include a stable GUI-ready contin
 - `agentdeck continue` must pass `validate_continue_contract()` before printing JSON.
 - It must not create plans, create leader actions, apply actions, dispatch work, capture replies, ack inbox items, or send tmux input.
 - GUI clients should use `next_command` and `recommended_action.safety` to render an affordance, not to auto-run runtime work.
+- If `next_command` is `agentdeck approval dispatch-ready --confirm`, it is still an explicit human command and must not be run automatically.

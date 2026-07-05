@@ -301,6 +301,77 @@ def test_continue_surfaces_provider_setup_when_configured_leader_is_not_ready(
     assert StateStore(root).load() == state_before
 
 
+def test_continue_promotes_multiple_approved_approvals_to_dispatch_ready(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"] = {
+        "planner": {
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "session_name": "agentdeck",
+            "cwd": str(root),
+            "status": "running",
+        },
+        "coder": {
+            "agent_id": "coder",
+            "pane_id": "%43",
+            "session_name": "agentdeck",
+            "cwd": str(root),
+            "status": "running",
+        },
+    }
+    state["approvals"] = [
+        {
+            "approval_id": "apv_planner",
+            "plan_id": "pln_ready",
+            "step_id": "step_1",
+            "step": 1,
+            "agent_id": "planner",
+            "role": "planning",
+            "task": "规划继续批量派发",
+            "risk": "low",
+            "status": "approved",
+            "created_at": "2026-07-05T00:00:00+00:00",
+        },
+        {
+            "approval_id": "apv_coder",
+            "plan_id": "pln_ready",
+            "step_id": "step_2",
+            "step": 2,
+            "agent_id": "coder",
+            "role": "implementation",
+            "task": "实现继续批量派发",
+            "risk": "low",
+            "status": "approved",
+            "created_at": "2026-07-05T00:00:01+00:00",
+        },
+    ]
+    store.save(state)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["continue"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "dispatch_ready"
+    assert payload["next_command"] == "agentdeck approval dispatch-ready --confirm"
+    assert payload["recommended_action"] == {
+        "label": "Dispatch ready approvals",
+        "command": "agentdeck approval dispatch-ready --confirm",
+        "safety": "explicit_runtime",
+        "requires_explicit_user": True,
+        "source": "approval",
+        "target_id": "dispatch_ready",
+    }
+    assert payload["pending"]["approved_approvals"] == 2
+    assert payload["leader_action"] is None
+    assert payload["action_detail_command"] is None
+    assert StateStore(root).load() == state_before
+
+
 def test_continue_refuses_invalid_project_view_before_printing(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
     original_asdict = cli.asdict

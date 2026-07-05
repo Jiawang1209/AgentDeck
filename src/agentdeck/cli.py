@@ -430,6 +430,17 @@ def events_command(args: argparse.Namespace) -> int:
 def _continue_card_payload(project_view: dict[str, object], store: StateStore) -> dict[str, object]:
     recovery = project_view.get("recovery", {})
     recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+    next_command = recovery.get("next_command") if isinstance(recovery, dict) else None
+    if _continue_should_promote_dispatch_ready(project_view, recovery, recommended_action):
+        next_command = "agentdeck approval dispatch-ready --confirm"
+        recommended_action = {
+            "label": "Dispatch ready approvals",
+            "command": next_command,
+            "safety": "explicit_runtime",
+            "requires_explicit_user": True,
+            "source": "approval",
+            "target_id": "dispatch_ready",
+        }
     target_id = recommended_action.get("target_id") if isinstance(recommended_action, dict) else None
     source = recommended_action.get("source") if isinstance(recommended_action, dict) else None
     leader_action = None
@@ -447,12 +458,28 @@ def _continue_card_payload(project_view: dict[str, object], store: StateStore) -
         "project_view_command": "agentdeck status",
         "status": recovery.get("status") if isinstance(recovery, dict) else None,
         "reason": recovery.get("reason") if isinstance(recovery, dict) else None,
-        "next_command": recovery.get("next_command") if isinstance(recovery, dict) else None,
+        "next_command": next_command,
         "recommended_action": recommended_action,
         "pending": recovery.get("pending") if isinstance(recovery, dict) else None,
         "leader_action": leader_action,
         "action_detail_command": action_detail_command,
     }
+
+
+def _continue_should_promote_dispatch_ready(
+    project_view: dict[str, object], recovery: object, recommended_action: object
+) -> bool:
+    if not isinstance(recovery, dict) or not isinstance(recommended_action, dict):
+        return False
+    if recovery.get("status") != "dispatch_ready" or recommended_action.get("source") != "approval":
+        return False
+    pending = recovery.get("pending") if isinstance(recovery.get("pending"), dict) else {}
+    if int(pending.get("approved_approvals", 0)) <= 1:
+        return False
+    approvals = project_view.get("approvals") if isinstance(project_view.get("approvals"), dict) else {}
+    if int(approvals.get("approved", 0)) <= 1:
+        return False
+    return True
 
 
 def _inbox_agent_id_for_item(store: StateStore, inbox_id: object) -> str | None:

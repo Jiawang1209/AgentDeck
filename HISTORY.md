@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Promote dispatch-ready in continue card
+
+- 调整 `agentdeck continue`：当 ProjectView recovery 发现多条 approved approvals 时，continue card 的 `next_command` 和 `recommended_action.command` 会提升为显式 `agentdeck approval dispatch-ready --confirm`，与 workbench/operator 和自然语言 queue-mode 的批量派发入口对齐。
+- 保持安全边界：`agentdeck continue` 仍只读，不写 state、不创建 leader action、不 apply action、不 approve/reject/dispatch、不发送 tmux 输入；`dispatch-ready --confirm` 仍必须由人类显式运行。
+- 同步 README、`docs/contracts/continue-card-schema.md`、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md，明确 continue card 可以做卡片级批量命令提升，但 ProjectView 仍是状态源。
+- 验证记录：已先确认红测失败，多条 approved approvals 时 `agentdeck continue` 最初仍推荐单条 `agentdeck approval dispatch --approval-id apv_planner`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_continue_promotes_multiple_approved_approvals_to_dispatch_ready tests/test_agent_cli.py::test_continue_returns_recovery_card_without_mutating_state tests/test_leader_cli.py::test_leader_chat_continue_returns_recovery_card_without_creating_action tests/test_leader_cli.py::test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching -q` 4 项通过；`conda run -n agentdeck pytest -q` 266 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `continue-dispatch-ready-smoke-ok code=0 status=dispatch_ready next=agentdeck approval dispatch-ready --confirm target=dispatch_ready messages=0 jobs=0`。
+
 ### Current - Expose dispatch-ready control kind
 
 - 调整 `agentdeck workbench` 的 `operator_card.controls[]`：当多条 approved approvals 被提升为 `approval_dispatch_ready` 时，对应显式 control 现在使用 `kind=dispatch_ready`，而不是通用 `explicit`。
