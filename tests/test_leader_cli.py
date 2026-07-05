@@ -559,6 +559,88 @@ def test_leader_chat_continue_returns_recovery_card_without_creating_action(tmp_
     assert '"event_type": "leader_chat_turn"' in events
 
 
+def test_leader_chat_continue_promotes_dispatch_ready_card_next_command(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"] = {
+        "planner": {
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "session_name": "agentdeck",
+            "cwd": str(root),
+            "status": "running",
+        },
+        "coder": {
+            "agent_id": "coder",
+            "pane_id": "%43",
+            "session_name": "agentdeck",
+            "cwd": str(root),
+            "status": "running",
+        },
+    }
+    state["approvals"] = [
+        {
+            "approval_id": "apv_planner",
+            "plan_id": "pln_ready",
+            "step_id": "step_1",
+            "step": 1,
+            "agent_id": "planner",
+            "role": "planning",
+            "task": "规划继续批量派发",
+            "risk": "low",
+            "status": "approved",
+            "created_at": "2026-07-05T00:00:00+00:00",
+        },
+        {
+            "approval_id": "apv_coder",
+            "plan_id": "pln_ready",
+            "step_id": "step_2",
+            "step": 2,
+            "agent_id": "coder",
+            "role": "implementation",
+            "task": "实现继续批量派发",
+            "risk": "low",
+            "status": "approved",
+            "created_at": "2026-07-05T00:00:01+00:00",
+        },
+    ]
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "继续"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "continue"
+    assert payload["recovery"]["status"] == "dispatch_ready"
+    assert payload["next_command"] == "agentdeck approval dispatch-ready --confirm"
+    assert payload["continue_card"]["next_command"] == payload["next_command"]
+    assert payload["continue_card"]["recommended_action"] == {
+        "label": "Dispatch ready approvals",
+        "command": "agentdeck approval dispatch-ready --confirm",
+        "safety": "explicit_runtime",
+        "requires_explicit_user": True,
+        "source": "approval",
+        "target_id": "dispatch_ready",
+    }
+    assert payload["leader_explanation"]["next_command"] == payload["next_command"]
+    assert payload["leader_explanation"]["recommended_action_id"] == "dispatch_ready"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert [
+        approval["status"]
+        for approval in payload["approval_card"]["approvals"]
+        if approval["approval_id"] in {"apv_planner", "apv_coder"}
+    ] == ["approved", "approved"]
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck approval dispatch-ready --confirm"
+    assert state_after["approvals"][0]["status"] == "approved"
+    assert state_after["approvals"][1]["status"] == "approved"
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_continue_embeds_inbox_card_for_pending_inbox(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

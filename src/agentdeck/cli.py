@@ -2830,9 +2830,16 @@ def _leader_chat_explanation(
     approval_card: dict[str, object] | None = None,
     approval_action_kind: str | None = None,
     dispatch_batch_preview_card: dict[str, object] | None = None,
+    recommended_action: dict[str, object] | None = None,
 ) -> dict[str, object]:
     recovery = project_view.get("recovery")
-    recovery_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+    recovery_action = (
+        recommended_action
+        if isinstance(recommended_action, dict)
+        else recovery.get("recommended_action")
+        if isinstance(recovery, dict)
+        else None
+    )
     action_kind = leader_action.get("kind") if isinstance(leader_action, dict) else None
     action_status = leader_action.get("status") if isinstance(leader_action, dict) else None
     reason = None
@@ -3309,8 +3316,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
     if _is_continue_chat_message(args.message):
         plans = store.list_plans()
         plan_id = str(plans[-1]["plan_id"]) if plans else None
-        initial_recovery = project_view.get("recovery", {})
-        next_command = initial_recovery.get("next_command") if isinstance(initial_recovery, dict) else None
+        initial_continue_card = _continue_card_payload(project_view, store)
+        next_command = initial_continue_card.get("next_command")
         turn = store.record_chat_turn(
             mode="continue",
             message=args.message,
@@ -3335,9 +3342,10 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if refreshed_project_view is None:
             return 1
         recovery = refreshed_project_view.get("recovery", {})
-        next_command = recovery.get("next_command") if isinstance(recovery, dict) else next_command
         continue_card = _continue_card_payload(refreshed_project_view, store)
+        next_command = continue_card.get("next_command")
         inbox_card, approval_card = _leader_chat_recovery_cards(refreshed_project_view, store)
+        continue_recommended_action = continue_card.get("recommended_action")
         recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
         runtime_card = (
             _workbench_runtime_card(refreshed_project_view)
@@ -3357,6 +3365,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 next_command=next_command,
                 project_view=refreshed_project_view,
                 leader_action=leader_action if isinstance(leader_action, dict) else None,
+                recommended_action=continue_recommended_action if isinstance(continue_recommended_action, dict) else None,
             ),
             "plan_id": plan_id,
             "review": None,

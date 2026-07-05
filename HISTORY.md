@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Align continue chat with continue card
+
+- 调整 `agentdeck leader chat --message "继续"`：continue-mode 现在把顶层 `next_command`、`leader_explanation.next_command` 和 chat turn 记录对齐到 `continue_card.next_command`，而不是直接沿用 ProjectView recovery 的单步命令。
+- 当多条 approvals 已 approved 时，自然语言 `继续` 会与 `agentdeck continue` 一样推荐显式 `agentdeck approval dispatch-ready --confirm`，并把 `leader_explanation.recommended_action_id` 对齐为 `dispatch_ready`。
+- 保持安全边界：continue-mode 仍只记录 chat turn，不创建 leader action、不 apply action、不 approve/reject/dispatch、不 ack、不发送 tmux 输入；dispatch-ready 仍必须由人类显式运行。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md，明确 continue-mode 顶层命令必须跟随 continue card。
+- 验证记录：已先确认红测失败，多条 approved approvals 时自然语言 `继续` 顶层 `next_command` 最初仍是单条 `agentdeck approval dispatch --approval-id apv_planner`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_continue_promotes_dispatch_ready_card_next_command tests/test_leader_cli.py::test_leader_chat_continue_returns_recovery_card_without_creating_action tests/test_agent_cli.py::test_continue_promotes_multiple_approved_approvals_to_dispatch_ready tests/test_leader_cli.py::test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching -q` 4 项通过；`conda run -n agentdeck pytest -q` 267 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-continue-dispatch-ready-smoke-ok code=0 mode=continue next=agentdeck approval dispatch-ready --confirm explanation_next=agentdeck approval dispatch-ready --confirm turn_next=agentdeck approval dispatch-ready --confirm messages=0 jobs=0`。
+
 ### Current - Promote dispatch-ready in continue card
 
 - 调整 `agentdeck continue`：当 ProjectView recovery 发现多条 approved approvals 时，continue card 的 `next_command` 和 `recommended_action.command` 会提升为显式 `agentdeck approval dispatch-ready --confirm`，与 workbench/operator 和自然语言 queue-mode 的批量派发入口对齐。
