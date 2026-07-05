@@ -975,6 +975,7 @@ TRACE_TOP_LEVEL_FIELDS = (
     "attempts",
     "jobs",
     "replies",
+    "artifacts",
     "inbox_items",
 )
 
@@ -1014,6 +1015,19 @@ TRACE_REPLY_FIELDS = (
     "from_agent",
     "to_actor",
     "text",
+    "created_at",
+)
+
+TRACE_ARTIFACT_FIELDS = (
+    "artifact_id",
+    "message_id",
+    "attempt_id",
+    "job_id",
+    "reply_id",
+    "from_agent",
+    "path",
+    "kind",
+    "status",
     "created_at",
 )
 
@@ -1702,6 +1716,7 @@ def trace_contract_payload(contract_path: Path) -> dict[str, object]:
         "attempt_fields": list(TRACE_ATTEMPT_FIELDS),
         "job_fields": list(TRACE_JOB_FIELDS),
         "reply_fields": list(TRACE_REPLY_FIELDS),
+        "artifact_fields": list(TRACE_ARTIFACT_FIELDS),
         "inbox_item_fields": list(TRACE_INBOX_ITEM_FIELDS),
     }
 
@@ -1716,6 +1731,7 @@ def trace_contract_response(contract_path: Path, include_example: bool = False) 
         payload["example_attempt_fields"] = list(example["attempts"][0])
         payload["example_job_fields"] = list(example["jobs"][0])
         payload["example_reply_fields"] = list(example["replies"][0])
+        payload["example_artifact_fields"] = list(example["artifacts"][0])
         payload["example_inbox_item_fields"] = list(example["inbox_items"][0])
         payload["example_trace"] = example
     return payload
@@ -2037,6 +2053,7 @@ def validate_trace_contract(payload: dict[str, object]) -> dict[str, object]:
     _validate_trace_items(errors, payload, "attempts", TRACE_ATTEMPT_FIELDS, "attempt")
     _validate_trace_items(errors, payload, "jobs", TRACE_JOB_FIELDS, "job")
     _validate_trace_items(errors, payload, "replies", TRACE_REPLY_FIELDS, "reply")
+    _validate_trace_items(errors, payload, "artifacts", TRACE_ARTIFACT_FIELDS, "artifact")
     _validate_trace_items(errors, payload, "inbox_items", TRACE_INBOX_ITEM_FIELDS, "inbox item")
     return {"ok": not errors, "errors": errors}
 
@@ -4606,6 +4623,20 @@ def trace_example() -> dict[str, object]:
                 "to_actor": "coder",
                 "text": "status: completed\nsummary: Plan is actionable.",
                 "created_at": "2026-07-04T00:00:01+00:00",
+            }
+        ],
+        "artifacts": [
+            {
+                "artifact_id": "art_example",
+                "message_id": "msg_example",
+                "attempt_id": "att_example",
+                "job_id": "job_example",
+                "reply_id": "rep_example",
+                "from_agent": "planner",
+                "path": "docs/example-plan.md",
+                "kind": "markdown",
+                "status": "created",
+                "created_at": "2026-07-04T00:00:02+00:00",
             }
         ],
         "inbox_items": [

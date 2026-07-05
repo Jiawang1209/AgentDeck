@@ -742,6 +742,7 @@ class StateStore:
         attempts = [item for item in state.get("attempts", []) if item.get("message_id") == message_id]
         jobs = [item for item in state.get("jobs", []) if item.get("message_id") == message_id]
         replies = [item for item in state.get("replies", []) if item.get("message_id") == message_id]
+        artifacts = [item for item in state.get("artifacts", []) if item.get("message_id") == message_id]
         inbox_items = []
         for items in state.get("inbox", {}).values():
             inbox_items.extend(item for item in items if item.get("message_id") == message_id)
@@ -752,6 +753,7 @@ class StateStore:
             "attempts": [self._trace_attempt(item) for item in attempts],
             "jobs": [self._trace_job(item) for item in jobs],
             "replies": [self._trace_reply(item) for item in replies],
+            "artifacts": [self._trace_artifact(item) for item in artifacts],
             "inbox_items": [self._trace_inbox_item(item) for item in inbox_items],
         }
 
@@ -803,6 +805,21 @@ class StateStore:
         }
 
     @staticmethod
+    def _trace_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "artifact_id": artifact.get("artifact_id"),
+            "message_id": artifact.get("message_id"),
+            "attempt_id": artifact.get("attempt_id"),
+            "job_id": artifact.get("job_id"),
+            "reply_id": artifact.get("reply_id"),
+            "from_agent": artifact.get("from_agent"),
+            "path": artifact.get("path"),
+            "kind": artifact.get("kind"),
+            "status": artifact.get("status"),
+            "created_at": artifact.get("created_at"),
+        }
+
+    @staticmethod
     def _trace_inbox_item(item: dict[str, Any]) -> dict[str, Any]:
         return {
             "inbox_id": item.get("inbox_id"),
@@ -835,6 +852,9 @@ class StateStore:
             for item in items:
                 if item.get("inbox_id") == query_id:
                     return str(item["message_id"])
+        for item in state.get("artifacts", []):
+            if item.get("artifact_id") == query_id:
+                return str(item["message_id"])
         return None
 
     @staticmethod

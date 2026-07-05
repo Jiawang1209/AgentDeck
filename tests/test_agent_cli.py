@@ -2921,6 +2921,7 @@ def test_contract_trace_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["job_fields"] == expected["job_fields"]
     assert payload["reply_fields"] == expected["reply_fields"]
     assert payload["inbox_item_fields"] == expected["inbox_item_fields"]
+    assert payload["artifact_fields"] == expected["artifact_fields"]
 
 
 def test_contract_trace_example_exports_gui_ready_lineage(capsys) -> None:
@@ -2943,11 +2944,14 @@ def test_contract_trace_example_exports_gui_ready_lineage(capsys) -> None:
     assert set(payload["example_reply_fields"]) == set(example["replies"][0])
     assert payload["example_inbox_item_fields"] == payload["inbox_item_fields"]
     assert set(payload["example_inbox_item_fields"]) == set(example["inbox_items"][0])
+    assert payload["example_artifact_fields"] == payload["artifact_fields"]
+    assert set(payload["example_artifact_fields"]) == set(example["artifacts"][0])
     assert validate_trace_contract(example) == {"ok": True, "errors": []}
     assert example["message"]["message_id"] == "msg_example"
     assert example["attempts"][0]["attempt_id"] == "att_example"
     assert example["jobs"][0]["job_id"] == "job_example"
     assert example["replies"][0]["reply_id"] == "rep_example"
+    assert example["artifacts"][0]["artifact_id"] == "art_example"
     assert {item["event_type"] for item in example["inbox_items"]} == {"task_request", "task_reply"}
 
 
@@ -2957,6 +2961,92 @@ def test_contract_trace_cli_matches_contract_module(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     expected = trace_contract_response(Path(payload["contract_path"]), include_example=True)
     assert payload == expected
+
+
+def test_trace_accepts_artifact_id_and_returns_artifacts(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["messages"] = [
+        {
+            "message_id": "msg_trace_artifact",
+            "from_actor": "leader",
+            "to_agent": "planner",
+            "task": "写设计文档",
+            "prompt": "prompt",
+            "status": "replied",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["attempts"] = [
+        {
+            "attempt_id": "att_trace_artifact",
+            "message_id": "msg_trace_artifact",
+            "agent_id": "planner",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:01+00:00",
+        }
+    ]
+    state["jobs"] = [
+        {
+            "job_id": "job_trace_artifact",
+            "message_id": "msg_trace_artifact",
+            "attempt_id": "att_trace_artifact",
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:02+00:00",
+        }
+    ]
+    state["replies"] = [
+        {
+            "reply_id": "rep_trace_artifact",
+            "message_id": "msg_trace_artifact",
+            "attempt_id": "att_trace_artifact",
+            "job_id": "job_trace_artifact",
+            "from_agent": "planner",
+            "to_actor": "leader",
+            "text": "status: completed\nfull_output_path: docs/architecture/trace.md",
+            "created_at": "2026-07-04T00:00:03+00:00",
+        }
+    ]
+    state["artifacts"] = [
+        {
+            "artifact_id": "art_trace",
+            "message_id": "msg_trace_artifact",
+            "attempt_id": "att_trace_artifact",
+            "job_id": "job_trace_artifact",
+            "reply_id": "rep_trace_artifact",
+            "from_agent": "planner",
+            "path": "docs/architecture/trace.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:04+00:00",
+        }
+    ]
+    store.save(state)
+
+    exit_code = cli.main(["trace", "--id", "art_trace"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["query_id"] == "art_trace"
+    assert payload["message"]["message_id"] == "msg_trace_artifact"
+    assert payload["artifacts"] == [
+        {
+            "artifact_id": "art_trace",
+            "message_id": "msg_trace_artifact",
+            "attempt_id": "att_trace_artifact",
+            "job_id": "job_trace_artifact",
+            "reply_id": "rep_trace_artifact",
+            "from_agent": "planner",
+            "path": "docs/architecture/trace.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:04+00:00",
+        }
+    ]
+    assert validate_trace_contract(payload) == {"ok": True, "errors": []}
 
 
 def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:

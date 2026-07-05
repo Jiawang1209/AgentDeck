@@ -217,6 +217,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - 使用 `agentdeck approval create-from-plan --plan-id <id>` 创建审批项，使用 `approval approve/reject` 更新状态；只有 approved approval 才能通过 `agentdeck approval dispatch --approval-id <id>` 派发；`agentdeck approval dispatch-ready --confirm` 是显式批量派发命令，只派发 approved 且目标 agent runtime ready 的审批项，blocked 项必须保留为 approved 并返回 blocker，不带 `--confirm` 必须失败且不得写 state 或发送 tmux 输入。
 - `dispatch`、`approval dispatch`、`approval dispatch-ready --confirm`、`reply` 和 `capture-reply` 的成功 JSON 输出必须包含或逐项包含 `trace_command`，指向对应 message/reply lineage，供 GUI 和人类直接追踪；当结构化 reply 含 `full_output_path:` 时，`reply` / `capture-reply` 必须登记 artifact 摘要并在成功 JSON 中返回 `artifacts`，但不得读取文件内容；`approval dispatch` 成功响应还必须嵌入目标 agent 的同源 `inbox_card`，复用 `agentdeck inbox --agent <id>` 队列形状，但不得自动 ack；`reply` / `capture-reply` 当 reply 回流到某个 agent inbox 时也必须嵌入接收方 `inbox_card`，但不得自动 ack 或继续 review。
 - Worker 输出结构化结果后，优先使用 `agentdeck capture-reply --agent <id> --message-id <id>` 从 pane 回收入账；手动 `reply` 作为兜底。
+- `agentdeck trace --id <id>` 可用 message/attempt/job/reply/artifact/inbox 任意 ID 还原通信链路；artifact trace 只返回路径摘要，不读取文件内容。
 - 使用 `agentdeck ack --agent <id> --inbox-id <id>` 时只能确认该 agent 最早的 pending inbox item；非 head item 必须等待前序 item ack 后再处理。
 - 先更新架构/README/agent 文档，再扩展行为。
 - 所有开发命令默认先激活 `agentdeck` conda 环境。

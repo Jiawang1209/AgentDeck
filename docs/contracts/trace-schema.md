@@ -2,7 +2,7 @@
 
 `agentdeck trace --id <id>` is the canonical read-only lineage view for one AgentDeck communication message.
 
-It accepts a `message_id`, `attempt_id`, `job_id`, `reply_id`, or `inbox_id`, resolves the owning message, and returns the message, attempts, jobs, replies, and inbox items that belong to that lineage.
+It accepts a `message_id`, `attempt_id`, `job_id`, `reply_id`, `artifact_id`, or `inbox_id`, resolves the owning message, and returns the message, attempts, jobs, replies, artifacts, and inbox items that belong to that lineage.
 
 The trace contract uses the same schema version constant as ProjectView: `PROJECT_VIEW_SCHEMA_VERSION` in `src/agentdeck/models.py`. Current value: `project-view/v1`.
 
@@ -20,6 +20,7 @@ Reusable contract response, payload, example fixture, and validator helpers live
   "attempts": [],
   "jobs": [],
   "replies": [],
+  "artifacts": [],
   "inbox_items": []
 }
 ```
@@ -39,6 +40,7 @@ Use `agentdeck contract trace` to discover this contract from tools or GUI clien
   "attempt_fields": [],
   "job_fields": [],
   "reply_fields": [],
+  "artifact_fields": [],
   "inbox_item_fields": []
 }
 ```
@@ -66,6 +68,8 @@ Use `agentdeck contract trace --example` to include a stable GUI-ready lineage f
 `jobs[]` records runtime dispatch facts such as agent id, pane id, and job status.
 
 `replies[]` records worker replies linked back to attempts and jobs.
+
+`artifacts[]` records worker deliverable paths linked back to replies, attempts, and jobs. It is a lineage index only; trace does not read artifact file contents.
 
 `inbox_items[]` records mailbox delivery events, including both `task_request` and `task_reply` items. Missing direction fields are normalized to `null` so GUI clients can render a stable table without checking event type first.
 

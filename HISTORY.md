@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Trace artifacts through communication lineage
+
+- 扩展 `agentdeck trace --id <id>`：现在 `artifact_id` 可作为 trace 查询入口，会解析到所属 message，并在同一条 lineage 中返回 `artifacts[]`。
+- 扩展 trace 契约：新增 `TRACE_ARTIFACT_FIELDS`，`TRACE_TOP_LEVEL_FIELDS` 加入 `artifacts`，`agentdeck contract trace` / `--example` 和 `validate_trace_contract()` 都会发现并校验 artifact fields。
+- 同步 README、`docs/contracts/trace-schema.md`、CLAUDE.md 和 AGENT.md，明确 trace 支持 message/attempt/job/reply/artifact/inbox 任意 ID，artifact trace 只返回路径摘要，不读取文件内容。
+- 验证记录：已先确认红测失败，`agentdeck contract trace` 最初没有 `artifact_fields`，`agentdeck trace --id art_trace` 最初返回 `unknown trace id: art_trace`；实现后目标测试 `conda run -n agentdeck pytest -q tests/test_agent_cli.py::test_contract_trace_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_trace_example_exports_gui_ready_lineage tests/test_agent_cli.py::test_trace_accepts_artifact_id_and_returns_artifacts tests/test_contracts.py::test_trace_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_trace_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_trace_contract_accepts_example tests/test_contracts.py::test_validate_trace_contract_reports_missing_artifact_field` 7 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 316 项通过。
+
 ### Current - Capture reply artifact paths into the ledger
 
 - 扩展 `agentdeck capture-reply` / `agentdeck reply` 入账路径：当结构化回复块包含 `full_output_path: <path>` 时，`StateStore.record_reply()` 会在同一次 reply 入账中创建 artifact 记录，关联 message/attempt/job/reply/from_agent，并按文件后缀推断 `kind`。

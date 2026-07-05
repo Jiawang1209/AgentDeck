@@ -43,6 +43,7 @@ from agentdeck.contracts import (
     PROJECT_VIEW_RECOVERY_FIELDS,
     PROJECT_VIEW_TOP_LEVEL_FIELDS,
     TRACE_ATTEMPT_FIELDS,
+    TRACE_ARTIFACT_FIELDS,
     TRACE_INBOX_ITEM_FIELDS,
     TRACE_JOB_FIELDS,
     TRACE_MESSAGE_FIELDS,
@@ -2310,6 +2311,7 @@ def test_trace_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     assert payload["attempt_fields"] == list(TRACE_ATTEMPT_FIELDS)
     assert payload["job_fields"] == list(TRACE_JOB_FIELDS)
     assert payload["reply_fields"] == list(TRACE_REPLY_FIELDS)
+    assert payload["artifact_fields"] == list(TRACE_ARTIFACT_FIELDS)
     assert payload["inbox_item_fields"] == list(TRACE_INBOX_ITEM_FIELDS)
 
 
@@ -2332,6 +2334,8 @@ def test_trace_contract_response_includes_example_without_drift(tmp_path: Path) 
     assert set(payload["example_job_fields"]) == set(example["jobs"][0])
     assert payload["example_reply_fields"] == payload["reply_fields"]
     assert set(payload["example_reply_fields"]) == set(example["replies"][0])
+    assert payload["example_artifact_fields"] == payload["artifact_fields"]
+    assert set(payload["example_artifact_fields"]) == set(example["artifacts"][0])
     assert payload["example_inbox_item_fields"] == payload["inbox_item_fields"]
     assert set(payload["example_inbox_item_fields"]) == set(example["inbox_items"][0])
 
@@ -2349,3 +2353,12 @@ def test_validate_trace_contract_reports_missing_reply_field() -> None:
     result = validate_trace_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing reply field: reply_id"]}
+
+
+def test_validate_trace_contract_reports_missing_artifact_field() -> None:
+    payload = trace_example()
+    del payload["artifacts"][0]["artifact_id"]
+
+    result = validate_trace_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing artifact field: artifact_id"]}
