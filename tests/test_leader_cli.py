@@ -109,6 +109,66 @@ def test_leader_plan_creates_structured_plan_without_dispatching(tmp_path, monke
     assert '"event_type": "leader_plan_created"' in events
 
 
+def test_run_task_creates_plan_and_pending_approvals_without_dispatching(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["run", "--task", "实现多 Agent smoke"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    plan_id = payload["plan_id"]
+    first_approval_id = payload["approval_card"]["approvals"][0]["approval_id"]
+    assert payload["ok"] is True
+    assert payload["mode"] == "run_start"
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["task"] == "实现多 Agent smoke"
+    assert plan_id.startswith("pln_")
+    assert payload["provider"] == "fake"
+    assert payload["model"] == "fake-plan"
+    assert payload["approval_count"] == 3
+    assert payload["pending_approval_count"] == 3
+    assert payload["next_command"] == "agentdeck approval list"
+    assert payload["approve_next_command"] == f"agentdeck approval approve --approval-id {first_approval_id}"
+    assert payload["review_command"] == f"agentdeck leader review --plan-id {plan_id}"
+    assert payload["continue_command"] == "agentdeck continue"
+    assert payload["workbench_command"] == "agentdeck workbench"
+    assert payload["safety"] == "approval_gated"
+    assert payload["requires_explicit_user"] is True
+    assert payload["plan"]["goal"] == "实现多 Agent smoke"
+    assert payload["approval_card"]["count"] == 3
+    assert all(approval["status"] == "pending" for approval in payload["approval_card"]["approvals"])
+    assert payload["controls"][0] == {
+        "kind": "preview",
+        "label": "Review approval queue",
+        "command": "agentdeck approval list",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["controls"][1]["command"] == payload["approve_next_command"]
+    assert payload["controls"][1]["safety"] == "explicit_runtime"
+    assert payload["controls"][2]["command"] == payload["review_command"]
+
+    state = StateStore(root).load()
+    assert len(state["plans"]) == 1
+    assert len(state["approvals"]) == 3
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state["replies"] == []
+    assert state.get("inbox", {}) == {}
+    assert state["leader_actions"] == []
+    assert fake.sent == []
+    assert fake.captured == []
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "run_started"' in events
+    assert f'"plan_id": "{plan_id}"' in events
+
+
 def test_leader_plan_defaults_to_configured_leader_provider_and_model(
     tmp_path, monkeypatch, capsys
 ) -> None:

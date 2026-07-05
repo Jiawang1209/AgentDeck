@@ -38,6 +38,8 @@ from agentdeck.contracts import (
     leader_summary_contract_response,
     project_view_contract_payload,
     project_view_contract_response,
+    run_start_contract_payload,
+    run_start_contract_response,
     trace_contract_payload,
     trace_contract_response,
     validate_trace_contract,
@@ -862,6 +864,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "continue",
         "doctor",
         "events",
+        "run",
         "workbench",
         "controls",
         "agent-runtime",
@@ -879,6 +882,39 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
     assert payload["contracts"][0]["command"] == "agentdeck contract project-view"
     assert payload["contracts"][0]["example_command"] == "agentdeck contract project-view --example"
     assert payload["contracts"][0]["contract_path"].endswith("docs/contracts/project-view-schema.md")
+
+
+def test_contract_run_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "run"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = run_start_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["run_command"] == "agentdeck run --task <text>"
+    assert payload["contract_path"].endswith("docs/contracts/run-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == expected["response_fields"]
+    assert payload["control_fields"] == expected["control_fields"]
+    assert payload["approval_contract"] == "agentdeck contract approvals"
+    assert payload["leader_review_contract"] == "agentdeck contract leader-review"
+
+
+def test_contract_run_example_exports_gui_ready_response(capsys) -> None:
+    exit_code = cli.main(["contract", "run", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = run_start_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_run_start"]
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert payload["example_control_fields"] == payload["control_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert set(payload["example_control_fields"]) == set(example["controls"][0])
+    assert example["mode"] == "run_start"
+    assert example["safety"] == "approval_gated"
+    assert example["requires_explicit_user"] is True
 
 
 def test_contract_artifacts_discovers_schema_for_gui_clients(capsys) -> None:
@@ -1490,6 +1526,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "project_view_contract",
         "events_contract",
         "doctor_contract",
+        "run_contract",
         "artifacts_contract",
     ]
     assert payload["change_summary_fields"] == [
@@ -2074,6 +2111,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "project_view_contract": "agentdeck contract project-view",
         "events_contract": "agentdeck contract events",
         "doctor_contract": "agentdeck contract doctor",
+        "run_contract": "agentdeck contract run",
         "artifacts_contract": "agentdeck contract artifacts",
     }
     assert payload["control_mode_card"] == {

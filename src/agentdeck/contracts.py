@@ -49,6 +49,12 @@ CONTRACT_INDEX_SPECS = (
         "events-schema.md",
     ),
     (
+        "run",
+        "agentdeck contract run",
+        "agentdeck contract run --example",
+        "run-schema.md",
+    ),
+    (
         "workbench",
         "agentdeck contract workbench",
         "agentdeck contract workbench --example",
@@ -867,6 +873,7 @@ WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "project_view_contract",
     "events_contract",
     "doctor_contract",
+    "run_contract",
     "artifacts_contract",
 )
 
@@ -969,6 +976,30 @@ LEADER_SUMMARY_ARTIFACT_FIELDS = (
 )
 
 LEADER_SUMMARY_CONTROL_FIELDS = LEADER_REVIEW_CONTROL_FIELDS
+
+RUN_START_RESPONSE_FIELDS = (
+    "schema_version",
+    "ok",
+    "mode",
+    "task",
+    "plan_id",
+    "provider",
+    "model",
+    "approval_count",
+    "pending_approval_count",
+    "plan",
+    "approval_card",
+    "next_command",
+    "approve_next_command",
+    "review_command",
+    "continue_command",
+    "workbench_command",
+    "controls",
+    "safety",
+    "requires_explicit_user",
+)
+
+RUN_START_CONTROL_FIELDS = LEADER_REVIEW_CONTROL_FIELDS
 
 LEADER_CHAT_EXPLANATION_FIELDS = (
     "mode",
@@ -1539,6 +1570,31 @@ def events_contract_response(contract_path: Path, include_example: bool = False)
     return payload
 
 
+def run_start_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "run_command": "agentdeck run --task <text>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(RUN_START_RESPONSE_FIELDS),
+        "control_fields": list(RUN_START_CONTROL_FIELDS),
+        "approval_contract": "agentdeck contract approvals",
+        "leader_review_contract": "agentdeck contract leader-review",
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def run_start_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = run_start_contract_payload(contract_path)
+    if include_example:
+        example = run_start_example()
+        payload["example"] = True
+        payload["example_response_fields"] = list(example)
+        payload["example_control_fields"] = list(example["controls"][0])
+        payload["example_run_start"] = example
+    return payload
+
+
 def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -2048,6 +2104,48 @@ def validate_approval_dispatch_ready_contract(payload: dict[str, object]) -> dic
             errors.append("dispatch_ready.skipped_count must match blocked results")
     elif "results" in payload:
         errors.append("dispatch_ready.results must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_run_start_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in RUN_START_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing run_start field: {field}")
+    if payload.get("mode") != "run_start":
+        errors.append("run_start.mode must be run_start")
+    if payload.get("requires_explicit_user") is not True:
+        errors.append("run_start.requires_explicit_user must be true")
+    if payload.get("safety") != "approval_gated":
+        errors.append("run_start.safety must be approval_gated")
+    plan_id = payload.get("plan_id")
+    review_command = payload.get("review_command")
+    if plan_id and review_command != f"agentdeck leader review --plan-id {plan_id}":
+        errors.append("run_start.review_command must match plan_id")
+    if payload.get("next_command") != "agentdeck approval list":
+        errors.append("run_start.next_command must be agentdeck approval list")
+    approval_card = payload.get("approval_card")
+    if isinstance(approval_card, dict):
+        approval_validation = validate_approval_contract(approval_card)
+        if not approval_validation["ok"]:
+            errors.extend(f"approval_card: {error}" for error in approval_validation["errors"])
+    else:
+        errors.append("run_start.approval_card must be an object")
+    controls = payload.get("controls")
+    if isinstance(controls, list):
+        if not controls:
+            errors.append("run_start.controls must not be empty")
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("run_start.controls items must be objects")
+                continue
+            for field in RUN_START_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"missing run_start control field: {field}")
+            if control.get("kind") == "approve" and control.get("safety") != "explicit_runtime":
+                errors.append("run_start approve control safety must be explicit_runtime")
+    elif "controls" in payload:
+        errors.append("run_start.controls must be a list")
     return {"ok": not errors, "errors": errors}
 
 
@@ -4237,6 +4335,7 @@ def workbench_example() -> dict[str, object]:
             "project_view_contract": "agentdeck contract project-view",
             "events_contract": "agentdeck contract events",
             "doctor_contract": "agentdeck contract doctor",
+            "run_contract": "agentdeck contract run",
             "artifacts_contract": "agentdeck contract artifacts",
         },
         "control_mode_card": {
@@ -4571,6 +4670,73 @@ def approval_dispatch_ready_example() -> dict[str, object]:
                 "dispatch_command": "agentdeck approval dispatch --approval-id apv_blocked",
             },
         ],
+    }
+
+
+def run_start_example() -> dict[str, object]:
+    plan_id = "pln_example"
+    approval_card = approval_example()
+    first_approval_id = approval_card["approvals"][0]["approval_id"]
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "ok": True,
+        "mode": "run_start",
+        "task": "Build an approval-gated multi-agent smoke test",
+        "plan_id": plan_id,
+        "provider": "fake",
+        "model": "fake-plan",
+        "approval_count": approval_card["count"],
+        "pending_approval_count": 1,
+        "plan": {
+            "goal": "Build an approval-gated multi-agent smoke test",
+            "summary": "Plan generated by the Leader provider.",
+            "steps": [
+                {
+                    "step": 1,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "Plan the approved smoke test.",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                }
+            ],
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
+        "approval_card": approval_card,
+        "next_command": "agentdeck approval list",
+        "approve_next_command": f"agentdeck approval approve --approval-id {first_approval_id}",
+        "review_command": f"agentdeck leader review --plan-id {plan_id}",
+        "continue_command": "agentdeck continue",
+        "workbench_command": "agentdeck workbench",
+        "controls": [
+            {
+                "kind": "preview",
+                "label": "Review approval queue",
+                "command": "agentdeck approval list",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "approve",
+                "label": "Approve next step",
+                "command": f"agentdeck approval approve --approval-id {first_approval_id}",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "review",
+                "label": "Review run",
+                "command": f"agentdeck leader review --plan-id {plan_id}",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+        "safety": "approval_gated",
+        "requires_explicit_user": True,
     }
 
 

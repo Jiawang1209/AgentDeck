@@ -41,6 +41,7 @@ from .contracts import (
     leader_summary_contract_response,
     project_view_contract_response,
     runtime_agent_controls,
+    run_start_contract_response,
     trace_contract_response,
     workbench_contract_response,
     validate_approval_contract,
@@ -55,6 +56,7 @@ from .contracts import (
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_project_view_contract,
+    validate_run_start_contract,
     validate_trace_contract,
     validate_workbench_contract,
 )
@@ -1239,6 +1241,7 @@ def _workbench_contracts_card() -> dict[str, object]:
         "project_view_contract": "agentdeck contract project-view",
         "events_contract": "agentdeck contract events",
         "doctor_contract": "agentdeck contract doctor",
+        "run_contract": "agentdeck contract run",
         "artifacts_contract": "agentdeck contract artifacts",
     }
 
@@ -1840,6 +1843,13 @@ def contract_doctor_command(args: argparse.Namespace) -> int:
 def contract_events_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "events-schema.md"
     payload = events_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_run_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "run-schema.md"
+    payload = run_start_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -2729,6 +2739,125 @@ def leader_plan_command(args: argparse.Namespace) -> int:
         }
     )
     return 0
+
+
+def run_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    provider_name = _leader_provider_name(config, args.provider)
+    model_label = _leader_model_label(config, args.model)
+    try:
+        provider = leader_provider(provider_name)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    orchestrator = LeaderOrchestrator(config, provider)
+    try:
+        plan = orchestrator.plan(args.task, model_label)
+    except RuntimeError as exc:
+        _record_leader_provider_failure(store, "run", provider.name, model_label, args.task, exc)
+        print(f"leader provider failed: {exc}", file=sys.stderr)
+        return 1
+    record = store.record_plan(args.task, provider.name, model_label, plan)
+    approvals = store.create_approvals_from_plan(record["plan_id"])
+    store.append_event(
+        EventRecord.create(
+            "leader_plan_created",
+            {
+                "plan_id": record["plan_id"],
+                "provider": record["provider"],
+                "model": record["model"],
+                "task_length": len(args.task),
+                "source": "run",
+            },
+        )
+    )
+    store.append_event(
+        EventRecord.create(
+            "approvals_created_from_plan",
+            {
+                "plan_id": record["plan_id"],
+                "count": len(approvals),
+                "source": "run",
+            },
+        )
+    )
+    store.append_event(
+        EventRecord.create(
+            "run_started",
+            {
+                "plan_id": record["plan_id"],
+                "approval_count": len(approvals),
+                "task_length": len(args.task),
+            },
+        )
+    )
+    approval_card = _approval_queue_payload(store)
+    payload = _run_start_payload(record, approvals, approval_card)
+    validation = validate_run_start_contract(payload)
+    if not validation["ok"]:
+        print("Run start contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def _run_start_payload(
+    plan_record: dict[str, object],
+    approvals: list[dict[str, object]],
+    approval_card: dict[str, object],
+) -> dict[str, object]:
+    plan_id = str(plan_record["plan_id"])
+    pending_approvals = [item for item in approvals if item.get("status") == "pending"]
+    first_approval = pending_approvals[0] if pending_approvals else None
+    first_approval_id = first_approval.get("approval_id") if isinstance(first_approval, dict) else None
+    approve_next_command = (
+        f"agentdeck approval approve --approval-id {first_approval_id}" if first_approval_id else None
+    )
+    review_command = f"agentdeck leader review --plan-id {plan_id}"
+    controls = [
+        _control(
+            kind="preview",
+            label="Review approval queue",
+            command="agentdeck approval list",
+            safety="inspect",
+        ),
+        _control(
+            kind="approve",
+            label="Approve next step",
+            command=approve_next_command or "agentdeck approval approve --approval-id <approval_id>",
+            safety="explicit_runtime",
+            enabled=approve_next_command is not None,
+            blocker=None if approve_next_command is not None else "no pending approval",
+        ),
+        _control(kind="review", label="Review run", command=review_command, safety="inspect"),
+        _control(kind="continue", label="Continue", command="agentdeck continue", safety="inspect"),
+        _control(kind="workbench", label="Open workbench", command="agentdeck workbench", safety="inspect"),
+    ]
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "ok": True,
+        "mode": "run_start",
+        "task": plan_record["task"],
+        "plan_id": plan_id,
+        "provider": plan_record["provider"],
+        "model": plan_record["model"],
+        "approval_count": len(approvals),
+        "pending_approval_count": len(pending_approvals),
+        "plan": plan_record["plan"],
+        "approval_card": approval_card,
+        "next_command": "agentdeck approval list",
+        "approve_next_command": approve_next_command,
+        "review_command": review_command,
+        "continue_command": "agentdeck continue",
+        "workbench_command": "agentdeck workbench",
+        "controls": controls,
+        "safety": "approval_gated",
+        "requires_explicit_user": True,
+    }
 
 
 def leader_review_command(args: argparse.Namespace) -> int:
@@ -6286,6 +6415,12 @@ def build_parser() -> argparse.ArgumentParser:
     events.add_argument("--since", default=None, help="Show audit events after this event id")
     events.set_defaults(func=events_command)
 
+    run = subparsers.add_parser("run", help="Start an approval-gated multi-agent run")
+    run.add_argument("--task", required=True, help="Goal for the Leader Agent to plan and queue for approval")
+    run.add_argument("--provider", help="Leader provider to use; defaults to .agentdeck/config.toml")
+    run.add_argument("--model", help="Provider model label recorded with the plan; defaults to config")
+    run.set_defaults(func=run_command)
+
     continue_parser = subparsers.add_parser("continue", help="Show the current recovery-driven next step")
     continue_parser.set_defaults(func=continue_command)
 
@@ -6347,6 +6482,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_events.add_argument("--example", action="store_true", help="Include a GUI-ready events example")
     contract_events.set_defaults(func=contract_events_command)
+    contract_run = contract_subparsers.add_parser(
+        "run",
+        help="Show run start response contract discovery metadata",
+    )
+    contract_run.add_argument("--example", action="store_true", help="Include a GUI-ready run start example")
+    contract_run.set_defaults(func=contract_run_command)
     contract_workbench = contract_subparsers.add_parser(
         "workbench",
         help="Show workbench snapshot contract discovery metadata",

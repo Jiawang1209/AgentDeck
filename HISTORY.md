@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Add approval-gated run start command
+
+- 新增 `agentdeck run --task <text>`：调用配置的 Leader provider 生成 plan，持久化 plan，并立即为需要审批的 steps 创建 pending approvals，返回 GUI-ready `run_start` card。
+- 新增 `agentdeck contract run` / `--example` 和 `docs/contracts/run-schema.md`：公开 run_start response/control 字段，并用 `validate_run_start_contract()` 校验 live 输出与 example fixture。
+- 保持人类控制边界：run start 不自动 approve、不 dispatch、不 capture pane、不 ack inbox、不创建 message/job/reply/inbox、不发送 tmux 输入；下一步停在 `agentdeck approval list` 和显式 approve controls。
+- 扩展 contract index 与 workbench `contracts_card`，让 GUI/TUI 能从 `agentdeck contract list` 或一屏 workbench 发现 run start contract。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/contract-index-schema.md` 和 `docs/contracts/workbench-schema.md`，明确 run start 是 Phase D run loop 的 approval-gated 起点。
+- 验证记录：已先确认红测失败，`RUN_START_CONTROL_FIELDS` / `run_start_contract_payload()` 最初不存在，`agentdeck run` 和 `agentdeck contract run` 也不可用；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli tests/test_contracts.py::test_run_start_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_run_start_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_run_start_contract_requires_approval_gated_controls tests/test_leader_cli.py::test_run_task_creates_plan_and_pending_approvals_without_dispatching tests/test_agent_cli.py::test_contract_list_discovers_all_gui_contracts tests/test_agent_cli.py::test_contract_run_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_run_example_exports_gui_ready_response -q` 8 项通过；相关回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 321 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 345 项通过。
+
 ### Current - Pass Leader model to provider backends
 
 - 加强真实 Leader provider：`LeaderPlanRequest` 现在携带 `model`，`agentdeck leader plan/chat --model <model>` 或配置中的 `[leader].model` 会进入实际 backend，而不是只写入 plan record。

@@ -87,7 +87,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `queue_card` is derived from `project_view.leader_actions`, `project_view.approvals`, `project_view.inbox`, and the recovery-driven next command.
 `operator_card` is derived from `recovery.recommended_action` and the active queue card. It is a renderable human-control descriptor, not an execution result.
 `audit_card` is derived from `recovery.latest_event` and `recovery.recent_events`.
-`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the Leader chat and Leader review contracts.
+`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Leader chat, and Leader review contracts.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `next_command` must equal `continue_card.next_command`.
@@ -497,11 +497,12 @@ The card intentionally uses compact ProjectView recovery event summaries. Use `e
   "project_view_contract": "agentdeck contract project-view",
   "events_contract": "agentdeck contract events",
   "doctor_contract": "agentdeck contract doctor",
+  "run_contract": "agentdeck contract run",
   "artifacts_contract": "agentdeck contract artifacts"
 }
 ```
 
-This card lets GUI/TUI clients bootstrap from a single workbench snapshot and then discover the full machine-readable contract index on demand, including the dedicated `controls` command palette contract, the `agent-runtime` command contract for visible tmux pane controls, the `leader-chat` response contract for natural-language Leader interactions, the `leader-summary` response contract for deterministic reply/artifact aggregation, and the `artifacts` contract for the read-only worker output index. It is static metadata and does not read state, inspect tmux panes, call providers, or execute any contract command.
+This card lets GUI/TUI clients bootstrap from a single workbench snapshot and then discover the full machine-readable contract index on demand, including the dedicated `run` start card contract, the `controls` command palette contract, the `agent-runtime` command contract for visible tmux pane controls, the `leader-chat` response contract for natural-language Leader interactions, the `leader-summary` response contract for deterministic reply/artifact aggregation, and the `artifacts` contract for the read-only worker output index. It is static metadata and does not read state, inspect tmux panes, call providers, or execute any contract command.
 
 When `recovery.recommended_action.source` is:
 

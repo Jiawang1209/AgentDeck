@@ -49,6 +49,8 @@ from agentdeck.contracts import (
     PROJECT_VIEW_REPLY_ITEM_FIELDS,
     PROJECT_VIEW_RECOVERY_FIELDS,
     PROJECT_VIEW_TOP_LEVEL_FIELDS,
+    RUN_START_CONTROL_FIELDS,
+    RUN_START_RESPONSE_FIELDS,
     TRACE_ATTEMPT_FIELDS,
     TRACE_ARTIFACT_FIELDS,
     TRACE_INBOX_ITEM_FIELDS,
@@ -121,6 +123,9 @@ from agentdeck.contracts import (
     project_view_contract_payload,
     project_view_contract_response,
     project_view_example,
+    run_start_contract_payload,
+    run_start_contract_response,
+    run_start_example,
     trace_contract_payload,
     trace_contract_response,
     trace_example,
@@ -139,6 +144,7 @@ from agentdeck.contracts import (
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_project_view_contract,
+    validate_run_start_contract,
     validate_trace_contract,
     validate_workbench_contract,
 )
@@ -151,6 +157,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "continue-card-schema.md",
         "doctor-schema.md",
         "events-schema.md",
+        "run-schema.md",
         "workbench-schema.md",
         "controls-schema.md",
         "agent-runtime-schema.md",
@@ -174,13 +181,14 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 16
+    assert payload["count"] == 17
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
         "continue",
         "doctor",
         "events",
+        "run",
         "workbench",
         "controls",
         "agent-runtime",
@@ -199,6 +207,52 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         assert contract["contract_exists"] is True
         assert contract["command"].startswith("agentdeck contract ")
         assert contract["example_command"].endswith(" --example")
+
+
+def test_run_start_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "run-schema.md"
+    contract_path.write_text("# Run Contract\n", encoding="utf-8")
+
+    payload = run_start_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["run_command"] == "agentdeck run --task <text>"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == list(RUN_START_RESPONSE_FIELDS)
+    assert payload["control_fields"] == list(RUN_START_CONTROL_FIELDS)
+    assert payload["approval_contract"] == "agentdeck contract approvals"
+    assert payload["leader_review_contract"] == "agentdeck contract leader-review"
+
+
+def test_run_start_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "run-schema.md"
+    contract_path.write_text("# Run Contract\n", encoding="utf-8")
+
+    payload = run_start_contract_response(contract_path, include_example=True)
+
+    assert payload["example"] is True
+    assert payload["example_response_fields"] == list(payload["example_run_start"])
+    assert payload["example_control_fields"] == list(payload["example_run_start"]["controls"][0])
+    assert set(payload["example_response_fields"]) == set(payload["response_fields"])
+    assert set(payload["example_control_fields"]) == set(payload["control_fields"])
+    assert validate_run_start_contract(payload["example_run_start"]) == {"ok": True, "errors": []}
+
+
+def test_validate_run_start_contract_requires_approval_gated_controls() -> None:
+    payload = run_start_example()
+    payload["requires_explicit_user"] = False
+    payload["safety"] = "inspect"
+
+    result = validate_run_start_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "run_start.requires_explicit_user must be true",
+            "run_start.safety must be approval_gated",
+        ],
+    }
 
 
 def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
@@ -1036,6 +1090,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["contracts_card"]["controls_contract"] == "agentdeck contract controls"
     assert example["contracts_card"]["leader_chat_contract"] == "agentdeck contract leader-chat"
     assert example["contracts_card"]["leader_review_contract"] == "agentdeck contract leader-review"
+    assert example["contracts_card"]["run_contract"] == "agentdeck contract run"
     assert example["contracts_card"]["artifacts_contract"] == "agentdeck contract artifacts"
     assert set(example["change_summary"]) == set(WORKBENCH_CHANGE_SUMMARY_FIELDS)
     assert example["ledger_card"]["trace_commands"] == [

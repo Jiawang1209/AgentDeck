@@ -36,6 +36,7 @@ The index currently lists these contract names in order:
 - `continue`
 - `doctor`
 - `events`
+- `run`
 - `workbench`
 - `controls`
 - `agent-runtime`
