@@ -1664,6 +1664,24 @@ def _chat_wants_role(message: str) -> bool:
     )
 
 
+def _chat_wants_ledger(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(
+        token in normalized
+        for token in [
+            "ledger",
+            "message ledger",
+            "trace commands",
+            "账本",
+            "消息账本",
+            "通信账本",
+            "通信",
+            "链路",
+            "追踪命令",
+        ]
+    )
+
+
 def _chat_inbox_agent_id(message: str, config: ProjectConfig) -> str | None:
     normalized = message.strip().lower()
     mentions_inbox = any(token in normalized for token in ["inbox", "收件箱", "消息", "mailbox"])
@@ -1853,6 +1871,24 @@ def _leader_chat_explanation(
             "safety": "inspect",
             "requires_explicit_user": False,
         }
+    if mode == "ledger":
+        ledger_card = _workbench_ledger_card(project_view)
+        trace_commands = ledger_card.get("trace_commands") if isinstance(ledger_card.get("trace_commands"), list) else []
+        recommended_action_id = None
+        if trace_commands:
+            first_command = str(trace_commands[0])
+            recommended_action_id = first_command.rsplit(" ", 1)[-1]
+        return {
+            "mode": mode,
+            "summary": "Leader recommends inspecting the communication ledger without mutating messages or runtime state.",
+            "reason": "human asked to inspect message lineage",
+            "next_command": next_command,
+            "recommended_action_id": recommended_action_id,
+            "action_kind": "ledger",
+            "action_status": "has_traces" if trace_commands else "empty",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
     if mode == "inbox":
         head = _inbox_head_item(inbox_card) if isinstance(inbox_card, dict) else None
         head_inbox_id = head.get("inbox_id") if isinstance(head, dict) else None
@@ -1985,6 +2021,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": None,
+            "ledger_card": None,
             "result": result,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -2053,6 +2090,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": None,
+            "ledger_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2106,6 +2144,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": None,
+            "ledger_card": None,
             "provider_health": _workbench_provider_health(refreshed_project_view),
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -2160,6 +2199,68 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": None,
+            "ledger_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_ledger(args.message):
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        ledger_card = _workbench_ledger_card(refreshed_project_view)
+        trace_commands = ledger_card.get("trace_commands")
+        next_command = trace_commands[0] if isinstance(trace_commands, list) and trace_commands else "agentdeck workbench"
+        turn = store.record_chat_turn(
+            mode="ledger",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="ledger",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "ledger",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        ledger_card = _workbench_ledger_card(refreshed_project_view)
+        trace_commands = ledger_card.get("trace_commands")
+        next_command = trace_commands[0] if isinstance(trace_commands, list) and trace_commands else "agentdeck workbench"
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "ledger",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "ledger",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": ledger_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2213,6 +2314,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": role_card,
+            "ledger_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2279,6 +2381,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": queue_card,
             "operator_card": operator_card,
             "role_card": None,
+            "ledger_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2359,6 +2462,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": None,
+            "ledger_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2438,6 +2542,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": None,
+            "ledger_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2488,6 +2593,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": None,
+            "ledger_card": None,
         }
         store.append_event(
             EventRecord.create(
@@ -2572,6 +2678,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         "queue_card": None,
         "operator_card": None,
         "role_card": None,
+        "ledger_card": None,
     }
     store.append_event(
         EventRecord.create(

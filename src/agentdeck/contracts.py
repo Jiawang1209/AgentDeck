@@ -356,6 +356,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "queue_card",
     "operator_card",
     "role_card",
+    "ledger_card",
 )
 
 CONTINUE_CARD_FIELDS = (
@@ -720,6 +721,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
+        "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -738,6 +740,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_operator_card_fields"] = list(example["operator_card"])
         payload["example_role_card_fields"] = list(example["role_card"])
         payload["example_role_agent_fields"] = list(example["role_card"]["agents"][0])
+        payload["example_ledger_card_fields"] = list(example["ledger_card"])
         payload["example_leader_chat"] = example
     return payload
 
@@ -1342,6 +1345,18 @@ def _validate_role_card_contract(errors: list[str], role_card: dict[str, object]
         errors.append(f"{prefix}: role_card.agents must be a list")
 
 
+def _validate_ledger_card_contract(errors: list[str], ledger_card: dict[str, object], *, prefix: str) -> None:
+    for field in WORKBENCH_LEDGER_CARD_FIELDS:
+        if field not in ledger_card:
+            errors.append(f"{prefix}: missing ledger_card field: {field}")
+    for section in ("messages", "jobs", "replies", "inbox"):
+        if section in ledger_card and not isinstance(ledger_card.get(section), dict):
+            errors.append(f"{prefix}: ledger_card.{section} must be an object")
+    trace_commands = ledger_card.get("trace_commands")
+    if "trace_commands" in ledger_card and not isinstance(trace_commands, list):
+        errors.append(f"{prefix}: ledger_card.trace_commands must be a list")
+
+
 def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, object]:
     errors: list[str] = []
     for field in LEADER_CHAT_RESPONSE_FIELDS:
@@ -1408,6 +1423,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_role_card_contract(errors, role_card, prefix="role_card")
     elif "role_card" in payload and role_card is not None:
         errors.append("role_card must be an object")
+    ledger_card = payload.get("ledger_card")
+    if isinstance(ledger_card, dict):
+        _validate_ledger_card_contract(errors, ledger_card, prefix="ledger_card")
+    elif "ledger_card" in payload and ledger_card is not None:
+        errors.append("ledger_card must be an object")
     return {"ok": not errors, "errors": errors}
 
 
@@ -1822,6 +1842,7 @@ def leader_chat_example() -> dict[str, object]:
     queue_card = workbench_example()["queue_card"]
     operator_card = workbench_example()["operator_card"]
     role_card = workbench_example()["role_card"]
+    ledger_card = workbench_example()["ledger_card"]
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -1852,6 +1873,7 @@ def leader_chat_example() -> dict[str, object]:
         "queue_card": queue_card,
         "operator_card": operator_card,
         "role_card": role_card,
+        "ledger_card": ledger_card,
     }
 
 

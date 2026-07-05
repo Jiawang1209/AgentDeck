@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add Leader ledger chat mode
+
+- 新增自然语言只读 ledger 意图：`agentdeck leader chat --message "查看账本"` / `"查看通信"` 会进入 `mode=ledger`，返回复用 workbench 投影的 `ledger_card`，展示 messages/jobs/replies/inbox 摘要和去重后的 `trace_commands`。
+- 扩展 Leader chat response contract：新增顶层 `ledger_card`，`agentdeck contract leader-chat` 现在公开 `ledger_card_fields` 和 `example_ledger_card_fields`，供 GUI/自然语言壳发现通信账本字段。
+- ledger chat mode 有 trace 时会把 `next_command` 指向第一条 `agentdeck trace --id <id>`，没有 trace 时回退到 `agentdeck workbench`；它只记录 chat turn，不创建 plan/action/approval/message/job/inbox、不 ack、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 ledger mode 是通信账本展示和 trace 跳转入口，不代表自动执行许可。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_ledger_without_mutating_state -q` 最初返回 `mode=plan`；实现后目标测试通过，leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 125 项通过；`conda run -n agentdeck pytest -q` 197 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `leader-chat-ledger-mode-smoke-ok`。
+
 ### Current - Add Leader role chat mode
 
 - 新增自然语言只读 role 意图：`agentdeck leader chat --message "查看角色"` / `"查看分工"` 会进入 `mode=role`，返回复用 workbench 投影的 `role_card`，展示每个 agent 的 role、provider、workspace_mode、role_prompt 和可复制的 `assign_command`。

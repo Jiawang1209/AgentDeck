@@ -120,6 +120,7 @@ Worker 不应该：
 - `agentdeck leader chat --message "查看 runtime"` / `"查看终端"` 必须进入只读 `mode=runtime`，嵌入同一张 `runtime_card` 并建议 `agentdeck agent list`；它不创建 plan/action/approval/message/job/inbox，也不执行任何 runtime 操作。
 - `agentdeck leader chat --message "查看队列"` / `"查看控制面"` 必须进入只读 `mode=queue`，嵌入 workbench 同源 `queue_card` / `operator_card` 并展示 next/apply/explicit controls；它不创建或应用 action、不审批、不派发、不 ack、不 refresh runtime、不发送 tmux 输入。
 - `agentdeck leader chat --message "查看角色"` / `"查看分工"` 必须进入只读 `mode=role`，嵌入 workbench 同源 `role_card` 并展示 assign-role 命令；它不修改 `.agentdeck/config.toml`、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入。
+- `agentdeck leader chat --message "查看账本"` / `"查看通信"` 必须进入只读 `mode=ledger`，嵌入 workbench 同源 `ledger_card` 并展示 trace_commands；它不创建 plan/action/approval/message/job/inbox、不 ack、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
 - `agentdeck contract leader-actions` 返回 Leader action queue 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定队列示例，供 GUI 原型使用。
 - `agentdeck contract leader-action` 返回单个 Leader action 详情契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 action detail 示例，供 GUI 原型使用。
 - `agentdeck contract approvals` 返回人类审批队列契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 approval queue 示例，供 GUI 原型使用。
