@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import sys
 import time
@@ -2329,6 +2330,15 @@ def _chat_wants_ledger(message: str) -> bool:
     )
 
 
+def _chat_trace_query_id(message: str) -> str | None:
+    normalized = message.strip().lower()
+    wants_trace = any(token in normalized for token in ["trace", "追踪", "溯源", "lineage", "链路"])
+    if not wants_trace:
+        return None
+    match = re.search(r"\b(?:msg|att|job|rep|inb)_[A-Za-z0-9][A-Za-z0-9_-]*\b", message)
+    return match.group(0) if match else None
+
+
 def _chat_inbox_agent_id(message: str, config: ProjectConfig) -> str | None:
     normalized = message.strip().lower()
     mentions_inbox = any(token in normalized for token in ["inbox", "收件箱", "消息", "mailbox"])
@@ -2411,6 +2421,7 @@ def _leader_chat_explanation(
     result: dict[str, object] | None = None,
     inbox_card: dict[str, object] | None = None,
     inbox_action_kind: str | None = None,
+    trace_card: dict[str, object] | None = None,
     approval_card: dict[str, object] | None = None,
     approval_action_kind: str | None = None,
 ) -> dict[str, object]:
@@ -2575,6 +2586,19 @@ def _leader_chat_explanation(
             "recommended_action_id": recommended_action_id,
             "action_kind": "ledger",
             "action_status": "has_traces" if trace_commands else "empty",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
+    if mode == "trace":
+        query_id = trace_card.get("query_id") if isinstance(trace_card, dict) else None
+        return {
+            "mode": mode,
+            "summary": "Leader recommends inspecting a specific communication trace without mutating messages or runtime state.",
+            "reason": "human asked to inspect one communication lineage by id",
+            "next_command": next_command,
+            "recommended_action_id": query_id,
+            "action_kind": "trace",
+            "action_status": "found" if query_id else "missing",
             "safety": "inspect",
             "requires_explicit_user": False,
         }
@@ -2956,6 +2980,68 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "workbench_card": None,
             "provider_health": _workbench_provider_health(refreshed_project_view),
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    trace_query_id = _chat_trace_query_id(args.message)
+    if trace_query_id is not None:
+        trace_card = _trace_card_for_query(store, trace_query_id)
+        if trace_card is None:
+            print(f"unknown trace id: {trace_query_id}", file=sys.stderr)
+            return 1
+        next_command = _trace_command(trace_query_id)
+        turn = store.record_chat_turn(
+            mode="trace",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="trace",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "trace",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "trace",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "trace",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                trace_card=trace_card,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "trace_card": trace_card,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "lineage_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

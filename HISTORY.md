@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Route direct trace IDs through Leader chat
+
+- 扩展 `agentdeck leader chat --message "追踪 msg_xxx"` / `"trace job_xxx"` / `"查看 rep_xxx 链路"`：自然语言入口现在会进入只读 `mode=trace`，嵌入同源 `trace_card`，并建议显式 `agentdeck trace --id <id>`。
+- 新增 trace id 提取与保护边界：只在用户表达 trace/追踪/溯源/lineage/链路意图且包含 `msg_`、`att_`、`job_`、`rep_` 或 `inb_` ID 时触发；未知 trace id 会返回 `unknown trace id: <id>`，不会误落入 provider-backed planning。
+- 保持安全边界：direct trace 只记录 chat turn 和只读 trace 证据，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture reply、不读取 tmux pane、不发送 tmux 输入。
+- 同步 `docs/contracts/leader-chat-schema.md`、README、CLAUDE.md、AGENT.md 和测试，记录 direct trace mode 与 inbox trace mode 的差异。
+- 完整验证：已先确认红测失败，`追踪 msg_trace_direct` 最初误走 `mode=plan`；实现后 direct trace 与 unknown trace id 目标测试 2 项通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_traces_specific_communication_id_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_rejects_unknown_trace_id_without_planning tests/test_leader_cli.py::test_leader_chat_suggests_trace_for_current_inbox_head tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients -q` 5 项通过；`conda run -n agentdeck pytest -q` 243 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-direct-trace-smoke-ok mode=trace embedded=trace_card query=msg_smoke_direct message=msg_smoke_direct bad=unknown trace id: msg_missing`。
+
 ### Current - Embed trace card in Leader chat inbox trace mode
 
 - 扩展 `agentdeck leader chat --message "追踪 planner 当前 inbox"`：inbox trace 意图现在仍保持只读 `mode=inbox`，但在能解析 pending head lineage 时会嵌入同源 `trace_card`。

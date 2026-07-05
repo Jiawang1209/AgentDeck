@@ -176,7 +176,7 @@ Help-mode responses include `capability_card`, a read-only capability map for na
 }
 ```
 
-The real card also includes Leader scheduling entries for `plan`, `review`, and `apply_action`, plus a `policy` entry for explicit control mode switching. `plan` must use `safety=plan_only` and its control command should point at the explicit `agentdeck leader plan --task <goal>` planning entrypoint; `review` and `apply_action` must use `safety=safe_apply`, with review pointing at `agentdeck leader review --plan-id <plan_id>` and apply_action pointing at `agentdeck leader apply-action --action-id <action_id>`; `policy` uses `safety=explicit_user` and points at `agentdeck policy set-mode --mode <mode>`; read-only views such as `workbench`, `continue`, `runtime`, `role`, `ledger`, `queue`, `approval`, `inbox`, and `setup` use `safety=inspect` unless the downstream mode explicitly recommends an explicit runtime command.
+The real card also includes Leader scheduling entries for `plan`, `review`, and `apply_action`, plus a `policy` entry for explicit control mode switching. `plan` must use `safety=plan_only` and its control command should point at the explicit `agentdeck leader plan --task <goal>` planning entrypoint; `review` and `apply_action` must use `safety=safe_apply`, with review pointing at `agentdeck leader review --plan-id <plan_id>` and apply_action pointing at `agentdeck leader apply-action --action-id <action_id>`; `policy` uses `safety=explicit_user` and points at `agentdeck policy set-mode --mode <mode>`; read-only views such as `workbench`, `continue`, `runtime`, `role`, `ledger`, `trace`, `queue`, `approval`, `inbox`, and `setup` use `safety=inspect` unless the downstream mode explicitly recommends an explicit runtime command.
 
 Every capability item includes `controls[]` using the same `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` shape as intent controls; `agentdeck contract leader-chat` exposes the same shape as `capability_control_fields`. Direct read-only commands such as `agentdeck workbench` are enabled. Template commands may only use known placeholders: `<goal>`, `<plan_id>`, `<action_id>`, `<agent_id>`, or `<mode>`. `capability_placeholders[]` exposes that whitelist with the matching blocker for each placeholder so GUI clients can render template inputs without parsing this Markdown document. Template commands with those placeholders must be disabled and must include a matching blocker such as `requires goal text`, `requires plan_id`, `requires action_id`, `requires agent_id`, or `requires control mode`. Capability controls must keep `command` and `safety` aligned with their parent capability item.
 
@@ -302,6 +302,25 @@ Ledger-mode responses are returned when the human asks to inspect the communicat
 ```
 
 When `ledger_card` or `lineage_card` is present, `validate_leader_chat_contract()` checks the same ledger and lineage field lists exposed by `agentdeck contract workbench`. Ledger-mode records a chat turn for history, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, dispatch work, capture replies, read pane output, or send tmux input.
+
+Trace-mode responses are returned when the human asks to inspect one concrete communication id such as `msg_xxx`, `att_xxx`, `job_xxx`, `rep_xxx`, or `inb_xxx`. They return `trace_card`, reusing the same shape as `agentdeck trace --id <id>`:
+
+```json
+{
+  "mode": "trace",
+  "next_command": "agentdeck trace --id msg_xxx",
+  "trace_card": {
+    "query_id": "msg_xxx",
+    "message": {},
+    "attempts": [],
+    "jobs": [],
+    "replies": [],
+    "inbox_items": []
+  }
+}
+```
+
+When `trace_card` is present, `validate_leader_chat_contract()` reuses `validate_trace_contract()` and prefixes nested errors with `trace_card:`. Trace-mode records a chat turn for history, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, dispatch work, capture replies, read pane output, or send tmux input. Unknown trace ids must fail with `unknown trace id: <id>` rather than falling through to provider-backed planning.
 
 Role-mode responses are returned when the human asks to inspect roles, role prompts, responsibilities, or assign-role commands. They return `role_card`, reusing the same role projection as `agentdeck workbench`:
 
@@ -458,6 +477,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat help-mode responses must include `capability_card`; `validate_leader_chat_contract()` rejects capability cards whose `capability_count` does not match `capabilities[]`, rejects capability items or controls with missing fields, rejects capability controls whose `command` or `safety` drift from the parent capability item, rejects placeholder capability controls that use unknown placeholders, are enabled, or use the wrong blocker, rejects disabled capability controls without blockers, and rejects `plan`, `review`, or `apply_action` entries whose safety does not match their scheduling semantics.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat inbox trace responses may embed `trace_card`, reusing the `agentdeck trace` contract for the current pending inbox head.
+- Chat direct trace responses must embed `trace_card`, reusing the `agentdeck trace` contract for the requested communication id.
 - Chat approval-mode responses and safe apply-action responses that create approvals must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.
 - Chat queue-mode responses must reuse the workbench queue and operator cards through `queue_card` and `operator_card`.

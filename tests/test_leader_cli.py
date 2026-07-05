@@ -1347,6 +1347,135 @@ def test_leader_chat_suggests_trace_for_current_inbox_head(tmp_path, monkeypatch
     assert StateStore(root).load()["inbox"]["planner"][0]["status"] == "pending"
 
 
+def test_leader_chat_traces_specific_communication_id_without_mutating_runtime(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["messages"] = [
+        {
+            "message_id": "msg_trace_direct",
+            "from_actor": "leader",
+            "to_agent": "planner",
+            "task": "直接追踪消息",
+            "prompt": "# AgentDeck dispatch\n\nAgent: planner\n\n当前任务:\n直接追踪消息",
+            "status": "replied",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["attempts"] = [
+        {
+            "attempt_id": "att_trace_direct",
+            "message_id": "msg_trace_direct",
+            "agent_id": "planner",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["jobs"] = [
+        {
+            "job_id": "job_trace_direct",
+            "message_id": "msg_trace_direct",
+            "attempt_id": "att_trace_direct",
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["replies"] = [
+        {
+            "reply_id": "rep_trace_direct",
+            "message_id": "msg_trace_direct",
+            "attempt_id": "att_trace_direct",
+            "job_id": "job_trace_direct",
+            "from_agent": "planner",
+            "to_actor": "leader",
+            "text": "status: completed\nsummary: direct trace ok.",
+            "created_at": "2026-07-04T00:00:01+00:00",
+        }
+    ]
+    state["inbox"] = {
+        "planner": [
+            {
+                "inbox_id": "inb_trace_direct",
+                "event_type": "task_reply",
+                "message_id": "msg_trace_direct",
+                "attempt_id": "att_trace_direct",
+                "job_id": "job_trace_direct",
+                "reply_id": "rep_trace_direct",
+                "from_agent": "planner",
+                "to_agent": "planner",
+                "task": "直接追踪消息",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "追踪 msg_trace_direct"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "trace"
+    assert payload["message"] == "追踪 msg_trace_direct"
+    assert payload["next_command"] == "agentdeck trace --id msg_trace_direct"
+    assert payload["inbox_card"] is None
+    assert payload["ledger_card"] is None
+    assert payload["lineage_card"] is None
+    assert payload["trace_card"]["query_id"] == "msg_trace_direct"
+    assert payload["trace_card"]["message"]["message_id"] == "msg_trace_direct"
+    assert payload["trace_card"]["jobs"][0]["job_id"] == "job_trace_direct"
+    assert payload["trace_card"]["replies"][0]["reply_id"] == "rep_trace_direct"
+    assert payload["trace_card"]["inbox_items"][0]["inbox_id"] == "inb_trace_direct"
+    assert payload["leader_explanation"] == {
+        "mode": "trace",
+        "summary": "Leader recommends inspecting a specific communication trace without mutating messages or runtime state.",
+        "reason": "human asked to inspect one communication lineage by id",
+        "next_command": "agentdeck trace --id msg_trace_direct",
+        "recommended_action_id": "msg_trace_direct",
+        "action_kind": "trace",
+        "action_status": "found",
+        "safety": "inspect",
+        "requires_explicit_user": False,
+    }
+    assert payload["intent_card"]["embedded_card"] == "trace_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect trace_card",
+        "command": "agentdeck trace --id msg_trace_direct",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "trace"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck trace --id msg_trace_direct"
+    assert state_after["chat_turns"][0]["action_kind"] == "trace"
+    assert state_after["inbox"]["planner"][0]["status"] == "pending"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+
+
+def test_leader_chat_rejects_unknown_trace_id_without_planning(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "追踪 msg_missing"])
+
+    assert exit_code == 1
+    assert capsys.readouterr().err == "unknown trace id: msg_missing\n"
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"] == []
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+    assert state_after.get("inbox", {}) == {}
+
+
 def test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging(
     tmp_path, monkeypatch, capsys
 ) -> None:

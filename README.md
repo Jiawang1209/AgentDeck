@@ -82,6 +82,7 @@ agentdeck leader chat --message "查看队列"
 agentdeck leader chat --message "查看 runtime"
 agentdeck leader chat --message "查看 planner inbox"
 agentdeck leader chat --message "追踪 planner 当前 inbox"
+agentdeck leader chat --message "追踪 msg_xxx"
 agentdeck leader chat --message "确认 planner 当前 inbox"
 agentdeck leader chat --message "查看审批"
 agentdeck leader chat --message "批准当前审批"
@@ -260,7 +261,7 @@ agentdeck trace --id rep_xxx
 agentdeck trace --id inb_xxx
 ```
 
-`trace` 会返回同一条 message lineage 下的 schema_version、message、attempts、jobs、replies 和 inbox_items。输出前会通过 `validate_trace_contract()` 自校验，失败时不会打印半坏 trace。后续会继续补更严格的 reply block 标记。
+`trace` 会返回同一条 message lineage 下的 schema_version、message、attempts、jobs、replies 和 inbox_items。输出前会通过 `validate_trace_contract()` 自校验，失败时不会打印半坏 trace。自然语言入口可以直接追踪具体通信 ID：`agentdeck leader chat --message "追踪 msg_xxx"` 会进入只读 `mode=trace`，嵌入同源 `trace_card`，并保持 `next_command=agentdeck trace --id msg_xxx`；如果 ID 不存在，chat 会返回 `unknown trace id: <id>`，不会误创建 plan。后续会继续补更严格的 reply block 标记。
 
 ## ProjectView and Status
 
@@ -349,6 +350,8 @@ agentdeck plan status --plan-id pln_xxx
 当人类输入 `agentdeck leader chat --message "打开工作台"`、`"查看总览"`、`"dashboard"` 或 `"workbench"` 这类全局工作台意图时，chat 会进入只读 `mode=workbench`：它嵌入一张完整 `workbench_card`，该卡片复用 `agentdeck workbench` 的快照契约，包含 leader/provider/runtime/role/ledger/queue/operator/audit/contracts/change_summary 等 GUI-ready 投影。`next_command` 等于 `workbench_card.next_command`，该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，不 ack、不 approve、不 dispatch、不 refresh runtime、不 capture、不读取 pane 输出、不发送 tmux 输入。
 
 当人类输入 `agentdeck leader chat --message "查看账本"`、`"查看通信"`、`"ledger"` 或 `"trace commands"` 这类 ledger 意图时，chat 会进入只读 `mode=ledger`：它复用 workbench 的 `ledger_card` 和 `lineage_card`，返回 messages/jobs/replies/inbox 摘要、去重后的 `trace_commands`，以及最近通信路径；如果有 trace，`next_command` 会指向第一条 `agentdeck trace --id <id>`，否则建议 `agentdeck workbench`。该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
+
+当人类输入 `agentdeck leader chat --message "追踪 msg_xxx"`、`"trace job_xxx"` 或 `"查看 rep_xxx 链路"` 这类具体通信 ID 追踪意图时，chat 会进入只读 `mode=trace`：它复用 `agentdeck trace --id <id>` 的 `trace_card`，返回该 message lineage 下的 message、attempts、jobs、replies 和 inbox_items。该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入；未知 ID 会返回错误，不会落到 provider-backed planning。
 
 当人类输入 `agentdeck leader chat --message "查看角色"`、`"查看分工"`、`"roles"` 或 `"assign-role"` 这类 role 意图时，chat 会进入只读 `mode=role`：它复用 workbench 的 `role_card`，返回每个 agent 的 role、provider、workspace_mode、role_prompt 和可复制的 `assign_command`。该模式只记录 chat turn，不创建 plan、leader action、approval、message、job、inbox，不修改配置，也不发送 tmux 输入；真正修改角色仍必须由人类显式运行 `agentdeck agent assign-role ...`。
 
