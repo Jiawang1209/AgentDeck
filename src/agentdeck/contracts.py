@@ -583,6 +583,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "next_command",
     "continue_card",
     "active_queue_source",
+    "run_progress_card",
     "inbox_card",
     "leader_inbox_card",
     "approval_card",
@@ -1661,6 +1662,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
+        "run_progress_card_fields": list(RUN_PROGRESS_RESPONSE_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
         "contracts_card_fields": list(WORKBENCH_CONTRACTS_CARD_FIELDS),
         "change_summary_fields": list(WORKBENCH_CHANGE_SUMMARY_FIELDS),
@@ -3397,6 +3399,13 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
                         errors.append("operator_card approval_dispatch_ready control kind must be dispatch_ready")
     elif "operator_card" in payload:
         errors.append("operator_card must be an object")
+    run_progress_card = payload.get("run_progress_card")
+    if isinstance(run_progress_card, dict):
+        run_progress_validation = validate_run_start_contract(run_progress_card)
+        for error in run_progress_validation["errors"]:
+            errors.append(f"run_progress_card: {error}")
+    elif "run_progress_card" in payload and run_progress_card is not None:
+        errors.append("run_progress_card must be an object")
     audit_card = payload.get("audit_card")
     if isinstance(audit_card, dict):
         for field in WORKBENCH_AUDIT_CARD_FIELDS:
@@ -4491,6 +4500,7 @@ def workbench_example() -> dict[str, object]:
         "next_command": recovery["next_command"],
         "continue_card": continue_example(),
         "active_queue_source": "leader_action",
+        "run_progress_card": run_progress_example(),
         "inbox_card": None,
         "leader_inbox_card": {
             "agent_id": "leader",

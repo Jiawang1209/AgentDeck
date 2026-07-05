@@ -962,6 +962,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["lineage_path_fields"] == lineage_path_fields
     assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
     assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
+    assert payload["run_progress_card_fields"] == list(RUN_PROGRESS_RESPONSE_FIELDS)
     assert payload["audit_card_fields"] == list(WORKBENCH_AUDIT_CARD_FIELDS)
     assert payload["contracts_card_fields"] == list(WORKBENCH_CONTRACTS_CARD_FIELDS)
     assert payload["change_summary_fields"] == list(WORKBENCH_CHANGE_SUMMARY_FIELDS)
@@ -1113,6 +1114,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         "agentdeck trace --id rep_example",
     ]
     assert example["recovery"] == example["project_view"]["recovery"]
+    assert example["run_progress_card"]["mode"] == "run_progress"
     assert example["audit_card"]["latest_event"] == example["recovery"]["latest_event"]
     assert example["audit_card"]["recent_events"] == example["recovery"]["recent_events"]
     assert example["next_command"] == example["continue_card"]["next_command"]
@@ -1142,6 +1144,18 @@ def test_validate_workbench_contract_reuses_continue_card_validator() -> None:
     assert result == {
         "ok": False,
         "errors": ["continue_card: missing pending field: approvals"],
+    }
+
+
+def test_validate_workbench_contract_reuses_run_progress_card_validator() -> None:
+    payload = workbench_example()
+    payload["run_progress_card"]["next_command"] = "agentdeck workbench"
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["run_progress_card: run_progress.next_command must match review.next_command"],
     }
 
 

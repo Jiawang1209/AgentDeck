@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Embed latest run progress in workbench
+
+- 扩展 `agentdeck workbench`：当项目存在 plan 时，一屏快照会嵌入最新 plan 的只读 `run_progress_card`，复用 `agentdeck run --plan-id <id>` 的响应形状，GUI/TUI 打开工作台即可看到当前 run 的审批、review 和下一步显式命令。
+- 扩展 workbench contract：`snapshot_fields` 新增 `run_progress_card`，discovery 新增 `run_progress_card_fields`，`validate_workbench_contract()` 会复用 `validate_run_start_contract()` 校验嵌入 progress card；无 plan 时该字段为 `null`。
+- 保持人类控制边界：workbench 的 `run_progress_card` 不写 state、不 approve、不 dispatch、不 capture pane、不 ack inbox、不发送 tmux 输入，也不成为第二套 run 状态源。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/workbench-schema.md`，明确 workbench latest run progress 是只读 GUI 投影。
+- 验证记录：已先确认红测失败，`agentdeck workbench` 最初缺少 `run_progress_card`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_latest_run_progress_card_without_mutating_state tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_workbench_contract_reuses_run_progress_card_validator -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 329 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 353 项通过。
+
 ### Current - Route natural-language run progress through Leader chat
 
 - 新增 `agentdeck leader chat --message "查看运行进度 <plan_id>"`：自然语言入口现在可进入只读 `mode=run_progress`，复用 `agentdeck run --plan-id <id>` 的 `run_progress_card`，展示 plan status、Leader review、run-specific approval queue 和下一步显式 command。

@@ -715,6 +715,7 @@ def _workbench_snapshot_payload(
     audit_card = _workbench_audit_card(project_view)
     contracts_card = _workbench_contracts_card()
     control_mode_card = _workbench_control_mode_card(project_view)
+    run_progress_card = _workbench_run_progress_card(store)
     payload = {
         "ok": True,
         "mode": "workbench",
@@ -736,6 +737,7 @@ def _workbench_snapshot_payload(
         "next_command": continue_card.get("next_command"),
         "continue_card": continue_card,
         "active_queue_source": active_queue_source,
+        "run_progress_card": run_progress_card,
         "inbox_card": inbox_card,
         "leader_inbox_card": leader_inbox_card,
         "approval_card": approval_card,
@@ -745,6 +747,14 @@ def _workbench_snapshot_payload(
     }
     payload["control_registry"] = _workbench_control_registry(payload)
     return payload
+
+
+def _workbench_run_progress_card(store: StateStore) -> dict[str, object] | None:
+    plans = store.list_plans()
+    if not plans:
+        return None
+    latest_plan_id = str(plans[-1]["plan_id"])
+    return _run_progress_payload(store, latest_plan_id)
 
 
 def _control_mode_from_approval_mode(approval_mode: object) -> str:

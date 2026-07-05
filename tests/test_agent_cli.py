@@ -1387,6 +1387,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "next_command",
         "continue_card",
         "active_queue_source",
+        "run_progress_card",
         "inbox_card",
         "leader_inbox_card",
         "approval_card",
@@ -2213,6 +2214,38 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert state_after["replies"][0]["text"] == "status: completed"
     assert state_after["chat_turns"] == []
     assert state_after["leader_actions"] == []
+
+
+def test_workbench_embeds_latest_run_progress_card_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_text = config_text.replace('provider = "deepseek"', 'provider = "fake"', 1)
+    config_text = config_text.replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
+    config_path.write_text(config_text, encoding="utf-8")
+    cli.main(["run", "--task", "实现 workbench run progress"])
+    started = json.loads(capsys.readouterr().out)
+    plan_id = started["plan_id"]
+    approval_id = started["approval_card"]["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    run_progress_card = payload["run_progress_card"]
+    assert run_progress_card["mode"] == "run_progress"
+    assert run_progress_card["plan_id"] == plan_id
+    assert run_progress_card["counts"]["approved"] == 1
+    assert run_progress_card["counts"]["pending"] == 2
+    assert run_progress_card["review"]["next_action"] == "dispatch_approved"
+    assert run_progress_card["next_command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
+
+    assert StateStore(root).load() == state_before
 
 
 def test_workbench_marks_codex_cli_leader_as_local_cli_backed(
