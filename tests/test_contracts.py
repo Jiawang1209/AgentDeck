@@ -44,6 +44,7 @@ from agentdeck.contracts import (
     WORKBENCH_ROLE_CARD_FIELDS,
     WORKBENCH_RUNTIME_AGENT_FIELDS,
     WORKBENCH_RUNTIME_CARD_FIELDS,
+    WORKBENCH_RUNTIME_CONTROL_FIELDS,
     WORKBENCH_SNAPSHOT_FIELDS,
     approval_contract_payload,
     approval_contract_response,
@@ -452,6 +453,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
+    assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
     assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
     assert payload["role_agent_fields"] == list(WORKBENCH_ROLE_AGENT_FIELDS)
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
@@ -492,6 +494,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         "enabled": True,
         "blocker": None,
     }
+    assert set(example["runtime_card"]["agents"][0]["controls"][0]) == set(WORKBENCH_RUNTIME_CONTROL_FIELDS)
     assert set(example["role_card"]) == set(WORKBENCH_ROLE_CARD_FIELDS)
     assert set(example["role_card"]["agents"][0]) == set(WORKBENCH_ROLE_AGENT_FIELDS)
     assert set(example["ledger_card"]) == set(WORKBENCH_LEDGER_CARD_FIELDS)
@@ -576,6 +579,15 @@ def test_validate_workbench_contract_requires_runtime_agent_controls() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing runtime agent field: controls"]}
+
+
+def test_validate_workbench_contract_requires_runtime_control_fields() -> None:
+    payload = workbench_example()
+    del payload["runtime_card"]["agents"][0]["controls"][0]["enabled"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing runtime control field: enabled"]}
 
 
 def test_validate_workbench_contract_requires_role_agent_fields() -> None:

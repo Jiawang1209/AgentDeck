@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add workbench runtime control fields
+
+- 扩展 workbench contract discovery：新增 `WORKBENCH_RUNTIME_CONTROL_FIELDS`，并在 `agentdeck contract workbench` 输出 `runtime_control_fields`，让 GUI/TUI 可以发现 runtime `controls[]` item 的稳定字段列表。
+- 加强 `validate_workbench_contract()`：runtime agent 的 `controls[]` 必须是列表，首个 control item 必须包含 `kind`、`label`、`command`、`safety`、`enabled` 和 `blocker`；缺字段会返回明确错误。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，把 `runtime_control_fields` 纳入 workbench 契约说明。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_runtime_control_fields -q` 最初因 `WORKBENCH_RUNTIME_CONTROL_FIELDS` 不存在失败；实现后目标测试通过；同一目标测试组 3 项通过；`conda run -n agentdeck pytest -q` 186 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `workbench-runtime-control-fields-ok`。
+
 ### Current - Add workbench runtime controls
 
 - 扩展 `agentdeck workbench` 的 `runtime_card.agents[]`：新增 `controls[]`，让 GUI/TUI 可以直接按按钮模型渲染可见 tmux runtime 的 capture、send、stop、spawn 和 inbox 操作。

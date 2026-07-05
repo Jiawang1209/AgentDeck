@@ -437,6 +437,15 @@ WORKBENCH_RUNTIME_AGENT_FIELDS = (
     "controls",
 )
 
+WORKBENCH_RUNTIME_CONTROL_FIELDS = (
+    "kind",
+    "label",
+    "command",
+    "safety",
+    "enabled",
+    "blocker",
+)
+
 WORKBENCH_ROLE_CARD_FIELDS = (
     "count",
     "agents",
@@ -765,6 +774,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
+        "runtime_control_fields": list(WORKBENCH_RUNTIME_CONTROL_FIELDS),
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
@@ -1274,6 +1284,18 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
                     for field in WORKBENCH_RUNTIME_AGENT_FIELDS:
                         if field not in first_agent:
                             errors.append(f"missing runtime agent field: {field}")
+                    controls = first_agent.get("controls")
+                    if isinstance(controls, list):
+                        if controls:
+                            first_control = controls[0]
+                            if isinstance(first_control, dict):
+                                for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                                    if field not in first_control:
+                                        errors.append(f"missing runtime control field: {field}")
+                            else:
+                                errors.append("runtime agent controls items must be objects")
+                    elif "controls" in first_agent:
+                        errors.append("runtime agent controls must be a list")
                 else:
                     errors.append("runtime_card.agents items must be objects")
         elif "agents" in runtime_card:

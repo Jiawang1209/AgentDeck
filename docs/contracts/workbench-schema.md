@@ -24,6 +24,7 @@ The contract command returns:
   "provider_health_fields": [],
   "runtime_card_fields": [],
   "runtime_agent_fields": [],
+  "runtime_control_fields": [],
   "role_card_fields": [],
   "role_agent_fields": [],
   "ledger_card_fields": [],

@@ -603,6 +603,14 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "inbox_command",
         "controls",
     ]
+    assert payload["runtime_control_fields"] == [
+        "kind",
+        "label",
+        "command",
+        "safety",
+        "enabled",
+        "blocker",
+    ]
     assert payload["role_card_fields"] == ["count", "agents", "assign_command_template"]
     assert payload["role_agent_fields"] == [
         "agent_id",
