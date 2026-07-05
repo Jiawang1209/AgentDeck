@@ -54,6 +54,37 @@ def _trace_command(trace_id: object) -> str:
     return f"agentdeck trace --id {trace_id}"
 
 
+def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
+    mode = str(payload.get("mode"))
+    explanation = payload.get("leader_explanation") if isinstance(payload.get("leader_explanation"), dict) else {}
+    embedded_card = None
+    for card_name in (
+        "workbench_card",
+        "continue_card",
+        "inbox_card",
+        "approval_card",
+        "runtime_card",
+        "operator_card",
+        "queue_card",
+        "role_card",
+        "ledger_card",
+    ):
+        if payload.get(card_name) is not None:
+            embedded_card = card_name
+            break
+    route_source = "provider_plan" if mode == "plan" else "state_review" if mode == "review" else "local_rule"
+    read_only = mode not in {"plan", "review", "apply_action"}
+    return {
+        "mode": mode,
+        "matched_intent": mode,
+        "route_source": route_source,
+        "embedded_card": embedded_card,
+        "read_only": read_only,
+        "next_command": payload.get("next_command"),
+        "requires_explicit_user": explanation.get("requires_explicit_user"),
+    }
+
+
 def _project_view_payload_or_error(config: ProjectConfig, store: StateStore) -> dict[str, object] | None:
     payload = asdict(store.project_view(config))
     validation = validate_project_view_contract(payload)
@@ -71,6 +102,7 @@ def _print_leader_chat_payload_or_error(
     *,
     task: str,
 ) -> int:
+    payload.setdefault("intent_card", _leader_chat_intent_card(payload))
     validation = validate_leader_chat_contract(payload)
     if not validation["ok"]:
         error = "; ".join(str(item) for item in validation["errors"])

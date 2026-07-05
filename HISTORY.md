@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add Leader chat intent card
+
+- 新增顶层 `intent_card`，所有 `agentdeck leader chat` 响应在输出前都会补齐自然语言路由卡，稳定暴露 mode、matched_intent、route_source、embedded_card、read_only、next_command 和 requires_explicit_user。
+- `route_source` 用于区分本地规则路由、首次 provider-backed planning 和已有 plan 的 state review；`embedded_card` 指向 GUI 应优先渲染的顶层卡片，例如 `workbench_card`、`runtime_card`、`ledger_card` 或 `continue_card`。
+- 扩展 Leader chat response contract：新增 `LEADER_CHAT_INTENT_CARD_FIELDS`、`intent_card_fields` 和 `example_intent_card_fields`，`validate_leader_chat_contract()` 会拒绝缺字段的 `intent_card`。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确新增 chat mode 时必须同步 intent card、契约、文档、HISTORY 和测试。
+- 完整验证：已先确认红测失败，目标测试最初因 `LEADER_CHAT_INTENT_CARD_FIELDS` 不存在而导入失败；`intent_card.next_command` mismatch 红测最初未被 validator 捕获；实现后目标测试通过，leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 128 项通过；`conda run -n agentdeck pytest -q` 200 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `leader-chat-intent-card-smoke-ok`。
+
 ### Current - Add Leader workbench chat mode
 
 - 新增自然语言只读 workbench 意图：`agentdeck leader chat --message "打开工作台"` / `"查看总览"` / `"dashboard"` 会进入 `mode=workbench`，嵌入完整 `workbench_card`，供未来 GUI/自然语言壳一跳拿到统一工作台快照。

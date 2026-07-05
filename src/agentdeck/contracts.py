@@ -344,6 +344,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "project_view",
     "leader_actions",
     "leader_explanation",
+    "intent_card",
     "plan_id",
     "review",
     "recovery",
@@ -607,6 +608,16 @@ LEADER_CHAT_EXPLANATION_FIELDS = (
     "requires_explicit_user",
 )
 
+LEADER_CHAT_INTENT_CARD_FIELDS = (
+    "mode",
+    "matched_intent",
+    "route_source",
+    "embedded_card",
+    "read_only",
+    "next_command",
+    "requires_explicit_user",
+)
+
 TRACE_TOP_LEVEL_FIELDS = (
     "schema_version",
     "query_id",
@@ -716,6 +727,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "response_fields": list(LEADER_CHAT_RESPONSE_FIELDS),
         "explanation_fields": list(LEADER_CHAT_EXPLANATION_FIELDS),
+        "intent_card_fields": list(LEADER_CHAT_INTENT_CARD_FIELDS),
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
@@ -736,6 +748,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example"] = True
         payload["example_response_fields"] = list(example)
         payload["example_explanation_fields"] = list(example["leader_explanation"])
+        payload["example_intent_card_fields"] = list(example["intent_card"])
         payload["example_continue_card_fields"] = list(example["continue_card"])
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
@@ -1381,6 +1394,15 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append(f"missing leader_explanation field: {field}")
     elif "leader_explanation" in payload:
         errors.append("leader_explanation must be an object")
+    intent_card = payload.get("intent_card")
+    if isinstance(intent_card, dict):
+        for field in LEADER_CHAT_INTENT_CARD_FIELDS:
+            if field not in intent_card:
+                errors.append(f"missing intent_card field: {field}")
+        if intent_card.get("next_command") != payload.get("next_command"):
+            errors.append("intent_card: next_command must match response next_command")
+    elif "intent_card" in payload:
+        errors.append("intent_card must be an object")
     continue_card = payload.get("continue_card")
     if isinstance(continue_card, dict):
         continue_card_validation = validate_continue_contract(continue_card)
@@ -1870,6 +1892,15 @@ def leader_chat_example() -> dict[str, object]:
             "action_kind": "leader_action",
             "action_status": "action_required",
             "safety": "safe_apply",
+            "requires_explicit_user": False,
+        },
+        "intent_card": {
+            "mode": "continue",
+            "matched_intent": "continue",
+            "route_source": "local_rule",
+            "embedded_card": "continue_card",
+            "read_only": True,
+            "next_command": next_command,
             "requires_explicit_user": False,
         },
         "plan_id": "pln_example",

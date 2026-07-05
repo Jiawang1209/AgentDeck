@@ -14,6 +14,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "contract_exists": true,
   "response_fields": [],
   "explanation_fields": [],
+  "intent_card_fields": [],
   "continue_card_fields": [],
   "runtime_card_fields": [],
   "queue_card_fields": [],
@@ -44,6 +45,7 @@ The review-mode response shape is:
   "project_view": {},
   "leader_actions": {},
   "leader_explanation": {},
+  "intent_card": {},
   "plan_id": "pln_xxx",
   "review": {},
   "recovery": {},
@@ -62,6 +64,22 @@ The review-mode response shape is:
 ```
 
 `leader_actions` is identical to `project_view.leader_actions`. It is provided so a chat surface can render the queue without issuing a second status call.
+
+`intent_card` is the stable routing card for GUI and natural-language shells:
+
+```json
+{
+  "mode": "workbench",
+  "matched_intent": "workbench",
+  "route_source": "local_rule",
+  "embedded_card": "workbench_card",
+  "read_only": true,
+  "next_command": "agentdeck continue",
+  "requires_explicit_user": false
+}
+```
+
+`route_source` is `local_rule` for local intent routing, `provider_plan` for first-time provider-backed planning, and `state_review` for review of an existing plan. `embedded_card` names the primary top-level card the GUI should render for that route, or `null` when there is no embedded card. `read_only=false` marks routes that create or apply state, such as `plan`, `review`, or `apply_action`.
 
 Continue-mode responses include `continue_card`, which reuses the same recovery card shape as `agentdeck continue`:
 
@@ -289,6 +307,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat responses must not auto-dispatch runtime work.
 - Chat responses must pass `validate_leader_chat_contract()` before printing JSON.
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
+- Chat responses must include `intent_card`, and `intent_card.next_command` must describe the same next action as the top-level response.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.
@@ -299,4 +318,4 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, or `runtime_card` when `recovery.recommended_action.source` points at those queues or runtime recovery.
 - Chat setup-mode responses may include `provider_health` and must recommend `agentdeck doctor` without calling the provider.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `workbench_card` as the full dashboard snapshot, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `workbench_card` as the full dashboard snapshot, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as safety/reason explanation.

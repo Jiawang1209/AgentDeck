@@ -864,6 +864,15 @@ def test_leader_chat_opens_workbench_snapshot_without_mutating_state(tmp_path, m
     assert payload["leader_explanation"]["safety"] == "inspect"
     assert payload["leader_explanation"]["requires_explicit_user"] is False
     assert payload["leader_explanation"]["next_command"] == payload["next_command"]
+    assert payload["intent_card"] == {
+        "mode": "workbench",
+        "matched_intent": "workbench",
+        "route_source": "local_rule",
+        "embedded_card": "workbench_card",
+        "read_only": True,
+        "next_command": payload["next_command"],
+        "requires_explicit_user": False,
+    }
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
     assert payload["project_view"]["chat_turns"]["items"][0]["mode"] == "workbench"
 

@@ -20,6 +20,7 @@ from agentdeck.contracts import (
     LEADER_ACTION_DETAIL_FIELDS,
     LEADER_ACTIONS_LIST_FIELDS,
     LEADER_CHAT_EXPLANATION_FIELDS,
+    LEADER_CHAT_INTENT_CARD_FIELDS,
     LEADER_CHAT_RESPONSE_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
     PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS,
@@ -357,6 +358,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == list(LEADER_CHAT_RESPONSE_FIELDS)
     assert payload["explanation_fields"] == list(LEADER_CHAT_EXPLANATION_FIELDS)
+    assert payload["intent_card_fields"] == list(LEADER_CHAT_INTENT_CARD_FIELDS)
     assert payload["continue_card_fields"] == list(CONTINUE_CARD_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
@@ -1028,6 +1030,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert set(payload["example_response_fields"]) == set(example)
     assert payload["example_explanation_fields"] == payload["explanation_fields"]
     assert set(payload["example_explanation_fields"]) == set(example["leader_explanation"])
+    assert payload["example_intent_card_fields"] == payload["intent_card_fields"]
+    assert payload["example_intent_card_fields"] == list(example["intent_card"])
     assert payload["example_continue_card_fields"] == payload["continue_card_fields"]
     assert set(payload["example_continue_card_fields"]) == set(example["continue_card"])
     assert payload["example_runtime_card_fields"] == payload["runtime_card_fields"]
@@ -1077,6 +1081,27 @@ def test_validate_leader_chat_contract_reports_missing_explanation_field() -> No
     result = validate_leader_chat_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing leader_explanation field: safety"]}
+
+
+def test_validate_leader_chat_contract_reports_missing_intent_card_field() -> None:
+    payload = leader_chat_example()
+    del payload["intent_card"]["route_source"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing intent_card field: route_source"]}
+
+
+def test_validate_leader_chat_contract_requires_intent_next_command_match() -> None:
+    payload = leader_chat_example()
+    payload["intent_card"]["next_command"] = "agentdeck workbench"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card: next_command must match response next_command"],
+    }
 
 
 def test_validate_leader_chat_contract_requires_embedded_project_view_contract() -> None:
