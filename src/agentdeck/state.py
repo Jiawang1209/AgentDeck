@@ -382,6 +382,7 @@ class StateStore:
             apply_blocker = "leader action requires explicit command"
         return {
             "can_apply": can_apply,
+            "preview_command": f"agentdeck leader action --action-id {action_id}",
             "apply_command": f"agentdeck leader apply-action --action-id {action_id}" if can_apply else None,
             "explicit_command": action.get("command"),
             "apply_blocker": apply_blocker,

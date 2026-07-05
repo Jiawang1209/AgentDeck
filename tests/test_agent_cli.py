@@ -876,7 +876,9 @@ def test_contract_leader_action_example_exports_gui_ready_detail(capsys) -> None
     example = payload["example_leader_action"]
     assert payload["example_action_fields"] == payload["action_fields"]
     assert set(payload["example_action_fields"]) == set(example)
+    assert "preview_command" in payload["action_fields"]
     assert example["matches_recommended_action"] is True
+    assert example["preview_command"] == "agentdeck leader action --action-id act_example"
     assert example["recovery"]["recommended_action"]["target_id"] == "act_example"
 
 
@@ -907,6 +909,8 @@ def test_contract_leader_actions_example_exports_gui_ready_queue(capsys) -> None
     assert set(payload["example_list_fields"]) == set(example)
     assert payload["example_action_item_fields"] == payload["action_item_fields"]
     assert set(payload["example_action_item_fields"]) == set(example["actions"][0])
+    assert "preview_command" in payload["action_item_fields"]
+    assert example["actions"][0]["preview_command"] == "agentdeck leader action --action-id act_example"
     assert example["actions"][0]["apply_command"] == "agentdeck leader apply-action --action-id act_example"
 
 
@@ -1196,6 +1200,7 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
                 "message_id": None,
                 "command": "agentdeck approval create-from-plan --plan-id pln_demo",
                 "reason": "plan has no approval records",
+                "preview_command": "agentdeck leader action --action-id act_demo",
                 "can_apply": True,
                 "apply_command": "agentdeck leader apply-action --action-id act_demo",
                 "explicit_command": "agentdeck approval create-from-plan --plan-id pln_demo",

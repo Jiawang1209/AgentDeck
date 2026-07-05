@@ -1052,6 +1052,7 @@ def test_leader_actions_lists_persisted_actions(tmp_path, monkeypatch, capsys) -
     assert payload["actions"][0]["kind"] == "create_approvals"
     assert payload["actions"][0]["status"] == "pending"
     assert payload["actions"][0]["can_apply"] is True
+    assert payload["actions"][0]["preview_command"] == f"agentdeck leader action --action-id {first['action_id']}"
     assert payload["actions"][0]["apply_command"] == f"agentdeck leader apply-action --action-id {first['action_id']}"
     assert payload["actions"][0]["explicit_command"] == first["command"]
     assert payload["actions"][0]["apply_blocker"] is None
@@ -1096,6 +1097,7 @@ def test_leader_action_show_outputs_full_action_with_applyability(tmp_path, monk
     assert payload["kind"] == "create_approvals"
     assert payload["status"] == "pending"
     assert payload["can_apply"] is True
+    assert payload["preview_command"] == f"agentdeck leader action --action-id {action_id}"
     assert payload["apply_command"] == f"agentdeck leader apply-action --action-id {action_id}"
     assert payload["explicit_command"] == f"agentdeck approval create-from-plan --plan-id {plan_id}"
     assert payload["apply_blocker"] is None

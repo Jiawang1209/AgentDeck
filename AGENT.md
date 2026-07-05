@@ -116,8 +116,8 @@ Worker 不应该：
 - `agentdeck contract trace` 返回通信 lineage 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 trace 示例，供 GUI 原型使用。
 - `agentdeck trace --id <id>` 输出前必须通过 `validate_trace_contract()` 自校验；失败时只能返回错误，不输出半坏 trace。
 - `agentdeck leader chat` 输出 JSON 前必须通过 `validate_leader_chat_contract()` 自校验；校验失败时只能返回错误，不输出半坏 chat response，并必须写入 `leader_errors[]` 和 `leader_chat_contract_failed` 事件。
-- `agentdeck leader actions` 输出 JSON 前必须通过 `validate_leader_actions_contract()` 自校验；校验失败时只能返回错误，不输出半坏 action queue。
-- `agentdeck leader action --action-id <id>` 输出 JSON 前必须通过 `validate_leader_action_contract()` 自校验；校验失败时只能返回错误，不输出半坏 action detail。
+- `agentdeck leader actions` 输出 JSON 前必须通过 `validate_leader_actions_contract()` 自校验；校验失败时只能返回错误，不输出半坏 action queue；每个 action item 必须公开 `preview_command`、can_apply、apply_command、explicit_command、apply_blocker 和 is_recommended。
+- `agentdeck leader action --action-id <id>` 输出 JSON 前必须通过 `validate_leader_action_contract()` 自校验；校验失败时只能返回错误，不输出半坏 action detail；detail 必须公开 `preview_command`、can_apply、apply_command、explicit_command 和 apply_blocker。
 - `agentdeck approval list` 输出 JSON 前必须通过 `validate_approval_contract()` 自校验；校验失败时只能返回错误，不输出半坏 approval queue；每个 approval item 必须公开 `preview_command`、approve/reject/dispatch commands、can_dispatch 和 dispatch_blocker。
 - `agentdeck inbox --agent <id>` 输出 JSON 前必须通过 `validate_inbox_contract()` 自校验；校验失败时只能返回错误，不输出半坏 inbox queue；每个 inbox item 必须公开 `preview_command`、trace_command、ack_command、is_head、can_ack 和 ack_blocker。
 - `status.recovery` 是当前恢复入口，包含 status/reason/next_command/recommended_action/pending/leader_action/latest_event/recent_events，用来判断下一步该继续什么；`recommended_action` 可直接驱动 GUI 的下一步按钮或检查入口，并通过 target_id 关联 action、approval 或 inbox item。
@@ -125,7 +125,7 @@ Worker 不应该：
 - `status.recovery.pending` 包含 `leader_errors` 计数，供 GUI 统一展示 Leader 错误数量。
 - `agentdeck contract project-view` 通过 `recovery_pending_fields` 暴露 `recovery.pending` 必备字段；缺字段的 ProjectView 应被 validator 拒绝。
 - `status.chat_turns.items` 包含 action_id/action_kind，可把自然语言 turn 关联回 leader_actions。
-- `status.leader_actions` 包含 recommended_action_id，`items[]` 包含 can_apply/apply_command/explicit_command/apply_blocker/is_recommended，可直接驱动 GUI action 按钮、阻塞提示和当前推荐项高亮。
+- `status.leader_actions` 包含 recommended_action_id，`items[]` 包含 preview_command/can_apply/apply_command/explicit_command/apply_blocker/is_recommended，可直接驱动 GUI action 预览、按钮、阻塞提示和当前推荐项高亮。
 - `status.messages.items[]`、`status.jobs.items[]` 和 `status.replies.items[]` 包含 `trace_command`；ProjectView contract discovery 会公开对应 item field lists，缺少 trace 入口的 summary item 应被 validator 拒绝。
 - `agentdeck continue` 是顶层只读恢复入口；它必须先通过 ProjectView contract 守门，再通过 `validate_continue_contract()` 自校验，最后返回 recovery-driven 下一步卡片；不得写 state、创建 action、apply action、dispatch 或发送 tmux 输入；`agentdeck contract continue` 会公开 `continue_card_fields`。
 - `agentdeck workbench` 是 GUI/TUI 优先的一屏只读快照；它必须先通过 ProjectView contract 守门，再组合 project_view、leader_actions、leader_card、provider_health、runtime_card、role_card、ledger_card、queue_card、operator_card、audit_card、recovery、continue_card、active_queue_source、inbox_card、approval_card 和 leader_action，并通过 `validate_workbench_contract()` 自校验；`leader_card` 必须从 ProjectView leader 派生 agent_id/provider/model/approval_mode/api_backed 和 chat/continue/actions/status 入口命令，且不得暴露 API key 或调用 provider；`provider_health` 必须从 Leader provider 和本地环境变量派生 supported/ready/missing_env/detail/doctor_command/doctor_contract，只能暴露 env 名称，不能暴露密钥值或调用 provider；`runtime_card` 必须从 ProjectView agents/runtime 派生并公开 agent role/provider/workspace/status/pane/session/cwd 与 spawn/stop/inbox 命令；`role_card` 必须从 ProjectView agents 派生 role/provider/workspace_mode/role_prompt/assign_command；`ledger_card` 必须从 ProjectView messages/jobs/replies/inbox 派生并保留 trace_commands；`queue_card` 必须从 leader_actions/approvals/inbox/recovery next_command 派生队列总览；`operator_card` 必须从 recovery/recommended_action 和当前 active queue 派生，公开 command/preview_command/safety/requires_explicit_user/apply_command/explicit_command/blocker 等人类操作字段，但不得自动执行；`audit_card` 必须从 recovery latest/recent event summary 派生并公开 events_command；不得写 state、创建 chat turn、ack、approve、dispatch、capture reply、读取 pane 输出或发送 tmux 输入；`agentdeck contract workbench` 会公开 `snapshot_fields`、`leader_card_fields`、`provider_health_fields`、`runtime_card_fields`、`runtime_agent_fields`、`role_card_fields`、`role_agent_fields`、`ledger_card_fields`、`queue_card_fields`、`operator_card_fields` 和 `audit_card_fields`。
@@ -146,8 +146,8 @@ Worker 不应该：
 - `agentdeck leader plan --task <text>` 会写入 `.agentdeck/state/state.json` 的 `plans[]`。
 - `agentdeck leader review --plan-id <id>` 会先通过 ProjectView contract 守门，再基于 plan status 和 replies 输出下一步建议。
 - `agentdeck leader next` 会先通过 ProjectView contract 守门，再把下一步建议写入 `leader_actions[]`，但不会执行命令；相同 pending action 已存在时会复用原 action_id。
-- `agentdeck leader actions` 返回已持久化的 action queue 摘要，包含顶层 `recommended_action_id` 和每项 `is_recommended`。
-- `agentdeck leader action --action-id <id>` 返回单个 action 的只读详情，包含 `can_apply`、`apply_command`、`explicit_command`、`apply_blocker`、当前 `recovery`、`recommended_action` 和 `matches_recommended_action`。
+- `agentdeck leader actions` 返回已持久化的 action queue 摘要，包含顶层 `recommended_action_id`、每项 `is_recommended` 和 `preview_command`。
+- `agentdeck leader action --action-id <id>` 返回单个 action 的只读详情，包含 `preview_command`、`can_apply`、`apply_command`、`explicit_command`、`apply_blocker`、当前 `recovery`、`recommended_action` 和 `matches_recommended_action`。
 - `agentdeck leader apply-action --action-id <id>` 执行 safe apply 前必须通过 ProjectView contract 守门；当前只允许应用 `create_approvals`，dispatch/capture 类 action 必须继续由人类显式命令执行。
 - `agentdeck plan list` 返回 plan 摘要，不包含完整 `plan` body。
 - `agentdeck plan show --plan-id <id>` 返回完整 plan，用于审批前检查。

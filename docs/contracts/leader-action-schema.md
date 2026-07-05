@@ -36,6 +36,7 @@ Use `agentdeck contract leader-action --example` to include a stable GUI-ready a
   "reason": "plan has no approval records",
   "created_at": "2026-07-04T00:00:00+00:00",
   "can_apply": true,
+  "preview_command": "agentdeck leader action --action-id act_xxx",
   "apply_command": "agentdeck leader apply-action --action-id act_xxx",
   "explicit_command": "agentdeck approval create-from-plan --plan-id pln_xxx",
   "apply_blocker": null,
@@ -45,7 +46,7 @@ Use `agentdeck contract leader-action --example` to include a stable GUI-ready a
 }
 ```
 
-`can_apply=true` is currently limited to safe `create_approvals` actions. Runtime actions such as dispatch or capture remain explicit commands and should be shown with `apply_blocker`.
+`preview_command` is the safe read-only detail command for the action. `can_apply=true` is currently limited to safe `create_approvals` actions. Runtime actions such as dispatch or capture remain explicit commands and should be shown with `apply_blocker`.
 
 `matches_recommended_action` tells a GUI or natural-language shell whether this action is the same action currently recommended by ProjectView recovery.
 
@@ -56,4 +57,4 @@ Use `agentdeck contract leader-action --example` to include a stable GUI-ready a
 - `agentdeck leader action` must pass ProjectView validation before printing JSON.
 - `agentdeck leader action` must pass `validate_leader_action_contract()` before printing JSON.
 - It must not create plans, create approvals, apply actions, dispatch work, capture replies, ack inbox items, or send tmux input.
-- GUI clients should use `can_apply`, `apply_command`, `explicit_command`, and `apply_blocker` to render controls while preserving human approval and explicit runtime boundaries.
+- GUI clients should use `preview_command`, `can_apply`, `apply_command`, `explicit_command`, and `apply_blocker` to render controls while preserving human approval and explicit runtime boundaries.

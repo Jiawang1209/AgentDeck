@@ -173,6 +173,7 @@ Summary items intentionally omit long prompts and pane output. Use detail comman
   "message_id": null,
   "command": "agentdeck approval create-from-plan --plan-id pln_xxx",
   "reason": "plan has no approval records",
+  "preview_command": "agentdeck leader action --action-id act_xxx",
   "can_apply": true,
   "apply_command": "agentdeck leader apply-action --action-id act_xxx",
   "explicit_command": "agentdeck approval create-from-plan --plan-id pln_xxx",
@@ -184,7 +185,7 @@ Summary items intentionally omit long prompts and pane output. Use detail comman
 
 ProjectView `leader_actions` and `agentdeck leader actions` both return a top-level `recommended_action_id`, derived from `recovery.recommended_action.target_id`, so GUI queues can highlight the active recovery affordance without opening every detail view.
 
-`can_apply=true` is currently limited to safe `create_approvals` actions. Runtime actions such as dispatch or capture stay explicit and should be shown with their blocker text.
+`preview_command` is the safe read-only detail view for the action. `can_apply=true` is currently limited to safe `create_approvals` actions. Runtime actions such as dispatch or capture stay explicit and should be shown with their blocker text.
 
 `agentdeck leader action --action-id <id>` returns the same action detail plus the current `recovery`, the current `recommended_action`, and `matches_recommended_action`. GUI clients can use this to tell whether a selected action is the active recovery affordance before rendering an apply button.
 

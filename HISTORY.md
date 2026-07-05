@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add leader action preview commands
+
+- 扩展 ProjectView `leader_actions.items[]`、`agentdeck leader actions` 和 `agentdeck leader action --action-id <id>`：新增 `preview_command`，统一 action / approval / inbox 三类队列的“只读预览优先、显式执行随后”模型。
+- `leader_action.preview_command` 指向 `agentdeck leader action --action-id <action_id>`，复用只读 action detail，不创建 plan、不 apply action、不创建 approval、不 dispatch、不发送 tmux 输入。
+- 更新 leader action/detail contract 字段、example fixture、validator、live action queue/detail 测试，以及 `README.md`、`docs/contracts/project-view-schema.md`、`docs/contracts/leader-actions-schema.md`、`docs/contracts/leader-action-schema.md`、`CLAUDE.md` 和 `AGENT.md`。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_contracts.py::test_leader_action_contract_response_includes_example_without_drift tests/test_contracts.py::test_leader_actions_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_actions_contract_requires_applyability_fields tests/test_agent_cli.py::test_contract_leader_action_example_exports_gui_ready_detail tests/test_agent_cli.py::test_contract_leader_actions_example_exports_gui_ready_queue tests/test_leader_cli.py::test_leader_actions_lists_persisted_actions tests/test_leader_cli.py::test_leader_action_show_outputs_full_action_with_applyability -q` 最初因 leader action 缺少 `preview_command` 失败；实现后目标测试通过；`conda run -n agentdeck pytest -q` 通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `leader-actions-preview-command-ok` 与 `leader-action-preview-command-ok`。
+
 ### Current - Add queue item preview commands
 
 - 扩展 approval queue 和 inbox queue item：新增 `preview_command`，让 GUI/TUI 可以先渲染只读预览按钮，再渲染 approve/dispatch/ack 等显式执行按钮。

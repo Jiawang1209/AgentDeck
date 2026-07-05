@@ -1229,6 +1229,7 @@ def _leader_action_summary(action: dict[str, object], recommended_action_id: obj
         "reason": action.get("reason"),
         "created_at": action.get("created_at"),
         "can_apply": detail_fields["can_apply"],
+        "preview_command": detail_fields["preview_command"],
         "apply_command": detail_fields["apply_command"],
         "explicit_command": detail_fields["explicit_command"],
         "apply_blocker": detail_fields["apply_blocker"],

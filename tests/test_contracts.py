@@ -639,6 +639,7 @@ def test_leader_action_contract_response_includes_example_without_drift(tmp_path
     assert payload["example_action_fields"] == payload["action_fields"]
     assert set(payload["example_action_fields"]) == set(example)
     assert example["action_id"] == "act_example"
+    assert example["preview_command"] == "agentdeck leader action --action-id act_example"
     assert example["recovery"]["recommended_action"]["target_id"] == "act_example"
     assert example["matches_recommended_action"] is True
 
@@ -690,6 +691,7 @@ def test_leader_actions_contract_response_includes_example_without_drift(tmp_pat
     assert payload["example_action_item_fields"] == payload["action_item_fields"]
     assert set(payload["example_action_item_fields"]) == set(example["actions"][0])
     assert example["recommended_action_id"] == "act_example"
+    assert example["actions"][0]["preview_command"] == "agentdeck leader action --action-id act_example"
     assert example["actions"][0]["can_apply"] is True
     assert example["actions"][0]["is_recommended"] is True
 
@@ -702,13 +704,13 @@ def test_validate_leader_actions_contract_accepts_example() -> None:
 
 def test_validate_leader_actions_contract_requires_applyability_fields() -> None:
     payload = leader_actions_example()
-    del payload["actions"][0]["apply_blocker"]
+    del payload["actions"][0]["preview_command"]
 
     result = validate_leader_actions_contract(payload)
 
     assert result == {
         "ok": False,
-        "errors": ["missing leader action item field: apply_blocker"],
+        "errors": ["missing leader action item field: preview_command"],
     }
 
 
