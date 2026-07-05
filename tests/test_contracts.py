@@ -684,6 +684,7 @@ def test_doctor_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None
         "supported",
         "missing_env",
         "detail",
+        "command_path",
         "setup_commands",
     ]
     assert payload["provider_check_fields"] == ["ok", "detail"]
@@ -799,6 +800,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["control_mode_option_fields"] == list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS)
     assert payload["control_mode_control_fields"] == list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS)
     assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
+    assert "command_path" in payload["provider_health_fields"]
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)

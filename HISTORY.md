@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Surface CLI Leader command path diagnostics
+
+- 扩展 `agentdeck doctor` 的 `configured_leader`：当 Leader provider 是 `codex-cli` 或 `claude-cli` 时，readiness 会通过解析后的本地命令路径判断，并在输出中返回 `command_path`；API-backed provider 和 unsupported provider 返回 `command_path=null`。
+- 扩展 `agentdeck workbench` / `provider_health`：CLI-backed Leader 可用时会在 GUI-ready provider card 中暴露 `command_path`，让 GUI/自然语言壳能显示 AgentDeck 实际会调用的 `codex` 或 `claude` 可执行文件。
+- 保持安全边界：该字段只来自本地 PATH 探测，不调用 provider、不读取 API key、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入。
+- 同步 README、`docs/contracts/doctor-schema.md`、`docs/contracts/workbench-schema.md`、CLAUDE.md 和 AGENT.md，并将 `command_path` 纳入 doctor configured_leader fields 与 workbench provider_health fields。
+- 验证记录：已先确认红测失败，测试最初无法 monkeypatch `_command_path`，说明 doctor/workbench 只有 bool readiness；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_doctor_reports_openai_compatible_provider_state tests/test_agent_cli.py::test_doctor_reports_configured_leader_ready_when_env_is_set tests/test_agent_cli.py::test_doctor_reports_codex_cli_leader_ready_from_local_command tests/test_agent_cli.py::test_contract_doctor_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_doctor_example_exports_gui_ready_diagnostics tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_marks_codex_cli_leader_as_local_cli_backed tests/test_contracts.py::test_doctor_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_doctor_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_workbench_contract_requires_provider_health_fields -q` 11 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 308 项通过。
+
 ### Current - Normalize CLI-backed Leader plan controls
 
 - 加强 `codex-cli` / `claude-cli` Leader provider：本地 CLI 输出缺少顶层 `approval_required` 或 `dispatch_ready` 时，会像 API-backed provider 一样归一化为 `approval_required=true` 和 `dispatch_ready=false`。

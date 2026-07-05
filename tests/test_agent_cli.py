@@ -176,6 +176,7 @@ def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, 
         "supported": True,
         "missing_env": ["DEEPSEEK_API_KEY"],
         "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+        "command_path": None,
         "setup_commands": [
             'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
             'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
@@ -208,6 +209,7 @@ def test_doctor_reports_configured_leader_ready_when_env_is_set(tmp_path, monkey
         "supported": True,
         "missing_env": [],
         "detail": "DEEPSEEK_API_KEY is set",
+        "command_path": None,
         "setup_commands": [
             'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
             'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
@@ -246,7 +248,7 @@ def test_doctor_reports_codex_cli_leader_ready_from_local_command(
     config_text = config_text.replace('provider = "deepseek"', 'provider = "codex-cli"', 1)
     config_text = config_text.replace('model = "deepseek-chat"', 'model = "codex-default"', 1)
     config_path.write_text(config_text, encoding="utf-8")
-    monkeypatch.setattr(cli, "_command_available", lambda command: command == "codex")
+    monkeypatch.setattr(cli, "_command_path", lambda command: "/opt/bin/codex" if command == "codex" else None)
 
     exit_code = cli.main(["doctor"])
 
@@ -260,6 +262,7 @@ def test_doctor_reports_codex_cli_leader_ready_from_local_command(
         "supported": True,
         "missing_env": [],
         "detail": "codex is available",
+        "command_path": "/opt/bin/codex",
         "setup_commands": ['codex login', 'codex doctor'],
     }
     assert exit_code == (0 if payload["tmux"]["ok"] else 1)
@@ -1109,6 +1112,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "ready",
         "missing_env",
         "detail",
+        "command_path",
         "doctor_command",
         "doctor_contract",
         "setup_commands",
@@ -1366,6 +1370,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "ready": False,
         "missing_env": ["DEEPSEEK_API_KEY"],
         "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+        "command_path": None,
         "doctor_command": "agentdeck doctor",
         "doctor_contract": "agentdeck contract doctor",
         "setup_commands": [
@@ -1811,7 +1816,7 @@ def test_workbench_marks_codex_cli_leader_as_local_cli_backed(
     config_text = config_text.replace('provider = "deepseek"', 'provider = "codex-cli"', 1)
     config_text = config_text.replace('model = "deepseek-chat"', 'model = "codex-default"', 1)
     config_path.write_text(config_text, encoding="utf-8")
-    monkeypatch.setattr(cli, "_command_available", lambda command: command == "codex")
+    monkeypatch.setattr(cli, "_command_path", lambda command: "/opt/bin/codex" if command == "codex" else None)
 
     exit_code = cli.main(["workbench"])
 
@@ -1829,6 +1834,7 @@ def test_workbench_marks_codex_cli_leader_as_local_cli_backed(
         "ready": True,
         "missing_env": [],
         "detail": "codex is available",
+        "command_path": "/opt/bin/codex",
         "doctor_command": "agentdeck doctor",
         "doctor_contract": "agentdeck contract doctor",
         "setup_commands": ['codex login', 'codex doctor'],

@@ -383,7 +383,8 @@ def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object]
         "claude-cli": "claude",
     }.get(provider)
     if cli_command is not None:
-        ready = _command_available(cli_command)
+        command_path = _command_path(cli_command)
+        ready = command_path is not None
         return {
             "agent_id": config.leader.agent_id,
             "provider": provider,
@@ -393,6 +394,7 @@ def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object]
             "supported": True,
             "missing_env": [],
             "detail": f"{cli_command} is available" if ready else f"{cli_command} is not found on PATH",
+            "command_path": command_path,
             "setup_commands": _provider_setup_commands(provider),
         }
     if required_env is None:
@@ -405,6 +407,7 @@ def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object]
             "supported": False,
             "missing_env": [],
             "detail": f"unsupported leader provider: {provider}",
+            "command_path": None,
             "setup_commands": [],
         }
     ready = bool(os.environ.get(required_env))
@@ -418,12 +421,17 @@ def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object]
         "supported": True,
         "missing_env": [] if ready else [required_env],
         "detail": detail,
+        "command_path": None,
         "setup_commands": _provider_setup_commands(provider),
     }
 
 
+def _command_path(command: str) -> str | None:
+    return shutil.which(command)
+
+
 def _command_available(command: str) -> bool:
-    return shutil.which(command) is not None
+    return _command_path(command) is not None
 
 
 def init_command(_args: argparse.Namespace) -> int:
@@ -926,6 +934,7 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
         "model": leader.get("model"),
         "approval_mode": leader.get("approval_mode"),
         "api_backed": provider in ("deepseek", "openai-compatible"),
+        "command_path": None,
         "doctor_contract": "agentdeck contract doctor",
         "controls": _leader_provider_controls(provider),
     }
@@ -948,13 +957,15 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
         "claude-cli": "claude",
     }.get(provider)
     if cli_command is not None:
-        ready = _command_available(cli_command)
+        command_path = _command_path(cli_command)
+        ready = command_path is not None
         return {
             **base,
             "supported": True,
             "ready": ready,
             "missing_env": [],
             "detail": f"{cli_command} is available" if ready else f"{cli_command} is not found on PATH",
+            "command_path": command_path,
             "doctor_command": "agentdeck doctor",
             "setup_commands": _provider_setup_commands(provider),
         }

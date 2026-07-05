@@ -199,6 +199,7 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
   "ready": false,
   "missing_env": ["DEEPSEEK_API_KEY"],
   "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+  "command_path": null,
   "doctor_command": "agentdeck doctor",
   "doctor_contract": "agentdeck contract doctor",
   "setup_commands": [
@@ -227,7 +228,7 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
 }
 ```
 
-The card never exposes API key values and never calls the provider. It includes the configured Leader identity and model so GUI clients can render provider setup next to the Leader card without joining another state source. For API-backed providers such as `deepseek` and `openai-compatible`, readiness is based on the required local environment variable. For CLI-backed providers such as `codex-cli` and `claude-cli`, readiness is based on whether the local command is available on PATH. GUI clients can render `doctor_command` as the next diagnostic action, read `doctor_contract` for the doctor diagnostics schema, and show `setup_commands` as copyable placeholder commands; placeholders must never be replaced with real secret values in AgentDeck output. `controls[]` exposes explicit `agentdeck leader set-provider` commands for supported Leader backends. The current provider control is disabled with `already current provider`; other controls require `safety=explicit_user` and only change the default Leader provider/model after the human runs the command. `validate_workbench_contract()` rejects `set_provider` controls that do not use `safety=explicit_user`, do not point at `agentdeck leader set-provider --provider ...`, or are disabled without a blocker.
+The card never exposes API key values and never calls the provider. It includes the configured Leader identity and model so GUI clients can render provider setup next to the Leader card without joining another state source. For API-backed providers such as `deepseek` and `openai-compatible`, readiness is based on the required local environment variable and `command_path` is `null`. For CLI-backed providers such as `codex-cli` and `claude-cli`, readiness is based on whether the local command is available on PATH, and `command_path` exposes the resolved executable path when available. GUI clients can render `doctor_command` as the next diagnostic action, read `doctor_contract` for the doctor diagnostics schema, and show `setup_commands` as copyable placeholder commands; placeholders must never be replaced with real secret values in AgentDeck output. `controls[]` exposes explicit `agentdeck leader set-provider` commands for supported Leader backends. The current provider control is disabled with `already current provider`; other controls require `safety=explicit_user` and only change the default Leader provider/model after the human runs the command. `validate_workbench_contract()` rejects `set_provider` controls that do not use `safety=explicit_user`, do not point at `agentdeck leader set-provider --provider ...`, or are disabled without a blocker.
 
 ## Runtime Card
 

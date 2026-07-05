@@ -363,6 +363,7 @@ DOCTOR_CONFIGURED_LEADER_FIELDS = (
     "supported",
     "missing_env",
     "detail",
+    "command_path",
     "setup_commands",
 )
 
@@ -599,6 +600,7 @@ WORKBENCH_PROVIDER_HEALTH_FIELDS = (
     "ready",
     "missing_env",
     "detail",
+    "command_path",
     "doctor_command",
     "doctor_contract",
     "setup_commands",
@@ -3310,6 +3312,7 @@ def doctor_example() -> dict[str, object]:
             "supported": True,
             "missing_env": ["DEEPSEEK_API_KEY"],
             "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+            "command_path": None,
             "setup_commands": [
                 'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
                 'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
@@ -3673,6 +3676,7 @@ def workbench_example() -> dict[str, object]:
             "ready": True,
             "missing_env": [],
             "detail": "fake provider is local and ready",
+            "command_path": None,
             "doctor_command": "agentdeck doctor",
             "doctor_contract": "agentdeck contract doctor",
             "setup_commands": [],

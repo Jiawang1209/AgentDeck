@@ -439,6 +439,7 @@ def test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning
         "ready": False,
         "missing_env": ["DEEPSEEK_API_KEY"],
         "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+        "command_path": None,
         "doctor_command": "agentdeck doctor",
         "doctor_contract": "agentdeck contract doctor",
         "setup_commands": [
