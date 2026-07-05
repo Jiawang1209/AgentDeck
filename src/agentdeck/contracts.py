@@ -838,6 +838,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "workbench_card_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
+        "workbench_control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
         "capability_card_fields": list(LEADER_CHAT_CAPABILITY_CARD_FIELDS),
         "capability_item_fields": list(LEADER_CHAT_CAPABILITY_ITEM_FIELDS),
         "capability_control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
@@ -865,6 +866,9 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_role_agent_fields"] = list(example["role_card"]["agents"][0])
         payload["example_ledger_card_fields"] = list(example["ledger_card"])
         payload["example_workbench_card_fields"] = list(example["workbench_card"])
+        payload["example_workbench_control_registry_item_fields"] = list(
+            example["workbench_card"]["control_registry"][0]
+        )
         payload["example_capability_card_fields"] = list(example["capability_card"])
         payload["example_capability_item_fields"] = list(example["capability_card"]["capabilities"][0])
         payload["example_capability_control_fields"] = list(example["capability_card"]["capabilities"][0]["controls"][0])

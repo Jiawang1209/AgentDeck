@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Surface workbench control registry in Leader chat contract
+
+- 扩展 `agentdeck contract leader-chat`：新增 `workbench_control_registry_item_fields`，让 GUI/自然语言壳在只读取 Leader chat contract 时也能发现嵌入 `workbench_card.control_registry[]` 的命令面板 item 字段。
+- `agentdeck contract leader-chat --example` 新增 `example_workbench_control_registry_item_fields`，并与稳定 `example_leader_chat.workbench_card.control_registry[0]` 对齐。
+- 同步 `docs/contracts/leader-chat-schema.md`、README、CLAUDE.md、AGENT.md 和测试；该 discovery 只描述字段，不新增执行路径，不改变 workbench/Leader chat 的只读边界。
+- 完整验证：已先确认红测失败，`workbench_control_registry_item_fields` / `example_workbench_control_registry_item_fields` 最初不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 4 项通过；相关测试 `conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py tests/test_leader_cli.py -q` 210 项通过；`conda run -n agentdeck pytest -q` 225 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-chat-workbench-control-registry-contract-smoke-ok`。
+
 ### Current - Add workbench control registry
 
 - 扩展 `agentdeck workbench`：新增只读 `control_registry[]`，把 `leader_card.controls[]`、`runtime_card.agents[].controls[]` 和 `operator_card.controls[]` 汇总成 GUI/TUI 可直接渲染的命令面板索引。

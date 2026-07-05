@@ -379,6 +379,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["role_agent_fields"] == list(WORKBENCH_ROLE_AGENT_FIELDS)
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
     assert payload["workbench_card_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
+    assert payload["workbench_control_registry_item_fields"] == list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
 
 
 def test_continue_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
@@ -1186,6 +1187,12 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_ledger_card_fields"] == list(example["ledger_card"])
     assert payload["example_workbench_card_fields"] == payload["workbench_card_fields"]
     assert payload["example_workbench_card_fields"] == list(example["workbench_card"])
+    assert payload["example_workbench_control_registry_item_fields"] == (
+        payload["workbench_control_registry_item_fields"]
+    )
+    assert payload["example_workbench_control_registry_item_fields"] == list(
+        example["workbench_card"]["control_registry"][0]
+    )
     assert payload["example_capability_card_fields"] == payload["capability_card_fields"]
     assert payload["example_capability_card_fields"] == list(example["capability_card"])
     assert "controls" in payload["capability_item_fields"]
