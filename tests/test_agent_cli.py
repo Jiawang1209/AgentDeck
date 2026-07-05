@@ -1131,6 +1131,42 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert state_after["leader_actions"] == []
 
 
+def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.load()
+
+    exit_code = cli.main(["controls"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "control_registry"
+    assert payload["title"] == "Command palette"
+    assert payload["source_command"] == "agentdeck workbench"
+    assert payload["default_command"] == "agentdeck workbench"
+    assert payload["item_count"] == len(payload["items"])
+    assert payload["items"][0] == {
+        "scope": "leader",
+        "card": "leader_card",
+        "kind": "chat",
+        "label": "Ask Leader",
+        "command": "agentdeck leader chat --message <text>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires message text",
+        "agent_id": "leader",
+    }
+    assert {
+        (item["scope"], item["card"], item["kind"], item["agent_id"])
+        for item in payload["items"]
+    } >= {
+        ("leader", "leader_card", "continue", "leader"),
+        ("runtime", "runtime_card", "spawn", "planner"),
+        ("operator", "operator_card", "explicit", None),
+    }
+    assert StateStore(root).load() == before
+
+
 def test_workbench_surfaces_provider_setup_as_active_operator_source(
     tmp_path, monkeypatch, capsys
 ) -> None:

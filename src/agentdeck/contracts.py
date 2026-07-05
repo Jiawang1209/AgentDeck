@@ -1850,6 +1850,12 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
     return {"ok": not errors, "errors": errors}
 
 
+def validate_control_registry_card_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    _validate_control_registry_card_contract(errors, payload)
+    return {"ok": not errors, "errors": errors}
+
+
 def _validate_control_registry_card_contract(errors: list[str], control_registry_card: dict[str, object]) -> None:
     for field in LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS:
         if field not in control_registry_card:

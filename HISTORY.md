@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add standalone controls command
+
+- 新增 `agentdeck controls`：从同一次 `agentdeck workbench` snapshot 派生 `control_registry_card`，为 GUI/TUI 或自然语言壳提供独立只读命令面板入口。
+- 新增 `validate_control_registry_card_contract()`，让独立 controls 输出复用 Leader chat `control_registry_card` 字段和 workbench `control_registry` item 字段校验，避免出现第二套 control 状态源。
+- 同步 README、CLAUDE.md、AGENT.md 和测试；该命令只输出 leader/runtime/operator controls 的 scope/card/kind/label/command/safety/enabled/blocker/agent_id，不写 state、不创建 chat turn、不调用 provider、不读取 pane、不执行任何 control。
+- 完整验证：已先确认红测失败，`agentdeck controls` 最初不是合法子命令；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state -q` 1 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli -q` 3 项通过；相关套件 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 212 项通过；`conda run -n agentdeck pytest -q` 227 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `controls-command-smoke-ok`。
+
 ### Current - Add Leader chat control registry card
 
 - 扩展 `agentdeck leader chat --message "帮助"` / `"命令面板"`：help mode 现在除 `capability_card` 外，还返回 `control_registry_card`，从同一次 workbench snapshot 派生 leader/runtime/operator controls，供 GUI 或自然语言壳直接渲染命令面板。

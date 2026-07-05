@@ -31,6 +31,7 @@ from .contracts import (
     workbench_contract_response,
     validate_approval_contract,
     validate_continue_contract,
+    validate_control_registry_card_contract,
     validate_inbox_contract,
     validate_leader_actions_contract,
     validate_leader_action_contract,
@@ -948,6 +949,25 @@ def workbench_command(args: argparse.Namespace) -> int:
                 time.sleep(args.interval)
             except KeyboardInterrupt:
                 return 130
+    return 0
+
+
+def controls_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    workbench_card = _workbench_snapshot_payload(project_view, store, since_event_id=None)
+    payload = leader_chat_control_registry_card(workbench_card)
+    validation = validate_control_registry_card_contract(payload)
+    if not validation["ok"]:
+        print("Control registry card contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
 
 
@@ -3478,6 +3498,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     workbench.add_argument("--interval", type=float, default=1.0, help="Seconds between --watch snapshots")
     workbench.set_defaults(func=workbench_command)
+
+    controls = subparsers.add_parser("controls", help="Show the GUI-ready command palette from the workbench")
+    controls.set_defaults(func=controls_command)
 
     contract = subparsers.add_parser("contract", help="Discover machine-readable AgentDeck contracts")
     contract_subparsers = contract.add_subparsers(dest="contract_command")
