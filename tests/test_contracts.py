@@ -7,6 +7,7 @@ from agentdeck.contracts import (
     AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
     AGENT_RUNTIME_REFRESH_AGENT_FIELDS,
     AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS,
+    AGENT_RUNTIME_READY_RESPONSE_FIELDS,
     APPROVAL_DISPATCH_READY_RESPONSE_FIELDS,
     APPROVAL_DISPATCH_READY_RESULT_FIELDS,
     APPROVAL_ITEM_FIELDS,
@@ -462,6 +463,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["continue_card_fields"] == list(CONTINUE_CARD_FIELDS)
     assert payload["capture_card_fields"] == list(LEADER_CHAT_CAPTURE_CARD_FIELDS)
     assert payload["dispatch_preview_card_fields"] == list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
+    assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
     assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
@@ -1440,6 +1442,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert example["leader_action_card"]["controls"] == example["leader_action"]["controls"]
     assert payload["example_continue_card_fields"] == payload["continue_card_fields"]
     assert set(payload["example_continue_card_fields"]) == set(example["continue_card"])
+    assert payload["example_agent_ready_card_fields"] == payload["agent_ready_card_fields"]
+    assert payload["example_agent_ready_card_fields"] == list(example["agent_ready_card"])
     assert payload["example_runtime_card_fields"] == payload["runtime_card_fields"]
     assert payload["example_runtime_card_fields"] == list(example["runtime_card"])
     assert payload["example_queue_card_fields"] == payload["queue_card_fields"]

@@ -887,6 +887,77 @@ def test_leader_chat_suggests_agent_spawn_without_mutating_runtime(tmp_path, mon
     assert fake.captured == []
 
 
+def test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["leader", "chat", "--message", "启动所有 agent"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "runtime"
+    assert payload["message"] == "启动所有 agent"
+    assert payload["next_command"] == "agentdeck agent spawn --agent coder"
+    assert payload["agent_ready_card"]["mode"] == "agent_runtime_ready"
+    assert payload["agent_ready_card"]["total_count"] == 3
+    assert payload["agent_ready_card"]["running_count"] == 1
+    assert payload["agent_ready_card"]["not_running_count"] == 2
+    assert payload["agent_ready_card"]["all_running"] is False
+    assert payload["agent_ready_card"]["next_command"] == payload["next_command"]
+    assert payload["agent_ready_card"]["spawn_commands"] == [
+        "agentdeck agent spawn --agent coder",
+        "agentdeck agent spawn --agent reviewer",
+    ]
+    assert payload["agent_ready_card"]["runtime_card"] == payload["runtime_card"]
+    assert payload["leader_explanation"]["mode"] == "runtime"
+    assert payload["leader_explanation"]["summary"] == (
+        "Leader recommends explicitly preparing all configured agent runtimes without mutating runtime state."
+    )
+    assert payload["leader_explanation"]["reason"] == "human asked to prepare all agent runtimes"
+    assert payload["leader_explanation"]["recommended_action_id"] == "agent_runtime_ready"
+    assert payload["leader_explanation"]["action_kind"] == "runtime_ready"
+    assert payload["leader_explanation"]["action_status"] == "partial"
+    assert payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert payload["intent_card"]["embedded_card"] == "agent_ready_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect agent_ready_card",
+        "command": "agentdeck agent ready",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Spawn coder",
+        "command": "agentdeck agent spawn --agent coder",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "runtime"
+    assert state_after["chat_turns"][0]["action_kind"] == "runtime_ready"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck agent spawn --agent coder"
+    assert state_after["agents"]["planner"]["status"] == "running"
+    assert state_after["agents"].get("coder") is None
+    assert state_after["agents"].get("reviewer") is None
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+    assert fake.sent == []
+    assert fake.captured == []
+    assert fake.killed == []
+    assert fake.checked_panes == []
+
+
 def test_leader_chat_open_agent_inbox_does_not_trigger_spawn_intent(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

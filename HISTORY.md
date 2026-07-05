@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Surface agent ready card through Leader chat
+
+- 扩展 `agentdeck leader chat --message "启动所有 agent"` / `"启动全部 agent"` / `"prepare all agents"`：自然语言 runtime 入口现在会走本地 `mode=runtime`，嵌入 `agent_ready_card`，复用 `agentdeck agent ready` 的 readiness shape，而不是落入 provider-backed plan。
+- `agent_ready_card` 会展示 total/running/not_running/all_running、所有未 running agent 的 `spawn_commands`、`refresh_command`、`dispatch_ready_command` 和同源 `runtime_card`；顶层 `next_command`、`leader_explanation.next_command` 和 chat turn 记录会对齐到 `agent_ready_card.next_command`。
+- 保持安全边界：该模式只记录 chat turn，不创建 plan/leader action/approval/message/job/inbox，不 inspect tmux、不 refresh runtime、不 spawn/stop/capture/send、不 dispatch approvals；真实启动仍必须由人类显式运行下一条 `agentdeck agent spawn --agent <id>`。
+- 扩展 `agentdeck contract leader-chat`：新增 response 字段 `agent_ready_card`、discovery 字段 `agent_ready_card_fields` 和 example 字段 `example_agent_ready_card_fields`，validator 会复用 agent runtime ready response 字段并校验嵌入的 `runtime_card`。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md，明确多 Agent 启动准备可以通过自然语言请求，但不会自动启动终端。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "启动所有 agent"` 最初误走 `mode=plan`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup tests/test_leader_cli.py::test_leader_chat_suggests_agent_spawn_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_inspects_runtime_without_mutating_state tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 8 项通过；真实 CLI smoke 确认当前项目输出 `agent_ready_card.not_running_count=3`、`next_command=agentdeck agent spawn --agent planner`、`leader_explanation.action_kind=runtime_ready`；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 269 项通过。
+
 ### Current - Add agent runtime readiness card
 
 - 新增只读入口 `agentdeck agent ready`：它复用 workbench `runtime_card`，汇总 configured agents 的 `total_count`、`running_count`、`not_running_count`、`all_running`，列出所有尚未 running agent 的显式 `spawn_commands`，并把 `next_command` 指向第一条待启动 agent 的 `agentdeck agent spawn --agent <id>`。

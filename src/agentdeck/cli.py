@@ -81,6 +81,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "capture_card",
         "dispatch_preview_card",
         "dispatch_batch_preview_card",
+        "agent_ready_card",
         "trace_card",
         "inbox_card",
         "approval_card",
@@ -188,6 +189,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck continue"
     if embedded_card == "runtime_card":
         return "agentdeck agent list"
+    if embedded_card == "agent_ready_card":
+        return "agentdeck agent ready"
     if embedded_card == "capture_card":
         capture_card = payload.get("capture_card")
         command = capture_card.get("capture_command") if isinstance(capture_card, dict) else None
@@ -268,6 +271,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("capture_card", None)
     payload.setdefault("dispatch_preview_card", None)
     payload.setdefault("dispatch_batch_preview_card", None)
+    payload.setdefault("agent_ready_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -1328,6 +1332,39 @@ def _workbench_runtime_card(project_view: dict[str, object]) -> dict[str, object
     }
 
 
+def _agent_ready_card_payload(project_view: dict[str, object]) -> dict[str, object]:
+    runtime_card = _workbench_runtime_card(project_view)
+    agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
+    running_count = 0
+    spawn_commands: list[str] = []
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        if agent.get("status") == "running" and agent.get("pane_id"):
+            running_count += 1
+        else:
+            spawn_command = agent.get("spawn_command")
+            if spawn_command:
+                spawn_commands.append(str(spawn_command))
+    total_count = len(agents)
+    not_running_count = total_count - running_count
+    dispatch_ready_command = "agentdeck approval dispatch-ready --confirm"
+    return {
+        "ok": True,
+        "mode": "agent_runtime_ready",
+        "runtime_backend": project_view.get("runtime_backend"),
+        "total_count": total_count,
+        "running_count": running_count,
+        "not_running_count": not_running_count,
+        "all_running": not_running_count == 0,
+        "next_command": spawn_commands[0] if spawn_commands else dispatch_ready_command,
+        "spawn_commands": spawn_commands,
+        "refresh_command": runtime_card.get("refresh_command"),
+        "dispatch_ready_command": dispatch_ready_command,
+        "runtime_card": runtime_card,
+    }
+
+
 def continue_command(_args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -1540,39 +1577,7 @@ def agent_ready_command(_args: argparse.Namespace) -> int:
     project_view = _project_view_payload_or_error(config, store)
     if project_view is None:
         return 1
-    runtime_card = _workbench_runtime_card(project_view)
-    agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
-    running_count = 0
-    spawn_commands: list[str] = []
-    for agent in agents:
-        if not isinstance(agent, dict):
-            continue
-        if agent.get("status") == "running" and agent.get("pane_id"):
-            running_count += 1
-        else:
-            spawn_command = agent.get("spawn_command")
-            if spawn_command:
-                spawn_commands.append(str(spawn_command))
-    total_count = len(agents)
-    not_running_count = total_count - running_count
-    dispatch_ready_command = "agentdeck approval dispatch-ready --confirm"
-    next_command = spawn_commands[0] if spawn_commands else dispatch_ready_command
-    _print_json(
-        {
-            "ok": True,
-            "mode": "agent_runtime_ready",
-            "runtime_backend": project_view.get("runtime_backend"),
-            "total_count": total_count,
-            "running_count": running_count,
-            "not_running_count": not_running_count,
-            "all_running": not_running_count == 0,
-            "next_command": next_command,
-            "spawn_commands": spawn_commands,
-            "refresh_command": runtime_card.get("refresh_command"),
-            "dispatch_ready_command": dispatch_ready_command,
-            "runtime_card": runtime_card,
-        }
-    )
+    _print_json(_agent_ready_card_payload(project_view))
     return 0
 
 
@@ -2525,6 +2530,29 @@ def _chat_wants_runtime(message: str) -> bool:
     )
 
 
+def _chat_wants_runtime_ready(message: str) -> bool:
+    normalized = message.strip().lower()
+    mentions_all = any(token in normalized for token in ["all", "所有", "全部", "多 agent", "多agent", "多个 agent"])
+    mentions_runtime = any(token in normalized for token in ["agent", "agents", "智能体", "runtime", "终端"])
+    mentions_prepare = any(
+        token in normalized
+        for token in ["ready", "prepare", "start", "spawn", "launch", "启动", "开启", "准备", "就绪"]
+    )
+    return (mentions_all and mentions_runtime and mentions_prepare) or any(
+        token in normalized
+        for token in [
+            "agent ready",
+            "runtime ready",
+            "准备多 agent",
+            "准备多个 agent",
+            "启动所有 agent",
+            "启动全部 agent",
+            "开启所有 agent",
+            "开启全部 agent",
+        ]
+    )
+
+
 def _chat_runtime_spawn_agent_id(message: str, project_view: dict[str, object]) -> str | None:
     normalized = message.strip().lower()
     if not any(token in normalized for token in ["spawn", "start", "launch", "启动", "开启"]):
@@ -2874,6 +2902,7 @@ def _leader_chat_explanation(
     approval_action_kind: str | None = None,
     dispatch_batch_preview_card: dict[str, object] | None = None,
     recommended_action: dict[str, object] | None = None,
+    agent_ready_card: dict[str, object] | None = None,
 ) -> dict[str, object]:
     recovery = project_view.get("recovery")
     recovery_action = (
@@ -2972,6 +3001,21 @@ def _leader_chat_explanation(
             "requires_explicit_user": True,
         }
     if mode == "runtime":
+        if isinstance(agent_ready_card, dict):
+            action_status = "ready" if agent_ready_card.get("all_running") is True else "partial"
+            return {
+                "mode": mode,
+                "summary": (
+                    "Leader recommends explicitly preparing all configured agent runtimes without mutating runtime state."
+                ),
+                "reason": "human asked to prepare all agent runtimes",
+                "next_command": next_command,
+                "recommended_action_id": "agent_runtime_ready",
+                "action_kind": "runtime_ready",
+                "action_status": action_status,
+                "safety": "explicit_runtime",
+                "requires_explicit_user": True,
+            }
         if next_command == "agentdeck agent refresh":
             return {
                 "mode": mode,
@@ -3745,13 +3789,16 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             return exit_code
     runtime_spawn_agent_id = _chat_runtime_spawn_agent_id(args.message, project_view)
     runtime_refresh = _chat_wants_runtime_refresh(args.message)
+    runtime_ready = _chat_wants_runtime_ready(args.message)
     if (
         runtime_send_intent is not None
         or runtime_stop_agent_id
         or runtime_spawn_agent_id
         or runtime_refresh
+        or runtime_ready
         or _chat_wants_runtime(args.message)
     ):
+        initial_agent_ready_card = _agent_ready_card_payload(project_view) if runtime_ready else None
         next_command = (
             _agent_send_command(str(send_agent_id), str(send_text))
             if runtime_send_intent is not None
@@ -3761,6 +3808,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             if runtime_spawn_agent_id
             else "agentdeck agent refresh"
             if runtime_refresh
+            else initial_agent_ready_card.get("next_command")
+            if isinstance(initial_agent_ready_card, dict)
             else "agentdeck agent list"
         )
         action_kind = (
@@ -3772,6 +3821,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             if runtime_spawn_agent_id
             else "runtime_refresh"
             if runtime_refresh
+            else "runtime_ready"
+            if runtime_ready
             else "runtime"
         )
         turn = store.record_chat_turn(
@@ -3798,6 +3849,9 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if refreshed_project_view is None:
             return 1
         runtime_card = _workbench_runtime_card(refreshed_project_view)
+        agent_ready_card = _agent_ready_card_payload(refreshed_project_view) if runtime_ready else None
+        if isinstance(agent_ready_card, dict):
+            next_command = agent_ready_card.get("next_command")
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -3809,6 +3863,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 "runtime",
                 next_command=next_command,
                 project_view=refreshed_project_view,
+                agent_ready_card=agent_ready_card,
             ),
             "plan_id": None,
             "review": None,
@@ -3818,6 +3873,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": None,
             "inbox_card": None,
             "approval_card": None,
+            "agent_ready_card": agent_ready_card,
             "runtime_card": runtime_card,
             "queue_card": None,
             "operator_card": None,

@@ -389,6 +389,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "capture_card",
     "dispatch_preview_card",
     "dispatch_batch_preview_card",
+    "agent_ready_card",
     "inbox_card",
     "trace_card",
     "approval_card",
@@ -1012,6 +1013,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_card_fields": list(LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_item_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
+        "agent_ready_card_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
@@ -1060,6 +1062,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_dispatch_batch_preview_item_fields"] = list(
             LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS
         )
+        payload["example_agent_ready_card_fields"] = list(example["agent_ready_card"])
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
         payload["example_operator_card_fields"] = list(example["operator_card"])
@@ -1995,6 +1998,22 @@ def _validate_runtime_card_contract(errors: list[str], runtime_card: dict[str, o
         errors.append(f"{prefix}: runtime_card.agents must be a list")
 
 
+def _validate_agent_ready_card_contract(errors: list[str], agent_ready_card: dict[str, object]) -> None:
+    for field in AGENT_RUNTIME_READY_RESPONSE_FIELDS:
+        if field not in agent_ready_card:
+            errors.append(f"agent_ready_card: missing ready field: {field}")
+    if agent_ready_card.get("mode") != "agent_runtime_ready":
+        errors.append("agent_ready_card.mode must be agent_runtime_ready")
+    runtime_card = agent_ready_card.get("runtime_card")
+    if isinstance(runtime_card, dict):
+        _validate_runtime_card_contract(errors, runtime_card, prefix="agent_ready_card.runtime_card")
+    elif "runtime_card" in agent_ready_card:
+        errors.append("agent_ready_card.runtime_card must be an object")
+    spawn_commands = agent_ready_card.get("spawn_commands")
+    if not isinstance(spawn_commands, list):
+        errors.append("agent_ready_card.spawn_commands must be a list")
+
+
 def _validate_queue_card_contract(errors: list[str], queue_card: dict[str, object], *, prefix: str) -> None:
     for field in WORKBENCH_QUEUE_CARD_FIELDS:
         if field not in queue_card:
@@ -2139,6 +2158,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_leader_chat_dispatch_batch_preview_card_contract(errors, dispatch_batch_preview_card)
     elif "dispatch_batch_preview_card" in payload and dispatch_batch_preview_card is not None:
         errors.append("dispatch_batch_preview_card must be an object")
+    agent_ready_card = payload.get("agent_ready_card")
+    if isinstance(agent_ready_card, dict):
+        _validate_agent_ready_card_contract(errors, agent_ready_card)
+    elif "agent_ready_card" in payload and agent_ready_card is not None:
+        errors.append("agent_ready_card must be an object")
     leader_action_card = payload.get("leader_action_card")
     leader_action = payload.get("leader_action")
     if isinstance(leader_action_card, dict):
@@ -2987,6 +3011,7 @@ def leader_chat_example() -> dict[str, object]:
     recovery = project_view["recovery"]
     next_command = recovery["next_command"]
     continue_card = continue_example()
+    agent_ready_card = agent_runtime_example()["ready"]
     runtime_card = workbench_example()["runtime_card"]
     queue_card = workbench_example()["queue_card"]
     operator_card = workbench_example()["operator_card"]
@@ -3045,6 +3070,7 @@ def leader_chat_example() -> dict[str, object]:
         "capture_card": None,
         "dispatch_preview_card": None,
         "dispatch_batch_preview_card": None,
+        "agent_ready_card": agent_ready_card,
         "inbox_card": None,
         "trace_card": None,
         "approval_card": None,

@@ -671,6 +671,7 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["explanation_fields"] == expected["explanation_fields"]
     assert payload["capture_card_fields"] == expected["capture_card_fields"]
     assert payload["dispatch_preview_card_fields"] == expected["dispatch_preview_card_fields"]
+    assert payload["agent_ready_card_fields"] == expected["agent_ready_card_fields"]
     assert payload["trace_card_fields"] == expected["trace_card_fields"]
     assert payload["trace_message_fields"] == expected["trace_message_fields"]
     assert payload["trace_inbox_item_fields"] == expected["trace_inbox_item_fields"]
@@ -2127,6 +2128,8 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     assert set(payload["example_response_fields"]) == set(example)
     assert payload["example_explanation_fields"] == payload["explanation_fields"]
     assert set(payload["example_explanation_fields"]) == set(example["leader_explanation"])
+    assert payload["example_agent_ready_card_fields"] == payload["agent_ready_card_fields"]
+    assert set(payload["example_agent_ready_card_fields"]) == set(example["agent_ready_card"])
     assert payload["example_workbench_control_registry_item_fields"] == (
         payload["workbench_control_registry_item_fields"]
     )
