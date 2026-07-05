@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Guard Leader capability placeholder controls
+
+- 加强 `validate_leader_chat_contract()`：capability control 的命令只要包含 `<...>` 模板占位符，就必须保持 disabled，避免 GUI 把缺少参数的模板命令渲染成可直接执行按钮。
+- 新增契约红测覆盖 `agentdeck leader plan --task <goal>` 这类 placeholder control 被错误 enabled 的情况；保持既有 blocker 规则继续要求 disabled control 说明缺少的输入。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 placeholder controls 是 contract gate，不只是 UI 展示建议。
+- 完整验证：已先确认红测失败，validator 最初允许 enabled placeholder control；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_placeholder_controls_disabled -q` 1 项通过；leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 138 项通过；`conda run -n agentdeck pytest -q` 210 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-help-placeholder-controls-disabled-smoke-ok`。
+
 ### Current - Route Leader review capability to explicit command
 
 - 调整 `capability_card` 的 `review` 能力：GUI-ready control 现在推荐 `agentdeck leader review --plan-id <plan_id>`，而不是复用自然语言 chat 模板，让命令面板能直接指向当前本地 Leader review loop。

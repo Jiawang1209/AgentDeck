@@ -1726,12 +1726,18 @@ def _validate_capability_controls(errors: list[str], item: dict[str, object]) ->
                     errors.append("capability_card.capabilities.controls: command must match capability command")
                 if control.get("safety") != item.get("safety"):
                     errors.append("capability_card.capabilities.controls: safety must match capability safety")
+                if _command_has_placeholder(control.get("command")) and control.get("enabled") is not False:
+                    errors.append("capability_card.capabilities.controls: placeholder commands must be disabled")
                 if control.get("enabled") is False and not control.get("blocker"):
                     errors.append("capability_card.capabilities.controls: disabled controls must include blocker")
             else:
                 errors.append("capability_card.capabilities.controls items must be objects")
     elif "controls" in item:
         errors.append("capability_card.capabilities.controls must be a list")
+
+
+def _command_has_placeholder(command: object) -> bool:
+    return isinstance(command, str) and "<" in command and ">" in command
 
 
 def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]:
