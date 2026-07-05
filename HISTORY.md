@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add Leader queue chat mode
+
+- 新增自然语言只读 queue/operator 意图：`agentdeck leader chat --message "查看队列"` / `"查看控制面"` 会进入 `mode=queue`，返回复用 workbench 投影的 `queue_card` 和 `operator_card`，并展示当前 active queue、next_command、preview/apply/explicit controls 和 blocker。
+- 扩展 Leader chat response contract：新增顶层 `queue_card` 和 `operator_card`，`agentdeck contract leader-chat` 现在公开 `queue_card_fields`、`operator_card_fields`、`example_queue_card_fields` 和 `example_operator_card_fields`，供 GUI/自然语言壳发现队列控制面字段。
+- 抽出 `_active_queue_source()`，让 workbench 和 Leader chat queue mode 共享同一套 active queue 判断；`validate_leader_chat_contract()` 会校验 queue/operator card 字段，并要求它们的 `next_command` 与 chat 顶层一致。
+- queue chat mode 只记录 chat turn，不创建或应用 Leader action、不 approve/reject/dispatch、不 ack inbox、不 refresh runtime、不发送 tmux 输入；实际可执行入口仍通过 `operator_card.controls[]` 显式展示。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 queue/operator 是展示和显式控制入口，不代表自动执行许可。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_queue_without_applying_action -q` 最初返回 `mode=review`；实现后目标测试通过，leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 123 项通过；`conda run -n agentdeck pytest -q` 195 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `leader-chat-queue-mode-smoke-ok`。
+
 ### Current - Add Leader runtime chat mode
 
 - 新增自然语言只读 runtime 意图：`agentdeck leader chat --message "查看 runtime"` / `"查看终端"` 会进入 `mode=runtime`，返回复用 workbench runtime 投影的 `runtime_card`，并建议 `next_command=agentdeck agent list`。

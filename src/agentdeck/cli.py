@@ -278,15 +278,20 @@ def _leader_chat_recovery_cards(
     return None, None
 
 
+def _active_queue_source(project_view: dict[str, object]) -> str:
+    recovery = project_view.get("recovery", {})
+    recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+    source = recommended_action.get("source") if isinstance(recommended_action, dict) else None
+    return source if source in ("leader_action", "inbox", "approval", "provider_health", "runtime") else "none"
+
+
 def _workbench_snapshot_payload(
     project_view: dict[str, object], store: StateStore, since_event_id: str | None = None
 ) -> dict[str, object]:
     continue_card = _continue_card_payload(project_view, store)
     inbox_card, approval_card = _leader_chat_recovery_cards(project_view, store)
     recovery = project_view.get("recovery", {})
-    recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
-    source = recommended_action.get("source") if isinstance(recommended_action, dict) else None
-    active_queue_source = source if source in ("leader_action", "inbox", "approval", "provider_health", "runtime") else "none"
+    active_queue_source = _active_queue_source(project_view)
     leader_action = continue_card.get("leader_action")
     return {
         "ok": True,
@@ -1623,6 +1628,24 @@ def _chat_wants_runtime(message: str) -> bool:
     )
 
 
+def _chat_wants_queue(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(
+        token in normalized
+        for token in [
+            "queue",
+            "operator",
+            "actions",
+            "action queue",
+            "队列",
+            "操作面",
+            "控制面",
+            "下一步按钮",
+            "主操作",
+        ]
+    )
+
+
 def _chat_inbox_agent_id(message: str, config: ProjectConfig) -> str | None:
     normalized = message.strip().lower()
     mentions_inbox = any(token in normalized for token in ["inbox", "收件箱", "消息", "mailbox"])
@@ -1785,6 +1808,20 @@ def _leader_chat_explanation(
             "safety": "inspect",
             "requires_explicit_user": False,
         }
+    if mode == "queue":
+        recovery = project_view.get("recovery") if isinstance(project_view.get("recovery"), dict) else {}
+        recovery_action = recovery.get("recommended_action") if isinstance(recovery.get("recommended_action"), dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader recommends inspecting the active queue and operator controls without applying actions.",
+            "reason": "human asked to inspect the queue control surface",
+            "next_command": next_command,
+            "recommended_action_id": recovery_action.get("target_id"),
+            "action_kind": recovery_action.get("source"),
+            "action_status": recovery.get("status"),
+            "safety": recovery_action.get("safety"),
+            "requires_explicit_user": bool(recovery_action.get("requires_explicit_user")),
+        }
     if mode == "inbox":
         head = _inbox_head_item(inbox_card) if isinstance(inbox_card, dict) else None
         head_inbox_id = head.get("inbox_id") if isinstance(head, dict) else None
@@ -1914,6 +1951,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "inbox_card": None,
             "approval_card": None,
             "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
             "result": result,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -1979,6 +2018,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "inbox_card": inbox_card,
             "approval_card": approval_card,
             "runtime_card": runtime_card,
+            "queue_card": None,
+            "operator_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2029,6 +2070,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "inbox_card": None,
             "approval_card": None,
             "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
             "provider_health": _workbench_provider_health(refreshed_project_view),
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -2080,6 +2123,73 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "inbox_card": None,
             "approval_card": None,
             "runtime_card": runtime_card,
+            "queue_card": None,
+            "operator_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_queue(args.message):
+        plans = store.list_plans()
+        plan_id = str(plans[-1]["plan_id"]) if plans else None
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        continue_card = _continue_card_payload(refreshed_project_view, store)
+        active_queue_source = _active_queue_source(refreshed_project_view)
+        queue_card = _workbench_queue_card(refreshed_project_view, continue_card, active_queue_source)
+        operator_card = _workbench_operator_card(refreshed_project_view, continue_card, active_queue_source)
+        next_command = continue_card.get("next_command")
+        turn = store.record_chat_turn(
+            mode="queue",
+            message=args.message,
+            plan_id=plan_id,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="queue",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "queue",
+                    "plan_id": plan_id,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        continue_card = _continue_card_payload(refreshed_project_view, store)
+        active_queue_source = _active_queue_source(refreshed_project_view)
+        queue_card = _workbench_queue_card(refreshed_project_view, continue_card, active_queue_source)
+        operator_card = _workbench_operator_card(refreshed_project_view, continue_card, active_queue_source)
+        next_command = continue_card.get("next_command")
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "queue",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "queue",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": plan_id,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": queue_card,
+            "operator_card": operator_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2157,6 +2267,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "inbox_card": None,
             "approval_card": approval_card,
             "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2233,6 +2345,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "inbox_card": inbox_card,
             "approval_card": None,
             "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2280,6 +2394,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "inbox_card": None,
             "approval_card": None,
             "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
         }
         store.append_event(
             EventRecord.create(
@@ -2361,6 +2477,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         "inbox_card": None,
         "approval_card": None,
         "runtime_card": None,
+        "queue_card": None,
+        "operator_card": None,
     }
     store.append_event(
         EventRecord.create(

@@ -359,6 +359,8 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["explanation_fields"] == list(LEADER_CHAT_EXPLANATION_FIELDS)
     assert payload["continue_card_fields"] == list(CONTINUE_CARD_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
+    assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
+    assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
 
 
 def test_continue_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
@@ -1026,6 +1028,10 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert set(payload["example_continue_card_fields"]) == set(example["continue_card"])
     assert payload["example_runtime_card_fields"] == payload["runtime_card_fields"]
     assert payload["example_runtime_card_fields"] == list(example["runtime_card"])
+    assert payload["example_queue_card_fields"] == payload["queue_card_fields"]
+    assert payload["example_queue_card_fields"] == list(example["queue_card"])
+    assert payload["example_operator_card_fields"] == payload["operator_card_fields"]
+    assert payload["example_operator_card_fields"] == list(example["operator_card"])
     assert example["leader_explanation"]["recommended_action_id"] == "act_example"
     assert example["leader_explanation"]["safety"] == "safe_apply"
     assert example["mode"] == "continue"

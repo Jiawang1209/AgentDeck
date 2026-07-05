@@ -353,6 +353,8 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "inbox_card",
     "approval_card",
     "runtime_card",
+    "queue_card",
+    "operator_card",
 )
 
 CONTINUE_CARD_FIELDS = (
@@ -713,6 +715,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "explanation_fields": list(LEADER_CHAT_EXPLANATION_FIELDS),
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
+        "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
+        "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -727,6 +731,8 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_explanation_fields"] = list(example["leader_explanation"])
         payload["example_continue_card_fields"] = list(example["continue_card"])
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
+        payload["example_queue_card_fields"] = list(example["queue_card"])
+        payload["example_operator_card_fields"] = list(example["operator_card"])
         payload["example_leader_chat"] = example
     return payload
 
@@ -1292,6 +1298,25 @@ def _validate_runtime_card_contract(errors: list[str], runtime_card: dict[str, o
         errors.append(f"{prefix}: runtime_card.agents must be a list")
 
 
+def _validate_queue_card_contract(errors: list[str], queue_card: dict[str, object], *, prefix: str) -> None:
+    for field in WORKBENCH_QUEUE_CARD_FIELDS:
+        if field not in queue_card:
+            errors.append(f"{prefix}: missing queue_card field: {field}")
+    for section in ("leader_actions", "approvals", "inbox"):
+        if section in queue_card and not isinstance(queue_card.get(section), dict):
+            errors.append(f"{prefix}: queue_card.{section} must be an object")
+
+
+def _validate_operator_card_contract(errors: list[str], operator_card: dict[str, object], *, prefix: str) -> None:
+    for field in WORKBENCH_OPERATOR_CARD_FIELDS:
+        if field not in operator_card:
+            errors.append(f"{prefix}: missing operator_card field: {field}")
+    if "requires_explicit_user" in operator_card and not isinstance(operator_card.get("requires_explicit_user"), bool):
+        errors.append(f"{prefix}: operator_card.requires_explicit_user must be a boolean")
+    if "can_apply" in operator_card and not isinstance(operator_card.get("can_apply"), bool):
+        errors.append(f"{prefix}: operator_card.can_apply must be a boolean")
+
+
 def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, object]:
     errors: list[str] = []
     for field in LEADER_CHAT_RESPONSE_FIELDS:
@@ -1339,6 +1364,20 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_runtime_card_contract(errors, runtime_card, prefix="runtime_card")
     elif "runtime_card" in payload and runtime_card is not None:
         errors.append("runtime_card must be an object")
+    queue_card = payload.get("queue_card")
+    if isinstance(queue_card, dict):
+        _validate_queue_card_contract(errors, queue_card, prefix="queue_card")
+        if payload.get("next_command") != queue_card.get("next_command"):
+            errors.append("queue_card: next_command must match queue_card.next_command")
+    elif "queue_card" in payload and queue_card is not None:
+        errors.append("queue_card must be an object")
+    operator_card = payload.get("operator_card")
+    if isinstance(operator_card, dict):
+        _validate_operator_card_contract(errors, operator_card, prefix="operator_card")
+        if payload.get("next_command") != operator_card.get("next_command"):
+            errors.append("operator_card: next_command must match operator_card.next_command")
+    elif "operator_card" in payload and operator_card is not None:
+        errors.append("operator_card must be an object")
     return {"ok": not errors, "errors": errors}
 
 
@@ -1750,6 +1789,8 @@ def leader_chat_example() -> dict[str, object]:
     next_command = recovery["next_command"]
     continue_card = continue_example()
     runtime_card = workbench_example()["runtime_card"]
+    queue_card = workbench_example()["queue_card"]
+    operator_card = workbench_example()["operator_card"]
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -1777,6 +1818,8 @@ def leader_chat_example() -> dict[str, object]:
         "inbox_card": None,
         "approval_card": None,
         "runtime_card": runtime_card,
+        "queue_card": queue_card,
+        "operator_card": operator_card,
     }
 
 

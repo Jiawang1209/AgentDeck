@@ -672,6 +672,60 @@ def test_leader_chat_inspects_runtime_without_mutating_state(tmp_path, monkeypat
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_inspects_queue_without_applying_action(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "chat", "--message", "帮我实现任务入口"])
+    planned = json.loads(capsys.readouterr().out)
+    action_id = planned["leader_action"]["action_id"]
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看队列"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "queue"
+    assert payload["message"] == "查看队列"
+    assert payload["plan_id"] == planned["plan_id"]
+    assert payload["review"] is None
+    assert payload["leader_action"] is None
+    assert payload["continue_card"] is None
+    assert payload["inbox_card"] is None
+    assert payload["approval_card"] is None
+    assert payload["runtime_card"] is None
+    assert payload["next_command"] == f"agentdeck leader apply-action --action-id {action_id}"
+    assert payload["queue_card"]["active_queue_source"] == "leader_action"
+    assert payload["queue_card"]["next_command"] == payload["next_command"]
+    assert payload["queue_card"]["leader_actions"]["count"] == 1
+    assert payload["queue_card"]["leader_actions"]["pending"] == 1
+    assert payload["queue_card"]["leader_actions"]["recommended_action_id"] == action_id
+    assert payload["operator_card"]["source"] == "leader_action"
+    assert payload["operator_card"]["target_id"] == action_id
+    assert payload["operator_card"]["preview_command"] == f"agentdeck leader action --action-id {action_id}"
+    assert payload["operator_card"]["apply_command"] == payload["next_command"]
+    assert payload["operator_card"]["can_apply"] is True
+    assert payload["operator_card"]["controls"][0]["command"] == payload["operator_card"]["preview_command"]
+    assert payload["operator_card"]["controls"][1]["command"] == payload["next_command"]
+    assert payload["leader_explanation"]["mode"] == "queue"
+    assert payload["leader_explanation"]["recommended_action_id"] == action_id
+    assert payload["leader_explanation"]["action_kind"] == "leader_action"
+    assert payload["leader_explanation"]["action_status"] == "action_required"
+    assert payload["leader_explanation"]["safety"] == "safe_apply"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["leader_explanation"]["next_command"] == payload["next_command"]
+    assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
+    assert payload["project_view"]["chat_turns"]["items"][-1]["mode"] == "queue"
+
+    state_after = StateStore(root).load()
+    assert [turn["mode"] for turn in state_after["chat_turns"]] == ["plan", "queue"]
+    assert state_after["chat_turns"][1]["next_command"] == payload["next_command"]
+    assert state_after["chat_turns"][1]["action_kind"] == "queue"
+    assert len(state_after["leader_actions"]) == 1
+    assert state_after["leader_actions"][0]["action_id"] == action_id
+    assert state_after["leader_actions"][0]["status"] == "pending"
+    assert state_after["approvals"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

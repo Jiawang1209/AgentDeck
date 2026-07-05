@@ -118,6 +118,7 @@ Worker 不应该：
 - `status.recovery` 必须把 `stale` runtime bindings 作为 `runtime_stale` 恢复状态暴露，`recommended_action.source=runtime` 且 `next_command=agentdeck agent refresh`；`pending.runtime_stale` 是 ProjectView recovery pending 契约字段。
 - `agentdeck leader chat --message "继续"` 在 recovery source 为 `runtime` 时必须嵌入 `runtime_card`，复用 workbench runtime card 字段规则；它只展示 `agentdeck agent refresh` 入口，不自动 refresh、spawn、stop、capture 或发送 tmux 输入。
 - `agentdeck leader chat --message "查看 runtime"` / `"查看终端"` 必须进入只读 `mode=runtime`，嵌入同一张 `runtime_card` 并建议 `agentdeck agent list`；它不创建 plan/action/approval/message/job/inbox，也不执行任何 runtime 操作。
+- `agentdeck leader chat --message "查看队列"` / `"查看控制面"` 必须进入只读 `mode=queue`，嵌入 workbench 同源 `queue_card` / `operator_card` 并展示 next/apply/explicit controls；它不创建或应用 action、不审批、不派发、不 ack、不 refresh runtime、不发送 tmux 输入。
 - `agentdeck contract leader-actions` 返回 Leader action queue 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定队列示例，供 GUI 原型使用。
 - `agentdeck contract leader-action` 返回单个 Leader action 详情契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 action detail 示例，供 GUI 原型使用。
 - `agentdeck contract approvals` 返回人类审批队列契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 approval queue 示例，供 GUI 原型使用。
