@@ -252,6 +252,8 @@ agentdeck trace --id inb_xxx
 
 `status.recovery` 会汇总当前恢复入口：`status`、`reason`、`next_command`、`recommended_action`、pending 计数、可应用的 `leader_action`，以及最近审计事件摘要。`recommended_action` 包含 label、command、safety、requires_explicit_user、source 和 target_id，GUI 可以用它直接渲染下一步按钮或检查入口，并把按钮关联回 action、approval 或 inbox item。GUI 和 Leader chat loop 可以优先用 recovery 判断“现在该继续什么”，而不需要散读 state 或自行推断。
 
+当 recovery 进入 `inbox_pending` 时，`next_command` 和 `recommended_action.command` 会指向具体 mailbox，例如 `agentdeck inbox --agent planner`，而不是退回宽泛的 `agentdeck status`。
+
 如果没有 pending action、approval 或 inbox item，但存在 `leader_errors[]`，`status.recovery` 会返回 `status=leader_error`，并推荐 `agentdeck status` 作为 inspect 动作，帮助 GUI 或人类先检查 Leader 错误。
 
 `status.recovery.pending` 也会包含 `leader_errors` 计数，让 GUI 可以在统一恢复面显示还有多少 Leader 错误待检查。

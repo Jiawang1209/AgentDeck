@@ -298,7 +298,7 @@ Only the earliest pending item is the actionable mailbox head for an agent. Use 
 | `action_required` with runtime action | explicit command from action | `explicit_runtime` | `action_id` |
 | `dispatch_ready` | `agentdeck approval dispatch --approval-id <id>` | `explicit_runtime` | `approval_id` |
 | `approval_required` | `agentdeck approval list` | `inspect` | first pending `approval_id` |
-| `inbox_pending` | `agentdeck status` | `inspect` | first pending `inbox_id` |
+| `inbox_pending` | `agentdeck inbox --agent <id>` | `inspect` | first pending `inbox_id` |
 | `leader_error` | `agentdeck status` | `inspect` | latest `error_id` |
 | `idle` | `null` | none | none |
 

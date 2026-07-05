@@ -987,14 +987,14 @@ def test_status_recovery_matrix_for_gui_actions(tmp_path, monkeypatch, capsys) -
         root,
         {
             "approvals": [],
-            "inbox": {"planner": [{"inbox_id": "inb_head", "status": "pending"}]},
+            "inbox": {"planner": [{"inbox_id": "inb_head", "to_agent": "planner", "status": "pending"}]},
         },
         capsys,
     )
     assert inbox_recovery["status"] == "inbox_pending"
     assert inbox_recovery["recommended_action"] == {
         "label": "Inspect pending inbox",
-        "command": "agentdeck status",
+        "command": "agentdeck inbox --agent planner",
         "safety": "inspect",
         "requires_explicit_user": False,
         "source": "inbox",

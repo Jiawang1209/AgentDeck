@@ -1019,18 +1019,21 @@ class StateStore:
                 }
             )
         elif pending_inbox_items:
+            inbox_item = pending_inbox_items[0]
+            agent_id = self._inbox_item_agent_id(state.get("inbox", {}), inbox_item)
+            next_command = f"agentdeck inbox --agent {agent_id}" if agent_id else "agentdeck status"
             summary.update(
                 {
                     "status": "inbox_pending",
                     "reason": "agent inbox has pending items",
-                    "next_command": "agentdeck status",
+                    "next_command": next_command,
                     "recommended_action": self._recommended_action(
                         label="Inspect pending inbox",
-                        command="agentdeck status",
+                        command=next_command,
                         safety="inspect",
                         requires_explicit_user=False,
                         source="inbox",
-                        target_id=pending_inbox_items[0].get("inbox_id"),
+                        target_id=inbox_item.get("inbox_id"),
                     ),
                 }
             )
@@ -1052,6 +1055,17 @@ class StateStore:
                 }
             )
         return summary
+
+    @staticmethod
+    def _inbox_item_agent_id(inbox: dict[str, list[dict[str, Any]]], item: dict[str, Any]) -> str | None:
+        to_agent = item.get("to_agent")
+        if to_agent:
+            return str(to_agent)
+        inbox_id = item.get("inbox_id")
+        for agent_id, items in inbox.items():
+            if any(candidate is item or candidate.get("inbox_id") == inbox_id for candidate in items):
+                return str(agent_id)
+        return None
 
     @staticmethod
     def _recommended_action(

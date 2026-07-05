@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Point inbox recovery at concrete mailbox commands
+
+- 调整 `status.recovery.status=inbox_pending` 的下一步命令：从宽泛的 `agentdeck status` 改为具体 `agentdeck inbox --agent <id>`。
+- `recommended_action.command` 与 `next_command` 保持一致，仍为 inspect 安全级别，并继续用 pending inbox item 的 `inbox_id` 作为 `target_id`。
+- 新增 `_inbox_item_agent_id()`，优先使用 inbox item 的 `to_agent`，并兼容旧 state 中缺少 `to_agent` 时从 inbox map owner 反查 agent id。
+- 更新 `docs/contracts/project-view-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 GUI/continue 可直接打开具体 mailbox。
+- 保持安全边界：本轮只调整只读 recovery 推荐命令，不 ack inbox、不 dispatch、不 capture reply、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_recovery_matrix_for_gui_actions -q` 最初因 `recommended_action.command` 仍为 `agentdeck status` 失败；实现后 recovery/continue 目标测试 2 项通过；ProjectView contract 目标测试 2 项通过；`conda run -n agentdeck pytest -q` 141 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `agentdeck status` 返回 `status-inbox-command-ok`，`agentdeck continue` 返回 `continue-inbox-command-ok`。
+
 ### Current - Suggest approved approval dispatch through Leader chat
 
 - 新增 `leader chat` approval dispatch 意图识别：`派发当前审批` 会在存在 approved approval 时建议第一条 approved approval 的 `dispatch_command`。
