@@ -4,6 +4,12 @@
 
 ## 2026-07-05
 
+### Current - Surface Leader chat contract in workbench
+
+- 扩展 `workbench.contracts_card`：新增 `leader_chat_contract=agentdeck contract leader-chat`，让 GUI/TUI 从一屏工作台直接发现自然语言 Leader chat 响应契约和 capability placeholder discovery。
+- 同步 `WORKBENCH_CONTRACTS_CARD_FIELDS`、workbench example、live `_workbench_contracts_card()`、contract docs、README、CLAUDE.md、AGENT.md 和测试。
+- 完整验证：已先确认红测失败，workbench contracts_card 最初缺少 `leader_chat_contract`；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q` 2 项通过；相关 contract/CLI 测试 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 134 项通过；`conda run -n agentdeck pytest -q` 212 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `workbench-leader-chat-contract-smoke-ok`。
+
 ### Current - Expose Leader capability placeholder discovery
 
 - 扩展 `agentdeck contract leader-chat`：新增 `capability_placeholder_fields` 和 `capability_placeholders`，让 GUI 能机器发现 placeholder 白名单及其 blocker，而不是解析 Markdown 文档。

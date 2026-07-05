@@ -607,6 +607,7 @@ def _workbench_contracts_card() -> dict[str, object]:
         "contract_index_contract": "docs/contracts/contract-index-schema.md",
         "workbench_contract": "agentdeck contract workbench",
         "agent_runtime_contract": "agentdeck contract agent-runtime",
+        "leader_chat_contract": "agentdeck contract leader-chat",
         "project_view_contract": "agentdeck contract project-view",
         "events_contract": "agentdeck contract events",
         "doctor_contract": "agentdeck contract doctor",
