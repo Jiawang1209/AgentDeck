@@ -761,6 +761,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     } >= {
         ("leader", "leader_card", "continue", "leader"),
         ("policy", "control_mode_card", "set_mode", None),
+        ("runtime", "runtime_card", "terminal", "planner"),
         ("runtime", "runtime_card", "capture", "planner"),
         ("operator", "operator_card", "apply", None),
     }
@@ -784,10 +785,21 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["runtime_card"]["agents"][0]["capture_command"] == (
         "agentdeck agent capture --agent planner --lines 200"
     )
+    assert example["runtime_card"]["agents"][0]["terminal_command"] == (
+        "agentdeck agent terminal --agent planner"
+    )
     assert example["runtime_card"]["agents"][0]["send_command_template"] == (
         "agentdeck agent send --agent planner --text <text>"
     )
     assert example["runtime_card"]["agents"][0]["controls"][0] == {
+        "kind": "terminal",
+        "label": "Open terminal",
+        "command": "agentdeck agent terminal --agent planner",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert example["runtime_card"]["agents"][0]["controls"][1] == {
         "kind": "capture",
         "label": "Capture pane output",
         "command": "agentdeck agent capture --agent planner --lines 200",
@@ -795,7 +807,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         "enabled": True,
         "blocker": None,
     }
-    assert example["runtime_card"]["agents"][0]["controls"][1] == {
+    assert example["runtime_card"]["agents"][0]["controls"][2] == {
         "kind": "send",
         "label": "Send input",
         "command": "agentdeck agent send --agent planner --text <text>",

@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Expose terminal controls in workbench runtime card
+
+- 扩展 workbench `runtime_card.agents[]`：每个 runtime agent 现在公开 `terminal_command=agentdeck agent terminal --agent <id>`，供 GUI/TUI 直接跳到只读 terminal card。
+- 调整 runtime controls：running agent 优先暴露 enabled `kind=terminal` / `Open terminal`；未 running agent 也暴露 disabled terminal control，并给出 `agent is not running` blocker。
+- 调整 `agentdeck controls` / workbench `control_registry[]`：runtime scope 现在保留 `kind=terminal` item，GUI 不需要解析 `Open terminal` 文案或命令字符串就能识别打开终端入口。
+- 保持只读边界：terminal control 只打开/定位 terminal card，不读取 pane 输出、不 attach tmux、不发送输入、不写 state；capture/send/stop/spawn 仍保持各自原有安全语义。
+- 同步 README、`docs/contracts/workbench-schema.md`、`docs/contracts/controls-schema.md`、CLAUDE.md 和 AGENT.md。
+- 验证记录：已先确认红测失败，workbench runtime agent 最初缺少 `terminal_command`，control registry 最初缺少 runtime `kind=terminal` item；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_agent_terminal_outputs_visible_pane_card_without_mutating_state -q` 3 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_agent_terminal_outputs_visible_pane_card_without_mutating_state tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift -q` 5 项通过；全量测试先暴露 workbench contract discovery 和 leader runtime chat 旧断言未同步 `terminal_command` / terminal control 顺序，修正后复跑失败项 2 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 273 项通过。
+
 ### Current - Add read-only agent terminal card
 
 - 新增只读入口 `agentdeck agent terminal --agent <id>`：返回指定 running agent 的 role/provider/workspace/status、pane/session/cwd、tmux `attach_command`、`select_pane_command`、capture/send/stop/inbox/refresh 命令和 runtime controls。

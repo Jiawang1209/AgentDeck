@@ -39,7 +39,7 @@ Top-level discovery fields:
 
 `source_command` stays `agentdeck workbench` because the registry is derived from the workbench snapshot. `default_command` is `agentdeck controls`, the dedicated command palette entrypoint GUI/TUI clients can refresh directly.
 
-Each `items[]` entry uses the workbench `control_registry_item_fields`. The registry includes Leader controls, concrete control-mode policy controls, runtime controls, and operator controls from the same workbench snapshot. Policy items are derived from `control_mode_card.active_controls[]`: GUI clients should render the concrete `agentdeck policy set-mode --mode ask|approve|autonomous` items directly, keep the current mode disabled, and keep the blocked autonomous item visible but unavailable. When the operator action is batch approval dispatch, the registry preserves `kind=dispatch_ready` for the `agentdeck approval dispatch-ready --confirm` item so clients can identify it without parsing labels or command strings.
+Each `items[]` entry uses the workbench `control_registry_item_fields`. The registry includes Leader controls, concrete control-mode policy controls, runtime controls, and operator controls from the same workbench snapshot. Policy items are derived from `control_mode_card.active_controls[]`: GUI clients should render the concrete `agentdeck policy set-mode --mode ask|approve|autonomous` items directly, keep the current mode disabled, and keep the blocked autonomous item visible but unavailable. Runtime terminal items preserve `kind=terminal` for `agentdeck agent terminal --agent <id>` so clients can render an "Open terminal" action without parsing labels or command strings. When the operator action is batch approval dispatch, the registry preserves `kind=dispatch_ready` for the `agentdeck approval dispatch-ready --confirm` item so clients can identify it without parsing labels or command strings.
 
 - `scope`
 - `card`
@@ -57,3 +57,4 @@ Safety rules:
 - It does not create chat turns, plans, approvals, messages, jobs, replies, or inbox items.
 - It does not call a provider, read tmux pane output, send tmux input, or execute any control.
 - It is a projection of workbench `control_registry[]`, not a second source of control state.
+- Runtime `kind=terminal` controls are inspect-only terminal card entry points; they do not attach tmux, capture pane output, send input, or mutate state.

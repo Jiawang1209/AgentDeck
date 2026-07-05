@@ -761,6 +761,9 @@ def test_leader_chat_inspects_runtime_without_mutating_state(tmp_path, monkeypat
     assert payload["runtime_card"]["agents"][0]["agent_id"] == "planner"
     assert payload["runtime_card"]["agents"][0]["pane_id"] == "%42"
     assert payload["runtime_card"]["agents"][0]["controls"][0]["command"] == (
+        "agentdeck agent terminal --agent planner"
+    )
+    assert payload["runtime_card"]["agents"][0]["controls"][1]["command"] == (
         "agentdeck agent capture --agent planner --lines 200"
     )
     assert payload["leader_explanation"]["mode"] == "runtime"

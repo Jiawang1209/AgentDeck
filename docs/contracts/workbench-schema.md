@@ -182,7 +182,7 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
 
 ## Control Registry
 
-`control_registry[]` is a flattened, read-only command palette index derived from existing card controls. Each item uses `scope`, `card`, `kind`, `label`, `command`, `safety`, `enabled`, `blocker`, and `agent_id`. It currently indexes `leader_card.controls[]`, `control_mode_card.active_controls[]`, every `runtime_card.agents[].controls[]`, and `operator_card.controls[]`. When the operator exposes batch approval dispatch, the registry must preserve the operator control as `kind=dispatch_ready` for `agentdeck approval dispatch-ready --confirm` so clients can identify it without parsing labels or command strings. Clients may render this as a command palette or toolbar, but it is not a second state source and does not grant permission beyond each item's `safety`, `enabled`, and `blocker`.
+`control_registry[]` is a flattened, read-only command palette index derived from existing card controls. Each item uses `scope`, `card`, `kind`, `label`, `command`, `safety`, `enabled`, `blocker`, and `agent_id`. It currently indexes `leader_card.controls[]`, `control_mode_card.active_controls[]`, every `runtime_card.agents[].controls[]`, and `operator_card.controls[]`. Runtime terminal controls must be preserved as `kind=terminal` so clients can render a direct "Open terminal" affordance without parsing `agentdeck agent terminal --agent <id>`. When the operator exposes batch approval dispatch, the registry must preserve the operator control as `kind=dispatch_ready` for `agentdeck approval dispatch-ready --confirm` so clients can identify it without parsing labels or command strings. Clients may render this as a command palette or toolbar, but it is not a second state source and does not grant permission beyond each item's `safety`, `enabled`, and `blocker`.
 
 ## Provider Health
 
@@ -233,10 +233,19 @@ The card never exposes API key values and never calls the provider. It includes 
       "cwd": "/workspace/project",
       "spawn_command": "agentdeck agent spawn --agent planner",
       "stop_command": "agentdeck agent stop --agent planner",
+      "terminal_command": "agentdeck agent terminal --agent planner",
       "capture_command": "agentdeck agent capture --agent planner --lines 200",
       "send_command_template": "agentdeck agent send --agent planner --text <text>",
       "inbox_command": "agentdeck inbox --agent planner",
       "controls": [
+        {
+          "kind": "terminal",
+          "label": "Open terminal",
+          "command": "agentdeck agent terminal --agent planner",
+          "safety": "inspect",
+          "enabled": true,
+          "blocker": null
+        },
         {
           "kind": "capture",
           "label": "Capture pane output",
@@ -259,7 +268,7 @@ The card never exposes API key values and never calls the provider. It includes 
 }
 ```
 
-The card does not capture pane output and does not prove task completion. It only surfaces the configured agent identity, role, provider, workspace mode, current runtime binding already present in ProjectView, and explicit runtime commands a GUI can render. `refresh_command` is an explicit reconciliation command that checks recorded `running` panes against tmux and marks missing panes as `stale`; `agentdeck workbench` does not run it automatically. `capture_command` is a read-only observation command. `send_command_template` is an explicit runtime input template and must not be executed automatically. GUI clients should prefer `controls[]` for rendering buttons; disabled controls include a `blocker` such as `agent is not running`.
+The card does not capture pane output and does not prove task completion. It only surfaces the configured agent identity, role, provider, workspace mode, current runtime binding already present in ProjectView, and explicit runtime commands a GUI can render. `refresh_command` is an explicit reconciliation command that checks recorded `running` panes against tmux and marks missing panes as `stale`; `agentdeck workbench` does not run it automatically. `terminal_command` opens the read-only terminal card for the agent; it does not attach tmux by itself. `capture_command` is a read-only observation command. `send_command_template` is an explicit runtime input template and must not be executed automatically. GUI clients should prefer `controls[]` for rendering buttons; disabled controls include a `blocker` such as `agent is not running`.
 
 ## Role Card
 

@@ -903,6 +903,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "cwd",
         "spawn_command",
         "stop_command",
+        "terminal_command",
         "capture_command",
         "send_command_template",
         "inbox_command",
@@ -1177,10 +1178,19 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert planner_runtime["cwd"] == str(root)
     assert planner_runtime["spawn_command"] == "agentdeck agent spawn --agent planner"
     assert planner_runtime["stop_command"] == "agentdeck agent stop --agent planner"
+    assert planner_runtime["terminal_command"] == "agentdeck agent terminal --agent planner"
     assert planner_runtime["capture_command"] == "agentdeck agent capture --agent planner --lines 200"
     assert planner_runtime["send_command_template"] == "agentdeck agent send --agent planner --text <text>"
     assert planner_runtime["inbox_command"] == "agentdeck inbox --agent planner"
     assert planner_runtime["controls"] == [
+        {
+            "kind": "terminal",
+            "label": "Open terminal",
+            "command": "agentdeck agent terminal --agent planner",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
         {
             "kind": "capture",
             "label": "Capture pane output",
@@ -1224,9 +1234,17 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "enabled": True,
         "blocker": None,
     }
-    assert coder_runtime["controls"][1]["kind"] == "capture"
-    assert coder_runtime["controls"][1]["enabled"] is False
-    assert coder_runtime["controls"][1]["blocker"] == "agent is not running"
+    assert coder_runtime["controls"][1] == {
+        "kind": "terminal",
+        "label": "Open terminal",
+        "command": "agentdeck agent terminal --agent coder",
+        "safety": "inspect",
+        "enabled": False,
+        "blocker": "agent is not running",
+    }
+    assert coder_runtime["controls"][2]["kind"] == "capture"
+    assert coder_runtime["controls"][2]["enabled"] is False
+    assert coder_runtime["controls"][2]["blocker"] == "agent is not running"
     assert payload["ledger_card"]["messages"]["count"] == 1
     assert payload["ledger_card"]["messages"]["items"][0]["trace_command"] == "agentdeck trace --id msg_workbench"
     assert payload["ledger_card"]["jobs"]["count"] == 1
@@ -3009,6 +3027,14 @@ def test_agent_terminal_outputs_visible_pane_card_without_mutating_state(
         "inbox_command": "agentdeck inbox --agent planner",
         "refresh_command": "agentdeck agent refresh",
         "controls": [
+            {
+                "kind": "terminal",
+                "label": "Open terminal",
+                "command": "agentdeck agent terminal --agent planner",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
             {
                 "kind": "capture",
                 "label": "Capture pane output",
