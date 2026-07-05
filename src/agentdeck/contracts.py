@@ -352,6 +352,8 @@ DOCTOR_RESPONSE_FIELDS = (
     "configured_leader",
     "deepseek",
     "openai_compatible",
+    "codex_cli",
+    "claude_cli",
 )
 
 DOCTOR_CONFIGURED_LEADER_FIELDS = (
@@ -370,6 +372,8 @@ DOCTOR_CONFIGURED_LEADER_FIELDS = (
 DOCTOR_PROVIDER_CHECK_FIELDS = (
     "ok",
     "detail",
+    "command_path",
+    "setup_commands",
 )
 
 LEADER_CHAT_RESPONSE_FIELDS = (
@@ -3322,10 +3326,34 @@ def doctor_example() -> dict[str, object]:
         "deepseek": {
             "ok": False,
             "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+            "command_path": None,
+            "setup_commands": [
+                'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
+                'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
+                'export DEEPSEEK_MODEL="deepseek-chat"',
+            ],
         },
         "openai_compatible": {
             "ok": False,
             "detail": "AGENTDECK_LEADER_API_KEY is not set; provider calls are disabled",
+            "command_path": None,
+            "setup_commands": [
+                'export AGENTDECK_LEADER_API_KEY="<your-provider-api-key>"',
+                'export AGENTDECK_LEADER_BASE_URL="https://api.example.com/v1"',
+                'export AGENTDECK_LEADER_MODEL="<model-name>"',
+            ],
+        },
+        "codex_cli": {
+            "ok": True,
+            "detail": "codex is available",
+            "command_path": "/usr/local/bin/codex",
+            "setup_commands": ["codex login", "codex doctor"],
+        },
+        "claude_cli": {
+            "ok": False,
+            "detail": "claude is not found on PATH",
+            "command_path": None,
+            "setup_commands": ["claude auth", "claude doctor"],
         },
     }
 

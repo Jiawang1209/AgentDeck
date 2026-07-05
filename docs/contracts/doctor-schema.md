@@ -40,7 +40,9 @@ Use `agentdeck contract doctor --example` to include a stable GUI-ready diagnost
   "tmux": {},
   "configured_leader": {},
   "deepseek": {},
-  "openai_compatible": {}
+  "openai_compatible": {},
+  "codex_cli": {},
+  "claude_cli": {}
 }
 ```
 
@@ -68,9 +70,15 @@ Provider checks such as `deepseek` and `openai_compatible` contain:
 ```json
 {
   "ok": false,
-  "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled"
+  "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+  "command_path": null,
+  "setup_commands": [
+    "export DEEPSEEK_API_KEY=\"<your-deepseek-api-key>\""
+  ]
 }
 ```
+
+`codex_cli` and `claude_cli` use the same provider check shape, with `command_path` set to the resolved local executable path when the command is available and `setup_commands` set to the relevant login/doctor commands.
 
 ## Boundaries
 
@@ -79,5 +87,6 @@ Provider checks such as `deepseek` and `openai_compatible` contain:
 - `setup_commands` must only contain placeholder commands that a human can copy and edit outside AgentDeck.
 - Output must never include real API key values.
 - API-backed providers such as `deepseek` and `openai-compatible` report missing environment variable names and set `command_path=null`; CLI-backed providers such as `codex-cli` and `claude-cli` report whether the local command is available on PATH and expose the resolved command path when found.
+- Top-level provider checks are diagnostics for provider selection. The top-level `ok` remains tied to tmux, config existence, and the currently configured Leader provider readiness.
 - GUI clients can use `agentdeck contract doctor` to discover fields before rendering setup guidance.
 - The discovery payload should expose adjacent workbench, Leader chat, and Leader review contracts so setup screens can link directly to the main control surfaces.

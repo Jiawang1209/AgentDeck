@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add CLI backend checks to doctor diagnostics
+
+- 扩展 `agentdeck doctor` 顶层 provider diagnostics：除了当前配置 Leader 的 `configured_leader` 外，现在还返回 `deepseek`、`openai_compatible`、`codex_cli` 和 `claude_cli` 四个 provider check。
+- 扩展 provider check 字段：每项包含 `ok`、`detail`、`command_path` 和 `setup_commands`；API-backed provider 的 `command_path=null`，CLI-backed provider 会在可用时显示解析后的本地命令路径，并返回登录/诊断命令。
+- 保持恢复语义：`agentdeck doctor` 顶层 `ok` 仍只由 tmux、config 存在和当前配置 Leader readiness 决定；额外 provider checks 只是 GUI/provider switch 页面可消费的只读诊断，不调用 provider、不读取或暴露真实 API key、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入。
+- 同步 README、`docs/contracts/doctor-schema.md`、CLAUDE.md 和 AGENT.md，并将 `codex_cli` / `claude_cli` 纳入 doctor response fields。
+- 验证记录：已先确认红测失败，live doctor 最初只返回 deepseek/openai_compatible 的 ok/detail，contract response fields 也缺少 `codex_cli` / `claude_cli`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_doctor_reports_openai_compatible_provider_state tests/test_agent_cli.py::test_doctor_reports_configured_leader_ready_when_env_is_set tests/test_contracts.py::test_doctor_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_doctor_contract_response_includes_example_without_drift -q` 4 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 308 项通过。
+
 ### Current - Include worker role prompts in Leader provider context
 
 - 扩展 DeepSeek/OpenAI-compatible 与 `codex-cli` / `claude-cli` Leader provider 的 planning prompt：`Available workers` / `Available worker agents` 现在会把每个 worker 的 `role_prompt` 和 role/provider/workspace 一起传给 Leader 推理后端。

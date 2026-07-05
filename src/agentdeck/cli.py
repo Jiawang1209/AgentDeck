@@ -363,11 +363,36 @@ def doctor_command(_args: argparse.Namespace) -> int:
             "config_path": str(config_path(root)),
             "tmux": asdict(tmux),
             "configured_leader": configured_leader,
-            "deepseek": {"ok": deepseek[0], "detail": deepseek[1]},
-            "openai_compatible": {"ok": openai_compatible[0], "detail": openai_compatible[1]},
+            "deepseek": _doctor_api_provider_check("deepseek", deepseek),
+            "openai_compatible": _doctor_api_provider_check("openai-compatible", openai_compatible),
+            "codex_cli": _doctor_cli_provider_check("codex-cli"),
+            "claude_cli": _doctor_cli_provider_check("claude-cli"),
         }
     )
     return 0 if ok else 1
+
+
+def _doctor_api_provider_check(provider: str, doctor_result: tuple[bool, str]) -> dict[str, object]:
+    return {
+        "ok": doctor_result[0],
+        "detail": doctor_result[1],
+        "command_path": None,
+        "setup_commands": _provider_setup_commands(provider),
+    }
+
+
+def _doctor_cli_provider_check(provider: str) -> dict[str, object]:
+    command = {
+        "codex-cli": "codex",
+        "claude-cli": "claude",
+    }[provider]
+    command_path = _command_path(command)
+    return {
+        "ok": command_path is not None,
+        "detail": f"{command} is available" if command_path else f"{command} is not found on PATH",
+        "command_path": command_path,
+        "setup_commands": _provider_setup_commands(provider),
+    }
 
 
 def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object] | None:

@@ -161,6 +161,11 @@ def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, 
     prepare_project(tmp_path, monkeypatch)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("AGENTDECK_LEADER_API_KEY", raising=False)
+    monkeypatch.setattr(
+        cli,
+        "_command_path",
+        lambda command: "/opt/bin/codex" if command == "codex" else None,
+    )
 
     exit_code = cli.main(["doctor"])
 
@@ -186,10 +191,34 @@ def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, 
     assert payload["deepseek"] == {
         "ok": False,
         "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+        "command_path": None,
+        "setup_commands": [
+            'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
+            'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
+            'export DEEPSEEK_MODEL="deepseek-chat"',
+        ],
     }
     assert payload["openai_compatible"] == {
         "ok": False,
         "detail": "AGENTDECK_LEADER_API_KEY is not set; provider calls are disabled",
+        "command_path": None,
+        "setup_commands": [
+            'export AGENTDECK_LEADER_API_KEY="<your-provider-api-key>"',
+            'export AGENTDECK_LEADER_BASE_URL="https://api.example.com/v1"',
+            'export AGENTDECK_LEADER_MODEL="<model-name>"',
+        ],
+    }
+    assert payload["codex_cli"] == {
+        "ok": True,
+        "detail": "codex is available",
+        "command_path": "/opt/bin/codex",
+        "setup_commands": ['codex login', 'codex doctor'],
+    }
+    assert payload["claude_cli"] == {
+        "ok": False,
+        "detail": "claude is not found on PATH",
+        "command_path": None,
+        "setup_commands": ['claude auth', 'claude doctor'],
     }
 
 
@@ -217,6 +246,7 @@ def test_doctor_reports_configured_leader_ready_when_env_is_set(tmp_path, monkey
         ],
     }
     assert payload["deepseek"]["ok"] is True
+    assert payload["deepseek"]["command_path"] is None
     assert exit_code == (0 if payload["tmux"]["ok"] else 1)
 
 

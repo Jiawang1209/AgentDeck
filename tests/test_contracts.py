@@ -674,6 +674,8 @@ def test_doctor_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None
         "configured_leader",
         "deepseek",
         "openai_compatible",
+        "codex_cli",
+        "claude_cli",
     ]
     assert payload["configured_leader_fields"] == [
         "agent_id",
@@ -687,7 +689,7 @@ def test_doctor_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None
         "command_path",
         "setup_commands",
     ]
-    assert payload["provider_check_fields"] == ["ok", "detail"]
+    assert payload["provider_check_fields"] == ["ok", "detail", "command_path", "setup_commands"]
     assert payload["workbench_contract"] == "agentdeck contract workbench"
     assert payload["leader_chat_contract"] == "agentdeck contract leader-chat"
     assert payload["leader_review_contract"] == "agentdeck contract leader-review"

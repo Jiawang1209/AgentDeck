@@ -131,7 +131,7 @@ agentdeck trace --id msg_xxx
 agentdeck events --limit 20
 ```
 
-`agentdeck doctor` 会检查 tmux、项目配置和当前配置的 Leader provider readiness。输出里的 `configured_leader` 包含 agent_id、provider、model、approval_mode、supported、ready、missing_env、detail、command_path 和 setup_commands；API-backed provider 的 `command_path=null`，CLI-backed provider 会在可用时显示实际命令路径，例如 `/opt/bin/codex`；它只暴露缺失的环境变量名和 placeholder setup 命令，不暴露密钥值。顶层 `ok=false` 表示当前项目还缺少运行前置条件，例如默认 DeepSeek Leader 缺少 `DEEPSEEK_API_KEY`。
+`agentdeck doctor` 会检查 tmux、项目配置和当前配置的 Leader provider readiness。输出里的 `configured_leader` 包含 agent_id、provider、model、approval_mode、supported、ready、missing_env、detail、command_path 和 setup_commands；顶层还会给出 `deepseek`、`openai_compatible`、`codex_cli` 和 `claude_cli` 四个 provider check，方便 GUI 一次性渲染所有 Leader backend 的可用性。API-backed provider 的 `command_path=null`，CLI-backed provider 会在可用时显示实际命令路径，例如 `/opt/bin/codex`；它只暴露缺失的环境变量名、CLI command path 和 placeholder setup 命令，不暴露密钥值。顶层 `ok=false` 表示当前项目还缺少运行前置条件，例如默认 DeepSeek Leader 缺少 `DEEPSEEK_API_KEY`。
 
 `project init` 会创建：
 

@@ -189,7 +189,7 @@ Worker 不应该：
 - `agentdeck plan show --plan-id <id>` 返回完整 plan，用于审批前检查。
 - `agentdeck plan status --plan-id <id>` 返回 plan step、approval 状态和 dispatch lineage 汇总。
 - Provider 失败会写入 `leader_errors[]`，并通过 `agentdeck status` 暴露摘要；失败不能创建 plan、approval、message、job 或 inbox。
-- `agentdeck doctor` 必须返回当前配置 Leader 的 `configured_leader` readiness 摘要，并让顶层 `ok` 受配置 provider readiness 影响；`configured_leader.setup_commands` 只能包含 placeholder export 命令或 CLI auth/doctor 命令，只能暴露缺失 env 名称和 CLI command path，不能暴露密钥值。
+- `agentdeck doctor` 必须返回当前配置 Leader 的 `configured_leader` readiness 摘要，并让顶层 `ok` 受配置 provider readiness 影响；顶层还必须返回 `deepseek`、`openai_compatible`、`codex_cli` 和 `claude_cli` provider checks，字段为 ok/detail/command_path/setup_commands，供 GUI 渲染 provider 选择诊断；这些检查不能调用 provider，不能暴露密钥值。
 - `agentdeck leader plan` 和 `agentdeck leader chat` 默认读取 `.agentdeck/config.toml` 的 `[leader] provider/model`；`fake` provider 是显式 dry-run provider，不调用外部 LLM。
 - `agentdeck leader set-provider --provider <provider> --model <model>` 是持久切换默认 Leader provider 的显式命令；它只修改 `.agentdeck/config.toml` 的 `[leader] provider/model` 并追加 `leader_provider_updated` 事件，不调用 provider、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入；未知 provider 必须失败且不得修改配置。
 - `deepseek` provider 通过 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 调用 OpenAI-compatible `/chat/completions`，但仍然只生成 plan。
