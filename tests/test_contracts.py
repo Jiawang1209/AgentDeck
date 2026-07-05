@@ -222,6 +222,19 @@ def test_validate_control_registry_card_contract_accepts_example() -> None:
     assert result == {"ok": True, "errors": []}
 
 
+def test_validate_control_registry_card_contract_requires_provider_switch_command() -> None:
+    payload = controls_example()
+    provider_item = next(item for item in payload["items"] if item["scope"] == "provider")
+    provider_item["command"] = "agentdeck doctor"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: provider set_provider command must use leader set-provider"],
+    }
+
+
 def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     contract_path = tmp_path / "agent-runtime-schema.md"
     contract_path.write_text("# Agent Runtime Contract\n", encoding="utf-8")

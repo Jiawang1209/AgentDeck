@@ -2539,6 +2539,11 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
             for field in WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS:
                 if field not in item:
                     errors.append(f"control_registry_card.items: missing item field: {field}")
+            if item.get("scope") == "provider" and item.get("kind") == "set_provider":
+                if item.get("safety") != "explicit_user":
+                    errors.append("control_registry_card.items: provider set_provider must use safety=explicit_user")
+                if not str(item.get("command") or "").startswith("agentdeck leader set-provider --provider "):
+                    errors.append("control_registry_card.items: provider set_provider command must use leader set-provider")
     elif "items" in control_registry_card:
         errors.append("control_registry_card.items must be a list")
 
