@@ -2207,6 +2207,19 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             and intent_card.get("embedded_card") != "trace_card"
         ):
             errors.append("intent_card: reply_waiting continue must embed trace_card")
+        trace_card = payload.get("trace_card") if isinstance(payload.get("trace_card"), dict) else {}
+        trace_query_id = trace_card.get("query_id") if isinstance(trace_card, dict) else None
+        expected_reply_waiting_trace_command = (
+            f"agentdeck trace --id {trace_query_id}"
+            if (
+                payload.get("mode") == "continue"
+                and isinstance(recommended_action, dict)
+                and recommended_action.get("source") == "reply"
+                and intent_card.get("embedded_card") == "trace_card"
+                and trace_query_id
+            )
+            else None
+        )
         controls = intent_card.get("controls")
         if isinstance(controls, list):
             for control in controls:
@@ -2216,6 +2229,12 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                             errors.append(f"intent_card.controls: missing control field: {field}")
                     if control.get("kind") == "inspect" and control.get("safety") != "inspect":
                         errors.append("intent_card.controls: inspect controls must use safety=inspect")
+                    if (
+                        expected_reply_waiting_trace_command is not None
+                        and control.get("kind") == "inspect"
+                        and control.get("command") != expected_reply_waiting_trace_command
+                    ):
+                        errors.append("intent_card.controls: reply_waiting inspect must trace pending message")
                     placeholder_enabled = _command_has_placeholder(control.get("command")) and control.get("enabled") is not False
                     if placeholder_enabled:
                         errors.append("intent_card.controls: placeholder commands must be disabled")
