@@ -94,6 +94,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     card_names = (
         "workbench_card",
         "continue_card",
+        "run_start_card",
         "leader_summary_card",
         "capture_card",
         "terminal_card",
@@ -119,9 +120,9 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         if payload.get(card_name) is not None:
             embedded_card = card_name
             break
-    route_source = "provider_plan" if mode == "plan" else "state_review" if mode in {"review", "summary"} else "local_rule"
+    route_source = "provider_plan" if mode in {"plan", "run_start"} else "state_review" if mode in {"review", "summary"} else "local_rule"
     action_kind = explanation.get("action_kind")
-    read_only = mode not in {"plan", "review", "apply_action"} and action_kind != "approval_create"
+    read_only = mode not in {"plan", "run_start", "review", "apply_action"} and action_kind != "approval_create"
     next_command = payload.get("next_command")
     controls: list[dict[str, object]] = []
     inspect_command = _leader_chat_intent_inspect_command(embedded_card, payload)
@@ -223,6 +224,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck workbench"
     if embedded_card == "continue_card":
         return "agentdeck continue"
+    if embedded_card == "run_start_card":
+        return "agentdeck approval list"
     if embedded_card == "leader_summary_card":
         summary_card = payload.get("leader_summary_card")
         command = (
@@ -332,6 +335,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("dispatch_batch_preview_card", None)
     payload.setdefault("agent_ready_card", None)
     payload.setdefault("leader_summary_card", None)
+    payload.setdefault("run_start_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -2759,21 +2763,50 @@ def run_command(args: argparse.Namespace) -> int:
             return 1
         _print_json(payload)
         return 0
-    provider_name = _leader_provider_name(config, args.provider)
-    model_label = _leader_model_label(config, args.model)
     try:
-        provider = leader_provider(provider_name)
+        payload, _record, _approvals = _create_run_start_payload(
+            config,
+            store,
+            task=args.task,
+            provider_override=args.provider,
+            model_override=args.model,
+            source="run",
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    orchestrator = LeaderOrchestrator(config, provider)
-    try:
-        plan = orchestrator.plan(args.task, model_label)
     except RuntimeError as exc:
-        _record_leader_provider_failure(store, "run", provider.name, model_label, args.task, exc)
         print(f"leader provider failed: {exc}", file=sys.stderr)
         return 1
-    record = store.record_plan(args.task, provider.name, model_label, plan)
+    validation = validate_run_start_contract(payload)
+    if not validation["ok"]:
+        print("Run start contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def _create_run_start_payload(
+    config: ProjectConfig,
+    store: StateStore,
+    *,
+    task: str,
+    provider_override: str | None,
+    model_override: str | None,
+    source: str,
+) -> tuple[dict[str, object], dict[str, object], list[dict[str, object]]]:
+    provider_name = _leader_provider_name(config, provider_override)
+    model_label = _leader_model_label(config, model_override)
+    provider = leader_provider(provider_name)
+    orchestrator = LeaderOrchestrator(config, provider)
+    try:
+        plan = orchestrator.plan(task, model_label)
+    except RuntimeError as exc:
+        _record_leader_provider_failure(store, source, provider.name, model_label, task, exc)
+        raise
+    record = store.record_plan(task, provider.name, model_label, plan)
     approvals = store.create_approvals_from_plan(record["plan_id"])
     store.append_event(
         EventRecord.create(
@@ -2782,8 +2815,8 @@ def run_command(args: argparse.Namespace) -> int:
                 "plan_id": record["plan_id"],
                 "provider": record["provider"],
                 "model": record["model"],
-                "task_length": len(args.task),
-                "source": "run",
+                "task_length": len(task),
+                "source": source,
             },
         )
     )
@@ -2793,7 +2826,7 @@ def run_command(args: argparse.Namespace) -> int:
             {
                 "plan_id": record["plan_id"],
                 "count": len(approvals),
-                "source": "run",
+                "source": source,
             },
         )
     )
@@ -2803,20 +2836,13 @@ def run_command(args: argparse.Namespace) -> int:
             {
                 "plan_id": record["plan_id"],
                 "approval_count": len(approvals),
-                "task_length": len(args.task),
+                "task_length": len(task),
+                "source": source,
             },
         )
     )
     approval_card = _approval_queue_payload(store, plan_id=record["plan_id"])
-    payload = _run_start_payload(record, approvals, approval_card)
-    validation = validate_run_start_contract(payload)
-    if not validation["ok"]:
-        print("Run start contract validation failed", file=sys.stderr)
-        for error in validation["errors"]:
-            print(f"- {error}", file=sys.stderr)
-        return 1
-    _print_json(payload)
-    return 0
+    return _run_start_payload(record, approvals, approval_card), record, approvals
 
 
 def _run_progress_payload(store: StateStore, plan_id: str) -> dict[str, object]:
@@ -4039,6 +4065,19 @@ def _leader_chat_explanation(
             if isinstance(recovery_action, dict)
             else True,
         }
+    if mode == "run_start":
+        run_start_card = result if isinstance(result, dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader started an approval-gated run from natural language and queued pending approvals.",
+            "reason": "human asked to start a multi-agent run",
+            "next_command": next_command,
+            "recommended_action_id": run_start_card.get("plan_id"),
+            "action_kind": "run_start",
+            "action_status": "approval_gated",
+            "safety": "approval_gated",
+            "requires_explicit_user": True,
+        }
     if mode == "apply_action":
         result_count = result.get("count") if isinstance(result, dict) else None
         return {
@@ -4445,6 +4484,28 @@ def _leader_chat_explanation(
     }
 
 
+def _chat_run_start_task(message: str) -> str | None:
+    text = message.strip()
+    prefixes = (
+        "开始运行",
+        "开始执行",
+        "启动运行",
+        "运行",
+        "执行",
+        "/run",
+        "run ",
+        "start run ",
+    )
+    lowered = text.lower()
+    for prefix in prefixes:
+        candidate = lowered if prefix in {"run ", "start run "} else text
+        if not candidate.startswith(prefix):
+            continue
+        task = text[len(prefix) :].strip(" ：:，,")
+        return task or None
+    return None
+
+
 def leader_chat_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -4534,6 +4595,87 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "workbench_card": None,
             "result": result,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    run_task = _chat_run_start_task(args.message)
+    if run_task:
+        try:
+            run_start_card, record, _approvals = _create_run_start_payload(
+                config,
+                store,
+                task=run_task,
+                provider_override=args.provider,
+                model_override=args.model,
+                source="leader_chat",
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        except RuntimeError as exc:
+            print(f"leader provider failed: {exc}", file=sys.stderr)
+            return 1
+        validation = validate_run_start_contract(run_start_card)
+        if not validation["ok"]:
+            print("Run start contract validation failed", file=sys.stderr)
+            for error in validation["errors"]:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        turn = store.record_chat_turn(
+            mode="run_start",
+            message=args.message,
+            plan_id=str(record["plan_id"]),
+            next_command=run_start_card.get("next_command"),
+            provider=str(record["provider"]),
+            model=str(record["model"]),
+            review=None,
+            action_id=None,
+            action_kind="run_start",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "run_start",
+                    "plan_id": record["plan_id"],
+                    "provider": record["provider"],
+                    "model": record["model"],
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "run_start",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "run_start",
+                next_command=run_start_card.get("next_command"),
+                project_view=refreshed_project_view,
+                result=run_start_card,
+            ),
+            "plan_id": record["plan_id"],
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": run_start_card.get("next_command"),
+            "leader_action": None,
+            "continue_card": None,
+            "run_start_card": run_start_card,
+            "inbox_card": None,
+            "approval_card": run_start_card.get("approval_card"),
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

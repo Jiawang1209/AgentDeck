@@ -19,6 +19,8 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "leader_action_card_fields": [],
   "leader_summary_card_fields": [],
   "continue_card_fields": [],
+  "run_start_card_fields": [],
+  "run_progress_card_fields": [],
   "capture_card_fields": [],
   "dispatch_preview_card_fields": [],
   "dispatch_batch_preview_card_fields": [],
@@ -78,6 +80,7 @@ The review-mode response shape is:
   "leader_action_card": {},
   "leader_summary_card": null,
   "continue_card": null,
+  "run_start_card": null,
   "capture_card": null,
   "dispatch_preview_card": null,
   "dispatch_batch_preview_card": null,
@@ -601,6 +604,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 ```
 
 `safety=plan_only` means the Leader only created a plan record. `safety=safe_apply` means the action can be applied through `agentdeck leader apply-action`. `safety=explicit_runtime` means the user must run the explicit command, such as dispatch, capture-reply, inbox ack, approval approve, or approval dispatch. `safety=safe_apply_completed` means a safe apply action already completed and the response may include `result_count`. `safety=inspect` means the response is only recommending or performing a read-only inspection command such as pane capture.
+`safety=approval_gated` means the Leader created a plan plus pending approvals, but runtime execution still waits for explicit human approval and dispatch.
 
 ## Boundaries
 
@@ -611,8 +615,9 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat responses must include `intent_card`, and `intent_card.next_command` must describe the same next action as the top-level response.
 - Chat responses with a top-level `leader_action` must expose a matching `leader_action_card`; `leader_action_card.action_id` must match `leader_action.action_id`.
 - Chat summary-mode responses must embed `leader_summary_card`, reusing `agentdeck leader summary --plan-id <id>` and `validate_leader_summary_contract()`; they must not create Leader actions or call the provider.
+- Chat run-start responses must embed `run_start_card`, reusing the `agentdeck run --task <text>` response shape and `validate_run_start_contract()`. Natural-language run intents such as `开始运行 <goal>` may create a plan and pending approvals, but must not create Leader actions, auto-approve, dispatch, capture pane output, acknowledge inbox items, create message/job/inbox runtime records, or send tmux input.
 - Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; `validate_leader_chat_contract()` rejects disabled controls without a blocker, rejects `kind=inspect` controls unless `safety=inspect`, and rejects enabled placeholder commands or placeholder blockers that do not match.
-- Chat help-mode responses must include `capability_card`; `validate_leader_chat_contract()` rejects capability cards whose `capability_count` does not match `capabilities[]`, rejects capability items or controls with missing fields, rejects capability controls whose `command` or `safety` drift from the parent capability item, rejects placeholder capability controls that use unknown placeholders, are enabled, or use the wrong blocker, rejects disabled capability controls without blockers, and rejects `plan`, `review`, or `apply_action` entries whose safety does not match their scheduling semantics.
+- Chat help-mode responses must include `capability_card`; `run_start` capability entries should point at `agentdeck leader chat --message "开始运行 <goal>"` and use `safety=approval_gated`. `validate_leader_chat_contract()` rejects capability cards whose `capability_count` does not match `capabilities[]`, rejects capability items or controls with missing fields, rejects capability controls whose `command` or `safety` drift from the parent capability item, rejects placeholder capability controls that use unknown placeholders, are enabled, or use the wrong blocker, rejects disabled capability controls without blockers, and rejects `plan`, `review`, or `apply_action` entries whose safety does not match their scheduling semantics.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat inbox trace responses may embed `trace_card`, reusing the `agentdeck trace` contract for the current pending inbox head.
 - Chat direct trace responses must embed `trace_card`, reusing the `agentdeck trace` contract for the requested communication id.
@@ -630,4 +635,4 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, `runtime_card`, or `trace_card` when `recovery.recommended_action.source` points at those queues, runtime recovery, or a pending reply capture; reply capture recovery should set `intent_card.embedded_card=trace_card`.
 - Chat setup-mode responses may include `provider_health`; diagnostics intents recommend `agentdeck doctor`, while provider switch intents recommend a concrete `agentdeck leader set-provider ...` command. Neither form calls the provider or mutates provider config.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `leader_summary_card` as the deterministic reply/artifact summary surface, `capture_card` as the selected visible pane snapshot surface, `dispatch_preview_card` as the explicit dispatch confirmation preview, `dispatch_batch_preview_card` as the multi-approval dispatch checklist, `agent_ready_card` as the multi-agent runtime readiness/startup surface, `inbox_card` as the mailbox queue surface, `trace_card` as the selected inbox/message lineage evidence surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics and provider switch command context, and `leader_explanation` as safety/reason explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `run_start_card` as the approval-gated run start surface, `leader_summary_card` as the deterministic reply/artifact summary surface, `capture_card` as the selected visible pane snapshot surface, `dispatch_preview_card` as the explicit dispatch confirmation preview, `dispatch_batch_preview_card` as the multi-approval dispatch checklist, `agent_ready_card` as the multi-agent runtime readiness/startup surface, `inbox_card` as the mailbox queue surface, `trace_card` as the selected inbox/message lineage evidence surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics and provider switch command context, and `leader_explanation` as safety/reason explanation.

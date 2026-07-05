@@ -218,6 +218,66 @@ def test_run_plan_id_returns_progress_card_without_dispatching(
     assert fake.captured == []
 
 
+def test_leader_chat_run_intent_starts_approval_gated_run_without_dispatching(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["leader", "chat", "--message", "开始运行 实现自然语言 run loop"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    plan_id = payload["plan_id"]
+    run_start_card = payload["run_start_card"]
+    first_approval_id = run_start_card["approval_card"]["approvals"][0]["approval_id"]
+    assert payload["ok"] is True
+    assert payload["mode"] == "run_start"
+    assert payload["message"] == "开始运行 实现自然语言 run loop"
+    assert payload["leader_action"] is None
+    assert payload["leader_action_card"] is None
+    assert payload["approval_card"] == run_start_card["approval_card"]
+    assert payload["next_command"] == "agentdeck approval list"
+    assert payload["intent_card"]["embedded_card"] == "run_start_card"
+    assert payload["intent_card"]["read_only"] is False
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect run_start_card",
+        "command": "agentdeck approval list",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert run_start_card["mode"] == "run_start"
+    assert run_start_card["task"] == "实现自然语言 run loop"
+    assert run_start_card["plan_id"] == plan_id
+    assert run_start_card["approval_count"] == 3
+    assert run_start_card["pending_approval_count"] == 3
+    assert run_start_card["approve_next_command"] == f"agentdeck approval approve --approval-id {first_approval_id}"
+    assert run_start_card["review_command"] == f"agentdeck leader review --plan-id {plan_id}"
+    assert run_start_card["safety"] == "approval_gated"
+    assert run_start_card["requires_explicit_user"] is True
+
+    state = StateStore(root).load()
+    assert len(state["plans"]) == 1
+    assert len(state["approvals"]) == 3
+    assert state["leader_actions"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state["replies"] == []
+    assert state.get("inbox", {}) == {}
+    assert state["chat_turns"][0]["mode"] == "run_start"
+    assert state["chat_turns"][0]["plan_id"] == plan_id
+    assert state["chat_turns"][0]["action_kind"] == "run_start"
+    assert fake.sent == []
+    assert fake.captured == []
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "run_started"' in events
+    assert '"source": "leader_chat"' in events
+
+
 def test_leader_plan_defaults_to_configured_leader_provider_and_model(
     tmp_path, monkeypatch, capsys
 ) -> None:

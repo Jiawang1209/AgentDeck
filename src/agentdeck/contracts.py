@@ -441,6 +441,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "leader_action_card",
     "leader_summary_card",
     "continue_card",
+    "run_start_card",
     "capture_card",
     "terminal_card",
     "dispatch_preview_card",
@@ -1226,6 +1227,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "leader_action_card_fields": list(LEADER_CHAT_ACTION_CARD_FIELDS),
         "leader_summary_card_fields": list(LEADER_SUMMARY_RESPONSE_FIELDS),
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
+        "run_start_card_fields": list(RUN_START_RESPONSE_FIELDS),
+        "run_progress_card_fields": list(RUN_PROGRESS_RESPONSE_FIELDS),
         "capture_card_fields": list(LEADER_CHAT_CAPTURE_CARD_FIELDS),
         "terminal_card_fields": list(LEADER_CHAT_TERMINAL_CARD_FIELDS),
         "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
@@ -1275,6 +1278,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_leader_action_card_fields"] = list(example["leader_action_card"])
         payload["example_leader_summary_card_fields"] = list(example["leader_summary_card"])
         payload["example_continue_card_fields"] = list(example["continue_card"])
+        payload["example_run_start_card_fields"] = list(RUN_START_RESPONSE_FIELDS)
         payload["example_terminal_card_fields"] = list(example["terminal_card"])
         payload["example_dispatch_preview_card_fields"] = list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
         payload["example_dispatch_batch_preview_card_fields"] = list(
@@ -1327,6 +1331,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "safety": "plan_only",
             "requires_explicit_user": False,
             "card": "leader_action",
+        },
+        {
+            "mode": "run_start",
+            "label": "Start approval-gated run",
+            "description": "Create a plan and pending approvals from a natural-language run request.",
+            "example_messages": ["开始运行 实现一个功能", "/run 实现多 Agent smoke"],
+            "command": "agentdeck leader chat --message \"开始运行 <goal>\"",
+            "safety": "approval_gated",
+            "requires_explicit_user": True,
+            "card": "run_start_card",
         },
         {
             "mode": "review",
@@ -2651,6 +2665,15 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append(f"continue_card: {error}")
     elif "continue_card" in payload and continue_card is not None:
         errors.append("continue_card must be an object")
+    run_start_card = payload.get("run_start_card")
+    if isinstance(run_start_card, dict):
+        run_start_validation = validate_run_start_contract(run_start_card)
+        for error in run_start_validation["errors"]:
+            errors.append(f"run_start_card: {error}")
+        if payload.get("mode") == "run_start" and payload.get("next_command") != run_start_card.get("next_command"):
+            errors.append("run_start_card: next_command must match response next_command")
+    elif "run_start_card" in payload and run_start_card is not None:
+        errors.append("run_start_card must be an object")
     capture_card = payload.get("capture_card")
     if isinstance(capture_card, dict):
         _validate_leader_chat_capture_card_contract(errors, capture_card)
@@ -3659,6 +3682,7 @@ def leader_chat_example() -> dict[str, object]:
     control_registry_card = leader_chat_control_registry_card(workbench_card)
     leader_action_card = leader_chat_action_card(leader_action)
     leader_summary_card = leader_summary_example()
+    run_start_card = run_start_example()
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -3704,6 +3728,7 @@ def leader_chat_example() -> dict[str, object]:
         "leader_action_card": leader_action_card,
         "leader_summary_card": leader_summary_card,
         "continue_card": continue_card,
+        "run_start_card": run_start_card,
         "capture_card": None,
         "terminal_card": terminal_card,
         "dispatch_preview_card": None,
