@@ -182,7 +182,7 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
 
 ## Control Registry
 
-`control_registry[]` is a flattened, read-only command palette index derived from existing card controls. Each item uses `scope`, `card`, `kind`, `label`, `command`, `safety`, `enabled`, `blocker`, and `agent_id`. It currently indexes `leader_card.controls[]`, `control_mode_card.active_controls[]`, every `runtime_card.agents[].controls[]`, and `operator_card.controls[]`. Runtime terminal controls must be preserved as `kind=terminal` so clients can render a direct "Open terminal" affordance without parsing `agentdeck agent terminal --agent <id>`. When the operator exposes batch approval dispatch, the registry must preserve the operator control as `kind=dispatch_ready` for `agentdeck approval dispatch-ready --confirm` so clients can identify it without parsing labels or command strings. Clients may render this as a command palette or toolbar, but it is not a second state source and does not grant permission beyond each item's `safety`, `enabled`, and `blocker`.
+`control_registry[]` is a flattened, read-only command palette index derived from existing card controls. Each item uses `scope`, `card`, `kind`, `label`, `command`, `safety`, `enabled`, `blocker`, and `agent_id`. It currently indexes `leader_card.controls[]`, `provider_health.controls[]`, `control_mode_card.active_controls[]`, every `runtime_card.agents[].controls[]`, and `operator_card.controls[]`. Provider switch controls must be preserved as `scope=provider` / `kind=set_provider` so clients can render DeepSeek, OpenAI-compatible, Codex CLI, Claude CLI, and fake-provider choices without hard-coding a menu. Runtime terminal controls must be preserved as `kind=terminal` so clients can render a direct "Open terminal" affordance without parsing `agentdeck agent terminal --agent <id>`. When the operator exposes batch approval dispatch, the registry must preserve the operator control as `kind=dispatch_ready` for `agentdeck approval dispatch-ready --confirm` so clients can identify it without parsing labels or command strings. Clients may render this as a command palette or toolbar, but it is not a second state source and does not grant permission beyond each item's `safety`, `enabled`, and `blocker`.
 
 ## Provider Health
 
@@ -205,11 +205,29 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
     "export DEEPSEEK_API_KEY=\"<your-deepseek-api-key>\"",
     "export DEEPSEEK_BASE_URL=\"https://api.deepseek.com/v1\"",
     "export DEEPSEEK_MODEL=\"deepseek-chat\""
+  ],
+  "controls": [
+    {
+      "kind": "set_provider",
+      "label": "Use Codex CLI",
+      "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+      "safety": "explicit_user",
+      "enabled": true,
+      "blocker": null
+    },
+    {
+      "kind": "set_provider",
+      "label": "Use DeepSeek",
+      "command": "agentdeck leader set-provider --provider deepseek --model deepseek-chat",
+      "safety": "explicit_user",
+      "enabled": false,
+      "blocker": "already current provider"
+    }
   ]
 }
 ```
 
-The card never exposes API key values and never calls the provider. It includes the configured Leader identity and model so GUI clients can render provider setup next to the Leader card without joining another state source. For API-backed providers such as `deepseek` and `openai-compatible`, readiness is based on the required local environment variable. For CLI-backed providers such as `codex-cli` and `claude-cli`, readiness is based on whether the local command is available on PATH. GUI clients can render `doctor_command` as the next diagnostic action, read `doctor_contract` for the doctor diagnostics schema, and show `setup_commands` as copyable placeholder commands; placeholders must never be replaced with real secret values in AgentDeck output.
+The card never exposes API key values and never calls the provider. It includes the configured Leader identity and model so GUI clients can render provider setup next to the Leader card without joining another state source. For API-backed providers such as `deepseek` and `openai-compatible`, readiness is based on the required local environment variable. For CLI-backed providers such as `codex-cli` and `claude-cli`, readiness is based on whether the local command is available on PATH. GUI clients can render `doctor_command` as the next diagnostic action, read `doctor_contract` for the doctor diagnostics schema, and show `setup_commands` as copyable placeholder commands; placeholders must never be replaced with real secret values in AgentDeck output. `controls[]` exposes explicit `agentdeck leader set-provider` commands for supported Leader backends. The current provider control is disabled with `already current provider`; other controls require `safety=explicit_user` and only change the default Leader provider/model after the human runs the command.
 
 ## Runtime Card
 

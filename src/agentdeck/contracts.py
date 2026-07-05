@@ -601,6 +601,7 @@ WORKBENCH_PROVIDER_HEALTH_FIELDS = (
     "doctor_command",
     "doctor_contract",
     "setup_commands",
+    "controls",
 )
 
 WORKBENCH_RUNTIME_CARD_FIELDS = (
@@ -2668,6 +2669,8 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("provider_health.missing_env must be a list")
         if "setup_commands" in provider_health and not isinstance(provider_health.get("setup_commands"), list):
             errors.append("provider_health.setup_commands must be a list")
+        if "controls" in provider_health and not isinstance(provider_health.get("controls"), list):
+            errors.append("provider_health.controls must be a list")
     elif "provider_health" in payload:
         errors.append("provider_health must be an object")
     runtime_card = payload.get("runtime_card")
@@ -3330,6 +3333,14 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         agent_id=str(leader_card.get("agent_id", "leader")),
         controls=leader_card.get("controls"),
     )
+    provider_health = payload.get("provider_health") if isinstance(payload.get("provider_health"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="provider",
+        card="provider_health",
+        agent_id=provider_health.get("agent_id") or "leader",
+        controls=provider_health.get("controls"),
+    )
     control_mode_card = payload.get("control_mode_card") if isinstance(payload.get("control_mode_card"), dict) else {}
     _append_control_registry_items(
         registry,
@@ -3386,6 +3397,32 @@ def _append_control_registry_items(
                 "agent_id": agent_id,
             }
         )
+
+
+LEADER_PROVIDER_SWITCHES: tuple[tuple[str, str, str], ...] = (
+    ("fake", "fake-plan", "Use fake"),
+    ("deepseek", "deepseek-chat", "Use DeepSeek"),
+    ("openai-compatible", "openai-compatible-default", "Use OpenAI-compatible"),
+    ("codex-cli", "codex-default", "Use Codex CLI"),
+    ("claude-cli", "claude-default", "Use Claude CLI"),
+)
+
+
+def leader_provider_controls(current_provider: str) -> list[dict[str, object]]:
+    controls: list[dict[str, object]] = []
+    for provider, model, label in LEADER_PROVIDER_SWITCHES:
+        enabled = provider != current_provider
+        controls.append(
+            {
+                "kind": "set_provider",
+                "label": label,
+                "command": f"agentdeck leader set-provider --provider {provider} --model {model}",
+                "safety": "explicit_user",
+                "enabled": enabled,
+                "blocker": None if enabled else "already current provider",
+            }
+        )
+    return controls
 
 
 def workbench_example() -> dict[str, object]:
@@ -3466,6 +3503,7 @@ def workbench_example() -> dict[str, object]:
             "doctor_command": "agentdeck doctor",
             "doctor_contract": "agentdeck contract doctor",
             "setup_commands": [],
+            "controls": leader_provider_controls("fake"),
         },
         "runtime_card": {
             "backend": "tmux",

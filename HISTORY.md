@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Expose Leader provider switch controls
+
+- 扩展 workbench `provider_health.controls[]`：为 fake、DeepSeek、OpenAI-compatible、Codex CLI 和 Claude CLI 暴露显式 `agentdeck leader set-provider --provider <provider> --model <model>` 切换入口。
+- 当前 Leader provider 的 control 会 disabled 并给出 `already current provider` blocker；其他 provider control 使用 `safety=explicit_user`，只作为人类显式配置命令，不调用 provider、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入。
+- 扩展 workbench `control_registry[]` 和 `agentdeck controls`：新增 `scope=provider` / `card=provider_health` / `kind=set_provider` 命令面板条目，供未来 GUI/TUI 直接渲染 provider switch，不需要硬编码 DeepSeek/Codex/Claude 菜单。
+- 同步 `agentdeck contract workbench --example`、contract validator、README、`docs/contracts/workbench-schema.md`、`docs/contracts/controls-schema.md`、CLAUDE.md 和 AGENT.md，明确 provider controls 是 GUI-ready control surface 的一部分。
+- 验证记录：已先确认红测失败，workbench provider health 最初缺少 `controls`，`agentdeck controls` 最初没有 provider scope，contract discovery 最初未公开 provider `controls` 字段；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_provider_health_fields tests/test_contracts.py::test_validate_workbench_contract_requires_provider_health_booleans -q` 6 项通过；全量测试先暴露 CLI-backed provider health 和 setup intent 的旧精确断言未同步 `controls[]`，修正后失败项 2 项通过；`conda run -n agentdeck pytest -q` 通过，全量测试 281 项通过。
+
 ### Current - Add explicit Leader provider switch command
 
 - 新增 `agentdeck leader set-provider --provider <provider> --model <model>`：用于把 `deepseek`、`openai-compatible`、`codex-cli`、`claude-cli` 或 `fake` 持久设为项目默认 Leader provider。

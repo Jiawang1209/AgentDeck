@@ -428,7 +428,8 @@ def test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning
     assert payload["inbox_card"] is None
     assert payload["approval_card"] is None
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
-    assert payload["provider_health"] == {
+    provider_health = payload["provider_health"]
+    assert {key: value for key, value in provider_health.items() if key != "controls"} == {
         "agent_id": "leader",
         "provider": "deepseek",
         "model": "deepseek-chat",
@@ -446,6 +447,18 @@ def test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning
             'export DEEPSEEK_MODEL="deepseek-chat"',
         ],
     }
+    deepseek_control = next(
+        item
+        for item in provider_health["controls"]
+        if item["command"] == "agentdeck leader set-provider --provider deepseek --model deepseek-chat"
+    )
+    assert deepseek_control["enabled"] is False
+    assert deepseek_control["blocker"] == "already current provider"
+    assert any(
+        item["kind"] == "set_provider"
+        and item["command"] == "agentdeck leader set-provider --provider codex-cli --model codex-default"
+        for item in provider_health["controls"]
+    )
     assert payload["leader_explanation"] == {
         "mode": "setup",
         "summary": "Leader recommends inspecting provider setup before planning or dispatching work.",

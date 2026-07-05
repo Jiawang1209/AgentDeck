@@ -677,6 +677,32 @@ def _control_mode_set_controls(current_mode: str, available_modes: list[dict[str
     return controls
 
 
+LEADER_PROVIDER_SWITCHES: tuple[tuple[str, str, str], ...] = (
+    ("fake", "fake-plan", "Use fake"),
+    ("deepseek", "deepseek-chat", "Use DeepSeek"),
+    ("openai-compatible", "openai-compatible-default", "Use OpenAI-compatible"),
+    ("codex-cli", "codex-default", "Use Codex CLI"),
+    ("claude-cli", "claude-default", "Use Claude CLI"),
+)
+
+
+def _leader_provider_controls(current_provider: str) -> list[dict[str, object]]:
+    controls: list[dict[str, object]] = []
+    for provider, model, label in LEADER_PROVIDER_SWITCHES:
+        enabled = provider != current_provider
+        controls.append(
+            _control(
+                kind="set_provider",
+                label=label,
+                command=f"agentdeck leader set-provider --provider {provider} --model {model}",
+                safety="explicit_user",
+                enabled=enabled,
+                blocker=None if enabled else "already current provider",
+            )
+        )
+    return controls
+
+
 def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, object]]:
     registry: list[dict[str, object]] = []
     leader_card = payload.get("leader_card") if isinstance(payload.get("leader_card"), dict) else {}
@@ -686,6 +712,14 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         card="leader_card",
         agent_id=leader_card.get("agent_id") or "leader",
         controls=leader_card.get("controls"),
+    )
+    provider_health = payload.get("provider_health") if isinstance(payload.get("provider_health"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry,
+        scope="provider",
+        card="provider_health",
+        agent_id=provider_health.get("agent_id") or "leader",
+        controls=provider_health.get("controls"),
     )
     control_mode_card = payload.get("control_mode_card") if isinstance(payload.get("control_mode_card"), dict) else {}
     _append_workbench_control_registry_items(
@@ -821,6 +855,7 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
         "approval_mode": leader.get("approval_mode"),
         "api_backed": provider in ("deepseek", "openai-compatible"),
         "doctor_contract": "agentdeck contract doctor",
+        "controls": _leader_provider_controls(provider),
     }
     provider_env = {
         "deepseek": "DEEPSEEK_API_KEY",

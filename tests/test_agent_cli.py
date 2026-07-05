@@ -995,6 +995,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "doctor_command",
         "doctor_contract",
         "setup_commands",
+        "controls",
     ]
     assert payload["runtime_card_fields"] == ["backend", "count", "by_status", "refresh_command", "agents"]
     assert payload["runtime_agent_fields"] == [
@@ -1254,6 +1255,48 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
             'export DEEPSEEK_MODEL="deepseek-chat"',
         ],
+        "controls": [
+            {
+                "kind": "set_provider",
+                "label": "Use fake",
+                "command": "agentdeck leader set-provider --provider fake --model fake-plan",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "set_provider",
+                "label": "Use DeepSeek",
+                "command": "agentdeck leader set-provider --provider deepseek --model deepseek-chat",
+                "safety": "explicit_user",
+                "enabled": False,
+                "blocker": "already current provider",
+            },
+            {
+                "kind": "set_provider",
+                "label": "Use OpenAI-compatible",
+                "command": "agentdeck leader set-provider --provider openai-compatible --model openai-compatible-default",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "set_provider",
+                "label": "Use Codex CLI",
+                "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "set_provider",
+                "label": "Use Claude CLI",
+                "command": "agentdeck leader set-provider --provider claude-cli --model claude-default",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
     }
     assert payload["runtime_card"]["backend"] == "tmux"
     assert payload["runtime_card"]["count"] == 3
@@ -1458,6 +1501,23 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "blocker": "requires message text",
         "agent_id": "leader",
     }
+    provider_controls = [
+        item
+        for item in payload["control_registry"]
+        if item["scope"] == "provider" and item["kind"] == "set_provider"
+    ]
+    assert provider_controls[0] == {
+        "scope": "provider",
+        "card": "provider_health",
+        "kind": "set_provider",
+        "label": "Use fake",
+        "command": "agentdeck leader set-provider --provider fake --model fake-plan",
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": "leader",
+    }
+    assert any(item["command"].endswith("--provider codex-cli --model codex-default") for item in provider_controls)
     assert {
         (item["scope"], item["card"], item["kind"], item["agent_id"])
         for item in payload["control_registry"]
@@ -1595,7 +1655,8 @@ def test_workbench_marks_codex_cli_leader_as_local_cli_backed(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["leader_card"]["api_backed"] is False
-    assert payload["provider_health"] == {
+    provider_health = payload["provider_health"]
+    assert {key: value for key, value in provider_health.items() if key != "controls"} == {
         "agent_id": "leader",
         "provider": "codex-cli",
         "model": "codex-default",
@@ -1609,6 +1670,17 @@ def test_workbench_marks_codex_cli_leader_as_local_cli_backed(
         "doctor_contract": "agentdeck contract doctor",
         "setup_commands": ['codex login', 'codex doctor'],
     }
+    codex_control = next(
+        item
+        for item in provider_health["controls"]
+        if item["command"] == "agentdeck leader set-provider --provider codex-cli --model codex-default"
+    )
+    assert codex_control["enabled"] is False
+    assert codex_control["blocker"] == "already current provider"
+    assert any(
+        item["command"] == "agentdeck leader set-provider --provider claude-cli --model claude-default"
+        for item in provider_health["controls"]
+    )
 
 
 def test_policy_set_mode_updates_config_and_workbench_control_mode(tmp_path, monkeypatch, capsys) -> None:
@@ -1899,6 +1971,8 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
     )
     assert approve_item["enabled"] is True
     assert approve_item["safety"] == "explicit_user"
+    provider_items = [item for item in payload["items"] if item["scope"] == "provider"]
+    assert any(item["kind"] == "set_provider" and "codex-cli" in item["command"] for item in provider_items)
     assert StateStore(root).load() == before
 
 
