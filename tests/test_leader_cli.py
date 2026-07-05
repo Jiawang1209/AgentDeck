@@ -471,6 +471,81 @@ def test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging(
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_inspects_approval_queue_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "审批自然语言入口"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    capsys.readouterr()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看审批"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "approval"
+    assert payload["message"] == "查看审批"
+    assert payload["plan_id"] is None
+    assert payload["review"] is None
+    assert payload["leader_action"] is None
+    assert payload["continue_card"] is None
+    assert payload["inbox_card"] is None
+    assert payload["next_command"] == "agentdeck approval list"
+    assert payload["approval_card"]["count"] == 3
+    assert payload["approval_card"]["approvals"][0]["approve_command"].startswith(
+        "agentdeck approval approve --approval-id apv_"
+    )
+    assert payload["leader_explanation"]["mode"] == "approval"
+    assert payload["leader_explanation"]["action_kind"] == "approval"
+    assert payload["leader_explanation"]["action_status"] == "pending"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["leader_explanation"]["next_command"] == payload["next_command"]
+    assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
+    assert payload["project_view"]["chat_turns"]["items"][0]["mode"] == "approval"
+
+    state_after = StateStore(root).load()
+    assert [item["status"] for item in state_after["approvals"]] == ["pending", "pending", "pending"]
+    assert state_after["chat_turns"][0]["mode"] == "approval"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck approval list"
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
+def test_leader_chat_suggests_approve_for_pending_approval_without_approving(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "审批建议"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    approval_id = approvals[0]["approval_id"]
+
+    exit_code = cli.main(["leader", "chat", "--message", "批准当前审批"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "approval"
+    assert payload["next_command"] == f"agentdeck approval approve --approval-id {approval_id}"
+    assert payload["approval_card"]["approvals"][0]["approval_id"] == approval_id
+    assert payload["approval_card"]["approvals"][0]["approve_command"] == payload["next_command"]
+    assert payload["leader_explanation"]["action_kind"] == "approval_approve"
+    assert payload["leader_explanation"]["recommended_action_id"] == approval_id
+    assert payload["leader_explanation"]["action_status"] == "pending"
+    assert payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+
+    state_after = StateStore(root).load()
+    assert state_after["approvals"][0]["status"] == "pending"
+    assert state_after["chat_turns"][0]["mode"] == "approval"
+    assert state_after["chat_turns"][0]["next_command"] == f"agentdeck approval approve --approval-id {approval_id}"
+    assert state_after["chat_turns"][0]["action_kind"] == "approval_approve"
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_persists_create_approvals_action_for_existing_plan(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "已有计划但未审批"])

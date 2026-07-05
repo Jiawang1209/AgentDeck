@@ -43,7 +43,8 @@ The review-mode response shape is:
   "next_command": "agentdeck leader apply-action --action-id act_xxx",
   "leader_action": {},
   "continue_card": null,
-  "inbox_card": null
+  "inbox_card": null,
+  "approval_card": null
 }
 ```
 
@@ -92,6 +93,27 @@ Inbox-mode responses include `inbox_card`, which reuses the same queue shape as 
 
 When `inbox_card` is present, `validate_leader_chat_contract()` reuses `validate_inbox_contract()` and prefixes nested errors with `inbox_card:`. Inbox-mode is read-only: it may recommend `agentdeck inbox --agent <id>`, `agentdeck trace --id <inbox_id>`, or the head item `ack_command`, but it must not execute ack, dispatch work, capture replies, or send tmux input.
 
+Approval-mode responses include `approval_card`, which reuses the same queue shape as `agentdeck approval list`:
+
+```json
+{
+  "count": 1,
+  "approvals": [
+    {
+      "approval_id": "apv_xxx",
+      "status": "pending",
+      "approve_command": "agentdeck approval approve --approval-id apv_xxx",
+      "reject_command": "agentdeck approval reject --approval-id apv_xxx --reason <reason>",
+      "dispatch_command": "agentdeck approval dispatch --approval-id apv_xxx",
+      "can_dispatch": false,
+      "dispatch_blocker": "approval is not approved"
+    }
+  ]
+}
+```
+
+When `approval_card` is present, `validate_leader_chat_contract()` reuses `validate_approval_contract()` and prefixes nested errors with `approval_card:`. Approval-mode is read-only: it may recommend `agentdeck approval list` or the first pending approval's `approve_command`, but it must not approve, reject, dispatch work, or send tmux input.
+
 ## Explanation
 
 `leader_explanation` is a GUI-ready explanation derived from the same ProjectView, review, action, and result payloads:
@@ -110,7 +132,7 @@ When `inbox_card` is present, `validate_leader_chat_contract()` reuses `validate
 }
 ```
 
-`safety=plan_only` means the Leader only created a plan record. `safety=safe_apply` means the action can be applied through `agentdeck leader apply-action`. `safety=explicit_runtime` means the user must run the explicit command, such as dispatch, capture, or inbox ack. `safety=safe_apply_completed` means a safe apply action already completed and the response may include `result_count`. `safety=inspect` means the response is only recommending a read-only inspection command.
+`safety=plan_only` means the Leader only created a plan record. `safety=safe_apply` means the action can be applied through `agentdeck leader apply-action`. `safety=explicit_runtime` means the user must run the explicit command, such as dispatch, capture, inbox ack, or approval approve. `safety=safe_apply_completed` means a safe apply action already completed and the response may include `result_count`. `safety=inspect` means the response is only recommending a read-only inspection command.
 
 ## Boundaries
 
@@ -119,5 +141,6 @@ When `inbox_card` is present, `validate_leader_chat_contract()` reuses `validate
 - Chat responses must pass `validate_leader_chat_contract()` before printing JSON.
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
+- Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, and `leader_explanation` as explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, and `leader_explanation` as explanation.

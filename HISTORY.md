@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Route approval intents through Leader chat
+
+- 扩展 `leader chat` response contract，新增正式 `approval_card` 字段，并在 `validate_leader_chat_contract()` 中复用 `validate_approval_contract()` 校验嵌入 approval queue。
+- 新增 `leader chat` 的只读 `mode=approval`：`查看审批` 会返回 `approval_card` 并建议 `agentdeck approval list`。
+- 新增 approval approve 意图：`批准当前审批` 会在存在 pending approval 时建议第一条 pending approval 的 `approve_command`，并标记 `safety=explicit_runtime`、`requires_explicit_user=true`。
+- 将 `agentdeck approval list` 的 queue payload 抽成 `_approval_queue_payload()`，让 CLI approval list 与自然语言审批视图共享同一 shape。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 approval chat 模式、`approval_card` 校验和只读/显式执行边界。
+- 保持安全边界：本轮自然语言入口只建议 approval list/approve 命令并记录 chat turn，不执行 approve/reject/dispatch，不创建 plan、不创建 leader action、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_approval_queue_without_mutating_state tests/test_leader_cli.py::test_leader_chat_suggests_approve_for_pending_approval_without_approving -q` 最初因 chat 误走 `mode=review` 失败；实现后 approval chat 目标测试 2 项通过；leader-chat contract 目标测试 3 项通过；`conda run -n agentdeck pytest -q` 140 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `查看审批` 返回 `approval-chat-ok`，`批准当前审批` 返回 `approval-approve-ok`，并确认第一条 approval 仍为 pending。
+
 ### Current - Suggest inbox ack commands through Leader chat
 
 - 新增 `leader chat` inbox ack 意图识别：`确认 planner 当前 inbox` 会复用 `inbox_card.items[0].ack_command` 作为 `next_command`。

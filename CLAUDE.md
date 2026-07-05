@@ -50,6 +50,8 @@ agentdeck leader chat --message "帮我设计自动 reply extraction"
 agentdeck leader chat --message "查看 planner inbox"
 agentdeck leader chat --message "追踪 planner 当前 inbox"
 agentdeck leader chat --message "确认 planner 当前 inbox"
+agentdeck leader chat --message "查看审批"
+agentdeck leader chat --message "批准当前审批"
 agentdeck leader chat-history
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
@@ -147,6 +149,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck leader chat --message <text>` 是当前自然语言入口 MVP：它读取 ProjectView 前必须通过 `validate_project_view_contract()` 守门；无 plan 时创建 plan-only 记录、持久化一条 safe `create_approvals` Leader action，并在响应前重新读取 ProjectView，使同次响应包含刚创建的 plan、chat turn 和 action queue；有 plan 时 review 最新 plan，并持久化或复用一条 `leader_actions[]` 建议；chat 输出必须包含顶层 `leader_actions`，且它必须等于同次响应的 `project_view.leader_actions`；chat 输出还必须包含 `leader_explanation`，说明 mode、summary、reason、next_command、recommended_action_id、action_kind、action_status、safety 和 requires_explicit_user；plan/review 输出必须包含 `recovery`，且 `next_command` 必须来自 `status.recovery.next_command`；每轮会写入 `chat_turns[]`，可用 `agentdeck leader chat-history` 查看。
 - `agentdeck leader chat --message "继续"`、`"继续吧"` 或 `"/continue"` 必须走 recovery-first 的 `mode=continue`，复用 `agentdeck continue` 的下一步卡片，只记录 chat turn，不得创建新的 leader action、apply action、dispatch 或发送 tmux 输入；`agentdeck contract leader-chat` 必须公开 `continue_card_fields`，example 必须包含稳定 `continue_card`；嵌入的 `continue_card` 必须通过 `validate_continue_contract()` 校验。
 - `agentdeck leader chat --message "查看 planner inbox"` 这类 inbox 意图必须走只读 `mode=inbox`，复用 `agentdeck inbox --agent <id>` 的 queue shape 返回 `inbox_card`；包含 `追踪`、`trace` 或 `lineage` 且存在 pending head 时，`next_command` 可推荐该 head 的 `agentdeck trace --id <inbox_id>`；包含 `确认`、`ack` 或 `acknowledge` 且 head 可 ack 时，`next_command` 可推荐该 head 的 `ack_command`，但 `leader_explanation.safety` 必须是 `explicit_runtime` 且 `requires_explicit_user=true`；该模式只记录 chat turn，不得创建 plan/leader action，不得执行 ack、dispatch、capture reply 或发送 tmux 输入；嵌入的 `inbox_card` 必须通过 `validate_inbox_contract()` 校验。
+- `agentdeck leader chat --message "查看审批"` 这类 approval 意图必须走只读 `mode=approval`，复用 `agentdeck approval list` 的 queue shape 返回 `approval_card`；包含 `批准` 或 `approve` 且存在 pending approval 时，`next_command` 可推荐第一条 pending approval 的 `approve_command`，但 `leader_explanation.safety` 必须是 `explicit_runtime` 且 `requires_explicit_user=true`；该模式只记录 chat turn，不得创建 plan/leader action，不得执行 approve/reject/dispatch 或发送 tmux 输入；嵌入的 `approval_card` 必须通过 `validate_approval_contract()` 校验。
 - `agentdeck leader chat --message "apply action <id>"` 只能复用 safe apply-action 白名单；不得通过 chat 自动应用 dispatch/capture 类 action；safe apply 完成后的 `next_command` 必须来自刷新后 `recovery.next_command`，例如进入 `agentdeck approval list`。
 - 真实 Leader API 使用 `agentdeck leader plan/chat --provider openai-compatible`，环境变量为 `AGENTDECK_LEADER_API_KEY`、`AGENTDECK_LEADER_BASE_URL` 和 `AGENTDECK_LEADER_MODEL`；真实 provider 也只能生成 plan，不得绕过审批。
 - 真实 provider 失败必须记录到 `leader_errors[]` 和 `leader_provider_failed` 事件；不要让异常崩溃 CLI，也不要半写入 plan。

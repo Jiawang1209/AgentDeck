@@ -174,6 +174,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "leader_action",
     "continue_card",
     "inbox_card",
+    "approval_card",
 )
 
 CONTINUE_CARD_FIELDS = (
@@ -795,6 +796,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append(f"inbox_card: {error}")
     elif "inbox_card" in payload and inbox_card is not None:
         errors.append("inbox_card must be an object")
+    approval_card = payload.get("approval_card")
+    if isinstance(approval_card, dict):
+        approval_card_validation = validate_approval_contract(approval_card)
+        for error in approval_card_validation["errors"]:
+            errors.append(f"approval_card: {error}")
+    elif "approval_card" in payload and approval_card is not None:
+        errors.append("approval_card must be an object")
     return {"ok": not errors, "errors": errors}
 
 
@@ -1000,6 +1008,7 @@ def leader_chat_example() -> dict[str, object]:
         "leader_action": leader_action,
         "continue_card": continue_card,
         "inbox_card": None,
+        "approval_card": None,
     }
 
 

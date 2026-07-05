@@ -935,6 +935,26 @@ def _chat_wants_inbox_ack(message: str) -> bool:
     return any(token in normalized for token in ["ack", "acknowledge", "确认", "标记已读", "已处理"])
 
 
+def _chat_wants_approval(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(token in normalized for token in ["approval", "approve", "审批", "批准"])
+
+
+def _chat_wants_approval_approve(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(token in normalized for token in ["approve", "批准", "同意", "通过审批"])
+
+
+def _pending_approval_item(approval_card: dict[str, object]) -> dict[str, object] | None:
+    approvals = approval_card.get("approvals")
+    if not isinstance(approvals, list):
+        return None
+    for approval in approvals:
+        if isinstance(approval, dict) and approval.get("status") == "pending":
+            return approval
+    return None
+
+
 def _inbox_head_item(inbox_card: dict[str, object]) -> dict[str, object] | None:
     head_inbox_id = inbox_card.get("head_inbox_id")
     items = inbox_card.get("items")
@@ -956,6 +976,8 @@ def _leader_chat_explanation(
     result: dict[str, object] | None = None,
     inbox_card: dict[str, object] | None = None,
     inbox_action_kind: str | None = None,
+    approval_card: dict[str, object] | None = None,
+    approval_action_kind: str | None = None,
 ) -> dict[str, object]:
     recovery = project_view.get("recovery")
     recovery_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
@@ -1020,6 +1042,21 @@ def _leader_chat_explanation(
             "recommended_action_id": head_inbox_id,
             "action_kind": inbox_action_kind or "inbox",
             "action_status": head.get("status") if isinstance(head, dict) else "empty",
+            "safety": safety,
+            "requires_explicit_user": safety != "inspect",
+        }
+    if mode == "approval":
+        pending = _pending_approval_item(approval_card) if isinstance(approval_card, dict) else None
+        approval_id = pending.get("approval_id") if isinstance(pending, dict) else None
+        safety = "explicit_runtime" if approval_action_kind == "approval_approve" else "inspect"
+        return {
+            "mode": mode,
+            "summary": "Leader recommends inspecting the approval queue without mutating runtime state.",
+            "reason": "human asked to inspect or approve pending approvals",
+            "next_command": next_command,
+            "recommended_action_id": approval_id,
+            "action_kind": approval_action_kind or "approval",
+            "action_status": pending.get("status") if isinstance(pending, dict) else "empty",
             "safety": safety,
             "requires_explicit_user": safety != "inspect",
         }
@@ -1118,6 +1155,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "leader_action": action_detail,
             "continue_card": None,
             "inbox_card": None,
+            "approval_card": None,
             "result": result,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -1174,6 +1212,73 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "leader_action": leader_action,
             "continue_card": continue_card,
             "inbox_card": None,
+            "approval_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_approval(args.message):
+        approval_card = _approval_queue_payload(store)
+        validation = validate_approval_contract(approval_card)
+        if not validation["ok"]:
+            print("Approval queue contract validation failed", file=sys.stderr)
+            for error in validation["errors"]:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        pending_approval = _pending_approval_item(approval_card)
+        wants_approve = _chat_wants_approval_approve(args.message)
+        next_command = (
+            pending_approval.get("approve_command")
+            if wants_approve and isinstance(pending_approval, dict) and pending_approval.get("approve_command")
+            else "agentdeck approval list"
+        )
+        approval_action_kind = (
+            "approval_approve" if wants_approve and isinstance(pending_approval, dict) else "approval"
+        )
+        turn = store.record_chat_turn(
+            mode="approval",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind=approval_action_kind,
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "approval",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "approval",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "approval",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                approval_card=approval_card,
+                approval_action_kind=approval_action_kind,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": approval_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -1248,6 +1353,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "leader_action": None,
             "continue_card": None,
             "inbox_card": inbox_card,
+            "approval_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -1293,6 +1399,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "leader_action": action_detail,
             "continue_card": None,
             "inbox_card": None,
+            "approval_card": None,
         }
         store.append_event(
             EventRecord.create(
@@ -1370,6 +1477,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         "review": None,
         "next_command": next_command,
         "inbox_card": None,
+        "approval_card": None,
     }
     store.append_event(
         EventRecord.create(
@@ -1485,8 +1593,7 @@ def approval_list_command(_args: argparse.Namespace) -> int:
     _config, store, exit_code = _load_project_or_error()
     if store is None:
         return exit_code
-    approvals = [_approval_queue_item(approval) for approval in store.list_approvals()]
-    payload = {"count": len(approvals), "approvals": approvals}
+    payload = _approval_queue_payload(store)
     validation = validate_approval_contract(payload)
     if not validation["ok"]:
         print("Approval queue contract validation failed", file=sys.stderr)
@@ -1495,6 +1602,11 @@ def approval_list_command(_args: argparse.Namespace) -> int:
         return 1
     _print_json(payload)
     return 0
+
+
+def _approval_queue_payload(store: StateStore) -> dict[str, object]:
+    approvals = [_approval_queue_item(approval) for approval in store.list_approvals()]
+    return {"count": len(approvals), "approvals": approvals}
 
 
 def _approval_queue_item(approval: dict[str, object]) -> dict[str, object]:
