@@ -2750,6 +2750,102 @@ def test_leader_chat_traces_specific_communication_id_without_mutating_runtime(
     assert state_after["leader_actions"] == []
 
 
+def test_leader_chat_traces_specific_artifact_id_without_mutating_runtime(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["messages"] = [
+        {
+            "message_id": "msg_trace_artifact_direct",
+            "from_actor": "leader",
+            "to_agent": "planner",
+            "task": "直接追踪产物",
+            "prompt": "# AgentDeck dispatch\n\nAgent: planner\n\n当前任务:\n直接追踪产物",
+            "status": "replied",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["attempts"] = [
+        {
+            "attempt_id": "att_trace_artifact_direct",
+            "message_id": "msg_trace_artifact_direct",
+            "agent_id": "planner",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["jobs"] = [
+        {
+            "job_id": "job_trace_artifact_direct",
+            "message_id": "msg_trace_artifact_direct",
+            "attempt_id": "att_trace_artifact_direct",
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["replies"] = [
+        {
+            "reply_id": "rep_trace_artifact_direct",
+            "message_id": "msg_trace_artifact_direct",
+            "attempt_id": "att_trace_artifact_direct",
+            "job_id": "job_trace_artifact_direct",
+            "from_agent": "planner",
+            "to_actor": "leader",
+            "text": "status: completed\nfull_output_path: docs/architecture/artifact-trace.md",
+            "created_at": "2026-07-04T00:00:01+00:00",
+        }
+    ]
+    state["artifacts"] = [
+        {
+            "artifact_id": "art_trace_direct",
+            "message_id": "msg_trace_artifact_direct",
+            "attempt_id": "att_trace_artifact_direct",
+            "job_id": "job_trace_artifact_direct",
+            "reply_id": "rep_trace_artifact_direct",
+            "from_agent": "planner",
+            "path": "docs/architecture/artifact-trace.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:02+00:00",
+        }
+    ]
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "追踪 art_trace_direct"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "trace"
+    assert payload["message"] == "追踪 art_trace_direct"
+    assert payload["next_command"] == "agentdeck trace --id art_trace_direct"
+    assert payload["trace_card"]["query_id"] == "art_trace_direct"
+    assert payload["trace_card"]["message"]["message_id"] == "msg_trace_artifact_direct"
+    assert payload["trace_card"]["artifacts"][0]["artifact_id"] == "art_trace_direct"
+    assert payload["trace_card"]["artifacts"][0]["path"] == "docs/architecture/artifact-trace.md"
+    assert payload["leader_explanation"]["recommended_action_id"] == "art_trace_direct"
+    assert payload["intent_card"]["embedded_card"] == "trace_card"
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Inspect trace",
+        "command": payload["next_command"],
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "trace"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck trace --id art_trace_direct"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == state["messages"]
+    assert state_after["artifacts"] == state["artifacts"]
+
+
 def test_leader_chat_rejects_unknown_trace_id_without_planning(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
 

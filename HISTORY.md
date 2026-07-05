@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Route artifact trace intents through Leader chat
+
+- 扩展 `agentdeck leader chat --message "追踪 art_xxx"`：自然语言 direct trace intent 现在会识别 artifact id，进入只读 `mode=trace`，嵌入同源 `trace_card`，并建议显式 `agentdeck trace --id art_xxx`。
+- 保持人类控制边界：artifact trace chat turn 只记录对话和检查入口，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture reply、不读取 pane、不发送 tmux 输入；未知 trace id 仍返回错误，不落入 provider-backed planning。
+- 同步 README、CLAUDE.md 和 AGENT.md，明确 direct trace 支持 `msg/att/job/rep/art/inb` 这条统一通信 lineage，并补充 trace CLI help 的 artifact 描述。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "追踪 art_trace_direct"` 最初被误路由为 `mode=plan`；实现后目标测试 `conda run -n agentdeck pytest -q tests/test_leader_cli.py::test_leader_chat_traces_specific_artifact_id_without_mutating_runtime` 通过；聚焦回归 `conda run -n agentdeck pytest -q tests/test_leader_cli.py::test_leader_chat_traces_specific_artifact_id_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_traces_specific_communication_id_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_rejects_unknown_trace_id_without_planning tests/test_agent_cli.py::test_trace_accepts_artifact_id_and_returns_artifacts tests/test_contracts.py::test_validate_trace_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example` 6 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 317 项通过。
+
 ### Current - Expose trace artifact fields to Leader chat contracts
 
 - 扩展 `agentdeck contract leader-chat`：新增 `trace_artifact_fields`，让 GUI/自然语言壳只读取 Leader chat contract 时也能发现嵌入 `trace_card.artifacts[]` 的字段。

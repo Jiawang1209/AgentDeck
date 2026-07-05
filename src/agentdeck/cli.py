@@ -3283,7 +3283,7 @@ def _chat_trace_query_id(message: str) -> str | None:
     wants_trace = any(token in normalized for token in ["trace", "追踪", "溯源", "lineage", "链路"])
     if not wants_trace:
         return None
-    match = re.search(r"\b(?:msg|att|job|rep|inb)_[A-Za-z0-9][A-Za-z0-9_-]*\b", message)
+    match = re.search(r"\b(?:msg|att|job|rep|art|inb)_[A-Za-z0-9][A-Za-z0-9_-]*\b", message)
     return match.group(0) if match else None
 
 
@@ -6326,8 +6326,12 @@ def build_parser() -> argparse.ArgumentParser:
     ack.add_argument("--inbox-id", required=True, help="Inbox item id")
     ack.set_defaults(func=ack_command)
 
-    trace = subparsers.add_parser("trace", help="Trace message, attempt, job, reply, or inbox lineage")
-    trace.add_argument("--id", required=True, help="message_id, attempt_id, job_id, reply_id, or inbox_id")
+    trace = subparsers.add_parser("trace", help="Trace message, attempt, job, reply, artifact, or inbox lineage")
+    trace.add_argument(
+        "--id",
+        required=True,
+        help="message_id, attempt_id, job_id, reply_id, artifact_id, or inbox_id",
+    )
     trace.set_defaults(func=trace_command)
 
     return parser
