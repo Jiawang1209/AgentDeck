@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Route natural-language inbox inspection through Leader chat
+
+- 扩展 `leader chat` response contract，新增正式 `inbox_card` 字段，并在 `validate_leader_chat_contract()` 中复用 `validate_inbox_contract()` 校验嵌入 inbox queue。
+- 新增 `leader chat` 的只读 `mode=inbox`：`查看 planner inbox` 会返回 `inbox_card` 并建议 `agentdeck inbox --agent planner`。
+- 新增 inbox trace 意图：`追踪 planner 当前 inbox` 会在存在 pending head 时建议该 head 的 `agentdeck trace --id <inbox_id>`。
+- 将 `agentdeck inbox --agent <id>` 的 queue payload 抽成 `_inbox_queue_payload()`，让 CLI inbox 与自然语言 inbox 视图共享同一 shape。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 inbox chat 模式、`inbox_card` 校验和只读边界。
+- 保持安全边界：本轮自然语言入口只建议 inspect/trace 命令并记录 chat turn，不创建 plan、不创建 leader action、不 ack inbox、不 dispatch、不 capture reply、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_agent_inbox_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_suggests_trace_for_current_inbox_head -q` 最初因 chat 误走 `mode=plan` 失败；实现后目标 leader chat/inbox 测试 4 项通过；leader-chat contract 目标测试 4 项通过；`conda run -n agentdeck pytest -q` 137 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `agentdeck leader chat --message "查看 planner inbox"` 返回 `inbox-chat-ok`，`agentdeck leader chat --message "追踪 planner 当前 inbox"` 返回 `inbox-trace-ok`。
+
 ### Current - Discover and validate inbox queue contract
 
 - 新增 `INBOX_QUEUE_FIELDS`、`INBOX_ITEM_FIELDS`、`inbox_contract_payload()`、`inbox_contract_response()`、`inbox_example()` 和 `validate_inbox_contract()`，为单 agent mailbox 建立可复用契约。

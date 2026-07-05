@@ -42,7 +42,8 @@ The review-mode response shape is:
   "recovery": {},
   "next_command": "agentdeck leader apply-action --action-id act_xxx",
   "leader_action": {},
-  "continue_card": null
+  "continue_card": null,
+  "inbox_card": null
 }
 ```
 
@@ -69,6 +70,28 @@ Continue-mode responses include `continue_card`, which reuses the same recovery 
 `agentdeck contract leader-chat --example` exposes `example_continue_card_fields` and a stable continue-mode example so GUI clients can build recovery cards without guessing fields.
 When `continue_card` is present, `validate_leader_chat_contract()` reuses `validate_continue_contract()` and prefixes nested errors with `continue_card:`.
 
+Inbox-mode responses include `inbox_card`, which reuses the same queue shape as `agentdeck inbox --agent <id>`:
+
+```json
+{
+  "agent_id": "planner",
+  "count": 1,
+  "head_inbox_id": "inb_xxx",
+  "items": [
+    {
+      "inbox_id": "inb_xxx",
+      "trace_command": "agentdeck trace --id inb_xxx",
+      "ack_command": "agentdeck ack --agent planner --inbox-id inb_xxx",
+      "is_head": true,
+      "can_ack": true,
+      "ack_blocker": null
+    }
+  ]
+}
+```
+
+When `inbox_card` is present, `validate_leader_chat_contract()` reuses `validate_inbox_contract()` and prefixes nested errors with `inbox_card:`. Inbox-mode is read-only: it may recommend `agentdeck inbox --agent <id>` or `agentdeck trace --id <inbox_id>`, but it must not ack inbox items, dispatch work, capture replies, or send tmux input.
+
 ## Explanation
 
 `leader_explanation` is a GUI-ready explanation derived from the same ProjectView, review, action, and result payloads:
@@ -87,7 +110,7 @@ When `continue_card` is present, `validate_leader_chat_contract()` reuses `valid
 }
 ```
 
-`safety=plan_only` means the Leader only created a plan record. `safety=safe_apply` means the action can be applied through `agentdeck leader apply-action`. `safety=explicit_runtime` means the user must run the explicit command, such as dispatch or capture. `safety=safe_apply_completed` means a safe apply action already completed and the response may include `result_count`.
+`safety=plan_only` means the Leader only created a plan record. `safety=safe_apply` means the action can be applied through `agentdeck leader apply-action`. `safety=explicit_runtime` means the user must run the explicit command, such as dispatch or capture. `safety=safe_apply_completed` means a safe apply action already completed and the response may include `result_count`. `safety=inspect` means the response is only recommending a read-only inspection command.
 
 ## Boundaries
 
@@ -95,5 +118,6 @@ When `continue_card` is present, `validate_leader_chat_contract()` reuses `valid
 - Chat responses must not auto-dispatch runtime work.
 - Chat responses must pass `validate_leader_chat_contract()` before printing JSON.
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
+- Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, and `leader_explanation` as explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, and `leader_explanation` as explanation.

@@ -481,11 +481,7 @@ def inbox_command(args: argparse.Namespace) -> int:
     if _agent_by_id(config, args.agent) is None:
         print(f"unknown agent: {args.agent}", file=sys.stderr)
         return 1
-    raw_items = store.inbox_items(args.agent)
-    head = next((item for item in raw_items if item.get("status") == "pending"), None)
-    head_inbox_id = head.get("inbox_id") if isinstance(head, dict) else None
-    items = [_inbox_queue_item(args.agent, item, head_inbox_id) for item in raw_items]
-    payload = {"agent_id": args.agent, "count": len(items), "head_inbox_id": head_inbox_id, "items": items}
+    payload = _inbox_queue_payload(args.agent, store)
     validation = validate_inbox_contract(payload)
     if not validation["ok"]:
         print("Inbox contract validation failed", file=sys.stderr)
@@ -494,6 +490,14 @@ def inbox_command(args: argparse.Namespace) -> int:
         return 1
     _print_json(payload)
     return 0
+
+
+def _inbox_queue_payload(agent_id: str, store: StateStore) -> dict[str, object]:
+    raw_items = store.inbox_items(agent_id)
+    head = next((item for item in raw_items if item.get("status") == "pending"), None)
+    head_inbox_id = head.get("inbox_id") if isinstance(head, dict) else None
+    items = [_inbox_queue_item(agent_id, item, head_inbox_id) for item in raw_items]
+    return {"agent_id": agent_id, "count": len(items), "head_inbox_id": head_inbox_id, "items": items}
 
 
 def _inbox_queue_item(agent_id: str, item: dict[str, object], head_inbox_id: object) -> dict[str, object]:
@@ -910,6 +914,33 @@ def _is_continue_chat_message(message: str) -> bool:
     return normalized in {"继续", "继续吧", "/continue", "continue"}
 
 
+def _chat_inbox_agent_id(message: str, config: ProjectConfig) -> str | None:
+    normalized = message.strip().lower()
+    mentions_inbox = any(token in normalized for token in ["inbox", "收件箱", "消息", "mailbox"])
+    if not mentions_inbox:
+        return None
+    for agent in config.agents:
+        if agent.agent_id.lower() in normalized:
+            return agent.agent_id
+    return None
+
+
+def _chat_wants_inbox_trace(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(token in normalized for token in ["trace", "追踪", "溯源", "lineage"])
+
+
+def _inbox_head_item(inbox_card: dict[str, object]) -> dict[str, object] | None:
+    head_inbox_id = inbox_card.get("head_inbox_id")
+    items = inbox_card.get("items")
+    if not isinstance(items, list):
+        return None
+    for item in items:
+        if isinstance(item, dict) and item.get("inbox_id") == head_inbox_id:
+            return item
+    return None
+
+
 def _leader_chat_explanation(
     mode: str,
     *,
@@ -918,6 +949,8 @@ def _leader_chat_explanation(
     leader_action: dict[str, object] | None = None,
     review: dict[str, object] | None = None,
     result: dict[str, object] | None = None,
+    inbox_card: dict[str, object] | None = None,
+    inbox_action_kind: str | None = None,
 ) -> dict[str, object]:
     recovery = project_view.get("recovery")
     recovery_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
@@ -969,6 +1002,20 @@ def _leader_chat_explanation(
             "requires_explicit_user": recovery_action.get("requires_explicit_user")
             if isinstance(recovery_action, dict)
             else None,
+        }
+    if mode == "inbox":
+        head = _inbox_head_item(inbox_card) if isinstance(inbox_card, dict) else None
+        head_inbox_id = head.get("inbox_id") if isinstance(head, dict) else None
+        return {
+            "mode": mode,
+            "summary": f"Leader recommends inspecting {inbox_card.get('agent_id') if isinstance(inbox_card, dict) else None} inbox without mutating runtime state.",
+            "reason": "human asked to inspect an agent inbox",
+            "next_command": next_command,
+            "recommended_action_id": head_inbox_id,
+            "action_kind": inbox_action_kind or "inbox",
+            "action_status": head.get("status") if isinstance(head, dict) else "empty",
+            "safety": "inspect",
+            "requires_explicit_user": False,
         }
     return {
         "mode": mode,
@@ -1064,6 +1111,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "next_command": next_command,
             "leader_action": action_detail,
             "continue_card": None,
+            "inbox_card": None,
             "result": result,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -1119,6 +1167,71 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "next_command": next_command,
             "leader_action": leader_action,
             "continue_card": continue_card,
+            "inbox_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    inbox_agent_id = _chat_inbox_agent_id(args.message, config)
+    if inbox_agent_id:
+        inbox_card = _inbox_queue_payload(inbox_agent_id, store)
+        validation = validate_inbox_contract(inbox_card)
+        if not validation["ok"]:
+            print("Inbox contract validation failed", file=sys.stderr)
+            for error in validation["errors"]:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        head = _inbox_head_item(inbox_card)
+        wants_trace = _chat_wants_inbox_trace(args.message)
+        next_command = (
+            head.get("trace_command")
+            if wants_trace and isinstance(head, dict) and head.get("trace_command")
+            else f"agentdeck inbox --agent {inbox_agent_id}"
+        )
+        inbox_action_kind = "inbox_trace" if wants_trace and isinstance(head, dict) else "inbox"
+        turn = store.record_chat_turn(
+            mode="inbox",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind=inbox_action_kind,
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "inbox",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "inbox",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "inbox",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                inbox_card=inbox_card,
+                inbox_action_kind=inbox_action_kind,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": inbox_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -1163,6 +1276,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "next_command": next_command,
             "leader_action": action_detail,
             "continue_card": None,
+            "inbox_card": None,
         }
         store.append_event(
             EventRecord.create(
@@ -1239,6 +1353,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         "plan": record["plan"],
         "review": None,
         "next_command": next_command,
+        "inbox_card": None,
     }
     store.append_event(
         EventRecord.create(

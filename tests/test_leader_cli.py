@@ -324,6 +324,103 @@ def test_leader_chat_continue_returns_recovery_card_without_creating_action(tmp_
     assert '"event_type": "leader_chat_turn"' in events
 
 
+def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["inbox"] = {
+        "planner": [
+            {
+                "inbox_id": "inb_planner_head",
+                "event_type": "task_request",
+                "message_id": "msg_planner",
+                "attempt_id": "att_planner",
+                "job_id": "job_planner",
+                "reply_id": None,
+                "from_actor": "leader",
+                "to_agent": "planner",
+                "task": "拆解自然语言 inbox",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看 planner inbox"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "inbox"
+    assert payload["message"] == "查看 planner inbox"
+    assert payload["plan_id"] is None
+    assert payload["review"] is None
+    assert payload["leader_action"] is None
+    assert payload["continue_card"] is None
+    assert payload["next_command"] == "agentdeck inbox --agent planner"
+    assert payload["inbox_card"]["agent_id"] == "planner"
+    assert payload["inbox_card"]["head_inbox_id"] == "inb_planner_head"
+    assert payload["inbox_card"]["items"][0]["trace_command"] == "agentdeck trace --id inb_planner_head"
+    assert payload["inbox_card"]["items"][0]["ack_command"] == "agentdeck ack --agent planner --inbox-id inb_planner_head"
+    assert payload["inbox_card"]["items"][0]["can_ack"] is True
+    assert payload["leader_explanation"]["mode"] == "inbox"
+    assert payload["leader_explanation"]["next_command"] == payload["next_command"]
+    assert payload["leader_explanation"]["recommended_action_id"] == "inb_planner_head"
+    assert payload["leader_explanation"]["action_kind"] == "inbox"
+    assert payload["leader_explanation"]["action_status"] == "pending"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
+    assert payload["project_view"]["chat_turns"]["items"][0]["mode"] == "inbox"
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "inbox"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck inbox --agent planner"
+    assert state_after["inbox"]["planner"][0]["status"] == "pending"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
+def test_leader_chat_suggests_trace_for_current_inbox_head(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["inbox"] = {
+        "planner": [
+            {
+                "inbox_id": "inb_trace_me",
+                "event_type": "task_reply",
+                "message_id": "msg_trace",
+                "attempt_id": "att_trace",
+                "job_id": "job_trace",
+                "reply_id": "rep_trace",
+                "from_agent": "coder",
+                "to_agent": "planner",
+                "task": "代码实现完成",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "追踪 planner 当前 inbox"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "inbox"
+    assert payload["next_command"] == "agentdeck trace --id inb_trace_me"
+    assert payload["inbox_card"]["agent_id"] == "planner"
+    assert payload["inbox_card"]["items"][0]["event_type"] == "task_reply"
+    assert payload["inbox_card"]["items"][0]["trace_command"] == payload["next_command"]
+    assert payload["leader_explanation"]["action_kind"] == "inbox_trace"
+    assert payload["leader_explanation"]["recommended_action_id"] == "inb_trace_me"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert StateStore(root).load()["inbox"]["planner"][0]["status"] == "pending"
+
+
 def test_leader_chat_persists_create_approvals_action_for_existing_plan(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "已有计划但未审批"])
