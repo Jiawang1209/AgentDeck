@@ -4,6 +4,12 @@
 
 ## 2026-07-05
 
+### Current - Surface Leader review contract in workbench
+
+- 扩展 `workbench.contracts_card`：新增 `leader_review_contract=agentdeck contract leader-review`，让 GUI/TUI 从一屏工作台直接发现 Leader review 响应契约。
+- 同步 `WORKBENCH_CONTRACTS_CARD_FIELDS`、workbench example、live `_workbench_contracts_card()`、workbench schema、README、CLAUDE.md、AGENT.md 和测试。
+- 完整验证：已先确认红测失败，workbench contracts_card 最初缺少 `leader_review_contract`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 3 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 143 项通过；`conda run -n agentdeck pytest -q` 223 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `workbench-leader-review-contract-smoke-ok`。
+
 ### Current - Validate Leader review live output
 
 - 新增 `validate_leader_review_contract(payload)`，校验 `agentdeck leader review --plan-id <id>` 的必备 response 字段、`controls[]` 字段、`enabled` 布尔值，以及 `wait_for_reply` 的 `capture_reply` control 安全语义。

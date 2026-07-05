@@ -79,7 +79,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `queue_card` is derived from `project_view.leader_actions`, `project_view.approvals`, `project_view.inbox`, and the recovery-driven next command.
 `operator_card` is derived from `recovery.recommended_action` and the active queue card. It is a renderable human-control descriptor, not an execution result.
 `audit_card` is derived from `recovery.latest_event` and `recovery.recent_events`.
-`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema.
+`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the Leader chat and Leader review contracts.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `next_command` must equal `continue_card.next_command`.
@@ -377,6 +377,7 @@ The card intentionally uses compact ProjectView recovery event summaries. Use `e
   "workbench_contract": "agentdeck contract workbench",
   "agent_runtime_contract": "agentdeck contract agent-runtime",
   "leader_chat_contract": "agentdeck contract leader-chat",
+  "leader_review_contract": "agentdeck contract leader-review",
   "project_view_contract": "agentdeck contract project-view",
   "events_contract": "agentdeck contract events",
   "doctor_contract": "agentdeck contract doctor"

@@ -580,6 +580,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["contracts_card"]["contracts_command"] == "agentdeck contract list"
     assert example["contracts_card"]["contract_index_contract"] == "docs/contracts/contract-index-schema.md"
     assert example["contracts_card"]["leader_chat_contract"] == "agentdeck contract leader-chat"
+    assert example["contracts_card"]["leader_review_contract"] == "agentdeck contract leader-review"
     assert set(example["change_summary"]) == set(WORKBENCH_CHANGE_SUMMARY_FIELDS)
     assert example["ledger_card"]["trace_commands"] == [
         "agentdeck trace --id msg_example",
