@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Suggest agent send through Leader chat
+
+- 扩展 `agentdeck leader chat --message "发送给 planner：继续"` / `"tell coder fix tests"`：自然语言入口现在会进入 `mode=runtime`，嵌入同源 `runtime_card`，并把 `next_command` 指向 shell-safe 的显式 `agentdeck agent send --agent <id> --text <text>`。
+- 该能力只对已 running 的目标 agent 生效；目标未 spawn 时返回 `agent is not spawned: <id>`，不会落到 provider-backed planning，也不会创建 chat turn 或 plan。
+- `leader_explanation` 和 `intent_card.controls[]` 会标记 `safety=explicit_runtime` 与 `requires_explicit_user=true`，让 GUI 或自然语言壳可以渲染发送按钮，但不会自动发送 tmux 输入。
+- 保持安全边界：该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，不执行 refresh/spawn/stop/capture/send，不读取 pane 输出。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md、capability card 和测试，让“启动 agent”和“发送输入给 agent”共享同一张 runtime card，但都保持显式执行。
+- 完整验证：已先确认红测失败，`发送给 planner：继续 实现测试` 最初误走 `mode=plan`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_agent_send_without_sending_input tests/test_leader_cli.py::test_leader_chat_rejects_agent_send_when_agent_is_not_spawned -q` 2 项通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_agent_send_without_sending_input tests/test_leader_cli.py::test_leader_chat_rejects_agent_send_when_agent_is_not_spawned tests/test_leader_cli.py::test_leader_chat_suggests_agent_spawn_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_open_agent_inbox_does_not_trigger_spawn_intent tests/test_leader_cli.py::test_leader_chat_inspects_runtime_without_mutating_state tests/test_leader_cli.py::test_leader_chat_captures_agent_output_as_read_only_card tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 10 项通过；`conda run -n agentdeck pytest -q` 251 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-send-suggestion-smoke-ok mode=runtime next=agentdeck agent send --agent planner --text '继续 实现测试' safety=explicit_runtime requires=True messages=0 jobs=0`，未 spawn smoke 确认 `leader-chat-send-unspawned-smoke-ok code=1 error=agent is not spawned: planner chat_turns=0 plans=0`。
+
 ### Current - Suggest agent spawn through Leader chat
 
 - 扩展 `agentdeck leader chat --message "启动 planner"` / `"spawn coder"`：自然语言入口现在会进入 `mode=runtime`，嵌入同源 `runtime_card`，并把 `next_command` 指向显式 `agentdeck agent spawn --agent <id>`。

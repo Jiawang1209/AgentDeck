@@ -780,6 +780,70 @@ def test_leader_chat_open_agent_inbox_does_not_trigger_spawn_intent(tmp_path, mo
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_suggests_agent_send_without_sending_input(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["leader", "chat", "--message", "发送给 planner：继续 实现测试"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "runtime"
+    assert payload["message"] == "发送给 planner：继续 实现测试"
+    assert payload["next_command"] == "agentdeck agent send --agent planner --text '继续 实现测试'"
+    assert payload["runtime_card"]["agents"][0]["agent_id"] == "planner"
+    assert payload["runtime_card"]["agents"][0]["status"] == "running"
+    assert payload["leader_explanation"]["mode"] == "runtime"
+    assert payload["leader_explanation"]["summary"] == (
+        "Leader recommends explicitly sending input to planner without mutating runtime state."
+    )
+    assert payload["leader_explanation"]["reason"] == "human asked to send input to one agent runtime"
+    assert payload["leader_explanation"]["recommended_action_id"] == "planner"
+    assert payload["leader_explanation"]["action_kind"] == "runtime_send"
+    assert payload["leader_explanation"]["action_status"] == "running"
+    assert payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert payload["intent_card"]["embedded_card"] == "runtime_card"
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Next command",
+        "command": "agentdeck agent send --agent planner --text '继续 实现测试'",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "runtime"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck agent send --agent planner --text '继续 实现测试'"
+    assert state_after["agents"]["planner"]["pane_id"] == "%42"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+    assert fake.sent == []
+    assert fake.captured == []
+
+
+def test_leader_chat_rejects_agent_send_when_agent_is_not_spawned(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "发送给 planner：继续 实现测试"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "agent is not spawned: planner"
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"] == []
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_captures_agent_output_as_read_only_card(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%42")

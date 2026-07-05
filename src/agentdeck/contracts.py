@@ -1076,8 +1076,8 @@ def leader_chat_capability_card() -> dict[str, object]:
         {
             "mode": "runtime",
             "label": "Inspect runtime",
-            "description": "Inspect visible tmux agent panes or suggest explicit agent spawn commands.",
-            "example_messages": ["查看 runtime", "查看终端", "启动 planner"],
+            "description": "Inspect visible tmux agent panes or suggest explicit agent spawn/send commands.",
+            "example_messages": ["查看 runtime", "查看终端", "启动 planner", "发送给 planner：继续"],
             "command": "agentdeck agent list",
             "safety": "inspect",
             "requires_explicit_user": False,
