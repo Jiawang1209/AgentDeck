@@ -872,6 +872,16 @@ def test_leader_chat_opens_workbench_snapshot_without_mutating_state(tmp_path, m
         "read_only": True,
         "next_command": payload["next_command"],
         "requires_explicit_user": False,
+        "controls": [
+            {
+                "kind": "next",
+                "label": "Next command",
+                "command": payload["next_command"],
+                "safety": "inspect",
+                "enabled": False,
+                "blocker": "next command unavailable",
+            }
+        ],
     }
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
     assert payload["project_view"]["chat_turns"]["items"][0]["mode"] == "workbench"

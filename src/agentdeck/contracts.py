@@ -616,6 +616,16 @@ LEADER_CHAT_INTENT_CARD_FIELDS = (
     "read_only",
     "next_command",
     "requires_explicit_user",
+    "controls",
+)
+
+LEADER_CHAT_INTENT_CONTROL_FIELDS = (
+    "kind",
+    "label",
+    "command",
+    "safety",
+    "enabled",
+    "blocker",
 )
 
 TRACE_TOP_LEVEL_FIELDS = (
@@ -728,6 +738,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "response_fields": list(LEADER_CHAT_RESPONSE_FIELDS),
         "explanation_fields": list(LEADER_CHAT_EXPLANATION_FIELDS),
         "intent_card_fields": list(LEADER_CHAT_INTENT_CARD_FIELDS),
+        "intent_control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
@@ -749,6 +760,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_response_fields"] = list(example)
         payload["example_explanation_fields"] = list(example["leader_explanation"])
         payload["example_intent_card_fields"] = list(example["intent_card"])
+        payload["example_intent_control_fields"] = list(example["intent_card"]["controls"][0])
         payload["example_continue_card_fields"] = list(example["continue_card"])
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
@@ -1401,6 +1413,17 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append(f"missing intent_card field: {field}")
         if intent_card.get("next_command") != payload.get("next_command"):
             errors.append("intent_card: next_command must match response next_command")
+        controls = intent_card.get("controls")
+        if isinstance(controls, list):
+            for control in controls:
+                if isinstance(control, dict):
+                    for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                        if field not in control:
+                            errors.append(f"intent_card.controls: missing control field: {field}")
+                else:
+                    errors.append("intent_card.controls items must be objects")
+        elif "controls" in intent_card:
+            errors.append("intent_card.controls must be a list")
     elif "intent_card" in payload:
         errors.append("intent_card must be an object")
     continue_card = payload.get("continue_card")
@@ -1902,6 +1925,16 @@ def leader_chat_example() -> dict[str, object]:
             "read_only": True,
             "next_command": next_command,
             "requires_explicit_user": False,
+            "controls": [
+                {
+                    "kind": "next",
+                    "label": "Next command",
+                    "command": next_command,
+                    "safety": "safe_apply",
+                    "enabled": True,
+                    "blocker": None,
+                }
+            ],
         },
         "plan_id": "pln_example",
         "review": None,

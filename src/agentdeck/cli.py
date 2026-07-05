@@ -74,14 +74,25 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
             break
     route_source = "provider_plan" if mode == "plan" else "state_review" if mode == "review" else "local_rule"
     read_only = mode not in {"plan", "review", "apply_action"}
+    next_command = payload.get("next_command")
     return {
         "mode": mode,
         "matched_intent": mode,
         "route_source": route_source,
         "embedded_card": embedded_card,
         "read_only": read_only,
-        "next_command": payload.get("next_command"),
+        "next_command": next_command,
         "requires_explicit_user": explanation.get("requires_explicit_user"),
+        "controls": [
+            {
+                "kind": "next",
+                "label": "Next command",
+                "command": next_command,
+                "safety": explanation.get("safety"),
+                "enabled": next_command is not None,
+                "blocker": None if next_command is not None else "next command unavailable",
+            }
+        ],
     }
 
 

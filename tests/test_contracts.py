@@ -21,6 +21,7 @@ from agentdeck.contracts import (
     LEADER_ACTIONS_LIST_FIELDS,
     LEADER_CHAT_EXPLANATION_FIELDS,
     LEADER_CHAT_INTENT_CARD_FIELDS,
+    LEADER_CHAT_INTENT_CONTROL_FIELDS,
     LEADER_CHAT_RESPONSE_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
     PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS,
@@ -359,6 +360,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["response_fields"] == list(LEADER_CHAT_RESPONSE_FIELDS)
     assert payload["explanation_fields"] == list(LEADER_CHAT_EXPLANATION_FIELDS)
     assert payload["intent_card_fields"] == list(LEADER_CHAT_INTENT_CARD_FIELDS)
+    assert payload["intent_control_fields"] == list(LEADER_CHAT_INTENT_CONTROL_FIELDS)
     assert payload["continue_card_fields"] == list(CONTINUE_CARD_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
@@ -1032,6 +1034,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert set(payload["example_explanation_fields"]) == set(example["leader_explanation"])
     assert payload["example_intent_card_fields"] == payload["intent_card_fields"]
     assert payload["example_intent_card_fields"] == list(example["intent_card"])
+    assert payload["example_intent_control_fields"] == payload["intent_control_fields"]
+    assert payload["example_intent_control_fields"] == list(example["intent_card"]["controls"][0])
     assert payload["example_continue_card_fields"] == payload["continue_card_fields"]
     assert set(payload["example_continue_card_fields"]) == set(example["continue_card"])
     assert payload["example_runtime_card_fields"] == payload["runtime_card_fields"]
@@ -1101,6 +1105,18 @@ def test_validate_leader_chat_contract_requires_intent_next_command_match() -> N
     assert result == {
         "ok": False,
         "errors": ["intent_card: next_command must match response next_command"],
+    }
+
+
+def test_validate_leader_chat_contract_requires_intent_control_fields() -> None:
+    payload = leader_chat_example()
+    del payload["intent_card"]["controls"][0]["enabled"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card.controls: missing control field: enabled"],
     }
 
 

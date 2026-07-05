@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add Leader intent controls
+
+- 扩展 `intent_card`：新增 `controls[]`，为 GUI/自然语言壳提供统一的下一步按钮描述，字段为 `kind`、`label`、`command`、`safety`、`enabled` 和 `blocker`。
+- `_leader_chat_intent_card()` 会根据 chat 顶层 `next_command` 和 `leader_explanation.safety` 生成 `kind=next` 的 control；当没有下一步命令时 control 会 disabled，并返回 `next command unavailable` blocker。
+- 扩展 Leader chat response contract：新增 `LEADER_CHAT_INTENT_CONTROL_FIELDS`、`intent_control_fields` 和 `example_intent_control_fields`，`validate_leader_chat_contract()` 会拒绝缺字段或非对象的 intent controls。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 intent controls 是可渲染命令描述，不代表自动执行许可。
+- 完整验证：已先确认红测失败，目标测试最初因 `LEADER_CHAT_INTENT_CONTROL_FIELDS` 不存在而导入失败；实现后目标测试 5 项通过，leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 129 项通过；`conda run -n agentdeck pytest -q` 201 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `leader-chat-intent-controls-smoke-ok`。
+
 ### Current - Add Leader chat intent card
 
 - 新增顶层 `intent_card`，所有 `agentdeck leader chat` 响应在输出前都会补齐自然语言路由卡，稳定暴露 mode、matched_intent、route_source、embedded_card、read_only、next_command 和 requires_explicit_user。
