@@ -1179,6 +1179,7 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["response_fields"] == expected["response_fields"]
     assert payload["explanation_fields"] == expected["explanation_fields"]
     assert payload["run_start_card_fields"] == expected["run_start_card_fields"]
+    assert payload["run_progress_card_fields"] == expected["run_progress_card_fields"]
     assert payload["capture_card_fields"] == expected["capture_card_fields"]
     assert payload["terminal_card_fields"] == expected["terminal_card_fields"]
     assert payload["dispatch_preview_card_fields"] == expected["dispatch_preview_card_fields"]

@@ -278,6 +278,66 @@ def test_leader_chat_run_intent_starts_approval_gated_run_without_dispatching(
     assert '"source": "leader_chat"' in events
 
 
+def test_leader_chat_run_progress_intent_returns_read_only_card_without_dispatching(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["run", "--task", "实现自然语言进度查看"])
+    started = json.loads(capsys.readouterr().out)
+    plan_id = started["plan_id"]
+    approval_id = started["approval_card"]["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", f"查看运行进度 {plan_id}"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    run_progress_card = payload["run_progress_card"]
+    assert payload["ok"] is True
+    assert payload["mode"] == "run_progress"
+    assert payload["plan_id"] == plan_id
+    assert payload["leader_action"] is None
+    assert payload["leader_action_card"] is None
+    assert payload["approval_card"] == run_progress_card["approval_card"]
+    assert payload["review"] == run_progress_card["review"]
+    assert payload["next_command"] == run_progress_card["next_command"]
+    assert payload["intent_card"]["embedded_card"] == "run_progress_card"
+    assert payload["intent_card"]["read_only"] is True
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect run_progress_card",
+        "command": f"agentdeck run --plan-id {plan_id}",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert run_progress_card["mode"] == "run_progress"
+    assert run_progress_card["plan_id"] == plan_id
+    assert run_progress_card["counts"]["approved"] == 1
+    assert run_progress_card["counts"]["pending"] == 2
+    assert run_progress_card["review"]["next_action"] == "dispatch_approved"
+    assert run_progress_card["next_command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
+    assert run_progress_card["safety"] == "approval_gated"
+    assert run_progress_card["requires_explicit_user"] is True
+
+    state_after = StateStore(root).load()
+    assert state_after["plans"] == state_before["plans"]
+    assert state_after["approvals"] == state_before["approvals"]
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["jobs"] == state_before["jobs"]
+    assert state_after["replies"] == state_before["replies"]
+    assert state_after.get("inbox", {}) == state_before.get("inbox", {})
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert state_after["chat_turns"][-1]["mode"] == "run_progress"
+    assert state_after["chat_turns"][-1]["plan_id"] == plan_id
+    assert fake.sent == []
+    assert fake.captured == []
+
+
 def test_leader_plan_defaults_to_configured_leader_provider_and_model(
     tmp_path, monkeypatch, capsys
 ) -> None:

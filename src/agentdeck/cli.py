@@ -95,6 +95,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "workbench_card",
         "continue_card",
         "run_start_card",
+        "run_progress_card",
         "leader_summary_card",
         "capture_card",
         "terminal_card",
@@ -226,6 +227,10 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck continue"
     if embedded_card == "run_start_card":
         return "agentdeck approval list"
+    if embedded_card == "run_progress_card":
+        run_progress_card = payload.get("run_progress_card")
+        plan_id = run_progress_card.get("plan_id") if isinstance(run_progress_card, dict) else None
+        return f"agentdeck run --plan-id {plan_id}" if plan_id else None
     if embedded_card == "leader_summary_card":
         summary_card = payload.get("leader_summary_card")
         command = (
@@ -336,6 +341,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("agent_ready_card", None)
     payload.setdefault("leader_summary_card", None)
     payload.setdefault("run_start_card", None)
+    payload.setdefault("run_progress_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -4078,6 +4084,19 @@ def _leader_chat_explanation(
             "safety": "approval_gated",
             "requires_explicit_user": True,
         }
+    if mode == "run_progress":
+        run_progress_card = result if isinstance(result, dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader is showing read-only run progress without mutating runtime state.",
+            "reason": "human asked to inspect an existing run",
+            "next_command": next_command,
+            "recommended_action_id": run_progress_card.get("plan_id"),
+            "action_kind": "run_progress",
+            "action_status": run_progress_card.get("status"),
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
     if mode == "apply_action":
         result_count = result.get("count") if isinstance(result, dict) else None
         return {
@@ -4506,6 +4525,14 @@ def _chat_run_start_task(message: str) -> str | None:
     return None
 
 
+def _chat_run_progress_plan_id(message: str) -> str | None:
+    text = message.strip()
+    if not re.search(r"(查看|检查|inspect|show|status|progress|进度|运行)", text, re.IGNORECASE):
+        return None
+    match = re.search(r"\bpln_[A-Za-z0-9_-]+\b", text)
+    return match.group(0) if match else None
+
+
 def leader_chat_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -4670,6 +4697,73 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "run_start_card": run_start_card,
             "inbox_card": None,
             "approval_card": run_start_card.get("approval_card"),
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    run_progress_plan_id = _chat_run_progress_plan_id(args.message)
+    if run_progress_plan_id:
+        try:
+            run_progress_card = _run_progress_payload(store, run_progress_plan_id)
+        except KeyError:
+            print(f"unknown plan: {run_progress_plan_id}", file=sys.stderr)
+            return 1
+        validation = validate_run_start_contract(run_progress_card)
+        if not validation["ok"]:
+            print("Run progress contract validation failed", file=sys.stderr)
+            for error in validation["errors"]:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        turn = store.record_chat_turn(
+            mode="run_progress",
+            message=args.message,
+            plan_id=run_progress_plan_id,
+            next_command=run_progress_card.get("next_command"),
+            review=run_progress_card.get("review") if isinstance(run_progress_card.get("review"), dict) else None,
+            action_id=None,
+            action_kind="run_progress",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "run_progress",
+                    "plan_id": run_progress_plan_id,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "run_progress",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "run_progress",
+                next_command=run_progress_card.get("next_command"),
+                project_view=refreshed_project_view,
+                result=run_progress_card,
+            ),
+            "plan_id": run_progress_plan_id,
+            "review": run_progress_card.get("review"),
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": run_progress_card.get("next_command"),
+            "leader_action": None,
+            "continue_card": None,
+            "run_progress_card": run_progress_card,
+            "inbox_card": None,
+            "approval_card": run_progress_card.get("approval_card"),
             "runtime_card": None,
             "queue_card": None,
             "operator_card": None,

@@ -1870,6 +1870,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert set(payload["example_continue_card_fields"]) == set(example["continue_card"])
     assert payload["example_run_start_card_fields"] == payload["run_start_card_fields"]
     assert payload["example_run_start_card_fields"] == list(example["run_start_card"])
+    assert payload["example_run_progress_card_fields"] == payload["run_progress_card_fields"]
+    assert payload["example_run_progress_card_fields"] == list(example["run_progress_card"])
     assert payload["example_terminal_card_fields"] == payload["terminal_card_fields"]
     assert set(payload["example_terminal_card_fields"]) == set(example["terminal_card"])
     assert payload["example_agent_ready_card_fields"] == payload["agent_ready_card_fields"]
@@ -1938,6 +1940,7 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert example["continue_card"]["next_command"] == example["next_command"]
     assert example["continue_card"]["leader_action"] == example["leader_action"]
     assert example["run_start_card"]["mode"] == "run_start"
+    assert example["run_progress_card"]["mode"] == "run_progress"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
 
 
@@ -2131,6 +2134,33 @@ def test_validate_leader_chat_contract_reuses_run_start_card_validator() -> None
     assert result == {
         "ok": False,
         "errors": ["run_start_card: run_start.safety must be approval_gated"],
+    }
+
+
+def test_validate_leader_chat_contract_reuses_run_progress_card_validator() -> None:
+    payload = leader_chat_example()
+    payload["mode"] = "run_progress"
+    payload["next_command"] = payload["run_progress_card"]["next_command"]
+    payload["intent_card"]["mode"] = "run_progress"
+    payload["intent_card"]["matched_intent"] = "run_progress"
+    payload["intent_card"]["embedded_card"] = "run_progress_card"
+    payload["intent_card"]["next_command"] = payload["next_command"]
+    payload["intent_card"]["controls"][0]["command"] = f"agentdeck run --plan-id {payload['run_progress_card']['plan_id']}"
+    payload["intent_card"]["controls"][0]["safety"] = "inspect"
+    payload["intent_card"]["controls"][0]["enabled"] = True
+    payload["intent_card"]["controls"][0]["blocker"] = None
+    payload["queue_card"] = None
+    payload["operator_card"] = None
+    payload["run_progress_card"]["next_command"] = "agentdeck workbench"
+    payload["next_command"] = payload["run_progress_card"]["next_command"]
+    payload["intent_card"]["next_command"] = payload["next_command"]
+    payload["intent_card"]["controls"][0]["command"] = payload["next_command"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["run_progress_card: run_progress.next_command must match review.next_command"],
     }
 
 

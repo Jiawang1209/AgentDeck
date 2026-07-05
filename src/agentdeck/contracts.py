@@ -442,6 +442,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "leader_summary_card",
     "continue_card",
     "run_start_card",
+    "run_progress_card",
     "capture_card",
     "terminal_card",
     "dispatch_preview_card",
@@ -1279,6 +1280,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_leader_summary_card_fields"] = list(example["leader_summary_card"])
         payload["example_continue_card_fields"] = list(example["continue_card"])
         payload["example_run_start_card_fields"] = list(RUN_START_RESPONSE_FIELDS)
+        payload["example_run_progress_card_fields"] = list(RUN_PROGRESS_RESPONSE_FIELDS)
         payload["example_terminal_card_fields"] = list(example["terminal_card"])
         payload["example_dispatch_preview_card_fields"] = list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
         payload["example_dispatch_batch_preview_card_fields"] = list(
@@ -2674,6 +2676,15 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append("run_start_card: next_command must match response next_command")
     elif "run_start_card" in payload and run_start_card is not None:
         errors.append("run_start_card must be an object")
+    run_progress_card = payload.get("run_progress_card")
+    if isinstance(run_progress_card, dict):
+        run_progress_validation = validate_run_start_contract(run_progress_card)
+        for error in run_progress_validation["errors"]:
+            errors.append(f"run_progress_card: {error}")
+        if payload.get("mode") == "run_progress" and payload.get("next_command") != run_progress_card.get("next_command"):
+            errors.append("run_progress_card: next_command must match response next_command")
+    elif "run_progress_card" in payload and run_progress_card is not None:
+        errors.append("run_progress_card must be an object")
     capture_card = payload.get("capture_card")
     if isinstance(capture_card, dict):
         _validate_leader_chat_capture_card_contract(errors, capture_card)
@@ -3683,6 +3694,7 @@ def leader_chat_example() -> dict[str, object]:
     leader_action_card = leader_chat_action_card(leader_action)
     leader_summary_card = leader_summary_example()
     run_start_card = run_start_example()
+    run_progress_card = run_progress_example()
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -3729,6 +3741,7 @@ def leader_chat_example() -> dict[str, object]:
         "leader_summary_card": leader_summary_card,
         "continue_card": continue_card,
         "run_start_card": run_start_card,
+        "run_progress_card": run_progress_card,
         "capture_card": None,
         "terminal_card": terminal_card,
         "dispatch_preview_card": None,

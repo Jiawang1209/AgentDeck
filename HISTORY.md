@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Route natural-language run progress through Leader chat
+
+- 新增 `agentdeck leader chat --message "查看运行进度 <plan_id>"`：自然语言入口现在可进入只读 `mode=run_progress`，复用 `agentdeck run --plan-id <id>` 的 `run_progress_card`，展示 plan status、Leader review、run-specific approval queue 和下一步显式 command。
+- 扩展 leader-chat contract：响应字段新增 `run_progress_card`，example fixture 新增 `example_run_progress_card_fields`，`validate_leader_chat_contract()` 会复用 `validate_run_start_contract()` 校验嵌入 progress card。
+- 保持人类控制边界：自然语言 run-progress 只记录 chat turn，不修改 plan/approval/runtime state，不创建 `leader_actions[]`，不 approve、不 dispatch、不 capture pane、不 ack inbox、不创建 runtime message/job/inbox、不发送 tmux 输入。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/leader-chat-schema.md`，明确自然语言进度查看与 CLI `run --plan-id` 共享同一契约。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "查看运行进度 <plan_id>"` 最初缺少 `run_progress_card`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_run_progress_intent_returns_read_only_card_without_dispatching tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_reuses_run_progress_card_validator tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 327 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 351 项通过。
+
 ### Current - Route natural-language run start through Leader chat
 
 - 新增 `agentdeck leader chat --message "开始运行 <goal>"` / `"开始执行 <goal>"` / `"/run <goal>"`：自然语言入口现在可直接进入 `mode=run_start`，复用 `agentdeck run --task <goal>` 的 Leader provider planning、pending approvals 创建和 GUI-ready `run_start_card`。
