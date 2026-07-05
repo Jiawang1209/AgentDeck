@@ -64,6 +64,8 @@ Use `agentdeck contract approvals --example` to include stable GUI-ready approva
 
 `preview_command` is the safe read-only queue view for the item. `controls[]` is the GUI-ready button list; each control has `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`. `can_dispatch=true` means the approval is approved and can be dispatched by an explicit human command. Pending or rejected approvals keep `can_dispatch=false` and expose `dispatch_blocker`.
 
+Approvals may be generated from a saved Leader plan or from an explicit natural-language task assignment in `agentdeck leader chat`. Chat-created approvals keep the same required item fields, use `plan_id: null`, and may include `source: "leader_chat_task_assignment"` as an extra provenance field. They are still ordinary pending approvals: users must explicitly approve and dispatch them before any runtime input is sent.
+
 `agentdeck approval dispatch --approval-id <id>` is an explicit runtime command, not part of the read-only queue contract. On success it returns `trace_command` for the created message lineage and embeds the target agent's `inbox_card`, reusing the `agentdeck inbox --agent <id>` queue shape so GUI clients can show the worker mailbox head without reading state directly.
 
 `agentdeck approval dispatch-ready --confirm` is also an explicit runtime command. It batch-dispatches only approved approvals whose target agent has a ready runtime binding, reusing the same single-dispatch lineage path for each dispatched item. Blocked approvals stay approved and are returned as `results[]` items with `status=blocked`, `blocker`, and `dispatch_command`. Without `--confirm`, it must fail without mutating state or sending tmux input.

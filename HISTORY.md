@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add natural-language task assignment approvals
+
+- 扩展 `agentdeck leader chat`：当用户输入 `"让 planner 规划 README 更新"`、`"指派 coder 修复测试"` 或 `"ask reviewer to review docs"` 这类明确给某个 agent 分配任务的自然语言时，进入 `mode=approval`，创建一条 pending approval，并嵌入同源 `approval_card`。
+- 保持审批门边界：自然语言任务指派只写 approval queue 和 chat turn，不创建 plan/leader action，不 approve、dispatch，不创建 message/job/inbox，不发送 tmux 输入；真正进入 worker runtime 仍必须由人类显式 approve 后再 dispatch。
+- 新增 chat-created approval provenance：approval item 会带 `source=leader_chat_task_assignment`、`plan_id=null`、`risk=human_requested`，但仍复用 `agentdeck approval list` 的 queue shape、controls、approve/reject/dispatch commands 和 `validate_approval_contract()`。
+- 扩展 `leader_explanation` / `intent_card`：任务指派创建审批时标记 `action_kind=approval_create`，`intent_card.read_only=false`，`next_command` 指向新 approval 的 `approve_command`，next control label 为 `Approve approval`，并保持 `safety=explicit_runtime` / `requires_explicit_user=true`。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、`docs/contracts/approvals-schema.md`、CLAUDE.md 和 AGENT.md。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "让 planner 规划 README 更新"` 最初没有返回 `approval_card`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_task_assignment_intent_creates_pending_approval_without_dispatching -q` 通过；相邻回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_task_assignment_intent_creates_pending_approval_without_dispatching tests/test_leader_cli.py::test_leader_chat_role_assignment_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_inspects_roles_without_mutating_state tests/test_leader_cli.py::test_leader_chat_suggests_approve_for_pending_approval_without_approving tests/test_leader_cli.py::test_leader_chat_suggests_reject_for_pending_approval_without_rejecting -q` 5 项通过；聚焦 contract 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_task_assignment_intent_creates_pending_approval_without_dispatching tests/test_leader_cli.py::test_leader_chat_role_assignment_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_suggests_approve_for_pending_approval_without_approving tests/test_leader_cli.py::test_leader_chat_suggests_reject_for_pending_approval_without_rejecting tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_agent_cli.py::test_contract_approvals_example_exports_gui_ready_queue -q` 7 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 284 项通过。
+
 ### Current - Add natural-language role assignment suggestion
 
 - 扩展 `agentdeck leader chat`：当用户输入 `"把 planner 设为 架构师"`、`"让 coder 担任 实现工程师"` 或 `"set reviewer role to QA"` 这类角色指派意图时，进入 `mode=role`，嵌入同源 `role_card`，并返回具体 `agentdeck agent assign-role --agent <id> --role <role> --role-prompt <prompt>` 作为 `next_command`。

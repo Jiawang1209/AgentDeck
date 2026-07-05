@@ -101,7 +101,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
             embedded_card = card_name
             break
     route_source = "provider_plan" if mode == "plan" else "state_review" if mode == "review" else "local_rule"
-    read_only = mode not in {"plan", "review", "apply_action"}
+    action_kind = explanation.get("action_kind")
+    read_only = mode not in {"plan", "review", "apply_action"} and action_kind != "approval_create"
     next_command = payload.get("next_command")
     controls: list[dict[str, object]] = []
     inspect_command = _leader_chat_intent_inspect_command(embedded_card, payload)
@@ -3047,6 +3048,30 @@ def _chat_role_assignment_intent(message: str, config: ProjectConfig) -> tuple[s
     return None
 
 
+def _chat_task_assignment_intent(message: str, config: ProjectConfig) -> tuple[str, str] | None:
+    normalized = message.strip()
+    if not normalized:
+        return None
+    known_agent_ids = {agent.agent_id.lower(): agent.agent_id for agent in config.agents}
+    patterns = [
+        r"(?:让|请让|安排|指派)\s*(?P<agent>[A-Za-z0-9_.-]+)\s*(?P<task>.+)",
+        r"(?:ask|assign)\s+(?P<agent>[A-Za-z0-9_.-]+)\s+(?:to\s+)?(?P<task>.+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            continue
+        requested_agent = match.group("agent").lower()
+        agent_id = known_agent_ids.get(requested_agent)
+        if agent_id is None:
+            return None
+        task = match.group("task").strip(" \t\r\n\"'`：:，,。.!！?")
+        if not task:
+            return None
+        return agent_id, task
+    return None
+
+
 def _chat_wants_ledger(message: str) -> bool:
     normalized = message.strip().lower()
     return any(
@@ -3663,6 +3688,19 @@ def _leader_chat_explanation(
     if mode == "approval":
         pending = _pending_approval_item(approval_card) if isinstance(approval_card, dict) else None
         approved = _approved_approval_item(approval_card) if isinstance(approval_card, dict) else None
+        if approval_action_kind == "approval_create":
+            approval_id = pending.get("approval_id") if isinstance(pending, dict) else None
+            return {
+                "mode": mode,
+                "summary": "Leader created a pending approval from explicit task assignment without dispatching runtime work.",
+                "reason": "human asked to assign a task to an agent",
+                "next_command": next_command,
+                "recommended_action_id": approval_id,
+                "action_kind": "approval_create",
+                "action_status": pending.get("status") if isinstance(pending, dict) else "missing",
+                "safety": "explicit_runtime",
+                "requires_explicit_user": True,
+            }
         if approval_action_kind == "approval_dispatch_batch":
             count = (
                 dispatch_batch_preview_card.get("count")
@@ -4588,6 +4626,87 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": role_card,
+            "ledger_card": None,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    task_assignment_intent = _chat_task_assignment_intent(args.message, config)
+    if task_assignment_intent is not None:
+        task_agent_id, task = task_assignment_intent
+        agent = _agent_by_id(config, task_agent_id)
+        if agent is None:
+            print(f"unknown agent: {task_agent_id}", file=sys.stderr)
+            return 1
+        approval = store.create_chat_assignment_approval(agent.agent_id, agent.role, task)
+        approval_id = str(approval["approval_id"])
+        next_command = f"agentdeck approval approve --approval-id {approval_id}"
+        store.append_event(
+            EventRecord.create(
+                "approval_created_from_chat",
+                {
+                    "approval_id": approval_id,
+                    "agent_id": agent.agent_id,
+                    "task": task,
+                },
+            )
+        )
+        turn = store.record_chat_turn(
+            mode="approval",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="approval_create",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "approval",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        approval_card = _approval_queue_payload(store)
+        validation = validate_approval_contract(approval_card)
+        if not validation["ok"]:
+            print("Approval queue contract validation failed", file=sys.stderr)
+            for error in validation["errors"]:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "approval",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "approval",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                approval_card=approval_card,
+                approval_action_kind="approval_create",
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": approval_card,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
             "ledger_card": None,
             "workbench_card": None,
         }

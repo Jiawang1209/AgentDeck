@@ -474,6 +474,24 @@ class StateStore:
         self.save(state)
         return approvals
 
+    def create_chat_assignment_approval(self, agent_id: str, role: str, task: str) -> dict[str, Any]:
+        state = self.load()
+        approval = {
+            "approval_id": new_id("apv"),
+            "plan_id": None,
+            "step": 1,
+            "agent_id": agent_id,
+            "role": role,
+            "task": task,
+            "risk": "human_requested",
+            "status": "pending",
+            "source": "leader_chat_task_assignment",
+            "created_at": utc_now(),
+        }
+        state.setdefault("approvals", []).append(approval)
+        self.save(state)
+        return approval
+
     def _create_approvals_from_plan_state(self, state: dict[str, Any], plan_id: str) -> list[dict[str, Any]]:
         plan_record = next((plan for plan in state.get("plans", []) if plan.get("plan_id") == plan_id), None)
         if plan_record is None:

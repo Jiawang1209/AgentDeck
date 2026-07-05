@@ -1604,6 +1604,101 @@ def test_leader_chat_role_assignment_intent_suggests_explicit_command_without_mu
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_task_assignment_intent_creates_pending_approval_without_dispatching(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_before = (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
+
+    exit_code = cli.main(["leader", "chat", "--message", "让 planner 规划 README 更新"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    approval = payload["approval_card"]["approvals"][0]
+    approval_id = approval["approval_id"]
+    assert payload["mode"] == "approval"
+    assert payload["message"] == "让 planner 规划 README 更新"
+    assert payload["plan_id"] is None
+    assert payload["review"] is None
+    assert payload["leader_action"] is None
+    assert payload["continue_card"] is None
+    assert payload["inbox_card"] is None
+    assert payload["runtime_card"] is None
+    assert payload["queue_card"] is None
+    assert payload["operator_card"] is None
+    assert payload["role_card"] is None
+    assert payload["next_command"] == f"agentdeck approval approve --approval-id {approval_id}"
+    assert payload["approval_card"]["count"] == 1
+    assert approval["plan_id"] is None
+    assert approval["step"] == 1
+    assert approval["agent_id"] == "planner"
+    assert approval["role"] == "planning"
+    assert approval["task"] == "规划 README 更新"
+    assert approval["risk"] == "human_requested"
+    assert approval["status"] == "pending"
+    assert approval["source"] == "leader_chat_task_assignment"
+    assert approval["approve_command"] == payload["next_command"]
+    assert approval["can_dispatch"] is False
+    assert approval["dispatch_blocker"] == "approval is not approved"
+    assert payload["leader_explanation"] == {
+        "mode": "approval",
+        "summary": "Leader created a pending approval from explicit task assignment without dispatching runtime work.",
+        "reason": "human asked to assign a task to an agent",
+        "next_command": f"agentdeck approval approve --approval-id {approval_id}",
+        "recommended_action_id": approval_id,
+        "action_kind": "approval_create",
+        "action_status": "pending",
+        "safety": "explicit_runtime",
+        "requires_explicit_user": True,
+    }
+    assert payload["intent_card"] == {
+        "mode": "approval",
+        "matched_intent": "approval",
+        "route_source": "local_rule",
+        "embedded_card": "approval_card",
+        "read_only": False,
+        "next_command": f"agentdeck approval approve --approval-id {approval_id}",
+        "requires_explicit_user": True,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect approval_card",
+                "command": "agentdeck approval list",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "next",
+                "label": "Approve approval",
+                "command": f"agentdeck approval approve --approval-id {approval_id}",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+    assert (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8") == config_before
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "approval"
+    assert state_after["chat_turns"][0]["next_command"] == f"agentdeck approval approve --approval-id {approval_id}"
+    assert state_after["chat_turns"][0]["action_kind"] == "approval_create"
+    assert state_after["approvals"][0]["approval_id"] == approval_id
+    assert state_after["approvals"][0]["agent_id"] == "planner"
+    assert state_after["approvals"][0]["task"] == "规划 README 更新"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+    assert state_after.get("inbox", {}) == {}
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "approval_created_from_chat"' in events
+    assert f'"approval_id": "{approval_id}"' in events
+
+
 def test_leader_chat_inspects_ledger_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%42")

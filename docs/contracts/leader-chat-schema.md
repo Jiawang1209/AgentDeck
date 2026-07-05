@@ -449,7 +449,9 @@ Approval-mode responses include `approval_card`, which reuses the same queue sha
 }
 ```
 
-When `approval_card` is present, `validate_leader_chat_contract()` reuses `validate_approval_contract()` and prefixes nested errors with `approval_card:`. Approval-mode is read-only: it may recommend `agentdeck approval list`, the first pending approval's `approve_command`, the first pending approval's `reject_command`, or the first approved approval's `dispatch_command`, but it must not approve, reject, dispatch work, or send tmux input. Apply-action mode may also embed `approval_card` after a safe `create_approvals` action succeeds, so the same response can show the newly created human approval queue without approving or dispatching it.
+When `approval_card` is present, `validate_leader_chat_contract()` reuses `validate_approval_contract()` and prefixes nested errors with `approval_card:`. Approval-mode normally stays read-only: it may recommend `agentdeck approval list`, the first pending approval's `approve_command`, the first pending approval's `reject_command`, or the first approved approval's `dispatch_command`, but it must not approve, reject, dispatch work, or send tmux input. Apply-action mode may also embed `approval_card` after a safe `create_approvals` action succeeds, so the same response can show the newly created human approval queue without approving or dispatching it.
+
+Natural-language task assignment, such as `让 planner 规划 README 更新` or `ask reviewer to review docs`, also returns `mode=approval`. In this case AgentDeck creates exactly one pending approval with `source=leader_chat_task_assignment`, embeds the refreshed `approval_card`, sets `leader_explanation.action_kind` to `approval_create`, and points `next_command` at the new approval's `approve_command`. The response's `intent_card.read_only` is `false` because the approval queue changed, but runtime work is still gated: it must not approve, dispatch, create messages/jobs/inbox items, or send tmux input.
 
 When approval-mode recommends dispatching an already approved item, it may also include `dispatch_preview_card`, a GUI-ready explicit-runtime preview:
 
