@@ -537,7 +537,9 @@ def test_approval_contract_response_includes_example_without_drift(tmp_path: Pat
     assert payload["example_approval_item_fields"] == payload["approval_item_fields"]
     assert set(payload["example_approval_item_fields"]) == set(example["approvals"][0])
     assert example["approvals"][0]["can_dispatch"] is False
+    assert example["approvals"][0]["preview_command"] == "agentdeck approval list"
     assert example["approvals"][1]["can_dispatch"] is True
+    assert example["approvals"][1]["preview_command"] == "agentdeck approval list"
 
 
 def test_validate_approval_contract_accepts_example() -> None:
@@ -548,13 +550,13 @@ def test_validate_approval_contract_accepts_example() -> None:
 
 def test_validate_approval_contract_requires_gui_action_fields() -> None:
     payload = approval_example()
-    del payload["approvals"][0]["dispatch_blocker"]
+    del payload["approvals"][0]["preview_command"]
 
     result = validate_approval_contract(payload)
 
     assert result == {
         "ok": False,
-        "errors": ["missing approval item field: dispatch_blocker"],
+        "errors": ["missing approval item field: preview_command"],
     }
 
 
@@ -588,7 +590,9 @@ def test_inbox_contract_response_includes_example_without_drift(tmp_path: Path) 
     assert set(payload["example_inbox_item_fields"]) == set(example["items"][0])
     assert example["head_inbox_id"] == "inb_task"
     assert example["items"][0]["can_ack"] is True
+    assert example["items"][0]["preview_command"] == "agentdeck trace --id inb_task"
     assert example["items"][1]["can_ack"] is False
+    assert example["items"][1]["preview_command"] == "agentdeck trace --id inb_reply"
 
 
 def test_validate_inbox_contract_accepts_example() -> None:
@@ -599,13 +603,13 @@ def test_validate_inbox_contract_accepts_example() -> None:
 
 def test_validate_inbox_contract_requires_head_ack_fields() -> None:
     payload = inbox_example()
-    del payload["items"][0]["ack_blocker"]
+    del payload["items"][0]["preview_command"]
 
     result = validate_inbox_contract(payload)
 
     assert result == {
         "ok": False,
-        "errors": ["missing inbox item field: ack_blocker"],
+        "errors": ["missing inbox item field: preview_command"],
     }
 
 

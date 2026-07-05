@@ -944,6 +944,7 @@ def _inbox_queue_item(agent_id: str, item: dict[str, object], head_inbox_id: obj
         "task": item.get("task"),
         "status": item.get("status"),
         "created_at": item.get("created_at"),
+        "preview_command": _trace_command(inbox_id),
         "trace_command": _trace_command(inbox_id),
         "ack_command": f"agentdeck ack --agent {agent_id} --inbox-id {inbox_id}",
         "is_head": is_head,
@@ -2169,6 +2170,7 @@ def _approval_queue_item(approval: dict[str, object]) -> dict[str, object]:
     return {
         **approval,
         "reason": approval.get("reason"),
+        "preview_command": "agentdeck approval list",
         "approve_command": f"agentdeck approval approve --approval-id {approval_id}",
         "reject_command": f"agentdeck approval reject --approval-id {approval_id} --reason <reason>",
         "dispatch_command": f"agentdeck approval dispatch --approval-id {approval_id}",

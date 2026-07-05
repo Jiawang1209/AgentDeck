@@ -204,7 +204,7 @@ Human/Leader -> dispatch -> message/attempt/job/inbox -> tmux pane -> reply -> s
 agentdeck inbox --agent planner
 ```
 
-`agentdeck inbox --agent <id>` 是单个 agent mailbox 的只读入口。每个 item 会包含 `trace_command`、`ack_command`、`is_head`、`can_ack` 和 `ack_blocker`；输出前会通过 `validate_inbox_contract()` 自校验。契约见 `docs/contracts/inbox-schema.md`，可用 `agentdeck contract inbox --example` 发现。
+`agentdeck inbox --agent <id>` 是单个 agent mailbox 的只读入口。每个 item 会包含 `preview_command`、`trace_command`、`ack_command`、`is_head`、`can_ack` 和 `ack_blocker`；`preview_command` 指向只读 lineage 预览，`ack_command` 仍然需要人类显式执行。输出前会通过 `validate_inbox_contract()` 自校验。契约见 `docs/contracts/inbox-schema.md`，可用 `agentdeck contract inbox --example` 发现。
 
 Agent 完成任务后，可以先用手动命令把回复写入账本：
 

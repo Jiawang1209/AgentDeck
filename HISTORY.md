@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add queue item preview commands
+
+- 扩展 approval queue 和 inbox queue item：新增 `preview_command`，让 GUI/TUI 可以先渲染只读预览按钮，再渲染 approve/dispatch/ack 等显式执行按钮。
+- `approval.preview_command` 指向 `agentdeck approval list`；`inbox.preview_command` 指向对应 `agentdeck trace --id <inbox_id>`，复用通信账本 lineage，不读取 pane、不发送 tmux 输入、不自动 ack/approve/dispatch。
+- 更新 approvals/inbox contract 字段、example fixture、validator、自然语言 approval/inbox card 测试，以及 `README.md`、`docs/contracts/approvals-schema.md`、`docs/contracts/inbox-schema.md`、`CLAUDE.md` 和 `AGENT.md`。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_contracts.py::test_approval_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_approval_contract_requires_gui_action_fields tests/test_contracts.py::test_inbox_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_inbox_contract_requires_head_ack_fields tests/test_agent_cli.py::test_contract_approvals_example_exports_gui_ready_queue tests/test_agent_cli.py::test_contract_inbox_example_exports_gui_ready_queue tests/test_leader_cli.py::test_leader_chat_suggests_approve_for_pending_approval_without_approving tests/test_leader_cli.py::test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging -q` 最初因 queue item 缺少 `preview_command` 失败；实现后目标测试通过；`conda run -n agentdeck pytest -q` 通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `approval-preview-command-ok` 与 `inbox-preview-command-ok`。
+
 ### Current - Expose doctor contract from provider health
 
 - 扩展 workbench/setup-mode `provider_health`：新增 `doctor_contract="agentdeck contract doctor"`，让 GUI/TUI 不只知道下一步运行 `agentdeck doctor`，也能直接发现 doctor diagnostics schema。

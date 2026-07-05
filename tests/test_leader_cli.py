@@ -501,6 +501,7 @@ def test_leader_chat_continue_returns_recovery_card_without_creating_action(tmp_
     assert payload["approval_card"]["count"] == 3
     assert payload["approval_card"]["approvals"][0]["approval_id"] == approval_id
     assert payload["approval_card"]["approvals"][0]["dispatch_command"] == payload["next_command"]
+    assert payload["approval_card"]["approvals"][0]["preview_command"] == "agentdeck approval list"
     assert payload["inbox_card"] is None
     assert payload["leader_action"] is None
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
@@ -710,6 +711,7 @@ def test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging(
     assert payload["mode"] == "inbox"
     assert payload["next_command"] == "agentdeck ack --agent planner --inbox-id inb_ack_me"
     assert payload["inbox_card"]["items"][0]["ack_command"] == payload["next_command"]
+    assert payload["inbox_card"]["items"][0]["preview_command"] == "agentdeck trace --id inb_ack_me"
     assert payload["inbox_card"]["items"][0]["can_ack"] is True
     assert payload["leader_explanation"]["action_kind"] == "inbox_ack"
     assert payload["leader_explanation"]["recommended_action_id"] == "inb_ack_me"
@@ -751,6 +753,7 @@ def test_leader_chat_inspects_approval_queue_without_mutating_state(tmp_path, mo
     assert payload["approval_card"]["approvals"][0]["approve_command"].startswith(
         "agentdeck approval approve --approval-id apv_"
     )
+    assert payload["approval_card"]["approvals"][0]["preview_command"] == "agentdeck approval list"
     assert payload["leader_explanation"]["mode"] == "approval"
     assert payload["leader_explanation"]["action_kind"] == "approval"
     assert payload["leader_explanation"]["action_status"] == "pending"
@@ -787,6 +790,7 @@ def test_leader_chat_suggests_approve_for_pending_approval_without_approving(
     assert payload["next_command"] == f"agentdeck approval approve --approval-id {approval_id}"
     assert payload["approval_card"]["approvals"][0]["approval_id"] == approval_id
     assert payload["approval_card"]["approvals"][0]["approve_command"] == payload["next_command"]
+    assert payload["approval_card"]["approvals"][0]["preview_command"] == "agentdeck approval list"
     assert payload["leader_explanation"]["action_kind"] == "approval_approve"
     assert payload["leader_explanation"]["recommended_action_id"] == approval_id
     assert payload["leader_explanation"]["action_status"] == "pending"
@@ -825,6 +829,7 @@ def test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching
     assert payload["approval_card"]["approvals"][0]["status"] == "approved"
     assert payload["approval_card"]["approvals"][0]["dispatch_command"] == payload["next_command"]
     assert payload["approval_card"]["approvals"][0]["can_dispatch"] is True
+    assert payload["approval_card"]["approvals"][0]["preview_command"] == "agentdeck approval list"
     assert payload["leader_explanation"]["action_kind"] == "approval_dispatch"
     assert payload["leader_explanation"]["recommended_action_id"] == approval_id
     assert payload["leader_explanation"]["action_status"] == "approved"
