@@ -957,8 +957,16 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
             "blocker": "requires goal text",
         }
     ]
-    assert capabilities["review"]["command"] == "agentdeck leader chat --message <goal>"
+    assert capabilities["review"]["command"] == "agentdeck leader review --plan-id <plan_id>"
     assert capabilities["review"]["safety"] == "safe_apply"
+    assert capabilities["review"]["controls"][0] == {
+        "kind": "review",
+        "label": "Review current plan",
+        "command": "agentdeck leader review --plan-id <plan_id>",
+        "safety": "safe_apply",
+        "enabled": False,
+        "blocker": "requires plan_id",
+    }
     assert capabilities["apply_action"]["command"] == "agentdeck leader apply-action --action-id <action_id>"
     assert capabilities["apply_action"]["safety"] == "safe_apply"
     assert capabilities["apply_action"]["controls"][0] == {

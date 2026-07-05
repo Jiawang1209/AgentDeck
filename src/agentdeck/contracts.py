@@ -826,9 +826,9 @@ def leader_chat_capability_card() -> dict[str, object]:
         {
             "mode": "review",
             "label": "Review current plan",
-            "description": "Review latest plan state and queue the recommended next Leader action.",
+            "description": "Review latest plan state and recommend the next Leader action.",
             "example_messages": ["继续推进这个计划", "下一步做什么"],
-            "command": "agentdeck leader chat --message <goal>",
+            "command": "agentdeck leader review --plan-id <plan_id>",
             "safety": "safe_apply",
             "requires_explicit_user": False,
             "card": "leader_action",
@@ -950,6 +950,8 @@ def _capability_item_control(item: dict[str, object]) -> dict[str, object]:
     blocker = None
     if "<goal>" in command:
         blocker = "requires goal text"
+    elif "<plan_id>" in command:
+        blocker = "requires plan_id"
     elif "<action_id>" in command:
         blocker = "requires action_id"
     elif "<agent_id>" in command:

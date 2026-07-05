@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Route Leader review capability to explicit command
+
+- 调整 `capability_card` 的 `review` 能力：GUI-ready control 现在推荐 `agentdeck leader review --plan-id <plan_id>`，而不是复用自然语言 chat 模板，让命令面板能直接指向当前本地 Leader review loop。
+- 扩展 capability control blocker 识别：带 `<plan_id>` 的模板命令会 disabled，并返回 `requires plan_id`，避免 GUI 在缺少计划 ID 时误触发 review。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 plan/review/apply_action 三个 Leader 调度能力各自对应的显式命令入口。
+- 完整验证：已先确认红测失败，review capability 最初仍返回 `agentdeck leader chat --message <goal>`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning -q` 1 项通过；leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 137 项通过；`conda run -n agentdeck pytest -q` 209 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-help-review-command-smoke-ok`。
+
 ### Current - Route Leader plan capability to explicit command
 
 - 调整 `capability_card` 的 `plan` 能力：GUI-ready control 现在推荐 `agentdeck leader plan --task <goal>`，而不是复用 `agentdeck leader chat --message <goal>`，让命令面板把显式 Leader planning 入口和自然语言 chat 路由区分开。
