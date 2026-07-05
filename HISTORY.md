@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add Leader chat control registry card
+
+- 扩展 `agentdeck leader chat --message "帮助"` / `"命令面板"`：help mode 现在除 `capability_card` 外，还返回 `control_registry_card`，从同一次 workbench snapshot 派生 leader/runtime/operator controls，供 GUI 或自然语言壳直接渲染命令面板。
+- 新增 `LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS`、`control_registry_card_fields`、`example_control_registry_card_fields` 和 validator，要求 `item_count` 与 `items[]` 长度一致，并复用 workbench control registry item 字段。
+- 同步 `docs/contracts/leader-chat-schema.md`、README、CLAUDE.md、AGENT.md 和测试；该 card 只描述命令入口，不新增执行路径，不调用 provider，不读取 pane，不发送 tmux 输入。
+- 完整验证：已先确认红测失败，help payload 和 leader-chat contract 最初缺少 `control_registry_card` / `control_registry_card_fields`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_requires_control_registry_card_count tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 6 项通过；相关测试 `conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py tests/test_leader_cli.py -q` 211 项通过；`conda run -n agentdeck pytest -q` 226 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-chat-control-registry-card-smoke-ok`。
+
 ### Current - Surface workbench control registry in Leader chat contract
 
 - 扩展 `agentdeck contract leader-chat`：新增 `workbench_control_registry_item_fields`，让 GUI/自然语言壳在只读取 Leader chat contract 时也能发现嵌入 `workbench_card.control_registry[]` 的命令面板 item 字段。

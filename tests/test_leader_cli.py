@@ -941,6 +941,30 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
     assert payload["ledger_card"] is None
     assert payload["workbench_card"] is None
     assert payload["capability_card"]["mode"] == "help"
+    assert payload["control_registry_card"]["mode"] == "control_registry"
+    assert payload["control_registry_card"]["title"] == "Command palette"
+    assert payload["control_registry_card"]["source_command"] == "agentdeck workbench"
+    assert payload["control_registry_card"]["default_command"] == "agentdeck workbench"
+    assert payload["control_registry_card"]["item_count"] == len(payload["control_registry_card"]["items"])
+    assert payload["control_registry_card"]["items"][0] == {
+        "scope": "leader",
+        "card": "leader_card",
+        "kind": "chat",
+        "label": "Ask Leader",
+        "command": "agentdeck leader chat --message <text>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires message text",
+        "agent_id": "leader",
+    }
+    assert {
+        (item["scope"], item["card"], item["kind"], item["agent_id"])
+        for item in payload["control_registry_card"]["items"]
+    } >= {
+        ("leader", "leader_card", "continue", "leader"),
+        ("runtime", "runtime_card", "spawn", "planner"),
+        ("operator", "operator_card", "preview", None),
+    }
     assert payload["capability_card"]["default_command"] == "agentdeck workbench"
     assert payload["capability_card"]["capability_count"] == len(payload["capability_card"]["capabilities"])
     capability_modes = {item["mode"] for item in payload["capability_card"]["capabilities"]}

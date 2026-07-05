@@ -380,6 +380,14 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
     assert payload["workbench_card_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
     assert payload["workbench_control_registry_item_fields"] == list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
+    assert payload["control_registry_card_fields"] == [
+        "mode",
+        "title",
+        "source_command",
+        "default_command",
+        "item_count",
+        "items",
+    ]
 
 
 def test_continue_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
@@ -1193,6 +1201,10 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_workbench_control_registry_item_fields"] == list(
         example["workbench_card"]["control_registry"][0]
     )
+    assert payload["example_control_registry_card_fields"] == payload["control_registry_card_fields"]
+    assert payload["example_control_registry_card_fields"] == list(example["control_registry_card"])
+    assert example["control_registry_card"]["items"][0] == example["workbench_card"]["control_registry"][0]
+    assert example["control_registry_card"]["item_count"] == len(example["control_registry_card"]["items"])
     assert payload["example_capability_card_fields"] == payload["capability_card_fields"]
     assert payload["example_capability_card_fields"] == list(example["capability_card"])
     assert "controls" in payload["capability_item_fields"]
@@ -1229,6 +1241,18 @@ def test_validate_leader_chat_contract_accepts_example() -> None:
     result = validate_leader_chat_contract(leader_chat_example())
 
     assert result == {"ok": True, "errors": []}
+
+
+def test_validate_leader_chat_contract_requires_control_registry_card_count() -> None:
+    payload = leader_chat_example()
+    payload["control_registry_card"]["item_count"] = 999
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.item_count must match items length"],
+    }
 
 
 def test_validate_leader_chat_contract_reuses_continue_card_validator() -> None:

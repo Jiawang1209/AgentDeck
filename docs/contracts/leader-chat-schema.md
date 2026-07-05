@@ -25,6 +25,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "ledger_card_fields": [],
   "workbench_card_fields": [],
   "workbench_control_registry_item_fields": [],
+  "control_registry_card_fields": [],
   "capability_card_fields": [],
   "capability_item_fields": [],
   "capability_control_fields": [],
@@ -145,7 +146,32 @@ The real card also includes Leader scheduling entries for `plan`, `review`, and 
 
 Every capability item includes `controls[]` using the same `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` shape as intent controls; `agentdeck contract leader-chat` exposes the same shape as `capability_control_fields`. Direct read-only commands such as `agentdeck workbench` are enabled. Template commands may only use known placeholders: `<goal>`, `<plan_id>`, `<action_id>`, or `<agent_id>`. `capability_placeholders[]` exposes that whitelist with the matching blocker for each placeholder so GUI clients can render template inputs without parsing this Markdown document. Template commands with those placeholders must be disabled and must include a matching blocker such as `requires goal text`, `requires plan_id`, `requires action_id`, or `requires agent_id`. Capability controls must keep `command` and `safety` aligned with their parent capability item.
 
-Help-mode is returned when the human asks `帮助`, `help`, `/help`, `你能做什么`, `有哪些能力`, `命令面板`, `commands`, or `capabilities`. It records a chat turn, recommends `agentdeck workbench`, embeds `capability_card`, and must not create a plan, leader action, approval, message, job, inbox item, inspect tmux panes, call the provider, or send tmux input. The capability entries and their controls describe available commands; they are not permission to auto-run those commands.
+Help-mode also includes `control_registry_card`, a read-only command palette snapshot derived from `agentdeck workbench`:
+
+```json
+{
+  "mode": "control_registry",
+  "title": "Command palette",
+  "source_command": "agentdeck workbench",
+  "default_command": "agentdeck workbench",
+  "item_count": 1,
+  "items": [
+    {
+      "scope": "leader",
+      "card": "leader_card",
+      "kind": "continue",
+      "label": "Continue",
+      "command": "agentdeck continue",
+      "safety": "inspect",
+      "enabled": true,
+      "blocker": null,
+      "agent_id": "leader"
+    }
+  ]
+}
+```
+
+Help-mode is returned when the human asks `帮助`, `help`, `/help`, `你能做什么`, `有哪些能力`, `命令面板`, `commands`, or `capabilities`. It records a chat turn, recommends `agentdeck workbench`, embeds `capability_card` and `control_registry_card`, and must not create a plan, leader action, approval, message, job, inbox item, inspect tmux panes, call the provider, or send tmux input. The capability entries, controls, and registry items describe available commands; they are not permission to auto-run those commands.
 
 Continue-mode responses include `continue_card`, which reuses the same recovery card shape as `agentdeck continue`:
 

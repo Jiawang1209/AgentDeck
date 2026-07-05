@@ -366,6 +366,16 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "ledger_card",
     "workbench_card",
     "capability_card",
+    "control_registry_card",
+)
+
+LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS = (
+    "mode",
+    "title",
+    "source_command",
+    "default_command",
+    "item_count",
+    "items",
 )
 
 CONTINUE_CARD_FIELDS = (
@@ -839,6 +849,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "workbench_card_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "workbench_control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
+        "control_registry_card_fields": list(LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS),
         "capability_card_fields": list(LEADER_CHAT_CAPABILITY_CARD_FIELDS),
         "capability_item_fields": list(LEADER_CHAT_CAPABILITY_ITEM_FIELDS),
         "capability_control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
@@ -869,6 +880,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_workbench_control_registry_item_fields"] = list(
             example["workbench_card"]["control_registry"][0]
         )
+        payload["example_control_registry_card_fields"] = list(example["control_registry_card"])
         payload["example_capability_card_fields"] = list(example["capability_card"])
         payload["example_capability_item_fields"] = list(example["capability_card"]["capabilities"][0])
         payload["example_capability_control_fields"] = list(example["capability_card"]["capabilities"][0]["controls"][0])
@@ -1008,6 +1020,18 @@ def leader_chat_capability_card() -> dict[str, object]:
         "default_command": "agentdeck workbench",
         "capability_count": len(capabilities),
         "capabilities": capabilities,
+    }
+
+
+def leader_chat_control_registry_card(workbench_card: dict[str, object]) -> dict[str, object]:
+    items = workbench_card.get("control_registry") if isinstance(workbench_card.get("control_registry"), list) else []
+    return {
+        "mode": "control_registry",
+        "title": "Command palette",
+        "source_command": "agentdeck workbench",
+        "default_command": "agentdeck workbench",
+        "item_count": len(items),
+        "items": items,
     }
 
 
@@ -1818,7 +1842,33 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_capability_card_contract(errors, capability_card)
     elif "capability_card" in payload and capability_card is not None:
         errors.append("capability_card must be an object")
+    control_registry_card = payload.get("control_registry_card")
+    if isinstance(control_registry_card, dict):
+        _validate_control_registry_card_contract(errors, control_registry_card)
+    elif "control_registry_card" in payload and control_registry_card is not None:
+        errors.append("control_registry_card must be an object")
     return {"ok": not errors, "errors": errors}
+
+
+def _validate_control_registry_card_contract(errors: list[str], control_registry_card: dict[str, object]) -> None:
+    for field in LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS:
+        if field not in control_registry_card:
+            errors.append(f"missing control_registry_card field: {field}")
+    if control_registry_card.get("mode") != "control_registry":
+        errors.append("control_registry_card.mode must be control_registry")
+    items = control_registry_card.get("items")
+    if isinstance(items, list):
+        if control_registry_card.get("item_count") != len(items):
+            errors.append("control_registry_card.item_count must match items length")
+        for item in items:
+            if not isinstance(item, dict):
+                errors.append("control_registry_card.items must be objects")
+                continue
+            for field in WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS:
+                if field not in item:
+                    errors.append(f"control_registry_card.items: missing item field: {field}")
+    elif "items" in control_registry_card:
+        errors.append("control_registry_card.items must be a list")
 
 
 def _validate_capability_card_contract(errors: list[str], capability_card: dict[str, object]) -> None:
@@ -2343,6 +2393,7 @@ def leader_chat_example() -> dict[str, object]:
     ledger_card = workbench_example()["ledger_card"]
     workbench_card = workbench_example()
     capability_card = leader_chat_capability_card()
+    control_registry_card = leader_chat_control_registry_card(workbench_card)
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -2395,6 +2446,7 @@ def leader_chat_example() -> dict[str, object]:
         "ledger_card": ledger_card,
         "workbench_card": workbench_card,
         "capability_card": capability_card,
+        "control_registry_card": control_registry_card,
     }
 
 

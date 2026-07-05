@@ -21,6 +21,7 @@ from .contracts import (
     leader_actions_contract_response,
     leader_action_contract_response,
     leader_chat_capability_card,
+    leader_chat_control_registry_card,
     leader_chat_contract_response,
     leader_chat_intent_placeholder_blocker,
     leader_review_contract_response,
@@ -159,6 +160,7 @@ def _print_leader_chat_payload_or_error(
     task: str,
 ) -> int:
     payload.setdefault("capability_card", None)
+    payload.setdefault("control_registry_card", None)
     payload.setdefault("intent_card", _leader_chat_intent_card(payload))
     validation = validate_leader_chat_contract(payload)
     if not validation["ok"]:
@@ -2380,6 +2382,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         refreshed_project_view = _project_view_payload_or_error(config, store)
         if refreshed_project_view is None:
             return 1
+        control_registry_workbench = _workbench_snapshot_payload(refreshed_project_view, store, since_event_id=None)
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -2407,6 +2410,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "workbench_card": None,
             "capability_card": leader_chat_capability_card(),
+            "control_registry_card": leader_chat_control_registry_card(control_registry_workbench),
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
