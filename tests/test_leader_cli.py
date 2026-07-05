@@ -1744,6 +1744,7 @@ def test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching
     approval_id = approvals[0]["approval_id"]
     cli.main(["approval", "approve", "--approval-id", approval_id])
     capsys.readouterr()
+    bind_agent(root, "planner", "%42")
 
     exit_code = cli.main(["leader", "chat", "--message", "派发当前审批"])
 
@@ -1756,6 +1757,29 @@ def test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching
     assert payload["approval_card"]["approvals"][0]["dispatch_command"] == payload["next_command"]
     assert payload["approval_card"]["approvals"][0]["can_dispatch"] is True
     assert payload["approval_card"]["approvals"][0]["preview_command"] == "agentdeck approval list"
+    assert payload["dispatch_preview_card"] == {
+        "approval_id": approval_id,
+        "agent_id": "planner",
+        "agent_role": "planning",
+        "pane_id": "%42",
+        "runtime_status": "running",
+        "task": "Break down the goal and identify risks: 派发建议",
+        "dispatch_command": f"agentdeck approval dispatch --approval-id {approval_id}",
+        "approval_command": "agentdeck approval list",
+        "inbox_command": "agentdeck inbox --agent planner",
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": None,
+    }
+    assert payload["intent_card"]["embedded_card"] == "dispatch_preview_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect dispatch_preview_card",
+        "command": "agentdeck approval list",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
     assert payload["leader_explanation"]["action_kind"] == "approval_dispatch"
     assert payload["leader_explanation"]["recommended_action_id"] == approval_id
     assert payload["leader_explanation"]["action_status"] == "approved"
@@ -1770,6 +1794,7 @@ def test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching
     assert state_after["messages"] == []
     assert state_after["jobs"] == []
     assert state_after.get("inbox", {}) == {}
+    assert state_after["agents"]["planner"]["status"] == "running"
 
 
 def test_leader_chat_persists_create_approvals_action_for_existing_plan(tmp_path, monkeypatch, capsys) -> None:

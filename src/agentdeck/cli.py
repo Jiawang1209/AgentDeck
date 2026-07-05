@@ -78,6 +78,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "workbench_card",
         "continue_card",
         "capture_card",
+        "dispatch_preview_card",
         "trace_card",
         "inbox_card",
         "approval_card",
@@ -143,6 +144,14 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         capture_card = payload.get("capture_card")
         command = capture_card.get("capture_command") if isinstance(capture_card, dict) else None
         return str(command) if command else None
+    if embedded_card == "dispatch_preview_card":
+        dispatch_preview_card = payload.get("dispatch_preview_card")
+        command = (
+            dispatch_preview_card.get("approval_command")
+            if isinstance(dispatch_preview_card, dict)
+            else None
+        )
+        return str(command) if command else None
     if embedded_card == "ledger_card":
         return "agentdeck workbench"
     if embedded_card == "trace_card":
@@ -189,6 +198,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("lineage_card", None)
     payload.setdefault("trace_card", None)
     payload.setdefault("capture_card", None)
+    payload.setdefault("dispatch_preview_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -2429,6 +2439,40 @@ def _approved_approval_item(approval_card: dict[str, object]) -> dict[str, objec
     return None
 
 
+def _approval_dispatch_preview_card(
+    approval: dict[str, object],
+    config: ProjectConfig,
+    store: StateStore,
+) -> dict[str, object]:
+    agent_id = str(approval.get("agent_id", ""))
+    approval_id = str(approval.get("approval_id", ""))
+    agent = _agent_by_id(config, agent_id)
+    binding = store.agent_binding(agent_id) or {}
+    pane_id = binding.get("pane_id")
+    runtime_status = str(binding.get("status", "configured"))
+    blocker = None
+    if agent is None:
+        blocker = f"unknown agent: {agent_id}"
+    elif not pane_id:
+        blocker = f"agent is not spawned: {agent_id}"
+    elif runtime_status != "running":
+        blocker = f"agent runtime is {runtime_status}: {agent_id}"
+    return {
+        "approval_id": approval_id,
+        "agent_id": agent_id,
+        "agent_role": agent.role if agent is not None else None,
+        "pane_id": pane_id,
+        "runtime_status": runtime_status,
+        "task": approval.get("task"),
+        "dispatch_command": f"agentdeck approval dispatch --approval-id {approval_id}",
+        "approval_command": "agentdeck approval list",
+        "inbox_command": f"agentdeck inbox --agent {agent_id}",
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": blocker,
+    }
+
+
 def _inbox_head_item(inbox_card: dict[str, object]) -> dict[str, object] | None:
     head_inbox_id = inbox_card.get("head_inbox_id")
     items = inbox_card.get("items")
@@ -3493,6 +3537,11 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             if wants_approve and isinstance(pending_approval, dict)
             else "approval"
         )
+        dispatch_preview_card = (
+            _approval_dispatch_preview_card(approved_approval, config, store)
+            if approval_action_kind == "approval_dispatch" and isinstance(approved_approval, dict)
+            else None
+        )
         turn = store.record_chat_turn(
             mode="approval",
             message=args.message,
@@ -3537,6 +3586,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "leader_action": None,
             "continue_card": None,
             "inbox_card": None,
+            "dispatch_preview_card": dispatch_preview_card,
             "approval_card": approval_card,
             "runtime_card": None,
             "queue_card": None,

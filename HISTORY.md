@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Preview approved dispatch through Leader chat
+
+- 扩展 `agentdeck leader chat --message "派发当前审批"`：当存在 approved approval 时，approval-mode 响应现在会嵌入 `dispatch_preview_card`，作为 GUI-ready 的 explicit-runtime 执行前确认卡。
+- `dispatch_preview_card` 暴露 approval_id、agent_id、agent_role、pane_id、runtime_status、task、dispatch_command、approval_command、inbox_command、requires_explicit_user、safety 和 blocker，让人类或 GUI 在真正派发前看到会发给谁、打到哪个 pane、执行后去哪里看 inbox。
+- 保持安全边界：该模式仍只记录 chat turn，不执行 approve/reject/dispatch，不创建 message/job/inbox，不发送 tmux 输入；真正派发仍必须运行显式 `agentdeck approval dispatch --approval-id <id>`。
+- 同步 `agentdeck contract leader-chat` 的 `dispatch_preview_card_fields`、validator、README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试，继续推进“ask/inspect -> explicit approve/dispatch”的控制梯度。
+- 完整验证：已先确认红测失败，`派发当前审批` 最初缺少 `dispatch_preview_card`，contract discovery 最初缺少 `LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients -q` 3 项通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching tests/test_leader_cli.py::test_leader_chat_suggests_approve_for_pending_approval_without_approving tests/test_leader_cli.py::test_leader_chat_suggests_reject_for_pending_approval_without_rejecting tests/test_leader_cli.py::test_leader_chat_inspects_approval_queue_without_mutating_state tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 8 项通过；`conda run -n agentdeck pytest -q` 245 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-dispatch-preview-smoke-ok mode=approval embedded=dispatch_preview_card approval=apv_f1afc7b39ca8 pane=%42 messages=0 jobs=0`。
+
 ### Current - Capture visible agent pane through Leader chat
 
 - 扩展 `agentdeck leader chat --message "查看 planner 输出"` / `"capture planner output"`：自然语言入口现在会进入只读 `mode=capture`，读取已 spawn agent 的 visible tmux pane，并嵌入 GUI-ready `capture_card`。

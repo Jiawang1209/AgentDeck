@@ -365,6 +365,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "leader_action_card",
     "continue_card",
     "capture_card",
+    "dispatch_preview_card",
     "inbox_card",
     "trace_card",
     "approval_card",
@@ -401,6 +402,21 @@ LEADER_CHAT_CAPTURE_CARD_FIELDS = (
     "lines",
     "capture_command",
     "output",
+)
+
+LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS = (
+    "approval_id",
+    "agent_id",
+    "agent_role",
+    "pane_id",
+    "runtime_status",
+    "task",
+    "dispatch_command",
+    "approval_command",
+    "inbox_command",
+    "requires_explicit_user",
+    "safety",
+    "blocker",
 )
 
 CONTROL_REGISTRY_CARD_FIELDS = (
@@ -940,6 +956,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "leader_action_card_fields": list(LEADER_CHAT_ACTION_CARD_FIELDS),
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "capture_card_fields": list(LEADER_CHAT_CAPTURE_CARD_FIELDS),
+        "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
@@ -981,6 +998,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_intent_control_fields"] = list(example["intent_card"]["controls"][0])
         payload["example_leader_action_card_fields"] = list(example["leader_action_card"])
         payload["example_continue_card_fields"] = list(example["continue_card"])
+        payload["example_dispatch_preview_card_fields"] = list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
         payload["example_operator_card_fields"] = list(example["operator_card"])
@@ -1987,6 +2005,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_leader_chat_capture_card_contract(errors, capture_card)
     elif "capture_card" in payload and capture_card is not None:
         errors.append("capture_card must be an object")
+    dispatch_preview_card = payload.get("dispatch_preview_card")
+    if isinstance(dispatch_preview_card, dict):
+        _validate_leader_chat_dispatch_preview_card_contract(errors, dispatch_preview_card)
+    elif "dispatch_preview_card" in payload and dispatch_preview_card is not None:
+        errors.append("dispatch_preview_card must be an object")
     leader_action_card = payload.get("leader_action_card")
     leader_action = payload.get("leader_action")
     if isinstance(leader_action_card, dict):
@@ -2109,6 +2132,18 @@ def _validate_leader_chat_capture_card_contract(errors: list[str], capture_card:
         errors.append("capture_card.lines must be an integer")
     if "output" in capture_card and not isinstance(capture_card.get("output"), str):
         errors.append("capture_card.output must be a string")
+
+
+def _validate_leader_chat_dispatch_preview_card_contract(
+    errors: list[str], dispatch_preview_card: dict[str, object]
+) -> None:
+    for field in LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS:
+        if field not in dispatch_preview_card:
+            errors.append(f"missing dispatch_preview_card field: {field}")
+    if dispatch_preview_card.get("requires_explicit_user") is not True:
+        errors.append("dispatch_preview_card.requires_explicit_user must be true")
+    if dispatch_preview_card.get("safety") != "explicit_runtime":
+        errors.append("dispatch_preview_card.safety must be explicit_runtime")
 
 
 def _validate_control_registry_card_contract(errors: list[str], control_registry_card: dict[str, object]) -> None:
@@ -2774,6 +2809,7 @@ def leader_chat_example() -> dict[str, object]:
         "leader_action_card": leader_action_card,
         "continue_card": continue_card,
         "capture_card": None,
+        "dispatch_preview_card": None,
         "inbox_card": None,
         "trace_card": None,
         "approval_card": None,

@@ -19,6 +19,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "leader_action_card_fields": [],
   "continue_card_fields": [],
   "capture_card_fields": [],
+  "dispatch_preview_card_fields": [],
   "runtime_card_fields": [],
   "queue_card_fields": [],
   "operator_card_fields": [],
@@ -72,6 +73,7 @@ The review-mode response shape is:
   "leader_action_card": {},
   "continue_card": null,
   "capture_card": null,
+  "dispatch_preview_card": null,
   "inbox_card": null,
   "trace_card": null,
   "approval_card": null,
@@ -436,6 +438,27 @@ Approval-mode responses include `approval_card`, which reuses the same queue sha
 
 When `approval_card` is present, `validate_leader_chat_contract()` reuses `validate_approval_contract()` and prefixes nested errors with `approval_card:`. Approval-mode is read-only: it may recommend `agentdeck approval list`, the first pending approval's `approve_command`, the first pending approval's `reject_command`, or the first approved approval's `dispatch_command`, but it must not approve, reject, dispatch work, or send tmux input. Apply-action mode may also embed `approval_card` after a safe `create_approvals` action succeeds, so the same response can show the newly created human approval queue without approving or dispatching it.
 
+When approval-mode recommends dispatching an already approved item, it may also include `dispatch_preview_card`, a GUI-ready explicit-runtime preview:
+
+```json
+{
+  "approval_id": "apv_xxx",
+  "agent_id": "planner",
+  "agent_role": "planning",
+  "pane_id": "%42",
+  "runtime_status": "running",
+  "task": "Break down the goal",
+  "dispatch_command": "agentdeck approval dispatch --approval-id apv_xxx",
+  "approval_command": "agentdeck approval list",
+  "inbox_command": "agentdeck inbox --agent planner",
+  "requires_explicit_user": true,
+  "safety": "explicit_runtime",
+  "blocker": null
+}
+```
+
+`dispatch_preview_card` is not dispatch execution. It is an execution-before-confirmation surface for humans and GUI clients: it shows the target agent, role, pane, task, dispatch command, and mailbox command before the human runs the explicit command. If runtime is missing, `blocker` should explain why the explicit command is not ready.
+
 Setup-mode responses are returned when the human asks to inspect `doctor`, provider setup, API key, or local environment readiness. They are read-only and do not call the configured Leader provider:
 
 ```json
@@ -500,6 +523,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat direct trace responses must embed `trace_card`, reusing the `agentdeck trace` contract for the requested communication id.
 - Chat capture-mode responses must embed `capture_card`, using the leader-chat `capture_card_fields` for the requested visible agent pane.
 - Chat approval-mode responses and safe apply-action responses that create approvals must reuse the `agentdeck approval list` queue contract through `approval_card`.
+- Chat approval dispatch recommendations may embed `dispatch_preview_card`, using `dispatch_preview_card_fields` to show the explicit runtime command target before any dispatch runs.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.
 - Chat queue-mode responses must reuse the workbench queue and operator cards through `queue_card` and `operator_card`.
 - Chat role-mode responses must reuse the workbench role card through `role_card`.
@@ -509,4 +533,4 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, or `runtime_card` when `recovery.recommended_action.source` points at those queues or runtime recovery.
 - Chat setup-mode responses may include `provider_health` and must recommend `agentdeck doctor` without calling the provider.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `capture_card` as the selected visible pane snapshot surface, `inbox_card` as the mailbox queue surface, `trace_card` as the selected inbox/message lineage evidence surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as safety/reason explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `capture_card` as the selected visible pane snapshot surface, `dispatch_preview_card` as the explicit dispatch confirmation preview, `inbox_card` as the mailbox queue surface, `trace_card` as the selected inbox/message lineage evidence surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as safety/reason explanation.
