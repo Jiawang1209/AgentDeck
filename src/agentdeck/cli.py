@@ -567,7 +567,7 @@ def _active_queue_source(project_view: dict[str, object]) -> str:
     recovery = project_view.get("recovery", {})
     recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
     source = recommended_action.get("source") if isinstance(recommended_action, dict) else None
-    return source if source in ("leader_action", "inbox", "approval", "provider_health", "runtime") else "none"
+    return source if source in ("leader_action", "inbox", "approval", "provider_health", "runtime", "reply") else "none"
 
 
 def _workbench_snapshot_payload(
@@ -1124,13 +1124,16 @@ def _workbench_operator_card(
     leader_action = leader_action if isinstance(leader_action, dict) else {}
     source = str(recommended_action.get("source", "none"))
     target_id = recommended_action.get("target_id")
-    action_kind = source if source in ("inbox", "approval", "leader_action", "provider_health", "runtime") else "none"
+    action_kind = source if source in ("inbox", "approval", "leader_action", "provider_health", "runtime", "reply") else "none"
     can_apply = bool(leader_action.get("can_apply")) if action_kind == "leader_action" else False
     apply_command = leader_action.get("apply_command") if can_apply else None
     command = recommended_action.get("command")
     explicit_command = leader_action.get("explicit_command") or recommended_action.get("command")
     explicit_label = "Run explicit command"
     explicit_kind = "explicit"
+    if action_kind == "reply":
+        explicit_label = "Capture reply"
+        explicit_kind = "capture_reply"
     if action_kind == "approval" and _workbench_approved_approval_count(project_view) > 1:
         action_kind = "approval_dispatch_ready"
         command = "agentdeck approval dispatch-ready --confirm"
@@ -1298,6 +1301,8 @@ def _workbench_operator_preview_command(action_kind: str, target_id: object) -> 
     if action_kind == "leader_action" and target_id:
         return f"agentdeck leader action --action-id {target_id}"
     if action_kind == "inbox" and target_id:
+        return f"agentdeck trace --id {target_id}"
+    if action_kind == "reply" and target_id:
         return f"agentdeck trace --id {target_id}"
     if action_kind in ("approval", "approval_dispatch_ready"):
         return "agentdeck approval list"

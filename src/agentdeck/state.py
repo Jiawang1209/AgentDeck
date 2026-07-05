@@ -1018,6 +1018,7 @@ class StateStore:
         pending_approvals = [item for item in approvals if item.get("status") == "pending"]
         approved_approvals = [item for item in approvals if item.get("status") == "approved"]
         pending_inbox_items = [item for item in inbox_items if item.get("status") == "pending"]
+        waiting_reply_review = self._latest_waiting_reply_review(state)
         stale_agents = [
             agent_id
             for agent_id, binding in agent_bindings.items()
@@ -1036,6 +1037,7 @@ class StateStore:
                 "inbox_items": len(pending_inbox_items),
                 "leader_errors": len(leader_errors),
                 "runtime_stale": len(stale_agents),
+                "reply_waiting": 1 if waiting_reply_review else 0,
             },
             "leader_action": None,
             "latest_event": recent_events[-1] if recent_events else None,
@@ -1138,6 +1140,25 @@ class StateStore:
                     ),
                 }
             )
+        elif waiting_reply_review:
+            agent_id = waiting_reply_review.get("agent_id")
+            message_id = waiting_reply_review.get("message_id")
+            next_command = f"agentdeck capture-reply --agent {agent_id} --message-id {message_id}"
+            summary.update(
+                {
+                    "status": "reply_waiting",
+                    "reason": waiting_reply_review.get("reason"),
+                    "next_command": next_command,
+                    "recommended_action": self._recommended_action(
+                        label="Capture pending reply",
+                        command=next_command,
+                        safety="explicit_runtime",
+                        requires_explicit_user=True,
+                        source="reply",
+                        target_id=message_id,
+                    ),
+                }
+            )
         elif leader_errors:
             error = leader_errors[-1]
             summary.update(
@@ -1190,6 +1211,23 @@ class StateStore:
         if required_env is None or os.environ.get(required_env):
             return None
         return {"command": "agentdeck doctor", "missing_env": required_env}
+
+    def _latest_waiting_reply_review(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        plans = state.get("plans", [])
+        if not plans:
+            return None
+        latest_plan_id = plans[-1].get("plan_id") if isinstance(plans[-1], dict) else None
+        if not latest_plan_id:
+            return None
+        try:
+            review = self.leader_review(str(latest_plan_id))
+        except KeyError:
+            return None
+        if review.get("next_action") != "wait_for_reply":
+            return None
+        if not review.get("agent_id") or not review.get("message_id"):
+            return None
+        return review
 
     @staticmethod
     def _inbox_item_agent_id(inbox: dict[str, list[dict[str, Any]]], item: dict[str, Any]) -> str | None:

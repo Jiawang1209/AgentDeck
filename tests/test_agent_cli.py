@@ -85,6 +85,19 @@ def prepare_project(tmp_path: Path, monkeypatch) -> Path:
     return root
 
 
+def bind_agent(root: Path, agent_id: str, pane_id: str = "%42") -> None:
+    store = StateStore(root)
+    state = store.load()
+    state["agents"][agent_id] = {
+        "agent_id": agent_id,
+        "pane_id": pane_id,
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
+
+
 def test_agent_list_outputs_configured_agents(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
 
@@ -524,6 +537,110 @@ def test_continue_promotes_multiple_approved_approvals_to_dispatch_ready(
     assert payload["leader_action"] is None
     assert payload["action_detail_command"] is None
     assert StateStore(root).load() == state_before
+
+
+def test_continue_surfaces_dispatched_step_waiting_for_reply(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "等待 worker 回复"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_payload = json.loads(capsys.readouterr().out)
+    approvals = approval_payload["approvals"]
+    approval_id = approvals[0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    for approval in approvals[1:]:
+        cli.main(["approval", "reject", "--approval-id", approval["approval_id"], "--reason", "focus first reply"])
+        capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    dispatch_payload = json.loads(capsys.readouterr().out)
+    message_id = dispatch_payload["message_id"]
+    inbox_id = dispatch_payload["inbox_card"]["head_inbox_id"]
+    cli.main(["ack", "--agent", "planner", "--inbox-id", inbox_id])
+    capsys.readouterr()
+    expected_command = f"agentdeck capture-reply --agent planner --message-id {message_id}"
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["continue"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "reply_waiting"
+    assert payload["reason"] == "dispatched step has no reply yet"
+    assert payload["next_command"] == expected_command
+    assert payload["recommended_action"] == {
+        "label": "Capture pending reply",
+        "command": expected_command,
+        "safety": "explicit_runtime",
+        "requires_explicit_user": True,
+        "source": "reply",
+        "target_id": message_id,
+    }
+    assert payload["leader_action"] is None
+    assert payload["action_detail_command"] is None
+    assert StateStore(root).load() == state_before
+    assert fake.sent
+    assert fake.captured == []
+
+
+def test_workbench_surfaces_capture_reply_operator_for_dispatched_step_waiting_for_reply(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "等待 workbench 回复"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    approval_id = approvals[0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    for approval in approvals[1:]:
+        cli.main(["approval", "reject", "--approval-id", approval["approval_id"], "--reason", "focus first reply"])
+        capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    dispatch_payload = json.loads(capsys.readouterr().out)
+    message_id = dispatch_payload["message_id"]
+    inbox_id = dispatch_payload["inbox_card"]["head_inbox_id"]
+    cli.main(["ack", "--agent", "planner", "--inbox-id", inbox_id])
+    capsys.readouterr()
+    expected_command = f"agentdeck capture-reply --agent planner --message-id {message_id}"
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["recovery"]["status"] == "reply_waiting"
+    assert payload["active_queue_source"] == "reply"
+    assert payload["next_command"] == expected_command
+    assert payload["operator_card"]["action_kind"] == "reply"
+    assert payload["operator_card"]["status"] == "reply_waiting"
+    assert payload["operator_card"]["command"] == expected_command
+    assert payload["operator_card"]["preview_command"] == f"agentdeck trace --id {message_id}"
+    assert payload["operator_card"]["explicit_command"] == expected_command
+    assert payload["operator_card"]["controls"][-1] == {
+        "kind": "capture_reply",
+        "label": "Capture reply",
+        "command": expected_command,
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+    registry_item = next(
+        item
+        for item in payload["control_registry"]
+        if item["scope"] == "operator" and item["command"] == expected_command
+    )
+    assert registry_item["kind"] == "capture_reply"
+    assert registry_item["card"] == "operator_card"
+    assert StateStore(root).load() == state_before
+    assert fake.captured == []
 
 
 def test_continue_refuses_invalid_project_view_before_printing(tmp_path, monkeypatch, capsys) -> None:
@@ -3041,6 +3158,7 @@ def test_status_includes_recovery_summary(tmp_path, monkeypatch, capsys) -> None
             "inbox_items": 1,
             "leader_errors": 0,
             "runtime_stale": 0,
+            "reply_waiting": 0,
         },
         "leader_action": {
             "action_id": "act_demo",

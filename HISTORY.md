@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Surface waiting replies in recovery and workbench
+
+- 扩展 ProjectView `status.recovery`：当没有 pending leader action、approval、stale runtime 或 pending inbox item，但 latest plan review 是 `wait_for_reply` 时，recovery 返回 `status=reply_waiting`，并推荐显式 `agentdeck capture-reply --agent <id> --message-id <msg_id>`。
+- 扩展 `agentdeck continue` 与 `agentdeck workbench`：continue 会直接展示 capture-reply 下一步；workbench `active_queue_source=reply`，`operator_card` 暴露 trace preview 和 `kind=capture_reply` 显式控制，`control_registry[]` 也会索引该 operator control，供 GUI/TUI 渲染“回收回复”按钮。
+- 保持安全边界：该恢复状态只读推导，不读取 pane、不写 reply、不创建 leader action、不 dispatch、不发送 tmux 输入；如果目标 worker inbox 仍有 pending task_request，recovery 仍优先建议 inbox inspect。
+- 同步 README、`docs/contracts/project-view-schema.md`、`docs/contracts/continue-card-schema.md`、`docs/contracts/workbench-schema.md`、CLAUDE.md 和 AGENT.md，并将 `reply_waiting` 加入 `recovery_pending_fields` 契约。
+- 验证记录：已先确认红测失败，已 ack worker inbox 的 dispatched step 最初被 `provider_setup_required` 覆盖，workbench contract 也拒绝 `active_queue_source=reply`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_continue_surfaces_dispatched_step_waiting_for_reply tests/test_agent_cli.py::test_workbench_surfaces_capture_reply_operator_for_dispatched_step_waiting_for_reply -q` 通过；相关回归 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_continue_surfaces_provider_setup_when_configured_leader_is_not_ready tests/test_agent_cli.py::test_workbench_surfaces_provider_setup_as_active_operator_source tests/test_agent_cli.py::test_workbench_watch_outputs_jsonl_snapshots_without_mutating_state tests/test_leader_cli.py::test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning tests/test_agent_cli.py::test_continue_surfaces_dispatched_step_waiting_for_reply tests/test_agent_cli.py::test_workbench_surfaces_capture_reply_operator_for_dispatched_step_waiting_for_reply -q` 6 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 293 项通过。
+
 ### Current - Resolve current capture-reply from waiting review
 
 - 扩展 `agentdeck leader chat` capture-reply intent：当用户输入 `"捕获当前回复"`、`"回收当前结果"` 或类似 current/latest reply 请求时，chat 会读取 latest plan 的 `leader_review`；只有 review 明确是 `wait_for_reply` 时，才解析出对应 agent/message 并建议显式 `agentdeck capture-reply --agent <id> --message-id <msg_id>`。

@@ -507,6 +507,7 @@ When `recovery.recommended_action.source` is:
 - `approval`: `active_queue_source` is `approval`, and `approval_card` reuses the `agentdeck approval list` queue contract. If the active approved approval cannot be dispatched because the target runtime is not running, `operator_card.blocker` and the explicit control blocker must expose that runtime blocker. If multiple approvals are approved, `operator_card.action_kind` may be `approval_dispatch_ready`, both `command` and `explicit_command` must be `agentdeck approval dispatch-ready --confirm`, and the matching operator control must use `kind=dispatch_ready`.
 - `provider_health`: `active_queue_source` is `provider_health`, and `operator_card` points at `agentdeck doctor` so GUI clients can surface missing Leader provider setup before users trigger a failing plan/chat call.
 - `runtime`: `active_queue_source` is `runtime`, and `operator_card` points at `agentdeck agent refresh` so GUI clients can surface stale pane bindings before users continue runtime-dependent work.
+- `reply`: `active_queue_source` is `reply`, and `operator_card` points at explicit `agentdeck capture-reply --agent <id> --message-id <id>` with a trace preview command. The explicit operator control must use `kind=capture_reply`, `label=Capture reply`, and `safety=explicit_runtime`.
 - absent or unknown: `active_queue_source` is `none`.
 
 ## Invariants

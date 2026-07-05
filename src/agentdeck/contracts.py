@@ -149,6 +149,7 @@ PROJECT_VIEW_RECOVERY_PENDING_FIELDS = (
     "inbox_items",
     "leader_errors",
     "runtime_stale",
+    "reply_waiting",
 )
 
 PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS = (
@@ -2936,8 +2937,10 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
     elif "approval_card" in payload and approval_card is not None:
         errors.append("approval_card must be an object")
     source = payload.get("active_queue_source")
-    if source not in ("none", "leader_action", "inbox", "approval", "provider_health", "runtime"):
-        errors.append("active_queue_source must be none, leader_action, inbox, approval, provider_health, or runtime")
+    if source not in ("none", "leader_action", "inbox", "approval", "provider_health", "runtime", "reply"):
+        errors.append(
+            "active_queue_source must be none, leader_action, inbox, approval, provider_health, runtime, or reply"
+        )
     if source == "inbox" and not isinstance(inbox_card, dict):
         errors.append("inbox active queue requires inbox_card")
     if source == "approval" and not isinstance(approval_card, dict):
@@ -3101,6 +3104,7 @@ def project_view_example() -> dict[str, object]:
                 "inbox_items": 0,
                 "leader_errors": 0,
                 "runtime_stale": 0,
+                "reply_waiting": 0,
             },
             "leader_action": {
                 "action_id": "act_example",

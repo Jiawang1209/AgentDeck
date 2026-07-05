@@ -50,7 +50,7 @@ All ProjectView fields are read-only summaries. Commands that mutate state, send
 
 ## Recovery
 
-`recovery` is the canonical next-step surface for humans, natural-language shells, and GUI clients. It prioritizes pending Leader actions, approved approvals, pending approvals, stale runtime bindings, pending inbox items, and Leader errors before returning idle.
+`recovery` is the canonical next-step surface for humans, natural-language shells, and GUI clients. It prioritizes pending Leader actions, approved approvals, pending approvals, stale runtime bindings, pending inbox items, waiting dispatched replies, and Leader errors before returning idle.
 
 When no state queue needs attention but the configured API-backed Leader provider is missing required local environment, `recovery.status` is `provider_setup_required`, `recovery.next_command` is `agentdeck doctor`, and `recovery.recommended_action.source` is `provider_health`. This is still read-only; it only guides the user toward setup diagnostics before a plan/chat call fails.
 
@@ -289,7 +289,8 @@ Only the earliest pending item is the actionable mailbox head for an agent. Use 
     "approved_approvals": 0,
     "inbox_items": 0,
     "leader_errors": 0,
-    "runtime_stale": 0
+    "runtime_stale": 0,
+    "reply_waiting": 0
   },
   "leader_action": {
     "action_id": "act_xxx",
@@ -318,12 +319,13 @@ Only the earliest pending item is the actionable mailbox head for an agent. Use 
 | `approval_required` | `agentdeck approval list` | `inspect` | first pending `approval_id` |
 | `runtime_stale` | `agentdeck agent refresh` | `inspect` | first stale `agent_id` |
 | `inbox_pending` | `agentdeck inbox --agent <id>` | `inspect` | first pending `inbox_id` |
+| `reply_waiting` | `agentdeck capture-reply --agent <id> --message-id <id>` | `explicit_runtime` | waiting `message_id` |
 | `leader_error` | `agentdeck status` | `inspect` | latest `error_id` |
 | `idle` | `null` | none | none |
 
 `recommended_action` is descriptive metadata. It never executes by itself. GUI clients must still call explicit AgentDeck commands and preserve approval boundaries.
 
-`pending.leader_errors` counts stored Leader errors. `pending.runtime_stale` counts agent runtime bindings whose tmux pane is no longer trusted. These counts do not execute anything; they help GUI clients show unresolved Leader diagnostics and runtime reconciliation work alongside approvals, inbox items, and action queue work.
+`pending.leader_errors` counts stored Leader errors. `pending.runtime_stale` counts agent runtime bindings whose tmux pane is no longer trusted. `pending.reply_waiting` is `1` when the latest plan review is waiting for a dispatched reply and no higher-priority queue masks it. These counts do not execute anything; they help GUI clients show unresolved Leader diagnostics, reply capture work, and runtime reconciliation work alongside approvals, inbox items, and action queue work.
 
 `agentdeck contract project-view` exposes the required pending keys as `recovery_pending_fields`, and `validate_project_view_contract()` rejects ProjectView payloads missing any of them.
 
