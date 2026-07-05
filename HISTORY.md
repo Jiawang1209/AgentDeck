@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Embed runtime card in Leader continue
+
+- 扩展 Leader chat response contract：新增顶层 `runtime_card`，`agentdeck contract leader-chat` 现在公开 `runtime_card_fields` 和 `example_runtime_card_fields`，供 GUI/自然语言壳发现 runtime 恢复字段。
+- 扩展 `agentdeck leader chat --message "继续"`：当 ProjectView recovery 的 `recommended_action.source=runtime` 时，响应会嵌入复用 workbench runtime 投影的 `runtime_card`，并继续返回 `continue_card`、`recovery` 和 `next_command=agentdeck agent refresh`。
+- 其他 leader chat 模式显式返回 `runtime_card=null`，保持 response contract 稳定；`validate_leader_chat_contract()` 会校验 runtime card 字段，但不会执行 refresh、spawn、stop、capture 或发送 tmux 输入。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 runtime card 是展示和显式恢复入口，不代表自动 runtime 操作。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_continue_embeds_runtime_card_for_stale_runtime tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 最初因 `runtime_card` 和 `runtime_card_fields` 缺失失败；实现后目标测试 4 项通过，leader/contract 扩展测试 121 项通过；`conda run -n agentdeck pytest -q` 193 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `leader-chat-runtime-card-smoke-ok`。
+
 ### Current - Surface stale runtime recovery
 
 - 扩展 ProjectView recovery：state 中存在 `status=stale` 的 agent runtime binding 时，`status.recovery` 会返回 `status=runtime_stale`、`next_command=agentdeck agent refresh`，并把 `recommended_action.source` 标记为 `runtime`。

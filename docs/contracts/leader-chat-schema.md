@@ -15,6 +15,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "response_fields": [],
   "explanation_fields": [],
   "continue_card_fields": [],
+  "runtime_card_fields": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view"
 }
@@ -44,7 +45,8 @@ The review-mode response shape is:
   "leader_action": {},
   "continue_card": null,
   "inbox_card": null,
-  "approval_card": null
+  "approval_card": null,
+  "runtime_card": null
 }
 ```
 
@@ -70,7 +72,21 @@ Continue-mode responses include `continue_card`, which reuses the same recovery 
 
 `agentdeck contract leader-chat --example` exposes `example_continue_card_fields` and a stable continue-mode example so GUI clients can build recovery cards without guessing fields.
 When `continue_card` is present, `validate_leader_chat_contract()` reuses `validate_continue_contract()` and prefixes nested errors with `continue_card:`.
-When continue-mode recovery points at a pending inbox item, the response also includes that agent's `inbox_card`; when recovery points at approvals, the response also includes `approval_card`. Continue-mode remains read-only: embedded queue cards are display/action affordances, not automatic ack, approve, dispatch, or tmux input.
+When continue-mode recovery points at a pending inbox item, the response also includes that agent's `inbox_card`; when recovery points at approvals, the response also includes `approval_card`; when recovery points at stale runtime, the response also includes `runtime_card`. Continue-mode remains read-only: embedded cards are display/action affordances, not automatic ack, approve, dispatch, refresh, spawn, stop, or tmux input.
+
+Runtime recovery responses include `runtime_card`, which reuses the same runtime projection as `agentdeck workbench`:
+
+```json
+{
+  "backend": "tmux",
+  "count": 3,
+  "by_status": {"stale": 1, "configured": 2},
+  "refresh_command": "agentdeck agent refresh",
+  "agents": []
+}
+```
+
+When `runtime_card` is present, `validate_leader_chat_contract()` checks the same runtime card field lists exposed by `agentdeck contract workbench`. Runtime-mode is read-only: it may recommend `agentdeck agent refresh`, but it must not refresh, spawn, stop, capture pane output, or send tmux input by itself.
 
 Inbox-mode responses include `inbox_card`, which reuses the same queue shape as `agentdeck inbox --agent <id>`:
 
@@ -172,7 +188,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
-- Chat continue-mode responses may embed `inbox_card` or `approval_card` when `recovery.recommended_action.source` points at those queues.
+- Chat continue-mode responses may embed `inbox_card`, `approval_card`, or `runtime_card` when `recovery.recommended_action.source` points at those queues or runtime recovery.
 - Chat setup-mode responses may include `provider_health` and must recommend `agentdeck doctor` without calling the provider.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as explanation.

@@ -582,6 +582,53 @@ def test_leader_chat_continue_embeds_inbox_card_for_pending_inbox(tmp_path, monk
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_continue_embeds_runtime_card_for_stale_runtime(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"]["planner"] = {
+        "agent_id": "planner",
+        "pane_id": None,
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "stale",
+    }
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "继续"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "continue"
+    assert payload["recovery"]["status"] == "runtime_stale"
+    assert payload["next_command"] == "agentdeck agent refresh"
+    assert payload["continue_card"]["status"] == "runtime_stale"
+    assert payload["runtime_card"]["refresh_command"] == "agentdeck agent refresh"
+    assert payload["runtime_card"]["by_status"]["stale"] == 1
+    assert payload["runtime_card"]["agents"][0]["agent_id"] == "planner"
+    assert payload["runtime_card"]["agents"][0]["status"] == "stale"
+    assert payload["runtime_card"]["agents"][0]["controls"][0] == {
+        "kind": "spawn",
+        "label": "Spawn pane",
+        "command": "agentdeck agent spawn --agent planner",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["inbox_card"] is None
+    assert payload["approval_card"] is None
+    assert payload["leader_explanation"]["action_kind"] == "runtime"
+    assert payload["leader_explanation"]["action_status"] == "runtime_stale"
+    assert payload["leader_explanation"]["next_command"] == "agentdeck agent refresh"
+
+    state_after = StateStore(root).load()
+    assert state_after["agents"]["planner"]["status"] == "stale"
+    assert state_after["chat_turns"][0]["mode"] == "continue"
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

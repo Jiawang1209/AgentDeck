@@ -352,6 +352,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "continue_card",
     "inbox_card",
     "approval_card",
+    "runtime_card",
 )
 
 CONTINUE_CARD_FIELDS = (
@@ -711,6 +712,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "response_fields": list(LEADER_CHAT_RESPONSE_FIELDS),
         "explanation_fields": list(LEADER_CHAT_EXPLANATION_FIELDS),
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
+        "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -724,6 +726,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_response_fields"] = list(example)
         payload["example_explanation_fields"] = list(example["leader_explanation"])
         payload["example_continue_card_fields"] = list(example["continue_card"])
+        payload["example_runtime_card_fields"] = list(example["runtime_card"])
         payload["example_leader_chat"] = example
     return payload
 
@@ -1259,6 +1262,36 @@ def _validate_trace_items(
             errors.append(f"missing {label} field: {field}")
 
 
+def _validate_runtime_card_contract(errors: list[str], runtime_card: dict[str, object], *, prefix: str) -> None:
+    for field in WORKBENCH_RUNTIME_CARD_FIELDS:
+        if field not in runtime_card:
+            errors.append(f"{prefix}: missing runtime_card field: {field}")
+    agents = runtime_card.get("agents")
+    if isinstance(agents, list):
+        if agents:
+            first_agent = agents[0]
+            if isinstance(first_agent, dict):
+                for field in WORKBENCH_RUNTIME_AGENT_FIELDS:
+                    if field not in first_agent:
+                        errors.append(f"{prefix}: missing runtime agent field: {field}")
+                controls = first_agent.get("controls")
+                if isinstance(controls, list):
+                    if controls:
+                        first_control = controls[0]
+                        if isinstance(first_control, dict):
+                            for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                                if field not in first_control:
+                                    errors.append(f"{prefix}: missing runtime control field: {field}")
+                        else:
+                            errors.append(f"{prefix}: runtime agent controls items must be objects")
+                elif "controls" in first_agent:
+                    errors.append(f"{prefix}: runtime agent controls must be a list")
+            else:
+                errors.append(f"{prefix}: runtime_card.agents items must be objects")
+    elif "agents" in runtime_card:
+        errors.append(f"{prefix}: runtime_card.agents must be a list")
+
+
 def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, object]:
     errors: list[str] = []
     for field in LEADER_CHAT_RESPONSE_FIELDS:
@@ -1301,6 +1334,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append(f"approval_card: {error}")
     elif "approval_card" in payload and approval_card is not None:
         errors.append("approval_card must be an object")
+    runtime_card = payload.get("runtime_card")
+    if isinstance(runtime_card, dict):
+        _validate_runtime_card_contract(errors, runtime_card, prefix="runtime_card")
+    elif "runtime_card" in payload and runtime_card is not None:
+        errors.append("runtime_card must be an object")
     return {"ok": not errors, "errors": errors}
 
 
@@ -1711,6 +1749,7 @@ def leader_chat_example() -> dict[str, object]:
     recovery = project_view["recovery"]
     next_command = recovery["next_command"]
     continue_card = continue_example()
+    runtime_card = workbench_example()["runtime_card"]
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -1737,6 +1776,7 @@ def leader_chat_example() -> dict[str, object]:
         "continue_card": continue_card,
         "inbox_card": None,
         "approval_card": None,
+        "runtime_card": runtime_card,
     }
 
 

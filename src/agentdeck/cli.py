@@ -1876,6 +1876,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": None,
             "inbox_card": None,
             "approval_card": None,
+            "runtime_card": None,
             "result": result,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -1912,6 +1913,12 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         next_command = recovery.get("next_command") if isinstance(recovery, dict) else next_command
         continue_card = _continue_card_payload(refreshed_project_view, store)
         inbox_card, approval_card = _leader_chat_recovery_cards(refreshed_project_view, store)
+        recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
+        runtime_card = (
+            _workbench_runtime_card(refreshed_project_view)
+            if isinstance(recommended_action, dict) and recommended_action.get("source") == "runtime"
+            else None
+        )
         leader_action = continue_card.get("leader_action")
         payload = {
             "ok": True,
@@ -1934,6 +1941,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": continue_card,
             "inbox_card": inbox_card,
             "approval_card": approval_card,
+            "runtime_card": runtime_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -1983,6 +1991,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": None,
             "inbox_card": None,
             "approval_card": None,
+            "runtime_card": None,
             "provider_health": _workbench_provider_health(refreshed_project_view),
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -2060,6 +2069,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": None,
             "inbox_card": None,
             "approval_card": approval_card,
+            "runtime_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2135,6 +2145,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": None,
             "inbox_card": inbox_card,
             "approval_card": None,
+            "runtime_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2181,6 +2192,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": None,
             "inbox_card": None,
             "approval_card": None,
+            "runtime_card": None,
         }
         store.append_event(
             EventRecord.create(
@@ -2261,6 +2273,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         "next_command": next_command,
         "inbox_card": None,
         "approval_card": None,
+        "runtime_card": None,
     }
     store.append_event(
         EventRecord.create(

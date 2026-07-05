@@ -116,6 +116,7 @@ Worker 不应该：
 - `agentdeck contract agent-runtime` 返回 agent runtime 命令模板与 capture/refresh 响应字段，不读取 state、不 inspect tmux pane、不发送输入；`--example` 会附带稳定 runtime 示例，供 GUI/TUI 原型使用。
 - `agentdeck agent refresh` 是显式 runtime reconciliation 命令；只检查 state 中记录为 `running` 的 pane 是否仍存在，丢失时标记为 `stale` 并写入 `agent_runtime_stale` 事件，不发送 tmux 输入、不推断任务完成。
 - `status.recovery` 必须把 `stale` runtime bindings 作为 `runtime_stale` 恢复状态暴露，`recommended_action.source=runtime` 且 `next_command=agentdeck agent refresh`；`pending.runtime_stale` 是 ProjectView recovery pending 契约字段。
+- `agentdeck leader chat --message "继续"` 在 recovery source 为 `runtime` 时必须嵌入 `runtime_card`，复用 workbench runtime card 字段规则；它只展示 `agentdeck agent refresh` 入口，不自动 refresh、spawn、stop、capture 或发送 tmux 输入。
 - `agentdeck contract leader-actions` 返回 Leader action queue 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定队列示例，供 GUI 原型使用。
 - `agentdeck contract leader-action` 返回单个 Leader action 详情契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 action detail 示例，供 GUI 原型使用。
 - `agentdeck contract approvals` 返回人类审批队列契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 approval queue 示例，供 GUI 原型使用。
