@@ -41,6 +41,7 @@ class CliLeaderProvider:
             {
                 "agent_id": agent.agent_id,
                 "role": agent.role,
+                "role_prompt": agent.role_prompt,
                 "provider": agent.provider,
                 "workspace_mode": agent.workspace_mode,
             }

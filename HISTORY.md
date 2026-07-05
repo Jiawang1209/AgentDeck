@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Include worker role prompts in Leader provider context
+
+- 扩展 DeepSeek/OpenAI-compatible 与 `codex-cli` / `claude-cli` Leader provider 的 planning prompt：`Available workers` / `Available worker agents` 现在会把每个 worker 的 `role_prompt` 和 role/provider/workspace 一起传给 Leader 推理后端。
+- 强化角色化多 Agent 语义：真实 Leader 在拆分任务时能看到 planner/coder/reviewer 的职责说明，而不是只看到短 `role` 名称；这有利于后续按角色生成更准确的审批 plan。
+- 保持审批边界：prompt 增强只影响 plan 生成上下文，不创建 approval、不 dispatch、不复用 worker tmux pane、不发送 tmux 输入；每个 step 仍必须 `requires_approval=true`。
+- 同步 README、CLAUDE.md 和 AGENT.md，明确真实 Leader provider 的 planning prompt 会携带 `role_prompt`。
+- 验证记录：已先确认红测失败，DeepSeek/OpenAI-compatible system prompt 和 Codex CLI stdin prompt 最初都缺少 `"role_prompt"`；实现后目标测试 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_deepseek_provider_uses_deepseek_env_and_openai_compatible_plan_shape tests/test_provider_openai_compatible.py::test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_claude_cli_provider_runs_print_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_cli_provider_normalizes_missing_plan_control_flags tests/test_provider_openai_compatible.py::test_openai_compatible_provider_posts_chat_completion_and_parses_json_plan -q` 5 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 308 项通过。
+
 ### Current - Surface CLI Leader command path diagnostics
 
 - 扩展 `agentdeck doctor` 的 `configured_leader`：当 Leader provider 是 `codex-cli` 或 `claude-cli` 时，readiness 会通过解析后的本地命令路径判断，并在输出中返回 `command_path`；API-backed provider 和 unsupported provider 返回 `command_path=null`。

@@ -501,7 +501,7 @@ agentdeck doctor
 
 `leader set-provider` 只修改 `.agentdeck/config.toml` 的 `[leader] provider/model` 并追加审计事件，不调用 provider、不创建 plan、不审批、不派发。
 
-真实 provider 仍然只生成 plan 或 chat turn，不会自动创建 approval 或派发任务。`codex-cli` / `claude-cli` 是 `agent_id=leader` 这个逻辑 Leader 的本地推理后端，不会复用 `planner`、`coder` 或 `reviewer` 的 worker pane，也不会让 Leader 自动拥有一个 tmux pane。CLI-backed Leader 可以解析纯 JSON stdout，或解析 Markdown fenced `json` block 中的 JSON plan；解析后仍必须通过同一审批 plan schema。
+真实 provider 仍然只生成 plan 或 chat turn，不会自动创建 approval 或派发任务。Leader planning prompt 会把每个 worker 的 `agent_id`、`role`、`role_prompt`、provider 和 workspace mode 一起交给 provider，让 DeepSeek、OpenAI-compatible、Codex CLI 或 Claude CLI 都能按角色职责拆分任务。`codex-cli` / `claude-cli` 是 `agent_id=leader` 这个逻辑 Leader 的本地推理后端，不会复用 `planner`、`coder` 或 `reviewer` 的 worker pane，也不会让 Leader 自动拥有一个 tmux pane。CLI-backed Leader 可以解析纯 JSON stdout，或解析 Markdown fenced `json` block 中的 JSON plan；解析后仍必须通过同一审批 plan schema。
 
 ## 设计原则
 

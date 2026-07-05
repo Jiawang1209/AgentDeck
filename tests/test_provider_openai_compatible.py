@@ -151,6 +151,8 @@ def test_deepseek_provider_uses_deepseek_env_and_openai_compatible_plan_shape(tm
     assert body["model"] == "deepseek-chat"
     assert body["response_format"] == {"type": "json_object"}
     assert body["messages"][0]["role"] == "system"
+    assert '"role_prompt":' in body["messages"][0]["content"]
+    assert "负责需求澄清、任务拆解、架构方案和风险识别" in body["messages"][0]["content"]
     assert body["messages"][1]["content"] == "DeepSeek 规划"
     assert plan["goal"] == "构建 provider"
     assert plan["dispatch_ready"] is False
@@ -185,6 +187,8 @@ def test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan(
     assert provider.doctor() == (True, "codex is available")
     assert seen["command"] == ["codex", "exec", "--sandbox", "read-only", "-"]
     assert "Return only a JSON object plan" in str(seen["input"])
+    assert '"role_prompt":' in str(seen["input"])
+    assert "负责需求澄清、任务拆解、架构方案和风险识别" in str(seen["input"])
     assert "让 Codex 做 Leader" in str(seen["input"])
     assert seen["cwd"] == str(root)
     assert plan["goal"] == "CLI Leader"
