@@ -820,6 +820,25 @@ def test_leader_chat_inspects_ledger_without_mutating_state(tmp_path, monkeypatc
     assert payload["ledger_card"]["jobs"]["items"][0]["job_id"].startswith("job_")
     assert payload["ledger_card"]["inbox"]["total"] == 1
     assert payload["ledger_card"]["trace_commands"][0] == payload["next_command"]
+    assert payload["lineage_card"]["message_count"] == 1
+    assert payload["lineage_card"]["job_count"] == 1
+    assert payload["lineage_card"]["reply_count"] == 0
+    assert payload["lineage_card"]["inbox_count"] == 1
+    assert payload["lineage_card"]["recent_paths"] == [
+        {
+            "message_id": dispatch_payload["message_id"],
+            "job_id": payload["ledger_card"]["jobs"]["items"][0]["job_id"],
+            "reply_id": None,
+            "inbox_id": payload["ledger_card"]["inbox"]["heads"]["planner"]["inbox_id"],
+            "from_actor": "user",
+            "to_agent": "planner",
+            "from_agent": None,
+            "to_actor": None,
+            "task": "设计消息账本",
+            "status": "inbox_pending",
+            "trace_command": payload["next_command"],
+        }
+    ]
     assert payload["leader_explanation"]["mode"] == "ledger"
     assert payload["leader_explanation"]["recommended_action_id"] == dispatch_payload["message_id"]
     assert payload["leader_explanation"]["action_kind"] == "ledger"

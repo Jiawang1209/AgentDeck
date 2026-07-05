@@ -51,6 +51,8 @@ from agentdeck.contracts import (
     WORKBENCH_LEADER_CARD_FIELDS,
     WORKBENCH_LEADER_CONTROL_FIELDS,
     WORKBENCH_LEDGER_CARD_FIELDS,
+    WORKBENCH_LINEAGE_CARD_FIELDS,
+    WORKBENCH_LINEAGE_PATH_FIELDS,
     WORKBENCH_OPERATOR_CARD_FIELDS,
     WORKBENCH_PROVIDER_HEALTH_FIELDS,
     WORKBENCH_QUEUE_CARD_FIELDS,
@@ -443,6 +445,8 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
     assert payload["role_agent_fields"] == list(WORKBENCH_ROLE_AGENT_FIELDS)
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
+    assert payload["lineage_card_fields"] == list(WORKBENCH_LINEAGE_CARD_FIELDS)
+    assert payload["lineage_path_fields"] == list(WORKBENCH_LINEAGE_PATH_FIELDS)
     assert payload["workbench_card_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
     assert payload["control_mode_card_fields"] == list(WORKBENCH_CONTROL_MODE_CARD_FIELDS)
     assert payload["control_mode_option_fields"] == list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS)
@@ -1362,6 +1366,10 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert set(payload["example_role_agent_fields"]) == set(example["role_card"]["agents"][0])
     assert payload["example_ledger_card_fields"] == payload["ledger_card_fields"]
     assert payload["example_ledger_card_fields"] == list(example["ledger_card"])
+    assert payload["example_lineage_card_fields"] == payload["lineage_card_fields"]
+    assert payload["example_lineage_card_fields"] == list(example["lineage_card"])
+    assert payload["example_lineage_path_fields"] == payload["lineage_path_fields"]
+    assert payload["example_lineage_path_fields"] == list(example["lineage_card"]["recent_paths"][0])
     assert payload["example_workbench_card_fields"] == payload["workbench_card_fields"]
     assert payload["example_workbench_card_fields"] == list(example["workbench_card"])
     assert payload["example_control_mode_card_fields"] == payload["control_mode_card_fields"]

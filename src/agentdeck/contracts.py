@@ -371,6 +371,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "operator_card",
     "role_card",
     "ledger_card",
+    "lineage_card",
     "workbench_card",
     "control_mode_card",
     "capability_card",
@@ -934,6 +935,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
+        "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
+        "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
         "workbench_card_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "control_mode_card_fields": list(WORKBENCH_CONTROL_MODE_CARD_FIELDS),
         "control_mode_option_fields": list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS),
@@ -967,6 +970,8 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_role_card_fields"] = list(example["role_card"])
         payload["example_role_agent_fields"] = list(example["role_card"]["agents"][0])
         payload["example_ledger_card_fields"] = list(example["ledger_card"])
+        payload["example_lineage_card_fields"] = list(example["lineage_card"])
+        payload["example_lineage_path_fields"] = list(example["lineage_card"]["recent_paths"][0])
         payload["example_workbench_card_fields"] = list(example["workbench_card"])
         payload["example_control_mode_card_fields"] = list(example["control_mode_card"])
         payload["example_workbench_control_registry_item_fields"] = list(
@@ -1882,6 +1887,26 @@ def _validate_ledger_card_contract(errors: list[str], ledger_card: dict[str, obj
         errors.append(f"{prefix}: ledger_card.trace_commands must be a list")
 
 
+def _validate_lineage_card_contract(errors: list[str], lineage_card: dict[str, object], *, prefix: str) -> None:
+    for field in WORKBENCH_LINEAGE_CARD_FIELDS:
+        if field not in lineage_card:
+            errors.append(f"{prefix}: missing lineage_card field: {field}")
+    for count_field in ("message_count", "job_count", "reply_count", "inbox_count"):
+        if count_field in lineage_card and not isinstance(lineage_card.get(count_field), int):
+            errors.append(f"{prefix}: lineage_card.{count_field} must be an integer")
+    recent_paths = lineage_card.get("recent_paths")
+    if isinstance(recent_paths, list):
+        for path in recent_paths:
+            if not isinstance(path, dict):
+                errors.append(f"{prefix}: lineage paths must be objects")
+                continue
+            for field in WORKBENCH_LINEAGE_PATH_FIELDS:
+                if field not in path:
+                    errors.append(f"{prefix}: missing lineage path field: {field}")
+    elif "recent_paths" in lineage_card:
+        errors.append(f"{prefix}: lineage_card.recent_paths must be a list")
+
+
 def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, object]:
     errors: list[str] = []
     for field in LEADER_CHAT_RESPONSE_FIELDS:
@@ -1993,6 +2018,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_ledger_card_contract(errors, ledger_card, prefix="ledger_card")
     elif "ledger_card" in payload and ledger_card is not None:
         errors.append("ledger_card must be an object")
+    lineage_card = payload.get("lineage_card")
+    if isinstance(lineage_card, dict):
+        _validate_lineage_card_contract(errors, lineage_card, prefix="lineage_card")
+    elif "lineage_card" in payload and lineage_card is not None:
+        errors.append("lineage_card must be an object")
     workbench_card = payload.get("workbench_card")
     if isinstance(workbench_card, dict):
         workbench_validation = validate_workbench_contract(workbench_card)
@@ -2654,6 +2684,7 @@ def leader_chat_example() -> dict[str, object]:
     operator_card = workbench_example()["operator_card"]
     role_card = workbench_example()["role_card"]
     ledger_card = workbench_example()["ledger_card"]
+    lineage_card = workbench_example()["lineage_card"]
     workbench_card = workbench_example()
     control_mode_card = workbench_card["control_mode_card"]
     capability_card = leader_chat_capability_card()
@@ -2710,6 +2741,7 @@ def leader_chat_example() -> dict[str, object]:
         "operator_card": operator_card,
         "role_card": role_card,
         "ledger_card": ledger_card,
+        "lineage_card": lineage_card,
         "workbench_card": workbench_card,
         "control_mode_card": control_mode_card,
         "capability_card": capability_card,

@@ -175,6 +175,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("capability_card", None)
     payload.setdefault("control_registry_card", None)
     payload.setdefault("control_mode_card", None)
+    payload.setdefault("lineage_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -3055,7 +3056,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         refreshed_project_view = _project_view_payload_or_error(config, store)
         if refreshed_project_view is None:
             return 1
-        ledger_card = _workbench_ledger_card(refreshed_project_view)
+        workbench_snapshot = _workbench_snapshot_payload(refreshed_project_view, store, since_event_id=None)
+        ledger_card = workbench_snapshot["ledger_card"]
         trace_commands = ledger_card.get("trace_commands")
         next_command = trace_commands[0] if isinstance(trace_commands, list) and trace_commands else "agentdeck workbench"
         turn = store.record_chat_turn(
@@ -3081,7 +3083,9 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         refreshed_project_view = _project_view_payload_or_error(config, store)
         if refreshed_project_view is None:
             return 1
-        ledger_card = _workbench_ledger_card(refreshed_project_view)
+        workbench_snapshot = _workbench_snapshot_payload(refreshed_project_view, store, since_event_id=None)
+        ledger_card = workbench_snapshot["ledger_card"]
+        lineage_card = workbench_snapshot["lineage_card"]
         trace_commands = ledger_card.get("trace_commands")
         next_command = trace_commands[0] if isinstance(trace_commands, list) and trace_commands else "agentdeck workbench"
         payload = {
@@ -3109,6 +3113,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": ledger_card,
+            "lineage_card": lineage_card,
             "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)

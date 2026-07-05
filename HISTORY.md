@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Embed lineage card in Leader chat ledger mode
+
+- 扩展 `agentdeck leader chat --message "查看账本"` / `"查看通信"`：ledger-mode 响应现在同时嵌入 workbench 同源的 `ledger_card` 和 `lineage_card`，让自然语言入口也能直接展示最近通信路径。
+- `lineage_card` 继续保持只读投影：只复用 ProjectView / workbench 派生结果，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture reply、不读取 tmux pane、不发送 tmux 输入。
+- 同步 `agentdeck contract leader-chat` 的 `lineage_card_fields` / `lineage_path_fields`、稳定 example、leader-chat validator、README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试。
+- 完整验证：已先确认红测失败，ledger-mode chat 最初缺少 `lineage_card`，leader-chat contract example 最初缺少 lineage 字段发现；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_ledger_without_mutating_state tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 2 项通过；相关测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 70 项通过；`conda run -n agentdeck pytest -q` 241 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-lineage-smoke-ok mode=ledger message_count=1 status=inbox_pending trace=agentdeck trace --id msg_chat_smoke`。
+
 ### Current - Surface communication lineage in workbench
 
 - 扩展 `agentdeck workbench` 一屏快照：新增只读 `lineage_card`，从 ProjectView 的 messages/jobs/replies/inbox 摘要以及可见 inbox cards 派生最近通信路径，让 GUI 可以直接画出 Leader -> Worker -> Reply -> Inbox 的链路。
