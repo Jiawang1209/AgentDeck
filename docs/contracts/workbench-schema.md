@@ -30,6 +30,7 @@ The contract command returns:
   "queue_card_fields": [],
   "operator_card_fields": [],
   "audit_card_fields": [],
+  "contracts_card_fields": [],
   "change_summary_fields": []
 }
 ```
@@ -55,6 +56,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "queue_card": {},
   "operator_card": {},
   "audit_card": {},
+  "contracts_card": {},
   "recovery": {},
   "next_command": "agentdeck continue",
   "continue_card": {},
@@ -76,6 +78,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `queue_card` is derived from `project_view.leader_actions`, `project_view.approvals`, `project_view.inbox`, and the recovery-driven next command.
 `operator_card` is derived from `recovery.recommended_action` and the active queue card. It is a renderable human-control descriptor, not an execution result.
 `audit_card` is derived from `recovery.latest_event` and `recovery.recent_events`.
+`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `next_command` must equal `continue_card.next_command`.
@@ -342,6 +345,21 @@ GUI clients should prefer `controls[]` as the renderable button list, while keep
 ```
 
 The card intentionally uses compact ProjectView recovery event summaries. Use `events_command` when a GUI needs the raw JSONL timeline.
+
+## Contracts Card
+
+```json
+{
+  "contracts_command": "agentdeck contract list",
+  "contract_index_contract": "docs/contracts/contract-index-schema.md",
+  "workbench_contract": "agentdeck contract workbench",
+  "project_view_contract": "agentdeck contract project-view",
+  "events_contract": "agentdeck contract events",
+  "doctor_contract": "agentdeck contract doctor"
+}
+```
+
+This card lets GUI/TUI clients bootstrap from a single workbench snapshot and then discover the full machine-readable contract index on demand. It is static metadata and does not read state, inspect tmux panes, call providers, or execute any contract command.
 
 When `recovery.recommended_action.source` is:
 

@@ -551,6 +551,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "queue_card",
         "operator_card",
         "audit_card",
+        "contracts_card",
         "recovery",
         "next_command",
         "continue_card",
@@ -647,6 +648,14 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "recent_events",
         "event_count",
         "events_command",
+    ]
+    assert payload["contracts_card_fields"] == [
+        "contracts_command",
+        "contract_index_contract",
+        "workbench_contract",
+        "project_view_contract",
+        "events_contract",
+        "doctor_contract",
     ]
     assert payload["change_summary_fields"] == [
         "since_event_id",
@@ -872,6 +881,14 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert payload["audit_card"]["recent_events"] == payload["recovery"]["recent_events"]
     assert payload["audit_card"]["event_count"] == len(payload["recovery"]["recent_events"])
     assert payload["audit_card"]["events_command"] == "agentdeck events --limit 20"
+    assert payload["contracts_card"] == {
+        "contracts_command": "agentdeck contract list",
+        "contract_index_contract": "docs/contracts/contract-index-schema.md",
+        "workbench_contract": "agentdeck contract workbench",
+        "project_view_contract": "agentdeck contract project-view",
+        "events_contract": "agentdeck contract events",
+        "doctor_contract": "agentdeck contract doctor",
+    }
     assert payload["continue_card"]["status"] == "inbox_pending"
     assert payload["active_queue_source"] == "inbox"
     assert payload["inbox_card"]["agent_id"] == "planner"

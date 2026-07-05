@@ -375,6 +375,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "queue_card",
     "operator_card",
     "audit_card",
+    "contracts_card",
     "recovery",
     "next_command",
     "continue_card",
@@ -490,6 +491,15 @@ WORKBENCH_AUDIT_CARD_FIELDS = (
     "recent_events",
     "event_count",
     "events_command",
+)
+
+WORKBENCH_CONTRACTS_CARD_FIELDS = (
+    "contracts_command",
+    "contract_index_contract",
+    "workbench_contract",
+    "project_view_contract",
+    "events_contract",
+    "doctor_contract",
 )
 
 WORKBENCH_CHANGE_SUMMARY_FIELDS = (
@@ -758,6 +768,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
+        "contracts_card_fields": list(WORKBENCH_CONTRACTS_CARD_FIELDS),
         "change_summary_fields": list(WORKBENCH_CHANGE_SUMMARY_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
@@ -1360,6 +1371,13 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("audit_card.event_count must be an integer")
     elif "audit_card" in payload:
         errors.append("audit_card must be an object")
+    contracts_card = payload.get("contracts_card")
+    if isinstance(contracts_card, dict):
+        for field in WORKBENCH_CONTRACTS_CARD_FIELDS:
+            if field not in contracts_card:
+                errors.append(f"missing contracts_card field: {field}")
+    elif "contracts_card" in payload:
+        errors.append("contracts_card must be an object")
     change_summary = payload.get("change_summary")
     if isinstance(change_summary, dict):
         for field in WORKBENCH_CHANGE_SUMMARY_FIELDS:
@@ -1881,6 +1899,14 @@ def workbench_example() -> dict[str, object]:
             "recent_events": recovery["recent_events"],
             "event_count": len(recovery["recent_events"]),
             "events_command": "agentdeck events --limit 20",
+        },
+        "contracts_card": {
+            "contracts_command": "agentdeck contract list",
+            "contract_index_contract": "docs/contracts/contract-index-schema.md",
+            "workbench_contract": "agentdeck contract workbench",
+            "project_view_contract": "agentdeck contract project-view",
+            "events_contract": "agentdeck contract events",
+            "doctor_contract": "agentdeck contract doctor",
         },
         "recovery": recovery,
         "next_command": recovery["next_command"],

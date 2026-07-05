@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add workbench contract discovery card
+
+- 扩展 `agentdeck workbench`：新增顶层 `contracts_card`，让 GUI/TUI 从单次 workbench 快照即可发现 `agentdeck contract list`、contract index schema、workbench/project-view/events/doctor contract 入口。
+- 扩展 workbench contract：新增 `WORKBENCH_CONTRACTS_CARD_FIELDS`，并在 `agentdeck contract workbench` 暴露 `contracts_card_fields`；`validate_workbench_contract()` 现在会拒绝缺失 contracts card 字段的 workbench payload。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 `contracts_card` 是只读 contract discovery metadata，不读取 state、不 inspect tmux pane、不调用 provider、不执行 contract 命令。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_contracts_card_fields -q` 最初因 `WORKBENCH_CONTRACTS_CARD_FIELDS` 不存在失败；实现后目标测试通过；`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_contracts_card_fields tests/test_contracts.py::test_validate_workbench_contract_accepts_example -q` 5 项通过；`conda run -n agentdeck pytest -q` 184 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `workbench-contracts-card-ok`。
+
 ### Current - Add contract discovery index
 
 - 新增 `agentdeck contract list`，为 GUI/TUI/自然语言入口提供统一契约总目录，返回所有可消费 contract 的 discovery command、example command、本地 schema 文档路径和存在性。

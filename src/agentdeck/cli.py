@@ -300,6 +300,7 @@ def _workbench_snapshot_payload(
         "queue_card": _workbench_queue_card(project_view, continue_card, active_queue_source),
         "operator_card": _workbench_operator_card(project_view, continue_card, active_queue_source),
         "audit_card": _workbench_audit_card(project_view),
+        "contracts_card": _workbench_contracts_card(),
         "recovery": recovery,
         "next_command": continue_card.get("next_command"),
         "continue_card": continue_card,
@@ -506,6 +507,17 @@ def _workbench_audit_card(project_view: dict[str, object]) -> dict[str, object]:
         "recent_events": recent_events,
         "event_count": len(recent_events),
         "events_command": "agentdeck events --limit 20",
+    }
+
+
+def _workbench_contracts_card() -> dict[str, object]:
+    return {
+        "contracts_command": "agentdeck contract list",
+        "contract_index_contract": "docs/contracts/contract-index-schema.md",
+        "workbench_contract": "agentdeck contract workbench",
+        "project_view_contract": "agentdeck contract project-view",
+        "events_contract": "agentdeck contract events",
+        "doctor_contract": "agentdeck contract doctor",
     }
 
 
