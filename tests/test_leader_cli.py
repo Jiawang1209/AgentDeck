@@ -1104,6 +1104,65 @@ def test_leader_chat_inspects_queue_without_applying_action(tmp_path, monkeypatc
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    store = StateStore(root)
+    state = store.load()
+    state["approvals"] = [
+        {
+            "approval_id": "apv_planner",
+            "plan_id": "pln_ready",
+            "step": 1,
+            "agent_id": "planner",
+            "role": "planning",
+            "task": "规划批量派发",
+            "risk": "low",
+            "status": "approved",
+            "created_at": "2026-07-05T00:00:00+00:00",
+        },
+        {
+            "approval_id": "apv_coder",
+            "plan_id": "pln_ready",
+            "step": 2,
+            "agent_id": "coder",
+            "role": "implementation",
+            "task": "实现批量派发",
+            "risk": "low",
+            "status": "approved",
+            "created_at": "2026-07-05T00:00:01+00:00",
+        },
+    ]
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看控制面"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "queue"
+    assert payload["next_command"] == "agentdeck approval dispatch-ready --confirm"
+    assert payload["queue_card"]["next_command"] == payload["next_command"]
+    assert payload["operator_card"]["action_kind"] == "approval_dispatch_ready"
+    assert payload["operator_card"]["command"] == payload["next_command"]
+    assert payload["operator_card"]["controls"][-1]["label"] == "Dispatch ready approvals"
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Dispatch ready approvals",
+        "command": "agentdeck approval dispatch-ready --confirm",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+    state_after = StateStore(root).load()
+    assert state_after["approvals"][0]["status"] == "approved"
+    assert state_after["approvals"][1]["status"] == "approved"
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+    assert state_after.get("inbox", {}) == {}
+
+
 def test_leader_chat_inspects_roles_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
 

@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Align queue chat with dispatch-ready operator
+
+- 调整 `agentdeck leader chat --message "查看队列"` / `"查看控制面"`：queue-mode 现在会把顶层 `next_command`、`queue_card.next_command` 和 `operator_card.next_command` 对齐到 `operator_card.command`，因此多条 approved approvals 时自然语言控制面也会推荐显式 `agentdeck approval dispatch-ready --confirm`。
+- 保持安全边界：queue-mode 仍只记录 chat turn，不执行 dispatch-ready、不 apply action、不 approve/reject/dispatch、不 ack、不 refresh runtime、不发送 tmux 输入；intent next control 使用 `Dispatch ready approvals` 标签，供 GUI/自然语言壳直接渲染。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试，明确 queue-mode 的主下一步应来自 operator card，而不是继续沿用 recovery 第一条单步命令。
+- 验证记录：已先确认红测失败，多条 approved approvals 时 queue-mode 顶层 `next_command` 最初仍是单条 `agentdeck approval dispatch --approval-id ...`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching tests/test_leader_cli.py::test_leader_chat_inspects_queue_without_applying_action tests/test_leader_cli.py::test_leader_chat_previews_all_approved_dispatches_without_dispatching tests/test_agent_cli.py::test_workbench_surfaces_dispatch_ready_operator_for_multiple_approved_items tests/test_contracts.py::test_validate_workbench_contract_requires_dispatch_ready_operator_command -q` 5 项通过；`conda run -n agentdeck pytest -q` 263 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `queue-chat-dispatch-ready-smoke-ok code=0 mode=queue next=agentdeck approval dispatch-ready --confirm action=approval_dispatch_ready label=Dispatch ready approvals messages=0 jobs=0`。
+
 ### Current - Surface dispatch-ready in workbench operator
 
 - 扩展 `agentdeck workbench` 的 `operator_card`：当 approval queue 中存在多条 `approved` approvals 时，主显式操作会提升为 `agentdeck approval dispatch-ready --confirm`，`action_kind=approval_dispatch_ready`，explicit control label 为 `Dispatch ready approvals`，方便 GUI 从总览页直接渲染批量派发入口。

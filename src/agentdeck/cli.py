@@ -970,6 +970,11 @@ def _workbench_operator_card(
     }
 
 
+def _queue_mode_next_command(continue_card: dict[str, object], operator_card: dict[str, object]) -> object:
+    command = operator_card.get("command")
+    return command if command else continue_card.get("next_command")
+
+
 def _workbench_operator_controls(
     *,
     preview_command: object,
@@ -3870,7 +3875,9 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         active_queue_source = _active_queue_source(refreshed_project_view)
         queue_card = _workbench_queue_card(refreshed_project_view, continue_card, active_queue_source)
         operator_card = _workbench_operator_card(refreshed_project_view, continue_card, active_queue_source)
-        next_command = continue_card.get("next_command")
+        next_command = _queue_mode_next_command(continue_card, operator_card)
+        queue_card["next_command"] = next_command
+        operator_card["next_command"] = next_command
         turn = store.record_chat_turn(
             mode="queue",
             message=args.message,
@@ -3898,7 +3905,9 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         active_queue_source = _active_queue_source(refreshed_project_view)
         queue_card = _workbench_queue_card(refreshed_project_view, continue_card, active_queue_source)
         operator_card = _workbench_operator_card(refreshed_project_view, continue_card, active_queue_source)
-        next_command = continue_card.get("next_command")
+        next_command = _queue_mode_next_command(continue_card, operator_card)
+        queue_card["next_command"] = next_command
+        operator_card["next_command"] = next_command
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
