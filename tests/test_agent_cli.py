@@ -1208,11 +1208,27 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             },
             {
                 "kind": "set_mode",
-                "label": "Set control mode",
-                "command": "agentdeck policy set-mode --mode <mode>",
+                "label": "Ask / inspect",
+                "command": "agentdeck policy set-mode --mode ask",
+                "safety": "inspect",
+                "enabled": False,
+                "blocker": "already current mode",
+            },
+            {
+                "kind": "set_mode",
+                "label": "Approval gated",
+                "command": "agentdeck policy set-mode --mode approve",
                 "safety": "explicit_user",
                 "enabled": True,
                 "blocker": None,
+            },
+            {
+                "kind": "set_mode",
+                "label": "Autonomous bounded",
+                "command": "agentdeck policy set-mode --mode autonomous",
+                "safety": "delegated",
+                "enabled": False,
+                "blocker": "autonomous execution policy is not implemented",
             },
         ],
         "set_mode_command_template": "agentdeck policy set-mode --mode <mode>",
@@ -1269,6 +1285,13 @@ def test_policy_set_mode_updates_config_and_workbench_control_mode(tmp_path, mon
     assert workbench["control_mode_card"]["current_mode"] == "approve"
     assert workbench["control_mode_card"]["approval_mode"] == "approve"
     assert workbench["control_mode_card"]["default_safety"] == "safe_apply"
+    approve_controls = {
+        item["command"]: item for item in workbench["control_mode_card"]["active_controls"] if item["kind"] == "set_mode"
+    }
+    assert approve_controls["agentdeck policy set-mode --mode ask"]["enabled"] is True
+    assert approve_controls["agentdeck policy set-mode --mode ask"]["safety"] == "inspect"
+    assert approve_controls["agentdeck policy set-mode --mode approve"]["enabled"] is False
+    assert approve_controls["agentdeck policy set-mode --mode approve"]["blocker"] == "already current mode"
 
     exit_code = cli.main(["policy", "set-mode", "--mode", "ask"])
 
@@ -1396,13 +1419,20 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
         "scope": "policy",
         "card": "control_mode_card",
         "kind": "set_mode",
-        "label": "Set control mode",
-        "command": "agentdeck policy set-mode --mode <mode>",
-        "safety": "explicit_user",
-        "enabled": True,
-        "blocker": None,
+        "label": "Ask / inspect",
+        "command": "agentdeck policy set-mode --mode ask",
+        "safety": "inspect",
+        "enabled": False,
+        "blocker": "already current mode",
         "agent_id": None,
     }
+    approve_item = next(
+        item
+        for item in payload["items"]
+        if item["card"] == "control_mode_card" and item["command"] == "agentdeck policy set-mode --mode approve"
+    )
+    assert approve_item["enabled"] is True
+    assert approve_item["safety"] == "explicit_user"
     assert StateStore(root).load() == before
 
 

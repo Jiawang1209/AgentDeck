@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Expose concrete control mode buttons
+
+- 扩展 `control_mode_card.active_controls[]`：不再只暴露 `agentdeck policy set-mode --mode <mode>` 模板，而是直接给出 ask、approve、autonomous 三个具体 `set_mode` 控件，供 GUI/TUI 和自然语言壳渲染真实按钮。
+- 明确按钮安全语义：当前模式会 disabled 并返回 `already current mode` blocker；`approve` 控件使用 `safety=explicit_user`；`autonomous` 控件继续 disabled，并保留 `autonomous execution policy is not implemented` blocker。`set_mode_command_template` 仅保留为表单式 UI 的辅助模板。
+- 同步 `agentdeck controls` / `workbench` 的 command palette 语义、contract example、README、`docs/contracts/workbench-schema.md`、`docs/contracts/controls-schema.md`、CLAUDE.md、AGENT.md 和测试；本轮把“类似 Codex：可以 ask，也可以显式授权”的控制面从模板推进到可直接渲染的具体控件。
+- 完整验证：已先确认红测失败，live workbench、controls 和 contract example 最初仍输出通用 `<mode>` 模板，缺少 ask/approve/autonomous 的具体按钮状态；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_policy_set_mode_updates_config_and_workbench_control_mode tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 4 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_policy_set_mode_updates_config_and_workbench_control_mode tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_leader_cli.py::test_leader_chat_suggests_policy_mode_change_without_mutating_config tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 8 项通过；`conda run -n agentdeck pytest -q` 240 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `control-mode-concrete-controls-smoke-ok policy_count=3 mode_after_switch=approve`。
+
 ### Current - Include policy controls in command palette
 
 - 扩展 `agentdeck workbench` / `agentdeck controls` 的 `control_registry` 派生逻辑：现在会把 `control_mode_card.active_controls[]` 纳入全局命令面板，使用 `scope=policy`、`card=control_mode_card`，让 GUI/TUI 工具栏可以发现显式 `agentdeck policy set-mode --mode <mode>` 入口。

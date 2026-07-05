@@ -674,8 +674,17 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     policy_item = next(
         item for item in example["control_registry"] if item["scope"] == "policy" and item["kind"] == "set_mode"
     )
-    assert policy_item["command"] == "agentdeck policy set-mode --mode <mode>"
-    assert policy_item["safety"] == "explicit_user"
+    assert policy_item["command"] == "agentdeck policy set-mode --mode ask"
+    assert policy_item["safety"] == "inspect"
+    assert policy_item["enabled"] is False
+    assert policy_item["blocker"] == "already current mode"
+    approve_item = next(
+        item
+        for item in example["control_registry"]
+        if item["scope"] == "policy" and item["command"] == "agentdeck policy set-mode --mode approve"
+    )
+    assert approve_item["enabled"] is True
+    assert approve_item["safety"] == "explicit_user"
     assert set(example["provider_health"]) == set(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)
