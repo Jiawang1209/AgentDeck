@@ -28,6 +28,7 @@ from agentdeck.contracts import (
     TRACE_REPLY_FIELDS,
     TRACE_TOP_LEVEL_FIELDS,
     WORKBENCH_AUDIT_CARD_FIELDS,
+    WORKBENCH_CHANGE_SUMMARY_FIELDS,
     WORKBENCH_LEADER_CARD_FIELDS,
     WORKBENCH_LEDGER_CARD_FIELDS,
     WORKBENCH_OPERATOR_CARD_FIELDS,
@@ -369,6 +370,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
     assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert payload["audit_card_fields"] == list(WORKBENCH_AUDIT_CARD_FIELDS)
+    assert payload["change_summary_fields"] == list(WORKBENCH_CHANGE_SUMMARY_FIELDS)
     assert payload["example"] is True
     assert payload["example_workbench"] == example
     assert payload["example_snapshot_fields"] == payload["snapshot_fields"]
@@ -387,6 +389,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["operator_card"]["controls"][0]["command"] == example["operator_card"]["preview_command"]
     assert example["operator_card"]["controls"][1]["command"] == example["operator_card"]["apply_command"]
     assert set(example["audit_card"]) == set(WORKBENCH_AUDIT_CARD_FIELDS)
+    assert set(example["change_summary"]) == set(WORKBENCH_CHANGE_SUMMARY_FIELDS)
     assert example["ledger_card"]["trace_commands"] == [
         "agentdeck trace --id msg_example",
         "agentdeck trace --id job_example",
@@ -499,6 +502,15 @@ def test_validate_workbench_contract_requires_audit_fields() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing audit_card field: events_command"]}
+
+
+def test_validate_workbench_contract_requires_change_summary_fields() -> None:
+    payload = workbench_example()
+    del payload["change_summary"]["has_new_events"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing change_summary field: has_new_events"]}
 
 
 def test_validate_workbench_contract_requires_matching_project_view_summaries() -> None:

@@ -247,6 +247,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "inbox_card",
     "approval_card",
     "leader_action",
+    "change_summary",
 )
 
 WORKBENCH_LEADER_CARD_FIELDS = (
@@ -354,6 +355,14 @@ WORKBENCH_AUDIT_CARD_FIELDS = (
     "recent_events",
     "event_count",
     "events_command",
+)
+
+WORKBENCH_CHANGE_SUMMARY_FIELDS = (
+    "since_event_id",
+    "latest_event_id",
+    "has_new_events",
+    "new_event_count",
+    "new_events",
 )
 
 LEADER_ACTION_DETAIL_FIELDS = (
@@ -588,6 +597,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
+        "change_summary_fields": list(WORKBENCH_CHANGE_SUMMARY_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
         "continue_contract": "agentdeck contract continue",
@@ -1189,6 +1199,19 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("audit_card.event_count must be an integer")
     elif "audit_card" in payload:
         errors.append("audit_card must be an object")
+    change_summary = payload.get("change_summary")
+    if isinstance(change_summary, dict):
+        for field in WORKBENCH_CHANGE_SUMMARY_FIELDS:
+            if field not in change_summary:
+                errors.append(f"missing change_summary field: {field}")
+        if "has_new_events" in change_summary and not isinstance(change_summary.get("has_new_events"), bool):
+            errors.append("change_summary.has_new_events must be a boolean")
+        if "new_event_count" in change_summary and not isinstance(change_summary.get("new_event_count"), int):
+            errors.append("change_summary.new_event_count must be an integer")
+        if "new_events" in change_summary and not isinstance(change_summary.get("new_events"), list):
+            errors.append("change_summary.new_events must be a list")
+    elif "change_summary" in payload:
+        errors.append("change_summary must be an object")
     continue_card = payload.get("continue_card")
     if isinstance(continue_card, dict):
         continue_card_validation = validate_continue_contract(continue_card)
@@ -1687,6 +1710,13 @@ def workbench_example() -> dict[str, object]:
         "inbox_card": None,
         "approval_card": None,
         "leader_action": leader_action,
+        "change_summary": {
+            "since_event_id": None,
+            "latest_event_id": recovery["latest_event"]["event_id"],
+            "has_new_events": False,
+            "new_event_count": 0,
+            "new_events": [],
+        },
     }
 
 

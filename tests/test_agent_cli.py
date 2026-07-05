@@ -448,6 +448,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "inbox_card",
         "approval_card",
         "leader_action",
+        "change_summary",
     ]
     assert payload["leader_card_fields"] == [
         "agent_id",
@@ -536,6 +537,13 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "recent_events",
         "event_count",
         "events_command",
+    ]
+    assert payload["change_summary_fields"] == [
+        "since_event_id",
+        "latest_event_id",
+        "has_new_events",
+        "new_event_count",
+        "new_events",
     ]
     assert payload["project_view_contract"] == "agentdeck contract project-view"
     assert payload["continue_contract"] == "agentdeck contract continue"
@@ -760,6 +768,13 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert payload["inbox_card"]["head_inbox_id"] == "inb_workbench_head"
     assert payload["approval_card"] is None
     assert payload["leader_action"] is None
+    assert payload["change_summary"] == {
+        "since_event_id": None,
+        "latest_event_id": payload["audit_card"]["latest_event"]["event_id"],
+        "has_new_events": False,
+        "new_event_count": 0,
+        "new_events": [],
+    }
 
     state_after = StateStore(root).load()
     assert state_after["agents"]["planner"]["status"] == "running"
@@ -842,6 +857,56 @@ def test_workbench_watch_outputs_jsonl_snapshots_without_mutating_state(
     assert snapshots[0]["operator_card"]["controls"][0]["command"] == "agentdeck doctor"
     assert snapshots[1]["operator_card"]["controls"][0]["command"] == "agentdeck doctor"
     assert StateStore(root).load() == before
+
+
+def test_workbench_since_event_summarizes_new_audit_events_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    first = cli.EventRecord.create("workbench_cursor_first", {"index": 1})
+    second = cli.EventRecord.create("workbench_cursor_second", {"index": 2})
+    store.append_event(first)
+    store.append_event(second)
+    before = StateStore(root).load()
+
+    exit_code = cli.main(["workbench", "--since-event", first.event_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["change_summary"] == {
+        "since_event_id": first.event_id,
+        "latest_event_id": second.event_id,
+        "has_new_events": True,
+        "new_event_count": 1,
+        "new_events": [
+            {
+                "event_id": second.event_id,
+                "event_type": "workbench_cursor_second",
+                "created_at": second.created_at,
+            }
+        ],
+    }
+    assert StateStore(root).load() == before
+
+
+def test_workbench_since_latest_event_reports_no_new_events(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    event = cli.EventRecord.create("workbench_cursor_latest", {"index": 1})
+    store.append_event(event)
+
+    exit_code = cli.main(["workbench", "--since-event", event.event_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["change_summary"] == {
+        "since_event_id": event.event_id,
+        "latest_event_id": event.event_id,
+        "has_new_events": False,
+        "new_event_count": 0,
+        "new_events": [],
+    }
 
 
 def test_contract_approvals_discovers_schema_for_gui_clients(capsys) -> None:

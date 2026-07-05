@@ -249,7 +249,9 @@ def _leader_chat_recovery_cards(
     return None, None
 
 
-def _workbench_snapshot_payload(project_view: dict[str, object], store: StateStore) -> dict[str, object]:
+def _workbench_snapshot_payload(
+    project_view: dict[str, object], store: StateStore, since_event_id: str | None = None
+) -> dict[str, object]:
     continue_card = _continue_card_payload(project_view, store)
     inbox_card, approval_card = _leader_chat_recovery_cards(project_view, store)
     recovery = project_view.get("recovery", {})
@@ -278,6 +280,36 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "inbox_card": inbox_card,
         "approval_card": approval_card,
         "leader_action": leader_action if isinstance(leader_action, dict) else None,
+        "change_summary": _workbench_change_summary(store, since_event_id),
+    }
+
+
+def _workbench_change_summary(store: StateStore, since_event_id: str | None) -> dict[str, object]:
+    events = store.list_events(1000000)
+    latest_event = events[-1] if events else None
+    latest_event_id = latest_event.get("event_id") if isinstance(latest_event, dict) else None
+    if not since_event_id:
+        new_events: list[dict[str, object]] = []
+    else:
+        cursor_index = next(
+            (index for index, event in enumerate(events) if event.get("event_id") == since_event_id),
+            -1,
+        )
+        new_events = [_event_summary(event) for event in events[cursor_index + 1 :]]
+    return {
+        "since_event_id": since_event_id,
+        "latest_event_id": latest_event_id,
+        "has_new_events": bool(new_events),
+        "new_event_count": len(new_events),
+        "new_events": new_events,
+    }
+
+
+def _event_summary(event: dict[str, object]) -> dict[str, object]:
+    return {
+        "event_id": event.get("event_id"),
+        "event_type": event.get("event_type"),
+        "created_at": event.get("created_at"),
     }
 
 
@@ -657,7 +689,7 @@ def workbench_command(args: argparse.Namespace) -> int:
         project_view = _project_view_payload_or_error(config, store)
         if project_view is None:
             return 1
-        payload = _workbench_snapshot_payload(project_view, store)
+        payload = _workbench_snapshot_payload(project_view, store, since_event_id=args.since_event)
         validation = validate_workbench_contract(payload)
         if not validation["ok"]:
             print("Workbench contract validation failed", file=sys.stderr)
@@ -2441,6 +2473,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     workbench = subparsers.add_parser("workbench", help="Show a GUI-ready read-only workbench snapshot")
     workbench.add_argument("--watch", action="store_true", help="Stream validated workbench snapshots as JSONL")
+    workbench.add_argument("--since-event", default=None, help="Summarize audit events after this event id")
     workbench.add_argument(
         "--iterations",
         type=int,

@@ -4,7 +4,7 @@
 
 It does not create plans, record chat turns, acknowledge inbox items, approve approvals, dispatch work, capture replies, or send tmux input. It composes already validated surfaces into one response so a terminal UI or GUI can render the current workspace without issuing several commands.
 
-For GUI/TUI clients that need a live local state feed, `agentdeck workbench --watch --interval <seconds>` emits the same validated snapshot shape as newline-delimited JSON. Each line is a complete workbench snapshot. Use `--iterations <n>` for bounded scripts, tests, and smoke checks.
+For GUI/TUI clients that need a live local state feed, `agentdeck workbench --watch --interval <seconds>` emits the same validated snapshot shape as newline-delimited JSON. Each line is a complete workbench snapshot. Use `--iterations <n>` for bounded scripts, tests, and smoke checks. Use `--since-event <event_id>` when a client wants a lightweight audit-event cursor summary on each snapshot.
 
 ## Discovery
 
@@ -29,7 +29,8 @@ The contract command returns:
   "ledger_card_fields": [],
   "queue_card_fields": [],
   "operator_card_fields": [],
-  "audit_card_fields": []
+  "audit_card_fields": [],
+  "change_summary_fields": []
 }
 ```
 
@@ -60,7 +61,8 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "active_queue_source": "none",
   "inbox_card": null,
   "approval_card": null,
-  "leader_action": null
+  "leader_action": null,
+  "change_summary": {}
 }
 ```
 
@@ -77,12 +79,14 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `next_command` must equal `continue_card.next_command`.
+`change_summary` is computed from the audit event ledger and is never persisted as a cursor.
 
 ## Watch Stream
 
 ```bash
 agentdeck workbench --watch --interval 1
 agentdeck workbench --watch --iterations 3 --interval 0
+agentdeck workbench --watch --since-event evt_xxx --interval 1
 ```
 
 Watch mode emits compact JSONL:
@@ -93,6 +97,28 @@ Watch mode emits compact JSONL:
 ```
 
 Each emitted line must pass `validate_workbench_contract()` before printing. Watch mode reloads ProjectView on every iteration, so clients can render state changes without reading `.agentdeck/state/` directly. It remains read-only and must not acknowledge inbox items, approve or dispatch work, apply leader actions, capture pane output, or send tmux input.
+
+## Change Summary
+
+When `--since-event <event_id>` is provided, every snapshot includes a compact event-cursor summary:
+
+```json
+{
+  "since_event_id": "evt_old",
+  "latest_event_id": "evt_new",
+  "has_new_events": true,
+  "new_event_count": 1,
+  "new_events": [
+    {
+      "event_id": "evt_new",
+      "event_type": "leader_plan_created",
+      "created_at": "2026-07-05T00:00:00+00:00"
+    }
+  ]
+}
+```
+
+Without `--since-event`, `since_event_id` is `null`, `latest_event_id` still reflects the current latest audit event, and `has_new_events` is `false`. This lets GUI clients hold their own cursor, compare it with `latest_event_id`, and decide whether to re-render or fetch `agentdeck events --limit <n>`.
 
 ## Leader Card
 

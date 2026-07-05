@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add workbench event cursor summary
+
+- 扩展 `agentdeck workbench`：新增 `--since-event <event_id>` 和顶层 `change_summary`，让 GUI/TUI 可以用审计事件游标判断当前快照相对上一帧是否有新事件。
+- `change_summary` 包含 `since_event_id`、`latest_event_id`、`has_new_events`、`new_event_count` 和 `new_events`；它只从 `events.jsonl` 临时计算，不保存 cursor、不写 state。
+- watch 模式可组合 `--watch --since-event <event_id> --interval <seconds>`，每行 JSONL 都保留同一契约形状并通过 `validate_workbench_contract()`。
+- 更新 workbench contract 字段、example fixture、validator/live workbench 测试，以及 `README.md`、`docs/contracts/workbench-schema.md`、`CLAUDE.md` 和 `AGENT.md`。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_workbench_since_event_summarizes_new_audit_events_without_mutating_state tests/test_agent_cli.py::test_workbench_since_latest_event_reports_no_new_events tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_change_summary_fields -q` 最初因 `WORKBENCH_CHANGE_SUMMARY_FIELDS` 不存在失败；实现后目标测试通过；同一目标测试组 6 项通过；`conda run -n agentdeck pytest -q` 175 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `workbench-since-event-ok` 和 `workbench-watch-since-event-ok`。
+
 ### Current - Add workbench watch stream
 
 - 扩展 `agentdeck workbench`：新增 `--watch`、`--iterations <n>` 和 `--interval <seconds>`，让未来 GUI/TUI 可以订阅连续的一屏工作台快照 JSONL。
