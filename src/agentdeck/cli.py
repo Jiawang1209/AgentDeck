@@ -2376,6 +2376,20 @@ def _chat_runtime_send_intent(message: str, project_view: dict[str, object]) -> 
     return None
 
 
+def _chat_runtime_stop_agent_id(message: str, project_view: dict[str, object]) -> str | None:
+    normalized = message.strip().lower()
+    if not any(token in normalized for token in ["stop", "停止", "关闭"]):
+        return None
+    agents = project_view.get("agents") if isinstance(project_view.get("agents"), list) else []
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        agent_id = str(agent.get("agent_id", ""))
+        if agent_id and re.search(rf"(?<![\w-]){re.escape(agent_id.lower())}(?![\w-])", normalized):
+            return agent_id
+    return None
+
+
 def _agent_send_command(agent_id: str, text: str) -> str:
     return " ".join(
         [
@@ -2688,6 +2702,23 @@ def _leader_chat_explanation(
             "requires_explicit_user": True,
         }
     if mode == "runtime":
+        stop_match = re.fullmatch(r"agentdeck agent stop --agent ([^\s]+)", str(next_command or ""))
+        if stop_match:
+            agent_id = stop_match.group(1)
+            agent = _project_view_agent_item(project_view, agent_id)
+            runtime = agent.get("runtime") if isinstance(agent, dict) and isinstance(agent.get("runtime"), dict) else {}
+            status = str(runtime.get("status", "configured")) if isinstance(runtime, dict) else "configured"
+            return {
+                "mode": mode,
+                "summary": f"Leader recommends explicitly stopping {agent_id} without mutating runtime state.",
+                "reason": "human asked to stop one agent runtime",
+                "next_command": next_command,
+                "recommended_action_id": agent_id,
+                "action_kind": "runtime_stop",
+                "action_status": status,
+                "safety": "explicit_runtime",
+                "requires_explicit_user": True,
+            }
         send_match = re.fullmatch(r"agentdeck agent send --agent ([^\s]+) --text (.+)", str(next_command or ""))
         if send_match:
             agent_id = send_match.group(1)
@@ -3401,11 +3432,18 @@ def leader_chat_command(args: argparse.Namespace) -> int:
     else:
         send_agent_id = None
         send_text = None
+    runtime_stop_agent_id = _chat_runtime_stop_agent_id(args.message, project_view)
+    if runtime_stop_agent_id is not None:
+        binding, exit_code = _running_binding_or_error(store, runtime_stop_agent_id)
+        if binding is None:
+            return exit_code
     runtime_spawn_agent_id = _chat_runtime_spawn_agent_id(args.message, project_view)
-    if runtime_send_intent is not None or runtime_spawn_agent_id or _chat_wants_runtime(args.message):
+    if runtime_send_intent is not None or runtime_stop_agent_id or runtime_spawn_agent_id or _chat_wants_runtime(args.message):
         next_command = (
             _agent_send_command(str(send_agent_id), str(send_text))
             if runtime_send_intent is not None
+            else f"agentdeck agent stop --agent {runtime_stop_agent_id}"
+            if runtime_stop_agent_id
             else f"agentdeck agent spawn --agent {runtime_spawn_agent_id}"
             if runtime_spawn_agent_id
             else "agentdeck agent list"
@@ -3413,6 +3451,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         action_kind = (
             "runtime_send"
             if runtime_send_intent is not None
+            else "runtime_stop"
+            if runtime_stop_agent_id
             else "runtime_spawn"
             if runtime_spawn_agent_id
             else "runtime"
