@@ -100,6 +100,7 @@ from agentdeck.contracts import (
     validate_leader_action_contract,
     validate_leader_actions_contract,
     validate_leader_chat_contract,
+    validate_leader_review_contract,
     validate_project_view_contract,
     validate_trace_contract,
     validate_workbench_contract,
@@ -982,6 +983,37 @@ def test_leader_review_contract_response_includes_example_without_drift(tmp_path
     assert example["controls"][0]["command"] == "agentdeck trace --id msg_example"
     assert example["controls"][1]["command"] == example["next_command"]
     assert example["controls"][1]["safety"] == "explicit_runtime"
+
+
+def test_validate_leader_review_contract_accepts_example() -> None:
+    result = validate_leader_review_contract(leader_review_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_leader_review_contract_requires_response_and_control_fields() -> None:
+    payload = leader_review_example()
+    del payload["next_command"]
+    del payload["controls"][0]["safety"]
+
+    result = validate_leader_review_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "missing leader_review field: next_command",
+            "missing leader review control field: safety",
+        ],
+    }
+
+
+def test_validate_leader_review_contract_rejects_non_list_controls() -> None:
+    payload = leader_review_example()
+    payload["controls"] = None
+
+    result = validate_leader_review_contract(payload)
+
+    assert result == {"ok": False, "errors": ["controls must be a list"]}
 
 
 def test_leader_actions_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:

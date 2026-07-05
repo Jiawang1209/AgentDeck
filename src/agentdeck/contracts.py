@@ -1453,6 +1453,38 @@ def validate_inbox_contract(payload: dict[str, object]) -> dict[str, object]:
     return {"ok": not errors, "errors": errors}
 
 
+def validate_leader_review_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in LEADER_REVIEW_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing leader_review field: {field}")
+    controls = payload.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("leader review controls must be objects")
+                continue
+            for field in LEADER_REVIEW_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"missing leader review control field: {field}")
+            if "enabled" in control and not isinstance(control.get("enabled"), bool):
+                errors.append("leader review control enabled must be a boolean")
+            if control.get("kind") == "capture_reply":
+                if "next_command" in payload and control.get("command") != payload.get("next_command"):
+                    errors.append("capture_reply control command must match next_command")
+                if control.get("safety") != "explicit_runtime":
+                    errors.append("capture_reply control safety must be explicit_runtime")
+    elif "controls" in payload:
+        errors.append("controls must be a list")
+    if payload.get("next_action") == "wait_for_reply" and isinstance(controls, list):
+        has_capture_reply = any(
+            isinstance(control, dict) and control.get("kind") == "capture_reply" for control in controls
+        )
+        if not has_capture_reply:
+            errors.append("wait_for_reply requires capture_reply control")
+    return {"ok": not errors, "errors": errors}
+
+
 def validate_leader_action_contract(payload: dict[str, object]) -> dict[str, object]:
     errors: list[str] = []
     for field in LEADER_ACTION_DETAIL_FIELDS:

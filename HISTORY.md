@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Validate Leader review live output
+
+- 新增 `validate_leader_review_contract(payload)`，校验 `agentdeck leader review --plan-id <id>` 的必备 response 字段、`controls[]` 字段、`enabled` 布尔值，以及 `wait_for_reply` 的 `capture_reply` control 安全语义。
+- `agentdeck leader review` 现在输出 JSON 前会通过 Leader review contract 自校验；校验失败时返回非 0、stderr 输出错误，且不打印半坏 review JSON。
+- 同步 `README.md`、`docs/contracts/leader-review-schema.md`、`CLAUDE.md`、`AGENT.md` 和测试。
+- 完整验证：已先确认红测失败，`validate_leader_review_contract` 最初不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_review_contract_accepts_example tests/test_contracts.py::test_validate_leader_review_contract_requires_response_and_control_fields tests/test_contracts.py::test_validate_leader_review_contract_rejects_non_list_controls tests/test_leader_cli.py::test_leader_review_refuses_contract_violation -q` 4 项通过；contract/leader 相关测试 `conda run -n agentdeck pytest tests/test_contracts.py tests/test_leader_cli.py -q` 149 项通过；`conda run -n agentdeck pytest -q` 223 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-review-validator-smoke-ok`。
+
 ### Current - Add Leader review contract discovery
 
 - 新增 `agentdeck contract leader-review` / `--example`，公开 `agentdeck leader review --plan-id <id>` 的 `response_fields` 和 `control_fields`，让 GUI/TUI 能发现 review `next_command` 与 `controls[]` 的形状。

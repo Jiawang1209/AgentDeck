@@ -121,7 +121,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - Leader chat response contract 维护在 `docs/contracts/leader-chat-schema.md`，发现入口是 `agentdeck contract leader-chat`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。
 - Workbench snapshot contract 维护在 `docs/contracts/workbench-schema.md`，发现入口是 `agentdeck contract workbench`；payload、example fixture 和 `validate_workbench_contract()` 也在 `src/agentdeck/contracts.py`。
 - Agent runtime contract 维护在 `docs/contracts/agent-runtime-schema.md`，发现入口是 `agentdeck contract agent-runtime`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`，并公开 capture/refresh 响应字段。
-- Leader review response contract 维护在 `docs/contracts/leader-review-schema.md`，发现入口是 `agentdeck contract leader-review`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。修改 `leader review` 的 `next_command` 或 `controls[]` 时必须同步该 contract。
+- Leader review response contract 维护在 `docs/contracts/leader-review-schema.md`，发现入口是 `agentdeck contract leader-review`；payload、example fixture 和 validator 也在 `src/agentdeck/contracts.py`。修改 `leader review` 的 `next_command` 或 `controls[]` 时必须同步该 contract，并保持 live 输出通过 `validate_leader_review_contract()` 守门。
 - `agentdeck agent refresh` 是显式 runtime reconciliation 命令；只检查 state 中记录为 `running` 的 pane 是否仍存在，丢失时标记为 `stale` 并写入 `agent_runtime_stale` 事件，不发送 tmux 输入、不推断任务完成。
 - `status.recovery` 必须把 `stale` runtime bindings 作为 `runtime_stale` 恢复状态暴露，`recommended_action.source=runtime` 且 `next_command=agentdeck agent refresh`；`pending.runtime_stale` 是 ProjectView recovery pending 契约字段。
 - `agentdeck leader chat --message "继续"` 在 recovery source 为 `runtime` 时必须嵌入 `runtime_card`，复用 workbench runtime card 字段规则；它只展示 `agentdeck agent refresh` 入口，不自动 refresh、spawn、stop、capture 或发送 tmux 输入。

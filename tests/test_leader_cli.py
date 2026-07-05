@@ -1962,6 +1962,30 @@ def test_leader_review_recommends_next_dispatch_when_pending_approved_step_exist
     assert payload["counts"]["approved"] == 1
 
 
+def test_leader_review_refuses_contract_violation(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "坏 review 不能输出"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+
+    def broken_validation(_payload):
+        return {"ok": False, "errors": ["missing leader_review field: next_command"]}
+
+    monkeypatch.setattr(cli, "validate_leader_review_contract", broken_validation)
+
+    exit_code = cli.main(["leader", "review", "--plan-id", plan_id])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "Leader review contract validation failed" in captured.err
+    assert "missing leader_review field: next_command" in captured.err
+    state = StateStore(root).load()
+    assert state["approvals"] == []
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert state["replies"] == []
+
+
 def test_leader_review_refuses_invalid_project_view_before_recommending_next_step(
     tmp_path,
     monkeypatch,

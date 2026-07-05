@@ -34,6 +34,7 @@ from .contracts import (
     validate_leader_actions_contract,
     validate_leader_action_contract,
     validate_leader_chat_contract,
+    validate_leader_review_contract,
     validate_project_view_contract,
     validate_trace_contract,
     validate_workbench_contract,
@@ -1511,7 +1512,14 @@ def leader_review_command(args: argparse.Namespace) -> int:
     except KeyError:
         print(f"unknown plan: {args.plan_id}", file=sys.stderr)
         return 1
-    _print_json(_leader_review_payload(review))
+    payload = _leader_review_payload(review)
+    validation = validate_leader_review_contract(payload)
+    if not validation["ok"]:
+        print("Leader review contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
 
 
@@ -1519,6 +1527,10 @@ def _leader_review_payload(review: dict[str, object]) -> dict[str, object]:
     next_command = _leader_review_next_command(review)
     return {
         **review,
+        "approval_id": review.get("approval_id"),
+        "agent_id": review.get("agent_id"),
+        "message_id": review.get("message_id"),
+        "replies": review.get("replies", []),
         "next_command": next_command,
         "controls": _leader_review_controls(review, next_command),
     }

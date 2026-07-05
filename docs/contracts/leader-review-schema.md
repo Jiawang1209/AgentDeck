@@ -45,6 +45,8 @@ Each control item uses:
 
 ## Safety Rules
 
+`agentdeck leader review --plan-id <id>` must pass `validate_leader_review_contract()` before printing JSON. Contract failures must return a non-zero exit code and must not print partial review output.
+
 For `next_action=wait_for_reply`, review may expose a read-only trace preview control plus a `capture_reply` control whose command is `agentdeck capture-reply --agent <agent_id> --message-id <message_id>`. The review command itself must not capture pane output, create replies, mutate inbox state, or persist a Leader action.
 
 For `next_action=summarize`, review may expose a read-only plan status command. It must not synthesize or write the final summary.
