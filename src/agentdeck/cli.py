@@ -1603,6 +1603,26 @@ def _chat_wants_setup(message: str) -> bool:
     )
 
 
+def _chat_wants_runtime(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(
+        token in normalized
+        for token in [
+            "runtime",
+            "tmux",
+            "terminal",
+            "pane",
+            "agent list",
+            "终端",
+            "面板",
+            "运行时",
+            "查看 agent",
+            "查看agents",
+            "查看智能体",
+        ]
+    )
+
+
 def _chat_inbox_agent_id(message: str, config: ProjectConfig) -> str | None:
     normalized = message.strip().lower()
     mentions_inbox = any(token in normalized for token in ["inbox", "收件箱", "消息", "mailbox"])
@@ -1745,6 +1765,23 @@ def _leader_chat_explanation(
             "recommended_action_id": provider,
             "action_kind": "provider_health",
             "action_status": recovery.get("status") if isinstance(recovery, dict) else None,
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
+    if mode == "runtime":
+        runtime_card = _workbench_runtime_card(project_view)
+        by_status = runtime_card.get("by_status") if isinstance(runtime_card.get("by_status"), dict) else {}
+        action_status = "empty"
+        if by_status:
+            action_status = "running" if by_status.get("running") else next(iter(by_status))
+        return {
+            "mode": mode,
+            "summary": "Leader recommends inspecting the visible tmux runtime without mutating runtime state.",
+            "reason": "human asked to inspect agent runtime bindings",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": "runtime",
+            "action_status": action_status,
             "safety": "inspect",
             "requires_explicit_user": False,
         }
@@ -1993,6 +2030,56 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "approval_card": None,
             "runtime_card": None,
             "provider_health": _workbench_provider_health(refreshed_project_view),
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_runtime(args.message):
+        next_command = "agentdeck agent list"
+        turn = store.record_chat_turn(
+            mode="runtime",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="runtime",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "runtime",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        runtime_card = _workbench_runtime_card(refreshed_project_view)
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "runtime",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "runtime",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": runtime_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

@@ -88,6 +88,21 @@ Runtime recovery responses include `runtime_card`, which reuses the same runtime
 
 When `runtime_card` is present, `validate_leader_chat_contract()` checks the same runtime card field lists exposed by `agentdeck contract workbench`. Runtime-mode is read-only: it may recommend `agentdeck agent refresh`, but it must not refresh, spawn, stop, capture pane output, or send tmux input by itself.
 
+Runtime-mode responses are returned when the human asks to inspect `runtime`, `tmux`, terminal panes, or the visible agent list. They return the same `runtime_card`, but default `next_command` to `agentdeck agent list` so a chat surface can show the visible terminal bindings before any explicit runtime operation:
+
+```json
+{
+  "mode": "runtime",
+  "next_command": "agentdeck agent list",
+  "runtime_card": {
+    "refresh_command": "agentdeck agent refresh",
+    "agents": []
+  }
+}
+```
+
+Runtime-mode records a chat turn for history, but it must not create a plan, leader action, approval, message, job, inbox item, refresh stale panes, spawn/stop agents, capture pane output, or send tmux input.
+
 Inbox-mode responses include `inbox_card`, which reuses the same queue shape as `agentdeck inbox --agent <id>`:
 
 ```json
@@ -188,6 +203,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
+- Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, or `runtime_card` when `recovery.recommended_action.source` points at those queues or runtime recovery.
 - Chat setup-mode responses may include `provider_health` and must recommend `agentdeck doctor` without calling the provider.
 - Runtime actions still require explicit commands or approval flow.

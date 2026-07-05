@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add Leader runtime chat mode
+
+- 新增自然语言只读 runtime 意图：`agentdeck leader chat --message "查看 runtime"` / `"查看终端"` 会进入 `mode=runtime`，返回复用 workbench runtime 投影的 `runtime_card`，并建议 `next_command=agentdeck agent list`。
+- 新增 `_chat_wants_runtime()` 和 runtime explanation 分支，让 Leader chat 可以把可见 tmux runtime 作为一等对话入口，而不是只在 `continue` 恢复 stale runtime 时展示。
+- runtime chat mode 只记录 chat turn，不创建 plan、leader action、approval、message、job 或 inbox，不执行 refresh、spawn、stop、capture，也不发送 tmux 输入；具体 runtime controls 仍由 `runtime_card.controls[]` 暴露给人类显式执行。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 runtime mode 复用 workbench runtime card，并保持只读边界。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_runtime_without_mutating_state -q` 最初返回 `mode=plan`；实现后目标测试通过，leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 122 项通过；`conda run -n agentdeck pytest -q` 194 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `leader-chat-runtime-mode-smoke-ok`。
+
 ### Current - Embed runtime card in Leader continue
 
 - 扩展 Leader chat response contract：新增顶层 `runtime_card`，`agentdeck contract leader-chat` 现在公开 `runtime_card_fields` 和 `example_runtime_card_fields`，供 GUI/自然语言壳发现 runtime 恢复字段。
