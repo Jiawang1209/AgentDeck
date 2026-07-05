@@ -250,6 +250,36 @@ def test_validate_control_registry_card_contract_requires_disabled_provider_bloc
     }
 
 
+def test_validate_control_registry_card_contract_requires_policy_set_mode_command() -> None:
+    payload = controls_example()
+    policy_item = next(item for item in payload["items"] if item["scope"] == "policy" and item["kind"] == "set_mode")
+    policy_item["command"] = "agentdeck doctor"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: policy set_mode command must use policy set-mode"],
+    }
+
+
+def test_validate_control_registry_card_contract_requires_enabled_policy_safety() -> None:
+    payload = controls_example()
+    policy_item = next(
+        item
+        for item in payload["items"]
+        if item["scope"] == "policy" and item["kind"] == "set_mode" and item["enabled"] is True
+    )
+    policy_item["safety"] = "inspect"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: enabled policy set_mode must use safety=explicit_user"],
+    }
+
+
 def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     contract_path = tmp_path / "agent-runtime-schema.md"
     contract_path.write_text("# Agent Runtime Contract\n", encoding="utf-8")

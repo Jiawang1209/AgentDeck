@@ -2546,6 +2546,13 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     errors.append("control_registry_card.items: provider set_provider command must use leader set-provider")
                 if item.get("enabled") is False and not item.get("blocker"):
                     errors.append("control_registry_card.items: disabled provider set_provider controls must include blocker")
+            if item.get("scope") == "policy" and item.get("kind") == "set_mode":
+                if not str(item.get("command") or "").startswith("agentdeck policy set-mode --mode "):
+                    errors.append("control_registry_card.items: policy set_mode command must use policy set-mode")
+                if item.get("enabled") is True and item.get("safety") != "explicit_user":
+                    errors.append("control_registry_card.items: enabled policy set_mode must use safety=explicit_user")
+                if item.get("enabled") is False and not item.get("blocker"):
+                    errors.append("control_registry_card.items: disabled policy set_mode controls must include blocker")
     elif "items" in control_registry_card:
         errors.append("control_registry_card.items must be a list")
 
