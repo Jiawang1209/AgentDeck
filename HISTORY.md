@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add doctor contract discovery
+
+- 新增 `agentdeck contract doctor` 和 `agentdeck contract doctor --example`，为 GUI/TUI 暴露 doctor diagnostics 的 response_fields、configured_leader_fields 和 provider_check_fields。
+- 在 `src/agentdeck/contracts.py` 中新增 doctor contract payload/response/example helper，保持 CLI discovery 输出与可复用模块输出一致。
+- 新增 `docs/contracts/doctor-schema.md`，明确 doctor 是只读本地诊断入口，不调用 Leader provider，不暴露真实 API key，`setup_commands` 只能包含 placeholder。
+- `agentdeck doctor` 顶层新增 `doctor_command`，让 live output、contract response fields 和 example fixture 一致，方便 GUI 渲染刷新/重跑入口。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，把 doctor contract 纳入统一 contract discovery 列表。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_doctor_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_doctor_example_exports_gui_ready_diagnostics tests/test_contracts.py::test_doctor_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_doctor_contract_response_includes_example_without_drift -q` 最初因 `doctor_contract_payload` 不存在而 import 失败；实现后 doctor contract 目标测试 4 项通过；`conda run -n agentdeck pytest -q` 171 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `doctor-contract-example-ok` 与 `doctor-live-command-ok`。
+
 ### Current - Add doctor setup commands
 
 - 扩展 `agentdeck doctor` 的 `configured_leader`：新增 `setup_commands`，复用 workbench/setup-mode 的 provider placeholder export 命令。

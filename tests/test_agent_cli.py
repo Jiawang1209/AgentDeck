@@ -10,6 +10,8 @@ from agentdeck.contracts import (
     approval_contract_response,
     continue_contract_payload,
     continue_contract_response,
+    doctor_contract_payload,
+    doctor_contract_response,
     inbox_contract_payload,
     inbox_contract_response,
     leader_actions_contract_payload,
@@ -381,6 +383,39 @@ def test_contract_continue_example_exports_gui_ready_card(capsys) -> None:
     assert set(payload["example_continue_card_fields"]) == set(example)
     assert example["mode"] == "continue"
     assert example["next_command"] == "agentdeck leader apply-action --action-id act_example"
+
+
+def test_contract_doctor_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "doctor"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = doctor_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["doctor_command"] == "agentdeck doctor"
+    assert payload["contract_path"].endswith("docs/contracts/doctor-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == expected["response_fields"]
+    assert payload["configured_leader_fields"] == expected["configured_leader_fields"]
+    assert payload["provider_check_fields"] == expected["provider_check_fields"]
+
+
+def test_contract_doctor_example_exports_gui_ready_diagnostics(capsys) -> None:
+    exit_code = cli.main(["contract", "doctor", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = doctor_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_doctor"]
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_configured_leader_fields"] == payload["configured_leader_fields"]
+    assert set(payload["example_configured_leader_fields"]) == set(example["configured_leader"])
+    assert payload["example_provider_check_fields"] == payload["provider_check_fields"]
+    assert set(payload["example_provider_check_fields"]) == set(example["deepseek"])
+    assert example["doctor_command"] == "agentdeck doctor"
+    assert example["configured_leader"]["setup_commands"][0].startswith("export DEEPSEEK_API_KEY=")
 
 
 def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:

@@ -12,6 +12,7 @@ from .config import config_path, load_config, project_root, update_agent_role, w
 from .contracts import (
     approval_contract_response,
     continue_contract_response,
+    doctor_contract_response,
     inbox_contract_response,
     leader_actions_contract_response,
     leader_action_contract_response,
@@ -98,6 +99,7 @@ def doctor_command(_args: argparse.Namespace) -> int:
     _print_json(
         {
             "ok": ok,
+            "doctor_command": "agentdeck doctor",
             "root": str(root),
             "config_exists": config_exists,
             "config_path": str(config_path(root)),
@@ -618,6 +620,13 @@ def contract_leader_chat_command(args: argparse.Namespace) -> int:
 def contract_continue_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "continue-card-schema.md"
     payload = continue_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_doctor_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "doctor-schema.md"
+    payload = doctor_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -2305,6 +2314,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_continue.add_argument("--example", action="store_true", help="Include a GUI-ready continue card example")
     contract_continue.set_defaults(func=contract_continue_command)
+    contract_doctor = contract_subparsers.add_parser(
+        "doctor",
+        help="Show doctor diagnostics contract discovery metadata",
+    )
+    contract_doctor.add_argument("--example", action="store_true", help="Include a GUI-ready doctor example")
+    contract_doctor.set_defaults(func=contract_doctor_command)
     contract_workbench = contract_subparsers.add_parser(
         "workbench",
         help="Show workbench snapshot contract discovery metadata",

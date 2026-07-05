@@ -56,6 +56,9 @@ from agentdeck.contracts import (
     continue_contract_payload,
     continue_contract_response,
     continue_example,
+    doctor_contract_payload,
+    doctor_contract_response,
+    doctor_example,
     project_view_contract_payload,
     project_view_contract_response,
     project_view_example,
@@ -274,6 +277,61 @@ def test_continue_contract_response_includes_example_without_drift(tmp_path: Pat
     assert example["mode"] == "continue"
     assert example["project_view_command"] == "agentdeck status"
     assert example["action_detail_command"] == "agentdeck leader action --action-id act_example"
+
+
+def test_doctor_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "doctor-schema.md"
+    contract_path.write_text("# Doctor Contract\n", encoding="utf-8")
+
+    payload = doctor_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["doctor_command"] == "agentdeck doctor"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == [
+        "ok",
+        "doctor_command",
+        "root",
+        "config_exists",
+        "config_path",
+        "tmux",
+        "configured_leader",
+        "deepseek",
+        "openai_compatible",
+    ]
+    assert payload["configured_leader_fields"] == [
+        "agent_id",
+        "provider",
+        "model",
+        "approval_mode",
+        "ready",
+        "supported",
+        "missing_env",
+        "detail",
+        "setup_commands",
+    ]
+    assert payload["provider_check_fields"] == ["ok", "detail"]
+
+
+def test_doctor_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "doctor-schema.md"
+    contract_path.write_text("# Doctor Contract\n", encoding="utf-8")
+
+    payload = doctor_contract_response(contract_path, include_example=True)
+    example = doctor_example()
+
+    assert payload["example"] is True
+    assert payload["example_doctor"] == example
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_configured_leader_fields"] == payload["configured_leader_fields"]
+    assert set(payload["example_configured_leader_fields"]) == set(example["configured_leader"])
+    assert payload["example_provider_check_fields"] == payload["provider_check_fields"]
+    assert set(payload["example_provider_check_fields"]) == set(example["deepseek"])
+    assert example["configured_leader"]["setup_commands"][0] == (
+        'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"'
+    )
 
 
 def test_validate_continue_contract_accepts_example() -> None:

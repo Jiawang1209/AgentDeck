@@ -159,6 +159,35 @@ PROJECT_VIEW_REPLY_ITEM_FIELDS = (
     "trace_command",
 )
 
+DOCTOR_RESPONSE_FIELDS = (
+    "ok",
+    "doctor_command",
+    "root",
+    "config_exists",
+    "config_path",
+    "tmux",
+    "configured_leader",
+    "deepseek",
+    "openai_compatible",
+)
+
+DOCTOR_CONFIGURED_LEADER_FIELDS = (
+    "agent_id",
+    "provider",
+    "model",
+    "approval_mode",
+    "ready",
+    "supported",
+    "missing_env",
+    "detail",
+    "setup_commands",
+)
+
+DOCTOR_PROVIDER_CHECK_FIELDS = (
+    "ok",
+    "detail",
+)
+
 LEADER_CHAT_RESPONSE_FIELDS = (
     "ok",
     "turn_id",
@@ -504,6 +533,32 @@ def continue_contract_response(contract_path: Path, include_example: bool = Fals
         payload["example"] = True
         payload["example_continue_card_fields"] = list(example)
         payload["example_continue_card"] = example
+    return payload
+
+
+def doctor_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "doctor_command": "agentdeck doctor",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(DOCTOR_RESPONSE_FIELDS),
+        "configured_leader_fields": list(DOCTOR_CONFIGURED_LEADER_FIELDS),
+        "provider_check_fields": list(DOCTOR_PROVIDER_CHECK_FIELDS),
+        "workbench_contract": "agentdeck contract workbench",
+        "leader_chat_contract": "agentdeck contract leader-chat",
+    }
+
+
+def doctor_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = doctor_contract_payload(contract_path)
+    if include_example:
+        example = doctor_example()
+        payload["example"] = True
+        payload["example_response_fields"] = list(example)
+        payload["example_configured_leader_fields"] = list(example["configured_leader"])
+        payload["example_provider_check_fields"] = list(example["deepseek"])
+        payload["example_doctor"] = example
     return payload
 
 
@@ -1363,6 +1418,43 @@ def leader_chat_example() -> dict[str, object]:
         "continue_card": continue_card,
         "inbox_card": None,
         "approval_card": None,
+    }
+
+
+def doctor_example() -> dict[str, object]:
+    return {
+        "ok": False,
+        "doctor_command": "agentdeck doctor",
+        "root": "/workspace/agentdeck-example",
+        "config_exists": True,
+        "config_path": "/workspace/agentdeck-example/.agentdeck/config.toml",
+        "tmux": {
+            "ok": True,
+            "detail": "tmux is available",
+        },
+        "configured_leader": {
+            "agent_id": "leader",
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "approval_mode": "confirm",
+            "ready": False,
+            "supported": True,
+            "missing_env": ["DEEPSEEK_API_KEY"],
+            "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+            "setup_commands": [
+                'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
+                'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
+                'export DEEPSEEK_MODEL="deepseek-chat"',
+            ],
+        },
+        "deepseek": {
+            "ok": False,
+            "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+        },
+        "openai_compatible": {
+            "ok": False,
+            "detail": "AGENTDECK_LEADER_API_KEY is not set; provider calls are disabled",
+        },
     }
 
 
