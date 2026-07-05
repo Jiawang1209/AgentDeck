@@ -36,6 +36,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "trace_attempt_fields": [],
   "trace_job_fields": [],
   "trace_reply_fields": [],
+  "trace_artifact_fields": [],
   "trace_inbox_item_fields": [],
   "workbench_card_fields": [],
   "workbench_control_registry_item_fields": [],
@@ -336,7 +337,7 @@ When `capture_card` is present, `validate_leader_chat_contract()` checks `captur
 
 Natural-language capture-reply suggestions, such as `捕获 planner 对 msg_xxx 的回复` or `capture reply from planner for msg_xxx`, also return `mode=capture`, but they do not include `capture_card` and do not read the pane. They embed `trace_card` for the referenced message, set `next_command` to `agentdeck capture-reply --agent <agent_id> --message-id <message_id>`, and mark `leader_explanation.action_kind=capture_reply`, `safety=explicit_runtime`, and `requires_explicit_user=true`. Requests such as `捕获当前回复` or `回收当前结果` may resolve the current target from the latest `leader_review` only when that review is `wait_for_reply`; in that case the response should include the review and plan_id while still returning the same explicit `capture-reply` command. Unknown message ids must fail with `unknown trace id: <id>` rather than falling through to provider-backed planning.
 
-Trace-mode responses are returned when the human asks to inspect one concrete communication id such as `msg_xxx`, `att_xxx`, `job_xxx`, `rep_xxx`, or `inb_xxx`. They return `trace_card`, reusing the same shape as `agentdeck trace --id <id>`:
+Trace-mode responses are returned when the human asks to inspect one concrete communication id such as `msg_xxx`, `att_xxx`, `job_xxx`, `rep_xxx`, `art_xxx`, or `inb_xxx`. They return `trace_card`, reusing the same shape as `agentdeck trace --id <id>`:
 
 ```json
 {
@@ -348,6 +349,7 @@ Trace-mode responses are returned when the human asks to inspect one concrete co
     "attempts": [],
     "jobs": [],
     "replies": [],
+    "artifacts": [],
     "inbox_items": []
   }
 }

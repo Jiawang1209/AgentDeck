@@ -4,6 +4,12 @@
 
 ## 2026-07-06
 
+### Current - Expose trace artifact fields to Leader chat contracts
+
+- 扩展 `agentdeck contract leader-chat`：新增 `trace_artifact_fields`，让 GUI/自然语言壳只读取 Leader chat contract 时也能发现嵌入 `trace_card.artifacts[]` 的字段。
+- 同步 `docs/contracts/leader-chat-schema.md` 和 README，明确 direct trace mode 支持 `art_xxx`，trace_card 形状包含 `artifacts[]`。
+- 验证记录：已先确认红测失败，`agentdeck contract leader-chat` 最初缺少 `trace_artifact_fields`；实现后目标测试 `conda run -n agentdeck pytest -q tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli` 2 项通过；聚焦回归 `conda run -n agentdeck pytest -q tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_agent_cli.py::test_contract_trace_discovers_schema_for_gui_clients tests/test_contracts.py::test_trace_contract_payload_is_reusable_without_cli` 4 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 316 项通过。
+
 ### Current - Trace artifacts through communication lineage
 
 - 扩展 `agentdeck trace --id <id>`：现在 `artifact_id` 可作为 trace 查询入口，会解析到所属 message，并在同一条 lineage 中返回 `artifacts[]`。

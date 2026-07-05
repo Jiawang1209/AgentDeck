@@ -1088,6 +1088,7 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["agent_ready_card_fields"] == expected["agent_ready_card_fields"]
     assert payload["trace_card_fields"] == expected["trace_card_fields"]
     assert payload["trace_message_fields"] == expected["trace_message_fields"]
+    assert payload["trace_artifact_fields"] == expected["trace_artifact_fields"]
     assert payload["trace_inbox_item_fields"] == expected["trace_inbox_item_fields"]
     assert payload["workbench_control_registry_item_fields"] == expected["workbench_control_registry_item_fields"]
     assert payload["control_registry_card_fields"] == expected["control_registry_card_fields"]

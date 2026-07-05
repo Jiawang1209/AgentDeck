@@ -630,6 +630,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["trace_attempt_fields"] == list(TRACE_ATTEMPT_FIELDS)
     assert payload["trace_job_fields"] == list(TRACE_JOB_FIELDS)
     assert payload["trace_reply_fields"] == list(TRACE_REPLY_FIELDS)
+    assert payload["trace_artifact_fields"] == list(TRACE_ARTIFACT_FIELDS)
     assert payload["trace_inbox_item_fields"] == list(TRACE_INBOX_ITEM_FIELDS)
     assert payload["workbench_card_fields"] == list(WORKBENCH_SNAPSHOT_FIELDS)
     assert payload["control_mode_card_fields"] == list(WORKBENCH_CONTROL_MODE_CARD_FIELDS)

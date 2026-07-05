@@ -1116,6 +1116,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "trace_attempt_fields": list(TRACE_ATTEMPT_FIELDS),
         "trace_job_fields": list(TRACE_JOB_FIELDS),
         "trace_reply_fields": list(TRACE_REPLY_FIELDS),
+        "trace_artifact_fields": list(TRACE_ARTIFACT_FIELDS),
         "trace_inbox_item_fields": list(TRACE_INBOX_ITEM_FIELDS),
         "workbench_card_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "control_mode_card_fields": list(WORKBENCH_CONTROL_MODE_CARD_FIELDS),
