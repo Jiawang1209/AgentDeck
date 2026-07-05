@@ -180,6 +180,7 @@ The card never exposes API key values and never calls the provider. It includes 
   "backend": "tmux",
   "count": 3,
   "by_status": {"running": 1, "configured": 2},
+  "refresh_command": "agentdeck agent refresh",
   "agents": [
     {
       "agent_id": "planner",
@@ -218,7 +219,7 @@ The card never exposes API key values and never calls the provider. It includes 
 }
 ```
 
-The card does not capture pane output and does not prove task completion. It only surfaces the configured agent identity, role, provider, workspace mode, current runtime binding already present in ProjectView, and explicit runtime commands a GUI can render. `capture_command` is a read-only observation command. `send_command_template` is an explicit runtime input template and must not be executed automatically. GUI clients should prefer `controls[]` for rendering buttons; disabled controls include a `blocker` such as `agent is not running`.
+The card does not capture pane output and does not prove task completion. It only surfaces the configured agent identity, role, provider, workspace mode, current runtime binding already present in ProjectView, and explicit runtime commands a GUI can render. `refresh_command` is an explicit reconciliation command that checks recorded `running` panes against tmux and marks missing panes as `stale`; `agentdeck workbench` does not run it automatically. `capture_command` is a read-only observation command. `send_command_template` is an explicit runtime input template and must not be executed automatically. GUI clients should prefer `controls[]` for rendering buttons; disabled controls include a `blocker` such as `agent is not running`.
 
 ## Role Card
 

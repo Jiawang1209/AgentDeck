@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add agent runtime refresh
+
+- 新增 `agentdeck agent refresh`，显式检查 state 中记录为 `running` 的 tmux pane 是否仍存在；丢失的 pane 会被标记为 `stale`，并写入 `agent_runtime_stale` 审计事件。
+- 扩展 runtime backend：`RuntimeBackend` / `TmuxBackend` 新增 `pane_exists()`，tmux backend 通过 `display-message -p -t <pane_id> "#{pane_id}"` 判断 pane 是否仍可寻址。
+- 扩展 workbench 与 agent-runtime contract：`runtime_card` 新增 `refresh_command`，`agentdeck contract agent-runtime` 新增 `refresh_command`、`refresh_response_fields` 和 `refresh_agent_fields`，`--example` 同步包含稳定 refresh 示例。
+- 更新 `docs/contracts/agent-runtime-schema.md`、`docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 refresh 是显式 runtime reconciliation，不发送 tmux 输入、不推断任务完成。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_agent_refresh_marks_missing_running_pane_as_stale tests/test_agent_cli.py::test_contract_agent_runtime_discovers_schema_for_gui_clients tests/test_contracts.py::test_agent_runtime_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_agent_runtime_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients -q` 最初因 `AGENT_RUNTIME_REFRESH_AGENT_FIELDS` 等新常量不存在失败；实现后目标测试组 6 项通过；`conda run -n agentdeck pytest -q` 191 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；真实 tmux 临时项目 smoke 确认 `agent-refresh-stale-smoke-ok`。
+
 ### Current - Add agent runtime contract discovery
 
 - 新增 `agentdeck contract agent-runtime` 和 `agentdeck contract agent-runtime --example`，为 GUI/TUI/自然语言入口发现 `agent list/spawn/capture/send/stop` 命令模板、capture 响应字段和 runtime control 字段。

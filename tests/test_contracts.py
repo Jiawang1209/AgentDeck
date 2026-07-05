@@ -5,6 +5,8 @@ from pathlib import Path
 from agentdeck.contracts import (
     AGENT_RUNTIME_AGENT_ITEM_FIELDS,
     AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
+    AGENT_RUNTIME_REFRESH_AGENT_FIELDS,
+    AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS,
     APPROVAL_ITEM_FIELDS,
     APPROVAL_QUEUE_FIELDS,
     CONTRACT_INDEX_ITEM_FIELDS,
@@ -158,10 +160,13 @@ def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) 
     assert payload["capture_command_template"] == "agentdeck agent capture --agent <id> --lines 200"
     assert payload["send_command_template"] == "agentdeck agent send --agent <id> --text <text>"
     assert payload["stop_command_template"] == "agentdeck agent stop --agent <id>"
+    assert payload["refresh_command"] == "agentdeck agent refresh"
     assert payload["contract_path"] == str(contract_path)
     assert payload["contract_exists"] is True
     assert payload["agent_item_fields"] == list(AGENT_RUNTIME_AGENT_ITEM_FIELDS)
     assert payload["capture_response_fields"] == list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
+    assert payload["refresh_response_fields"] == list(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS)
+    assert payload["refresh_agent_fields"] == list(AGENT_RUNTIME_REFRESH_AGENT_FIELDS)
     assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
     assert payload["workbench_contract"] == "agentdeck contract workbench"
 
@@ -178,9 +183,13 @@ def test_agent_runtime_contract_response_includes_example_without_drift(tmp_path
     assert payload["example_agent_runtime"] == example
     assert payload["example_agent_item_fields"] == payload["agent_item_fields"]
     assert payload["example_capture_response_fields"] == payload["capture_response_fields"]
+    assert payload["example_refresh_response_fields"] == payload["refresh_response_fields"]
+    assert payload["example_refresh_agent_fields"] == payload["refresh_agent_fields"]
     assert payload["example_control_fields"] == payload["runtime_control_fields"]
     assert set(example["agents"][0]) == set(AGENT_RUNTIME_AGENT_ITEM_FIELDS)
     assert set(example["capture"]) == set(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
+    assert set(example["refresh"]) == set(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS)
+    assert set(example["refresh"]["agents"][0]) == set(AGENT_RUNTIME_REFRESH_AGENT_FIELDS)
     assert set(example["controls"][0]) == set(WORKBENCH_RUNTIME_CONTROL_FIELDS)
 
 

@@ -8,6 +8,8 @@ from agentdeck.config import write_default_config
 from agentdeck.contracts import (
     AGENT_RUNTIME_AGENT_ITEM_FIELDS,
     AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
+    AGENT_RUNTIME_REFRESH_AGENT_FIELDS,
+    AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS,
     approval_contract_payload,
     approval_contract_response,
     agent_runtime_contract_payload,
@@ -44,6 +46,8 @@ class FakeTmuxBackend:
         self.captured: list[tuple[str, int]] = []
         self.sent: list[tuple[str, str]] = []
         self.killed: list[str] = []
+        self.existing_panes: set[str] = set()
+        self.checked_panes: list[str] = []
 
     def create_session(self, _config) -> None:
         self.created_sessions += 1
@@ -61,6 +65,10 @@ class FakeTmuxBackend:
 
     def kill_pane(self, _config, pane_id: str) -> None:
         self.killed.append(pane_id)
+
+    def pane_exists(self, _config, pane_id: str) -> bool:
+        self.checked_panes.append(pane_id)
+        return pane_id in self.existing_panes
 
 
 def prepare_project(tmp_path: Path, monkeypatch) -> Path:
@@ -374,10 +382,13 @@ def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None
     assert payload["capture_command_template"] == "agentdeck agent capture --agent <id> --lines 200"
     assert payload["send_command_template"] == "agentdeck agent send --agent <id> --text <text>"
     assert payload["stop_command_template"] == "agentdeck agent stop --agent <id>"
+    assert payload["refresh_command"] == "agentdeck agent refresh"
     assert payload["contract_path"].endswith("docs/contracts/agent-runtime-schema.md")
     assert payload["contract_exists"] is True
     assert payload["agent_item_fields"] == list(AGENT_RUNTIME_AGENT_ITEM_FIELDS)
     assert payload["capture_response_fields"] == list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
+    assert payload["refresh_response_fields"] == list(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS)
+    assert payload["refresh_agent_fields"] == list(AGENT_RUNTIME_REFRESH_AGENT_FIELDS)
     assert payload["workbench_contract"] == "agentdeck contract workbench"
 
 
@@ -392,9 +403,13 @@ def test_contract_agent_runtime_example_exports_gui_ready_runtime_contract(capsy
     example = payload["example_agent_runtime"]
     assert payload["example_agent_item_fields"] == payload["agent_item_fields"]
     assert payload["example_capture_response_fields"] == payload["capture_response_fields"]
+    assert payload["example_refresh_response_fields"] == payload["refresh_response_fields"]
+    assert payload["example_refresh_agent_fields"] == payload["refresh_agent_fields"]
     assert payload["example_control_fields"] == payload["runtime_control_fields"]
     assert set(example["agents"][0]) == set(payload["agent_item_fields"])
     assert set(example["capture"]) == set(payload["capture_response_fields"])
+    assert set(example["refresh"]) == set(payload["refresh_response_fields"])
+    assert set(example["refresh"]["agents"][0]) == set(payload["refresh_agent_fields"])
     assert set(example["controls"][0]) == set(payload["runtime_control_fields"])
     assert example["agents"][0]["runtime"]["pane_id"] == "%42"
     assert example["capture"]["output"] == "status: completed\n"
@@ -630,7 +645,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "doctor_contract",
         "setup_commands",
     ]
-    assert payload["runtime_card_fields"] == ["backend", "count", "by_status", "agents"]
+    assert payload["runtime_card_fields"] == ["backend", "count", "by_status", "refresh_command", "agents"]
     assert payload["runtime_agent_fields"] == [
         "agent_id",
         "role",
@@ -834,6 +849,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert payload["runtime_card"]["backend"] == "tmux"
     assert payload["runtime_card"]["count"] == 3
     assert payload["runtime_card"]["by_status"] == {"configured": 2, "running": 1}
+    assert payload["runtime_card"]["refresh_command"] == "agentdeck agent refresh"
     assert payload["role_card"]["count"] == 3
     assert payload["role_card"]["assign_command_template"] == (
         "agentdeck agent assign-role --agent <agent_id> --role <role> --role-prompt <role_prompt>"
@@ -1996,6 +2012,46 @@ def test_agent_send_uses_bound_pane_and_records_event(tmp_path, monkeypatch, cap
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "agent_input_sent"' in events
+
+
+def test_agent_refresh_marks_missing_running_pane_as_stale(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"]["planner"] = {
+        "agent_id": "planner",
+        "pane_id": "%42",
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "refresh"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["stale_count"] == 1
+    assert payload["running_count"] == 0
+    assert payload["agents"][0] == {
+        "agent_id": "planner",
+        "previous_status": "running",
+        "status": "stale",
+        "pane_id": "%42",
+        "pane_exists": False,
+        "changed": True,
+    }
+    assert fake.checked_panes == ["%42"]
+
+    state = StateStore(root).load()
+    assert state["agents"]["planner"]["pane_id"] is None
+    assert state["agents"]["planner"]["status"] == "stale"
+
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "agent_runtime_stale"' in events
 
 
 def test_agent_stop_kills_bound_pane_and_marks_stopped(tmp_path, monkeypatch, capsys) -> None:

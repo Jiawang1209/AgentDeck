@@ -89,3 +89,12 @@ class TmuxBackend:
             ["tmux", "-L", config.socket_name, "kill-pane", "-t", pane_id],
             check=True,
         )
+
+    def pane_exists(self, config: RuntimeConfig, pane_id: str) -> bool:
+        result = subprocess.run(
+            ["tmux", "-L", config.socket_name, "display-message", "-p", "-t", pane_id, "#{pane_id}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0 and result.stdout.strip() == pane_id

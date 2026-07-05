@@ -21,10 +21,13 @@ The contract command returns:
   "capture_command_template": "agentdeck agent capture --agent <id> --lines 200",
   "send_command_template": "agentdeck agent send --agent <id> --text <text>",
   "stop_command_template": "agentdeck agent stop --agent <id>",
+  "refresh_command": "agentdeck agent refresh",
   "contract_path": "docs/contracts/agent-runtime-schema.md",
   "contract_exists": true,
   "agent_item_fields": [],
   "capture_response_fields": [],
+  "refresh_response_fields": [],
+  "refresh_agent_fields": [],
   "runtime_control_fields": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view",
@@ -58,6 +61,42 @@ Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready f
 - `pane_id`: tmux pane id bound to the agent.
 - `output`: captured pane output.
 
+## Refresh Response Fields
+
+`agentdeck agent refresh` explicitly checks stored `running` pane bindings against tmux and marks missing panes as `stale`:
+
+```json
+{
+  "ok": true,
+  "agents": [
+    {
+      "agent_id": "planner",
+      "previous_status": "running",
+      "status": "stale",
+      "pane_id": "%42",
+      "pane_exists": false,
+      "changed": true
+    }
+  ],
+  "stale_count": 1,
+  "running_count": 0
+}
+```
+
+- `ok`: whether the refresh command completed.
+- `agents`: per-agent refresh summaries.
+- `stale_count`: number of running bindings changed to `stale`.
+- `running_count`: number of running bindings confirmed to still have a live pane.
+
+Refresh agent items contain:
+
+- `agent_id`: configured agent id.
+- `previous_status`: status before refresh.
+- `status`: status after refresh.
+- `pane_id`: pane id checked for that agent, if any.
+- `pane_exists`: `true` or `false` for checked running panes; `null` when no pane was checked.
+- `changed`: whether refresh mutated that agent binding.
+
 ## Runtime Controls
 
 `runtime_control_fields` reuses the same control item fields as the workbench runtime card:
@@ -69,7 +108,7 @@ Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready f
 - `enabled`
 - `blocker`
 
-`capture` controls are inspect-only. `spawn`, `send`, and `stop` controls are explicit runtime actions and must be triggered by a human or an equivalent explicit user command. GUI clients must never treat this contract as permission to auto-send text or auto-kill panes.
+`capture` controls are inspect-only. `refresh` is an explicit runtime reconciliation command. `spawn`, `send`, and `stop` controls are explicit runtime actions and must be triggered by a human or an equivalent explicit user command. GUI clients must never treat this contract as permission to auto-send text or auto-kill panes.
 
 ## Related Surfaces
 

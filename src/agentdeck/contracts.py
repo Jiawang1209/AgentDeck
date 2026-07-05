@@ -423,6 +423,7 @@ WORKBENCH_RUNTIME_CARD_FIELDS = (
     "backend",
     "count",
     "by_status",
+    "refresh_command",
     "agents",
 )
 
@@ -464,6 +465,22 @@ AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS = (
     "agent_id",
     "pane_id",
     "output",
+)
+
+AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS = (
+    "ok",
+    "agents",
+    "stale_count",
+    "running_count",
+)
+
+AGENT_RUNTIME_REFRESH_AGENT_FIELDS = (
+    "agent_id",
+    "previous_status",
+    "status",
+    "pane_id",
+    "pane_exists",
+    "changed",
 )
 
 WORKBENCH_ROLE_CARD_FIELDS = (
@@ -831,10 +848,13 @@ def agent_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
         "capture_command_template": "agentdeck agent capture --agent <id> --lines 200",
         "send_command_template": "agentdeck agent send --agent <id> --text <text>",
         "stop_command_template": "agentdeck agent stop --agent <id>",
+        "refresh_command": "agentdeck agent refresh",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "agent_item_fields": list(AGENT_RUNTIME_AGENT_ITEM_FIELDS),
         "capture_response_fields": list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS),
+        "refresh_response_fields": list(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS),
+        "refresh_agent_fields": list(AGENT_RUNTIME_REFRESH_AGENT_FIELDS),
         "runtime_control_fields": list(WORKBENCH_RUNTIME_CONTROL_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
@@ -849,6 +869,8 @@ def agent_runtime_contract_response(contract_path: Path, include_example: bool =
         payload["example"] = True
         payload["example_agent_item_fields"] = list(example["agents"][0])
         payload["example_capture_response_fields"] = list(example["capture"])
+        payload["example_refresh_response_fields"] = list(example["refresh"])
+        payload["example_refresh_agent_fields"] = list(example["refresh"]["agents"][0])
         payload["example_control_fields"] = list(example["controls"][0])
         payload["example_agent_runtime"] = example
     return payload
@@ -1891,6 +1913,7 @@ def workbench_example() -> dict[str, object]:
             "backend": "tmux",
             "count": 3,
             "by_status": {"configured": 2, "running": 1},
+            "refresh_command": "agentdeck agent refresh",
             "agents": [
                 {
                     "agent_id": "planner",
@@ -2113,6 +2136,21 @@ def agent_runtime_example() -> dict[str, object]:
             "agent_id": agent_id,
             "pane_id": "%42",
             "output": "status: completed\n",
+        },
+        "refresh": {
+            "ok": True,
+            "agents": [
+                {
+                    "agent_id": agent_id,
+                    "previous_status": "running",
+                    "status": "running",
+                    "pane_id": "%42",
+                    "pane_exists": True,
+                    "changed": False,
+                }
+            ],
+            "stale_count": 0,
+            "running_count": 1,
         },
         "controls": runtime_agent_controls(agent_id, True),
     }

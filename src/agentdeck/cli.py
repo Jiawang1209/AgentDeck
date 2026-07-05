@@ -698,6 +698,7 @@ def _workbench_runtime_card(project_view: dict[str, object]) -> dict[str, object
         "backend": project_view.get("runtime_backend"),
         "count": len(runtime_agents),
         "by_status": by_status,
+        "refresh_command": "agentdeck agent refresh",
         "agents": runtime_agents,
     }
 
@@ -954,6 +955,54 @@ def agent_send_command(args: argparse.Namespace) -> int:
         )
     )
     _print_json({"ok": True, "agent_id": args.agent, "pane_id": pane_id})
+    return 0
+
+
+def agent_refresh_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    backend = TmuxBackend()
+    agents = []
+    stale_count = 0
+    running_count = 0
+    for agent in config.agents:
+        binding = store.agent_binding(agent.agent_id) or {}
+        previous_status = str(binding.get("status", "configured"))
+        pane_id = binding.get("pane_id")
+        pane_exists = None
+        status = previous_status
+        changed = False
+        if pane_id and previous_status == "running":
+            pane_exists = backend.pane_exists(config.runtime, str(pane_id))
+            if pane_exists:
+                running_count += 1
+            else:
+                stale_count += 1
+                status = "stale"
+                changed = True
+                store.mark_agent_stale(agent.agent_id)
+                store.append_event(
+                    EventRecord.create(
+                        "agent_runtime_stale",
+                        {
+                            "agent_id": agent.agent_id,
+                            "pane_id": pane_id,
+                            "previous_status": previous_status,
+                        },
+                    )
+                )
+        agents.append(
+            {
+                "agent_id": agent.agent_id,
+                "previous_status": previous_status,
+                "status": status,
+                "pane_id": pane_id,
+                "pane_exists": pane_exists,
+                "changed": changed,
+            }
+        )
+    _print_json({"ok": True, "agents": agents, "stale_count": stale_count, "running_count": running_count})
     return 0
 
 
@@ -2666,6 +2715,9 @@ def build_parser() -> argparse.ArgumentParser:
     agent_send.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
     agent_send.add_argument("--text", required=True, help="Text to send followed by Enter")
     agent_send.set_defaults(func=agent_send_command)
+
+    agent_refresh = agent_subparsers.add_parser("refresh", help="Refresh stored agent runtime bindings from tmux")
+    agent_refresh.set_defaults(func=agent_refresh_command)
 
     agent_stop = agent_subparsers.add_parser("stop", help="Kill a spawned agent pane and mark it stopped")
     agent_stop.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")

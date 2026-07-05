@@ -30,3 +30,6 @@ class RuntimeBackend(Protocol):
 
     def kill_pane(self, config: RuntimeConfig, pane_id: str) -> None:
         raise NotImplementedError
+
+    def pane_exists(self, config: RuntimeConfig, pane_id: str) -> bool:
+        raise NotImplementedError
