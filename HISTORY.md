@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add workbench operator controls
+
+- 扩展 `agentdeck workbench` 的 `operator_card`：新增 `controls[]`，让一屏主操作区与 leader action / approval / inbox 队列 item 共用同一套 GUI 按钮描述模型。
+- `operator_card.controls[]` 包含 preview、可选 apply、explicit control；每个 control 包含 `kind`、`label`、`command`、`safety`、`enabled` 和 `blocker`，只描述人类操作，不自动执行。
+- 保留既有 `preview_command`、`apply_command`、`explicit_command` 和 `blocker` 兼容字段；workbench 仍只读，不写 state、不 ack/approve/dispatch、不读取 pane、不发送 tmux 输入。
+- 更新 workbench contract 字段、example fixture、validator/live workbench 测试，以及 `README.md`、`docs/contracts/workbench-schema.md`、`CLAUDE.md` 和 `AGENT.md`。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_workbench_surfaces_provider_setup_as_active_operator_source tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_operator_fields -q` 最初因 `operator_card` 缺少 `controls` 失败；实现后目标测试通过；`conda run -n agentdeck pytest -q` 通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `operator-controls-ok` 与 `provider-operator-controls-ok`。
+
 ### Current - Add queue item controls
 
 - 扩展 leader action、approval 和 inbox 三类 queue item：新增 `controls[]`，为 GUI/TUI 提供统一按钮描述对象。

@@ -460,6 +460,7 @@ def _workbench_operator_card(
     can_apply = bool(leader_action.get("can_apply")) if action_kind == "leader_action" else False
     apply_command = leader_action.get("apply_command") if can_apply else None
     explicit_command = leader_action.get("explicit_command") or recommended_action.get("command")
+    preview_command = _workbench_operator_preview_command(action_kind, target_id)
     return {
         "status": recovery.get("status"),
         "reason": recovery.get("reason"),
@@ -470,7 +471,15 @@ def _workbench_operator_card(
         "requires_explicit_user": bool(recommended_action.get("requires_explicit_user")),
         "source": source,
         "target_id": target_id,
-        "preview_command": _workbench_operator_preview_command(action_kind, target_id),
+        "preview_command": preview_command,
+        "controls": _workbench_operator_controls(
+            preview_command=preview_command,
+            apply_command=apply_command,
+            explicit_command=explicit_command,
+            safety=recommended_action.get("safety"),
+            can_apply=can_apply,
+            blocker=leader_action.get("apply_blocker"),
+        ),
         "active_queue_source": active_queue_source,
         "action_kind": action_kind,
         "can_apply": can_apply,
@@ -478,6 +487,49 @@ def _workbench_operator_card(
         "explicit_command": explicit_command,
         "blocker": leader_action.get("apply_blocker"),
     }
+
+
+def _workbench_operator_controls(
+    *,
+    preview_command: object,
+    apply_command: object,
+    explicit_command: object,
+    safety: object,
+    can_apply: bool,
+    blocker: object,
+) -> list[dict[str, object]]:
+    controls = [
+        {
+            "kind": "preview",
+            "label": "Preview",
+            "command": preview_command,
+            "safety": "inspect",
+            "enabled": preview_command is not None,
+            "blocker": None,
+        }
+    ]
+    if apply_command is not None or can_apply:
+        controls.append(
+            {
+                "kind": "apply",
+                "label": "Apply",
+                "command": apply_command,
+                "safety": safety,
+                "enabled": can_apply and apply_command is not None,
+                "blocker": blocker,
+            }
+        )
+    controls.append(
+        {
+            "kind": "explicit",
+            "label": "Run explicit command",
+            "command": explicit_command,
+            "safety": safety,
+            "enabled": explicit_command is not None,
+            "blocker": None,
+        }
+    )
+    return controls
 
 
 def _workbench_operator_preview_command(action_kind: str, target_id: object) -> str:

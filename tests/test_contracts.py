@@ -384,6 +384,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert set(example["ledger_card"]) == set(WORKBENCH_LEDGER_CARD_FIELDS)
     assert set(example["queue_card"]) == set(WORKBENCH_QUEUE_CARD_FIELDS)
     assert set(example["operator_card"]) == set(WORKBENCH_OPERATOR_CARD_FIELDS)
+    assert example["operator_card"]["controls"][0]["command"] == example["operator_card"]["preview_command"]
+    assert example["operator_card"]["controls"][1]["command"] == example["operator_card"]["apply_command"]
     assert set(example["audit_card"]) == set(WORKBENCH_AUDIT_CARD_FIELDS)
     assert example["ledger_card"]["trace_commands"] == [
         "agentdeck trace --id msg_example",
@@ -483,11 +485,11 @@ def test_validate_workbench_contract_requires_queue_fields() -> None:
 
 def test_validate_workbench_contract_requires_operator_fields() -> None:
     payload = workbench_example()
-    del payload["operator_card"]["preview_command"]
+    del payload["operator_card"]["controls"]
 
     result = validate_workbench_contract(payload)
 
-    assert result == {"ok": False, "errors": ["missing operator_card field: preview_command"]}
+    assert result == {"ok": False, "errors": ["missing operator_card field: controls"]}
 
 
 def test_validate_workbench_contract_requires_audit_fields() -> None:

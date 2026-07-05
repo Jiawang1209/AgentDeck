@@ -243,6 +243,32 @@ The card summarizes queues only. GUI clients should use `leader_action`, `approv
   "source": "leader_action",
   "target_id": "act_xxx",
   "preview_command": "agentdeck leader action --action-id act_xxx",
+  "controls": [
+    {
+      "kind": "preview",
+      "label": "Preview",
+      "command": "agentdeck leader action --action-id act_xxx",
+      "safety": "inspect",
+      "enabled": true,
+      "blocker": null
+    },
+    {
+      "kind": "apply",
+      "label": "Apply",
+      "command": "agentdeck leader action --action-id act_xxx --apply",
+      "safety": "safe_apply",
+      "enabled": true,
+      "blocker": null
+    },
+    {
+      "kind": "explicit",
+      "label": "Run explicit command",
+      "command": "agentdeck approval create --plan-id plan_xxx --step-id step_001",
+      "safety": "safe_apply",
+      "enabled": true,
+      "blocker": null
+    }
+  ],
   "active_queue_source": "leader_action",
   "action_kind": "leader_action",
   "can_apply": true,
@@ -252,7 +278,7 @@ The card summarizes queues only. GUI clients should use `leader_action`, `approv
 }
 ```
 
-GUI clients may render `preview_command` as the safest first click before rendering `command`, `apply_command`, or `explicit_command` as explicit action buttons. Execution still belongs to the user or a later explicit approval flow. The card must not be treated as permission to auto-dispatch, auto-ack, auto-approve, or send tmux input.
+GUI clients should prefer `controls[]` as the renderable button list, while keeping `preview_command`, `command`, `apply_command`, and `explicit_command` as compatibility fields. Execution still belongs to the user or a later explicit approval flow. The card must not be treated as permission to auto-dispatch, auto-ack, auto-approve, or send tmux input.
 
 ## Audit Card
 
