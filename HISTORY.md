@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Embed inbox card after agent reply
+
+- 扩展 `agentdeck reply` 和 `agentdeck capture-reply` 成功响应：当 worker reply 回流到某个 agent inbox（例如 `leader`）时，同步嵌入接收方 `inbox_card`，让 GUI/TUI 或自然语言壳立即看到 `task_reply`、trace 和 ack 入口。
+- `inbox_card` 复用 `agentdeck inbox --agent <id>` 队列形状，并通过 `validate_inbox_contract()` 校验，不成为第二套 inbox 状态源。
+- 保持安全边界不变：reply/capture-reply 只记录 reply 与回流 inbox，不自动 ack、不继续 review、不发送 tmux 输入。
+- 同步 README、CLAUDE.md、AGENT.md 和测试；本轮推进了“worker 输出 -> Leader/发起方 inbox -> 可恢复 review”的北极星主线。
+- 完整验证：已先确认红测失败，`reply` 成功响应最初缺少接收方 `inbox_card`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_review_summarizes_when_all_dispatched_steps_have_replies -q` 1 项通过；`conda run -n agentdeck pytest tests/test_leader_cli.py -q` 65 项通过；`conda run -n agentdeck pytest -q` 233 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时项目 in-process smoke 确认 `task_reply` 回流到 `leader` inbox，`inbox_count=1`，且仅显式 dispatch 触发 1 次 tmux send。
+
 ### Current - Embed inbox card after approval dispatch
 
 - 扩展 `agentdeck approval dispatch --approval-id <id>` 成功响应：除 `trace_command` 外，现在同步嵌入目标 agent 的 `inbox_card`，让 GUI/TUI 或自然语言壳立即看到 worker mailbox head、trace 和 ack 入口。

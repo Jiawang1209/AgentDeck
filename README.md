@@ -237,7 +237,7 @@ agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
 agentdeck capture-reply --agent planner --message-id msg_xxx
 ```
 
-如果任务由另一个 agent 发起，reply 会作为 `task_reply` 投递到发起方 inbox。`reply` 和 `capture-reply` 的 JSON 输出也会包含 `trace_command`，指向刚记录的 reply lineage。处理完 inbox item 后可以确认：
+如果任务由另一个 agent 发起，reply 会作为 `task_reply` 投递到发起方 inbox。`reply` 和 `capture-reply` 的 JSON 输出也会包含 `trace_command`，指向刚记录的 reply lineage；当 reply 回流到某个 agent inbox 时，成功响应会嵌入接收方的 `inbox_card`，复用 `agentdeck inbox --agent <id>` 队列形状，让 GUI 或自然语言壳立刻看到 task_reply、trace 和 ack 入口。处理完 inbox item 后可以确认：
 
 ```bash
 agentdeck ack --agent planner --inbox-id inb_xxx

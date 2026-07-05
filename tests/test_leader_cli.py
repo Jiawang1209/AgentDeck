@@ -2138,7 +2138,15 @@ def test_leader_review_summarizes_when_all_dispatched_steps_have_replies(tmp_pat
     cli.main(["approval", "dispatch", "--approval-id", approval_id])
     message_id = json.loads(capsys.readouterr().out)["message_id"]
     cli.main(["reply", "--agent", "planner", "--message-id", message_id, "--text", "status: completed\nsummary: done"])
-    reply_id = json.loads(capsys.readouterr().out)["reply_id"]
+    reply_payload = json.loads(capsys.readouterr().out)
+    reply_id = reply_payload["reply_id"]
+    assert reply_payload["inbox_card"]["agent_id"] == "leader"
+    assert reply_payload["inbox_card"]["count"] == 1
+    assert reply_payload["inbox_card"]["items"][0]["event_type"] == "task_reply"
+    assert reply_payload["inbox_card"]["items"][0]["reply_id"] == reply_id
+    assert reply_payload["inbox_card"]["items"][0]["message_id"] == message_id
+    assert reply_payload["inbox_card"]["items"][0]["trace_command"].startswith("agentdeck trace --id inb_")
+    assert reply_payload["inbox_card"]["items"][0]["can_ack"] is True
 
     exit_code = cli.main(["leader", "review", "--plan-id", plan_id])
 

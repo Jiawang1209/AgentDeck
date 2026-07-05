@@ -1434,16 +1434,32 @@ def reply_command(args: argparse.Namespace) -> int:
             },
         )
     )
-    _print_json(
-        {
-            "ok": True,
-            "reply_id": reply["reply_id"],
-            "message_id": reply["message_id"],
-            "from_agent": args.agent,
-            "trace_command": _trace_command(reply["reply_id"]),
-        }
-    )
+    payload = _reply_success_payload(reply, store)
+    if payload is None:
+        return 1
+    _print_json(payload)
     return 0
+
+
+def _reply_success_payload(reply: dict[str, object], store: StateStore) -> dict[str, object] | None:
+    payload = {
+        "ok": True,
+        "reply_id": reply["reply_id"],
+        "message_id": reply["message_id"],
+        "from_agent": reply["from_agent"],
+        "trace_command": _trace_command(reply["reply_id"]),
+    }
+    to_actor = reply.get("to_actor")
+    if to_actor and to_actor != "user":
+        inbox_card = _inbox_queue_payload(str(to_actor), store)
+        validation = validate_inbox_contract(inbox_card)
+        if not validation["ok"]:
+            print("Inbox contract validation failed", file=sys.stderr)
+            for error in validation["errors"]:
+                print(f"- {error}", file=sys.stderr)
+            return None
+        payload["inbox_card"] = inbox_card
+    return payload
 
 
 def _extract_structured_reply(output: str) -> str | None:
@@ -1490,17 +1506,12 @@ def capture_reply_command(args: argparse.Namespace) -> int:
             },
         )
     )
-    _print_json(
-        {
-            "ok": True,
-            "reply_id": reply["reply_id"],
-            "message_id": reply["message_id"],
-            "from_agent": args.agent,
-            "pane_id": pane_id,
-            "captured_lines": len(text.splitlines()),
-            "trace_command": _trace_command(reply["reply_id"]),
-        }
-    )
+    payload = _reply_success_payload(reply, store)
+    if payload is None:
+        return 1
+    payload["pane_id"] = pane_id
+    payload["captured_lines"] = len(text.splitlines())
+    _print_json(payload)
     return 0
 
 
