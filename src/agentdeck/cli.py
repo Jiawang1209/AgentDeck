@@ -4536,11 +4536,20 @@ def _chat_run_start_task(message: str) -> str | None:
 
 
 def _chat_run_progress_plan_id(message: str) -> str | None:
-    text = message.strip()
-    if not re.search(r"(查看|检查|inspect|show|status|progress|进度|运行)", text, re.IGNORECASE):
+    if not _chat_wants_run_progress(message):
         return None
+    text = message.strip()
     match = re.search(r"\bpln_[A-Za-z0-9_-]+\b", text)
     return match.group(0) if match else None
+
+
+def _chat_wants_run_progress(message: str) -> bool:
+    text = message.strip()
+    return bool(
+        re.search(r"(运行进度|执行进度|任务进度|run progress)", text, re.IGNORECASE)
+        or re.search(r"(查看|检查|inspect|show|status).*(progress|进度)", text, re.IGNORECASE)
+        or re.search(r"(progress|进度).*(查看|检查|inspect|show|status)", text, re.IGNORECASE)
+    )
 
 
 def leader_chat_command(args: argparse.Namespace) -> int:
@@ -4716,8 +4725,14 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
-    run_progress_plan_id = _chat_run_progress_plan_id(args.message)
-    if run_progress_plan_id:
+    if _chat_wants_run_progress(args.message):
+        run_progress_plan_id = _chat_run_progress_plan_id(args.message)
+        if run_progress_plan_id is None:
+            plans = store.list_plans()
+            if not plans:
+                print("no plans available for run progress", file=sys.stderr)
+                return 1
+            run_progress_plan_id = str(plans[-1]["plan_id"])
         try:
             run_progress_card = _run_progress_payload(store, run_progress_plan_id)
         except KeyError:

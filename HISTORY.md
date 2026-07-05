@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Default run progress chat to latest plan
+
+- 扩展 `agentdeck leader chat --message "查看运行进度"`：省略 plan_id 时默认读取最新 plan，并返回同源只读 `run_progress_card`；带 `pln_xxx` 时仍查看指定 plan。
+- 明确空项目行为：没有任何 plan 时，进度查询返回非 0 和 `no plans available for run progress`，不得把“查看运行进度”误当成新任务来创建 plan、Leader action 或 chat turn。
+- 保持人类控制边界：自然语言 latest run progress 只记录成功查询的 chat turn，不修改 plan/approval/runtime state，不 approve、不 dispatch、不 capture pane、不 ack inbox、不创建 runtime message/job/inbox、不发送 tmux 输入。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/leader-chat-schema.md`，明确自然语言进度查询可以省略 plan_id。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "查看运行进度"` 最初会落入旧 review/plan 路径，空项目里还会创建新 plan；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_run_progress_without_plan_id_uses_latest_plan_without_dispatching tests/test_leader_cli.py::test_leader_chat_run_progress_without_any_plan_does_not_create_plan -q` 2 项通过；聚焦 contract/run-progress 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_run_progress_intent_returns_read_only_card_without_dispatching tests/test_leader_cli.py::test_leader_chat_run_progress_without_plan_id_uses_latest_plan_without_dispatching tests/test_leader_cli.py::test_leader_chat_run_progress_without_any_plan_does_not_create_plan tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_reuses_run_progress_card_validator tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients -q` 7 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 331 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 355 项通过。
+
 ### Current - Embed latest run progress in workbench
 
 - 扩展 `agentdeck workbench`：当项目存在 plan 时，一屏快照会嵌入最新 plan 的只读 `run_progress_card`，复用 `agentdeck run --plan-id <id>` 的响应形状，GUI/TUI 打开工作台即可看到当前 run 的审批、review 和下一步显式命令。

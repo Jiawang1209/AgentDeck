@@ -338,6 +338,61 @@ def test_leader_chat_run_progress_intent_returns_read_only_card_without_dispatch
     assert fake.captured == []
 
 
+def test_leader_chat_run_progress_without_plan_id_uses_latest_plan_without_dispatching(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["run", "--task", "实现 latest run progress intent"])
+    first_started = json.loads(capsys.readouterr().out)
+    cli.main(["run", "--task", "实现第二个 run"])
+    latest_started = json.loads(capsys.readouterr().out)
+    latest_plan_id = latest_started["plan_id"]
+    approval_id = latest_started["approval_card"]["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看运行进度"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "run_progress"
+    assert payload["plan_id"] == latest_plan_id
+    assert payload["plan_id"] != first_started["plan_id"]
+    assert payload["run_progress_card"]["plan_id"] == latest_plan_id
+    assert payload["run_progress_card"]["counts"]["approved"] == 1
+    assert payload["next_command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
+    assert payload["intent_card"]["controls"][0]["command"] == f"agentdeck run --plan-id {latest_plan_id}"
+
+    state_after = StateStore(root).load()
+    assert state_after["plans"] == state_before["plans"]
+    assert state_after["approvals"] == state_before["approvals"]
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["jobs"] == state_before["jobs"]
+    assert state_after["replies"] == state_before["replies"]
+    assert state_after.get("inbox", {}) == state_before.get("inbox", {})
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert state_after["chat_turns"][-1]["mode"] == "run_progress"
+    assert state_after["chat_turns"][-1]["plan_id"] == latest_plan_id
+    assert fake.sent == []
+    assert fake.captured == []
+
+
+def test_leader_chat_run_progress_without_any_plan_does_not_create_plan(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看运行进度"])
+
+    assert exit_code == 1
+    assert capsys.readouterr().err.strip() == "no plans available for run progress"
+    assert StateStore(root).load() == state_before
+
+
 def test_leader_plan_defaults_to_configured_leader_provider_and_model(
     tmp_path, monkeypatch, capsys
 ) -> None:
