@@ -959,6 +959,18 @@ def test_validate_workbench_contract_requires_provider_health_booleans() -> None
     assert result == {"ok": False, "errors": ["provider_health.ready must be a boolean"]}
 
 
+def test_validate_workbench_contract_requires_provider_switch_control_safety() -> None:
+    payload = workbench_example()
+    payload["provider_health"]["controls"][0]["safety"] = "inspect"
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["provider_health.controls: set_provider controls must use safety=explicit_user"],
+    }
+
+
 def test_validate_workbench_contract_requires_runtime_agent_fields() -> None:
     payload = workbench_example()
     del payload["runtime_card"]["agents"][0]["pane_id"]

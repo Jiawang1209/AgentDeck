@@ -2732,7 +2732,17 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("provider_health.missing_env must be a list")
         if "setup_commands" in provider_health and not isinstance(provider_health.get("setup_commands"), list):
             errors.append("provider_health.setup_commands must be a list")
-        if "controls" in provider_health and not isinstance(provider_health.get("controls"), list):
+        controls = provider_health.get("controls")
+        if isinstance(controls, list):
+            for control in controls:
+                if isinstance(control, dict):
+                    if control.get("kind") == "set_provider" and control.get("safety") != "explicit_user":
+                        errors.append("provider_health.controls: set_provider controls must use safety=explicit_user")
+                    if control.get("enabled") is False and not control.get("blocker"):
+                        errors.append("provider_health.controls: disabled controls must include blocker")
+                else:
+                    errors.append("provider_health.controls items must be objects")
+        elif "controls" in provider_health:
             errors.append("provider_health.controls must be a list")
     elif "provider_health" in payload:
         errors.append("provider_health must be an object")
