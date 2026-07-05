@@ -76,16 +76,53 @@ def test_agent_list_outputs_configured_agents(tmp_path, monkeypatch, capsys) -> 
 
 def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("AGENTDECK_LEADER_API_KEY", raising=False)
 
     exit_code = cli.main(["doctor"])
 
-    assert exit_code in {0, 1}
+    assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["configured_leader"] == {
+        "agent_id": "leader",
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "approval_mode": "confirm",
+        "ready": False,
+        "supported": True,
+        "missing_env": ["DEEPSEEK_API_KEY"],
+        "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+    }
+    assert payload["deepseek"] == {
+        "ok": False,
+        "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+    }
     assert payload["openai_compatible"] == {
         "ok": False,
         "detail": "AGENTDECK_LEADER_API_KEY is not set; provider calls are disabled",
     }
+
+
+def test_doctor_reports_configured_leader_ready_when_env_is_set(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+
+    exit_code = cli.main(["doctor"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["configured_leader"] == {
+        "agent_id": "leader",
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "approval_mode": "confirm",
+        "ready": True,
+        "supported": True,
+        "missing_env": [],
+        "detail": "DEEPSEEK_API_KEY is set",
+    }
+    assert payload["deepseek"]["ok"] is True
+    assert exit_code == (0 if payload["tmux"]["ok"] else 1)
 
 
 def test_events_lists_recent_event_tail(tmp_path, monkeypatch, capsys) -> None:

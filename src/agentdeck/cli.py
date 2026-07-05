@@ -89,9 +89,12 @@ def doctor_command(_args: argparse.Namespace) -> int:
     root = project_root()
     tmux = TmuxBackend().doctor()
     config_exists = config_path(root).exists()
+    config = load_config(root) if config_exists else None
     deepseek = DeepSeekProvider().doctor()
     openai_compatible = OpenAICompatibleProvider().doctor()
-    ok = tmux.ok and config_exists
+    configured_leader = _doctor_configured_leader(config)
+    leader_ready = bool(configured_leader.get("ready")) if configured_leader else False
+    ok = tmux.ok and config_exists and leader_ready
     _print_json(
         {
             "ok": ok,
@@ -99,11 +102,45 @@ def doctor_command(_args: argparse.Namespace) -> int:
             "config_exists": config_exists,
             "config_path": str(config_path(root)),
             "tmux": asdict(tmux),
+            "configured_leader": configured_leader,
             "deepseek": {"ok": deepseek[0], "detail": deepseek[1]},
             "openai_compatible": {"ok": openai_compatible[0], "detail": openai_compatible[1]},
         }
     )
     return 0 if ok else 1
+
+
+def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object] | None:
+    if config is None:
+        return None
+    provider = config.leader.provider
+    required_env = {
+        "deepseek": "DEEPSEEK_API_KEY",
+        "openai-compatible": "AGENTDECK_LEADER_API_KEY",
+    }.get(provider)
+    if required_env is None:
+        return {
+            "agent_id": config.leader.agent_id,
+            "provider": provider,
+            "model": config.leader.model,
+            "approval_mode": config.leader.approval_mode,
+            "ready": False,
+            "supported": False,
+            "missing_env": [],
+            "detail": f"unsupported leader provider: {provider}",
+        }
+    ready = bool(os.environ.get(required_env))
+    detail = f"{required_env} is set" if ready else f"{required_env} is not set; provider calls are disabled"
+    return {
+        "agent_id": config.leader.agent_id,
+        "provider": provider,
+        "model": config.leader.model,
+        "approval_mode": config.leader.approval_mode,
+        "ready": ready,
+        "supported": True,
+        "missing_env": [] if ready else [required_env],
+        "detail": detail,
+    }
 
 
 def init_command(_args: argparse.Namespace) -> int:

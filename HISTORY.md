@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add configured Leader readiness to doctor
+
+- 扩展 `agentdeck doctor`：新增 `configured_leader`，从 `.agentdeck/config.toml` 的 `[leader]` 派生当前 Leader provider/model/approval_mode 的 readiness 摘要。
+- `configured_leader` 公开 agent_id、provider、model、approval_mode、supported、ready、missing_env 和 detail，只暴露缺失 env 名称，不暴露密钥值。
+- 调整 doctor 顶层 `ok`：除了 tmux 和 config 存在外，还要求当前配置 Leader provider ready；默认 DeepSeek 缺少 `DEEPSEEK_API_KEY` 时 `agentdeck doctor` 会返回非 0。
+- 补充 CLI 测试，覆盖缺失 `DEEPSEEK_API_KEY` 时 `configured_leader.ready=false`、顶层 `ok=false`，以及设置 env 后 `configured_leader.ready=true`。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 doctor 是 provider setup recovery 推荐的诊断面，不能暴露密钥值。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_doctor_reports_openai_compatible_provider_state tests/test_agent_cli.py::test_doctor_reports_configured_leader_ready_when_env_is_set -q` 最初因 doctor 缺少 `configured_leader` 且顶层 `ok` 未受 provider readiness 影响失败；实现后 doctor 目标测试 2 项通过；`conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_provider_openai_compatible.py tests/test_leader_cli.py -q` 100 项通过；`conda run -n agentdeck pytest -q` 164 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `doctor-configured-leader-missing-ok` 与 `doctor-configured-leader-ready-ok`。
+
 ### Current - Surface provider setup in recovery
 
 - 扩展 ProjectView recovery：当没有 pending leader action、approval、inbox item 或 leader error，但配置的 API-backed Leader provider 缺少本地环境变量时，返回 `status=provider_setup_required`。
