@@ -663,6 +663,10 @@ LEADER_CHAT_CAPABILITY_PLACEHOLDERS = (
     {"placeholder": "<agent_id>", "blocker": "requires agent_id"},
 )
 
+LEADER_CHAT_INTENT_PLACEHOLDERS = (
+    {"placeholder": "<reason>", "blocker": "requires reason"},
+)
+
 TRACE_TOP_LEVEL_FIELDS = (
     "schema_version",
     "query_id",
@@ -1623,6 +1627,12 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                             errors.append(f"intent_card.controls: missing control field: {field}")
                     if control.get("kind") == "inspect" and control.get("safety") != "inspect":
                         errors.append("intent_card.controls: inspect controls must use safety=inspect")
+                    placeholder_enabled = _command_has_placeholder(control.get("command")) and control.get("enabled") is not False
+                    if placeholder_enabled:
+                        errors.append("intent_card.controls: placeholder commands must be disabled")
+                    expected_blocker = leader_chat_intent_placeholder_blocker(control.get("command"))
+                    if not placeholder_enabled and expected_blocker is not None and control.get("blocker") != expected_blocker:
+                        errors.append("intent_card.controls: blocker must match placeholder")
                     if control.get("enabled") is False and not control.get("blocker"):
                         errors.append("intent_card.controls: disabled controls must include blocker")
                 else:
@@ -1760,6 +1770,17 @@ def _placeholder_blocker(command: object) -> str | None:
     for item in LEADER_CHAT_CAPABILITY_PLACEHOLDERS:
         if item["placeholder"] in command:
             return str(item["blocker"])
+    return None
+
+
+def leader_chat_intent_placeholder_blocker(command: object) -> str | None:
+    if not isinstance(command, str):
+        return None
+    for item in LEADER_CHAT_INTENT_PLACEHOLDERS:
+        if item["placeholder"] in command:
+            return str(item["blocker"])
+    if _command_has_placeholder(command):
+        return "requires template input"
     return None
 
 

@@ -22,6 +22,7 @@ from .contracts import (
     leader_action_contract_response,
     leader_chat_capability_card,
     leader_chat_contract_response,
+    leader_chat_intent_placeholder_blocker,
     project_view_contract_response,
     runtime_agent_controls,
     trace_contract_response,
@@ -90,14 +91,16 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
                 "blocker": None,
             }
         )
+    next_blocker = leader_chat_intent_placeholder_blocker(next_command)
+    next_enabled = next_command is not None and next_blocker is None
     controls.append(
         {
             "kind": "next",
             "label": "Next command",
             "command": next_command,
             "safety": explanation.get("safety"),
-            "enabled": next_command is not None,
-            "blocker": None if next_command is not None else "next command unavailable",
+            "enabled": next_enabled,
+            "blocker": next_blocker if next_command is not None else "next command unavailable",
         }
     )
     return {

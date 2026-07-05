@@ -1269,6 +1269,14 @@ def test_leader_chat_suggests_reject_for_pending_approval_without_rejecting(
     assert payload["leader_explanation"]["action_status"] == "pending"
     assert payload["leader_explanation"]["safety"] == "explicit_runtime"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Next command",
+        "command": payload["next_command"],
+        "safety": "explicit_runtime",
+        "enabled": False,
+        "blocker": "requires reason",
+    }
 
     state_after = StateStore(root).load()
     assert state_after["approvals"][0]["status"] == "pending"

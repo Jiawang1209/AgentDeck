@@ -104,7 +104,7 @@ The review-mode response shape is:
 }
 ```
 
-`route_source` is `local_rule` for local intent routing, `provider_plan` for first-time provider-backed planning, and `state_review` for review of an existing plan. `embedded_card` names the primary top-level card the GUI should render for that route, or `null` when there is no embedded card. `read_only=false` marks routes that create or apply state, such as `plan`, `review`, or `apply_action`. `controls[]` are renderable command descriptors only; they must not be executed automatically. When an embedded card has a safe read-only command, `controls[]` should include an `inspect` control before the `next` control.
+`route_source` is `local_rule` for local intent routing, `provider_plan` for first-time provider-backed planning, and `state_review` for review of an existing plan. `embedded_card` names the primary top-level card the GUI should render for that route, or `null` when there is no embedded card. `read_only=false` marks routes that create or apply state, such as `plan`, `review`, or `apply_action`. `controls[]` are renderable command descriptors only; they must not be executed automatically. When an embedded card has a safe read-only command, `controls[]` should include an `inspect` control before the `next` control. Template `next` commands that still require user input, such as `--reason <reason>`, must be disabled and include a blocker such as `requires reason`.
 
 Help-mode responses include `capability_card`, a read-only capability map for natural-language shells and future GUI command palettes:
 
@@ -373,7 +373,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat responses must pass `validate_leader_chat_contract()` before printing JSON.
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Chat responses must include `intent_card`, and `intent_card.next_command` must describe the same next action as the top-level response.
-- Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; `validate_leader_chat_contract()` rejects disabled controls without a blocker and rejects `kind=inspect` controls unless `safety=inspect`.
+- Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; `validate_leader_chat_contract()` rejects disabled controls without a blocker, rejects `kind=inspect` controls unless `safety=inspect`, and rejects enabled placeholder commands or placeholder blockers that do not match.
 - Chat help-mode responses must include `capability_card`; `validate_leader_chat_contract()` rejects capability cards whose `capability_count` does not match `capabilities[]`, rejects capability items or controls with missing fields, rejects capability controls whose `command` or `safety` drift from the parent capability item, rejects placeholder capability controls that use unknown placeholders, are enabled, or use the wrong blocker, rejects disabled capability controls without blockers, and rejects `plan`, `review`, or `apply_action` entries whose safety does not match their scheduling semantics.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.
 - Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.

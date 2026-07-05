@@ -1180,6 +1180,52 @@ def test_validate_leader_chat_contract_requires_disabled_control_blocker() -> No
     }
 
 
+def test_validate_leader_chat_contract_requires_placeholder_intent_controls_disabled() -> None:
+    payload = leader_chat_example()
+    payload["next_command"] = "agentdeck approval reject --approval-id apv_example --reason <reason>"
+    payload["intent_card"]["next_command"] = payload["next_command"]
+    payload["queue_card"] = None
+    payload["operator_card"] = None
+    payload["intent_card"]["controls"][0] = {
+        "kind": "next",
+        "label": "Next command",
+        "command": payload["next_command"],
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card.controls: placeholder commands must be disabled"],
+    }
+
+
+def test_validate_leader_chat_contract_requires_placeholder_intent_blocker_match() -> None:
+    payload = leader_chat_example()
+    payload["next_command"] = "agentdeck approval reject --approval-id apv_example --reason <reason>"
+    payload["intent_card"]["next_command"] = payload["next_command"]
+    payload["queue_card"] = None
+    payload["operator_card"] = None
+    payload["intent_card"]["controls"][0] = {
+        "kind": "next",
+        "label": "Next command",
+        "command": payload["next_command"],
+        "safety": "explicit_runtime",
+        "enabled": False,
+        "blocker": "requires approval_id",
+    }
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card.controls: blocker must match placeholder"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_capability_count_match() -> None:
     payload = leader_chat_example()
     payload["capability_card"]["capability_count"] = 999

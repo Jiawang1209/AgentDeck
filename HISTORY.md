@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Guard Leader intent placeholder controls
+
+- 加强 `intent_card.controls[]`：当 `next_command` 仍包含 `<reason>` 这类模板输入时，next control 会 disabled，并返回 `requires reason` blocker，避免 GUI 把缺参命令渲染成可直接执行按钮。
+- 加强 `validate_leader_chat_contract()`：拒绝 enabled placeholder intent control，并要求 disabled placeholder control 的 blocker 与模板输入匹配。
+- 同步 `README.md`、`docs/contracts/leader-chat-schema.md`、`CLAUDE.md`、`AGENT.md` 和测试。
+- 完整验证：已先确认红测失败，reject chat 的 intent next control 最初 enabled 且 blocker 为 null，validator 最初允许 enabled placeholder intent control；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_reject_for_pending_approval_without_rejecting tests/test_contracts.py::test_validate_leader_chat_contract_requires_placeholder_intent_controls_disabled tests/test_contracts.py::test_validate_leader_chat_contract_requires_placeholder_intent_blocker_match -q` 3 项通过；leader/contract 相关测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 143 项通过；`conda run -n agentdeck pytest -q` 215 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-chat-intent-placeholder-control-smoke-ok` 且 approval 仍为 pending。
+
 ### Current - Route approval reject chat to explicit command
 
 - 扩展自然语言 approval 模式：`agentdeck leader chat --message "拒绝当前审批"` 会推荐第一条 pending approval 的 `reject_command`，并标记 `action_kind=approval_reject`、`safety=explicit_runtime`、`requires_explicit_user=true`。
