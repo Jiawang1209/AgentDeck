@@ -22,7 +22,7 @@ AgentDeck 是一个正在搭建中的本地多智能体终端工作台。它的�
 - tmux 作为第一 runtime backend
 - TOML 配置
 - JSON/JSONL 初始状态存储，后续迁移到 SQLite
-- API-backed LLM provider adapter，支持本地 `fake`、DeepSeek 和 OpenAI-compatible plan provider
+- Leader provider adapter，支持本地 `fake`、DeepSeek、OpenAI-compatible、Codex CLI 和 Claude Code CLI plan provider
 
 未来可扩展：
 
@@ -365,7 +365,7 @@ agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
 ```
 
-`agentdeck leader plan` 和 `agentdeck leader chat` 默认读取 `.agentdeck/config.toml` 的 `[leader] provider/model`；新项目默认是 `deepseek` / `deepseek-chat`。也可以显式使用 `--provider fake --model fake-plan` 做本地 dry-run，用 `--provider openai-compatible` 调用通用 OpenAI-compatible `/chat/completions` API，或用 `--provider codex-cli` / `--provider claude-cli` 调用本地已登录的 Codex CLI / Claude Code CLI 作为 Leader 推理后端。所有模式都不会 dispatch、不会发送 tmux 输入。
+`agentdeck leader plan` 和 `agentdeck leader chat` 默认读取 `.agentdeck/config.toml` 的 `[leader] provider/model`；新项目默认是 `deepseek` / `deepseek-chat`。也可以显式使用 `--provider fake --model fake-plan` 做本地 dry-run，用 `--provider openai-compatible` 调用通用 OpenAI-compatible `/chat/completions` API，或用 `--provider codex-cli` / `--provider claude-cli` 调用本地已登录的 Codex CLI / Claude Code CLI 作为 Leader 推理后端。CLI-backed Leader stdout 可以是纯 JSON plan，也可以是唯一 Markdown fenced `json` block；解析后会归一化同一 plan schema 的 `approval_required` 和 `dispatch_ready` 控制字段，并继续要求每个 step 都 `requires_approval=true`。所有模式都不会 dispatch、不会发送 tmux 输入。
 
 `agentdeck continue` 是顶层只读恢复入口。它会先校验 ProjectView，再把 `status.recovery` 整理成一张下一步卡片，并在输出前通过 `validate_continue_contract()` 自校验。卡片包含 status、reason、next_command、recommended_action、pending 计数、project_view_command，以及可选的 `leader_action` 详情和 `action_detail_command`；当存在多条 approved approvals 时，continue card 会把卡片级 `next_command` 和 `recommended_action.command` 提升为显式 `agentdeck approval dispatch-ready --confirm`，与 workbench/operator 的批量派发入口对齐。它不创建 plan、不写入 `leader_actions[]`、不 apply action、不 dispatch、不发送 tmux 输入，适合终端用户、自然语言壳和 GUI 在任何时刻询问“现在该继续什么”。
 

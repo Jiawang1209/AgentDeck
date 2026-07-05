@@ -94,6 +94,25 @@ def cli_plan_stdout() -> str:
     )
 
 
+def cli_plan_stdout_without_control_flags() -> str:
+    return json.dumps(
+        {
+            "goal": "CLI Leader",
+            "summary": "plan from local CLI",
+            "steps": [
+                {
+                    "step": 1,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "Plan the work",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                }
+            ],
+        }
+    )
+
+
 def test_openai_compatible_provider_requires_api_key(monkeypatch) -> None:
     monkeypatch.delenv("AGENTDECK_LEADER_API_KEY", raising=False)
 
@@ -248,6 +267,24 @@ def test_cli_provider_rejects_multiple_fenced_json_plans(tmp_path, monkeypatch) 
         assert str(exc) == "provider plan content contains multiple JSON plans"
     else:
         raise AssertionError("provider should reject ambiguous fenced JSON plans")
+
+
+def test_cli_provider_normalizes_missing_plan_control_flags(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_without_control_flags(), stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    provider = CodexCliProvider()
+    plan = provider.plan(LeaderPlanRequest(task="归一化 CLI plan", config=config))
+
+    assert plan["approval_required"] is True
+    assert plan["dispatch_ready"] is False
 
 
 def test_cli_provider_reports_subprocess_failure(tmp_path, monkeypatch) -> None:

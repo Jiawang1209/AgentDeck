@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Normalize CLI-backed Leader plan controls
+
+- 加强 `codex-cli` / `claude-cli` Leader provider：本地 CLI 输出缺少顶层 `approval_required` 或 `dispatch_ready` 时，会像 API-backed provider 一样归一化为 `approval_required=true` 和 `dispatch_ready=false`。
+- 保持统一 schema 和审批边界：CLI-backed Leader 仍必须返回非空 `steps[]`，且每个 step 必须 `requires_approval=true`；该 provider 只生成 plan，不复用 worker tmux pane、不创建 approval、不 dispatch、不发送 tmux 输入。
+- 同步 README、CLAUDE.md 和 AGENT.md，明确 CLI-backed Leader stdout 可以是纯 JSON 或唯一 fenced JSON，解析后会补齐同一 plan schema 的控制字段。
+- 验证记录：已先确认红测失败，CLI provider 最初会让缺少 `approval_required` 的 plan 直接漏出并触发 `KeyError`；实现后目标测试 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_cli_provider_normalizes_missing_plan_control_flags tests/test_provider_openai_compatible.py::test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_claude_cli_provider_runs_print_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_cli_provider_extracts_fenced_json_plan_from_local_cli_output tests/test_provider_openai_compatible.py::test_cli_provider_rejects_multiple_fenced_json_plans tests/test_provider_openai_compatible.py::test_cli_provider_reports_subprocess_failure -q` 6 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 308 项通过。
+
 ### Current - Embed reply trace in Leader continue
 
 - 扩展 `agentdeck leader chat --message "继续"`：当 ProjectView recovery 是 `reply_waiting` / `recommended_action.source=reply` 时，continue-mode 会嵌入同源 `trace_card`，展示 pending message lineage、已 ack 的 inbox item 和当前空 replies。
