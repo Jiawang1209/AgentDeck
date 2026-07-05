@@ -22,6 +22,20 @@ def prepare_project(tmp_path: Path, monkeypatch) -> Path:
     root.mkdir()
     (root / ".git").mkdir()
     write_default_config(root)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_text = config_text.replace('provider = "deepseek"', 'provider = "fake"', 1)
+    config_text = config_text.replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
+    config_path.write_text(config_text, encoding="utf-8")
+    monkeypatch.chdir(root)
+    return root
+
+
+def prepare_project_with_default_leader(tmp_path: Path, monkeypatch) -> Path:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
     monkeypatch.chdir(root)
     return root
 
@@ -78,6 +92,70 @@ def test_leader_plan_creates_structured_plan_without_dispatching(tmp_path, monke
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "leader_plan_created"' in events
+
+
+def test_leader_plan_defaults_to_configured_leader_provider_and_model(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project_with_default_leader(tmp_path, monkeypatch)
+    seen: dict[str, str] = {}
+
+    class StubProvider(FakeLeaderProvider):
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    def fake_leader_provider(name: str):
+        seen["provider"] = name
+        return StubProvider(name)
+
+    monkeypatch.setattr(cli, "leader_provider", fake_leader_provider)
+
+    exit_code = cli.main(["leader", "plan", "--task", "使用配置 Leader"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert seen["provider"] == "deepseek"
+    assert payload["provider"] == "deepseek"
+    assert payload["model"] == "deepseek-chat"
+    state = StateStore(root).load()
+    assert state["plans"][0]["provider"] == "deepseek"
+    assert state["plans"][0]["model"] == "deepseek-chat"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
+def test_leader_chat_defaults_to_configured_leader_provider_and_model(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project_with_default_leader(tmp_path, monkeypatch)
+    seen: dict[str, str] = {}
+
+    class StubProvider(FakeLeaderProvider):
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    def fake_leader_provider(name: str):
+        seen["provider"] = name
+        return StubProvider(name)
+
+    monkeypatch.setattr(cli, "leader_provider", fake_leader_provider)
+
+    exit_code = cli.main(["leader", "chat", "--message", "用配置 Leader 对话"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert seen["provider"] == "deepseek"
+    assert payload["mode"] == "plan"
+    assert payload["plan_id"].startswith("pln_")
+    assert payload["project_view"]["plans"]["items"][0]["provider"] == "deepseek"
+    assert payload["project_view"]["plans"]["items"][0]["model"] == "deepseek-chat"
+    state = StateStore(root).load()
+    assert state["plans"][0]["provider"] == "deepseek"
+    assert state["plans"][0]["model"] == "deepseek-chat"
+    assert state["chat_turns"][0]["provider"] == "deepseek"
+    assert state["chat_turns"][0]["model"] == "deepseek-chat"
+    assert state["messages"] == []
+    assert state["jobs"] == []
 
 
 def test_leader_plan_rejects_unknown_provider(tmp_path, monkeypatch, capsys) -> None:

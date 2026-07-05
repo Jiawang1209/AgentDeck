@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Use configured Leader provider by default
+
+- 将 `agentdeck leader plan` 与 `agentdeck leader chat` 的默认 provider/model 从硬编码 `fake/fake-plan` 改为读取 `.agentdeck/config.toml` 的 `[leader] provider/model`。
+- 新项目默认配置仍是 `deepseek` / `deepseek-chat`，因此自然语言 plan/chat 入口现在与 workbench 的 `leader_card`、`provider_health` 和 API-backed Leader 北极星保持一致。
+- 保留本地 dry-run 能力：需要 fake provider 时显式传入 `--provider fake --model fake-plan`。
+- 补充 CLI 测试，覆盖 plan/chat 不传 provider 时使用配置中的 DeepSeek provider/model；同时调整旧 dry-run 测试，使其显式表达 fake provider 意图。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，明确默认读取配置，fake 是显式 dry-run，不得自动 dispatch 或发送 tmux 输入。
+- 保持安全边界：配置默认 provider 只影响 plan/chat 生成来源，仍不创建 approval、不 dispatch、不写 message/job/inbox、不发送 tmux 输入；provider 失败仍进入 `leader_errors[]`。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_plan_defaults_to_configured_leader_provider_and_model tests/test_leader_cli.py::test_leader_chat_defaults_to_configured_leader_provider_and_model -q` 最初显示实际 provider 仍是 `fake`；实现后 `tests/test_leader_cli.py` 54 项通过，provider/leader/agent 相关测试 97 项通过；`conda run -n agentdeck pytest -q` 161 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `config-default-leader-ok`。
+
 ### Current - Enable DeepSeek provider planning
 
 - 将 `deepseek` 从仅 doctor/health 可见的 provider 边界推进为真实 plan-only Leader provider：`leader_provider("deepseek")` 现在返回 `DeepSeekProvider`。

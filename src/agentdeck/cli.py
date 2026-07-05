@@ -1039,12 +1039,26 @@ def _record_leader_provider_failure(
     )
 
 
+def _leader_provider_name(config: ProjectConfig, requested_provider: str | None) -> str:
+    if requested_provider:
+        return requested_provider
+    return config.leader.provider
+
+
+def _leader_model_label(config: ProjectConfig, requested_model: str | None) -> str:
+    if requested_model:
+        return requested_model
+    return config.leader.model
+
+
 def leader_plan_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
+    provider_name = _leader_provider_name(config, args.provider)
+    model_label = _leader_model_label(config, args.model)
     try:
-        provider = leader_provider(args.provider)
+        provider = leader_provider(provider_name)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -1052,10 +1066,10 @@ def leader_plan_command(args: argparse.Namespace) -> int:
     try:
         plan = orchestrator.plan(args.task)
     except RuntimeError as exc:
-        _record_leader_provider_failure(store, "plan", provider.name, args.model, args.task, exc)
+        _record_leader_provider_failure(store, "plan", provider.name, model_label, args.task, exc)
         print(f"leader provider failed: {exc}", file=sys.stderr)
         return 1
-    record = store.record_plan(args.task, provider.name, args.model, plan)
+    record = store.record_plan(args.task, provider.name, model_label, plan)
     store.append_event(
         EventRecord.create(
             "leader_plan_created",
@@ -1793,7 +1807,9 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
     try:
-        provider = leader_provider(args.provider)
+        provider_name = _leader_provider_name(config, args.provider)
+        model_label = _leader_model_label(config, args.model)
+        provider = leader_provider(provider_name)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -1801,10 +1817,10 @@ def leader_chat_command(args: argparse.Namespace) -> int:
     try:
         plan = orchestrator.plan(args.message)
     except RuntimeError as exc:
-        _record_leader_provider_failure(store, "chat", provider.name, args.model, args.message, exc)
+        _record_leader_provider_failure(store, "chat", provider.name, model_label, args.message, exc)
         print(f"leader provider failed: {exc}", file=sys.stderr)
         return 1
-    record = store.record_plan(args.message, provider.name, args.model, plan)
+    record = store.record_plan(args.message, provider.name, model_label, plan)
     action = store.suggest_leader_action(str(record["plan_id"]))
     action_detail = store.leader_action_detail(str(action["action_id"]))
     project_view_with_action = _project_view_payload_or_error(config, store)
@@ -2226,8 +2242,8 @@ def build_parser() -> argparse.ArgumentParser:
     leader_subparsers = leader.add_subparsers(dest="leader_command")
     leader_plan = leader_subparsers.add_parser("plan", help="Create a plan without dispatching work")
     leader_plan.add_argument("--task", required=True, help="Goal for the Leader Agent to plan")
-    leader_plan.add_argument("--provider", default="fake", help="Leader provider to use; defaults to local fake")
-    leader_plan.add_argument("--model", default="fake-plan", help="Provider model label recorded with the plan")
+    leader_plan.add_argument("--provider", help="Leader provider to use; defaults to .agentdeck/config.toml")
+    leader_plan.add_argument("--model", help="Provider model label recorded with the plan; defaults to config")
     leader_plan.set_defaults(func=leader_plan_command)
     leader_review = leader_subparsers.add_parser("review", help="Review plan progress and recommend next action")
     leader_review.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
@@ -2248,8 +2264,8 @@ def build_parser() -> argparse.ArgumentParser:
     leader_apply_action.set_defaults(func=leader_apply_action_command)
     leader_chat = leader_subparsers.add_parser("chat", help="Natural-language Leader entrypoint")
     leader_chat.add_argument("--message", required=True, help="Natural-language message for the Leader")
-    leader_chat.add_argument("--provider", default="fake", help="Leader provider to use when a new plan is needed")
-    leader_chat.add_argument("--model", default="fake-plan", help="Provider model label recorded with new plans")
+    leader_chat.add_argument("--provider", help="Leader provider to use when a new plan is needed; defaults to config")
+    leader_chat.add_argument("--model", help="Provider model label recorded with new plans; defaults to config")
     leader_chat.set_defaults(func=leader_chat_command)
     leader_chat_history = leader_subparsers.add_parser("chat-history", help="List persisted Leader chat turns")
     leader_chat_history.set_defaults(func=leader_chat_history_command)

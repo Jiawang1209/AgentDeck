@@ -117,7 +117,7 @@ def test_events_returns_empty_list_when_log_is_missing(tmp_path, monkeypatch, ca
 
 def test_continue_returns_recovery_card_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
-    cli.main(["leader", "chat", "--message", "帮我规划下一步"])
+    cli.main(["leader", "chat", "--provider", "fake", "--model", "fake-plan", "--message", "帮我规划下一步"])
     capsys.readouterr()
     state_before = StateStore(root).load()
     status_before = cli.asdict(StateStore(root).project_view(cli.load_config(root)))

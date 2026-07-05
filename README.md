@@ -293,7 +293,7 @@ agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
 ```
 
-当前默认使用本地 `fake` provider 生成确定性的结构化 plan，并写入 `.agentdeck/state/state.json` 的 `plans[]`。也可以显式使用 `--provider deepseek` 或 `--provider openai-compatible` 调用 OpenAI-compatible `/chat/completions` API。所有模式都不会 dispatch、不会发送 tmux 输入。
+`agentdeck leader plan` 和 `agentdeck leader chat` 默认读取 `.agentdeck/config.toml` 的 `[leader] provider/model`；新项目默认是 `deepseek` / `deepseek-chat`。也可以显式使用 `--provider fake --model fake-plan` 做本地 dry-run，或用 `--provider openai-compatible` 调用通用 OpenAI-compatible `/chat/completions` API。所有模式都不会 dispatch、不会发送 tmux 输入。
 
 `agentdeck continue` 是顶层只读恢复入口。它会先校验 ProjectView，再把 `status.recovery` 整理成一张下一步卡片，并在输出前通过 `validate_continue_contract()` 自校验。卡片包含 status、reason、next_command、recommended_action、pending 计数、project_view_command，以及可选的 `leader_action` 详情和 `action_detail_command`。它不创建 plan、不写入 `leader_actions[]`、不 apply action、不 dispatch、不发送 tmux 输入，适合终端用户、自然语言壳和 GUI 在任何时刻询问“现在该继续什么”。
 
