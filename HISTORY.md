@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add Leader action card to chat responses
+
+- 扩展 `agentdeck leader chat` 响应：当响应包含顶层 `leader_action` 时，同步派生 `leader_action_card`，暴露 mode/title/action_id/kind/status/reason/preview_command/can_apply/apply_command/explicit_command/apply_blocker/controls，供 GUI/TUI 或自然语言壳直接渲染下一步动作卡。
+- 保持 `leader_action_card` 从同一个 action detail 派生，不成为第二套 action 状态源；validator 要求有 `leader_action` 时必须有 `leader_action_card`，且 `leader_action_card.action_id` 与 `leader_action.action_id` 对齐，并校验 controls 字段。
+- 同步 `agentdeck contract leader-chat` 的 `leader_action_card_fields`、example 字段、`docs/contracts/leader-chat-schema.md`、README、CLAUDE.md、AGENT.md 和测试；该卡片只描述预览/应用入口，不新增 dispatch、approval、tmux 发送或 provider 调用路径。
+- 完整验证：已先确认红测失败，live chat 响应最初缺少 `leader_action_card`，leader-chat contract payload/example 最初缺少 `leader_action_card_fields` / `example_leader_action_card_fields`，validator 最初放过 `leader_action_card=null`；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_action_card_when_action_is_present tests/test_leader_cli.py::test_leader_chat_creates_plan_from_natural_language_without_dispatching tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 4 项通过；相关测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 156 项通过；`conda run -n agentdeck pytest -q` 233 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-action-card-smoke-ok`。
+
 ### Current - Point command palette default to controls
 
 - 调整 `control_registry_card.default_command`：从 `agentdeck workbench` 改为独立入口 `agentdeck controls`，让 GUI/TUI 或自然语言壳可以直接刷新命令面板。

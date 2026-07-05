@@ -295,6 +295,20 @@ def test_leader_chat_creates_plan_from_natural_language_without_dispatching(tmp_
     assert payload["leader_action"]["plan_id"] == payload["plan_id"]
     assert payload["leader_action"]["can_apply"] is True
     assert payload["leader_action"]["apply_blocker"] is None
+    assert payload["leader_action_card"] == {
+        "mode": "leader_action",
+        "title": "Leader action",
+        "action_id": payload["leader_action"]["action_id"],
+        "kind": "create_approvals",
+        "status": "pending",
+        "reason": payload["leader_action"]["reason"],
+        "preview_command": payload["leader_action"]["preview_command"],
+        "can_apply": True,
+        "apply_command": payload["leader_action"]["apply_command"],
+        "explicit_command": payload["leader_action"]["explicit_command"],
+        "apply_blocker": None,
+        "controls": payload["leader_action"]["controls"],
+    }
     assert payload["recovery"]["status"] == "action_required"
     assert payload["recovery"]["leader_action"]["action_id"] == payload["leader_action"]["action_id"]
     assert payload["recovery"]["next_command"] == payload["leader_action"]["apply_command"]

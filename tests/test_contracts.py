@@ -419,6 +419,20 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["explanation_fields"] == list(LEADER_CHAT_EXPLANATION_FIELDS)
     assert payload["intent_card_fields"] == list(LEADER_CHAT_INTENT_CARD_FIELDS)
     assert payload["intent_control_fields"] == list(LEADER_CHAT_INTENT_CONTROL_FIELDS)
+    assert payload["leader_action_card_fields"] == [
+        "mode",
+        "title",
+        "action_id",
+        "kind",
+        "status",
+        "reason",
+        "preview_command",
+        "can_apply",
+        "apply_command",
+        "explicit_command",
+        "apply_blocker",
+        "controls",
+    ]
     assert payload["continue_card_fields"] == list(CONTINUE_CARD_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
@@ -1228,6 +1242,10 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_intent_card_fields"] == list(example["intent_card"])
     assert payload["example_intent_control_fields"] == payload["intent_control_fields"]
     assert payload["example_intent_control_fields"] == list(example["intent_card"]["controls"][0])
+    assert payload["example_leader_action_card_fields"] == payload["leader_action_card_fields"]
+    assert payload["example_leader_action_card_fields"] == list(example["leader_action_card"])
+    assert example["leader_action_card"]["action_id"] == example["leader_action"]["action_id"]
+    assert example["leader_action_card"]["controls"] == example["leader_action"]["controls"]
     assert payload["example_continue_card_fields"] == payload["continue_card_fields"]
     assert set(payload["example_continue_card_fields"]) == set(example["continue_card"])
     assert payload["example_runtime_card_fields"] == payload["runtime_card_fields"]
@@ -1301,6 +1319,18 @@ def test_validate_leader_chat_contract_requires_control_registry_card_count() ->
     assert result == {
         "ok": False,
         "errors": ["control_registry_card.item_count must match items length"],
+    }
+
+
+def test_validate_leader_chat_contract_requires_action_card_when_action_is_present() -> None:
+    payload = leader_chat_example()
+    payload["leader_action_card"] = None
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["leader_action_card is required when leader_action is present"],
     }
 
 

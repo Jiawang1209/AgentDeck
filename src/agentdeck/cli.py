@@ -21,6 +21,7 @@ from .contracts import (
     inbox_contract_response,
     leader_actions_contract_response,
     leader_action_contract_response,
+    leader_chat_action_card,
     leader_chat_capability_card,
     leader_chat_control_registry_card,
     leader_chat_contract_response,
@@ -163,6 +164,11 @@ def _print_leader_chat_payload_or_error(
 ) -> int:
     payload.setdefault("capability_card", None)
     payload.setdefault("control_registry_card", None)
+    leader_action = payload.get("leader_action")
+    payload.setdefault(
+        "leader_action_card",
+        leader_chat_action_card(leader_action) if isinstance(leader_action, dict) else None,
+    )
     payload.setdefault("intent_card", _leader_chat_intent_card(payload))
     validation = validate_leader_chat_contract(payload)
     if not validation["ok"]:

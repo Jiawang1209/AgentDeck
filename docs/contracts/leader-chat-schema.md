@@ -16,6 +16,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "explanation_fields": [],
   "intent_card_fields": [],
   "intent_control_fields": [],
+  "leader_action_card_fields": [],
   "continue_card_fields": [],
   "runtime_card_fields": [],
   "queue_card_fields": [],
@@ -59,6 +60,7 @@ The review-mode response shape is:
   "recovery": {},
   "next_command": "agentdeck leader apply-action --action-id act_xxx",
   "leader_action": {},
+  "leader_action_card": {},
   "continue_card": null,
   "inbox_card": null,
   "approval_card": null,
@@ -73,6 +75,27 @@ The review-mode response shape is:
 ```
 
 `leader_actions` is identical to `project_view.leader_actions`. It is provided so a chat surface can render the queue without issuing a second status call.
+
+`leader_action_card` is a GUI-ready projection of the top-level `leader_action` when one is present:
+
+```json
+{
+  "mode": "leader_action",
+  "title": "Leader action",
+  "action_id": "act_xxx",
+  "kind": "create_approvals",
+  "status": "pending",
+  "reason": "plan has no approval records",
+  "preview_command": "agentdeck leader action --action-id act_xxx",
+  "can_apply": true,
+  "apply_command": "agentdeck leader apply-action --action-id act_xxx",
+  "explicit_command": "agentdeck approval create-from-plan --plan-id pln_xxx",
+  "apply_blocker": null,
+  "controls": []
+}
+```
+
+The card is derived from the same action detail and does not introduce a second action state source. GUI and natural-language shells should render its `controls[]`, `preview_command`, `apply_command`, `explicit_command`, and `apply_blocker`, while still treating the underlying `leader_action` and ProjectView recovery as the authority.
 
 `intent_card` is the stable routing card for GUI and natural-language shells:
 
@@ -401,6 +424,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat responses must pass `validate_leader_chat_contract()` before printing JSON.
 - Chat response contract failures must be auditable through ProjectView `leader_errors` and `agentdeck events`.
 - Chat responses must include `intent_card`, and `intent_card.next_command` must describe the same next action as the top-level response.
+- Chat responses with a top-level `leader_action` must expose a matching `leader_action_card`; `leader_action_card.action_id` must match `leader_action.action_id`.
 - Chat intent controls must include `kind`, `label`, `command`, `safety`, `enabled`, and `blocker`; `validate_leader_chat_contract()` rejects disabled controls without a blocker, rejects `kind=inspect` controls unless `safety=inspect`, and rejects enabled placeholder commands or placeholder blockers that do not match.
 - Chat help-mode responses must include `capability_card`; `validate_leader_chat_contract()` rejects capability cards whose `capability_count` does not match `capabilities[]`, rejects capability items or controls with missing fields, rejects capability controls whose `command` or `safety` drift from the parent capability item, rejects placeholder capability controls that use unknown placeholders, are enabled, or use the wrong blocker, rejects disabled capability controls without blockers, and rejects `plan`, `review`, or `apply_action` entries whose safety does not match their scheduling semantics.
 - Chat inbox-mode responses must reuse the `agentdeck inbox` queue contract through `inbox_card`.

@@ -362,6 +362,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "recovery",
     "next_command",
     "leader_action",
+    "leader_action_card",
     "continue_card",
     "inbox_card",
     "approval_card",
@@ -373,6 +374,21 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "workbench_card",
     "capability_card",
     "control_registry_card",
+)
+
+LEADER_CHAT_ACTION_CARD_FIELDS = (
+    "mode",
+    "title",
+    "action_id",
+    "kind",
+    "status",
+    "reason",
+    "preview_command",
+    "can_apply",
+    "apply_command",
+    "explicit_command",
+    "apply_blocker",
+    "controls",
 )
 
 CONTROL_REGISTRY_CARD_FIELDS = (
@@ -849,6 +865,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "explanation_fields": list(LEADER_CHAT_EXPLANATION_FIELDS),
         "intent_card_fields": list(LEADER_CHAT_INTENT_CARD_FIELDS),
         "intent_control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
+        "leader_action_card_fields": list(LEADER_CHAT_ACTION_CARD_FIELDS),
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
@@ -878,6 +895,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_explanation_fields"] = list(example["leader_explanation"])
         payload["example_intent_card_fields"] = list(example["intent_card"])
         payload["example_intent_control_fields"] = list(example["intent_card"]["controls"][0])
+        payload["example_leader_action_card_fields"] = list(example["leader_action_card"])
         payload["example_continue_card_fields"] = list(example["continue_card"])
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
@@ -1041,6 +1059,23 @@ def leader_chat_control_registry_card(workbench_card: dict[str, object]) -> dict
         "default_command": "agentdeck controls",
         "item_count": len(items),
         "items": items,
+    }
+
+
+def leader_chat_action_card(action: dict[str, object]) -> dict[str, object]:
+    return {
+        "mode": "leader_action",
+        "title": "Leader action",
+        "action_id": action.get("action_id"),
+        "kind": action.get("kind"),
+        "status": action.get("status"),
+        "reason": action.get("reason"),
+        "preview_command": action.get("preview_command"),
+        "can_apply": action.get("can_apply"),
+        "apply_command": action.get("apply_command"),
+        "explicit_command": action.get("explicit_command"),
+        "apply_blocker": action.get("apply_blocker"),
+        "controls": action.get("controls", []),
     }
 
 
@@ -1824,6 +1859,16 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append(f"continue_card: {error}")
     elif "continue_card" in payload and continue_card is not None:
         errors.append("continue_card must be an object")
+    leader_action_card = payload.get("leader_action_card")
+    leader_action = payload.get("leader_action")
+    if isinstance(leader_action_card, dict):
+        _validate_leader_chat_action_card_contract(errors, leader_action_card)
+        if isinstance(leader_action, dict) and leader_action_card.get("action_id") != leader_action.get("action_id"):
+            errors.append("leader_action_card.action_id must match leader_action.action_id")
+    elif isinstance(leader_action, dict):
+        errors.append("leader_action_card is required when leader_action is present")
+    elif "leader_action_card" in payload and leader_action_card is not None:
+        errors.append("leader_action_card must be an object")
     inbox_card = payload.get("inbox_card")
     if isinstance(inbox_card, dict):
         inbox_card_validation = validate_inbox_contract(inbox_card)
@@ -1891,6 +1936,29 @@ def validate_control_registry_card_contract(payload: dict[str, object]) -> dict[
     errors: list[str] = []
     _validate_control_registry_card_contract(errors, payload)
     return {"ok": not errors, "errors": errors}
+
+
+def _validate_leader_chat_action_card_contract(errors: list[str], action_card: dict[str, object]) -> None:
+    for field in LEADER_CHAT_ACTION_CARD_FIELDS:
+        if field not in action_card:
+            errors.append(f"missing leader_action_card field: {field}")
+    if action_card.get("mode") != "leader_action":
+        errors.append("leader_action_card.mode must be leader_action")
+    controls = action_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if isinstance(control, dict):
+                for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                    if field not in control:
+                        errors.append(f"leader_action_card.controls: missing control field: {field}")
+                if control.get("kind") == "inspect" and control.get("safety") != "inspect":
+                    errors.append("leader_action_card.controls: inspect controls must use safety=inspect")
+                if control.get("enabled") is False and not control.get("blocker"):
+                    errors.append("leader_action_card.controls: disabled controls must include blocker")
+            else:
+                errors.append("leader_action_card.controls items must be objects")
+    elif "controls" in action_card:
+        errors.append("leader_action_card.controls must be a list")
 
 
 def _validate_control_registry_card_contract(errors: list[str], control_registry_card: dict[str, object]) -> None:
@@ -2437,6 +2505,7 @@ def leader_chat_example() -> dict[str, object]:
     workbench_card = workbench_example()
     capability_card = leader_chat_capability_card()
     control_registry_card = leader_chat_control_registry_card(workbench_card)
+    leader_action_card = leader_chat_action_card(leader_action)
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -2479,6 +2548,7 @@ def leader_chat_example() -> dict[str, object]:
         "recovery": recovery,
         "next_command": next_command,
         "leader_action": leader_action,
+        "leader_action_card": leader_action_card,
         "continue_card": continue_card,
         "inbox_card": None,
         "approval_card": None,
