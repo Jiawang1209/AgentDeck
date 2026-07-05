@@ -209,7 +209,7 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
     recovery = project_view.get("recovery", {})
     recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
     source = recommended_action.get("source") if isinstance(recommended_action, dict) else None
-    active_queue_source = source if source in ("leader_action", "inbox", "approval") else "none"
+    active_queue_source = source if source in ("leader_action", "inbox", "approval", "provider_health") else "none"
     leader_action = continue_card.get("leader_action")
     return {
         "ok": True,
@@ -388,7 +388,7 @@ def _workbench_operator_card(
     leader_action = leader_action if isinstance(leader_action, dict) else {}
     source = str(recommended_action.get("source", "none"))
     target_id = recommended_action.get("target_id")
-    action_kind = source if source in ("inbox", "approval", "leader_action") else "none"
+    action_kind = source if source in ("inbox", "approval", "leader_action", "provider_health") else "none"
     can_apply = bool(leader_action.get("can_apply")) if action_kind == "leader_action" else False
     apply_command = leader_action.get("apply_command") if can_apply else None
     explicit_command = leader_action.get("explicit_command") or recommended_action.get("command")
@@ -419,6 +419,8 @@ def _workbench_operator_preview_command(action_kind: str, target_id: object) -> 
         return f"agentdeck trace --id {target_id}"
     if action_kind == "approval":
         return "agentdeck approval list"
+    if action_kind == "provider_health":
+        return "agentdeck doctor"
     return "agentdeck status"
 
 

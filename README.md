@@ -256,6 +256,8 @@ agentdeck trace --id inb_xxx
 
 如果没有 pending action、approval 或 inbox item，但存在 `leader_errors[]`，`status.recovery` 会返回 `status=leader_error`，并推荐 `agentdeck status` 作为 inspect 动作，帮助 GUI 或人类先检查 Leader 错误。
 
+如果没有 pending action、approval、inbox item 或 leader error，但配置的 API-backed Leader provider 缺少本地环境变量，`status.recovery` 会返回 `status=provider_setup_required`，并推荐 `agentdeck doctor`。GUI 可以把它渲染成 provider setup/diagnostics 入口，避免用户直接触发会失败的 `leader plan/chat`。
+
 `status.recovery.pending` 也会包含 `leader_errors` 计数，让 GUI 可以在统一恢复面显示还有多少 Leader 错误待检查。
 
 `agentdeck contract project-view` 会通过 `recovery_pending_fields` 公开 `recovery.pending` 的必备字段，GUI 可以据此做字段兼容检查。

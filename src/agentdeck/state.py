@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -931,7 +932,7 @@ class StateStore:
             "created_at": head.get("created_at"),
         }
 
-    def _recovery_summary(self, state: dict[str, Any]) -> dict[str, Any]:
+    def _recovery_summary(self, state: dict[str, Any], config: ProjectConfig) -> dict[str, Any]:
         approvals = state.get("approvals", [])
         leader_actions = state.get("leader_actions", [])
         leader_errors = state.get("leader_errors", [])
@@ -1054,7 +1055,33 @@ class StateStore:
                     ),
                 }
             )
+        elif provider_setup := self._leader_provider_setup_action(config):
+            summary.update(
+                {
+                    "status": "provider_setup_required",
+                    "reason": f"configured Leader provider is not ready: {config.leader.provider}",
+                    "next_command": provider_setup["command"],
+                    "recommended_action": self._recommended_action(
+                        label="Inspect Leader provider setup",
+                        command=provider_setup["command"],
+                        safety="inspect",
+                        requires_explicit_user=False,
+                        source="provider_health",
+                        target_id=config.leader.provider,
+                    ),
+                }
+            )
         return summary
+
+    @staticmethod
+    def _leader_provider_setup_action(config: ProjectConfig) -> dict[str, Any] | None:
+        required_env = {
+            "deepseek": "DEEPSEEK_API_KEY",
+            "openai-compatible": "AGENTDECK_LEADER_API_KEY",
+        }.get(config.leader.provider)
+        if required_env is None or os.environ.get(required_env):
+            return None
+        return {"command": "agentdeck doctor", "missing_env": required_env}
 
     @staticmethod
     def _inbox_item_agent_id(inbox: dict[str, list[dict[str, Any]]], item: dict[str, Any]) -> str | None:
@@ -1138,7 +1165,7 @@ class StateStore:
             leader_errors=self._leader_error_summaries(state.get("leader_errors", [])),
             leader_actions=self._leader_action_summaries(state.get("leader_actions", [])),
             inbox=self._inbox_summary(state.get("inbox", {})),
-            recovery=self._recovery_summary(state),
+            recovery=self._recovery_summary(state, config),
         )
 
 

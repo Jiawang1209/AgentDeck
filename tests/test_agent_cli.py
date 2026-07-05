@@ -144,6 +144,32 @@ def test_continue_returns_recovery_card_without_mutating_state(tmp_path, monkeyp
     assert StateStore(root).load() == state_before
 
 
+def test_continue_surfaces_provider_setup_when_configured_leader_is_not_ready(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["continue"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "provider_setup_required"
+    assert payload["reason"] == "configured Leader provider is not ready: deepseek"
+    assert payload["next_command"] == "agentdeck doctor"
+    assert payload["recommended_action"] == {
+        "label": "Inspect Leader provider setup",
+        "command": "agentdeck doctor",
+        "safety": "inspect",
+        "requires_explicit_user": False,
+        "source": "provider_health",
+        "target_id": "deepseek",
+    }
+    assert payload["leader_action"] is None
+    assert StateStore(root).load() == state_before
+
+
 def test_continue_refuses_invalid_project_view_before_printing(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
     original_asdict = cli.asdict
@@ -607,6 +633,40 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert state_after["replies"][0]["text"] == "status: completed"
     assert state_after["chat_turns"] == []
     assert state_after["leader_actions"] == []
+
+
+def test_workbench_surfaces_provider_setup_as_active_operator_source(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["recovery"]["status"] == "provider_setup_required"
+    assert payload["active_queue_source"] == "provider_health"
+    assert payload["queue_card"]["active_queue_source"] == "provider_health"
+    assert payload["queue_card"]["next_command"] == "agentdeck doctor"
+    assert payload["operator_card"] == {
+        "status": "provider_setup_required",
+        "reason": "configured Leader provider is not ready: deepseek",
+        "label": "Inspect Leader provider setup",
+        "command": "agentdeck doctor",
+        "next_command": "agentdeck doctor",
+        "safety": "inspect",
+        "requires_explicit_user": False,
+        "source": "provider_health",
+        "target_id": "deepseek",
+        "preview_command": "agentdeck doctor",
+        "active_queue_source": "provider_health",
+        "action_kind": "provider_health",
+        "can_apply": False,
+        "apply_command": None,
+        "explicit_command": "agentdeck doctor",
+        "blocker": None,
+    }
 
 
 def test_contract_approvals_discovers_schema_for_gui_clients(capsys) -> None:
@@ -1270,6 +1330,7 @@ def recovery_for_state(root: Path, state_patch: dict[str, object], capsys) -> di
 
 def test_status_recovery_matrix_for_gui_actions(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
 
     dispatch_recovery = recovery_for_state(
         root,

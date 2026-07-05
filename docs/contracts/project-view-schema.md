@@ -48,6 +48,12 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
 
 All ProjectView fields are read-only summaries. Commands that mutate state, send tmux input, dispatch work, or apply approvals must remain explicit commands with approval semantics.
 
+## Recovery
+
+`recovery` is the canonical next-step surface for humans, natural-language shells, and GUI clients. It prioritizes pending Leader actions, approved approvals, pending approvals, pending inbox items, and Leader errors before returning idle.
+
+When no state queue needs attention but the configured API-backed Leader provider is missing required local environment, `recovery.status` is `provider_setup_required`, `recovery.next_command` is `agentdeck doctor`, and `recovery.recommended_action.source` is `provider_health`. This is still read-only; it only guides the user toward setup diagnostics before a plan/chat call fails.
+
 ## Discovery Command
 
 Use `agentdeck contract project-view` to discover this contract from tools or GUI clients:

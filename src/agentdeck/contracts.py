@@ -1142,8 +1142,8 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
     elif "approval_card" in payload and approval_card is not None:
         errors.append("approval_card must be an object")
     source = payload.get("active_queue_source")
-    if source not in ("none", "leader_action", "inbox", "approval"):
-        errors.append("active_queue_source must be none, leader_action, inbox, or approval")
+    if source not in ("none", "leader_action", "inbox", "approval", "provider_health"):
+        errors.append("active_queue_source must be none, leader_action, inbox, approval, or provider_health")
     if source == "inbox" and not isinstance(inbox_card, dict):
         errors.append("inbox active queue requires inbox_card")
     if source == "approval" and not isinstance(approval_card, dict):

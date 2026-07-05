@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Surface provider setup in recovery
+
+- 扩展 ProjectView recovery：当没有 pending leader action、approval、inbox item 或 leader error，但配置的 API-backed Leader provider 缺少本地环境变量时，返回 `status=provider_setup_required`。
+- `agentdeck continue` 现在会在该状态下推荐 `agentdeck doctor`，`recommended_action.source=provider_health`，帮助用户先完成 provider setup，而不是直接触发会失败的 `leader plan/chat`。
+- `agentdeck workbench` 现在会把 `provider_health` 作为 `active_queue_source`，并在 `operator_card` 中暴露 `agentdeck doctor` 的 preview/explicit command，供 GUI/TUI 直接渲染 provider setup 操作面。
+- 更新 `docs/contracts/project-view-schema.md`、`docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 provider setup recovery 是只读诊断入口，不创建 plan/chat turn/approval/message/job/inbox，也不发送 tmux 输入。
+- 保持优先级边界：已有 leader action、approval、inbox 或 leader error 仍优先于 provider setup；provider ready 时空状态仍为 idle。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_continue_surfaces_provider_setup_when_configured_leader_is_not_ready tests/test_agent_cli.py::test_workbench_surfaces_provider_setup_as_active_operator_source -q` 最初显示 recovery 仍为 `idle`；实现后 provider setup 目标测试 2 项通过；`conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 148 项通过；`conda run -n agentdeck pytest -q` 163 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `continue-provider-setup-ok` 与 `workbench-provider-setup-ok`。
+
 ### Current - Use configured Leader provider by default
 
 - 将 `agentdeck leader plan` 与 `agentdeck leader chat` 的默认 provider/model 从硬编码 `fake/fake-plan` 改为读取 `.agentdeck/config.toml` 的 `[leader] provider/model`。
