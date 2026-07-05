@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Preview batch approval dispatch through Leader chat
+
+- 扩展 `agentdeck leader chat --message "派发所有已审批"` / `"dispatch all approvals"`：自然语言审批入口现在会返回 `dispatch_batch_preview_card`，把所有 approved approvals 映射成逐项 `dispatch_preview` item，并汇总 `count`、`ready_count`、`blocked_count`。
+- 保持安全边界：批量派发仍然只是 explicit-runtime 预览，顶层 `next_command=null`，不会自动连续 dispatch，不创建 message/job/inbox，不发送 tmux 输入；每个 item 仍复用单条 dispatch preview 的 runtime blocker 逻辑。
+- 同步 `agentdeck contract leader-chat`：新增 `dispatch_batch_preview_card_fields` 和 `dispatch_batch_preview_item_fields`，validator 会校验 batch card 的 count/ready_count/blocked_count 与 items 一致。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试，明确 GUI/自然语言壳可以把批量 dispatch 作为 checklist 渲染，而不是当成一个自动执行按钮。
+- 验证记录：已先确认红测失败，`派发所有已审批` 最初仍只推荐第一条 `agentdeck approval dispatch --approval-id ...`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_previews_all_approved_dispatches_without_dispatching tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching tests/test_leader_cli.py::test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned -q` 3 项通过；契约测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 4 项通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_previews_all_approved_dispatches_without_dispatching tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching tests/test_leader_cli.py::test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned tests/test_leader_cli.py::test_leader_chat_inspects_approval_queue_without_mutating_state tests/test_contracts.py::test_validate_leader_chat_contract_checks_dispatch_batch_preview_counts tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 8 项通过；`conda run -n agentdeck pytest -q` 256 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `batch-preview-smoke-ok approvals=2 ready=1 blocked=1 messages=0 jobs=0`。
+
 ### Current - Label observation intent controls by action
 
 - 调整 `agentdeck leader chat` 的只读 observation `intent_card.controls[]`：`查看 planner 输出`、`查看 planner inbox`、`追踪 planner 当前 inbox`、`追踪 msg_xxx` 的 next control 现在分别使用 `Capture agent output`、`Open inbox`、`Inspect trace`、`Inspect trace`。

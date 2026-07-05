@@ -2107,6 +2107,15 @@ def test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching
         "blocker": None,
     }
     assert payload["leader_explanation"]["action_kind"] == "approval_dispatch"
+    assert payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+
+    state_after = StateStore(root).load()
+    assert state_after["approvals"][0]["status"] == "approved"
+    assert state_after["chat_turns"][0]["action_kind"] == "approval_dispatch"
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+    assert state_after.get("inbox", {}) == {}
     assert payload["leader_explanation"]["recommended_action_id"] == approval_id
     assert payload["leader_explanation"]["action_status"] == "approved"
     assert payload["leader_explanation"]["safety"] == "explicit_runtime"
@@ -2156,12 +2165,77 @@ def test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned(
         "blocker": "agent is not spawned: planner",
     }
     assert payload["leader_explanation"]["action_kind"] == "approval_dispatch"
+
+
+def test_leader_chat_previews_all_approved_dispatches_without_dispatching(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "批量派发建议"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    planner_approval_id = approvals[0]["approval_id"]
+    coder_approval_id = approvals[1]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", planner_approval_id])
+    capsys.readouterr()
+    cli.main(["approval", "approve", "--approval-id", coder_approval_id])
+    capsys.readouterr()
+    bind_agent(root, "planner", "%42")
+
+    exit_code = cli.main(["leader", "chat", "--message", "派发所有已审批"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "approval"
+    assert payload["next_command"] is None
+    assert payload["dispatch_preview_card"] is None
+    batch_card = payload["dispatch_batch_preview_card"]
+    assert batch_card["mode"] == "dispatch_batch_preview"
+    assert batch_card["approval_command"] == "agentdeck approval list"
+    assert batch_card["count"] == 2
+    assert batch_card["ready_count"] == 1
+    assert batch_card["blocked_count"] == 1
+    assert batch_card["requires_explicit_user"] is True
+    assert batch_card["safety"] == "explicit_runtime"
+    assert batch_card["blocker"] == "some dispatch targets are blocked"
+    assert batch_card["items"][0]["approval_id"] == planner_approval_id
+    assert batch_card["items"][0]["agent_id"] == "planner"
+    assert batch_card["items"][0]["pane_id"] == "%42"
+    assert batch_card["items"][0]["blocker"] is None
+    assert batch_card["items"][1]["approval_id"] == coder_approval_id
+    assert batch_card["items"][1]["agent_id"] == "coder"
+    assert batch_card["items"][1]["pane_id"] is None
+    assert batch_card["items"][1]["blocker"] == "agent is not spawned: coder"
+    assert payload["intent_card"]["embedded_card"] == "dispatch_batch_preview_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect dispatch_batch_preview_card",
+        "command": "agentdeck approval list",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Next command",
+        "command": None,
+        "safety": "explicit_runtime",
+        "enabled": False,
+        "blocker": "next command unavailable",
+    }
+    assert payload["leader_explanation"]["action_kind"] == "approval_dispatch_batch"
+    assert payload["leader_explanation"]["recommended_action_id"] == "2 approvals"
+    assert payload["leader_explanation"]["action_status"] == "partially_blocked"
     assert payload["leader_explanation"]["safety"] == "explicit_runtime"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
 
     state_after = StateStore(root).load()
     assert state_after["approvals"][0]["status"] == "approved"
-    assert state_after["chat_turns"][0]["action_kind"] == "approval_dispatch"
+    assert state_after["approvals"][1]["status"] == "approved"
+    assert state_after["chat_turns"][0]["mode"] == "approval"
+    assert state_after["chat_turns"][0]["next_command"] is None
+    assert state_after["chat_turns"][0]["action_kind"] == "approval_dispatch_batch"
     assert state_after["messages"] == []
     assert state_after["jobs"] == []
     assert state_after.get("inbox", {}) == {}

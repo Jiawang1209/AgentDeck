@@ -20,6 +20,8 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "continue_card_fields": [],
   "capture_card_fields": [],
   "dispatch_preview_card_fields": [],
+  "dispatch_batch_preview_card_fields": [],
+  "dispatch_batch_preview_item_fields": [],
   "runtime_card_fields": [],
   "queue_card_fields": [],
   "operator_card_fields": [],
@@ -74,6 +76,7 @@ The review-mode response shape is:
   "continue_card": null,
   "capture_card": null,
   "dispatch_preview_card": null,
+  "dispatch_batch_preview_card": null,
   "inbox_card": null,
   "trace_card": null,
   "approval_card": null,
@@ -459,6 +462,24 @@ When approval-mode recommends dispatching an already approved item, it may also 
 
 `dispatch_preview_card` is not dispatch execution. It is an execution-before-confirmation surface for humans and GUI clients: it shows the target agent, role, pane, task, dispatch command, and mailbox command before the human runs the explicit command. If runtime is missing, `blocker` should explain why the explicit command is not ready, and the `intent_card.controls[]` `next` control must be disabled with the same blocker.
 
+When approval-mode recommends dispatching all approved items, it may include `dispatch_batch_preview_card` instead of a single `dispatch_preview_card`:
+
+```json
+{
+  "mode": "dispatch_batch_preview",
+  "approval_command": "agentdeck approval list",
+  "count": 2,
+  "ready_count": 1,
+  "blocked_count": 1,
+  "items": [],
+  "requires_explicit_user": true,
+  "safety": "explicit_runtime",
+  "blocker": "some dispatch targets are blocked"
+}
+```
+
+`items[]` must reuse `dispatch_preview_card_fields`. The batch card does not execute or imply automatic fan-out; it is a GUI-ready checklist of explicit `agentdeck approval dispatch --approval-id <id>` commands. The top-level `next_command` may be `null` because there is no single safe command that represents the whole batch. `validate_leader_chat_contract()` checks that `count`, `ready_count`, and `blocked_count` match the item list.
+
 Setup-mode responses are returned when the human asks to inspect `doctor`, provider setup, API key, or local environment readiness. They are read-only and do not call the configured Leader provider:
 
 ```json
@@ -523,7 +544,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat direct trace responses must embed `trace_card`, reusing the `agentdeck trace` contract for the requested communication id.
 - Chat capture-mode responses must embed `capture_card`, using the leader-chat `capture_card_fields` for the requested visible agent pane, and use an action-specific next label for recapturing visible output.
 - Chat approval-mode responses and safe apply-action responses that create approvals must reuse the `agentdeck approval list` queue contract through `approval_card`.
-- Chat approval dispatch recommendations may embed `dispatch_preview_card`, using `dispatch_preview_card_fields` to show the explicit runtime command target before any dispatch runs; when `dispatch_preview_card.blocker` is set, the intent next control must be disabled with the same blocker. Approval approve, reject, and dispatch intent next labels must be action-specific so GUI shells can render human approval controls without command parsing.
+- Chat approval dispatch recommendations may embed `dispatch_preview_card`, using `dispatch_preview_card_fields` to show the explicit runtime command target before any dispatch runs; when `dispatch_preview_card.blocker` is set, the intent next control must be disabled with the same blocker. Batch approval dispatch recommendations may embed `dispatch_batch_preview_card`, using `dispatch_batch_preview_card_fields` and `dispatch_batch_preview_item_fields` to show all approved items with per-item runtime blockers before any dispatch runs. Approval approve, reject, and dispatch intent next labels must be action-specific so GUI shells can render human approval controls without command parsing.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`. Plain runtime inspection recommends `agentdeck agent list` with `safety=inspect`; explicit refresh intents such as `刷新 runtime` may recommend `agentdeck agent refresh` with `safety=explicit_runtime` and `requires_explicit_user=true`; explicit spawn intents such as `启动 planner` may recommend `agentdeck agent spawn --agent <id>` with `safety=explicit_runtime` and `requires_explicit_user=true`; explicit send intents such as `发送给 planner：继续` may recommend `agentdeck agent send --agent <id> --text <text>` only when the target agent has a running pane; explicit stop intents such as `停止 planner` may recommend `agentdeck agent stop --agent <id>` only when the target agent has a running pane. Runtime explicit `intent_card.controls[]` next labels must be action-specific so GUI shells can render controls without command parsing. Runtime-mode must not spawn panes, refresh runtime, stop panes, read pane output, send tmux input, or fall back to provider-backed planning when a targeted runtime command cannot run.
 - Chat queue-mode responses must reuse the workbench queue and operator cards through `queue_card` and `operator_card`.
 - Chat role-mode responses must reuse the workbench role card through `role_card`.
@@ -533,4 +554,4 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, or `runtime_card` when `recovery.recommended_action.source` points at those queues or runtime recovery.
 - Chat setup-mode responses may include `provider_health` and must recommend `agentdeck doctor` without calling the provider.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `capture_card` as the selected visible pane snapshot surface, `dispatch_preview_card` as the explicit dispatch confirmation preview, `inbox_card` as the mailbox queue surface, `trace_card` as the selected inbox/message lineage evidence surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as safety/reason explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `capture_card` as the selected visible pane snapshot surface, `dispatch_preview_card` as the explicit dispatch confirmation preview, `dispatch_batch_preview_card` as the multi-approval dispatch checklist, `inbox_card` as the mailbox queue surface, `trace_card` as the selected inbox/message lineage evidence surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as safety/reason explanation.

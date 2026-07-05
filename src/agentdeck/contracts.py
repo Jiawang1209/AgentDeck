@@ -366,6 +366,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "continue_card",
     "capture_card",
     "dispatch_preview_card",
+    "dispatch_batch_preview_card",
     "inbox_card",
     "trace_card",
     "approval_card",
@@ -414,6 +415,18 @@ LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS = (
     "dispatch_command",
     "approval_command",
     "inbox_command",
+    "requires_explicit_user",
+    "safety",
+    "blocker",
+)
+
+LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS = (
+    "mode",
+    "approval_command",
+    "count",
+    "ready_count",
+    "blocked_count",
+    "items",
     "requires_explicit_user",
     "safety",
     "blocker",
@@ -957,6 +970,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "capture_card_fields": list(LEADER_CHAT_CAPTURE_CARD_FIELDS),
         "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
+        "dispatch_batch_preview_card_fields": list(LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS),
+        "dispatch_batch_preview_item_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
@@ -999,6 +1014,12 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_leader_action_card_fields"] = list(example["leader_action_card"])
         payload["example_continue_card_fields"] = list(example["continue_card"])
         payload["example_dispatch_preview_card_fields"] = list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
+        payload["example_dispatch_batch_preview_card_fields"] = list(
+            LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS
+        )
+        payload["example_dispatch_batch_preview_item_fields"] = list(
+            LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS
+        )
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
         payload["example_operator_card_fields"] = list(example["operator_card"])
@@ -2010,6 +2031,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_leader_chat_dispatch_preview_card_contract(errors, dispatch_preview_card)
     elif "dispatch_preview_card" in payload and dispatch_preview_card is not None:
         errors.append("dispatch_preview_card must be an object")
+    dispatch_batch_preview_card = payload.get("dispatch_batch_preview_card")
+    if isinstance(dispatch_batch_preview_card, dict):
+        _validate_leader_chat_dispatch_batch_preview_card_contract(errors, dispatch_batch_preview_card)
+    elif "dispatch_batch_preview_card" in payload and dispatch_batch_preview_card is not None:
+        errors.append("dispatch_batch_preview_card must be an object")
     leader_action_card = payload.get("leader_action_card")
     leader_action = payload.get("leader_action")
     if isinstance(leader_action_card, dict):
@@ -2144,6 +2170,37 @@ def _validate_leader_chat_dispatch_preview_card_contract(
         errors.append("dispatch_preview_card.requires_explicit_user must be true")
     if dispatch_preview_card.get("safety") != "explicit_runtime":
         errors.append("dispatch_preview_card.safety must be explicit_runtime")
+
+
+def _validate_leader_chat_dispatch_batch_preview_card_contract(
+    errors: list[str], dispatch_batch_preview_card: dict[str, object]
+) -> None:
+    for field in LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS:
+        if field not in dispatch_batch_preview_card:
+            errors.append(f"missing dispatch_batch_preview_card field: {field}")
+    if dispatch_batch_preview_card.get("mode") != "dispatch_batch_preview":
+        errors.append("dispatch_batch_preview_card.mode must be dispatch_batch_preview")
+    if dispatch_batch_preview_card.get("requires_explicit_user") is not True:
+        errors.append("dispatch_batch_preview_card.requires_explicit_user must be true")
+    if dispatch_batch_preview_card.get("safety") != "explicit_runtime":
+        errors.append("dispatch_batch_preview_card.safety must be explicit_runtime")
+    items = dispatch_batch_preview_card.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                _validate_leader_chat_dispatch_preview_card_contract(errors, item)
+            else:
+                errors.append("dispatch_batch_preview_card.items items must be objects")
+        if isinstance(dispatch_batch_preview_card.get("count"), int) and dispatch_batch_preview_card["count"] != len(items):
+            errors.append("dispatch_batch_preview_card.count must match items length")
+        ready_count = sum(1 for item in items if isinstance(item, dict) and not item.get("blocker"))
+        blocked_count = sum(1 for item in items if isinstance(item, dict) and item.get("blocker"))
+        if dispatch_batch_preview_card.get("ready_count") != ready_count:
+            errors.append("dispatch_batch_preview_card.ready_count must match unblocked items")
+        if dispatch_batch_preview_card.get("blocked_count") != blocked_count:
+            errors.append("dispatch_batch_preview_card.blocked_count must match blocked items")
+    elif "items" in dispatch_batch_preview_card:
+        errors.append("dispatch_batch_preview_card.items must be a list")
 
 
 def _validate_control_registry_card_contract(errors: list[str], control_registry_card: dict[str, object]) -> None:
@@ -2810,6 +2867,7 @@ def leader_chat_example() -> dict[str, object]:
         "continue_card": continue_card,
         "capture_card": None,
         "dispatch_preview_card": None,
+        "dispatch_batch_preview_card": None,
         "inbox_card": None,
         "trace_card": None,
         "approval_card": None,

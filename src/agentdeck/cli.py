@@ -79,6 +79,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "continue_card",
         "capture_card",
         "dispatch_preview_card",
+        "dispatch_batch_preview_card",
         "trace_card",
         "inbox_card",
         "approval_card",
@@ -196,6 +197,14 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
             else None
         )
         return str(command) if command else None
+    if embedded_card == "dispatch_batch_preview_card":
+        dispatch_batch_preview_card = payload.get("dispatch_batch_preview_card")
+        command = (
+            dispatch_batch_preview_card.get("approval_command")
+            if isinstance(dispatch_batch_preview_card, dict)
+            else None
+        )
+        return str(command) if command else None
     if embedded_card == "ledger_card":
         return "agentdeck workbench"
     if embedded_card == "trace_card":
@@ -251,6 +260,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("trace_card", None)
     payload.setdefault("capture_card", None)
     payload.setdefault("dispatch_preview_card", None)
+    payload.setdefault("dispatch_batch_preview_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -2578,6 +2588,13 @@ def _chat_wants_approval_dispatch(message: str) -> bool:
     return any(token in normalized for token in ["dispatch", "派发", "发送", "执行审批"])
 
 
+def _chat_wants_approval_dispatch_all(message: str) -> bool:
+    normalized = message.strip().lower()
+    wants_dispatch = _chat_wants_approval_dispatch(normalized)
+    wants_many = any(token in normalized for token in ["all", "batch", "所有", "全部", "批量"])
+    return wants_dispatch and wants_many
+
+
 def _pending_approval_item(approval_card: dict[str, object]) -> dict[str, object] | None:
     approvals = approval_card.get("approvals")
     if not isinstance(approvals, list):
@@ -2596,6 +2613,13 @@ def _approved_approval_item(approval_card: dict[str, object]) -> dict[str, objec
         if isinstance(approval, dict) and approval.get("status") == "approved":
             return approval
     return None
+
+
+def _approved_approval_items(approval_card: dict[str, object]) -> list[dict[str, object]]:
+    approvals = approval_card.get("approvals")
+    if not isinstance(approvals, list):
+        return []
+    return [approval for approval in approvals if isinstance(approval, dict) and approval.get("status") == "approved"]
 
 
 def _approval_dispatch_preview_card(
@@ -2632,6 +2656,27 @@ def _approval_dispatch_preview_card(
     }
 
 
+def _approval_dispatch_batch_preview_card(
+    approvals: list[dict[str, object]],
+    config: ProjectConfig,
+    store: StateStore,
+) -> dict[str, object]:
+    items = [_approval_dispatch_preview_card(approval, config, store) for approval in approvals]
+    blocked_count = sum(1 for item in items if item.get("blocker"))
+    ready_count = len(items) - blocked_count
+    return {
+        "mode": "dispatch_batch_preview",
+        "approval_command": "agentdeck approval list",
+        "count": len(items),
+        "ready_count": ready_count,
+        "blocked_count": blocked_count,
+        "items": items,
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": "some dispatch targets are blocked" if blocked_count else None,
+    }
+
+
 def _inbox_head_item(inbox_card: dict[str, object]) -> dict[str, object] | None:
     head_inbox_id = inbox_card.get("head_inbox_id")
     items = inbox_card.get("items")
@@ -2657,6 +2702,7 @@ def _leader_chat_explanation(
     trace_card: dict[str, object] | None = None,
     approval_card: dict[str, object] | None = None,
     approval_action_kind: str | None = None,
+    dispatch_batch_preview_card: dict[str, object] | None = None,
 ) -> dict[str, object]:
     recovery = project_view.get("recovery")
     recovery_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
@@ -2929,6 +2975,28 @@ def _leader_chat_explanation(
     if mode == "approval":
         pending = _pending_approval_item(approval_card) if isinstance(approval_card, dict) else None
         approved = _approved_approval_item(approval_card) if isinstance(approval_card, dict) else None
+        if approval_action_kind == "approval_dispatch_batch":
+            count = (
+                dispatch_batch_preview_card.get("count")
+                if isinstance(dispatch_batch_preview_card, dict)
+                else len(_approved_approval_items(approval_card)) if isinstance(approval_card, dict) else 0
+            )
+            blocked_count = (
+                dispatch_batch_preview_card.get("blocked_count")
+                if isinstance(dispatch_batch_preview_card, dict)
+                else 0
+            )
+            return {
+                "mode": mode,
+                "summary": "Leader previews all approved approval dispatches without mutating runtime state.",
+                "reason": "human asked to dispatch all approved approvals",
+                "next_command": next_command,
+                "recommended_action_id": f"{count} approvals",
+                "action_kind": "approval_dispatch_batch",
+                "action_status": "partially_blocked" if blocked_count else "ready",
+                "safety": "explicit_runtime",
+                "requires_explicit_user": True,
+            }
         selected = approved if approval_action_kind == "approval_dispatch" else pending
         approval_id = selected.get("approval_id") if isinstance(selected, dict) else None
         safety = (
@@ -3779,10 +3847,15 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             return 1
         pending_approval = _pending_approval_item(approval_card)
         approved_approval = _approved_approval_item(approval_card)
+        approved_approvals = _approved_approval_items(approval_card)
         wants_approve = _chat_wants_approval_approve(args.message)
         wants_reject = _chat_wants_approval_reject(args.message)
         wants_dispatch = _chat_wants_approval_dispatch(args.message)
+        wants_dispatch_all = _chat_wants_approval_dispatch_all(args.message)
         next_command = (
+            None
+            if wants_dispatch_all and approved_approvals
+            else
             approved_approval.get("dispatch_command")
             if wants_dispatch
             and isinstance(approved_approval, dict)
@@ -3794,6 +3867,9 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             else "agentdeck approval list"
         )
         approval_action_kind = (
+            "approval_dispatch_batch"
+            if wants_dispatch_all and approved_approvals
+            else
             "approval_dispatch"
             if wants_dispatch and isinstance(approved_approval, dict)
             else "approval_reject"
@@ -3805,6 +3881,11 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         dispatch_preview_card = (
             _approval_dispatch_preview_card(approved_approval, config, store)
             if approval_action_kind == "approval_dispatch" and isinstance(approved_approval, dict)
+            else None
+        )
+        dispatch_batch_preview_card = (
+            _approval_dispatch_batch_preview_card(approved_approvals, config, store)
+            if approval_action_kind == "approval_dispatch_batch"
             else None
         )
         turn = store.record_chat_turn(
@@ -3843,6 +3924,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 project_view=refreshed_project_view,
                 approval_card=approval_card,
                 approval_action_kind=approval_action_kind,
+                dispatch_batch_preview_card=dispatch_batch_preview_card,
             ),
             "plan_id": None,
             "review": None,
@@ -3852,6 +3934,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": None,
             "inbox_card": None,
             "dispatch_preview_card": dispatch_preview_card,
+            "dispatch_batch_preview_card": dispatch_batch_preview_card,
             "approval_card": approval_card,
             "runtime_card": None,
             "queue_card": None,

@@ -1458,6 +1458,46 @@ def test_validate_leader_chat_contract_requires_action_card_when_action_is_prese
     }
 
 
+def test_validate_leader_chat_contract_checks_dispatch_batch_preview_counts() -> None:
+    payload = leader_chat_example()
+    payload["dispatch_batch_preview_card"] = {
+        "mode": "dispatch_batch_preview",
+        "approval_command": "agentdeck approval list",
+        "count": 2,
+        "ready_count": 2,
+        "blocked_count": 0,
+        "items": [
+            {
+                "approval_id": "apv_one",
+                "agent_id": "planner",
+                "agent_role": "planning",
+                "pane_id": "%42",
+                "runtime_status": "running",
+                "task": "Plan the work",
+                "dispatch_command": "agentdeck approval dispatch --approval-id apv_one",
+                "approval_command": "agentdeck approval list",
+                "inbox_command": "agentdeck inbox --agent planner",
+                "requires_explicit_user": True,
+                "safety": "explicit_runtime",
+                "blocker": None,
+            }
+        ],
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": None,
+    }
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "dispatch_batch_preview_card.count must match items length",
+            "dispatch_batch_preview_card.ready_count must match unblocked items",
+        ],
+    }
+
+
 def test_validate_leader_chat_contract_reuses_continue_card_validator() -> None:
     payload = leader_chat_example()
     del payload["continue_card"]["pending"]["leader_errors"]
