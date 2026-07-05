@@ -43,6 +43,7 @@ from agentdeck.contracts import (
     WORKBENCH_AUDIT_CARD_FIELDS,
     WORKBENCH_CHANGE_SUMMARY_FIELDS,
     WORKBENCH_CONTRACTS_CARD_FIELDS,
+    WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS,
     WORKBENCH_LEADER_CARD_FIELDS,
     WORKBENCH_LEADER_CONTROL_FIELDS,
     WORKBENCH_LEDGER_CARD_FIELDS,
@@ -540,6 +541,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["audit_card_fields"] == list(WORKBENCH_AUDIT_CARD_FIELDS)
     assert payload["contracts_card_fields"] == list(WORKBENCH_CONTRACTS_CARD_FIELDS)
     assert payload["change_summary_fields"] == list(WORKBENCH_CHANGE_SUMMARY_FIELDS)
+    assert payload["control_registry_item_fields"] == list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
     assert payload["example"] is True
     assert payload["example_workbench"] == example
     assert payload["example_snapshot_fields"] == payload["snapshot_fields"]
@@ -560,6 +562,26 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["leader_card"]["controls"][0]["blocker"] == "requires message text"
     assert example["leader_card"]["controls"][2]["enabled"] is False
     assert example["leader_card"]["controls"][2]["blocker"] == "requires plan_id"
+    assert set(example["control_registry"][0]) == set(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
+    assert example["control_registry"][0] == {
+        "scope": "leader",
+        "card": "leader_card",
+        "kind": "chat",
+        "label": "Ask Leader",
+        "command": "agentdeck leader chat --message <text>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires message text",
+        "agent_id": "leader",
+    }
+    assert {
+        (item["scope"], item["card"], item["kind"], item["agent_id"])
+        for item in example["control_registry"]
+    } >= {
+        ("leader", "leader_card", "continue", "leader"),
+        ("runtime", "runtime_card", "capture", "planner"),
+        ("operator", "operator_card", "apply", None),
+    }
     assert set(example["provider_health"]) == set(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)
@@ -645,6 +667,15 @@ def test_validate_workbench_contract_requires_leader_control_fields() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing leader control field: safety"]}
+
+
+def test_validate_workbench_contract_requires_control_registry_item_fields() -> None:
+    payload = workbench_example()
+    del payload["control_registry"][0]["scope"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing control_registry item field: scope"]}
 
 
 def test_validate_workbench_contract_requires_provider_health_fields() -> None:

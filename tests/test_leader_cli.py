@@ -857,6 +857,19 @@ def test_leader_chat_opens_workbench_snapshot_without_mutating_state(tmp_path, m
     assert payload["workbench_card"]["ledger_card"]["messages"]["count"] == 0
     assert payload["workbench_card"]["queue_card"]["active_queue_source"] == "none"
     assert payload["workbench_card"]["operator_card"]["preview_command"] == "agentdeck status"
+    assert payload["workbench_card"]["operator_card"]["controls"][1] == {
+        "kind": "explicit",
+        "label": "Run explicit command",
+        "command": None,
+        "safety": None,
+        "enabled": False,
+        "blocker": "no explicit command available",
+    }
+    assert not [
+        item
+        for item in payload["workbench_card"]["control_registry"]
+        if item["enabled"] is False and not item["blocker"]
+    ]
     assert payload["workbench_card"]["contracts_card"]["workbench_contract"] == "agentdeck contract workbench"
     assert payload["leader_explanation"]["mode"] == "workbench"
     assert payload["leader_explanation"]["action_kind"] == "workbench"

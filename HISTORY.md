@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Add workbench control registry
+
+- 扩展 `agentdeck workbench`：新增只读 `control_registry[]`，把 `leader_card.controls[]`、`runtime_card.agents[].controls[]` 和 `operator_card.controls[]` 汇总成 GUI/TUI 可直接渲染的命令面板索引。
+- 每个 registry item 保留 `scope`、`card`、`kind`、`label`、`command`、`safety`、`enabled`、`blocker`、`agent_id`，不新增执行路径，不绕过原 control 的 safety/blocker，也不成为第二套状态源。
+- `agentdeck contract workbench` 新增 `control_registry_item_fields`，并同步 workbench example、live `_workbench_snapshot_payload()`、validator、README、workbench schema、CLAUDE.md、AGENT.md 和测试。
+- 完整验证：已先确认红测失败，`WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS` 最初不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_control_registry_item_fields -q` 4 项通过；修复 Leader chat workbench 嵌入时发现 idle operator explicit control disabled 却缺 blocker，并用 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_opens_workbench_snapshot_without_mutating_state tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_control_registry_item_fields -q` 覆盖，5 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 210 项通过；`conda run -n agentdeck pytest -q` 225 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `workbench-control-registry-smoke-ok`。
+
 ### Current - Add Leader controls to workbench leader card
 
 - 扩展 workbench `leader_card`：新增 GUI-ready `controls[]`，覆盖 chat、continue、review、actions、status 五类 Leader 入口。

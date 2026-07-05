@@ -382,21 +382,30 @@ def _workbench_snapshot_payload(
     recovery = project_view.get("recovery", {})
     active_queue_source = _active_queue_source(project_view)
     leader_action = continue_card.get("leader_action")
-    return {
+    leader_card = _workbench_leader_card(project_view)
+    provider_health = _workbench_provider_health(project_view)
+    runtime_card = _workbench_runtime_card(project_view)
+    role_card = _workbench_role_card(project_view)
+    ledger_card = _workbench_ledger_card(project_view)
+    queue_card = _workbench_queue_card(project_view, continue_card, active_queue_source)
+    operator_card = _workbench_operator_card(project_view, continue_card, active_queue_source)
+    audit_card = _workbench_audit_card(project_view)
+    contracts_card = _workbench_contracts_card()
+    payload = {
         "ok": True,
         "mode": "workbench",
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view": project_view,
         "leader_actions": project_view.get("leader_actions"),
-        "leader_card": _workbench_leader_card(project_view),
-        "provider_health": _workbench_provider_health(project_view),
-        "runtime_card": _workbench_runtime_card(project_view),
-        "role_card": _workbench_role_card(project_view),
-        "ledger_card": _workbench_ledger_card(project_view),
-        "queue_card": _workbench_queue_card(project_view, continue_card, active_queue_source),
-        "operator_card": _workbench_operator_card(project_view, continue_card, active_queue_source),
-        "audit_card": _workbench_audit_card(project_view),
-        "contracts_card": _workbench_contracts_card(),
+        "leader_card": leader_card,
+        "provider_health": provider_health,
+        "runtime_card": runtime_card,
+        "role_card": role_card,
+        "ledger_card": ledger_card,
+        "queue_card": queue_card,
+        "operator_card": operator_card,
+        "audit_card": audit_card,
+        "contracts_card": contracts_card,
         "recovery": recovery,
         "next_command": continue_card.get("next_command"),
         "continue_card": continue_card,
@@ -404,9 +413,71 @@ def _workbench_snapshot_payload(
         "inbox_card": inbox_card,
         "approval_card": approval_card,
         "leader_action": leader_action if isinstance(leader_action, dict) else None,
+        "control_registry": [],
         "change_summary": _workbench_change_summary(store, since_event_id),
     }
+    payload["control_registry"] = _workbench_control_registry(payload)
+    return payload
 
+
+def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, object]]:
+    registry: list[dict[str, object]] = []
+    leader_card = payload.get("leader_card") if isinstance(payload.get("leader_card"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry,
+        scope="leader",
+        card="leader_card",
+        agent_id=leader_card.get("agent_id") or "leader",
+        controls=leader_card.get("controls"),
+    )
+    runtime_card = payload.get("runtime_card") if isinstance(payload.get("runtime_card"), dict) else {}
+    runtime_agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
+    for agent in runtime_agents:
+        if isinstance(agent, dict):
+            _append_workbench_control_registry_items(
+                registry,
+                scope="runtime",
+                card="runtime_card",
+                agent_id=agent.get("agent_id"),
+                controls=agent.get("controls"),
+            )
+    operator_card = payload.get("operator_card") if isinstance(payload.get("operator_card"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry,
+        scope="operator",
+        card="operator_card",
+        agent_id=None,
+        controls=operator_card.get("controls"),
+    )
+    return registry
+
+
+def _append_workbench_control_registry_items(
+    registry: list[dict[str, object]],
+    *,
+    scope: str,
+    card: str,
+    agent_id: object,
+    controls: object,
+) -> None:
+    if not isinstance(controls, list):
+        return
+    for control in controls:
+        if not isinstance(control, dict):
+            continue
+        registry.append(
+            {
+                "scope": scope,
+                "card": card,
+                "kind": control.get("kind"),
+                "label": control.get("label"),
+                "command": control.get("command"),
+                "safety": control.get("safety"),
+                "enabled": control.get("enabled"),
+                "blocker": control.get("blocker"),
+                "agent_id": agent_id,
+            }
+        )
 
 def _workbench_change_summary(store: StateStore, since_event_id: str | None) -> dict[str, object]:
     events = store.list_events(1000000)
@@ -723,7 +794,7 @@ def _workbench_operator_controls(
             "command": explicit_command,
             "safety": safety,
             "enabled": explicit_command is not None,
-            "blocker": None,
+            "blocker": None if explicit_command is not None else "no explicit command available",
         }
     )
     return controls

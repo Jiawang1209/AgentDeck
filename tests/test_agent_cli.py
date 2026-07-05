@@ -624,6 +624,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "inbox_card",
         "approval_card",
         "leader_action",
+        "control_registry",
         "change_summary",
     ]
     assert payload["leader_card_fields"] == [
@@ -752,6 +753,17 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "has_new_events",
         "new_event_count",
         "new_events",
+    ]
+    assert payload["control_registry_item_fields"] == [
+        "scope",
+        "card",
+        "kind",
+        "label",
+        "command",
+        "safety",
+        "enabled",
+        "blocker",
+        "agent_id",
     ]
     assert payload["project_view_contract"] == "agentdeck contract project-view"
     assert payload["continue_contract"] == "agentdeck contract continue"
@@ -1057,6 +1069,25 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "apply_command": None,
         "explicit_command": "agentdeck inbox --agent planner",
         "blocker": None,
+    }
+    assert payload["control_registry"][0] == {
+        "scope": "leader",
+        "card": "leader_card",
+        "kind": "chat",
+        "label": "Ask Leader",
+        "command": "agentdeck leader chat --message <text>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires message text",
+        "agent_id": "leader",
+    }
+    assert {
+        (item["scope"], item["card"], item["kind"], item["agent_id"])
+        for item in payload["control_registry"]
+    } >= {
+        ("leader", "leader_card", "continue", "leader"),
+        ("runtime", "runtime_card", "capture", "planner"),
+        ("operator", "operator_card", "explicit", None),
     }
     assert payload["audit_card"]["latest_event"] == payload["recovery"]["latest_event"]
     assert payload["audit_card"]["latest_event"]["event_type"] == "workbench_second_event"

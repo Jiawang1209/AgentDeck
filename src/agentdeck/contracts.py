@@ -404,6 +404,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "inbox_card",
     "approval_card",
     "leader_action",
+    "control_registry",
     "change_summary",
 )
 
@@ -477,6 +478,18 @@ WORKBENCH_RUNTIME_CONTROL_FIELDS = (
     "safety",
     "enabled",
     "blocker",
+)
+
+WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS = (
+    "scope",
+    "card",
+    "kind",
+    "label",
+    "command",
+    "safety",
+    "enabled",
+    "blocker",
+    "agent_id",
 )
 
 AGENT_RUNTIME_AGENT_ITEM_FIELDS = (
@@ -1113,6 +1126,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
         "contracts_card_fields": list(WORKBENCH_CONTRACTS_CARD_FIELDS),
         "change_summary_fields": list(WORKBENCH_CHANGE_SUMMARY_FIELDS),
+        "control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
         "continue_contract": "agentdeck contract continue",
@@ -1923,6 +1937,21 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("leader_card.controls must be a list")
     elif "leader_card" in payload:
         errors.append("leader_card must be an object")
+    control_registry = payload.get("control_registry")
+    if isinstance(control_registry, list):
+        for item in control_registry:
+            if not isinstance(item, dict):
+                errors.append("control_registry items must be objects")
+                continue
+            for field in WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS:
+                if field not in item:
+                    errors.append(f"missing control_registry item field: {field}")
+            if "enabled" in item and not isinstance(item.get("enabled"), bool):
+                errors.append("control_registry item enabled must be a boolean")
+            if item.get("enabled") is False and not item.get("blocker"):
+                errors.append("disabled control_registry item requires blocker")
+    elif "control_registry" in payload:
+        errors.append("control_registry must be a list")
     provider_health = payload.get("provider_health")
     if isinstance(provider_health, dict):
         for field in WORKBENCH_PROVIDER_HEALTH_FIELDS:
@@ -2500,12 +2529,72 @@ def runtime_agent_controls(agent_id: str, running: bool) -> list[dict[str, objec
     ]
 
 
+def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, object]]:
+    registry: list[dict[str, object]] = []
+    leader_card = payload.get("leader_card") if isinstance(payload.get("leader_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="leader",
+        card="leader_card",
+        agent_id=str(leader_card.get("agent_id", "leader")),
+        controls=leader_card.get("controls"),
+    )
+    runtime_card = payload.get("runtime_card") if isinstance(payload.get("runtime_card"), dict) else {}
+    runtime_agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
+    for agent in runtime_agents:
+        if isinstance(agent, dict):
+            _append_control_registry_items(
+                registry,
+                scope="runtime",
+                card="runtime_card",
+                agent_id=agent.get("agent_id"),
+                controls=agent.get("controls"),
+            )
+    operator_card = payload.get("operator_card") if isinstance(payload.get("operator_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="operator",
+        card="operator_card",
+        agent_id=None,
+        controls=operator_card.get("controls"),
+    )
+    return registry
+
+
+def _append_control_registry_items(
+    registry: list[dict[str, object]],
+    *,
+    scope: str,
+    card: str,
+    agent_id: object,
+    controls: object,
+) -> None:
+    if not isinstance(controls, list):
+        return
+    for control in controls:
+        if not isinstance(control, dict):
+            continue
+        registry.append(
+            {
+                "scope": scope,
+                "card": card,
+                "kind": control.get("kind"),
+                "label": control.get("label"),
+                "command": control.get("command"),
+                "safety": control.get("safety"),
+                "enabled": control.get("enabled"),
+                "blocker": control.get("blocker"),
+                "agent_id": agent_id,
+            }
+        )
+
+
 def workbench_example() -> dict[str, object]:
     project_view = project_view_example()
     leader_action = project_view["leader_actions"]["items"][0]
     recovery = project_view["recovery"]
     recommended_action = recovery["recommended_action"]
-    return {
+    payload = {
         "ok": True,
         "mode": "workbench",
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -2777,6 +2866,7 @@ def workbench_example() -> dict[str, object]:
         "inbox_card": None,
         "approval_card": None,
         "leader_action": leader_action,
+        "control_registry": [],
         "change_summary": {
             "since_event_id": None,
             "latest_event_id": recovery["latest_event"]["event_id"],
@@ -2785,6 +2875,8 @@ def workbench_example() -> dict[str, object]:
             "new_events": [],
         },
     }
+    payload["control_registry"] = workbench_control_registry(payload)
+    return payload
 
 
 def agent_runtime_example() -> dict[str, object]:

@@ -32,7 +32,8 @@ The contract command returns:
   "operator_card_fields": [],
   "audit_card_fields": [],
   "contracts_card_fields": [],
-  "change_summary_fields": []
+  "change_summary_fields": [],
+  "control_registry_item_fields": []
 }
 ```
 
@@ -154,6 +155,10 @@ Without `--since-event`, `since_event_id` is `null`, `latest_event_id` still ref
 ```
 
 The card never exposes API keys and does not call the provider. `api_backed` only indicates that the configured provider is not the local `fake` provider. `controls[]` uses `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` so GUI clients can render Leader entry points without deriving buttons from command strings. `chat` and `review` controls are disabled templates until a GUI or user supplies message text or a plan id; `continue`, `actions`, and `status` are read-only inspect controls. `review_command_template` requires a concrete plan id and must not be treated as permission to review, approve, dispatch, or capture automatically.
+
+## Control Registry
+
+`control_registry[]` is a flattened, read-only command palette index derived from existing card controls. Each item uses `scope`, `card`, `kind`, `label`, `command`, `safety`, `enabled`, `blocker`, and `agent_id`. It currently indexes `leader_card.controls[]`, every `runtime_card.agents[].controls[]`, and `operator_card.controls[]`. Clients may render this as a command palette or toolbar, but it is not a second state source and does not grant permission beyond each item's `safety`, `enabled`, and `blocker`.
 
 ## Provider Health
 
