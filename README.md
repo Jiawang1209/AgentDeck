@@ -80,6 +80,7 @@ agentdeck leader chat --message "查看账本"
 agentdeck leader chat --message "查看角色"
 agentdeck leader chat --message "查看队列"
 agentdeck leader chat --message "查看 runtime"
+agentdeck leader chat --message "启动 planner"
 agentdeck leader chat --message "查看 planner 输出"
 agentdeck leader chat --message "查看 planner inbox"
 agentdeck leader chat --message "追踪 planner 当前 inbox"
@@ -309,6 +310,8 @@ agentdeck leader chat --message "打开工作台"
 agentdeck leader chat --message "查看账本"
 agentdeck leader chat --message "查看角色"
 agentdeck leader chat --message "查看队列"
+agentdeck leader chat --message "查看 runtime"
+agentdeck leader chat --message "启动 planner"
 agentdeck leader chat --message "查看 planner inbox"
 agentdeck leader chat --message "追踪 planner 当前 inbox"
 agentdeck leader chat --message "确认 planner 当前 inbox"
@@ -360,7 +363,7 @@ agentdeck plan status --plan-id pln_xxx
 
 当人类输入 `agentdeck leader chat --message "检查 Leader provider 配置"`、`"doctor"`、`"诊断环境变量"` 这类 setup/diagnostics 意图时，chat 会进入只读 `mode=setup`：它返回 `provider_health`、`recovery`、`next_command=agentdeck doctor` 和 `leader_explanation`，不会调用配置的 Leader provider，也不会创建 plan、leader action、approval、message、job、inbox 或发送 tmux 输入。`provider_health` 与 workbench provider health 使用同一组字段，包含当前 Leader 的 agent_id、provider、model、approval_mode、api_backed、supported、ready、missing_env、detail、doctor_command、doctor_contract 和 setup_commands；`agentdeck contract doctor` 也会公开 workbench、Leader chat 和 Leader review contract 入口，供 GUI setup 页面直接跳转到主要控制面契约；`setup_commands` 只能是可复制后由人类自行编辑的 placeholder export 命令，只暴露缺失 env 名称，不暴露密钥值。
 
-当人类输入 `agentdeck leader chat --message "查看 runtime"`、`"查看终端"`、`"查看智能体"` 或包含 `tmux` / `pane` 的 runtime 意图时，chat 会进入只读 `mode=runtime`：它返回复用 workbench runtime 投影的 `runtime_card`，并建议 `agentdeck agent list`。`runtime_card` 包含每个 agent 的 runtime status、pane_id、session_name、cwd、refresh/spawn/capture/send/stop/inbox 命令和 `controls[]`，方便 GUI 或自然语言壳直接渲染终端控制面。该模式只记录 chat turn，不创建 plan、leader action、approval、message、job、inbox，也不执行 refresh、spawn、stop、capture 或发送 tmux 输入。
+当人类输入 `agentdeck leader chat --message "查看 runtime"`、`"查看终端"`、`"查看智能体"` 或包含 `tmux` / `pane` 的 runtime 意图时，chat 会进入只读 `mode=runtime`：它返回复用 workbench runtime 投影的 `runtime_card`，并建议 `agentdeck agent list`。当人类明确输入 `"启动 planner"`、`"开启 coder"` 或 `"spawn reviewer"` 这类启动某个 agent 的意图时，chat 仍进入 `mode=runtime` 并嵌入同一张 `runtime_card`，但 `next_command` 和 `intent_card.controls[]` 会指向显式 `agentdeck agent spawn --agent <id>`，`leader_explanation.safety=explicit_runtime` 且 `requires_explicit_user=true`。`runtime_card` 包含每个 agent 的 runtime status、pane_id、session_name、cwd、refresh/spawn/capture/send/stop/inbox 命令和 `controls[]`，方便 GUI 或自然语言壳直接渲染终端控制面。该模式只记录 chat turn，不创建 plan、leader action、approval、message、job、inbox，也不执行 refresh、spawn、stop、capture 或发送 tmux 输入。
 
 当人类输入 `agentdeck leader chat --message "查看 planner 输出"`、`"capture planner output"` 或其他明确查看某个 agent pane 输出的意图时，chat 会进入只读 `mode=capture`：它读取已 spawn 的 tmux pane，返回 `capture_card`，包含 agent_id、pane_id、lines、capture_command 和 output，并建议同一条 `agentdeck agent capture --agent <id> --lines 200`。该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture-reply、不发送 tmux 输入；未 spawn 的 agent 会返回 `agent is not spawned: <id>`，不会落入 provider-backed planning。
 

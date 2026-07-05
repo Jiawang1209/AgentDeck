@@ -524,7 +524,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat capture-mode responses must embed `capture_card`, using the leader-chat `capture_card_fields` for the requested visible agent pane.
 - Chat approval-mode responses and safe apply-action responses that create approvals must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Chat approval dispatch recommendations may embed `dispatch_preview_card`, using `dispatch_preview_card_fields` to show the explicit runtime command target before any dispatch runs; when `dispatch_preview_card.blocker` is set, the intent next control must be disabled with the same blocker.
-- Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.
+- Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`. Plain runtime inspection recommends `agentdeck agent list` with `safety=inspect`; explicit spawn intents such as `启动 planner` may recommend `agentdeck agent spawn --agent <id>` with `safety=explicit_runtime` and `requires_explicit_user=true`, but must not spawn panes, refresh runtime, read pane output, or send tmux input.
 - Chat queue-mode responses must reuse the workbench queue and operator cards through `queue_card` and `operator_card`.
 - Chat role-mode responses must reuse the workbench role card through `role_card`.
 - Chat ledger-mode responses must reuse the workbench ledger and lineage cards through `ledger_card` and `lineage_card`.

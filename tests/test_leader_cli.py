@@ -691,6 +691,95 @@ def test_leader_chat_inspects_runtime_without_mutating_state(tmp_path, monkeypat
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_suggests_agent_spawn_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["leader", "chat", "--message", "启动 planner"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "runtime"
+    assert payload["message"] == "启动 planner"
+    assert payload["next_command"] == "agentdeck agent spawn --agent planner"
+    assert payload["runtime_card"]["agents"][0]["agent_id"] == "planner"
+    assert payload["runtime_card"]["agents"][0]["status"] == "configured"
+    assert payload["runtime_card"]["agents"][0]["controls"][0] == {
+        "kind": "spawn",
+        "label": "Spawn pane",
+        "command": "agentdeck agent spawn --agent planner",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["leader_explanation"]["mode"] == "runtime"
+    assert payload["leader_explanation"]["summary"] == (
+        "Leader recommends explicitly spawning planner without mutating runtime state."
+    )
+    assert payload["leader_explanation"]["reason"] == "human asked to spawn one agent runtime"
+    assert payload["leader_explanation"]["recommended_action_id"] == "planner"
+    assert payload["leader_explanation"]["action_kind"] == "runtime_spawn"
+    assert payload["leader_explanation"]["action_status"] == "configured"
+    assert payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert payload["intent_card"]["embedded_card"] == "runtime_card"
+    assert payload["intent_card"]["requires_explicit_user"] is True
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Next command",
+        "command": "agentdeck agent spawn --agent planner",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "runtime"
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck agent spawn --agent planner"
+    assert state_after["agents"].get("planner") is None
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+    assert fake.sent == []
+    assert fake.captured == []
+
+
+def test_leader_chat_open_agent_inbox_does_not_trigger_spawn_intent(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["inbox"] = {
+        "planner": [
+            {
+                "inbox_id": "inb_open_inbox",
+                "from": "coder",
+                "to": "planner",
+                "type": "task_reply",
+                "status": "pending",
+                "task": "检查 inbox 路由",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "打开 planner inbox"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "inbox"
+    assert payload["next_command"] == "agentdeck inbox --agent planner"
+    assert payload["inbox_card"]["agent_id"] == "planner"
+    assert payload["runtime_card"] is None
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    state_after = StateStore(root).load()
+    assert state_after["agents"].get("planner") is None
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_captures_agent_output_as_read_only_card(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%42")

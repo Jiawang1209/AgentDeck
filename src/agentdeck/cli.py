@@ -2342,6 +2342,20 @@ def _chat_wants_runtime(message: str) -> bool:
     )
 
 
+def _chat_runtime_spawn_agent_id(message: str, project_view: dict[str, object]) -> str | None:
+    normalized = message.strip().lower()
+    if not any(token in normalized for token in ["spawn", "start", "launch", "启动", "开启"]):
+        return None
+    agents = project_view.get("agents") if isinstance(project_view.get("agents"), list) else []
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        agent_id = str(agent.get("agent_id", ""))
+        if agent_id and re.search(rf"(?<![\w-]){re.escape(agent_id.lower())}(?![\w-])", normalized):
+            return agent_id
+    return None
+
+
 def _chat_wants_queue(message: str) -> bool:
     normalized = message.strip().lower()
     return any(
@@ -2640,6 +2654,23 @@ def _leader_chat_explanation(
             "requires_explicit_user": True,
         }
     if mode == "runtime":
+        spawn_match = re.fullmatch(r"agentdeck agent spawn --agent ([^\s]+)", str(next_command or ""))
+        if spawn_match:
+            agent_id = spawn_match.group(1)
+            agent = _project_view_agent_item(project_view, agent_id)
+            runtime = agent.get("runtime") if isinstance(agent, dict) and isinstance(agent.get("runtime"), dict) else {}
+            status = str(runtime.get("status", "configured")) if isinstance(runtime, dict) else "configured"
+            return {
+                "mode": mode,
+                "summary": f"Leader recommends explicitly spawning {agent_id} without mutating runtime state.",
+                "reason": "human asked to spawn one agent runtime",
+                "next_command": next_command,
+                "recommended_action_id": agent_id,
+                "action_kind": "runtime_spawn",
+                "action_status": status,
+                "safety": "explicit_runtime",
+                "requires_explicit_user": True,
+            }
         runtime_card = _workbench_runtime_card(project_view)
         by_status = runtime_card.get("by_status") if isinstance(runtime_card.get("by_status"), dict) else {}
         action_status = "empty"
@@ -3310,8 +3341,13 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
-    if _chat_wants_runtime(args.message):
-        next_command = "agentdeck agent list"
+    runtime_spawn_agent_id = _chat_runtime_spawn_agent_id(args.message, project_view)
+    if runtime_spawn_agent_id or _chat_wants_runtime(args.message):
+        next_command = (
+            f"agentdeck agent spawn --agent {runtime_spawn_agent_id}"
+            if runtime_spawn_agent_id
+            else "agentdeck agent list"
+        )
         turn = store.record_chat_turn(
             mode="runtime",
             message=args.message,
@@ -3319,7 +3355,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             next_command=next_command,
             review=None,
             action_id=None,
-            action_kind="runtime",
+            action_kind="runtime_spawn" if runtime_spawn_agent_id else "runtime",
         )
         store.append_event(
             EventRecord.create(

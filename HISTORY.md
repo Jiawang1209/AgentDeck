@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Suggest agent spawn through Leader chat
+
+- 扩展 `agentdeck leader chat --message "启动 planner"` / `"spawn coder"`：自然语言入口现在会进入 `mode=runtime`，嵌入同源 `runtime_card`，并把 `next_command` 指向显式 `agentdeck agent spawn --agent <id>`。
+- `leader_explanation` 和 `intent_card.controls[]` 会标记 `safety=explicit_runtime` 与 `requires_explicit_user=true`，让 GUI 或自然语言壳可以渲染启动按钮，但不会把启动当成自动执行。
+- 保持安全边界：该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，不执行 refresh/spawn/stop/capture，不读取 pane 输出，不发送 tmux 输入。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md、capability card 和测试，让“查看 runtime”和“启动某个 agent”共享同一张 runtime card，但使用不同 safety。
+- 完整验证：已先确认红测失败，`启动 planner` 最初误走 `mode=plan`；实现后发现并用红测捕获 `打开 planner inbox` 误进 `mode=runtime` 的路由风险，收窄 spawn 触发词后目标与回归测试通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_agent_spawn_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_open_agent_inbox_does_not_trigger_spawn_intent tests/test_leader_cli.py::test_leader_chat_inspects_runtime_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_leader_cli.py::test_leader_chat_inspects_agent_inbox_without_mutating_runtime tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 8 项通过；`conda run -n agentdeck pytest -q` 249 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-spawn-suggestion-smoke-ok mode=runtime next=agentdeck agent spawn --agent planner safety=explicit_runtime requires=True agents=0 messages=0 jobs=0`。
+
 ### Current - Block workbench dispatch operator when runtime is missing
 
 - 扩展 `agentdeck workbench` 的 `operator_card`：当 recovery 指向 approved approval dispatch 且目标 agent 没有 running pane 时，卡片现在会暴露 `blocker=agent is not spawned: <agent>`，并禁用 explicit control。
