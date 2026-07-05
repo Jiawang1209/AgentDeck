@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Suggest dispatch-ready from batch Leader chat
+
+- 调整 `agentdeck leader chat --message "派发所有已审批"`：批量审批派发意图现在会把顶层 `next_command` 指向显式 `agentdeck approval dispatch-ready --confirm`，并在 `intent_card.controls[]` 中显示 `Dispatch ready approvals`。
+- 扩展 `dispatch_batch_preview_card`：新增 `dispatch_ready_command` 和 batch-level `controls[]`，其中 `dispatch_ready` control 会在 `ready_count>0` 时 enabled，方便 GUI/自然语言壳从批量预览直接渲染“派发 ready 项”按钮。
+- 保持安全边界：Leader chat 仍只记录 chat turn 和预览，不执行 `dispatch-ready`，不创建 message/job/inbox，不发送 tmux 输入；真正批量派发仍必须由人类显式运行 `agentdeck approval dispatch-ready --confirm`。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试；`validate_leader_chat_contract()` 会校验 batch-level `dispatch_ready` control 的 command、safety、enabled 状态与 `ready_count` 对齐。
+- 验证记录：已先确认红测失败，`派发所有已审批` 的 `next_command` 最初仍是 `null`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_previews_all_approved_dispatches_without_dispatching tests/test_leader_cli.py::test_approval_dispatch_ready_requires_confirm_and_dispatches_only_ready_items tests/test_contracts.py::test_validate_leader_chat_contract_checks_dispatch_batch_preview_counts tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 6 项通过；`conda run -n agentdeck pytest -q` 258 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-dispatch-ready-smoke-ok next=agentdeck approval dispatch-ready --confirm ready=1 blocked=1 messages=0 jobs=0`。
+
 ### Current - Dispatch all runtime-ready approvals explicitly
 
 - 新增显式批量执行入口 `agentdeck approval dispatch-ready --confirm`：它只派发当前所有 `approved` 且目标 agent runtime ready 的审批项，blocked 项保持 `approved` 并在 `results[]` 中返回 `status=blocked`、`blocker` 和对应 `dispatch_command`。

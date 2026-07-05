@@ -1463,6 +1463,7 @@ def test_validate_leader_chat_contract_checks_dispatch_batch_preview_counts() ->
     payload["dispatch_batch_preview_card"] = {
         "mode": "dispatch_batch_preview",
         "approval_command": "agentdeck approval list",
+        "dispatch_ready_command": "agentdeck approval dispatch-ready --confirm",
         "count": 2,
         "ready_count": 2,
         "blocked_count": 0,
@@ -1503,6 +1504,24 @@ def test_validate_leader_chat_contract_checks_dispatch_batch_preview_counts() ->
         "requires_explicit_user": True,
         "safety": "explicit_runtime",
         "blocker": None,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect approvals",
+                "command": "agentdeck approval list",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "dispatch_ready",
+                "label": "Dispatch ready approvals",
+                "command": "agentdeck approval dispatch-ready --confirm",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
     }
 
     result = validate_leader_chat_contract(payload)

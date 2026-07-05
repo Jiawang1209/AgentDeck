@@ -2214,7 +2214,7 @@ def test_leader_chat_previews_all_approved_dispatches_without_dispatching(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "approval"
-    assert payload["next_command"] is None
+    assert payload["next_command"] == "agentdeck approval dispatch-ready --confirm"
     assert payload["dispatch_preview_card"] is None
     batch_card = payload["dispatch_batch_preview_card"]
     assert batch_card["mode"] == "dispatch_batch_preview"
@@ -2225,6 +2225,25 @@ def test_leader_chat_previews_all_approved_dispatches_without_dispatching(
     assert batch_card["requires_explicit_user"] is True
     assert batch_card["safety"] == "explicit_runtime"
     assert batch_card["blocker"] == "some dispatch targets are blocked"
+    assert batch_card["dispatch_ready_command"] == "agentdeck approval dispatch-ready --confirm"
+    assert batch_card["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect approvals",
+            "command": "agentdeck approval list",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "dispatch_ready",
+            "label": "Dispatch ready approvals",
+            "command": "agentdeck approval dispatch-ready --confirm",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
     assert batch_card["items"][0]["approval_id"] == planner_approval_id
     assert batch_card["items"][0]["agent_id"] == "planner"
     assert batch_card["items"][0]["pane_id"] == "%42"
@@ -2270,11 +2289,11 @@ def test_leader_chat_previews_all_approved_dispatches_without_dispatching(
     }
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
-        "label": "Next command",
-        "command": None,
+        "label": "Dispatch ready approvals",
+        "command": "agentdeck approval dispatch-ready --confirm",
         "safety": "explicit_runtime",
-        "enabled": False,
-        "blocker": "next command unavailable",
+        "enabled": True,
+        "blocker": None,
     }
     assert payload["leader_explanation"]["action_kind"] == "approval_dispatch_batch"
     assert payload["leader_explanation"]["recommended_action_id"] == "2 approvals"
@@ -2286,7 +2305,7 @@ def test_leader_chat_previews_all_approved_dispatches_without_dispatching(
     assert state_after["approvals"][0]["status"] == "approved"
     assert state_after["approvals"][1]["status"] == "approved"
     assert state_after["chat_turns"][0]["mode"] == "approval"
-    assert state_after["chat_turns"][0]["next_command"] is None
+    assert state_after["chat_turns"][0]["next_command"] == "agentdeck approval dispatch-ready --confirm"
     assert state_after["chat_turns"][0]["action_kind"] == "approval_dispatch_batch"
     assert state_after["messages"] == []
     assert state_after["jobs"] == []

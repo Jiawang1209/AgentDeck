@@ -424,6 +424,7 @@ LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS = (
 LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS = (
     "mode",
     "approval_command",
+    "dispatch_ready_command",
     "count",
     "ready_count",
     "blocked_count",
@@ -431,6 +432,7 @@ LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS = (
     "requires_explicit_user",
     "safety",
     "blocker",
+    "controls",
 )
 
 CONTROL_REGISTRY_CARD_FIELDS = (
@@ -2210,6 +2212,29 @@ def _validate_leader_chat_dispatch_batch_preview_card_contract(
         errors.append("dispatch_batch_preview_card.requires_explicit_user must be true")
     if dispatch_batch_preview_card.get("safety") != "explicit_runtime":
         errors.append("dispatch_batch_preview_card.safety must be explicit_runtime")
+    controls = dispatch_batch_preview_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if isinstance(control, dict):
+                for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                    if field not in control:
+                        errors.append(f"dispatch_batch_preview_card.controls: missing control field: {field}")
+                if control.get("kind") == "inspect" and control.get("safety") != "inspect":
+                    errors.append("dispatch_batch_preview_card.controls: inspect controls must use safety=inspect")
+                if control.get("kind") == "dispatch_ready":
+                    if control.get("command") != dispatch_batch_preview_card.get("dispatch_ready_command"):
+                        errors.append("dispatch_batch_preview_card.controls: dispatch_ready command must match dispatch_ready_command")
+                    if control.get("safety") != "explicit_runtime":
+                        errors.append("dispatch_batch_preview_card.controls: dispatch_ready controls must use safety=explicit_runtime")
+                    expected_enabled = bool(dispatch_batch_preview_card.get("ready_count"))
+                    if control.get("enabled") is not expected_enabled:
+                        errors.append("dispatch_batch_preview_card.controls: dispatch_ready enabled must match ready_count")
+                if control.get("enabled") is False and not control.get("blocker"):
+                    errors.append("dispatch_batch_preview_card.controls: disabled controls must include blocker")
+            else:
+                errors.append("dispatch_batch_preview_card.controls items must be objects")
+    elif "controls" in dispatch_batch_preview_card:
+        errors.append("dispatch_batch_preview_card.controls must be a list")
     items = dispatch_batch_preview_card.get("items")
     if isinstance(items, list):
         for item in items:

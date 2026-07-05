@@ -486,17 +486,36 @@ When approval-mode recommends dispatching all approved items, it may include `di
 {
   "mode": "dispatch_batch_preview",
   "approval_command": "agentdeck approval list",
+  "dispatch_ready_command": "agentdeck approval dispatch-ready --confirm",
   "count": 2,
   "ready_count": 1,
   "blocked_count": 1,
   "items": [],
   "requires_explicit_user": true,
   "safety": "explicit_runtime",
-  "blocker": "some dispatch targets are blocked"
+  "blocker": "some dispatch targets are blocked",
+  "controls": [
+    {
+      "kind": "inspect",
+      "label": "Inspect approvals",
+      "command": "agentdeck approval list",
+      "safety": "inspect",
+      "enabled": true,
+      "blocker": null
+    },
+    {
+      "kind": "dispatch_ready",
+      "label": "Dispatch ready approvals",
+      "command": "agentdeck approval dispatch-ready --confirm",
+      "safety": "explicit_runtime",
+      "enabled": true,
+      "blocker": null
+    }
+  ]
 }
 ```
 
-`items[]` must reuse `dispatch_preview_card_fields`, including per-item `controls[]`. The batch card does not execute or imply automatic fan-out; it is a GUI-ready checklist of explicit `agentdeck approval dispatch --approval-id <id>` commands. The top-level `next_command` may be `null` because there is no single safe command that represents the whole batch. `validate_leader_chat_contract()` checks that `count`, `ready_count`, and `blocked_count` match the item list, and that dispatch controls match each item's dispatch command, safety, enabled state, and blocker.
+`items[]` must reuse `dispatch_preview_card_fields`, including per-item `controls[]`. The batch card does not execute or imply automatic fan-out; it is a GUI-ready checklist of explicit dispatch commands. The top-level `next_command` may point to `agentdeck approval dispatch-ready --confirm`, which is still an explicit human command and is not run by chat. `validate_leader_chat_contract()` checks that `count`, `ready_count`, and `blocked_count` match the item list, and that item-level dispatch controls plus the batch-level `dispatch_ready` control match their command, safety, enabled state, and blocker.
 
 Setup-mode responses are returned when the human asks to inspect `doctor`, provider setup, API key, or local environment readiness. They are read-only and do not call the configured Leader provider:
 

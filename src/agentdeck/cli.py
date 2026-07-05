@@ -138,6 +138,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
 
 def _leader_chat_next_control_label(next_command: object) -> str:
     command = str(next_command or "")
+    if command == "agentdeck approval dispatch-ready --confirm":
+        return "Dispatch ready approvals"
     if command == "agentdeck agent refresh":
         return "Refresh runtime"
     spawn_match = re.fullmatch(r"agentdeck agent spawn --agent ([^\s]+)", command)
@@ -233,6 +235,10 @@ def _leader_chat_intent_card_blocker(embedded_card: object, payload: dict[str, o
         dispatch_preview_card = payload.get("dispatch_preview_card")
         blocker = dispatch_preview_card.get("blocker") if isinstance(dispatch_preview_card, dict) else None
         return str(blocker) if blocker else None
+    if embedded_card == "dispatch_batch_preview_card":
+        dispatch_batch_preview_card = payload.get("dispatch_batch_preview_card")
+        if isinstance(dispatch_batch_preview_card, dict) and not dispatch_batch_preview_card.get("ready_count"):
+            return "no ready approvals to dispatch"
     return None
 
 
@@ -2683,9 +2689,11 @@ def _approval_dispatch_batch_preview_card(
     items = [_approval_dispatch_preview_card(approval, config, store) for approval in approvals]
     blocked_count = sum(1 for item in items if item.get("blocker"))
     ready_count = len(items) - blocked_count
+    dispatch_ready_command = "agentdeck approval dispatch-ready --confirm"
     return {
         "mode": "dispatch_batch_preview",
         "approval_command": "agentdeck approval list",
+        "dispatch_ready_command": dispatch_ready_command,
         "count": len(items),
         "ready_count": ready_count,
         "blocked_count": blocked_count,
@@ -2693,6 +2701,24 @@ def _approval_dispatch_batch_preview_card(
         "requires_explicit_user": True,
         "safety": "explicit_runtime",
         "blocker": "some dispatch targets are blocked" if blocked_count else None,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect approvals",
+                "command": "agentdeck approval list",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "dispatch_ready",
+                "label": "Dispatch ready approvals",
+                "command": dispatch_ready_command,
+                "safety": "explicit_runtime",
+                "enabled": ready_count > 0,
+                "blocker": None if ready_count > 0 else "no ready approvals to dispatch",
+            },
+        ],
     }
 
 
@@ -3872,7 +3898,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         wants_dispatch = _chat_wants_approval_dispatch(args.message)
         wants_dispatch_all = _chat_wants_approval_dispatch_all(args.message)
         next_command = (
-            None
+            "agentdeck approval dispatch-ready --confirm"
             if wants_dispatch_all and approved_approvals
             else
             approved_approval.get("dispatch_command")
