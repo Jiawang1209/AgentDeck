@@ -872,6 +872,9 @@ def _workbench_operator_card(
     apply_command = leader_action.get("apply_command") if can_apply else None
     explicit_command = leader_action.get("explicit_command") or recommended_action.get("command")
     preview_command = _workbench_operator_preview_command(action_kind, target_id)
+    action_blocker = leader_action.get("apply_blocker") or _workbench_operator_runtime_blocker(
+        project_view, action_kind, target_id
+    )
     return {
         "status": recovery.get("status"),
         "reason": recovery.get("reason"),
@@ -889,14 +892,14 @@ def _workbench_operator_card(
             explicit_command=explicit_command,
             safety=recommended_action.get("safety"),
             can_apply=can_apply,
-            blocker=leader_action.get("apply_blocker"),
+            blocker=action_blocker,
         ),
         "active_queue_source": active_queue_source,
         "action_kind": action_kind,
         "can_apply": can_apply,
         "apply_command": apply_command,
         "explicit_command": explicit_command,
-        "blocker": leader_action.get("apply_blocker"),
+        "blocker": action_blocker,
     }
 
 
@@ -936,11 +939,48 @@ def _workbench_operator_controls(
             "label": "Run explicit command",
             "command": explicit_command,
             "safety": safety,
-            "enabled": explicit_command is not None,
-            "blocker": None if explicit_command is not None else "no explicit command available",
+            "enabled": explicit_command is not None and not blocker,
+            "blocker": blocker or (None if explicit_command is not None else "no explicit command available"),
         }
     )
     return controls
+
+
+def _workbench_operator_runtime_blocker(
+    project_view: dict[str, object], action_kind: str, target_id: object
+) -> str | None:
+    if action_kind != "approval" or not target_id:
+        return None
+    approval = _project_view_approval_item(project_view, target_id)
+    agent_id = approval.get("agent_id") if isinstance(approval, dict) else None
+    if not agent_id:
+        return None
+    agent = _project_view_agent_item(project_view, agent_id)
+    runtime = agent.get("runtime") if isinstance(agent, dict) and isinstance(agent.get("runtime"), dict) else {}
+    pane_id = runtime.get("pane_id") if isinstance(runtime, dict) else None
+    status = str(runtime.get("status", "configured")) if isinstance(runtime, dict) else "configured"
+    if not pane_id:
+        return f"agent is not spawned: {agent_id}"
+    if status != "running":
+        return f"agent runtime is {status}: {agent_id}"
+    return None
+
+
+def _project_view_approval_item(project_view: dict[str, object], approval_id: object) -> dict[str, object] | None:
+    approvals = project_view.get("approvals") if isinstance(project_view.get("approvals"), dict) else {}
+    items = approvals.get("items") if isinstance(approvals.get("items"), list) else []
+    for item in items:
+        if isinstance(item, dict) and item.get("approval_id") == approval_id:
+            return item
+    return None
+
+
+def _project_view_agent_item(project_view: dict[str, object], agent_id: object) -> dict[str, object] | None:
+    agents = project_view.get("agents") if isinstance(project_view.get("agents"), list) else []
+    for item in agents:
+        if isinstance(item, dict) and item.get("agent_id") == agent_id:
+            return item
+    return None
 
 
 def _workbench_operator_preview_command(action_kind: str, target_id: object) -> str:

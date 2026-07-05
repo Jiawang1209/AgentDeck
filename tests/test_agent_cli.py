@@ -1355,6 +1355,52 @@ def test_policy_set_mode_rejects_autonomous_without_mutating_config(tmp_path, mo
     assert workbench["control_mode_card"]["approval_mode"] == "confirm"
 
 
+def test_workbench_blocks_dispatch_operator_when_approved_agent_is_not_spawned(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["approvals"] = [
+        {
+            "approval_id": "apv_ready",
+            "plan_id": "pln_ready",
+            "step_id": "step_1",
+            "step": 1,
+            "agent_id": "planner",
+            "role": "planning",
+            "task": "派发前检查 runtime",
+            "risk": "requires visible runtime before dispatch",
+            "status": "approved",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    store.save(state)
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["active_queue_source"] == "approval"
+    assert payload["queue_card"]["active_queue_source"] == "approval"
+    assert payload["operator_card"]["status"] == "dispatch_ready"
+    assert payload["operator_card"]["command"] == "agentdeck approval dispatch --approval-id apv_ready"
+    assert payload["operator_card"]["explicit_command"] == "agentdeck approval dispatch --approval-id apv_ready"
+    assert payload["operator_card"]["blocker"] == "agent is not spawned: planner"
+    assert payload["operator_card"]["controls"][-1] == {
+        "kind": "explicit",
+        "label": "Run explicit command",
+        "command": "agentdeck approval dispatch --approval-id apv_ready",
+        "safety": "explicit_runtime",
+        "enabled": False,
+        "blocker": "agent is not spawned: planner",
+    }
+    state_after = StateStore(root).load()
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+    assert state_after.get("inbox", {}) == {}
+
+
 def test_workbench_embeds_leader_inbox_card_when_worker_reply_returns_to_leader(
     tmp_path, monkeypatch, capsys
 ) -> None:

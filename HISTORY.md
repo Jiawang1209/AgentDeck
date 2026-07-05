@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Block workbench dispatch operator when runtime is missing
+
+- 扩展 `agentdeck workbench` 的 `operator_card`：当 recovery 指向 approved approval dispatch 且目标 agent 没有 running pane 时，卡片现在会暴露 `blocker=agent is not spawned: <agent>`，并禁用 explicit control。
+- blocker 从同一份 ProjectView snapshot 的 approvals items 到 agents runtime 派生，不读取 tmux、不写 state、不执行 spawn/refresh/dispatch。
+- 保持安全边界：workbench 仍不创建 chat turn、message、job、inbox，不 ack、不 approve、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
+- 同步 `docs/contracts/workbench-schema.md`、README、CLAUDE.md、AGENT.md 和测试，保持 workbench 与 Leader chat dispatch preview 的 runtime 控制语义一致。
+- 完整验证：已先确认红测失败，`operator_card.blocker` 最初为 `None`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_blocks_dispatch_operator_when_approved_agent_is_not_spawned tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_workbench_surfaces_provider_setup_as_active_operator_source tests/test_agent_cli.py::test_workbench_surfaces_stale_runtime_as_active_operator_source -q` 4 项通过；聚焦契约测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_blocks_dispatch_operator_when_approved_agent_is_not_spawned tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_workbench_surfaces_provider_setup_as_active_operator_source tests/test_agent_cli.py::test_workbench_surfaces_stale_runtime_as_active_operator_source tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients -q` 6 项通过；`conda run -n agentdeck pytest -q` 247 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `workbench-dispatch-blocker-smoke-ok blocked_enabled=False blocked=agent is not spawned: planner ready_enabled=True pane=%42 messages=0 jobs=0`。
+
 ### Current - Block dispatch preview controls when runtime is missing
 
 - 扩展 `dispatch_preview_card` 的 GUI 控制语义：当 approved approval 的目标 agent 没有 running pane 时，preview 仍展示显式 dispatch 命令和 blocker，但 `intent_card.controls[]` 的 next control 会 disabled，并复用同一个 blocker。
