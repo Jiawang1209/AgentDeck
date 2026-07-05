@@ -53,6 +53,29 @@ PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS = (
     "target_id",
 )
 
+APPROVAL_QUEUE_FIELDS = (
+    "count",
+    "approvals",
+)
+
+APPROVAL_ITEM_FIELDS = (
+    "approval_id",
+    "plan_id",
+    "step",
+    "agent_id",
+    "role",
+    "task",
+    "risk",
+    "status",
+    "created_at",
+    "reason",
+    "approve_command",
+    "reject_command",
+    "dispatch_command",
+    "can_dispatch",
+    "dispatch_blocker",
+)
+
 PROJECT_VIEW_LEADER_ACTIONS_FIELDS = (
     "count",
     "by_kind",
@@ -327,6 +350,30 @@ def continue_contract_response(contract_path: Path, include_example: bool = Fals
     return payload
 
 
+def approval_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "approvals_command": "agentdeck approval list",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "queue_fields": list(APPROVAL_QUEUE_FIELDS),
+        "approval_item_fields": list(APPROVAL_ITEM_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def approval_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = approval_contract_payload(contract_path)
+    if include_example:
+        example = approval_example()
+        payload["example"] = True
+        payload["example_queue_fields"] = list(example)
+        payload["example_approval_item_fields"] = list(example["approvals"][0])
+        payload["example_approval_queue"] = example
+    return payload
+
+
 def leader_action_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -504,6 +551,28 @@ def validate_continue_contract(payload: dict[str, object]) -> dict[str, object]:
                 errors.append(f"missing pending field: {field}")
     elif "pending" in payload and pending is not None:
         errors.append("pending must be an object")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_approval_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in APPROVAL_QUEUE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing approval queue field: {field}")
+    approvals = payload.get("approvals")
+    if isinstance(approvals, list):
+        if approvals:
+            first_approval = approvals[0]
+            if isinstance(first_approval, dict):
+                for field in APPROVAL_ITEM_FIELDS:
+                    if field not in first_approval:
+                        errors.append(f"missing approval item field: {field}")
+                if not isinstance(first_approval.get("can_dispatch"), bool):
+                    errors.append("can_dispatch must be a boolean")
+            else:
+                errors.append("approval items must be objects")
+    elif "approvals" in payload:
+        errors.append("approvals must be a list")
     return {"ok": not errors, "errors": errors}
 
 
@@ -866,6 +935,45 @@ def continue_example() -> dict[str, object]:
         "leader_action": leader_action,
         "action_detail_command": "agentdeck leader action --action-id act_example",
     }
+
+
+def approval_example() -> dict[str, object]:
+    return {
+        "count": 2,
+        "approvals": [
+            _approval_example_item(
+                approval_id="apv_pending",
+                status="pending",
+                reason=None,
+            ),
+            _approval_example_item(
+                approval_id="apv_approved",
+                status="approved",
+                reason=None,
+            ),
+        ],
+    }
+
+
+def _approval_example_item(approval_id: str, status: str, reason: object) -> dict[str, object]:
+    item = {
+        "approval_id": approval_id,
+        "plan_id": "pln_example",
+        "step": 1,
+        "agent_id": "planner",
+        "role": "planning",
+        "task": "Prepare an implementation plan",
+        "risk": "low",
+        "status": status,
+        "created_at": "2026-07-04T00:00:00+00:00",
+        "reason": reason,
+        "approve_command": f"agentdeck approval approve --approval-id {approval_id}",
+        "reject_command": f"agentdeck approval reject --approval-id {approval_id} --reason <reason>",
+        "dispatch_command": f"agentdeck approval dispatch --approval-id {approval_id}",
+        "can_dispatch": status == "approved",
+        "dispatch_blocker": None if status == "approved" else "approval is not approved",
+    }
+    return {field: item.get(field) for field in APPROVAL_ITEM_FIELDS}
 
 
 def leader_action_example() -> dict[str, object]:

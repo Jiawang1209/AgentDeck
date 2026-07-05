@@ -6,6 +6,8 @@ from pathlib import Path
 from agentdeck import cli
 from agentdeck.config import write_default_config
 from agentdeck.contracts import (
+    approval_contract_payload,
+    approval_contract_response,
     continue_contract_payload,
     continue_contract_response,
     leader_actions_contract_payload,
@@ -285,6 +287,37 @@ def test_contract_continue_example_exports_gui_ready_card(capsys) -> None:
     assert set(payload["example_continue_card_fields"]) == set(example)
     assert example["mode"] == "continue"
     assert example["next_command"] == "agentdeck leader apply-action --action-id act_example"
+
+
+def test_contract_approvals_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "approvals"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = approval_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["approvals_command"] == "agentdeck approval list"
+    assert payload["contract_path"].endswith("docs/contracts/approvals-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["queue_fields"] == expected["queue_fields"]
+    assert payload["approval_item_fields"] == expected["approval_item_fields"]
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+
+
+def test_contract_approvals_example_exports_gui_ready_queue(capsys) -> None:
+    exit_code = cli.main(["contract", "approvals", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = approval_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_approval_queue"]
+    assert payload["example_queue_fields"] == payload["queue_fields"]
+    assert set(payload["example_queue_fields"]) == set(example)
+    assert payload["example_approval_item_fields"] == payload["approval_item_fields"]
+    assert set(payload["example_approval_item_fields"]) == set(example["approvals"][0])
+    assert example["approvals"][0]["approve_command"] == "agentdeck approval approve --approval-id apv_pending"
+    assert example["approvals"][1]["dispatch_command"] == "agentdeck approval dispatch --approval-id apv_approved"
 
 
 def test_contract_leader_action_discovers_schema_for_gui_clients(capsys) -> None:

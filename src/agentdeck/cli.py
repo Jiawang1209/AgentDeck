@@ -8,12 +8,14 @@ import sys
 
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
 from .contracts import (
+    approval_contract_response,
     continue_contract_response,
     leader_actions_contract_response,
     leader_action_contract_response,
     leader_chat_contract_response,
     project_view_contract_response,
     trace_contract_response,
+    validate_approval_contract,
     validate_continue_contract,
     validate_leader_actions_contract,
     validate_leader_action_contract,
@@ -204,6 +206,13 @@ def contract_leader_chat_command(args: argparse.Namespace) -> int:
 def contract_continue_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "continue-card-schema.md"
     payload = continue_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_approvals_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "approvals-schema.md"
+    payload = approval_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -1301,9 +1310,30 @@ def approval_list_command(_args: argparse.Namespace) -> int:
     _config, store, exit_code = _load_project_or_error()
     if store is None:
         return exit_code
-    approvals = store.list_approvals()
-    _print_json({"count": len(approvals), "approvals": approvals})
+    approvals = [_approval_queue_item(approval) for approval in store.list_approvals()]
+    payload = {"count": len(approvals), "approvals": approvals}
+    validation = validate_approval_contract(payload)
+    if not validation["ok"]:
+        print("Approval queue contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
+
+
+def _approval_queue_item(approval: dict[str, object]) -> dict[str, object]:
+    approval_id = str(approval.get("approval_id"))
+    can_dispatch = approval.get("status") == "approved"
+    return {
+        **approval,
+        "reason": approval.get("reason"),
+        "approve_command": f"agentdeck approval approve --approval-id {approval_id}",
+        "reject_command": f"agentdeck approval reject --approval-id {approval_id} --reason <reason>",
+        "dispatch_command": f"agentdeck approval dispatch --approval-id {approval_id}",
+        "can_dispatch": can_dispatch,
+        "dispatch_blocker": None if can_dispatch else "approval is not approved",
+    }
 
 
 def _approval_decision_command(approval_id: str, status: str, reason: str | None = None) -> int:
@@ -1441,6 +1471,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_continue.add_argument("--example", action="store_true", help="Include a GUI-ready continue card example")
     contract_continue.set_defaults(func=contract_continue_command)
+    contract_approvals = contract_subparsers.add_parser(
+        "approvals",
+        help="Show approval queue contract discovery metadata",
+    )
+    contract_approvals.add_argument("--example", action="store_true", help="Include a GUI-ready approval queue example")
+    contract_approvals.set_defaults(func=contract_approvals_command)
     contract_leader_action = contract_subparsers.add_parser(
         "leader-action",
         help="Show Leader action detail contract discovery metadata",

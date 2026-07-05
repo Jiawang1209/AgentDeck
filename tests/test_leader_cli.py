@@ -1097,6 +1097,13 @@ def test_approval_list_and_decisions_update_status(tmp_path, monkeypatch, capsys
     assert payload["count"] == 3
     assert [item["status"] for item in payload["approvals"]] == ["approved", "rejected", "pending"]
     assert payload["approvals"][1]["reason"] == "范围过大"
+    assert payload["approvals"][0]["can_dispatch"] is True
+    assert payload["approvals"][0]["dispatch_command"] == f"agentdeck approval dispatch --approval-id {first_id}"
+    assert payload["approvals"][0]["dispatch_blocker"] is None
+    assert payload["approvals"][1]["can_dispatch"] is False
+    assert payload["approvals"][1]["dispatch_blocker"] == "approval is not approved"
+    assert payload["approvals"][2]["approve_command"].startswith("agentdeck approval approve --approval-id apv_")
+    assert payload["approvals"][2]["reject_command"].startswith("agentdeck approval reject --approval-id apv_")
 
     state = StateStore(root).load()
     assert state["approvals"][0]["status"] == "approved"
@@ -1105,6 +1112,30 @@ def test_approval_list_and_decisions_update_status(tmp_path, monkeypatch, capsys
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "approval_decided"' in events
+
+
+def test_approval_list_refuses_contract_violation(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "坏 approval 队列不能输出"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    capsys.readouterr()
+
+    def broken_validation(_payload):
+        return {"ok": False, "errors": ["missing approval item field: dispatch_blocker"]}
+
+    monkeypatch.setattr(cli, "validate_approval_contract", broken_validation)
+
+    exit_code = cli.main(["approval", "list"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "Approval queue contract validation failed" in captured.err
+    assert "missing approval item field: dispatch_blocker" in captured.err
+    state = StateStore(root).load()
+    assert len(state["approvals"]) == 3
+    assert state["approvals"][0]["status"] == "pending"
 
 
 def test_approval_commands_reject_unknown_ids(tmp_path, monkeypatch, capsys) -> None:

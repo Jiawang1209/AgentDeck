@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from agentdeck.contracts import (
+    APPROVAL_ITEM_FIELDS,
+    APPROVAL_QUEUE_FIELDS,
     CONTINUE_CARD_FIELDS,
     LEADER_ACTION_DETAIL_FIELDS,
     LEADER_ACTIONS_LIST_FIELDS,
@@ -23,6 +25,9 @@ from agentdeck.contracts import (
     TRACE_MESSAGE_FIELDS,
     TRACE_REPLY_FIELDS,
     TRACE_TOP_LEVEL_FIELDS,
+    approval_contract_payload,
+    approval_contract_response,
+    approval_example,
     leader_chat_contract_payload,
     leader_chat_contract_response,
     leader_chat_example,
@@ -41,6 +46,7 @@ from agentdeck.contracts import (
     trace_contract_payload,
     trace_contract_response,
     trace_example,
+    validate_approval_contract,
     validate_continue_contract,
     validate_leader_action_contract,
     validate_leader_actions_contract,
@@ -262,6 +268,56 @@ def test_validate_continue_contract_reports_missing_field() -> None:
     result = validate_continue_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing continue_card field: next_command"]}
+
+
+def test_approval_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "approvals-schema.md"
+    contract_path.write_text("# Approvals Contract\n", encoding="utf-8")
+
+    payload = approval_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["approvals_command"] == "agentdeck approval list"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["queue_fields"] == list(APPROVAL_QUEUE_FIELDS)
+    assert payload["approval_item_fields"] == list(APPROVAL_ITEM_FIELDS)
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+
+
+def test_approval_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "approvals-schema.md"
+    contract_path.write_text("# Approvals Contract\n", encoding="utf-8")
+
+    payload = approval_contract_response(contract_path, include_example=True)
+    example = approval_example()
+
+    assert payload["example"] is True
+    assert payload["example_approval_queue"] == example
+    assert payload["example_queue_fields"] == payload["queue_fields"]
+    assert set(payload["example_queue_fields"]) == set(example)
+    assert payload["example_approval_item_fields"] == payload["approval_item_fields"]
+    assert set(payload["example_approval_item_fields"]) == set(example["approvals"][0])
+    assert example["approvals"][0]["can_dispatch"] is False
+    assert example["approvals"][1]["can_dispatch"] is True
+
+
+def test_validate_approval_contract_accepts_example() -> None:
+    result = validate_approval_contract(approval_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_approval_contract_requires_gui_action_fields() -> None:
+    payload = approval_example()
+    del payload["approvals"][0]["dispatch_blocker"]
+
+    result = validate_approval_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing approval item field: dispatch_blocker"],
+    }
 
 
 def test_leader_action_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:

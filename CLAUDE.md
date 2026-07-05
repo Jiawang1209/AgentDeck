@@ -112,6 +112,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - Leader chat response contract 维护在 `docs/contracts/leader-chat-schema.md`，发现入口是 `agentdeck contract leader-chat`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。
 - Leader actions queue contract 维护在 `docs/contracts/leader-actions-schema.md`，发现入口是 `agentdeck contract leader-actions`；payload、example fixture 和 `validate_leader_actions_contract()` 也在 `src/agentdeck/contracts.py`。
 - Leader action detail contract 维护在 `docs/contracts/leader-action-schema.md`，发现入口是 `agentdeck contract leader-action`；payload、example fixture 和 `validate_leader_action_contract()` 也在 `src/agentdeck/contracts.py`。
+- Approval queue contract 维护在 `docs/contracts/approvals-schema.md`，发现入口是 `agentdeck contract approvals`；payload、example fixture 和 `validate_approval_contract()` 也在 `src/agentdeck/contracts.py`。
 - Trace contract 维护在 `docs/contracts/trace-schema.md`，发现入口是 `agentdeck contract trace`；payload、example fixture 和 `validate_trace_contract()` 也在 `src/agentdeck/contracts.py`。
 - `src/agentdeck/contracts.py::validate_project_view_contract()` 是 ProjectView-like payload 的 v1 基础契约校验入口。
 - `agentdeck status` 必须在输出 JSON 前调用 `validate_project_view_contract()` 自校验；校验失败时返回非 0 且不得输出半坏的 ProjectView。
@@ -120,11 +121,13 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck contract continue` 是只读契约发现入口，供 GUI 或外部集成读取 `agentdeck continue` 的恢复卡片字段；`--example` 会返回稳定 continue card 示例，不读取或修改 live state。
 - `agentdeck contract leader-actions` 是只读契约发现入口，供 GUI 或外部集成读取 Leader action queue 字段；`--example` 会返回稳定队列示例，不读取或修改 live state。
 - `agentdeck contract leader-action` 是只读契约发现入口，供 GUI 或外部集成读取单个 Leader action 详情字段；`--example` 会返回稳定 action detail 示例，不读取或修改 live state。
+- `agentdeck contract approvals` 是只读契约发现入口，供 GUI 或外部集成读取人类审批队列字段；`--example` 会返回稳定 approval queue 示例，不读取或修改 live state。
 - `agentdeck contract trace` 是只读契约发现入口，供 GUI 或外部集成读取通信 lineage 的 message/attempt/job/reply/inbox 字段；`--example` 会返回稳定 trace 示例，不读取或修改 live state。
 - `agentdeck trace --id <id>` 输出 JSON 前必须通过 `validate_trace_contract()` 自校验；失败时返回非 0 且不得输出半坏 trace。
 - `agentdeck leader chat` 输出 JSON 前必须通过 `validate_leader_chat_contract()` 自校验；校验失败时返回非 0、不得输出半坏 chat response，并必须写入 `leader_errors[]` 和 `leader_chat_contract_failed` 事件。
 - `agentdeck leader actions` 输出 JSON 前必须通过 `validate_leader_actions_contract()` 自校验；校验失败时返回非 0 且不得输出半坏 action queue。
 - `agentdeck leader action --action-id <id>` 输出 JSON 前必须通过 `validate_leader_action_contract()` 自校验；校验失败时返回非 0 且不得输出半坏 action detail。
+- `agentdeck approval list` 输出 JSON 前必须通过 `validate_approval_contract()` 自校验；校验失败时返回非 0 且不得输出半坏 approval queue。
 - `agentdeck events --limit <n>` 是只读事件时间线入口，用于审计和 GUI 最近事件列表。
 - `agentdeck status` 的 `recovery` 是默认恢复入口，必须保持只读，并暴露 status/reason/next_command/recommended_action/pending/leader_action/latest_event/recent_events；`recommended_action` 必须说明 label/command/safety/requires_explicit_user/source/target_id。
 - 当没有 pending action、approval 或 inbox item 但存在 `leader_errors[]` 时，`agentdeck status.recovery` 必须返回 `status=leader_error` 和 inspect 型 recommended_action。

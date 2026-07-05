@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Discover and validate approval queue contract
+
+- 新增 `APPROVAL_QUEUE_FIELDS`、`APPROVAL_ITEM_FIELDS`、`approval_contract_payload()`、`approval_contract_response()`、`approval_example()` 和 `validate_approval_contract()`，为人类审批队列建立可复用契约。
+- 新增 `agentdeck contract approvals` 和 `agentdeck contract approvals --example`，供 GUI、自然语言壳或外部集成发现 approval queue 字段。
+- `agentdeck approval list` 现在每个 approval item 都包含 `approve_command`、`reject_command`、`dispatch_command`、`can_dispatch` 和 `dispatch_blocker`，并在输出前通过 `validate_approval_contract()` 自校验。
+- 新增 `docs/contracts/approvals-schema.md`，记录 approval queue shape、GUI 控制字段和只读边界。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 approval queue contract discovery 与输出自校验规则。
+- 保持安全边界：本轮只增加只读 contract discovery、审批队列字段补齐与输出校验，不 approve、不 reject、不 dispatch、不发送 tmux 输入、不改变 state mutation 语义。
+- 完整验证：`conda run -n agentdeck pytest tests/test_contracts.py -q` 36 项通过；approvals 相关 CLI 目标测试 4 项通过；`conda run -n agentdeck pytest -q` 128 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `agentdeck contract approvals --example` 返回 `contract-ok`，`agentdeck approval list` 返回 `approval-ok` 且审批项包含 `approve_command/can_dispatch/dispatch_blocker`。
+
 ### Current - Discover and validate Leader actions queue contract
 
 - 新增 `LEADER_ACTIONS_LIST_FIELDS`、`leader_actions_contract_payload()`、`leader_actions_contract_response()`、`leader_actions_example()` 和 `validate_leader_actions_contract()`，为 Leader action queue 建立可复用契约。

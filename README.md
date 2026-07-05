@@ -52,6 +52,8 @@ agentdeck contract leader-actions
 agentdeck contract leader-actions --example
 agentdeck contract leader-action
 agentdeck contract leader-action --example
+agentdeck contract approvals
+agentdeck contract approvals --example
 agentdeck contract trace
 agentdeck contract trace --example
 agentdeck agent list
@@ -228,7 +230,7 @@ agentdeck trace --id inb_xxx
 
 `agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、leader_errors、leader_actions、inbox、recovery 的轻量摘要。
 
-详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，`--example` 会附带包含 `leader_explanation` 的稳定响应示例。`agentdeck contract leader-actions` 会发现 Leader action queue 字段，`--example` 会附带稳定队列示例。`agentdeck contract leader-action` 会发现单个 Leader action 详情字段，`--example` 会附带稳定 action detail 示例。`agentdeck contract trace` 会发现通信 lineage 的 message/attempt/job/reply/inbox 字段，`--example` 会附带稳定 trace 示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck status`、`agentdeck leader chat`、`agentdeck leader actions`、`agentdeck leader action` 和 `agentdeck trace`，不要把 tmux pane 或 state 文件当成第二套状态源。
+详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，`--example` 会附带包含 `leader_explanation` 的稳定响应示例。`agentdeck contract leader-actions` 会发现 Leader action queue 字段，`--example` 会附带稳定队列示例。`agentdeck contract leader-action` 会发现单个 Leader action 详情字段，`--example` 会附带稳定 action detail 示例。`agentdeck contract approvals` 会发现人类审批队列字段，`--example` 会附带稳定 approval queue 示例。`agentdeck contract trace` 会发现通信 lineage 的 message/attempt/job/reply/inbox 字段，`--example` 会附带稳定 trace 示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck status`、`agentdeck leader chat`、`agentdeck leader actions`、`agentdeck leader action`、`agentdeck approval list` 和 `agentdeck trace`，不要把 tmux pane 或 state 文件当成第二套状态源。
 
 `status.messages.items[]`、`status.jobs.items[]` 和 `status.replies.items[]` 会包含 `trace_command`，GUI 可以直接把摘要行链接到 `agentdeck trace --id <id>`，不用散读 state 或拼接命令。
 
@@ -303,6 +305,8 @@ agentdeck approval approve --approval-id apv_xxx
 agentdeck approval reject --approval-id apv_xxx --reason "范围过大"
 agentdeck approval dispatch --approval-id apv_xxx
 ```
+
+`agentdeck approval list` 是人类审批队列的只读入口。每个 approval item 会包含 `approve_command`、`reject_command`、`dispatch_command`、`can_dispatch` 和 `dispatch_blocker`，方便 GUI 渲染审批按钮和阻塞原因；输出前会通过 `validate_approval_contract()` 自校验。契约见 `docs/contracts/approvals-schema.md`，可用 `agentdeck contract approvals --example` 发现。真正的 approve/reject/dispatch 仍必须由人类显式运行对应命令。
 
 `approval dispatch` 只接受 `approved` 状态的审批项，并把对应 plan step 转成现有 `dispatch -> message/attempt/job/inbox` 链路。它仍然是显式命令，不会自动连续派发整个 plan。
 
