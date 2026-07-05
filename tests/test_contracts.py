@@ -227,6 +227,7 @@ def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) 
 
     assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
     assert payload["list_command"] == "agentdeck agent list"
+    assert payload["ready_command"] == "agentdeck agent ready"
     assert payload["spawn_command_template"] == "agentdeck agent spawn --agent <id>"
     assert payload["capture_command_template"] == "agentdeck agent capture --agent <id> --lines 200"
     assert payload["send_command_template"] == "agentdeck agent send --agent <id> --text <text>"
@@ -238,6 +239,20 @@ def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) 
     assert payload["capture_response_fields"] == list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
     assert payload["refresh_response_fields"] == list(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS)
     assert payload["refresh_agent_fields"] == list(AGENT_RUNTIME_REFRESH_AGENT_FIELDS)
+    assert payload["ready_response_fields"] == [
+        "ok",
+        "mode",
+        "runtime_backend",
+        "total_count",
+        "running_count",
+        "not_running_count",
+        "all_running",
+        "next_command",
+        "spawn_commands",
+        "refresh_command",
+        "dispatch_ready_command",
+        "runtime_card",
+    ]
     assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
     assert payload["workbench_contract"] == "agentdeck contract workbench"
 

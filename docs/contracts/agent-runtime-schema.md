@@ -17,6 +17,7 @@ The contract command returns:
 {
   "schema_version": "project-view/v1",
   "list_command": "agentdeck agent list",
+  "ready_command": "agentdeck agent ready",
   "spawn_command_template": "agentdeck agent spawn --agent <id>",
   "capture_command_template": "agentdeck agent capture --agent <id> --lines 200",
   "send_command_template": "agentdeck agent send --agent <id> --text <text>",
@@ -28,6 +29,7 @@ The contract command returns:
   "capture_response_fields": [],
   "refresh_response_fields": [],
   "refresh_agent_fields": [],
+  "ready_response_fields": [],
   "runtime_control_fields": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view",
@@ -35,7 +37,7 @@ The contract command returns:
 }
 ```
 
-Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready fixture with one running agent, a capture response, and reusable runtime controls.
+Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready fixture with one running agent, a ready response, a capture response, and reusable runtime controls.
 
 ## Agent Item Fields
 
@@ -44,6 +46,45 @@ Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready f
 - `provider`: agent provider, such as `codex` or `claude`.
 - `workspace_mode`: whether the agent uses the shared workspace or a future isolated mode.
 - `runtime`: runtime binding summary from ProjectView, including pane id, session name, cwd, and status.
+
+## Ready Response Fields
+
+`agentdeck agent ready` is a read-only startup card for answering whether the configured multi-agent team is runtime-ready:
+
+```json
+{
+  "ok": true,
+  "mode": "agent_runtime_ready",
+  "runtime_backend": "tmux",
+  "total_count": 3,
+  "running_count": 1,
+  "not_running_count": 2,
+  "all_running": false,
+  "next_command": "agentdeck agent spawn --agent coder",
+  "spawn_commands": [
+    "agentdeck agent spawn --agent coder",
+    "agentdeck agent spawn --agent reviewer"
+  ],
+  "refresh_command": "agentdeck agent refresh",
+  "dispatch_ready_command": "agentdeck approval dispatch-ready --confirm",
+  "runtime_card": {}
+}
+```
+
+- `ok`: whether the readiness card was produced.
+- `mode`: always `agent_runtime_ready`.
+- `runtime_backend`: configured runtime backend, currently `tmux`.
+- `total_count`: number of configured agents in the runtime card.
+- `running_count`: number of agents with `status=running` and a pane id.
+- `not_running_count`: configured agents that still need explicit spawn or repair.
+- `all_running`: whether every configured agent has a running pane.
+- `next_command`: first explicit spawn command when any agent is not running; otherwise `agentdeck approval dispatch-ready --confirm`.
+- `spawn_commands`: explicit spawn commands for every not-running configured agent.
+- `refresh_command`: explicit runtime reconciliation command.
+- `dispatch_ready_command`: explicit batch approval dispatch command for the later step after agents are running.
+- `runtime_card`: the same GUI-ready runtime card shape used by `agentdeck workbench`.
+
+The command does not inspect tmux, create panes, refresh bindings, send input, write events, or dispatch approvals.
 
 ## Capture Response Fields
 

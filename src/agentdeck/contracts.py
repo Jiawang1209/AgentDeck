@@ -656,6 +656,21 @@ AGENT_RUNTIME_REFRESH_AGENT_FIELDS = (
     "changed",
 )
 
+AGENT_RUNTIME_READY_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "runtime_backend",
+    "total_count",
+    "running_count",
+    "not_running_count",
+    "all_running",
+    "next_command",
+    "spawn_commands",
+    "refresh_command",
+    "dispatch_ready_command",
+    "runtime_card",
+)
+
 WORKBENCH_ROLE_CARD_FIELDS = (
     "count",
     "agents",
@@ -1417,6 +1432,7 @@ def agent_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "list_command": "agentdeck agent list",
+        "ready_command": "agentdeck agent ready",
         "spawn_command_template": "agentdeck agent spawn --agent <id>",
         "capture_command_template": "agentdeck agent capture --agent <id> --lines 200",
         "send_command_template": "agentdeck agent send --agent <id> --text <text>",
@@ -1428,6 +1444,7 @@ def agent_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
         "capture_response_fields": list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS),
         "refresh_response_fields": list(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS),
         "refresh_agent_fields": list(AGENT_RUNTIME_REFRESH_AGENT_FIELDS),
+        "ready_response_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
         "runtime_control_fields": list(WORKBENCH_RUNTIME_CONTROL_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
@@ -1444,6 +1461,7 @@ def agent_runtime_contract_response(contract_path: Path, include_example: bool =
         payload["example_capture_response_fields"] = list(example["capture"])
         payload["example_refresh_response_fields"] = list(example["refresh"])
         payload["example_refresh_agent_fields"] = list(example["refresh"]["agents"][0])
+        payload["example_ready_response_fields"] = list(example["ready"])
         payload["example_control_fields"] = list(example["controls"][0])
         payload["example_agent_runtime"] = example
     return payload
@@ -3714,6 +3732,43 @@ def agent_runtime_example() -> dict[str, object]:
             ],
             "stale_count": 0,
             "running_count": 1,
+        },
+        "ready": {
+            "ok": True,
+            "mode": "agent_runtime_ready",
+            "runtime_backend": "tmux",
+            "total_count": 1,
+            "running_count": 1,
+            "not_running_count": 0,
+            "all_running": True,
+            "next_command": "agentdeck approval dispatch-ready --confirm",
+            "spawn_commands": [],
+            "refresh_command": "agentdeck agent refresh",
+            "dispatch_ready_command": "agentdeck approval dispatch-ready --confirm",
+            "runtime_card": {
+                "backend": "tmux",
+                "count": 1,
+                "by_status": {"running": 1},
+                "refresh_command": "agentdeck agent refresh",
+                "agents": [
+                    {
+                        "agent_id": agent_id,
+                        "role": "planning",
+                        "provider": "codex",
+                        "workspace_mode": "shared",
+                        "status": "running",
+                        "pane_id": "%42",
+                        "session_name": "agentdeck",
+                        "cwd": "/workspace/project",
+                        "spawn_command": "agentdeck agent spawn --agent planner",
+                        "stop_command": "agentdeck agent stop --agent planner",
+                        "capture_command": "agentdeck agent capture --agent planner --lines 200",
+                        "send_command_template": "agentdeck agent send --agent planner --text <text>",
+                        "inbox_command": "agentdeck inbox --agent planner",
+                        "controls": runtime_agent_controls(agent_id, True),
+                    }
+                ],
+            },
         },
         "controls": runtime_agent_controls(agent_id, True),
     }

@@ -1533,6 +1533,49 @@ def agent_list_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+def agent_ready_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    runtime_card = _workbench_runtime_card(project_view)
+    agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
+    running_count = 0
+    spawn_commands: list[str] = []
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        if agent.get("status") == "running" and agent.get("pane_id"):
+            running_count += 1
+        else:
+            spawn_command = agent.get("spawn_command")
+            if spawn_command:
+                spawn_commands.append(str(spawn_command))
+    total_count = len(agents)
+    not_running_count = total_count - running_count
+    dispatch_ready_command = "agentdeck approval dispatch-ready --confirm"
+    next_command = spawn_commands[0] if spawn_commands else dispatch_ready_command
+    _print_json(
+        {
+            "ok": True,
+            "mode": "agent_runtime_ready",
+            "runtime_backend": project_view.get("runtime_backend"),
+            "total_count": total_count,
+            "running_count": running_count,
+            "not_running_count": not_running_count,
+            "all_running": not_running_count == 0,
+            "next_command": next_command,
+            "spawn_commands": spawn_commands,
+            "refresh_command": runtime_card.get("refresh_command"),
+            "dispatch_ready_command": dispatch_ready_command,
+            "runtime_card": runtime_card,
+        }
+    )
+    return 0
+
+
 def policy_set_mode_command(args: argparse.Namespace) -> int:
     _config, store, exit_code = _load_project_or_error()
     if store is None:
@@ -4881,6 +4924,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     agent_list = agent_subparsers.add_parser("list", help="List configured agents and runtime bindings")
     agent_list.set_defaults(func=agent_list_command)
+
+    agent_ready = agent_subparsers.add_parser(
+        "ready",
+        help="Show a read-only startup card for configured agent panes",
+    )
+    agent_ready.set_defaults(func=agent_ready_command)
 
     agent_spawn = agent_subparsers.add_parser("spawn", help="Spawn a configured agent in tmux")
     agent_spawn.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")

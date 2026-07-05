@@ -68,6 +68,7 @@ agentdeck contract inbox --example
 agentdeck contract trace
 agentdeck contract trace --example
 agentdeck agent list
+agentdeck agent ready
 agentdeck agent spawn --agent planner
 agentdeck agent capture --agent planner --lines 200
 agentdeck agent send --agent planner --text "继续"
@@ -181,10 +182,11 @@ python -m compileall src
 
 ## Agent Runtime Commands
 
-当前 tmux runtime MVP 已支持六个 agent 操作命令：
+当前 tmux runtime MVP 已支持七个 agent 操作命令：
 
 ```bash
 agentdeck agent list
+agentdeck agent ready
 agentdeck agent spawn --agent planner
 agentdeck agent capture --agent planner --lines 200
 agentdeck agent send --agent planner --text "继续"
@@ -195,6 +197,7 @@ agentdeck agent stop --agent planner
 这些命令的约束：
 
 - `agent_id` 来自 `.agentdeck/config.toml`。
+- `ready` 是只读启动准备卡：复用 workbench runtime card，汇总 total/running/not_running/all_running，列出所有尚未 running agent 的 `spawn_commands`，并把 `next_command` 指向第一条显式 spawn 命令；当全部 running 时，它会指向 `agentdeck approval dispatch-ready --confirm`。
 - `spawn` 会创建项目 tmux session，并记录 `agent_id -> pane_id` 绑定。
 - `spawn` 会拒绝重复启动已经处于 `running` 状态且已有 `pane_id` 的 agent。
 - `capture` 和 `send` 只面向已经 spawn 的 agent。
@@ -275,7 +278,7 @@ agentdeck trace --id inb_xxx
 
 `agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、chat_turns、leader_errors、leader_actions、inbox、recovery 的轻量摘要。
 
-详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract list` 会返回所有 GUI 可消费契约的发现命令、example 命令和本地文档路径，方便 GUI 启动时做能力 discovery；字段契约见 `docs/contracts/contract-index-schema.md`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract doctor` 会发现本地诊断字段，`--example` 会附带稳定 doctor diagnostics 示例。`agentdeck contract events` 会发现审计时间线字段，`--example` 会附带稳定 events timeline 示例。`agentdeck contract workbench` 会发现工作台快照字段，`--example` 会附带稳定的一屏 workbench 示例。`agentdeck contract controls` 会发现独立命令面板 card 字段和 item 字段，`--example` 会附带稳定 control registry card 示例。`agentdeck contract agent-runtime` 会发现 `agent list/spawn/capture/send/refresh/stop` 的命令模板、capture/refresh 响应字段和 runtime control 字段，`--example` 会附带稳定的可见 tmux runtime 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，包括 inbox trace intent 可选嵌入的 `trace_card` 字段，`--example` 会附带包含 `leader_explanation` 的稳定响应示例。`agentdeck contract leader-actions` 会发现 Leader action queue 字段，`--example` 会附带稳定队列示例。`agentdeck contract leader-review` 会发现 `agentdeck leader review --plan-id <id>` 的 response 字段和 `controls[]` 字段，`--example` 会附带稳定 review 响应示例。`agentdeck contract leader-action` 会发现单个 Leader action 详情字段，`--example` 会附带稳定 action detail 示例。`agentdeck contract approvals` 会发现人类审批队列字段和 dispatch-ready 批量派发响应字段，`--example` 会附带稳定 approval queue 与 dispatch-ready 示例。`agentdeck contract inbox` 会发现单 agent mailbox 字段，`--example` 会附带稳定 inbox 示例。`agentdeck contract trace` 会发现通信 lineage 的 message/attempt/job/reply/inbox 字段，`--example` 会附带稳定 trace 示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck doctor`、`agentdeck events`、`agentdeck workbench`、`agentdeck controls`、`agentdeck agent list`、`agentdeck agent refresh`、`agentdeck status`、`agentdeck leader chat`、`agentdeck leader actions`、`agentdeck leader review`、`agentdeck leader action`、`agentdeck approval list`、`agentdeck inbox` 和 `agentdeck trace`，不要把 tmux pane 或 state 文件当成第二套状态源。
+详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract list` 会返回所有 GUI 可消费契约的发现命令、example 命令和本地文档路径，方便 GUI 启动时做能力 discovery；字段契约见 `docs/contracts/contract-index-schema.md`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract doctor` 会发现本地诊断字段，`--example` 会附带稳定 doctor diagnostics 示例。`agentdeck contract events` 会发现审计时间线字段，`--example` 会附带稳定 events timeline 示例。`agentdeck contract workbench` 会发现工作台快照字段，`--example` 会附带稳定的一屏 workbench 示例。`agentdeck contract controls` 会发现独立命令面板 card 字段和 item 字段，`--example` 会附带稳定 control registry card 示例。`agentdeck contract agent-runtime` 会发现 `agent list/ready/spawn/capture/send/refresh/stop` 的命令模板、ready/capture/refresh 响应字段和 runtime control 字段，`--example` 会附带稳定的可见 tmux runtime 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，包括 inbox trace intent 可选嵌入的 `trace_card` 字段，`--example` 会附带包含 `leader_explanation` 的稳定响应示例。`agentdeck contract leader-actions` 会发现 Leader action queue 字段，`--example` 会附带稳定队列示例。`agentdeck contract leader-review` 会发现 `agentdeck leader review --plan-id <id>` 的 response 字段和 `controls[]` 字段，`--example` 会附带稳定 review 响应示例。`agentdeck contract leader-action` 会发现单个 Leader action 详情字段，`--example` 会附带稳定 action detail 示例。`agentdeck contract approvals` 会发现人类审批队列字段和 dispatch-ready 批量派发响应字段，`--example` 会附带稳定 approval queue 与 dispatch-ready 示例。`agentdeck contract inbox` 会发现单 agent mailbox 字段，`--example` 会附带稳定 inbox 示例。`agentdeck contract trace` 会发现通信 lineage 的 message/attempt/job/reply/inbox 字段，`--example` 会附带稳定 trace 示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck doctor`、`agentdeck events`、`agentdeck workbench`、`agentdeck controls`、`agentdeck agent list`、`agentdeck agent ready`、`agentdeck agent refresh`、`agentdeck status`、`agentdeck leader chat`、`agentdeck leader actions`、`agentdeck leader review`、`agentdeck leader action`、`agentdeck approval list`、`agentdeck inbox` 和 `agentdeck trace`，不要把 tmux pane 或 state 文件当成第二套状态源。
 
 `status.messages.items[]`、`status.jobs.items[]` 和 `status.replies.items[]` 会包含 `trace_command`，GUI 可以直接把摘要行链接到 `agentdeck trace --id <id>`，不用散读 state 或拼接命令。
 

@@ -95,6 +95,53 @@ def test_agent_list_outputs_configured_agents(tmp_path, monkeypatch, capsys) -> 
     assert payload["agents"][0]["runtime"]["status"] == "configured"
 
 
+def test_agent_ready_outputs_startup_card_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"]["planner"] = {
+        "agent_id": "planner",
+        "pane_id": "%42",
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["agent", "ready"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "agent_runtime_ready"
+    assert payload["runtime_backend"] == "tmux"
+    assert payload["total_count"] == 3
+    assert payload["running_count"] == 1
+    assert payload["not_running_count"] == 2
+    assert payload["all_running"] is False
+    assert payload["next_command"] == "agentdeck agent spawn --agent coder"
+    assert payload["spawn_commands"] == [
+        "agentdeck agent spawn --agent coder",
+        "agentdeck agent spawn --agent reviewer",
+    ]
+    assert payload["refresh_command"] == "agentdeck agent refresh"
+    assert payload["dispatch_ready_command"] == "agentdeck approval dispatch-ready --confirm"
+    assert payload["runtime_card"]["by_status"] == {"running": 1, "configured": 2}
+    assert payload["runtime_card"]["agents"][0]["agent_id"] == "planner"
+    assert payload["runtime_card"]["agents"][0]["status"] == "running"
+    assert payload["runtime_card"]["agents"][1]["agent_id"] == "coder"
+    assert payload["runtime_card"]["agents"][1]["controls"][0] == {
+        "kind": "spawn",
+        "label": "Spawn pane",
+        "command": "agentdeck agent spawn --agent coder",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert StateStore(root).load() == state_before
+
+
 def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -492,6 +539,7 @@ def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None
     assert payload == expected
     assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
     assert payload["list_command"] == "agentdeck agent list"
+    assert payload["ready_command"] == "agentdeck agent ready"
     assert payload["spawn_command_template"] == "agentdeck agent spawn --agent <id>"
     assert payload["capture_command_template"] == "agentdeck agent capture --agent <id> --lines 200"
     assert payload["send_command_template"] == "agentdeck agent send --agent <id> --text <text>"
@@ -503,6 +551,20 @@ def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None
     assert payload["capture_response_fields"] == list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
     assert payload["refresh_response_fields"] == list(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS)
     assert payload["refresh_agent_fields"] == list(AGENT_RUNTIME_REFRESH_AGENT_FIELDS)
+    assert payload["ready_response_fields"] == [
+        "ok",
+        "mode",
+        "runtime_backend",
+        "total_count",
+        "running_count",
+        "not_running_count",
+        "all_running",
+        "next_command",
+        "spawn_commands",
+        "refresh_command",
+        "dispatch_ready_command",
+        "runtime_card",
+    ]
     assert payload["workbench_contract"] == "agentdeck contract workbench"
 
 
@@ -519,11 +581,13 @@ def test_contract_agent_runtime_example_exports_gui_ready_runtime_contract(capsy
     assert payload["example_capture_response_fields"] == payload["capture_response_fields"]
     assert payload["example_refresh_response_fields"] == payload["refresh_response_fields"]
     assert payload["example_refresh_agent_fields"] == payload["refresh_agent_fields"]
+    assert payload["example_ready_response_fields"] == payload["ready_response_fields"]
     assert payload["example_control_fields"] == payload["runtime_control_fields"]
     assert set(example["agents"][0]) == set(payload["agent_item_fields"])
     assert set(example["capture"]) == set(payload["capture_response_fields"])
     assert set(example["refresh"]) == set(payload["refresh_response_fields"])
     assert set(example["refresh"]["agents"][0]) == set(payload["refresh_agent_fields"])
+    assert set(example["ready"]) == set(payload["ready_response_fields"])
     assert set(example["controls"][0]) == set(payload["runtime_control_fields"])
     assert example["agents"][0]["runtime"]["pane_id"] == "%42"
     assert example["capture"]["output"] == "status: completed\n"

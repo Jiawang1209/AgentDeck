@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add agent runtime readiness card
+
+- 新增只读入口 `agentdeck agent ready`：它复用 workbench `runtime_card`，汇总 configured agents 的 `total_count`、`running_count`、`not_running_count`、`all_running`，列出所有尚未 running agent 的显式 `spawn_commands`，并把 `next_command` 指向第一条待启动 agent 的 `agentdeck agent spawn --agent <id>`。
+- 当所有 configured agents 都已 running 时，`agent ready` 的 `next_command` 会切到后续显式批量派发入口 `agentdeck approval dispatch-ready --confirm`；但该命令本身不写 state、不追加事件、不 inspect tmux、不 spawn/stop/capture/send、不 refresh runtime、不 dispatch approvals。
+- 扩展 `agentdeck contract agent-runtime`：新增 `ready_command` 和 `ready_response_fields`，`--example` 现在包含稳定 `ready` response fixture，方便未来 GUI/TUI 在启动页回答“多 Agent 终端是否已 ready”。
+- 同步 README、`docs/contracts/agent-runtime-schema.md`、CLAUDE.md 和 AGENT.md，明确 `agent ready` 是启动准备卡，不是自动启动器。
+- 验证记录：已先确认红测失败，`agentdeck agent ready` 最初不是合法子命令，`agent_runtime_contract_payload()` 最初缺少 `ready_command`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_agent_ready_outputs_startup_card_without_mutating_state tests/test_agent_cli.py::test_agent_list_outputs_configured_agents tests/test_agent_cli.py::test_contract_agent_runtime_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_agent_runtime_example_exports_gui_ready_runtime_contract tests/test_contracts.py::test_agent_runtime_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_agent_runtime_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q` 7 项通过；真实 CLI smoke 确认 `agentdeck agent ready` 在当前项目输出 `total_count=3`、`running_count=0`、`not_running_count=3`、`next_command=agentdeck agent spawn --agent planner`，并且 `agentdeck agent --help` 暴露 `ready` 子命令；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 268 项通过。
+
 ### Current - Align continue chat with continue card
 
 - 调整 `agentdeck leader chat --message "继续"`：continue-mode 现在把顶层 `next_command`、`leader_explanation.next_command` 和 chat turn 记录对齐到 `continue_card.next_command`，而不是直接沿用 ProjectView recovery 的单步命令。
