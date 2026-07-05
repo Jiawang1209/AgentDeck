@@ -909,10 +909,13 @@ def test_contract_run_example_exports_gui_ready_response(capsys) -> None:
     assert payload == expected
     example = payload["example_run_start"]
     assert payload["example_response_fields"] == payload["response_fields"]
+    assert payload["example_progress_fields"] == payload["progress_response_fields"]
     assert payload["example_control_fields"] == payload["control_fields"]
     assert set(payload["example_response_fields"]) == set(example)
+    assert set(payload["example_progress_fields"]) == set(payload["example_run_progress"])
     assert set(payload["example_control_fields"]) == set(example["controls"][0])
     assert example["mode"] == "run_start"
+    assert payload["example_run_progress"]["mode"] == "run_progress"
     assert example["safety"] == "approval_gated"
     assert example["requires_explicit_user"] is True
 

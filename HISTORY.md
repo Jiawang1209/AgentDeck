@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add read-only run progress card
+
+- 扩展 `agentdeck run --plan-id <id>`：对已有 plan/run 返回只读 `run_progress` card，聚合 plan status、Leader review、run-specific approval queue、next_command 和 plan/review/continue/workbench controls。
+- 扩展 `agentdeck contract run --example`：在原有 `run_start` 字段外新增 `progress_response_fields` 和 `example_run_progress`，同一个 `validate_run_start_contract()` 现在同时校验 `run_start` 与 `run_progress`。
+- 保持 run loop 的人类控制边界：`run --plan-id` 不写 state、不 approve、不 dispatch、不 capture pane、不 ack inbox、不发送 tmux 输入；当 review 推荐 dispatch 时只返回显式 `agentdeck approval dispatch --approval-id <id>`。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/run-schema.md`，明确 `run --task` 用于启动，`run --plan-id` 用于恢复/检查进度。
+- 验证记录：已先确认红测失败，`RUN_PROGRESS_RESPONSE_FIELDS` / `run_progress_example()` 最初不存在，`agentdeck run --plan-id <id>` 也不可用；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_run_start_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_run_start_contract_accepts_run_progress_example tests/test_agent_cli.py::test_contract_run_example_exports_gui_ready_response tests/test_leader_cli.py::test_run_plan_id_returns_progress_card_without_dispatching -q` 4 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 323 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 347 项通过。
+
 ### Current - Add approval-gated run start command
 
 - 新增 `agentdeck run --task <text>`：调用配置的 Leader provider 生成 plan，持久化 plan，并立即为需要审批的 steps 创建 pending approvals，返回 GUI-ready `run_start` card。

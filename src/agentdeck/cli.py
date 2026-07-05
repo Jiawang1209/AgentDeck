@@ -2745,6 +2745,20 @@ def run_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
+    if args.plan_id:
+        try:
+            payload = _run_progress_payload(store, args.plan_id)
+        except KeyError:
+            print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+            return 1
+        validation = validate_run_start_contract(payload)
+        if not validation["ok"]:
+            print("Run progress contract validation failed", file=sys.stderr)
+            for error in validation["errors"]:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        _print_json(payload)
+        return 0
     provider_name = _leader_provider_name(config, args.provider)
     model_label = _leader_model_label(config, args.model)
     try:
@@ -2793,7 +2807,7 @@ def run_command(args: argparse.Namespace) -> int:
             },
         )
     )
-    approval_card = _approval_queue_payload(store)
+    approval_card = _approval_queue_payload(store, plan_id=record["plan_id"])
     payload = _run_start_payload(record, approvals, approval_card)
     validation = validate_run_start_contract(payload)
     if not validation["ok"]:
@@ -2803,6 +2817,71 @@ def run_command(args: argparse.Namespace) -> int:
         return 1
     _print_json(payload)
     return 0
+
+
+def _run_progress_payload(store: StateStore, plan_id: str) -> dict[str, object]:
+    status = store.plan_status(plan_id)
+    review = _leader_review_payload(store.leader_review(plan_id))
+    approval_card = _approval_queue_payload(store, plan_id=plan_id)
+    next_command = review.get("next_command")
+    controls = [
+        _control(
+            kind="plan_status",
+            label="Plan status",
+            command=f"agentdeck plan status --plan-id {plan_id}",
+            safety="inspect",
+        ),
+        _control(
+            kind="review",
+            label="Review run",
+            command=f"agentdeck leader review --plan-id {plan_id}",
+            safety="inspect",
+        ),
+        _control(
+            kind="approval_queue",
+            label="Review approval queue",
+            command="agentdeck approval list",
+            safety="inspect",
+        ),
+    ]
+    if next_command:
+        review_next_action = review.get("next_action")
+        controls.append(
+            _control(
+                kind="next",
+                label="Next command",
+                command=next_command,
+                safety="inspect" if review_next_action in {"summarize", "wait_for_approval"} else "explicit_runtime",
+            )
+        )
+    controls.extend(
+        [
+            _control(kind="continue", label="Continue", command="agentdeck continue", safety="inspect"),
+            _control(kind="workbench", label="Open workbench", command="agentdeck workbench", safety="inspect"),
+        ]
+    )
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "ok": True,
+        "mode": "run_progress",
+        "plan_id": plan_id,
+        "task": status.get("task"),
+        "status": status.get("status"),
+        "provider": status.get("provider"),
+        "model": status.get("model"),
+        "counts": status.get("counts"),
+        "steps": status.get("steps"),
+        "review": review,
+        "approval_card": approval_card,
+        "next_command": next_command,
+        "plan_status_command": f"agentdeck plan status --plan-id {plan_id}",
+        "review_command": f"agentdeck leader review --plan-id {plan_id}",
+        "continue_command": "agentdeck continue",
+        "workbench_command": "agentdeck workbench",
+        "controls": controls,
+        "safety": "approval_gated",
+        "requires_explicit_user": True,
+    }
 
 
 def _run_start_payload(
@@ -6109,8 +6188,11 @@ def approval_list_command(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _approval_queue_payload(store: StateStore) -> dict[str, object]:
-    approvals = [_approval_queue_item(approval) for approval in store.list_approvals()]
+def _approval_queue_payload(store: StateStore, plan_id: object = None) -> dict[str, object]:
+    raw_approvals = store.list_approvals()
+    if plan_id is not None:
+        raw_approvals = [approval for approval in raw_approvals if approval.get("plan_id") == plan_id]
+    approvals = [_approval_queue_item(approval) for approval in raw_approvals]
     return {"count": len(approvals), "approvals": approvals}
 
 
@@ -6416,7 +6498,9 @@ def build_parser() -> argparse.ArgumentParser:
     events.set_defaults(func=events_command)
 
     run = subparsers.add_parser("run", help="Start an approval-gated multi-agent run")
-    run.add_argument("--task", required=True, help="Goal for the Leader Agent to plan and queue for approval")
+    run_target = run.add_mutually_exclusive_group(required=True)
+    run_target.add_argument("--task", help="Goal for the Leader Agent to plan and queue for approval")
+    run_target.add_argument("--plan-id", help="Existing plan id to inspect as a run progress card")
     run.add_argument("--provider", help="Leader provider to use; defaults to .agentdeck/config.toml")
     run.add_argument("--model", help="Provider model label recorded with the plan; defaults to config")
     run.set_defaults(func=run_command)

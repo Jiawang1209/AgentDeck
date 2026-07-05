@@ -169,6 +169,55 @@ def test_run_task_creates_plan_and_pending_approvals_without_dispatching(
     assert f'"plan_id": "{plan_id}"' in events
 
 
+def test_run_plan_id_returns_progress_card_without_dispatching(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["run", "--task", "实现 run progress"])
+    started = json.loads(capsys.readouterr().out)
+    plan_id = started["plan_id"]
+    approval_id = started["approval_card"]["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["run", "--plan-id", plan_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "run_progress"
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["plan_id"] == plan_id
+    assert payload["task"] == "实现 run progress"
+    assert payload["status"] == "planned"
+    assert payload["counts"]["approved"] == 1
+    assert payload["counts"]["pending"] == 2
+    assert payload["review"]["next_action"] == "dispatch_approved"
+    assert payload["review"]["approval_id"] == approval_id
+    assert payload["next_command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
+    assert payload["approval_card"]["count"] == 3
+    assert payload["approval_card"]["approvals"][0]["status"] == "approved"
+    assert payload["approval_card"]["approvals"][0]["dispatch_command"] == payload["next_command"]
+    assert payload["plan_status_command"] == f"agentdeck plan status --plan-id {plan_id}"
+    assert payload["review_command"] == f"agentdeck leader review --plan-id {plan_id}"
+    assert payload["continue_command"] == "agentdeck continue"
+    assert payload["workbench_command"] == "agentdeck workbench"
+    assert payload["safety"] == "approval_gated"
+    assert payload["requires_explicit_user"] is True
+    assert payload["controls"][0]["command"] == payload["plan_status_command"]
+    assert payload["controls"][1]["command"] == payload["review_command"]
+    assert payload["controls"][2]["command"] == "agentdeck approval list"
+    assert payload["controls"][3]["command"] == payload["next_command"]
+    assert payload["controls"][3]["safety"] == "explicit_runtime"
+
+    assert StateStore(root).load() == state_before
+    assert fake.sent == []
+    assert fake.captured == []
+
+
 def test_leader_plan_defaults_to_configured_leader_provider_and_model(
     tmp_path, monkeypatch, capsys
 ) -> None:

@@ -50,6 +50,7 @@ from agentdeck.contracts import (
     PROJECT_VIEW_RECOVERY_FIELDS,
     PROJECT_VIEW_TOP_LEVEL_FIELDS,
     RUN_START_CONTROL_FIELDS,
+    RUN_PROGRESS_RESPONSE_FIELDS,
     RUN_START_RESPONSE_FIELDS,
     TRACE_ATTEMPT_FIELDS,
     TRACE_ARTIFACT_FIELDS,
@@ -126,6 +127,7 @@ from agentdeck.contracts import (
     run_start_contract_payload,
     run_start_contract_response,
     run_start_example,
+    run_progress_example,
     trace_contract_payload,
     trace_contract_response,
     trace_example,
@@ -237,6 +239,10 @@ def test_run_start_contract_response_includes_example_without_drift(tmp_path: Pa
     assert set(payload["example_response_fields"]) == set(payload["response_fields"])
     assert set(payload["example_control_fields"]) == set(payload["control_fields"])
     assert validate_run_start_contract(payload["example_run_start"]) == {"ok": True, "errors": []}
+    assert payload["progress_response_fields"] == list(RUN_PROGRESS_RESPONSE_FIELDS)
+    assert payload["example_progress_fields"] == list(payload["example_run_progress"])
+    assert set(payload["example_progress_fields"]) == set(payload["progress_response_fields"])
+    assert validate_run_start_contract(payload["example_run_progress"]) == {"ok": True, "errors": []}
 
 
 def test_validate_run_start_contract_requires_approval_gated_controls() -> None:
@@ -253,6 +259,14 @@ def test_validate_run_start_contract_requires_approval_gated_controls() -> None:
             "run_start.safety must be approval_gated",
         ],
     }
+
+
+def test_validate_run_start_contract_accepts_run_progress_example() -> None:
+    payload = run_progress_example()
+
+    result = validate_run_start_contract(payload)
+
+    assert result == {"ok": True, "errors": []}
 
 
 def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:

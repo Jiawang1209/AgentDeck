@@ -2,7 +2,9 @@
 
 `agentdeck run --task <text>` starts an approval-gated multi-agent run. It asks the configured Leader provider for a plan, persists that plan, creates pending approval items for approval-required steps, and returns a GUI-ready `run_start` card.
 
-The command does not approve, dispatch, capture pane output, acknowledge inbox items, or send tmux input. Runtime work still requires explicit follow-up commands from the returned controls.
+`agentdeck run --plan-id <id>` returns a read-only `run_progress` card for an existing plan/run. It combines plan status, Leader review, the run-specific approval queue, and explicit next-step controls.
+
+Both modes avoid implicit runtime mutation. They do not approve, dispatch, capture pane output, acknowledge inbox items, or send tmux input. Runtime work still requires explicit follow-up commands from the returned controls.
 
 ## Discovery
 
@@ -16,6 +18,7 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `run_start_contract_payload()`
 - `run_start_contract_response()`
 - `run_start_example()`
+- `run_progress_example()`
 - `validate_run_start_contract()`
 
 ## Response Fields
@@ -43,6 +46,31 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `requires_explicit_user`
 
 `mode` must be `run_start`. `safety` must be `approval_gated`, and `requires_explicit_user` must be `true`.
+
+`progress_response_fields` describes the live `agentdeck run --plan-id <id>` response:
+
+- `schema_version`
+- `ok`
+- `mode`
+- `plan_id`
+- `task`
+- `status`
+- `provider`
+- `model`
+- `counts`
+- `steps`
+- `review`
+- `approval_card`
+- `next_command`
+- `plan_status_command`
+- `review_command`
+- `continue_command`
+- `workbench_command`
+- `controls`
+- `safety`
+- `requires_explicit_user`
+
+`mode` must be `run_progress`. `review` reuses the `agentdeck leader review --plan-id <id>` response shape, and `next_command` must match `review.next_command`.
 
 ## Controls
 
