@@ -387,6 +387,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "leader_action_card",
     "continue_card",
     "capture_card",
+    "terminal_card",
     "dispatch_preview_card",
     "dispatch_batch_preview_card",
     "agent_ready_card",
@@ -426,6 +427,27 @@ LEADER_CHAT_CAPTURE_CARD_FIELDS = (
     "lines",
     "capture_command",
     "output",
+)
+
+LEADER_CHAT_TERMINAL_CARD_FIELDS = (
+    "ok",
+    "mode",
+    "agent_id",
+    "role",
+    "provider",
+    "workspace_mode",
+    "status",
+    "pane_id",
+    "session_name",
+    "cwd",
+    "attach_command",
+    "select_pane_command",
+    "capture_command",
+    "send_command_template",
+    "stop_command",
+    "inbox_command",
+    "refresh_command",
+    "controls",
 )
 
 LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS = (
@@ -640,6 +662,8 @@ AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS = (
     "pane_id",
     "output",
 )
+
+AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS = LEADER_CHAT_TERMINAL_CARD_FIELDS
 
 AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS = (
     "ok",
@@ -1031,6 +1055,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "leader_action_card_fields": list(LEADER_CHAT_ACTION_CARD_FIELDS),
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "capture_card_fields": list(LEADER_CHAT_CAPTURE_CARD_FIELDS),
+        "terminal_card_fields": list(LEADER_CHAT_TERMINAL_CARD_FIELDS),
         "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_card_fields": list(LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_item_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
@@ -1076,6 +1101,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_intent_control_fields"] = list(example["intent_card"]["controls"][0])
         payload["example_leader_action_card_fields"] = list(example["leader_action_card"])
         payload["example_continue_card_fields"] = list(example["continue_card"])
+        payload["example_terminal_card_fields"] = list(example["terminal_card"])
         payload["example_dispatch_preview_card_fields"] = list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
         payload["example_dispatch_batch_preview_card_fields"] = list(
             LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS
@@ -1459,6 +1485,7 @@ def agent_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
         "ready_command": "agentdeck agent ready",
         "spawn_ready_command": "agentdeck agent spawn-ready --confirm",
         "spawn_command_template": "agentdeck agent spawn --agent <id>",
+        "terminal_command_template": "agentdeck agent terminal --agent <id>",
         "capture_command_template": "agentdeck agent capture --agent <id> --lines 200",
         "send_command_template": "agentdeck agent send --agent <id> --text <text>",
         "stop_command_template": "agentdeck agent stop --agent <id>",
@@ -1467,6 +1494,7 @@ def agent_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "agent_item_fields": list(AGENT_RUNTIME_AGENT_ITEM_FIELDS),
         "capture_response_fields": list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS),
+        "terminal_response_fields": list(AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS),
         "refresh_response_fields": list(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS),
         "refresh_agent_fields": list(AGENT_RUNTIME_REFRESH_AGENT_FIELDS),
         "ready_response_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
@@ -1486,6 +1514,7 @@ def agent_runtime_contract_response(contract_path: Path, include_example: bool =
         payload["example"] = True
         payload["example_agent_item_fields"] = list(example["agents"][0])
         payload["example_capture_response_fields"] = list(example["capture"])
+        payload["example_terminal_response_fields"] = list(example["terminal"])
         payload["example_refresh_response_fields"] = list(example["refresh"])
         payload["example_refresh_agent_fields"] = list(example["refresh"]["agents"][0])
         payload["example_ready_response_fields"] = list(example["ready"])
@@ -2174,6 +2203,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_leader_chat_capture_card_contract(errors, capture_card)
     elif "capture_card" in payload and capture_card is not None:
         errors.append("capture_card must be an object")
+    terminal_card = payload.get("terminal_card")
+    if isinstance(terminal_card, dict):
+        _validate_leader_chat_terminal_card_contract(errors, terminal_card)
+    elif "terminal_card" in payload and terminal_card is not None:
+        errors.append("terminal_card must be an object")
     dispatch_preview_card = payload.get("dispatch_preview_card")
     if isinstance(dispatch_preview_card, dict):
         _validate_leader_chat_dispatch_preview_card_contract(errors, dispatch_preview_card)
@@ -2311,6 +2345,25 @@ def _validate_leader_chat_capture_card_contract(errors: list[str], capture_card:
         errors.append("capture_card.lines must be an integer")
     if "output" in capture_card and not isinstance(capture_card.get("output"), str):
         errors.append("capture_card.output must be a string")
+
+
+def _validate_leader_chat_terminal_card_contract(errors: list[str], terminal_card: dict[str, object]) -> None:
+    for field in LEADER_CHAT_TERMINAL_CARD_FIELDS:
+        if field not in terminal_card:
+            errors.append(f"missing terminal_card field: {field}")
+    controls = terminal_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if isinstance(control, dict):
+                for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                    if field not in control:
+                        errors.append(f"terminal_card.controls: missing control field: {field}")
+                if control.get("enabled") is False and not control.get("blocker"):
+                    errors.append("terminal_card.controls: disabled controls must include blocker")
+            else:
+                errors.append("terminal_card.controls items must be objects")
+    elif "controls" in terminal_card:
+        errors.append("terminal_card.controls must be a list")
 
 
 def _validate_leader_chat_dispatch_preview_card_contract(
@@ -3038,6 +3091,7 @@ def leader_chat_example() -> dict[str, object]:
     next_command = recovery["next_command"]
     continue_card = continue_example()
     agent_ready_card = agent_runtime_example()["ready"]
+    terminal_card = agent_runtime_example()["terminal"]
     runtime_card = workbench_example()["runtime_card"]
     queue_card = workbench_example()["queue_card"]
     operator_card = workbench_example()["operator_card"]
@@ -3094,6 +3148,7 @@ def leader_chat_example() -> dict[str, object]:
         "leader_action_card": leader_action_card,
         "continue_card": continue_card,
         "capture_card": None,
+        "terminal_card": terminal_card,
         "dispatch_preview_card": None,
         "dispatch_batch_preview_card": None,
         "agent_ready_card": agent_ready_card,
@@ -3769,6 +3824,26 @@ def agent_runtime_example() -> dict[str, object]:
             "agent_id": agent_id,
             "pane_id": "%42",
             "output": "status: completed\n",
+        },
+        "terminal": {
+            "ok": True,
+            "mode": "agent_terminal",
+            "agent_id": agent_id,
+            "role": "planning",
+            "provider": "codex",
+            "workspace_mode": "shared",
+            "status": "running",
+            "pane_id": "%42",
+            "session_name": "agentdeck",
+            "cwd": "/workspace/project",
+            "attach_command": "tmux -L agentdeck-multi-agent-explore attach -t agentdeck",
+            "select_pane_command": "tmux -L agentdeck-multi-agent-explore select-pane -t %42",
+            "capture_command": "agentdeck agent capture --agent planner --lines 200",
+            "send_command_template": "agentdeck agent send --agent planner --text <text>",
+            "stop_command": "agentdeck agent stop --agent planner",
+            "inbox_command": "agentdeck inbox --agent planner",
+            "refresh_command": "agentdeck agent refresh",
+            "controls": runtime_agent_controls(agent_id, True),
         },
         "refresh": {
             "ok": True,

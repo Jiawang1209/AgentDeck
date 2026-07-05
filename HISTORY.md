@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add read-only agent terminal card
+
+- 新增只读入口 `agentdeck agent terminal --agent <id>`：返回指定 running agent 的 role/provider/workspace/status、pane/session/cwd、tmux `attach_command`、`select_pane_command`、capture/send/stop/inbox/refresh 命令和 runtime controls。
+- 保持 visible runtime 边界：`agent terminal` 不 attach tmux、不读取 pane 输出、不发送输入、不 stop pane、不写 state、不追加事件，只给人类和 GUI 提供可复制/可渲染的终端定位卡。
+- 扩展自然语言入口：`agentdeck leader chat --message "打开 planner 终端"` / `"进入 coder pane"` 进入只读 `mode=terminal`，嵌入 `terminal_card`，顶层 `next_command` 对齐 `terminal_card.attach_command`，并使用 `Open terminal` intent control；该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，也不执行 tmux 操作。
+- 扩展 `agentdeck contract agent-runtime` 和 `agentdeck contract leader-chat`：新增 terminal 命令模板、`terminal_response_fields` / `terminal_card_fields`、稳定 example 字段和 validator，供未来 GUI/TUI 不解析命令字符串也能渲染 terminal card。
+- 同步 README、`docs/contracts/agent-runtime-schema.md`、`docs/contracts/leader-chat-schema.md`、CLAUDE.md 和 AGENT.md，明确 terminal card 与 capture card 分工：terminal 只定位 pane，capture 才读取输出。
+- 验证记录：已先确认红测失败，`AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS` / `LEADER_CHAT_TERMINAL_CARD_FIELDS` 最初不存在，`agent terminal` 不是合法子命令，自然语言打开终端无法返回 `terminal_card`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_agent_terminal_outputs_visible_pane_card_without_mutating_state tests/test_agent_cli.py::test_contract_agent_runtime_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_agent_runtime_example_exports_gui_ready_runtime_contract tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response tests/test_contracts.py::test_agent_runtime_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_agent_runtime_contract_response_includes_example_without_drift tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_leader_cli.py::test_leader_chat_opens_agent_terminal_card_without_reading_pane -q` 10 项通过；全量测试先暴露 `"打开 planner inbox"` 被 terminal 规则误拦截，修正 terminal intent 排除 inbox/mailbox 后复跑相关测试 2 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 273 项通过。
+
 ### Current - Add explicit spawn-ready runtime batch
 
 - 新增显式批量启动入口 `agentdeck agent spawn-ready --confirm`：它会启动所有尚未 `running` 的 configured agents，跳过已 running pane，并在结果中返回每个 agent 的 previous_status、pane_id、spawn_command 和 blocker。

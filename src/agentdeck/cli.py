@@ -79,6 +79,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "workbench_card",
         "continue_card",
         "capture_card",
+        "terminal_card",
         "dispatch_preview_card",
         "dispatch_batch_preview_card",
         "agent_ready_card",
@@ -146,6 +147,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Spawn ready agents"
     if command == "agentdeck agent refresh":
         return "Refresh runtime"
+    if command.startswith("tmux ") and " attach " in command:
+        return "Open terminal"
     spawn_match = re.fullmatch(r"agentdeck agent spawn --agent ([^\s]+)", command)
     if spawn_match:
         return f"Spawn {spawn_match.group(1)}"
@@ -196,6 +199,10 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
     if embedded_card == "capture_card":
         capture_card = payload.get("capture_card")
         command = capture_card.get("capture_command") if isinstance(capture_card, dict) else None
+        return str(command) if command else None
+    if embedded_card == "terminal_card":
+        terminal_card = payload.get("terminal_card")
+        command = terminal_card.get("attach_command") if isinstance(terminal_card, dict) else None
         return str(command) if command else None
     if embedded_card == "dispatch_preview_card":
         dispatch_preview_card = payload.get("dispatch_preview_card")
@@ -271,6 +278,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("lineage_card", None)
     payload.setdefault("trace_card", None)
     payload.setdefault("capture_card", None)
+    payload.setdefault("terminal_card", None)
     payload.setdefault("dispatch_preview_card", None)
     payload.setdefault("dispatch_batch_preview_card", None)
     payload.setdefault("agent_ready_card", None)
@@ -1376,6 +1384,55 @@ def _agent_ready_card_payload(project_view: dict[str, object]) -> dict[str, obje
     }
 
 
+def _tmux_attach_command(config: ProjectConfig) -> str:
+    return (
+        f"tmux -L {shlex.quote(config.runtime.socket_name)} "
+        f"attach -t {shlex.quote(config.runtime.session_name)}"
+    )
+
+
+def _tmux_select_pane_command(config: ProjectConfig, pane_id: str) -> str:
+    return f"tmux -L {shlex.quote(config.runtime.socket_name)} select-pane -t {shlex.quote(pane_id)}"
+
+
+def _agent_terminal_card_payload(
+    config: ProjectConfig,
+    store: StateStore,
+    agent_id: str,
+) -> tuple[dict[str, object] | None, int]:
+    agent = next((item for item in config.agents if item.agent_id == agent_id), None)
+    if agent is None:
+        print(f"unknown agent: {agent_id}", file=sys.stderr)
+        return None, 1
+    binding, exit_code = _running_binding_or_error(store, agent_id)
+    if binding is None:
+        return None, exit_code
+    pane_id = str(binding["pane_id"])
+    return (
+        {
+            "ok": True,
+            "mode": "agent_terminal",
+            "agent_id": agent.agent_id,
+            "role": agent.role,
+            "provider": agent.provider,
+            "workspace_mode": agent.workspace_mode,
+            "status": str(binding.get("status", "running")),
+            "pane_id": pane_id,
+            "session_name": binding.get("session_name") or config.runtime.session_name,
+            "cwd": binding.get("cwd") or config.root,
+            "attach_command": _tmux_attach_command(config),
+            "select_pane_command": _tmux_select_pane_command(config, pane_id),
+            "capture_command": f"agentdeck agent capture --agent {agent.agent_id} --lines 200",
+            "send_command_template": f"agentdeck agent send --agent {agent.agent_id} --text <text>",
+            "stop_command": f"agentdeck agent stop --agent {agent.agent_id}",
+            "inbox_command": f"agentdeck inbox --agent {agent.agent_id}",
+            "refresh_command": "agentdeck agent refresh",
+            "controls": runtime_agent_controls(agent.agent_id, True),
+        },
+        0,
+    )
+
+
 def continue_command(_args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -1785,6 +1842,17 @@ def agent_capture_command(args: argparse.Namespace) -> int:
     pane_id = str(binding["pane_id"])
     output = TmuxBackend().capture_output(config.runtime, pane_id, args.lines)
     _print_json({"agent_id": args.agent, "pane_id": pane_id, "output": output})
+    return 0
+
+
+def agent_terminal_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    payload, exit_code = _agent_terminal_card_payload(config, store, args.agent)
+    if payload is None:
+        return exit_code
+    _print_json(payload)
     return 0
 
 
@@ -2810,6 +2878,35 @@ def _chat_capture_agent_id(message: str, config: ProjectConfig) -> str | None:
     return None
 
 
+def _chat_terminal_agent_id(message: str, config: ProjectConfig) -> str | None:
+    normalized = message.strip().lower()
+    wants_terminal = any(
+        token in normalized
+        for token in [
+            "open",
+            "attach",
+            "focus",
+            "select pane",
+            "terminal",
+            "pane",
+            "打开",
+            "进入",
+            "切到",
+            "聚焦",
+            "终端",
+            "面板",
+        ]
+    )
+    wants_output = any(token in normalized for token in ["output", "输出", "屏幕", "capture"])
+    wants_inbox = any(token in normalized for token in ["inbox", "mailbox", "收件箱", "消息"])
+    if not wants_terminal or wants_output or wants_inbox:
+        return None
+    for agent in config.agents:
+        if agent.agent_id.lower() in normalized:
+            return agent.agent_id
+    return None
+
+
 def _chat_inbox_agent_id(message: str, config: ProjectConfig) -> str | None:
     normalized = message.strip().lower()
     mentions_inbox = any(token in normalized for token in ["inbox", "收件箱", "消息", "mailbox"])
@@ -3001,6 +3098,7 @@ def _leader_chat_explanation(
     inbox_card: dict[str, object] | None = None,
     inbox_action_kind: str | None = None,
     capture_card: dict[str, object] | None = None,
+    terminal_card: dict[str, object] | None = None,
     trace_card: dict[str, object] | None = None,
     approval_card: dict[str, object] | None = None,
     approval_action_kind: str | None = None,
@@ -3209,6 +3307,20 @@ def _leader_chat_explanation(
             "recommended_action_id": agent_id,
             "action_kind": "capture",
             "action_status": "captured" if agent_id else "missing",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
+    if mode == "terminal":
+        agent_id = terminal_card.get("agent_id") if isinstance(terminal_card, dict) else None
+        status = str(terminal_card.get("status", "unknown")) if isinstance(terminal_card, dict) else "unknown"
+        return {
+            "mode": mode,
+            "summary": "Leader recommends opening a visible agent terminal pane without reading or mutating it.",
+            "reason": "human asked to open one agent terminal pane",
+            "next_command": next_command,
+            "recommended_action_id": agent_id,
+            "action_kind": "terminal",
+            "action_status": status,
             "safety": "inspect",
             "requires_explicit_user": False,
         }
@@ -3684,6 +3796,68 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "workbench_card": None,
             "provider_health": _workbench_provider_health(refreshed_project_view),
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    terminal_agent_id = _chat_terminal_agent_id(args.message, config)
+    if terminal_agent_id is not None:
+        terminal_card, exit_code = _agent_terminal_card_payload(config, store, terminal_agent_id)
+        if terminal_card is None:
+            return exit_code
+        next_command = terminal_card["attach_command"]
+        turn = store.record_chat_turn(
+            mode="terminal",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="terminal",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "terminal",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "terminal",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "terminal",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                terminal_card=terminal_card,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "capture_card": None,
+            "terminal_card": terminal_card,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "lineage_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -5106,6 +5280,13 @@ def build_parser() -> argparse.ArgumentParser:
     agent_capture.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
     agent_capture.add_argument("--lines", type=int, default=200, help="Number of recent lines to capture")
     agent_capture.set_defaults(func=agent_capture_command)
+
+    agent_terminal = agent_subparsers.add_parser(
+        "terminal",
+        help="Show a read-only terminal card for a spawned agent pane",
+    )
+    agent_terminal.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")
+    agent_terminal.set_defaults(func=agent_terminal_command)
 
     agent_send = agent_subparsers.add_parser("send", help="Send text to a spawned agent pane")
     agent_send.add_argument("--agent", required=True, help="Agent id from .agentdeck/config.toml")

@@ -8,6 +8,7 @@ from agentdeck.contracts import (
     AGENT_RUNTIME_REFRESH_AGENT_FIELDS,
     AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS,
     AGENT_RUNTIME_READY_RESPONSE_FIELDS,
+    AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS,
     APPROVAL_DISPATCH_READY_RESPONSE_FIELDS,
     APPROVAL_DISPATCH_READY_RESULT_FIELDS,
     APPROVAL_ITEM_FIELDS,
@@ -31,6 +32,7 @@ from agentdeck.contracts import (
     LEADER_CHAT_INTENT_CARD_FIELDS,
     LEADER_CHAT_INTENT_CONTROL_FIELDS,
     LEADER_CHAT_RESPONSE_FIELDS,
+    LEADER_CHAT_TERMINAL_CARD_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
     PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS,
     PROJECT_VIEW_JOB_ITEM_FIELDS,
@@ -231,6 +233,7 @@ def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) 
     assert payload["ready_command"] == "agentdeck agent ready"
     assert payload["spawn_ready_command"] == "agentdeck agent spawn-ready --confirm"
     assert payload["spawn_command_template"] == "agentdeck agent spawn --agent <id>"
+    assert payload["terminal_command_template"] == "agentdeck agent terminal --agent <id>"
     assert payload["capture_command_template"] == "agentdeck agent capture --agent <id> --lines 200"
     assert payload["send_command_template"] == "agentdeck agent send --agent <id> --text <text>"
     assert payload["stop_command_template"] == "agentdeck agent stop --agent <id>"
@@ -239,6 +242,7 @@ def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) 
     assert payload["contract_exists"] is True
     assert payload["agent_item_fields"] == list(AGENT_RUNTIME_AGENT_ITEM_FIELDS)
     assert payload["capture_response_fields"] == list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
+    assert payload["terminal_response_fields"] == list(AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS)
     assert payload["refresh_response_fields"] == list(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS)
     assert payload["refresh_agent_fields"] == list(AGENT_RUNTIME_REFRESH_AGENT_FIELDS)
     assert payload["ready_response_fields"] == [
@@ -290,6 +294,7 @@ def test_agent_runtime_contract_response_includes_example_without_drift(tmp_path
     assert payload["example_agent_runtime"] == example
     assert payload["example_agent_item_fields"] == payload["agent_item_fields"]
     assert payload["example_capture_response_fields"] == payload["capture_response_fields"]
+    assert payload["example_terminal_response_fields"] == payload["terminal_response_fields"]
     assert payload["example_refresh_response_fields"] == payload["refresh_response_fields"]
     assert payload["example_refresh_agent_fields"] == payload["refresh_agent_fields"]
     assert payload["example_ready_response_fields"] == payload["ready_response_fields"]
@@ -298,6 +303,7 @@ def test_agent_runtime_contract_response_includes_example_without_drift(tmp_path
     assert payload["example_control_fields"] == payload["runtime_control_fields"]
     assert set(example["agents"][0]) == set(AGENT_RUNTIME_AGENT_ITEM_FIELDS)
     assert set(example["capture"]) == set(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
+    assert set(example["terminal"]) == set(AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS)
     assert set(example["refresh"]) == set(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS)
     assert set(example["refresh"]["agents"][0]) == set(AGENT_RUNTIME_REFRESH_AGENT_FIELDS)
     assert set(example["ready"]) == set(payload["ready_response_fields"])
@@ -488,6 +494,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     ]
     assert payload["continue_card_fields"] == list(CONTINUE_CARD_FIELDS)
     assert payload["capture_card_fields"] == list(LEADER_CHAT_CAPTURE_CARD_FIELDS)
+    assert payload["terminal_card_fields"] == list(LEADER_CHAT_TERMINAL_CARD_FIELDS)
     assert payload["dispatch_preview_card_fields"] == list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
     assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
@@ -1468,6 +1475,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert example["leader_action_card"]["controls"] == example["leader_action"]["controls"]
     assert payload["example_continue_card_fields"] == payload["continue_card_fields"]
     assert set(payload["example_continue_card_fields"]) == set(example["continue_card"])
+    assert payload["example_terminal_card_fields"] == payload["terminal_card_fields"]
+    assert set(payload["example_terminal_card_fields"]) == set(example["terminal_card"])
     assert payload["example_agent_ready_card_fields"] == payload["agent_ready_card_fields"]
     assert payload["example_agent_ready_card_fields"] == list(example["agent_ready_card"])
     assert payload["example_runtime_card_fields"] == payload["runtime_card_fields"]

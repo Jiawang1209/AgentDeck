@@ -10,6 +10,7 @@ from agentdeck.contracts import (
     AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
     AGENT_RUNTIME_REFRESH_AGENT_FIELDS,
     AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS,
+    AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS,
     approval_contract_payload,
     approval_contract_response,
     agent_runtime_contract_payload,
@@ -543,6 +544,7 @@ def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None
     assert payload["ready_command"] == "agentdeck agent ready"
     assert payload["spawn_ready_command"] == "agentdeck agent spawn-ready --confirm"
     assert payload["spawn_command_template"] == "agentdeck agent spawn --agent <id>"
+    assert payload["terminal_command_template"] == "agentdeck agent terminal --agent <id>"
     assert payload["capture_command_template"] == "agentdeck agent capture --agent <id> --lines 200"
     assert payload["send_command_template"] == "agentdeck agent send --agent <id> --text <text>"
     assert payload["stop_command_template"] == "agentdeck agent stop --agent <id>"
@@ -551,6 +553,7 @@ def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None
     assert payload["contract_exists"] is True
     assert payload["agent_item_fields"] == list(AGENT_RUNTIME_AGENT_ITEM_FIELDS)
     assert payload["capture_response_fields"] == list(AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS)
+    assert payload["terminal_response_fields"] == list(AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS)
     assert payload["refresh_response_fields"] == list(AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS)
     assert payload["refresh_agent_fields"] == list(AGENT_RUNTIME_REFRESH_AGENT_FIELDS)
     assert payload["ready_response_fields"] == [
@@ -600,6 +603,7 @@ def test_contract_agent_runtime_example_exports_gui_ready_runtime_contract(capsy
     example = payload["example_agent_runtime"]
     assert payload["example_agent_item_fields"] == payload["agent_item_fields"]
     assert payload["example_capture_response_fields"] == payload["capture_response_fields"]
+    assert payload["example_terminal_response_fields"] == payload["terminal_response_fields"]
     assert payload["example_refresh_response_fields"] == payload["refresh_response_fields"]
     assert payload["example_refresh_agent_fields"] == payload["refresh_agent_fields"]
     assert payload["example_ready_response_fields"] == payload["ready_response_fields"]
@@ -608,6 +612,7 @@ def test_contract_agent_runtime_example_exports_gui_ready_runtime_contract(capsy
     assert payload["example_control_fields"] == payload["runtime_control_fields"]
     assert set(example["agents"][0]) == set(payload["agent_item_fields"])
     assert set(example["capture"]) == set(payload["capture_response_fields"])
+    assert set(example["terminal"]) == set(payload["terminal_response_fields"])
     assert set(example["refresh"]) == set(payload["refresh_response_fields"])
     assert set(example["refresh"]["agents"][0]) == set(payload["refresh_agent_fields"])
     assert set(example["ready"]) == set(payload["ready_response_fields"])
@@ -616,6 +621,7 @@ def test_contract_agent_runtime_example_exports_gui_ready_runtime_contract(capsy
     assert set(example["controls"][0]) == set(payload["runtime_control_fields"])
     assert example["agents"][0]["runtime"]["pane_id"] == "%42"
     assert example["capture"]["output"] == "status: completed\n"
+    assert example["terminal"]["attach_command"] == "tmux -L agentdeck-multi-agent-explore attach -t agentdeck"
 
 
 def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
@@ -695,6 +701,7 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["response_fields"] == expected["response_fields"]
     assert payload["explanation_fields"] == expected["explanation_fields"]
     assert payload["capture_card_fields"] == expected["capture_card_fields"]
+    assert payload["terminal_card_fields"] == expected["terminal_card_fields"]
     assert payload["dispatch_preview_card_fields"] == expected["dispatch_preview_card_fields"]
     assert payload["agent_ready_card_fields"] == expected["agent_ready_card_fields"]
     assert payload["trace_card_fields"] == expected["trace_card_fields"]
@@ -2155,6 +2162,8 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     assert set(payload["example_explanation_fields"]) == set(example["leader_explanation"])
     assert payload["example_agent_ready_card_fields"] == payload["agent_ready_card_fields"]
     assert set(payload["example_agent_ready_card_fields"]) == set(example["agent_ready_card"])
+    assert payload["example_terminal_card_fields"] == payload["terminal_card_fields"]
+    assert set(payload["example_terminal_card_fields"]) == set(example["terminal_card"])
     assert payload["example_workbench_control_registry_item_fields"] == (
         payload["workbench_control_registry_item_fields"]
     )
@@ -2957,6 +2966,89 @@ def test_agent_capture_reads_bound_pane(tmp_path, monkeypatch, capsys) -> None:
     assert payload["pane_id"] == "%42"
     assert payload["output"] == "planner output\n"
     assert fake.captured == [("%42", 50)]
+
+
+def test_agent_terminal_outputs_visible_pane_card_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"]["planner"] = {
+        "agent_id": "planner",
+        "pane_id": "%42",
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
+    state_before = store.load()
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["agent", "terminal", "--agent", "planner"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "ok": True,
+        "mode": "agent_terminal",
+        "agent_id": "planner",
+        "role": "planning",
+        "provider": "codex",
+        "workspace_mode": "shared",
+        "status": "running",
+        "pane_id": "%42",
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "attach_command": "tmux -L agentdeck-repo attach -t agentdeck",
+        "select_pane_command": "tmux -L agentdeck-repo select-pane -t %42",
+        "capture_command": "agentdeck agent capture --agent planner --lines 200",
+        "send_command_template": "agentdeck agent send --agent planner --text <text>",
+        "stop_command": "agentdeck agent stop --agent planner",
+        "inbox_command": "agentdeck inbox --agent planner",
+        "refresh_command": "agentdeck agent refresh",
+        "controls": [
+            {
+                "kind": "capture",
+                "label": "Capture pane output",
+                "command": "agentdeck agent capture --agent planner --lines 200",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "send",
+                "label": "Send input",
+                "command": "agentdeck agent send --agent planner --text <text>",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "stop",
+                "label": "Stop pane",
+                "command": "agentdeck agent stop --agent planner",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inbox",
+                "label": "Open inbox",
+                "command": "agentdeck inbox --agent planner",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    assert store.load() == state_before
+    assert fake.created_sessions == 0
+    assert fake.spawned == []
+    assert fake.captured == []
+    assert fake.sent == []
+    assert fake.killed == []
 
 
 def test_agent_send_uses_bound_pane_and_records_event(tmp_path, monkeypatch, capsys) -> None:

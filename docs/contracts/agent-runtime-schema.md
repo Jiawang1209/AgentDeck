@@ -20,6 +20,7 @@ The contract command returns:
   "ready_command": "agentdeck agent ready",
   "spawn_ready_command": "agentdeck agent spawn-ready --confirm",
   "spawn_command_template": "agentdeck agent spawn --agent <id>",
+  "terminal_command_template": "agentdeck agent terminal --agent <id>",
   "capture_command_template": "agentdeck agent capture --agent <id> --lines 200",
   "send_command_template": "agentdeck agent send --agent <id> --text <text>",
   "stop_command_template": "agentdeck agent stop --agent <id>",
@@ -28,6 +29,7 @@ The contract command returns:
   "contract_exists": true,
   "agent_item_fields": [],
   "capture_response_fields": [],
+  "terminal_response_fields": [],
   "refresh_response_fields": [],
   "refresh_agent_fields": [],
   "ready_response_fields": [],
@@ -40,7 +42,7 @@ The contract command returns:
 }
 ```
 
-Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready fixture with one running agent, a ready response, a spawn-ready response, a capture response, and reusable runtime controls.
+Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready fixture with one running agent, a ready response, a spawn-ready response, a terminal response, a capture response, and reusable runtime controls.
 
 ## Agent Item Fields
 
@@ -135,6 +137,43 @@ The command does not inspect tmux, create panes, refresh bindings, send input, w
 - `ready_command`: command to re-open the readiness card after startup.
 
 The command requires `--confirm`; without it, the command exits non-zero and must not write state or create panes.
+
+## Terminal Response Fields
+
+`agentdeck agent terminal --agent <id>` is a read-only terminal card for opening or locating a visible tmux pane:
+
+```json
+{
+  "ok": true,
+  "mode": "agent_terminal",
+  "agent_id": "planner",
+  "role": "planning",
+  "provider": "codex",
+  "workspace_mode": "shared",
+  "status": "running",
+  "pane_id": "%42",
+  "session_name": "agentdeck",
+  "cwd": "/workspace/project",
+  "attach_command": "tmux -L agentdeck-example attach -t agentdeck",
+  "select_pane_command": "tmux -L agentdeck-example select-pane -t %42",
+  "capture_command": "agentdeck agent capture --agent planner --lines 200",
+  "send_command_template": "agentdeck agent send --agent planner --text <text>",
+  "stop_command": "agentdeck agent stop --agent planner",
+  "inbox_command": "agentdeck inbox --agent planner",
+  "refresh_command": "agentdeck agent refresh",
+  "controls": []
+}
+```
+
+- `attach_command`: explicit tmux command for attaching to the configured project session.
+- `select_pane_command`: explicit tmux command for selecting the agent pane.
+- `capture_command`: read-only output capture command.
+- `send_command_template`: explicit input template that still requires text.
+- `stop_command`: explicit pane stop command.
+- `inbox_command`: read-only mailbox command for the same agent.
+- `controls`: the same runtime controls used by workbench runtime agents.
+
+The command does not attach to tmux, read pane output, send input, write state, or append events.
 
 ## Capture Response Fields
 

@@ -1187,6 +1187,73 @@ def test_leader_chat_captures_agent_output_as_read_only_card(tmp_path, monkeypat
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_opens_agent_terminal_card_without_reading_pane(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["leader", "chat", "--message", "打开 planner 终端"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "terminal"
+    assert payload["message"] == "打开 planner 终端"
+    assert payload["next_command"] == "tmux -L agentdeck-repo attach -t agentdeck"
+    assert payload["runtime_card"] is None
+    assert payload["capture_card"] is None
+    assert payload["terminal_card"]["agent_id"] == "planner"
+    assert payload["terminal_card"]["pane_id"] == "%42"
+    assert payload["terminal_card"]["attach_command"] == payload["next_command"]
+    assert payload["terminal_card"]["select_pane_command"] == (
+        "tmux -L agentdeck-repo select-pane -t %42"
+    )
+    assert payload["terminal_card"]["capture_command"] == "agentdeck agent capture --agent planner --lines 200"
+    assert payload["leader_explanation"] == {
+        "mode": "terminal",
+        "summary": "Leader recommends opening a visible agent terminal pane without reading or mutating it.",
+        "reason": "human asked to open one agent terminal pane",
+        "next_command": "tmux -L agentdeck-repo attach -t agentdeck",
+        "recommended_action_id": "planner",
+        "action_kind": "terminal",
+        "action_status": "running",
+        "safety": "inspect",
+        "requires_explicit_user": False,
+    }
+    assert payload["intent_card"]["embedded_card"] == "terminal_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect terminal_card",
+        "command": "tmux -L agentdeck-repo attach -t agentdeck",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Open terminal",
+        "command": payload["next_command"],
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert fake.captured == []
+    assert fake.sent == []
+
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "terminal"
+    assert state_after["chat_turns"][0]["next_command"] == payload["next_command"]
+    assert state_after["chat_turns"][0]["action_kind"] == "terminal"
+    assert state_after["agents"]["planner"]["status"] == "running"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+    assert state_after["approvals"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_rejects_capture_for_unspawned_agent_without_planning(
     tmp_path, monkeypatch, capsys
 ) -> None:
