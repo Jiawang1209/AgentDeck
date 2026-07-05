@@ -217,6 +217,7 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "leader_actions": project_view.get("leader_actions"),
         "runtime_card": _workbench_runtime_card(project_view),
         "ledger_card": _workbench_ledger_card(project_view),
+        "operator_card": _workbench_operator_card(project_view, continue_card, active_queue_source),
         "recovery": recovery,
         "next_command": continue_card.get("next_command"),
         "continue_card": continue_card,
@@ -224,6 +225,39 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "inbox_card": inbox_card,
         "approval_card": approval_card,
         "leader_action": leader_action if isinstance(leader_action, dict) else None,
+    }
+
+
+def _workbench_operator_card(
+    project_view: dict[str, object], continue_card: dict[str, object], active_queue_source: str
+) -> dict[str, object]:
+    recovery = project_view.get("recovery") if isinstance(project_view.get("recovery"), dict) else {}
+    recommended_action = (
+        recovery.get("recommended_action") if isinstance(recovery.get("recommended_action"), dict) else {}
+    )
+    leader_action = continue_card.get("leader_action")
+    leader_action = leader_action if isinstance(leader_action, dict) else {}
+    source = str(recommended_action.get("source", "none"))
+    action_kind = source if source in ("inbox", "approval", "leader_action") else "none"
+    can_apply = bool(leader_action.get("can_apply")) if action_kind == "leader_action" else False
+    apply_command = leader_action.get("apply_command") if can_apply else None
+    explicit_command = leader_action.get("explicit_command") or recommended_action.get("command")
+    return {
+        "status": recovery.get("status"),
+        "reason": recovery.get("reason"),
+        "label": recommended_action.get("label"),
+        "command": recommended_action.get("command"),
+        "next_command": continue_card.get("next_command"),
+        "safety": recommended_action.get("safety"),
+        "requires_explicit_user": bool(recommended_action.get("requires_explicit_user")),
+        "source": source,
+        "target_id": recommended_action.get("target_id"),
+        "active_queue_source": active_queue_source,
+        "action_kind": action_kind,
+        "can_apply": can_apply,
+        "apply_command": apply_command,
+        "explicit_command": explicit_command,
+        "blocker": leader_action.get("apply_blocker"),
     }
 
 

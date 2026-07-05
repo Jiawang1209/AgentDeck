@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add operator card to workbench snapshot
+
+- 扩展 `agentdeck workbench`：新增 `operator_card`，从 recovery recommended_action、continue_card 和 active queue 派生 GUI/TUI 可渲染的人类操作卡。
+- `operator_card` 公开 status、reason、label、command、next_command、safety、requires_explicit_user、source、target_id、active_queue_source、action_kind、can_apply、apply_command、explicit_command 和 blocker，供 GUI 渲染下一步按钮、风险提示和阻塞原因。
+- 扩展 workbench contract：新增 `WORKBENCH_OPERATOR_CARD_FIELDS`，并在 `agentdeck contract workbench` 暴露 `operator_card_fields`。
+- 补充 CLI 与 contract 测试，覆盖 operator card discovery、inbox recovery 投影、example 防漂移、validator 缺字段拒绝和只读状态不变性。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 operator_card 是人类操作描述，不是自动执行许可。
+- 保持安全边界：本轮不写 state、不创建 chat turn、不 ack、不 approve、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_workbench_contract_requires_operator_fields -q` 最初因 `WORKBENCH_OPERATOR_CARD_FIELDS` 未出现在 contract 中失败；实现后 operator card 目标测试 5 项通过；`conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 86 项通过；`conda run -n agentdeck pytest -q` 151 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `contract-workbench-operator-ok` 与 `workbench-operator-ok`。
+
 ### Current - Add communication ledger card to workbench snapshot
 
 - 扩展 `agentdeck workbench`：新增 `ledger_card`，从 ProjectView 的 messages、jobs、replies 和 inbox 摘要派生 GUI/TUI 可渲染的通信账本投影。

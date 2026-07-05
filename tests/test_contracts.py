@@ -28,6 +28,7 @@ from agentdeck.contracts import (
     TRACE_REPLY_FIELDS,
     TRACE_TOP_LEVEL_FIELDS,
     WORKBENCH_LEDGER_CARD_FIELDS,
+    WORKBENCH_OPERATOR_CARD_FIELDS,
     WORKBENCH_RUNTIME_AGENT_FIELDS,
     WORKBENCH_RUNTIME_CARD_FIELDS,
     WORKBENCH_SNAPSHOT_FIELDS,
@@ -297,6 +298,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert payload["ledger_card_fields"] == list(WORKBENCH_LEDGER_CARD_FIELDS)
+    assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert payload["example"] is True
     assert payload["example_workbench"] == example
     assert payload["example_snapshot_fields"] == payload["snapshot_fields"]
@@ -306,6 +308,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert set(example["ledger_card"]) == set(WORKBENCH_LEDGER_CARD_FIELDS)
+    assert set(example["operator_card"]) == set(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert example["ledger_card"]["trace_commands"] == [
         "agentdeck trace --id msg_example",
         "agentdeck trace --id job_example",
@@ -353,6 +356,15 @@ def test_validate_workbench_contract_requires_ledger_trace_commands() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing message item field: trace_command"]}
+
+
+def test_validate_workbench_contract_requires_operator_fields() -> None:
+    payload = workbench_example()
+    del payload["operator_card"]["safety"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing operator_card field: safety"]}
 
 
 def test_validate_workbench_contract_requires_matching_project_view_summaries() -> None:

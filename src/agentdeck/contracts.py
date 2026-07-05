@@ -199,6 +199,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "leader_actions",
     "runtime_card",
     "ledger_card",
+    "operator_card",
     "recovery",
     "next_command",
     "continue_card",
@@ -235,6 +236,24 @@ WORKBENCH_LEDGER_CARD_FIELDS = (
     "replies",
     "inbox",
     "trace_commands",
+)
+
+WORKBENCH_OPERATOR_CARD_FIELDS = (
+    "status",
+    "reason",
+    "label",
+    "command",
+    "next_command",
+    "safety",
+    "requires_explicit_user",
+    "source",
+    "target_id",
+    "active_queue_source",
+    "action_kind",
+    "can_apply",
+    "apply_command",
+    "explicit_command",
+    "blocker",
 )
 
 LEADER_ACTION_DETAIL_FIELDS = (
@@ -435,6 +454,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
+        "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
         "continue_contract": "agentdeck contract continue",
@@ -945,6 +965,25 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("ledger_card.trace_commands must be a list")
     elif "ledger_card" in payload:
         errors.append("ledger_card must be an object")
+    operator_card = payload.get("operator_card")
+    if isinstance(operator_card, dict):
+        for field in WORKBENCH_OPERATOR_CARD_FIELDS:
+            if field not in operator_card:
+                errors.append(f"missing operator_card field: {field}")
+        if "next_command" in operator_card and payload.get("next_command") != operator_card.get("next_command"):
+            errors.append("next_command must match operator_card.next_command")
+        if "active_queue_source" in operator_card and payload.get("active_queue_source") != operator_card.get(
+            "active_queue_source"
+        ):
+            errors.append("active_queue_source must match operator_card.active_queue_source")
+        if "requires_explicit_user" in operator_card and not isinstance(
+            operator_card.get("requires_explicit_user"), bool
+        ):
+            errors.append("operator_card.requires_explicit_user must be a boolean")
+        if "can_apply" in operator_card and not isinstance(operator_card.get("can_apply"), bool):
+            errors.append("operator_card.can_apply must be a boolean")
+    elif "operator_card" in payload:
+        errors.append("operator_card must be an object")
     continue_card = payload.get("continue_card")
     if isinstance(continue_card, dict):
         continue_card_validation = validate_continue_contract(continue_card)
@@ -1190,6 +1229,7 @@ def workbench_example() -> dict[str, object]:
     project_view = project_view_example()
     leader_action = project_view["leader_actions"]["items"][0]
     recovery = project_view["recovery"]
+    recommended_action = recovery["recommended_action"]
     return {
         "ok": True,
         "mode": "workbench",
@@ -1252,6 +1292,23 @@ def workbench_example() -> dict[str, object]:
                 "agentdeck trace --id job_example",
                 "agentdeck trace --id rep_example",
             ],
+        },
+        "operator_card": {
+            "status": recovery["status"],
+            "reason": recovery["reason"],
+            "label": recommended_action["label"],
+            "command": recommended_action["command"],
+            "next_command": recovery["next_command"],
+            "safety": recommended_action["safety"],
+            "requires_explicit_user": recommended_action["requires_explicit_user"],
+            "source": recommended_action["source"],
+            "target_id": recommended_action["target_id"],
+            "active_queue_source": "leader_action",
+            "action_kind": "leader_action",
+            "can_apply": leader_action["can_apply"],
+            "apply_command": leader_action["apply_command"],
+            "explicit_command": leader_action["explicit_command"],
+            "blocker": leader_action["apply_blocker"],
         },
         "recovery": recovery,
         "next_command": recovery["next_command"],
