@@ -3333,11 +3333,18 @@ def test_approval_dispatch_ready_requires_confirm_and_dispatches_only_ready_item
     assert payload["results"][0]["pane_id"] == "%77"
     assert payload["results"][0]["message_id"].startswith("msg_")
     assert payload["results"][0]["trace_command"] == f"agentdeck trace --id {payload['results'][0]['message_id']}"
+    assert payload["results"][0]["blocker"] is None
+    assert (
+        payload["results"][0]["dispatch_command"]
+        == f"agentdeck approval dispatch --approval-id {planner_approval_id}"
+    )
     assert payload["results"][1] == {
         "approval_id": coder_approval_id,
         "status": "blocked",
         "agent_id": "coder",
         "pane_id": None,
+        "message_id": None,
+        "trace_command": None,
         "blocker": "agent is not spawned: coder",
         "dispatch_command": f"agentdeck approval dispatch --approval-id {coder_approval_id}",
     }

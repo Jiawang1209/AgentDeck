@@ -1677,6 +1677,9 @@ def test_contract_approvals_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["contract_exists"] is True
     assert payload["queue_fields"] == expected["queue_fields"]
     assert payload["approval_item_fields"] == expected["approval_item_fields"]
+    assert payload["dispatch_ready_command"] == expected["dispatch_ready_command"]
+    assert payload["dispatch_ready_response_fields"] == expected["dispatch_ready_response_fields"]
+    assert payload["dispatch_ready_result_fields"] == expected["dispatch_ready_result_fields"]
     assert payload["project_view_contract"] == "agentdeck contract project-view"
 
 
@@ -1692,6 +1695,10 @@ def test_contract_approvals_example_exports_gui_ready_queue(capsys) -> None:
     assert set(payload["example_queue_fields"]) == set(example)
     assert payload["example_approval_item_fields"] == payload["approval_item_fields"]
     assert set(payload["example_approval_item_fields"]) == set(example["approvals"][0])
+    assert payload["example_dispatch_ready_fields"] == payload["dispatch_ready_response_fields"]
+    assert payload["example_dispatch_ready_result_fields"] == payload["dispatch_ready_result_fields"]
+    assert set(payload["example_dispatch_ready_fields"]) == set(payload["example_dispatch_ready"])
+    assert set(payload["example_dispatch_ready_result_fields"]) == set(payload["example_dispatch_ready"]["results"][0])
     assert "preview_command" in payload["approval_item_fields"]
     assert "controls" in payload["approval_item_fields"]
     assert example["approvals"][0]["approve_command"] == "agentdeck approval approve --approval-id apv_pending"

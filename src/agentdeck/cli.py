@@ -40,6 +40,7 @@ from .contracts import (
     trace_contract_response,
     workbench_contract_response,
     validate_approval_contract,
+    validate_approval_dispatch_ready_contract,
     validate_continue_contract,
     validate_control_registry_card_contract,
     validate_inbox_contract,
@@ -4572,6 +4573,8 @@ def approval_dispatch_ready_command(args: argparse.Namespace) -> int:
                     "status": "blocked",
                     "agent_id": preview.get("agent_id"),
                     "pane_id": preview.get("pane_id"),
+                    "message_id": None,
+                    "trace_command": None,
                     "blocker": blocker,
                     "dispatch_command": preview.get("dispatch_command"),
                 }
@@ -4592,6 +4595,8 @@ def approval_dispatch_ready_command(args: argparse.Namespace) -> int:
                 "pane_id": dispatched["pane_id"],
                 "message_id": dispatched["message_id"],
                 "trace_command": dispatched["trace_command"],
+                "blocker": None,
+                "dispatch_command": f"agentdeck approval dispatch --approval-id {approval_id}",
             }
         )
     dispatched_count = sum(1 for item in results if item.get("status") == "dispatched")
@@ -4605,18 +4610,23 @@ def approval_dispatch_ready_command(args: argparse.Namespace) -> int:
             },
         )
     )
-    _print_json(
-        {
-            "ok": True,
-            "mode": "dispatch_ready",
-            "requires_explicit_user": True,
-            "safety": "explicit_runtime",
-            "dispatched_count": dispatched_count,
-            "blocked_count": blocked_count,
-            "skipped_count": blocked_count,
-            "results": results,
-        }
-    )
+    payload = {
+        "ok": True,
+        "mode": "dispatch_ready",
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "dispatched_count": dispatched_count,
+        "blocked_count": blocked_count,
+        "skipped_count": blocked_count,
+        "results": results,
+    }
+    validation = validate_approval_dispatch_ready_contract(payload)
+    if not validation["ok"]:
+        print("Approval dispatch-ready contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
 
 

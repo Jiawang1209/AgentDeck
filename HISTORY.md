@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Validate dispatch-ready approval responses
+
+- 扩展 `agentdeck contract approvals`：现在会公开 `dispatch_ready_command`、`dispatch_ready_response_fields` 和 `dispatch_ready_result_fields`，`--example` 同时返回稳定的 approval queue 与 dispatch-ready 响应示例，供 GUI/TUI 不解析 CLI help 也能发现批量派发输出形状。
+- 新增 `approval_dispatch_ready_example()` 和 `validate_approval_dispatch_ready_contract()`：校验 `mode=dispatch_ready`、`requires_explicit_user=true`、`safety=explicit_runtime`、结果字段完整性，以及 `dispatched_count` / `blocked_count` / `skipped_count` 与 `results[]` 状态一致。
+- 调整 `agentdeck approval dispatch-ready --confirm`：dispatched 与 blocked result 现在都输出同一字段集，包含 `approval_id`、`status`、`agent_id`、`pane_id`、`message_id`、`trace_command`、`blocker` 和 `dispatch_command`；打印 JSON 前会先通过 dispatch-ready contract validator，避免 GUI 消费半坏响应。
+- 同步 README、`docs/contracts/approvals-schema.md`、CLAUDE.md、AGENT.md 和测试，明确 dispatch-ready 是显式 runtime 命令，但其响应契约是 machine-discoverable 且 self-validated。
+- 验证记录：已先确认红测失败，`approval_contract_payload()` 缺少 `dispatch_ready_command`，`approval_contract_response(..., include_example=True)` 缺少 `example_dispatch_ready_fields`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_approval_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_approval_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_approval_dispatch_ready_contract_accepts_example tests/test_contracts.py::test_validate_approval_dispatch_ready_contract_checks_counts tests/test_agent_cli.py::test_contract_approvals_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_approvals_example_exports_gui_ready_queue tests/test_leader_cli.py::test_approval_dispatch_ready_requires_confirm_and_dispatches_only_ready_items -q` 7 项通过；`conda run -n agentdeck pytest -q` 260 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；真实 CLI smoke 确认 `approvals-contract-dispatch-ready-ok command=agentdeck approval dispatch-ready --confirm response_fields=8 result_fields=8 example_results=2`。
+
 ### Current - Suggest dispatch-ready from batch Leader chat
 
 - 调整 `agentdeck leader chat --message "派发所有已审批"`：批量审批派发意图现在会把顶层 `next_command` 指向显式 `agentdeck approval dispatch-ready --confirm`，并在 `intent_card.controls[]` 中显示 `Dispatch ready approvals`。

@@ -105,7 +105,7 @@ Worker 不应该：
 - Leader actions queue contract 见 `docs/contracts/leader-actions-schema.md`；`agentdeck contract leader-actions --example` 会返回稳定队列示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Leader review response contract 见 `docs/contracts/leader-review-schema.md`；`agentdeck contract leader-review --example` 会返回稳定 review 响应示例，字段常量、example fixture 和 validator 都在 `src/agentdeck/contracts.py`。修改 `leader review` 的 `next_command` 或 `controls[]` 时必须同步该 contract，并保持 live 输出通过 `validate_leader_review_contract()` 守门。
 - Leader action detail contract 见 `docs/contracts/leader-action-schema.md`；`agentdeck contract leader-action --example` 会返回稳定 action detail 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
-- Approval queue contract 见 `docs/contracts/approvals-schema.md`；`agentdeck contract approvals --example` 会返回稳定 approval queue 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
+- Approval queue contract 见 `docs/contracts/approvals-schema.md`；`agentdeck contract approvals --example` 会返回稳定 approval queue 和 dispatch-ready 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Inbox queue contract 见 `docs/contracts/inbox-schema.md`；`agentdeck contract inbox --example` 会返回稳定 inbox 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Trace contract 见 `docs/contracts/trace-schema.md`；`agentdeck contract trace --example` 会返回稳定通信 lineage 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - `validate_project_view_contract(payload)` 可校验任意 ProjectView-like payload 是否满足 v1 基础契约。
@@ -134,7 +134,7 @@ Worker 不应该：
 - `agentdeck contract leader-chat` 必须暴露 `capability_placeholder_fields` 和 `capability_placeholders`，让 GUI 机器发现 capability command 模板支持的 placeholder 白名单及 blocker；新增 placeholder 时必须同步 `LEADER_CHAT_CAPABILITY_PLACEHOLDERS`、validator、contract docs、README、HISTORY 和测试。
 - `agentdeck contract leader-actions` 返回 Leader action queue 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定队列示例，供 GUI 原型使用。
 - `agentdeck contract leader-action` 返回单个 Leader action 详情契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 action detail 示例，供 GUI 原型使用。
-- `agentdeck contract approvals` 返回人类审批队列契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 approval queue 示例，供 GUI 原型使用。
+- `agentdeck contract approvals` 返回人类审批队列和 dispatch-ready 响应契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 approval queue 和 dispatch-ready 示例，供 GUI 原型使用。
 - `agentdeck contract inbox` 返回单 agent mailbox 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 inbox 示例，供 GUI 原型使用。
 - `agentdeck contract trace` 返回通信 lineage 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 trace 示例，供 GUI 原型使用。
 - `agentdeck trace --id <id>` 输出前必须通过 `validate_trace_contract()` 自校验；失败时只能返回错误，不输出半坏 trace。
@@ -193,7 +193,7 @@ Worker 不应该：
 - `agentdeck approval approve --approval-id <id>` 将审批项标记为 `approved`。
 - `agentdeck approval reject --approval-id <id> --reason <text>` 将审批项标记为 `rejected`。
 - `agentdeck approval dispatch --approval-id <id>` 只接受 `approved` 审批项，并把对应 plan step 派发到目标 agent。
-- `agentdeck approval dispatch-ready --confirm` 是显式批量派发命令，只派发 approved 且目标 agent runtime ready 的审批项；blocked 项必须保留为 approved 并返回 blocker；不带 `--confirm` 必须失败且不得写 state 或发送 tmux 输入。
+- `agentdeck approval dispatch-ready --confirm` 是显式批量派发命令，只派发 approved 且目标 agent runtime ready 的审批项；blocked 项必须保留为 approved 并返回同一 result 字段集里的 blocker/dispatch_command；输出前必须通过 `validate_approval_dispatch_ready_contract()`；不带 `--confirm` 必须失败且不得写 state 或发送 tmux 输入。
 - approval dispatch 默认是单步显式命令；批量派发只能通过 `dispatch-ready --confirm` 这种明确入口触发。
 
 以下动作必须进入审批：

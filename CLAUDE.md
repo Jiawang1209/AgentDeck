@@ -143,7 +143,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck contract leader-chat` 必须暴露 `capability_placeholder_fields` 和 `capability_placeholders`，让 GUI 机器发现 capability command 模板支持的 placeholder 白名单及 blocker；新增 placeholder 时必须同步 `LEADER_CHAT_CAPABILITY_PLACEHOLDERS`、validator、contract docs、README、HISTORY 和测试。
 - Leader actions queue contract 维护在 `docs/contracts/leader-actions-schema.md`，发现入口是 `agentdeck contract leader-actions`；payload、example fixture 和 `validate_leader_actions_contract()` 也在 `src/agentdeck/contracts.py`。
 - Leader action detail contract 维护在 `docs/contracts/leader-action-schema.md`，发现入口是 `agentdeck contract leader-action`；payload、example fixture 和 `validate_leader_action_contract()` 也在 `src/agentdeck/contracts.py`。
-- Approval queue contract 维护在 `docs/contracts/approvals-schema.md`，发现入口是 `agentdeck contract approvals`；payload、example fixture 和 `validate_approval_contract()` 也在 `src/agentdeck/contracts.py`。
+- Approval queue contract 维护在 `docs/contracts/approvals-schema.md`，发现入口是 `agentdeck contract approvals`；payload、approval queue example、dispatch-ready example、`validate_approval_contract()` 和 `validate_approval_dispatch_ready_contract()` 也在 `src/agentdeck/contracts.py`。
 - Inbox queue contract 维护在 `docs/contracts/inbox-schema.md`，发现入口是 `agentdeck contract inbox`；payload、example fixture 和 `validate_inbox_contract()` 也在 `src/agentdeck/contracts.py`。
 - Trace contract 维护在 `docs/contracts/trace-schema.md`，发现入口是 `agentdeck contract trace`；payload、example fixture 和 `validate_trace_contract()` 也在 `src/agentdeck/contracts.py`。
 - `src/agentdeck/contracts.py::validate_project_view_contract()` 是 ProjectView-like payload 的 v1 基础契约校验入口。
@@ -157,7 +157,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck contract controls` 是只读契约发现入口，供 GUI 或外部集成读取 `agentdeck controls` 的 command palette card 字段和 item 字段；`--example` 会返回稳定 control registry card 示例，不读取或修改 live state。
 - `agentdeck contract leader-actions` 是只读契约发现入口，供 GUI 或外部集成读取 Leader action queue 字段；`--example` 会返回稳定队列示例，不读取或修改 live state。
 - `agentdeck contract leader-action` 是只读契约发现入口，供 GUI 或外部集成读取单个 Leader action 详情字段；`--example` 会返回稳定 action detail 示例，不读取或修改 live state。
-- `agentdeck contract approvals` 是只读契约发现入口，供 GUI 或外部集成读取人类审批队列字段；`--example` 会返回稳定 approval queue 示例，不读取或修改 live state。
+- `agentdeck contract approvals` 是只读契约发现入口，供 GUI 或外部集成读取人类审批队列字段和 dispatch-ready 响应字段；`--example` 会返回稳定 approval queue 与 dispatch-ready 示例，不读取或修改 live state。
 - `agentdeck contract inbox` 是只读契约发现入口，供 GUI 或外部集成读取单 agent mailbox 字段；`--example` 会返回稳定 inbox 示例，不读取或修改 live state。
 - `agentdeck contract trace` 是只读契约发现入口，供 GUI 或外部集成读取通信 lineage 的 message/attempt/job/reply/inbox 字段；`--example` 会返回稳定 trace 示例，不读取或修改 live state。
 - `agentdeck trace --id <id>` 输出 JSON 前必须通过 `validate_trace_contract()` 自校验；失败时返回非 0 且不得输出半坏 trace。

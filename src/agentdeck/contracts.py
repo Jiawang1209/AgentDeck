@@ -207,6 +207,28 @@ APPROVAL_ITEM_FIELDS = (
     "dispatch_blocker",
 )
 
+APPROVAL_DISPATCH_READY_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "requires_explicit_user",
+    "safety",
+    "dispatched_count",
+    "blocked_count",
+    "skipped_count",
+    "results",
+)
+
+APPROVAL_DISPATCH_READY_RESULT_FIELDS = (
+    "approval_id",
+    "status",
+    "agent_id",
+    "pane_id",
+    "message_id",
+    "trace_command",
+    "blocker",
+    "dispatch_command",
+)
+
 INBOX_QUEUE_FIELDS = (
     "agent_id",
     "count",
@@ -1431,10 +1453,13 @@ def approval_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "approvals_command": "agentdeck approval list",
+        "dispatch_ready_command": "agentdeck approval dispatch-ready --confirm",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "queue_fields": list(APPROVAL_QUEUE_FIELDS),
         "approval_item_fields": list(APPROVAL_ITEM_FIELDS),
+        "dispatch_ready_response_fields": list(APPROVAL_DISPATCH_READY_RESPONSE_FIELDS),
+        "dispatch_ready_result_fields": list(APPROVAL_DISPATCH_READY_RESULT_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -1448,6 +1473,10 @@ def approval_contract_response(contract_path: Path, include_example: bool = Fals
         payload["example_queue_fields"] = list(example)
         payload["example_approval_item_fields"] = list(example["approvals"][0])
         payload["example_approval_queue"] = example
+        dispatch_ready_example = approval_dispatch_ready_example()
+        payload["example_dispatch_ready_fields"] = list(dispatch_ready_example)
+        payload["example_dispatch_ready_result_fields"] = list(dispatch_ready_example["results"][0])
+        payload["example_dispatch_ready"] = dispatch_ready_example
     return payload
 
 
@@ -1699,6 +1728,59 @@ def validate_approval_contract(payload: dict[str, object]) -> dict[str, object]:
                 errors.append("approval items must be objects")
     elif "approvals" in payload:
         errors.append("approvals must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_approval_dispatch_ready_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in APPROVAL_DISPATCH_READY_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing approval dispatch-ready field: {field}")
+    if payload.get("mode") != "dispatch_ready":
+        errors.append("dispatch_ready.mode must be dispatch_ready")
+    if payload.get("requires_explicit_user") is not True:
+        errors.append("dispatch_ready.requires_explicit_user must be true")
+    if payload.get("safety") != "explicit_runtime":
+        errors.append("dispatch_ready.safety must be explicit_runtime")
+
+    results = payload.get("results")
+    if isinstance(results, list):
+        dispatched_count = 0
+        blocked_count = 0
+        for index, result in enumerate(results):
+            if not isinstance(result, dict):
+                errors.append("dispatch_ready.results items must be objects")
+                continue
+            for field in APPROVAL_DISPATCH_READY_RESULT_FIELDS:
+                if field not in result:
+                    errors.append(f"missing approval dispatch-ready result field: {field}")
+            status = result.get("status")
+            if status == "dispatched":
+                dispatched_count += 1
+                if not result.get("message_id"):
+                    errors.append(f"dispatch_ready.results[{index}].message_id is required when dispatched")
+                if not result.get("trace_command"):
+                    errors.append(f"dispatch_ready.results[{index}].trace_command is required when dispatched")
+                if result.get("blocker") is not None:
+                    errors.append(f"dispatch_ready.results[{index}].blocker must be null when dispatched")
+            elif status == "blocked":
+                blocked_count += 1
+                if not result.get("blocker"):
+                    errors.append(f"dispatch_ready.results[{index}].blocker is required when blocked")
+            else:
+                errors.append(f"dispatch_ready.results[{index}].status must be dispatched or blocked")
+            approval_id = result.get("approval_id")
+            expected_dispatch = f"agentdeck approval dispatch --approval-id {approval_id}"
+            if result.get("dispatch_command") != expected_dispatch:
+                errors.append(f"dispatch_ready.results[{index}].dispatch_command must match approval_id")
+        if payload.get("dispatched_count") != dispatched_count:
+            errors.append("dispatch_ready.dispatched_count must match dispatched results")
+        if payload.get("blocked_count") != blocked_count:
+            errors.append("dispatch_ready.blocked_count must match blocked results")
+        if payload.get("skipped_count") != blocked_count:
+            errors.append("dispatch_ready.skipped_count must match blocked results")
+    elif "results" in payload:
+        errors.append("dispatch_ready.results must be a list")
     return {"ok": not errors, "errors": errors}
 
 
@@ -3644,6 +3726,40 @@ def approval_example() -> dict[str, object]:
                 status="approved",
                 reason=None,
             ),
+        ],
+    }
+
+
+def approval_dispatch_ready_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "dispatch_ready",
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "dispatched_count": 1,
+        "blocked_count": 1,
+        "skipped_count": 1,
+        "results": [
+            {
+                "approval_id": "apv_ready",
+                "status": "dispatched",
+                "agent_id": "planner",
+                "pane_id": "%42",
+                "message_id": "msg_ready",
+                "trace_command": "agentdeck trace --id msg_ready",
+                "blocker": None,
+                "dispatch_command": "agentdeck approval dispatch --approval-id apv_ready",
+            },
+            {
+                "approval_id": "apv_blocked",
+                "status": "blocked",
+                "agent_id": "coder",
+                "pane_id": None,
+                "message_id": None,
+                "trace_command": None,
+                "blocker": "agent is not spawned: coder",
+                "dispatch_command": "agentdeck approval dispatch --approval-id apv_blocked",
+            },
         ],
     }
 

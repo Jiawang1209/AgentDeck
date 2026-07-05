@@ -7,6 +7,8 @@ from agentdeck.contracts import (
     AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
     AGENT_RUNTIME_REFRESH_AGENT_FIELDS,
     AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS,
+    APPROVAL_DISPATCH_READY_RESPONSE_FIELDS,
+    APPROVAL_DISPATCH_READY_RESULT_FIELDS,
     APPROVAL_ITEM_FIELDS,
     APPROVAL_QUEUE_FIELDS,
     CONTRACT_INDEX_ITEM_FIELDS,
@@ -67,6 +69,7 @@ from agentdeck.contracts import (
     agent_runtime_contract_payload,
     agent_runtime_contract_response,
     agent_runtime_example,
+    approval_dispatch_ready_example,
     approval_contract_payload,
     approval_contract_response,
     approval_example,
@@ -108,6 +111,7 @@ from agentdeck.contracts import (
     workbench_contract_response,
     workbench_example,
     validate_approval_contract,
+    validate_approval_dispatch_ready_contract,
     validate_continue_contract,
     validate_control_registry_card_contract,
     validate_inbox_contract,
@@ -999,6 +1003,9 @@ def test_approval_contract_payload_is_reusable_without_cli(tmp_path: Path) -> No
     assert payload["contract_exists"] is True
     assert payload["queue_fields"] == list(APPROVAL_QUEUE_FIELDS)
     assert payload["approval_item_fields"] == list(APPROVAL_ITEM_FIELDS)
+    assert payload["dispatch_ready_command"] == "agentdeck approval dispatch-ready --confirm"
+    assert payload["dispatch_ready_response_fields"] == list(APPROVAL_DISPATCH_READY_RESPONSE_FIELDS)
+    assert payload["dispatch_ready_result_fields"] == list(APPROVAL_DISPATCH_READY_RESULT_FIELDS)
     assert payload["project_view_contract"] == "agentdeck contract project-view"
 
 
@@ -1015,6 +1022,10 @@ def test_approval_contract_response_includes_example_without_drift(tmp_path: Pat
     assert set(payload["example_queue_fields"]) == set(example)
     assert payload["example_approval_item_fields"] == payload["approval_item_fields"]
     assert set(payload["example_approval_item_fields"]) == set(example["approvals"][0])
+    assert payload["example_dispatch_ready_fields"] == payload["dispatch_ready_response_fields"]
+    assert payload["example_dispatch_ready_result_fields"] == payload["dispatch_ready_result_fields"]
+    assert set(payload["example_dispatch_ready_fields"]) == set(payload["example_dispatch_ready"])
+    assert set(payload["example_dispatch_ready_result_fields"]) == set(payload["example_dispatch_ready"]["results"][0])
     assert example["approvals"][0]["can_dispatch"] is False
     assert example["approvals"][0]["preview_command"] == "agentdeck approval list"
     assert example["approvals"][0]["controls"] == [
@@ -1072,6 +1083,24 @@ def test_validate_approval_contract_requires_gui_action_fields() -> None:
     assert result == {
         "ok": False,
         "errors": ["missing approval item field: controls"],
+    }
+
+
+def test_validate_approval_dispatch_ready_contract_accepts_example() -> None:
+    result = validate_approval_dispatch_ready_contract(approval_dispatch_ready_example())
+
+    assert result == {"ok": True, "errors": []}
+
+
+def test_validate_approval_dispatch_ready_contract_checks_counts() -> None:
+    payload = approval_dispatch_ready_example()
+    payload["dispatched_count"] = 99
+
+    result = validate_approval_dispatch_ready_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["dispatch_ready.dispatched_count must match dispatched results"],
     }
 
 
