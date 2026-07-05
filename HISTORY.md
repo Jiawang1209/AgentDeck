@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Add CLI-backed Leader providers
+
+- 新增 `codex-cli` / `claude-cli` Leader provider：Leader 仍然是 `agent_id=leader` 这个逻辑调度者，但推理后端可以切换到本地 Codex CLI 或 Claude Code CLI。
+- 新增 `src/agentdeck/providers/cli_subprocess.py`，通过非交互命令 `codex exec --sandbox read-only -` 和 `claude --print --output-format text --permission-mode plan` 生成同一 JSON plan schema；每个 step 仍必须 `requires_approval=true`。
+- 保持边界：CLI-backed Leader 不复用 `planner`、`coder`、`reviewer` 的 worker tmux pane，不创建 approval，不 dispatch，不发送 tmux 输入；stdout 必须是 JSON plan，非法 JSON、空 steps 或无审批 step 会失败并进入现有 provider failure 诊断路径。
+- 扩展 `agentdeck doctor` 与 workbench `provider_health`：`codex-cli` / `claude-cli` readiness 检查本地命令是否在 PATH 上，并返回 `codex login` / `codex doctor` 或 `claude auth` / `claude doctor` setup commands；它们不要求也不暴露 API key。
+- 同步 README、`docs/contracts/doctor-schema.md`、`docs/contracts/workbench-schema.md`、CLAUDE.md 和 AGENT.md，明确 Leader 是 Agent 身份，provider 可以是 API-backed 或 CLI-backed，但 worker pane 不会被偷偷升格为 Leader。
+- 验证记录：已先确认红测失败，`ClaudeCliProvider` / `CodexCliProvider` 最初不存在且 `leader_provider("codex-cli")` / `leader_provider("claude-cli")` unsupported；实现后目标测试 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_claude_cli_provider_runs_print_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_cli_provider_reports_subprocess_failure tests/test_agent_cli.py::test_doctor_reports_codex_cli_leader_ready_from_local_command tests/test_agent_cli.py::test_workbench_marks_codex_cli_leader_as_local_cli_backed -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_claude_cli_provider_runs_print_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_cli_provider_reports_subprocess_failure tests/test_agent_cli.py::test_doctor_reports_codex_cli_leader_ready_from_local_command tests/test_agent_cli.py::test_workbench_marks_codex_cli_leader_as_local_cli_backed tests/test_leader_cli.py::test_leader_plan_defaults_to_configured_leader_provider_and_model tests/test_agent_cli.py::test_doctor_reports_openai_compatible_provider_state tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q` 8 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 278 项通过。
+
 ### Current - Expose terminal controls in workbench runtime card
 
 - 扩展 workbench `runtime_card.agents[]`：每个 runtime agent 现在公开 `terminal_command=agentdeck agent terminal --agent <id>`，供 GUI/TUI 直接跳到只读 terminal card。

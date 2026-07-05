@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import sys
 import time
 
@@ -346,6 +347,23 @@ def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object]
         "deepseek": "DEEPSEEK_API_KEY",
         "openai-compatible": "AGENTDECK_LEADER_API_KEY",
     }.get(provider)
+    cli_command = {
+        "codex-cli": "codex",
+        "claude-cli": "claude",
+    }.get(provider)
+    if cli_command is not None:
+        ready = _command_available(cli_command)
+        return {
+            "agent_id": config.leader.agent_id,
+            "provider": provider,
+            "model": config.leader.model,
+            "approval_mode": config.leader.approval_mode,
+            "ready": ready,
+            "supported": True,
+            "missing_env": [],
+            "detail": f"{cli_command} is available" if ready else f"{cli_command} is not found on PATH",
+            "setup_commands": _provider_setup_commands(provider),
+        }
     if required_env is None:
         return {
             "agent_id": config.leader.agent_id,
@@ -371,6 +389,10 @@ def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object]
         "detail": detail,
         "setup_commands": _provider_setup_commands(provider),
     }
+
+
+def _command_available(command: str) -> bool:
+    return shutil.which(command) is not None
 
 
 def init_command(_args: argparse.Namespace) -> int:
@@ -758,7 +780,7 @@ def _workbench_leader_card(project_view: dict[str, object]) -> dict[str, object]
         "provider": provider,
         "model": leader.get("model"),
         "approval_mode": leader.get("approval_mode"),
-        "api_backed": provider not in ("", "fake"),
+        "api_backed": provider in ("deepseek", "openai-compatible"),
         "chat_command": "agentdeck leader chat --message <text>",
         "continue_command": "agentdeck continue",
         "review_command_template": "agentdeck leader review --plan-id <plan_id>",
@@ -796,7 +818,7 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
         "provider": provider,
         "model": leader.get("model"),
         "approval_mode": leader.get("approval_mode"),
-        "api_backed": provider not in ("", "fake"),
+        "api_backed": provider in ("deepseek", "openai-compatible"),
         "doctor_contract": "agentdeck contract doctor",
     }
     provider_env = {
@@ -810,6 +832,21 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
             "ready": True,
             "missing_env": [],
             "detail": "fake provider is local and ready",
+            "doctor_command": "agentdeck doctor",
+            "setup_commands": _provider_setup_commands(provider),
+        }
+    cli_command = {
+        "codex-cli": "codex",
+        "claude-cli": "claude",
+    }.get(provider)
+    if cli_command is not None:
+        ready = _command_available(cli_command)
+        return {
+            **base,
+            "supported": True,
+            "ready": ready,
+            "missing_env": [],
+            "detail": f"{cli_command} is available" if ready else f"{cli_command} is not found on PATH",
             "doctor_command": "agentdeck doctor",
             "setup_commands": _provider_setup_commands(provider),
         }
@@ -851,6 +888,10 @@ def _provider_setup_commands(provider: str) -> list[str]:
             'export AGENTDECK_LEADER_BASE_URL="https://api.example.com/v1"',
             'export AGENTDECK_LEADER_MODEL="<model-name>"',
         ]
+    if provider == "codex-cli":
+        return ["codex login", "codex doctor"]
+    if provider == "claude-cli":
+        return ["claude auth", "claude doctor"]
     return []
 
 

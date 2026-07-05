@@ -77,5 +77,6 @@ Provider checks such as `deepseek` and `openai_compatible` contain:
 - The command must not call the configured Leader provider.
 - `setup_commands` must only contain placeholder commands that a human can copy and edit outside AgentDeck.
 - Output must never include real API key values.
+- API-backed providers such as `deepseek` and `openai-compatible` report missing environment variable names; CLI-backed providers such as `codex-cli` and `claude-cli` report whether the local command is available on PATH.
 - GUI clients can use `agentdeck contract doctor` to discover fields before rendering setup guidance.
 - The discovery payload should expose adjacent workbench, Leader chat, and Leader review contracts so setup screens can link directly to the main control surfaces.

@@ -224,6 +224,34 @@ def test_doctor_configured_leader_never_exposes_real_provider_key(
     assert "real-secret-key" not in rendered
 
 
+def test_doctor_reports_codex_cli_leader_ready_from_local_command(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_text = config_text.replace('provider = "deepseek"', 'provider = "codex-cli"', 1)
+    config_text = config_text.replace('model = "deepseek-chat"', 'model = "codex-default"', 1)
+    config_path.write_text(config_text, encoding="utf-8")
+    monkeypatch.setattr(cli, "_command_available", lambda command: command == "codex")
+
+    exit_code = cli.main(["doctor"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["configured_leader"] == {
+        "agent_id": "leader",
+        "provider": "codex-cli",
+        "model": "codex-default",
+        "approval_mode": "confirm",
+        "ready": True,
+        "supported": True,
+        "missing_env": [],
+        "detail": "codex is available",
+        "setup_commands": ['codex login', 'codex doctor'],
+    }
+    assert exit_code == (0 if payload["tmux"]["ok"] else 1)
+
+
 def test_events_lists_recent_event_tail(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)
@@ -1472,6 +1500,38 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert state_after["replies"][0]["text"] == "status: completed"
     assert state_after["chat_turns"] == []
     assert state_after["leader_actions"] == []
+
+
+def test_workbench_marks_codex_cli_leader_as_local_cli_backed(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_text = config_text.replace('provider = "deepseek"', 'provider = "codex-cli"', 1)
+    config_text = config_text.replace('model = "deepseek-chat"', 'model = "codex-default"', 1)
+    config_path.write_text(config_text, encoding="utf-8")
+    monkeypatch.setattr(cli, "_command_available", lambda command: command == "codex")
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["leader_card"]["api_backed"] is False
+    assert payload["provider_health"] == {
+        "agent_id": "leader",
+        "provider": "codex-cli",
+        "model": "codex-default",
+        "approval_mode": "confirm",
+        "api_backed": False,
+        "supported": True,
+        "ready": True,
+        "missing_env": [],
+        "detail": "codex is available",
+        "doctor_command": "agentdeck doctor",
+        "doctor_contract": "agentdeck contract doctor",
+        "setup_commands": ['codex login', 'codex doctor'],
+    }
 
 
 def test_policy_set_mode_updates_config_and_workbench_control_mode(tmp_path, monkeypatch, capsys) -> None:

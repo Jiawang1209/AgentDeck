@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 from agentdeck.config import write_default_config, load_config
-from agentdeck.providers import DeepSeekProvider, LeaderPlanRequest, OpenAICompatibleProvider, leader_provider
+from agentdeck.providers import (
+    ClaudeCliProvider,
+    CodexCliProvider,
+    DeepSeekProvider,
+    LeaderPlanRequest,
+    OpenAICompatibleProvider,
+    leader_provider,
+)
 
 
 class FakeResponse:
@@ -65,6 +73,27 @@ class InvalidJsonPlanResponse:
         ).encode("utf-8")
 
 
+def cli_plan_stdout() -> str:
+    return json.dumps(
+        {
+            "goal": "CLI Leader",
+            "summary": "plan from local CLI",
+            "steps": [
+                {
+                    "step": 1,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "Plan the work",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                }
+            ],
+            "approval_required": True,
+            "dispatch_ready": False,
+        }
+    )
+
+
 def test_openai_compatible_provider_requires_api_key(monkeypatch) -> None:
     monkeypatch.delenv("AGENTDECK_LEADER_API_KEY", raising=False)
 
@@ -106,6 +135,90 @@ def test_deepseek_provider_uses_deepseek_env_and_openai_compatible_plan_shape(tm
     assert body["messages"][1]["content"] == "DeepSeek 规划"
     assert plan["goal"] == "构建 provider"
     assert plan["dispatch_ready"] is False
+
+
+def test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan(
+    tmp_path, monkeypatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    seen: dict[str, object] = {}
+
+    def fake_run(command, input, text, capture_output, cwd, timeout, check):
+        seen["command"] = command
+        seen["input"] = input
+        seen["text"] = text
+        seen["capture_output"] = capture_output
+        seen["cwd"] = cwd
+        seen["timeout"] = timeout
+        seen["check"] = check
+        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout(), stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.shutil.which", lambda name: f"/usr/bin/{name}")
+
+    provider = leader_provider("codex-cli")
+    plan = provider.plan(LeaderPlanRequest(task="让 Codex 做 Leader", config=config))
+
+    assert isinstance(provider, CodexCliProvider)
+    assert provider.doctor() == (True, "codex is available")
+    assert seen["command"] == ["codex", "exec", "--sandbox", "read-only", "-"]
+    assert "Return only a JSON object plan" in str(seen["input"])
+    assert "让 Codex 做 Leader" in str(seen["input"])
+    assert seen["cwd"] == str(root)
+    assert plan["goal"] == "CLI Leader"
+    assert plan["steps"][0]["requires_approval"] is True
+
+
+def test_claude_cli_provider_runs_print_command_and_parses_json_plan(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    seen: dict[str, object] = {}
+
+    def fake_run(command, input, text, capture_output, cwd, timeout, check):
+        seen["command"] = command
+        seen["input"] = input
+        seen["cwd"] = cwd
+        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout(), stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.shutil.which", lambda name: f"/usr/bin/{name}")
+
+    provider = leader_provider("claude-cli")
+    plan = provider.plan(LeaderPlanRequest(task="让 Claude 做 Leader", config=config))
+
+    assert isinstance(provider, ClaudeCliProvider)
+    assert provider.doctor() == (True, "claude is available")
+    assert seen["command"] == ["claude", "--print", "--output-format", "text", "--permission-mode", "plan"]
+    assert "Return only a JSON object plan" in str(seen["input"])
+    assert "让 Claude 做 Leader" in str(seen["input"])
+    assert seen["cwd"] == str(root)
+    assert plan["goal"] == "CLI Leader"
+
+
+def test_cli_provider_reports_subprocess_failure(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(command, 2, stdout="", stderr="not logged in")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    provider = CodexCliProvider()
+
+    try:
+        provider.plan(LeaderPlanRequest(task="失败", config=config))
+    except RuntimeError as exc:
+        assert str(exc) == "codex-cli failed: not logged in"
+    else:
+        raise AssertionError("provider should reject failed CLI command")
 
 
 def test_openai_compatible_provider_posts_chat_completion_and_parses_json_plan(tmp_path, monkeypatch) -> None:

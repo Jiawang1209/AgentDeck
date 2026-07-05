@@ -188,6 +188,8 @@ Worker 不应该：
 - `agentdeck leader plan` 和 `agentdeck leader chat` 默认读取 `.agentdeck/config.toml` 的 `[leader] provider/model`；`fake` provider 是显式 dry-run provider，不调用外部 LLM。
 - `deepseek` provider 通过 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 调用 OpenAI-compatible `/chat/completions`，但仍然只生成 plan。
 - `openai-compatible` provider 通过 `AGENTDECK_LEADER_API_KEY`、`AGENTDECK_LEADER_BASE_URL` 和 `AGENTDECK_LEADER_MODEL` 调用 `/chat/completions`，但仍然只生成 plan。
+- `codex-cli` / `claude-cli` provider 是 CLI-backed Leader provider：它们通过本地 `codex exec` / `claude --print` 非交互调用为 `agent_id=leader` 生成同一 JSON plan schema；不得复用 worker tmux pane 作为 Leader，也不得自动创建 approval、dispatch 或发送 tmux 输入。
+- CLI-backed Leader readiness 只检查本地命令是否存在并提供 `codex login` / `codex doctor` 或 `claude auth` / `claude doctor` setup commands；不得要求或暴露 API key。
 - chat/plan-only 阶段不会写入 `messages`、`jobs` 或 `inbox`，也不会发送 tmux 输入。
 - 后续其他 API-backed provider 必须复用 DeepSeek/OpenAI-compatible 的同一 plan schema。
 

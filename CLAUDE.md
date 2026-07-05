@@ -196,6 +196,8 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck leader chat --message "apply action <id>"` 只能复用 safe apply-action 白名单；不得通过 chat 自动应用 dispatch/capture 类 action；safe apply 完成后的 `next_command` 必须来自刷新后 `recovery.next_command`，例如进入 `agentdeck approval list`，并且当 safe apply 创建 approvals 时必须嵌入同源 `approval_card` 供 GUI/对话层展示审批队列，但不得自动 approve/reject/dispatch 或发送 tmux 输入。
 - `agentdeck leader plan` 和 `agentdeck leader chat` 默认读取 `.agentdeck/config.toml` 的 `[leader] provider/model`；需要本地 dry-run 时必须显式使用 `--provider fake --model fake-plan`。
 - 真实 Leader API 可以使用 `agentdeck leader plan/chat --provider deepseek`，环境变量为 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL`；也可以使用 `--provider openai-compatible`，环境变量为 `AGENTDECK_LEADER_API_KEY`、`AGENTDECK_LEADER_BASE_URL` 和 `AGENTDECK_LEADER_MODEL`；真实 provider 也只能生成 plan，不得绕过审批。
+- CLI-backed Leader 可以使用 `agentdeck leader plan/chat --provider codex-cli` 或 `--provider claude-cli`，通过本地 `codex exec` / `claude --print` 为 `agent_id=leader` 生成同一 JSON plan schema；不得复用 worker tmux pane 作为 Leader，也不得自动创建 approval、dispatch 或发送 tmux 输入。
+- CLI-backed Leader readiness 只检查本地命令是否存在并提供 `codex login` / `codex doctor` 或 `claude auth` / `claude doctor` setup commands；不得要求或暴露 API key。
 - 真实 provider 失败必须记录到 `leader_errors[]` 和 `leader_provider_failed` 事件；不要让异常崩溃 CLI，也不要半写入 plan。
 - 自然语言任务调度优先从 `agentdeck leader plan --task <text>` 生成 plan-only 记录开始；不要跳过 plan 直接自动 dispatch。
 - `agentdeck leader review --plan-id <id>` 是当前本地 Leader review loop，进入 review 前必须通过 ProjectView contract 守门，用于基于 approval/dispatch/reply 状态建议下一步；输出必须包含 `next_command` 和 GUI-ready `controls[]`，其中 `wait_for_reply` 推荐 `agentdeck capture-reply --agent <id> --message-id <id>` 但不执行 capture。

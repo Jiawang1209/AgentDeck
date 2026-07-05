@@ -354,7 +354,7 @@ agentdeck plan show --plan-id pln_xxx
 agentdeck plan status --plan-id pln_xxx
 ```
 
-`agentdeck leader plan` 和 `agentdeck leader chat` 默认读取 `.agentdeck/config.toml` 的 `[leader] provider/model`；新项目默认是 `deepseek` / `deepseek-chat`。也可以显式使用 `--provider fake --model fake-plan` 做本地 dry-run，或用 `--provider openai-compatible` 调用通用 OpenAI-compatible `/chat/completions` API。所有模式都不会 dispatch、不会发送 tmux 输入。
+`agentdeck leader plan` 和 `agentdeck leader chat` 默认读取 `.agentdeck/config.toml` 的 `[leader] provider/model`；新项目默认是 `deepseek` / `deepseek-chat`。也可以显式使用 `--provider fake --model fake-plan` 做本地 dry-run，用 `--provider openai-compatible` 调用通用 OpenAI-compatible `/chat/completions` API，或用 `--provider codex-cli` / `--provider claude-cli` 调用本地已登录的 Codex CLI / Claude Code CLI 作为 Leader 推理后端。所有模式都不会 dispatch、不会发送 tmux 输入。
 
 `agentdeck continue` 是顶层只读恢复入口。它会先校验 ProjectView，再把 `status.recovery` 整理成一张下一步卡片，并在输出前通过 `validate_continue_contract()` 自校验。卡片包含 status、reason、next_command、recommended_action、pending 计数、project_view_command，以及可选的 `leader_action` 详情和 `action_detail_command`；当存在多条 approved approvals 时，continue card 会把卡片级 `next_command` 和 `recommended_action.command` 提升为显式 `agentdeck approval dispatch-ready --confirm`，与 workbench/operator 的批量派发入口对齐。它不创建 plan、不写入 `leader_actions[]`、不 apply action、不 dispatch、不发送 tmux 输入，适合终端用户、自然语言壳和 GUI 在任何时刻询问“现在该继续什么”。
 
@@ -435,7 +435,7 @@ agentdeck approval dispatch-ready --confirm
 - `plan.goal`
 - `plan.steps[]`
 
-DeepSeek 和 OpenAI-compatible provider 使用同一个 provider 抽象和 plan schema，并要求模型返回 JSON object plan。
+DeepSeek、OpenAI-compatible、Codex CLI 和 Claude Code CLI provider 使用同一个 Leader provider 抽象和 plan schema，并要求后端返回 JSON object plan。
 
 如果真实 provider 返回非法 JSON、缺少 steps 或某个 step 没有 `requires_approval: true`，CLI 会明确失败并把错误写入 `.agentdeck/state/state.json` 的 `leader_errors[]`。失败不会创建 plan、approval、message、job 或 inbox。
 
@@ -453,6 +453,16 @@ export AGENTDECK_LEADER_BASE_URL="https://api.deepseek.com/v1"
 export AGENTDECK_LEADER_MODEL="deepseek-chat"
 ```
 
+本地 CLI-backed Leader 不需要 API key，但要求本机命令已登录并在 PATH 上：
+
+```bash
+codex login
+codex doctor
+
+claude auth
+claude doctor
+```
+
 示例：
 
 ```bash
@@ -461,9 +471,12 @@ agentdeck leader chat --provider deepseek --model deepseek-chat --message "帮�
 
 agentdeck leader plan --provider openai-compatible --model "$AGENTDECK_LEADER_MODEL" --task "规划下一步开发"
 agentdeck leader chat --provider openai-compatible --model "$AGENTDECK_LEADER_MODEL" --message "帮我规划下一步"
+
+agentdeck leader plan --provider codex-cli --model codex-default --task "规划下一步开发"
+agentdeck leader chat --provider claude-cli --model claude-default --message "帮我规划下一步"
 ```
 
-真实 provider 仍然只生成 plan 或 chat turn，不会自动创建 approval 或派发任务。
+真实 provider 仍然只生成 plan 或 chat turn，不会自动创建 approval 或派发任务。`codex-cli` / `claude-cli` 是 `agent_id=leader` 这个逻辑 Leader 的本地推理后端，不会复用 `planner`、`coder` 或 `reviewer` 的 worker pane，也不会让 Leader 自动拥有一个 tmux pane。
 
 ## 设计原则
 

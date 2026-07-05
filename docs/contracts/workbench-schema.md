@@ -209,7 +209,7 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
 }
 ```
 
-The card never exposes API key values and never calls the provider. It includes the configured Leader identity and model so GUI clients can render provider setup next to the Leader card without joining another state source. It only reports whether AgentDeck recognizes the provider and whether the required local environment variable is present. GUI clients can render `doctor_command` as the next diagnostic action, read `doctor_contract` for the doctor diagnostics schema, and show `setup_commands` as copyable placeholder commands; placeholders must never be replaced with real secret values in AgentDeck output.
+The card never exposes API key values and never calls the provider. It includes the configured Leader identity and model so GUI clients can render provider setup next to the Leader card without joining another state source. For API-backed providers such as `deepseek` and `openai-compatible`, readiness is based on the required local environment variable. For CLI-backed providers such as `codex-cli` and `claude-cli`, readiness is based on whether the local command is available on PATH. GUI clients can render `doctor_command` as the next diagnostic action, read `doctor_contract` for the doctor diagnostics schema, and show `setup_commands` as copyable placeholder commands; placeholders must never be replaced with real secret values in AgentDeck output.
 
 ## Runtime Card
 
