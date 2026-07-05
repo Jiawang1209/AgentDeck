@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add controls to approval dispatch previews
+
+- 扩展 `dispatch_preview_card` 与 `dispatch_batch_preview_card.items[]`：每个派发预览现在都包含 GUI-ready `controls[]`，提供只读 `Inspect approval` 和显式 runtime `Dispatch approval` 两个控件。
+- 保持安全边界：dispatch control 只暴露命令，不执行命令；当目标 agent runtime 不可用时，dispatch control 会 disabled，并复用同一个 blocker；批量预览仍保持顶层 `next_command=null`，不自动派发、不创建 message/job/inbox、不发送 tmux 输入。
+- 同步 `agentdeck contract leader-chat`：`dispatch_preview_card_fields` / `dispatch_batch_preview_item_fields` 现在包含 `controls`，validator 会校验 dispatch control 的 command、safety、enabled 状态和 blocker 必须与 card 对齐。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试，明确 GUI 可以直接渲染每个 approval 的 inspect/dispatch controls，而不用解析 `dispatch_command`。
+- 验证记录：已先确认红测失败，batch item 最初缺少 `controls`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_previews_all_approved_dispatches_without_dispatching tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching tests/test_leader_cli.py::test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned tests/test_contracts.py::test_validate_leader_chat_contract_checks_dispatch_batch_preview_counts -q` 4 项通过；新增 validator 负测 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_rejects_dispatch_preview_control_drift -q` 通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_previews_all_approved_dispatches_without_dispatching tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching tests/test_leader_cli.py::test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned tests/test_contracts.py::test_validate_leader_chat_contract_checks_dispatch_batch_preview_counts tests/test_contracts.py::test_validate_leader_chat_contract_rejects_dispatch_preview_control_drift tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 8 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`conda run -n agentdeck pytest -q` 257 项通过；`git diff --check` 通过；临时项目 smoke 确认 `batch-controls-smoke-ok ready_control=True blocked_control=False messages=0 jobs=0`。
+
 ### Current - Preview batch approval dispatch through Leader chat
 
 - 扩展 `agentdeck leader chat --message "派发所有已审批"` / `"dispatch all approvals"`：自然语言审批入口现在会返回 `dispatch_batch_preview_card`，把所有 approved approvals 映射成逐项 `dispatch_preview` item，并汇总 `count`、`ready_count`、`blocked_count`。

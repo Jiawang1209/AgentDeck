@@ -418,6 +418,7 @@ LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS = (
     "requires_explicit_user",
     "safety",
     "blocker",
+    "controls",
 )
 
 LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS = (
@@ -2170,6 +2171,31 @@ def _validate_leader_chat_dispatch_preview_card_contract(
         errors.append("dispatch_preview_card.requires_explicit_user must be true")
     if dispatch_preview_card.get("safety") != "explicit_runtime":
         errors.append("dispatch_preview_card.safety must be explicit_runtime")
+    controls = dispatch_preview_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if isinstance(control, dict):
+                for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                    if field not in control:
+                        errors.append(f"dispatch_preview_card.controls: missing control field: {field}")
+                if control.get("kind") == "inspect" and control.get("safety") != "inspect":
+                    errors.append("dispatch_preview_card.controls: inspect controls must use safety=inspect")
+                if control.get("kind") == "dispatch":
+                    if control.get("command") != dispatch_preview_card.get("dispatch_command"):
+                        errors.append("dispatch_preview_card.controls: dispatch command must match dispatch_command")
+                    if control.get("safety") != "explicit_runtime":
+                        errors.append("dispatch_preview_card.controls: dispatch controls must use safety=explicit_runtime")
+                    expected_enabled = dispatch_preview_card.get("blocker") is None
+                    if control.get("enabled") is not expected_enabled:
+                        errors.append("dispatch_preview_card.controls: dispatch enabled must match blocker")
+                    if dispatch_preview_card.get("blocker") and control.get("blocker") != dispatch_preview_card.get("blocker"):
+                        errors.append("dispatch_preview_card.controls: dispatch blocker must match card blocker")
+                if control.get("enabled") is False and not control.get("blocker"):
+                    errors.append("dispatch_preview_card.controls: disabled controls must include blocker")
+            else:
+                errors.append("dispatch_preview_card.controls items must be objects")
+    elif "controls" in dispatch_preview_card:
+        errors.append("dispatch_preview_card.controls must be a list")
 
 
 def _validate_leader_chat_dispatch_batch_preview_card_contract(

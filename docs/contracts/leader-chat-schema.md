@@ -456,11 +456,29 @@ When approval-mode recommends dispatching an already approved item, it may also 
   "inbox_command": "agentdeck inbox --agent planner",
   "requires_explicit_user": true,
   "safety": "explicit_runtime",
-  "blocker": null
+  "blocker": null,
+  "controls": [
+    {
+      "kind": "inspect",
+      "label": "Inspect approval",
+      "command": "agentdeck approval list",
+      "safety": "inspect",
+      "enabled": true,
+      "blocker": null
+    },
+    {
+      "kind": "dispatch",
+      "label": "Dispatch approval",
+      "command": "agentdeck approval dispatch --approval-id apv_xxx",
+      "safety": "explicit_runtime",
+      "enabled": true,
+      "blocker": null
+    }
+  ]
 }
 ```
 
-`dispatch_preview_card` is not dispatch execution. It is an execution-before-confirmation surface for humans and GUI clients: it shows the target agent, role, pane, task, dispatch command, and mailbox command before the human runs the explicit command. If runtime is missing, `blocker` should explain why the explicit command is not ready, and the `intent_card.controls[]` `next` control must be disabled with the same blocker.
+`dispatch_preview_card` is not dispatch execution. It is an execution-before-confirmation surface for humans and GUI clients: it shows the target agent, role, pane, task, dispatch command, mailbox command, and renderable `controls[]` before the human runs the explicit command. If runtime is missing, `blocker` should explain why the explicit command is not ready, and both the card's dispatch control and the `intent_card.controls[]` `next` control must be disabled with the same blocker.
 
 When approval-mode recommends dispatching all approved items, it may include `dispatch_batch_preview_card` instead of a single `dispatch_preview_card`:
 
@@ -478,7 +496,7 @@ When approval-mode recommends dispatching all approved items, it may include `di
 }
 ```
 
-`items[]` must reuse `dispatch_preview_card_fields`. The batch card does not execute or imply automatic fan-out; it is a GUI-ready checklist of explicit `agentdeck approval dispatch --approval-id <id>` commands. The top-level `next_command` may be `null` because there is no single safe command that represents the whole batch. `validate_leader_chat_contract()` checks that `count`, `ready_count`, and `blocked_count` match the item list.
+`items[]` must reuse `dispatch_preview_card_fields`, including per-item `controls[]`. The batch card does not execute or imply automatic fan-out; it is a GUI-ready checklist of explicit `agentdeck approval dispatch --approval-id <id>` commands. The top-level `next_command` may be `null` because there is no single safe command that represents the whole batch. `validate_leader_chat_contract()` checks that `count`, `ready_count`, and `blocked_count` match the item list, and that dispatch controls match each item's dispatch command, safety, enabled state, and blocker.
 
 Setup-mode responses are returned when the human asks to inspect `doctor`, provider setup, API key, or local environment readiness. They are read-only and do not call the configured Leader provider:
 

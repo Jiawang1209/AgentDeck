@@ -1480,6 +1480,24 @@ def test_validate_leader_chat_contract_checks_dispatch_batch_preview_counts() ->
                 "requires_explicit_user": True,
                 "safety": "explicit_runtime",
                 "blocker": None,
+                "controls": [
+                    {
+                        "kind": "inspect",
+                        "label": "Inspect approval",
+                        "command": "agentdeck approval list",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                    {
+                        "kind": "dispatch",
+                        "label": "Dispatch approval",
+                        "command": "agentdeck approval dispatch --approval-id apv_one",
+                        "safety": "explicit_runtime",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                ],
             }
         ],
         "requires_explicit_user": True,
@@ -1494,6 +1512,44 @@ def test_validate_leader_chat_contract_checks_dispatch_batch_preview_counts() ->
         "errors": [
             "dispatch_batch_preview_card.count must match items length",
             "dispatch_batch_preview_card.ready_count must match unblocked items",
+        ],
+    }
+
+
+def test_validate_leader_chat_contract_rejects_dispatch_preview_control_drift() -> None:
+    payload = leader_chat_example()
+    payload["dispatch_preview_card"] = {
+        "approval_id": "apv_blocked",
+        "agent_id": "planner",
+        "agent_role": "planning",
+        "pane_id": None,
+        "runtime_status": "configured",
+        "task": "Plan the work",
+        "dispatch_command": "agentdeck approval dispatch --approval-id apv_blocked",
+        "approval_command": "agentdeck approval list",
+        "inbox_command": "agentdeck inbox --agent planner",
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": "agent is not spawned: planner",
+        "controls": [
+            {
+                "kind": "dispatch",
+                "label": "Dispatch approval",
+                "command": "agentdeck approval dispatch --approval-id apv_blocked",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            }
+        ],
+    }
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "dispatch_preview_card.controls: dispatch enabled must match blocker",
+            "dispatch_preview_card.controls: dispatch blocker must match card blocker",
         ],
     }
 

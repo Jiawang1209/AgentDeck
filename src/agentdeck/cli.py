@@ -2640,6 +2640,7 @@ def _approval_dispatch_preview_card(
         blocker = f"agent is not spawned: {agent_id}"
     elif runtime_status != "running":
         blocker = f"agent runtime is {runtime_status}: {agent_id}"
+    dispatch_command = f"agentdeck approval dispatch --approval-id {approval_id}"
     return {
         "approval_id": approval_id,
         "agent_id": agent_id,
@@ -2647,12 +2648,30 @@ def _approval_dispatch_preview_card(
         "pane_id": pane_id,
         "runtime_status": runtime_status,
         "task": approval.get("task"),
-        "dispatch_command": f"agentdeck approval dispatch --approval-id {approval_id}",
+        "dispatch_command": dispatch_command,
         "approval_command": "agentdeck approval list",
         "inbox_command": f"agentdeck inbox --agent {agent_id}",
         "requires_explicit_user": True,
         "safety": "explicit_runtime",
         "blocker": blocker,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect approval",
+                "command": "agentdeck approval list",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "dispatch",
+                "label": "Dispatch approval",
+                "command": dispatch_command,
+                "safety": "explicit_runtime",
+                "enabled": blocker is None,
+                "blocker": blocker,
+            },
+        ],
     }
 
 

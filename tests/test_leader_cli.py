@@ -2085,10 +2085,28 @@ def test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching
         "dispatch_command": f"agentdeck approval dispatch --approval-id {approval_id}",
         "approval_command": "agentdeck approval list",
         "inbox_command": "agentdeck inbox --agent planner",
-        "requires_explicit_user": True,
-        "safety": "explicit_runtime",
-        "blocker": None,
-    }
+            "requires_explicit_user": True,
+            "safety": "explicit_runtime",
+            "blocker": None,
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "Inspect approval",
+                    "command": "agentdeck approval list",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "dispatch",
+                    "label": "Dispatch approval",
+                    "command": f"agentdeck approval dispatch --approval-id {approval_id}",
+                    "safety": "explicit_runtime",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
+        }
     assert payload["intent_card"]["embedded_card"] == "dispatch_preview_card"
     assert payload["intent_card"]["controls"][0] == {
         "kind": "inspect",
@@ -2155,6 +2173,14 @@ def test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned(
     assert payload["dispatch_preview_card"]["pane_id"] is None
     assert payload["dispatch_preview_card"]["runtime_status"] == "configured"
     assert payload["dispatch_preview_card"]["blocker"] == "agent is not spawned: planner"
+    assert payload["dispatch_preview_card"]["controls"][-1] == {
+        "kind": "dispatch",
+        "label": "Dispatch approval",
+        "command": f"agentdeck approval dispatch --approval-id {approval_id}",
+        "safety": "explicit_runtime",
+        "enabled": False,
+        "blocker": "agent is not spawned: planner",
+    }
     assert payload["intent_card"]["embedded_card"] == "dispatch_preview_card"
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
@@ -2203,10 +2229,36 @@ def test_leader_chat_previews_all_approved_dispatches_without_dispatching(
     assert batch_card["items"][0]["agent_id"] == "planner"
     assert batch_card["items"][0]["pane_id"] == "%42"
     assert batch_card["items"][0]["blocker"] is None
+    assert batch_card["items"][0]["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect approval",
+            "command": "agentdeck approval list",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "dispatch",
+            "label": "Dispatch approval",
+            "command": f"agentdeck approval dispatch --approval-id {planner_approval_id}",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
     assert batch_card["items"][1]["approval_id"] == coder_approval_id
     assert batch_card["items"][1]["agent_id"] == "coder"
     assert batch_card["items"][1]["pane_id"] is None
     assert batch_card["items"][1]["blocker"] == "agent is not spawned: coder"
+    assert batch_card["items"][1]["controls"][-1] == {
+        "kind": "dispatch",
+        "label": "Dispatch approval",
+        "command": f"agentdeck approval dispatch --approval-id {coder_approval_id}",
+        "safety": "explicit_runtime",
+        "enabled": False,
+        "blocker": "agent is not spawned: coder",
+    }
     assert payload["intent_card"]["embedded_card"] == "dispatch_batch_preview_card"
     assert payload["intent_card"]["controls"][0] == {
         "kind": "inspect",
