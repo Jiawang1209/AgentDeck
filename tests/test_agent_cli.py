@@ -1401,6 +1401,73 @@ def test_workbench_blocks_dispatch_operator_when_approved_agent_is_not_spawned(
     assert state_after.get("inbox", {}) == {}
 
 
+def test_workbench_surfaces_dispatch_ready_operator_for_multiple_approved_items(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"] = {
+        "planner": {
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "session_name": "agentdeck",
+            "cwd": str(root),
+            "status": "running",
+        }
+    }
+    state["approvals"] = [
+        {
+            "approval_id": "apv_planner",
+            "plan_id": "pln_ready",
+            "step_id": "step_1",
+            "step": 1,
+            "agent_id": "planner",
+            "role": "planning",
+            "task": "规划批量派发",
+            "risk": "low",
+            "status": "approved",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        },
+        {
+            "approval_id": "apv_coder",
+            "plan_id": "pln_ready",
+            "step_id": "step_2",
+            "step": 2,
+            "agent_id": "coder",
+            "role": "implementation",
+            "task": "实现批量派发",
+            "risk": "low",
+            "status": "approved",
+            "created_at": "2026-07-04T00:00:01+00:00",
+        },
+    ]
+    store.save(state)
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["active_queue_source"] == "approval"
+    assert payload["queue_card"]["approvals"]["approved"] == 2
+    assert payload["operator_card"]["action_kind"] == "approval_dispatch_ready"
+    assert payload["operator_card"]["command"] == "agentdeck approval dispatch-ready --confirm"
+    assert payload["operator_card"]["explicit_command"] == "agentdeck approval dispatch-ready --confirm"
+    assert payload["operator_card"]["blocker"] is None
+    assert payload["operator_card"]["controls"][-1] == {
+        "kind": "explicit",
+        "label": "Dispatch ready approvals",
+        "command": "agentdeck approval dispatch-ready --confirm",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+    state_after = StateStore(root).load()
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+    assert state_after.get("inbox", {}) == {}
+
+
 def test_workbench_embeds_leader_inbox_card_when_worker_reply_returns_to_leader(
     tmp_path, monkeypatch, capsys
 ) -> None:

@@ -955,6 +955,22 @@ def test_validate_workbench_contract_requires_operator_fields() -> None:
     assert result == {"ok": False, "errors": ["missing operator_card field: controls"]}
 
 
+def test_validate_workbench_contract_requires_dispatch_ready_operator_command() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["action_kind"] = "approval_dispatch_ready"
+    payload["operator_card"]["command"] = "agentdeck approval dispatch --approval-id apv_example"
+    payload["operator_card"]["explicit_command"] = "agentdeck approval dispatch-ready --confirm"
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "operator_card approval_dispatch_ready command must be agentdeck approval dispatch-ready --confirm"
+        ],
+    }
+
+
 def test_validate_workbench_contract_requires_audit_fields() -> None:
     payload = workbench_example()
     del payload["audit_card"]["events_command"]

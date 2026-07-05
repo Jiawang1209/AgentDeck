@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Surface dispatch-ready in workbench operator
+
+- 扩展 `agentdeck workbench` 的 `operator_card`：当 approval queue 中存在多条 `approved` approvals 时，主显式操作会提升为 `agentdeck approval dispatch-ready --confirm`，`action_kind=approval_dispatch_ready`，explicit control label 为 `Dispatch ready approvals`，方便 GUI 从总览页直接渲染批量派发入口。
+- 保持安全边界：workbench 仍只读，不执行 dispatch-ready、不创建 message/job/inbox、不发送 tmux 输入；如果没有任何 approved approval 的目标 agent 处于 running pane，operator 会返回 blocker 并禁用 explicit control。
+- 扩展 `validate_workbench_contract()`：当 `operator_card.action_kind=approval_dispatch_ready` 时，`command` 和 `explicit_command` 必须都等于 `agentdeck approval dispatch-ready --confirm`，避免 GUI 主按钮和实际显式命令漂移。
+- 同步 README、`docs/contracts/workbench-schema.md`、CLAUDE.md、AGENT.md 和测试，明确 workbench/operator 可以展示 dispatch-ready 批量入口，但不能自动派发。
+- 验证记录：已先确认红测失败，多条 approved approvals 时 `operator_card.action_kind` 最初仍是单条 `approval`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_workbench_contract_requires_dispatch_ready_operator_command tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_workbench_surfaces_dispatch_ready_operator_for_multiple_approved_items tests/test_agent_cli.py::test_workbench_blocks_dispatch_operator_when_approved_agent_is_not_spawned tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_leader_cli.py::test_leader_chat_opens_workbench_snapshot_without_mutating_state -q` 7 项通过；`conda run -n agentdeck pytest -q` 262 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `workbench-dispatch-ready-operator-smoke-ok code=0 action=approval_dispatch_ready command=agentdeck approval dispatch-ready --confirm enabled=True messages=0 jobs=0`。
+
 ### Current - Validate dispatch-ready approval responses
 
 - 扩展 `agentdeck contract approvals`：现在会公开 `dispatch_ready_command`、`dispatch_ready_response_fields` 和 `dispatch_ready_result_fields`，`--example` 同时返回稳定的 approval queue 与 dispatch-ready 响应示例，供 GUI/TUI 不解析 CLI help 也能发现批量派发输出形状。

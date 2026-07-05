@@ -929,16 +929,23 @@ def _workbench_operator_card(
     action_kind = source if source in ("inbox", "approval", "leader_action", "provider_health", "runtime") else "none"
     can_apply = bool(leader_action.get("can_apply")) if action_kind == "leader_action" else False
     apply_command = leader_action.get("apply_command") if can_apply else None
+    command = recommended_action.get("command")
     explicit_command = leader_action.get("explicit_command") or recommended_action.get("command")
+    explicit_label = "Run explicit command"
+    if action_kind == "approval" and _workbench_approved_approval_count(project_view) > 1:
+        action_kind = "approval_dispatch_ready"
+        command = "agentdeck approval dispatch-ready --confirm"
+        explicit_command = "agentdeck approval dispatch-ready --confirm"
+        explicit_label = "Dispatch ready approvals"
     preview_command = _workbench_operator_preview_command(action_kind, target_id)
-    action_blocker = leader_action.get("apply_blocker") or _workbench_operator_runtime_blocker(
+    action_blocker = leader_action.get("apply_blocker") or _workbench_operator_action_blocker(
         project_view, action_kind, target_id
     )
     return {
         "status": recovery.get("status"),
         "reason": recovery.get("reason"),
         "label": recommended_action.get("label"),
-        "command": recommended_action.get("command"),
+        "command": command,
         "next_command": continue_card.get("next_command"),
         "safety": recommended_action.get("safety"),
         "requires_explicit_user": bool(recommended_action.get("requires_explicit_user")),
@@ -952,6 +959,7 @@ def _workbench_operator_card(
             safety=recommended_action.get("safety"),
             can_apply=can_apply,
             blocker=action_blocker,
+            explicit_label=explicit_label,
         ),
         "active_queue_source": active_queue_source,
         "action_kind": action_kind,
@@ -970,6 +978,7 @@ def _workbench_operator_controls(
     safety: object,
     can_apply: bool,
     blocker: object,
+    explicit_label: str = "Run explicit command",
 ) -> list[dict[str, object]]:
     controls = [
         {
@@ -995,7 +1004,7 @@ def _workbench_operator_controls(
     controls.append(
         {
             "kind": "explicit",
-            "label": "Run explicit command",
+            "label": explicit_label,
             "command": explicit_command,
             "safety": safety,
             "enabled": explicit_command is not None and not blocker,
@@ -1003,6 +1012,14 @@ def _workbench_operator_controls(
         }
     )
     return controls
+
+
+def _workbench_operator_action_blocker(
+    project_view: dict[str, object], action_kind: str, target_id: object
+) -> str | None:
+    if action_kind == "approval_dispatch_ready":
+        return _workbench_dispatch_ready_blocker(project_view)
+    return _workbench_operator_runtime_blocker(project_view, action_kind, target_id)
 
 
 def _workbench_operator_runtime_blocker(
@@ -1023,6 +1040,34 @@ def _workbench_operator_runtime_blocker(
     if status != "running":
         return f"agent runtime is {status}: {agent_id}"
     return None
+
+
+def _workbench_dispatch_ready_blocker(project_view: dict[str, object]) -> str | None:
+    approved_items = _workbench_approved_approval_items(project_view)
+    if not approved_items:
+        return "no approved approvals"
+    for approval in approved_items:
+        agent_id = approval.get("agent_id")
+        if _project_view_agent_is_running(project_view, agent_id):
+            return None
+    return "no approved approvals have running agents"
+
+
+def _workbench_approved_approval_count(project_view: dict[str, object]) -> int:
+    approvals = project_view.get("approvals") if isinstance(project_view.get("approvals"), dict) else {}
+    return int(approvals.get("approved", 0))
+
+
+def _workbench_approved_approval_items(project_view: dict[str, object]) -> list[dict[str, object]]:
+    approvals = project_view.get("approvals") if isinstance(project_view.get("approvals"), dict) else {}
+    items = approvals.get("items") if isinstance(approvals.get("items"), list) else []
+    return [item for item in items if isinstance(item, dict) and item.get("status") == "approved"]
+
+
+def _project_view_agent_is_running(project_view: dict[str, object], agent_id: object) -> bool:
+    agent = _project_view_agent_item(project_view, agent_id)
+    runtime = agent.get("runtime") if isinstance(agent, dict) and isinstance(agent.get("runtime"), dict) else {}
+    return bool(runtime.get("pane_id")) and runtime.get("status") == "running"
 
 
 def _project_view_approval_item(project_view: dict[str, object], approval_id: object) -> dict[str, object] | None:
@@ -1047,7 +1092,7 @@ def _workbench_operator_preview_command(action_kind: str, target_id: object) -> 
         return f"agentdeck leader action --action-id {target_id}"
     if action_kind == "inbox" and target_id:
         return f"agentdeck trace --id {target_id}"
-    if action_kind == "approval":
+    if action_kind in ("approval", "approval_dispatch_ready"):
         return "agentdeck approval list"
     if action_kind == "provider_health":
         return "agentdeck doctor"

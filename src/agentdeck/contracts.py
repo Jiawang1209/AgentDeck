@@ -2681,6 +2681,15 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("operator_card.requires_explicit_user must be a boolean")
         if "can_apply" in operator_card and not isinstance(operator_card.get("can_apply"), bool):
             errors.append("operator_card.can_apply must be a boolean")
+        if operator_card.get("action_kind") == "approval_dispatch_ready":
+            if operator_card.get("command") != "agentdeck approval dispatch-ready --confirm":
+                errors.append(
+                    "operator_card approval_dispatch_ready command must be agentdeck approval dispatch-ready --confirm"
+                )
+            if operator_card.get("explicit_command") != "agentdeck approval dispatch-ready --confirm":
+                errors.append(
+                    "operator_card approval_dispatch_ready explicit_command must be agentdeck approval dispatch-ready --confirm"
+                )
     elif "operator_card" in payload:
         errors.append("operator_card must be an object")
     audit_card = payload.get("audit_card")
