@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add explicit control mode policy command
+
+- 新增 `agentdeck policy set-mode --mode ask|approve|autonomous`：`ask` 会把 `leader.approval_mode` 写回 `confirm`，`approve` 会写回 `approve`，并在成功时追加 `policy_mode_updated` 审计事件。
+- `autonomous` 仍保持未来能力占位：命令会返回失败、保持 `.agentdeck/config.toml` 不变，并追加 `policy_mode_rejected` 审计事件，避免“完全放权”在预算、allowlist 和审计门完成前偷跑。
+- 更新 `control_mode_card.active_controls[]` 和 contract example，把 `agentdeck policy set-mode --mode <mode>` 暴露为已实现但仍需显式用户触发的策略入口；`agentdeck workbench` 继续保持只读，不自动切换策略、不 ack、不 approve、不 dispatch、不发送 tmux 输入。
+- 同步 README、`docs/contracts/workbench-schema.md`、CLAUDE.md、AGENT.md 和测试；本轮把“类似 Codex：可以 ask，也可以显式授权”的产品约束落到真实 CLI、配置和审计账本上。
+- 完整验证：已先确认红测失败，`policy` 顶层命令最初不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_policy_set_mode_updates_config_and_workbench_control_mode tests/test_agent_cli.py::test_policy_set_mode_rejects_autonomous_without_mutating_config -q` 2 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_policy_set_mode_updates_config_and_workbench_control_mode tests/test_agent_cli.py::test_policy_set_mode_rejects_autonomous_without_mutating_config tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 4 项通过；`conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 158 项通过；`conda run -n agentdeck pytest -q` 238 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `approve_payload_mode=approve`、`workbench_mode=approve`、`ask_config_restored=true`、`autonomous_exit=1`，并记录 `policy_mode_updated` / `policy_mode_rejected`。
+
 ### Current - Surface control mode in workbench
 
 - 扩展 `agentdeck workbench` 一屏快照：新增只读 `control_mode_card`，把类似 Codex 的 ask/approve/autonomous 控制梯度显式暴露给 GUI/TUI 和自然语言壳。

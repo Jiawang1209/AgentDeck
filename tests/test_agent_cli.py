@@ -1211,8 +1211,8 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "label": "Set control mode",
                 "command": "agentdeck policy set-mode --mode <mode>",
                 "safety": "explicit_user",
-                "enabled": False,
-                "blocker": "policy mutation command is not implemented",
+                "enabled": True,
+                "blocker": None,
             },
         ],
         "set_mode_command_template": "agentdeck policy set-mode --mode <mode>",
@@ -1240,6 +1240,66 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert state_after["replies"][0]["text"] == "status: completed"
     assert state_after["chat_turns"] == []
     assert state_after["leader_actions"] == []
+
+
+def test_policy_set_mode_updates_config_and_workbench_control_mode(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["policy", "set-mode", "--mode", "approve"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "ok": True,
+        "mode": "approve",
+        "approval_mode": "approve",
+        "policy_source": ".agentdeck/config.toml:leader.approval_mode",
+        "workbench_command": "agentdeck workbench",
+    }
+    assert 'approval_mode = "approve"' in (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "policy_mode_updated"' in events
+    assert '"mode": "approve"' in events
+    assert '"approval_mode": "approve"' in events
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    workbench = json.loads(capsys.readouterr().out)
+    assert workbench["control_mode_card"]["current_mode"] == "approve"
+    assert workbench["control_mode_card"]["approval_mode"] == "approve"
+    assert workbench["control_mode_card"]["default_safety"] == "safe_apply"
+
+    exit_code = cli.main(["policy", "set-mode", "--mode", "ask"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "ask"
+    assert payload["approval_mode"] == "confirm"
+    assert 'approval_mode = "confirm"' in (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
+
+
+def test_policy_set_mode_rejects_autonomous_without_mutating_config(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_before = (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
+
+    exit_code = cli.main(["policy", "set-mode", "--mode", "autonomous"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "autonomous control mode is not implemented" in captured.err
+    assert (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8") == config_before
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "policy_mode_rejected"' in events
+    assert '"mode": "autonomous"' in events
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    workbench = json.loads(capsys.readouterr().out)
+    assert workbench["control_mode_card"]["current_mode"] == "ask"
+    assert workbench["control_mode_card"]["approval_mode"] == "confirm"
 
 
 def test_workbench_embeds_leader_inbox_card_when_worker_reply_returns_to_leader(

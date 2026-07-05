@@ -174,7 +174,7 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
 }
 ```
 
-`current_mode=ask` means AgentDeck may plan, inspect, and suggest commands without mutating runtime state. `approve` describes the existing approval-gated safe-apply path. `autonomous` is advertised as disabled until scoped delegation, budgets, allowlists, and audit gates exist. This card does not grant permission by itself and does not execute, approve, dispatch, acknowledge, or send tmux input.
+`current_mode=ask` means AgentDeck may plan, inspect, and suggest commands without mutating runtime state. `approve` describes the existing approval-gated safe-apply path. `autonomous` is advertised as disabled until scoped delegation, budgets, allowlists, and audit gates exist. This card does not grant permission by itself and does not execute, approve, dispatch, acknowledge, or send tmux input. The explicit mutation path is `agentdeck policy set-mode --mode ask|approve`; it only updates `.agentdeck/config.toml:leader.approval_mode` and appends an audit event. `agentdeck policy set-mode --mode autonomous` must fail, leave config unchanged, and append a rejection audit event.
 
 ## Control Registry
 

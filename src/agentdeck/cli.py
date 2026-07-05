@@ -9,7 +9,14 @@ import shlex
 import sys
 import time
 
-from .config import config_path, load_config, project_root, update_agent_role, write_default_config
+from .config import (
+    config_path,
+    load_config,
+    project_root,
+    update_agent_role,
+    update_leader_approval_mode,
+    write_default_config,
+)
 from .contracts import (
     agent_runtime_contract_response,
     approval_contract_response,
@@ -484,8 +491,8 @@ def _workbench_control_mode_card(project_view: dict[str, object]) -> dict[str, o
                 label="Set control mode",
                 command="agentdeck policy set-mode --mode <mode>",
                 safety="explicit_user",
-                enabled=False,
-                blocker="policy mutation command is not implemented",
+                enabled=True,
+                blocker=None,
             ),
         ],
         "set_mode_command_template": "agentdeck policy set-mode --mode <mode>",
@@ -1170,6 +1177,49 @@ def agent_list_command(_args: argparse.Namespace) -> int:
     if config is None or store is None:
         return exit_code
     _print_json(asdict(store.project_view(config)))
+    return 0
+
+
+def policy_set_mode_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    mode = str(args.mode)
+    if mode == "autonomous":
+        store.append_event(
+            EventRecord.create(
+                "policy_mode_rejected",
+                {
+                    "mode": mode,
+                    "reason": "autonomous control mode is not implemented",
+                    "policy_source": ".agentdeck/config.toml:leader.approval_mode",
+                },
+            )
+        )
+        print("autonomous control mode is not implemented", file=sys.stderr)
+        return 1
+
+    approval_mode = "confirm" if mode == "ask" else "approve"
+    leader = update_leader_approval_mode(project_root(), approval_mode)
+    store.append_event(
+        EventRecord.create(
+            "policy_mode_updated",
+            {
+                "mode": mode,
+                "approval_mode": leader.approval_mode,
+                "policy_source": ".agentdeck/config.toml:leader.approval_mode",
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": mode,
+            "approval_mode": leader.approval_mode,
+            "policy_source": ".agentdeck/config.toml:leader.approval_mode",
+            "workbench_command": "agentdeck workbench",
+        }
+    )
     return 0
 
 
@@ -3599,6 +3649,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     controls = subparsers.add_parser("controls", help="Show the GUI-ready command palette from the workbench")
     controls.set_defaults(func=controls_command)
+
+    policy = subparsers.add_parser("policy", help="Policy and control mode commands")
+    policy_subparsers = policy.add_subparsers(dest="policy_command")
+    policy_set_mode = policy_subparsers.add_parser("set-mode", help="Set explicit control mode")
+    policy_set_mode.add_argument("--mode", required=True, choices=["ask", "approve", "autonomous"])
+    policy_set_mode.set_defaults(func=policy_set_mode_command)
 
     contract = subparsers.add_parser("contract", help="Discover machine-readable AgentDeck contracts")
     contract_subparsers = contract.add_subparsers(dest="contract_command")
