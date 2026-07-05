@@ -1347,7 +1347,7 @@ def test_leader_chat_suggests_policy_mode_change_without_mutating_config(
     }
     assert payload["intent_card"]["controls"][1] == {
         "kind": "next",
-        "label": "Next command",
+        "label": "Switch to approval mode",
         "command": "agentdeck policy set-mode --mode approve",
         "safety": "explicit_user",
         "enabled": True,
@@ -1390,7 +1390,7 @@ def test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked(
     assert payload["leader_explanation"]["requires_explicit_user"] is True
     assert payload["intent_card"]["controls"][1] == {
         "kind": "next",
-        "label": "Next command",
+        "label": "Request autonomous mode",
         "command": "agentdeck policy set-mode --mode autonomous",
         "safety": "explicit_user",
         "enabled": True,

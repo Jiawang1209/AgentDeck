@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Label policy intent controls by authorization mode
+
+- 调整 `agentdeck leader chat` 的 policy-mode `intent_card.controls[]`：`切换到审批模式` 和 `开启 autonomous 完全放权` 的 next control 现在分别使用 `Switch to approval mode` 与 `Request autonomous mode`，`回到 ask 模式` 对应 `Switch to ask mode`。
+- 保持安全边界：该变化只影响 GUI/自然语言壳可渲染的 `label`，不修改 `.agentdeck/config.toml`，不创建 plan/action/approval/message/job/inbox，不调用 provider，也不开放 autonomous 执行。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、CLAUDE.md、AGENT.md 和测试，明确 GUI 可以直接渲染 ask/审批/放权梯度，而不用解析 `agentdeck policy set-mode --mode ...`。
+- 验证记录：已先确认红测失败，policy next control label 最初仍是 `Next command`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_policy_mode_change_without_mutating_config tests/test_leader_cli.py::test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked -q` 2 项通过；聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_policy_mode_change_without_mutating_config tests/test_leader_cli.py::test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_policy_set_mode_updates_config_and_workbench_control_mode tests/test_agent_cli.py::test_policy_set_mode_rejects_autonomous_without_mutating_config tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 8 项通过；`conda run -n agentdeck pytest -q` 254 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `leader-chat-policy-label-smoke-ok labels=Switch to approval mode|Switch to ask mode|Request autonomous mode config_unchanged=True`。
+
 ### Current - Label runtime intent controls by action
 
 - 调整 `agentdeck leader chat` 的 runtime explicit action `intent_card.controls[]`：`刷新 runtime`、`启动 planner`、`发送给 planner：继续`、`停止 planner` 的 next control 现在分别使用 `Refresh runtime`、`Spawn planner`、`Send input to planner`、`Stop planner`。

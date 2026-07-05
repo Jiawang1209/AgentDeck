@@ -148,6 +148,14 @@ def _leader_chat_next_control_label(next_command: object) -> str:
     stop_match = re.fullmatch(r"agentdeck agent stop --agent ([^\s]+)", command)
     if stop_match:
         return f"Stop {stop_match.group(1)}"
+    policy_match = re.fullmatch(r"agentdeck policy set-mode --mode (ask|approve|autonomous)", command)
+    if policy_match:
+        mode = policy_match.group(1)
+        if mode == "ask":
+            return "Switch to ask mode"
+        if mode == "approve":
+            return "Switch to approval mode"
+        return "Request autonomous mode"
     return "Next command"
 
 
