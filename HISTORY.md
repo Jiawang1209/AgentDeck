@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add contract discovery index
+
+- 新增 `agentdeck contract list`，为 GUI/TUI/自然语言入口提供统一契约总目录，返回所有可消费 contract 的 discovery command、example command、本地 schema 文档路径和存在性。
+- 在 `src/agentdeck/contracts.py` 中新增 `CONTRACT_INDEX_RESPONSE_FIELDS`、`CONTRACT_INDEX_ITEM_FIELDS`、`CONTRACT_INDEX_SPECS` 和 `contract_index_response()`，让 CLI 与外部复用代码共享同一份 contract index 定义。
+- 新增 `docs/contracts/contract-index-schema.md`，明确 contract index 是只读 discovery 入口，不读取 `.agentdeck/` state、不 inspect tmux pane、不调用 Leader provider、不修改项目。
+- 更新 `README.md`、`CLAUDE.md` 和 `AGENT.md`，要求新增 GUI-consumable contract 时同步 contract index、文档和测试。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_list_discovers_all_gui_contracts tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli -q` 最初因 `contract_index_response` 和 `CONTRACT_INDEX_ITEM_FIELDS` 不存在失败；实现后目标测试通过；`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_list_discovers_all_gui_contracts tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli tests/test_agent_cli.py::test_contract_project_view_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_events_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients -q` 5 项通过；`conda run -n agentdeck pytest -q` 183 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `contract-list-ok`。
+
 ### Current - Add events contract discovery
 
 - 新增 `agentdeck contract events` 和 `agentdeck contract events --example`，为 GUI/TUI 暴露审计事件时间线的 response、cursor metadata 和 event item 字段。

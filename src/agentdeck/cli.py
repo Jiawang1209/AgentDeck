@@ -12,6 +12,7 @@ import time
 from .config import config_path, load_config, project_root, update_agent_role, write_default_config
 from .contracts import (
     approval_contract_response,
+    contract_index_response,
     continue_contract_response,
     doctor_contract_response,
     events_contract_response,
@@ -741,6 +742,13 @@ def workbench_command(args: argparse.Namespace) -> int:
 def contract_project_view_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "project-view-schema.md"
     payload = project_view_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_list_command(_args: argparse.Namespace) -> int:
+    contract_docs_dir = Path(__file__).resolve().parents[2] / "docs" / "contracts"
+    payload = contract_index_response(contract_docs_dir)
     _print_json(payload)
     return 0
 
@@ -2519,6 +2527,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     contract = subparsers.add_parser("contract", help="Discover machine-readable AgentDeck contracts")
     contract_subparsers = contract.add_subparsers(dest="contract_command")
+    contract_list = contract_subparsers.add_parser(
+        "list",
+        help="List all GUI-consumable contract discovery commands",
+    )
+    contract_list.set_defaults(func=contract_list_command)
     contract_project_view = contract_subparsers.add_parser(
         "project-view",
         help="Show ProjectView contract discovery metadata",

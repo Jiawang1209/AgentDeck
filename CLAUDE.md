@@ -115,6 +115,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - ProjectView 字段契约维护在 `docs/contracts/project-view-schema.md`；当前 `schema_version` 是 `project-view/v1`，任何 GUI、recovery 或自然语言入口改动都要保持该文档同步。
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`；不要在 Python 源码里重复手写版本字符串。
 - ProjectView contract discovery payload 和 example fixture 的源码入口是 `src/agentdeck/contracts.py`；CLI 只负责调用它。
+- Contract index 维护在 `docs/contracts/contract-index-schema.md`，发现入口是 `agentdeck contract list`；`CONTRACT_INDEX_SPECS`、payload helper 和测试都在 `src/agentdeck/contracts.py` / `tests/` 中。新增 GUI-consumable contract 时必须同步索引。
 - Doctor diagnostics contract 维护在 `docs/contracts/doctor-schema.md`，发现入口是 `agentdeck contract doctor`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。
 - Events timeline contract 维护在 `docs/contracts/events-schema.md`，发现入口是 `agentdeck contract events`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。
 - Leader chat response contract 维护在 `docs/contracts/leader-chat-schema.md`，发现入口是 `agentdeck contract leader-chat`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`。
@@ -126,6 +127,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - Trace contract 维护在 `docs/contracts/trace-schema.md`，发现入口是 `agentdeck contract trace`；payload、example fixture 和 `validate_trace_contract()` 也在 `src/agentdeck/contracts.py`。
 - `src/agentdeck/contracts.py::validate_project_view_contract()` 是 ProjectView-like payload 的 v1 基础契约校验入口。
 - `agentdeck status` 必须在输出 JSON 前调用 `validate_project_view_contract()` 自校验；校验失败时返回非 0 且不得输出半坏的 ProjectView。
+- `agentdeck contract list` 是只读契约总目录，供 GUI/TUI 启动时读取所有 contract discovery 命令、example 命令和文档路径；不得读取或修改 live state。
 - `agentdeck contract project-view` 是只读契约发现入口，供 GUI 或外部集成读取 schema version、契约文档路径和关键字段列表；`--example` 会返回稳定 ProjectView 示例，不代表 live state。
 - `agentdeck contract events` 是只读契约发现入口，供 GUI 或外部集成读取事件时间线 response/cursor/event item 字段；`--example` 会返回稳定 events timeline 示例，不读取或修改 live state。
 - `agentdeck contract leader-chat` 是只读契约发现入口，供 GUI 或外部集成读取 `leader chat` 响应字段和 `leader_explanation` 字段；`--example` 会返回稳定 chat 响应示例，不读取或修改 live state。

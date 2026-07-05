@@ -8,6 +8,7 @@ from agentdeck.config import write_default_config
 from agentdeck.contracts import (
     approval_contract_payload,
     approval_contract_response,
+    contract_index_response,
     continue_contract_payload,
     continue_contract_response,
     doctor_contract_payload,
@@ -323,6 +324,36 @@ def test_continue_refuses_invalid_continue_card_before_printing(tmp_path, monkey
     assert captured.out == ""
     assert "Continue card contract validation failed" in captured.err
     assert "missing continue_card field: next_command" in captured.err
+
+
+def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
+    exit_code = cli.main(["contract", "list"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = contract_index_response(Path(payload["contract_docs_dir"]))
+    assert payload == expected
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["contracts_command"] == "agentdeck contract list"
+    assert payload["contract_docs_dir"].endswith("docs/contracts")
+    assert payload["count"] == len(payload["contracts"])
+    assert [item["name"] for item in payload["contracts"]] == [
+        "project-view",
+        "continue",
+        "doctor",
+        "events",
+        "workbench",
+        "leader-chat",
+        "leader-actions",
+        "leader-action",
+        "approvals",
+        "inbox",
+        "trace",
+    ]
+    assert all(item["contract_exists"] for item in payload["contracts"])
+    assert payload["contracts"][0]["command"] == "agentdeck contract project-view"
+    assert payload["contracts"][0]["example_command"] == "agentdeck contract project-view --example"
+    assert payload["contracts"][0]["contract_path"].endswith("docs/contracts/project-view-schema.md")
 
 
 def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:

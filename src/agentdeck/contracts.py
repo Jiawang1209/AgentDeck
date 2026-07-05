@@ -5,6 +5,94 @@ from pathlib import Path
 from .models import PROJECT_VIEW_SCHEMA_VERSION
 
 
+CONTRACT_INDEX_RESPONSE_FIELDS = (
+    "schema_version",
+    "contracts_command",
+    "contract_docs_dir",
+    "response_fields",
+    "contract_item_fields",
+    "count",
+    "contracts",
+)
+
+CONTRACT_INDEX_ITEM_FIELDS = (
+    "name",
+    "command",
+    "example_command",
+    "contract_path",
+    "contract_exists",
+)
+
+CONTRACT_INDEX_SPECS = (
+    (
+        "project-view",
+        "agentdeck contract project-view",
+        "agentdeck contract project-view --example",
+        "project-view-schema.md",
+    ),
+    (
+        "continue",
+        "agentdeck contract continue",
+        "agentdeck contract continue --example",
+        "continue-card-schema.md",
+    ),
+    (
+        "doctor",
+        "agentdeck contract doctor",
+        "agentdeck contract doctor --example",
+        "doctor-schema.md",
+    ),
+    (
+        "events",
+        "agentdeck contract events",
+        "agentdeck contract events --example",
+        "events-schema.md",
+    ),
+    (
+        "workbench",
+        "agentdeck contract workbench",
+        "agentdeck contract workbench --example",
+        "workbench-schema.md",
+    ),
+    (
+        "leader-chat",
+        "agentdeck contract leader-chat",
+        "agentdeck contract leader-chat --example",
+        "leader-chat-schema.md",
+    ),
+    (
+        "leader-actions",
+        "agentdeck contract leader-actions",
+        "agentdeck contract leader-actions --example",
+        "leader-actions-schema.md",
+    ),
+    (
+        "leader-action",
+        "agentdeck contract leader-action",
+        "agentdeck contract leader-action --example",
+        "leader-action-schema.md",
+    ),
+    (
+        "approvals",
+        "agentdeck contract approvals",
+        "agentdeck contract approvals --example",
+        "approvals-schema.md",
+    ),
+    (
+        "inbox",
+        "agentdeck contract inbox",
+        "agentdeck contract inbox --example",
+        "inbox-schema.md",
+    ),
+    (
+        "trace",
+        "agentdeck contract trace",
+        "agentdeck contract trace --example",
+        "trace-schema.md",
+    ),
+)
+
+
 PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "schema_version",
     "project",
@@ -186,6 +274,31 @@ PROJECT_VIEW_REPLY_ITEM_FIELDS = (
     "created_at",
     "trace_command",
 )
+
+
+def contract_index_response(contract_docs_dir: Path) -> dict[str, object]:
+    contracts = []
+    for name, command, example_command, filename in CONTRACT_INDEX_SPECS:
+        contract_path = contract_docs_dir / filename
+        contracts.append(
+            {
+                "name": name,
+                "command": command,
+                "example_command": example_command,
+                "contract_path": str(contract_path),
+                "contract_exists": contract_path.exists(),
+            }
+        )
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "contracts_command": "agentdeck contract list",
+        "contract_docs_dir": str(contract_docs_dir),
+        "response_fields": list(CONTRACT_INDEX_RESPONSE_FIELDS),
+        "contract_item_fields": list(CONTRACT_INDEX_ITEM_FIELDS),
+        "count": len(contracts),
+        "contracts": contracts,
+    }
+
 
 DOCTOR_RESPONSE_FIELDS = (
     "ok",

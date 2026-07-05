@@ -95,6 +95,7 @@ Worker 不应该：
 - ProjectView 详细字段契约见 `docs/contracts/project-view-schema.md`；当前 `schema_version` 是 `project-view/v1`，修改 status、recovery、GUI 或自然语言入口时必须同步该文档。
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`。
 - ProjectView contract payload 和 example fixture 维护在 `src/agentdeck/contracts.py`，需要复用时优先 import 该模块。
+- Contract index 见 `docs/contracts/contract-index-schema.md`；`agentdeck contract list` 会返回所有 GUI 可消费契约的 discovery command、example command 和 schema 文档路径。新增契约命令时必须同步 `CONTRACT_INDEX_SPECS`、该文档和测试。
 - Doctor diagnostics contract 见 `docs/contracts/doctor-schema.md`；`agentdeck contract doctor --example` 会返回稳定 doctor diagnostics 示例，字段常量和 example fixture 都在 `src/agentdeck/contracts.py`。
 - Events timeline contract 见 `docs/contracts/events-schema.md`；`agentdeck contract events --example` 会返回稳定 events timeline 示例，字段常量和 example fixture 都在 `src/agentdeck/contracts.py`。
 - Leader chat response contract 见 `docs/contracts/leader-chat-schema.md`；`agentdeck contract leader-chat --example` 会返回包含 `leader_explanation` 的稳定响应示例。
@@ -107,6 +108,7 @@ Worker 不应该：
 - `validate_project_view_contract(payload)` 可校验任意 ProjectView-like payload 是否满足 v1 基础契约。
 - `agentdeck status` 输出 JSON 前必须先用 `validate_project_view_contract()` 自校验；失败时只能返回错误，不输出半坏 ProjectView。
 - `agentdeck contract project-view` 返回 ProjectView 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定示例，供 GUI 原型使用。
+- `agentdeck contract list` 返回契约总目录，不读取或修改项目 state；GUI/TUI 启动时应优先用它发现可消费 contract，而不是在前端硬编码所有子命令。
 - `agentdeck contract leader-chat` 返回自然语言 Leader chat 响应契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定响应示例，供 GUI 原型使用。
 - `agentdeck contract continue` 返回顶层 continue 恢复卡片契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定恢复卡片示例，供 GUI 原型使用。
 - `agentdeck contract workbench` 返回工作台快照契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定一屏 workbench 示例，供 GUI/TUI 原型使用。

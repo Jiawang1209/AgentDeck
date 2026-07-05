@@ -5,6 +5,8 @@ from pathlib import Path
 from agentdeck.contracts import (
     APPROVAL_ITEM_FIELDS,
     APPROVAL_QUEUE_FIELDS,
+    CONTRACT_INDEX_ITEM_FIELDS,
+    CONTRACT_INDEX_RESPONSE_FIELDS,
     CONTINUE_CARD_FIELDS,
     EVENTS_CURSOR_FIELDS,
     EVENTS_EVENT_ITEM_FIELDS,
@@ -45,6 +47,7 @@ from agentdeck.contracts import (
     approval_contract_payload,
     approval_contract_response,
     approval_example,
+    contract_index_response,
     inbox_contract_payload,
     inbox_contract_response,
     inbox_example,
@@ -86,6 +89,52 @@ from agentdeck.contracts import (
     validate_workbench_contract,
 )
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
+
+
+def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None:
+    docs = {
+        "project-view-schema.md",
+        "continue-card-schema.md",
+        "doctor-schema.md",
+        "events-schema.md",
+        "workbench-schema.md",
+        "leader-chat-schema.md",
+        "leader-actions-schema.md",
+        "leader-action-schema.md",
+        "approvals-schema.md",
+        "inbox-schema.md",
+        "trace-schema.md",
+    }
+    for filename in docs:
+        (tmp_path / filename).write_text(f"# {filename}\n", encoding="utf-8")
+
+    payload = contract_index_response(tmp_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["contracts_command"] == "agentdeck contract list"
+    assert payload["contract_docs_dir"] == str(tmp_path)
+    assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
+    assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
+    assert payload["count"] == 11
+    assert len(payload["contracts"]) == payload["count"]
+    assert [item["name"] for item in payload["contracts"]] == [
+        "project-view",
+        "continue",
+        "doctor",
+        "events",
+        "workbench",
+        "leader-chat",
+        "leader-actions",
+        "leader-action",
+        "approvals",
+        "inbox",
+        "trace",
+    ]
+    for contract in payload["contracts"]:
+        assert set(contract) == set(CONTRACT_INDEX_ITEM_FIELDS)
+        assert contract["contract_exists"] is True
+        assert contract["command"].startswith("agentdeck contract ")
+        assert contract["example_command"].endswith(" --example")
 
 
 def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
