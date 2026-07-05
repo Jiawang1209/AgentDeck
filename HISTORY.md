@@ -4,6 +4,16 @@
 
 ## 2026-07-05
 
+### Current - Add communication ledger card to workbench snapshot
+
+- 扩展 `agentdeck workbench`：新增 `ledger_card`，从 ProjectView 的 messages、jobs、replies 和 inbox 摘要派生 GUI/TUI 可渲染的通信账本投影。
+- `ledger_card` 复用 ProjectView summary shape，保留每条 message/job/reply 的 `trace_command`，并增加去重后的 `trace_commands` 快捷入口列表。
+- 扩展 workbench contract：新增 `WORKBENCH_LEDGER_CARD_FIELDS`，并在 `agentdeck contract workbench` 暴露 `ledger_card_fields`。
+- 补充 CLI 与 contract 测试，覆盖 ledger card discovery、messages/jobs/replies/inbox 投影、trace command 汇总、只读边界和 validator 缺 trace 拒绝。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 ledger_card 只来自 ProjectView，不读取 pane 输出，不复制长 prompt。
+- 保持安全边界：本轮不写 state、不创建 chat turn、不 ack、不 approve、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_runtime_ledger_and_active_inbox_cards_without_mutating_state -q` 最初因 `ledger_card` 未出现在 contract/workbench payload 中失败；实现后 ledger card 目标测试 5 项通过；`conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 85 项通过；`conda run -n agentdeck pytest -q` 150 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `contract-workbench-ledger-ok` 与 `workbench-ledger-ok`。
+
 ### Current - Add runtime card to workbench snapshot
 
 - 扩展 `agentdeck workbench`：新增 `runtime_card`，从 ProjectView 的 `runtime_backend` 和 `agents[]` 派生可渲染的 tmux runtime 投影。

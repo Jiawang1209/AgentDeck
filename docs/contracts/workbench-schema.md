@@ -37,6 +37,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "project_view": {},
   "leader_actions": {},
   "runtime_card": {},
+  "ledger_card": {},
   "recovery": {},
   "next_command": "agentdeck continue",
   "continue_card": {},
@@ -50,6 +51,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `project_view` remains the source of truth and must pass `validate_project_view_contract()`.
 `leader_actions` must equal `project_view.leader_actions`.
 `runtime_card` is derived from `project_view.runtime_backend` and `project_view.agents[]`.
+`ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, and `project_view.inbox`.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `next_command` must equal `continue_card.next_command`.
@@ -82,6 +84,27 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 ```
 
 The card does not capture pane output and does not prove task completion. It only surfaces the configured agent identity, role, provider, workspace mode, and current runtime binding already present in ProjectView.
+
+## Ledger Card
+
+`ledger_card` is a GUI-ready projection of the communication ledger:
+
+```json
+{
+  "messages": {},
+  "jobs": {},
+  "replies": {},
+  "inbox": {},
+  "trace_commands": [
+    "agentdeck trace --id msg_xxx",
+    "agentdeck trace --id job_xxx",
+    "agentdeck trace --id rep_xxx",
+    "agentdeck trace --id inb_xxx"
+  ]
+}
+```
+
+`messages`, `jobs`, and `replies` reuse the ProjectView summary shapes and must retain `trace_command` on each item. `inbox` reuses the ProjectView inbox summary so GUI clients can show mailbox heads without scanning per-agent inbox arrays. `trace_commands` is a de-duplicated convenience list for quick trace navigation; the detail source remains `agentdeck trace --id <id>`.
 
 When `recovery.recommended_action.source` is:
 

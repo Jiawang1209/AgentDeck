@@ -216,6 +216,7 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "project_view": project_view,
         "leader_actions": project_view.get("leader_actions"),
         "runtime_card": _workbench_runtime_card(project_view),
+        "ledger_card": _workbench_ledger_card(project_view),
         "recovery": recovery,
         "next_command": continue_card.get("next_command"),
         "continue_card": continue_card,
@@ -224,6 +225,47 @@ def _workbench_snapshot_payload(project_view: dict[str, object], store: StateSto
         "approval_card": approval_card,
         "leader_action": leader_action if isinstance(leader_action, dict) else None,
     }
+
+
+def _workbench_ledger_card(project_view: dict[str, object]) -> dict[str, object]:
+    messages = project_view.get("messages") if isinstance(project_view.get("messages"), dict) else {}
+    jobs = project_view.get("jobs") if isinstance(project_view.get("jobs"), dict) else {}
+    replies = project_view.get("replies") if isinstance(project_view.get("replies"), dict) else {}
+    inbox = project_view.get("inbox") if isinstance(project_view.get("inbox"), dict) else {}
+    trace_commands = _workbench_trace_commands(messages, jobs, replies, inbox)
+    return {
+        "messages": messages,
+        "jobs": jobs,
+        "replies": replies,
+        "inbox": inbox,
+        "trace_commands": trace_commands,
+    }
+
+
+def _workbench_trace_commands(*summaries: dict[str, object]) -> list[str]:
+    commands: list[str] = []
+    seen: set[str] = set()
+    for summary in summaries:
+        for command in _trace_commands_from_summary(summary):
+            if command not in seen:
+                commands.append(command)
+                seen.add(command)
+    return commands
+
+
+def _trace_commands_from_summary(summary: dict[str, object]) -> list[str]:
+    commands = []
+    items = summary.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict) and item.get("trace_command"):
+                commands.append(str(item["trace_command"]))
+    heads = summary.get("heads")
+    if isinstance(heads, dict):
+        for item in heads.values():
+            if isinstance(item, dict) and item.get("inbox_id"):
+                commands.append(_trace_command(item["inbox_id"]))
+    return commands
 
 
 def _workbench_runtime_card(project_view: dict[str, object]) -> dict[str, object]:

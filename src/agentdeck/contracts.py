@@ -198,6 +198,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "project_view",
     "leader_actions",
     "runtime_card",
+    "ledger_card",
     "recovery",
     "next_command",
     "continue_card",
@@ -226,6 +227,14 @@ WORKBENCH_RUNTIME_AGENT_FIELDS = (
     "spawn_command",
     "stop_command",
     "inbox_command",
+)
+
+WORKBENCH_LEDGER_CARD_FIELDS = (
+    "messages",
+    "jobs",
+    "replies",
+    "inbox",
+    "trace_commands",
 )
 
 LEADER_ACTION_DETAIL_FIELDS = (
@@ -425,6 +434,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
+        "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
         "continue_contract": "agentdeck contract continue",
@@ -908,6 +918,33 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("runtime_card.agents must be a list")
     elif "runtime_card" in payload:
         errors.append("runtime_card must be an object")
+    ledger_card = payload.get("ledger_card")
+    if isinstance(ledger_card, dict):
+        for field in WORKBENCH_LEDGER_CARD_FIELDS:
+            if field not in ledger_card:
+                errors.append(f"missing ledger_card field: {field}")
+        messages = ledger_card.get("messages")
+        if isinstance(messages, dict):
+            _validate_project_view_summary_items(
+                errors, ledger_card, "messages", PROJECT_VIEW_MESSAGE_ITEM_FIELDS, "message"
+            )
+        elif "messages" in ledger_card:
+            errors.append("ledger_card.messages must be an object")
+        jobs = ledger_card.get("jobs")
+        if isinstance(jobs, dict):
+            _validate_project_view_summary_items(errors, ledger_card, "jobs", PROJECT_VIEW_JOB_ITEM_FIELDS, "job")
+        elif "jobs" in ledger_card:
+            errors.append("ledger_card.jobs must be an object")
+        replies = ledger_card.get("replies")
+        if isinstance(replies, dict):
+            _validate_project_view_summary_items(errors, ledger_card, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
+        elif "replies" in ledger_card:
+            errors.append("ledger_card.replies must be an object")
+        trace_commands = ledger_card.get("trace_commands")
+        if not isinstance(trace_commands, list):
+            errors.append("ledger_card.trace_commands must be a list")
+    elif "ledger_card" in payload:
+        errors.append("ledger_card must be an object")
     continue_card = payload.get("continue_card")
     if isinstance(continue_card, dict):
         continue_card_validation = validate_continue_contract(continue_card)
@@ -1203,6 +1240,17 @@ def workbench_example() -> dict[str, object]:
                     "stop_command": "agentdeck agent stop --agent reviewer",
                     "inbox_command": "agentdeck inbox --agent reviewer",
                 },
+            ],
+        },
+        "ledger_card": {
+            "messages": project_view["messages"],
+            "jobs": project_view["jobs"],
+            "replies": project_view["replies"],
+            "inbox": project_view["inbox"],
+            "trace_commands": [
+                "agentdeck trace --id msg_example",
+                "agentdeck trace --id job_example",
+                "agentdeck trace --id rep_example",
             ],
         },
         "recovery": recovery,
