@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Surface stale runtime recovery
+
+- 扩展 ProjectView recovery：state 中存在 `status=stale` 的 agent runtime binding 时，`status.recovery` 会返回 `status=runtime_stale`、`next_command=agentdeck agent refresh`，并把 `recommended_action.source` 标记为 `runtime`。
+- 扩展 `recovery.pending`：新增 `runtime_stale` 计数，并同步 `PROJECT_VIEW_RECOVERY_PENDING_FIELDS`、ProjectView example fixture、validator 和 contract 测试，供 GUI 做字段兼容检查。
+- 扩展 workbench operator：`runtime` 进入 `active_queue_source` / `operator_card.action_kind`，主操作卡片会把 stale runtime 的 preview/explicit command 都指向 `agentdeck agent refresh`。
+- 更新 `docs/contracts/project-view-schema.md`、`docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 `runtime_stale` 是可恢复状态，不代表自动发送 tmux 输入或自动重启 agent。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_recovery_matrix_for_gui_actions tests/test_contracts.py::test_validate_project_view_contract_reports_missing_recovery_pending_field tests/test_contracts.py::test_project_view_example_matches_contract_field_lists tests/test_agent_cli.py::test_contract_project_view_example_exports_gui_ready_status -q` 最初因 stale runtime 仍返回 idle 且 `runtime_stale` pending 字段不存在失败；补充 workbench 红测后确认 `active_queue_source` 仍为 `none`；实现后 focused 测试 5 项通过；`conda run -n agentdeck pytest -q` 192 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `runtime-stale-recovery-smoke-ok`。
+
 ### Current - Add agent runtime refresh
 
 - 新增 `agentdeck agent refresh`，显式检查 state 中记录为 `running` 的 tmux pane 是否仍存在；丢失的 pane 会被标记为 `stale`，并写入 `agent_runtime_stale` 审计事件。

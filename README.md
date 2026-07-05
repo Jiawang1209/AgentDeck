@@ -258,15 +258,17 @@ agentdeck trace --id inb_xxx
 
 `status.chat_turns.items` 会包含 review/apply turn 关联的 `action_id` 和 `action_kind`，GUI 可以从自然语言对话历史直接跳转到对应 action。
 
-`status.recovery` 会汇总当前恢复入口：`status`、`reason`、`next_command`、`recommended_action`、pending 计数、可应用的 `leader_action`，以及最近审计事件摘要。`recommended_action` 包含 label、command、safety、requires_explicit_user、source 和 target_id，GUI 可以用它直接渲染下一步按钮或检查入口，并把按钮关联回 action、approval 或 inbox item。GUI 和 Leader chat loop 可以优先用 recovery 判断“现在该继续什么”，而不需要散读 state 或自行推断。
+`status.recovery` 会汇总当前恢复入口：`status`、`reason`、`next_command`、`recommended_action`、pending 计数、可应用的 `leader_action`，以及最近审计事件摘要。`recommended_action` 包含 label、command、safety、requires_explicit_user、source 和 target_id，GUI 可以用它直接渲染下一步按钮或检查入口，并把按钮关联回 action、approval、runtime、inbox item 或 provider setup。GUI 和 Leader chat loop 可以优先用 recovery 判断“现在该继续什么”，而不需要散读 state 或自行推断。
 
 当 recovery 进入 `inbox_pending` 时，`next_command` 和 `recommended_action.command` 会指向具体 mailbox，例如 `agentdeck inbox --agent planner`，而不是退回宽泛的 `agentdeck status`。
+
+当 recovery 进入 `runtime_stale` 时，`next_command` 和 `recommended_action.command` 会指向 `agentdeck agent refresh`，`recommended_action.source=runtime`，`target_id` 是第一个 stale agent id，帮助 GUI 或自然语言壳先校准可见 tmux runtime。
 
 如果没有 pending action、approval 或 inbox item，但存在 `leader_errors[]`，`status.recovery` 会返回 `status=leader_error`，并推荐 `agentdeck status` 作为 inspect 动作，帮助 GUI 或人类先检查 Leader 错误。
 
 如果没有 pending action、approval、inbox item 或 leader error，但配置的 API-backed Leader provider 缺少本地环境变量，`status.recovery` 会返回 `status=provider_setup_required`，并推荐 `agentdeck doctor`。GUI 可以把它渲染成 provider setup/diagnostics 入口，避免用户直接触发会失败的 `leader plan/chat`。
 
-`status.recovery.pending` 也会包含 `leader_errors` 计数，让 GUI 可以在统一恢复面显示还有多少 Leader 错误待检查。
+`status.recovery.pending` 也会包含 `leader_errors` 和 `runtime_stale` 计数，让 GUI 可以在统一恢复面显示还有多少 Leader 错误或 stale runtime 待检查。
 
 `agentdeck contract project-view` 会通过 `recovery_pending_fields` 公开 `recovery.pending` 的必备字段，GUI 可以据此做字段兼容检查。
 

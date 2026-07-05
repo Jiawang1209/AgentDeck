@@ -390,6 +390,7 @@ When `recovery.recommended_action.source` is:
 - `inbox`: `active_queue_source` is `inbox`, and `inbox_card` reuses the `agentdeck inbox --agent <id>` queue contract.
 - `approval`: `active_queue_source` is `approval`, and `approval_card` reuses the `agentdeck approval list` queue contract.
 - `provider_health`: `active_queue_source` is `provider_health`, and `operator_card` points at `agentdeck doctor` so GUI clients can surface missing Leader provider setup before users trigger a failing plan/chat call.
+- `runtime`: `active_queue_source` is `runtime`, and `operator_card` points at `agentdeck agent refresh` so GUI clients can surface stale pane bindings before users continue runtime-dependent work.
 - absent or unknown: `active_queue_source` is `none`.
 
 ## Invariants

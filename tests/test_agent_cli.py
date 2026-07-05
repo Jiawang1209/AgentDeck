@@ -1087,6 +1087,36 @@ def test_workbench_surfaces_provider_setup_as_active_operator_source(
     }
 
 
+def test_workbench_surfaces_stale_runtime_as_active_operator_source(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    store = StateStore(root)
+    state = store.load()
+    state["agents"]["planner"] = {
+        "agent_id": "planner",
+        "pane_id": None,
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "stale",
+    }
+    store.save(state)
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["recovery"]["status"] == "runtime_stale"
+    assert payload["active_queue_source"] == "runtime"
+    assert payload["queue_card"]["active_queue_source"] == "runtime"
+    assert payload["operator_card"]["action_kind"] == "runtime"
+    assert payload["operator_card"]["command"] == "agentdeck agent refresh"
+    assert payload["operator_card"]["preview_command"] == "agentdeck agent refresh"
+    assert payload["operator_card"]["controls"][0]["command"] == "agentdeck agent refresh"
+    assert payload["operator_card"]["explicit_command"] == "agentdeck agent refresh"
+
+
 def test_workbench_watch_outputs_jsonl_snapshots_without_mutating_state(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -1820,6 +1850,7 @@ def test_status_includes_recovery_summary(tmp_path, monkeypatch, capsys) -> None
             "approved_approvals": 1,
             "inbox_items": 1,
             "leader_errors": 0,
+            "runtime_stale": 0,
         },
         "leader_action": {
             "action_id": "act_demo",
@@ -1913,7 +1944,36 @@ def test_status_recovery_matrix_for_gui_actions(tmp_path, monkeypatch, capsys) -
         "target_id": "inb_head",
     }
 
-    idle_recovery = recovery_for_state(root, {"inbox": {}}, capsys)
+    stale_recovery = recovery_for_state(
+        root,
+        {
+            "approvals": [],
+            "inbox": {},
+            "agents": {
+                "planner": {
+                    "agent_id": "planner",
+                    "pane_id": None,
+                    "session_name": "agentdeck",
+                    "cwd": str(root),
+                    "status": "stale",
+                }
+            },
+        },
+        capsys,
+    )
+    assert stale_recovery["status"] == "runtime_stale"
+    assert stale_recovery["pending"]["runtime_stale"] == 1
+    assert stale_recovery["next_command"] == "agentdeck agent refresh"
+    assert stale_recovery["recommended_action"] == {
+        "label": "Refresh stale runtime",
+        "command": "agentdeck agent refresh",
+        "safety": "inspect",
+        "requires_explicit_user": False,
+        "source": "runtime",
+        "target_id": "planner",
+    }
+
+    idle_recovery = recovery_for_state(root, {"agents": {}, "inbox": {}}, capsys)
     assert idle_recovery["status"] == "idle"
     assert idle_recovery["recommended_action"] is None
 

@@ -122,6 +122,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - Workbench snapshot contract 维护在 `docs/contracts/workbench-schema.md`，发现入口是 `agentdeck contract workbench`；payload、example fixture 和 `validate_workbench_contract()` 也在 `src/agentdeck/contracts.py`。
 - Agent runtime contract 维护在 `docs/contracts/agent-runtime-schema.md`，发现入口是 `agentdeck contract agent-runtime`；payload 和 example fixture 也在 `src/agentdeck/contracts.py`，并公开 capture/refresh 响应字段。
 - `agentdeck agent refresh` 是显式 runtime reconciliation 命令；只检查 state 中记录为 `running` 的 pane 是否仍存在，丢失时标记为 `stale` 并写入 `agent_runtime_stale` 事件，不发送 tmux 输入、不推断任务完成。
+- `status.recovery` 必须把 `stale` runtime bindings 作为 `runtime_stale` 恢复状态暴露，`recommended_action.source=runtime` 且 `next_command=agentdeck agent refresh`；`pending.runtime_stale` 是 ProjectView recovery pending 契约字段。
 - Leader actions queue contract 维护在 `docs/contracts/leader-actions-schema.md`，发现入口是 `agentdeck contract leader-actions`；payload、example fixture 和 `validate_leader_actions_contract()` 也在 `src/agentdeck/contracts.py`。
 - Leader action detail contract 维护在 `docs/contracts/leader-action-schema.md`，发现入口是 `agentdeck contract leader-action`；payload、example fixture 和 `validate_leader_action_contract()` 也在 `src/agentdeck/contracts.py`。
 - Approval queue contract 维护在 `docs/contracts/approvals-schema.md`，发现入口是 `agentdeck contract approvals`；payload、example fixture 和 `validate_approval_contract()` 也在 `src/agentdeck/contracts.py`。

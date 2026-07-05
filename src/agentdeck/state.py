@@ -993,11 +993,17 @@ class StateStore:
         approvals = state.get("approvals", [])
         leader_actions = state.get("leader_actions", [])
         leader_errors = state.get("leader_errors", [])
+        agent_bindings = state.get("agents", {})
         inbox_items = [item for items in state.get("inbox", {}).values() for item in items]
         pending_leader_actions = [item for item in leader_actions if item.get("status") == "pending"]
         pending_approvals = [item for item in approvals if item.get("status") == "pending"]
         approved_approvals = [item for item in approvals if item.get("status") == "approved"]
         pending_inbox_items = [item for item in inbox_items if item.get("status") == "pending"]
+        stale_agents = [
+            agent_id
+            for agent_id, binding in agent_bindings.items()
+            if isinstance(binding, dict) and binding.get("status") == "stale"
+        ]
         recent_events = [self._event_summary(event) for event in self.list_events(5)]
         summary = {
             "status": "idle",
@@ -1010,6 +1016,7 @@ class StateStore:
                 "approved_approvals": len(approved_approvals),
                 "inbox_items": len(pending_inbox_items),
                 "leader_errors": len(leader_errors),
+                "runtime_stale": len(stale_agents),
             },
             "leader_action": None,
             "latest_event": recent_events[-1] if recent_events else None,
@@ -1073,6 +1080,23 @@ class StateStore:
                         requires_explicit_user=False,
                         source="approval",
                         target_id=pending_approvals[0].get("approval_id"),
+                    ),
+                }
+            )
+        elif stale_agents:
+            stale_agent_id = stale_agents[0]
+            summary.update(
+                {
+                    "status": "runtime_stale",
+                    "reason": "agent runtime binding is stale",
+                    "next_command": "agentdeck agent refresh",
+                    "recommended_action": self._recommended_action(
+                        label="Refresh stale runtime",
+                        command="agentdeck agent refresh",
+                        safety="inspect",
+                        requires_explicit_user=False,
+                        source="runtime",
+                        target_id=stale_agent_id,
                     ),
                 }
             )

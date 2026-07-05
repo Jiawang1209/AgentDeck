@@ -317,13 +317,13 @@ def test_validate_project_view_contract_reports_missing_leader_action_recommenda
 
 def test_validate_project_view_contract_reports_missing_recovery_pending_field() -> None:
     payload = project_view_example()
-    del payload["recovery"]["pending"]["leader_errors"]
+    del payload["recovery"]["pending"]["runtime_stale"]
 
     result = validate_project_view_contract(payload)
 
     assert result == {
         "ok": False,
-        "errors": ["missing recovery pending field: leader_errors"],
+        "errors": ["missing recovery pending field: runtime_stale"],
     }
 
 
