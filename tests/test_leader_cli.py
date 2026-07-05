@@ -827,6 +827,72 @@ def test_leader_chat_continue_embeds_runtime_card_for_stale_runtime(tmp_path, mo
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_continue_embeds_trace_card_for_reply_waiting(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "等待自然语言继续"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    approval_id = approvals[0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    for approval in approvals[1:]:
+        cli.main(["approval", "reject", "--approval-id", approval["approval_id"], "--reason", "focus first reply"])
+        capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    dispatch_payload = json.loads(capsys.readouterr().out)
+    message_id = dispatch_payload["message_id"]
+    inbox_id = dispatch_payload["inbox_card"]["head_inbox_id"]
+    cli.main(["ack", "--agent", "planner", "--inbox-id", inbox_id])
+    capsys.readouterr()
+    expected_command = f"agentdeck capture-reply --agent planner --message-id {message_id}"
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "继续"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "continue"
+    assert payload["plan_id"] == plan_id
+    assert payload["recovery"]["status"] == "reply_waiting"
+    assert payload["next_command"] == expected_command
+    assert payload["continue_card"]["status"] == "reply_waiting"
+    assert payload["continue_card"]["recommended_action"] == {
+        "label": "Capture pending reply",
+        "command": expected_command,
+        "safety": "explicit_runtime",
+        "requires_explicit_user": True,
+        "source": "reply",
+        "target_id": message_id,
+    }
+    assert payload["trace_card"]["message"]["message_id"] == message_id
+    assert payload["trace_card"]["message"]["status"] == "dispatched"
+    assert payload["trace_card"]["inbox_items"][0]["inbox_id"] == inbox_id
+    assert payload["trace_card"]["inbox_items"][0]["status"] == "acked"
+    assert payload["trace_card"]["replies"] == []
+    assert payload["inbox_card"] is None
+    assert payload["approval_card"] is None
+    assert payload["runtime_card"] is None
+    assert payload["leader_explanation"]["action_kind"] == "reply"
+    assert payload["leader_explanation"]["recommended_action_id"] == message_id
+    assert payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert payload["leader_explanation"]["next_command"] == expected_command
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "continue"
+    assert state_after["chat_turns"][0]["next_command"] == expected_command
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["jobs"] == state_before["jobs"]
+    assert state_after["replies"] == []
+    assert state_after["inbox"]["planner"][0]["status"] == "acked"
+    assert fake.captured == []
+
+
 def test_leader_chat_inspects_runtime_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%42")

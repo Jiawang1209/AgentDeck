@@ -4081,6 +4081,11 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             if isinstance(recommended_action, dict) and recommended_action.get("source") == "runtime"
             else None
         )
+        trace_card = (
+            _trace_card_for_query(store, recommended_action.get("target_id"))
+            if isinstance(recommended_action, dict) and recommended_action.get("source") == "reply"
+            else None
+        )
         leader_action = continue_card.get("leader_action")
         payload = {
             "ok": True,
@@ -4108,6 +4113,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": None,
+            "trace_card": trace_card,
             "ledger_card": None,
             "workbench_card": None,
         }
