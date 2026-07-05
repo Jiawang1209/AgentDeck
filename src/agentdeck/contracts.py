@@ -816,9 +816,9 @@ def leader_chat_capability_card() -> dict[str, object]:
         {
             "mode": "plan",
             "label": "Create Leader plan",
-            "description": "Create a plan-only record from a new natural-language goal.",
+            "description": "Create a plan-only record from a new goal.",
             "example_messages": ["帮我实现一个功能", "设计多 Agent 任务"],
-            "command": "agentdeck leader chat --message <goal>",
+            "command": "agentdeck leader plan --task <goal>",
             "safety": "plan_only",
             "requires_explicit_user": False,
             "card": "leader_action",

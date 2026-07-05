@@ -138,7 +138,7 @@ Help-mode responses include `capability_card`, a read-only capability map for na
 }
 ```
 
-The real card also includes Leader scheduling entries for `plan`, `review`, and `apply_action`. `plan` must use `safety=plan_only`; `review` and `apply_action` must use `safety=safe_apply`; read-only views such as `workbench`, `continue`, `runtime`, `role`, `ledger`, `queue`, `approval`, `inbox`, and `setup` use `safety=inspect` unless the downstream mode explicitly recommends an explicit runtime command.
+The real card also includes Leader scheduling entries for `plan`, `review`, and `apply_action`. `plan` must use `safety=plan_only` and its control command should point at the explicit `agentdeck leader plan --task <goal>` planning entrypoint; `review` and `apply_action` must use `safety=safe_apply`; read-only views such as `workbench`, `continue`, `runtime`, `role`, `ledger`, `queue`, `approval`, `inbox`, and `setup` use `safety=inspect` unless the downstream mode explicitly recommends an explicit runtime command.
 
 Every capability item includes `controls[]` using the same `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` shape as intent controls; `agentdeck contract leader-chat` exposes the same shape as `capability_control_fields`. Direct read-only commands such as `agentdeck workbench` are enabled. Template commands with placeholders such as `<goal>`, `<action_id>`, or `<agent_id>` are disabled and must include a blocker such as `requires goal text`, `requires action_id`, or `requires agent_id`. Capability controls must keep `command` and `safety` aligned with their parent capability item.
 

@@ -951,7 +951,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         {
             "kind": "plan",
             "label": "Create Leader plan",
-            "command": "agentdeck leader chat --message <goal>",
+            "command": "agentdeck leader plan --task <goal>",
             "safety": "plan_only",
             "enabled": False,
             "blocker": "requires goal text",

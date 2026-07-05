@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Route Leader plan capability to explicit command
+
+- 调整 `capability_card` 的 `plan` 能力：GUI-ready control 现在推荐 `agentdeck leader plan --task <goal>`，而不是复用 `agentdeck leader chat --message <goal>`，让命令面板把显式 Leader planning 入口和自然语言 chat 路由区分开。
+- 保持 `<goal>` 模板 control disabled，并继续返回 `requires goal text` blocker，避免 GUI 在缺少任务文本时误执行 provider-backed planning。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 help mode 仍然只读，capability controls 只是可渲染命令描述。
+- 完整验证：已先确认红测失败，help capability 最初仍返回 `agentdeck leader chat --message <goal>`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning -q` 1 项通过；leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 137 项通过；`conda run -n agentdeck pytest -q` 209 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-help-plan-command-smoke-ok`。
+
 ### Current - Harden Leader capability control discovery
 
 - 扩展 `agentdeck contract leader-chat`：新增 `capability_control_fields` 和 `example_capability_control_fields`，让 GUI 命令面板能发现 capability control 的稳定字段，而不是复用或猜测 intent control shape。
