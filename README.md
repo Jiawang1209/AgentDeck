@@ -332,7 +332,7 @@ agentdeck plan status --plan-id pln_xxx
 
 `agentdeck contract continue` 会公开这张恢复卡片的 `continue_card_fields`；`--example` 会返回稳定 `example_continue_card`，供 GUI 或外部集成发现 `agentdeck continue` 的响应形状。
 
-`agentdeck controls` 是独立只读命令面板入口。它从同一次 `agentdeck workbench` snapshot 派生 `control_registry_card`，输出 mode、title、source_command、default_command、item_count 和 items[]；其中 `source_command=agentdeck workbench` 表示命令面板来自 workbench 快照，`default_command=agentdeck controls` 表示 GUI/TUI 可以直接刷新独立命令面板。每个 item 保留 leader/runtime/operator controls 的 scope、card、kind、label、command、safety、enabled、blocker 和 agent_id。它不创建 chat turn、不写 state、不调用 provider、不读取 pane，也不执行任何 control，适合 GUI/TUI 或自然语言壳直接渲染命令面板。
+`agentdeck controls` 是独立只读命令面板入口。它从同一次 `agentdeck workbench` snapshot 派生 `control_registry_card`，输出 mode、title、source_command、default_command、item_count 和 items[]；其中 `source_command=agentdeck workbench` 表示命令面板来自 workbench 快照，`default_command=agentdeck controls` 表示 GUI/TUI 可以直接刷新独立命令面板。每个 item 保留 leader/policy/runtime/operator controls 的 scope、card、kind、label、command、safety、enabled、blocker 和 agent_id；policy scope 来自 `control_mode_card.active_controls[]`，用于渲染显式 `agentdeck policy set-mode --mode <mode>` 入口。它不创建 chat turn、不写 state、不调用 provider、不读取 pane，也不执行任何 control，适合 GUI/TUI 或自然语言壳直接渲染命令面板。
 
 `agentdeck contract controls` 会公开独立命令面板的 `control_registry_card_fields` 和 `control_registry_item_fields`，并指向 `agentdeck contract workbench` 与 `agentdeck contract leader-chat`，说明 live 命令和 help-mode 嵌入卡片都复用同一份 control registry 形状；`--example` 会返回稳定 `example_control_registry_card`。
 

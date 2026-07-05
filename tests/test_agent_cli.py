@@ -1387,8 +1387,21 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
         for item in payload["items"]
     } >= {
         ("leader", "leader_card", "continue", "leader"),
+        ("policy", "control_mode_card", "set_mode", None),
         ("runtime", "runtime_card", "spawn", "planner"),
         ("operator", "operator_card", "explicit", None),
+    }
+    policy_item = next(item for item in payload["items"] if item["card"] == "control_mode_card" and item["kind"] == "set_mode")
+    assert policy_item == {
+        "scope": "policy",
+        "card": "control_mode_card",
+        "kind": "set_mode",
+        "label": "Set control mode",
+        "command": "agentdeck policy set-mode --mode <mode>",
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
     }
     assert StateStore(root).load() == before
 

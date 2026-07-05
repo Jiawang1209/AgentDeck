@@ -39,7 +39,7 @@ Top-level discovery fields:
 
 `source_command` stays `agentdeck workbench` because the registry is derived from the workbench snapshot. `default_command` is `agentdeck controls`, the dedicated command palette entrypoint GUI/TUI clients can refresh directly.
 
-Each `items[]` entry uses the workbench `control_registry_item_fields`:
+Each `items[]` entry uses the workbench `control_registry_item_fields`. The registry includes Leader controls, control-mode policy controls, runtime controls, and operator controls from the same workbench snapshot.
 
 - `scope`
 - `card`

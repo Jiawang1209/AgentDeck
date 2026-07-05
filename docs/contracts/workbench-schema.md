@@ -178,7 +178,7 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
 
 ## Control Registry
 
-`control_registry[]` is a flattened, read-only command palette index derived from existing card controls. Each item uses `scope`, `card`, `kind`, `label`, `command`, `safety`, `enabled`, `blocker`, and `agent_id`. It currently indexes `leader_card.controls[]`, every `runtime_card.agents[].controls[]`, and `operator_card.controls[]`. Clients may render this as a command palette or toolbar, but it is not a second state source and does not grant permission beyond each item's `safety`, `enabled`, and `blocker`.
+`control_registry[]` is a flattened, read-only command palette index derived from existing card controls. Each item uses `scope`, `card`, `kind`, `label`, `command`, `safety`, `enabled`, `blocker`, and `agent_id`. It currently indexes `leader_card.controls[]`, `control_mode_card.active_controls[]`, every `runtime_card.agents[].controls[]`, and `operator_card.controls[]`. Clients may render this as a command palette or toolbar, but it is not a second state source and does not grant permission beyond each item's `safety`, `enabled`, and `blocker`.
 
 ## Provider Health
 

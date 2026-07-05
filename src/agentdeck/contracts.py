@@ -2813,6 +2813,14 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         agent_id=str(leader_card.get("agent_id", "leader")),
         controls=leader_card.get("controls"),
     )
+    control_mode_card = payload.get("control_mode_card") if isinstance(payload.get("control_mode_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="policy",
+        card="control_mode_card",
+        agent_id=None,
+        controls=control_mode_card.get("active_controls"),
+    )
     runtime_card = payload.get("runtime_card") if isinstance(payload.get("runtime_card"), dict) else {}
     runtime_agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
     for agent in runtime_agents:

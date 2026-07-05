@@ -667,9 +667,15 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         for item in example["control_registry"]
     } >= {
         ("leader", "leader_card", "continue", "leader"),
+        ("policy", "control_mode_card", "set_mode", None),
         ("runtime", "runtime_card", "capture", "planner"),
         ("operator", "operator_card", "apply", None),
     }
+    policy_item = next(
+        item for item in example["control_registry"] if item["scope"] == "policy" and item["kind"] == "set_mode"
+    )
+    assert policy_item["command"] == "agentdeck policy set-mode --mode <mode>"
+    assert policy_item["safety"] == "explicit_user"
     assert set(example["provider_health"]) == set(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)

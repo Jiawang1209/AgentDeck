@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Include policy controls in command palette
+
+- 扩展 `agentdeck workbench` / `agentdeck controls` 的 `control_registry` 派生逻辑：现在会把 `control_mode_card.active_controls[]` 纳入全局命令面板，使用 `scope=policy`、`card=control_mode_card`，让 GUI/TUI 工具栏可以发现显式 `agentdeck policy set-mode --mode <mode>` 入口。
+- 保持只读边界不变：`agentdeck controls` 仍只投影同一次 workbench snapshot，不写 state、不创建 chat turn、不调用 provider、不读取 pane、不执行任何 control。
+- 同步 `docs/contracts/controls-schema.md`、`docs/contracts/workbench-schema.md`、README、CLAUDE.md、AGENT.md 和测试；本轮让 policy 控制模式入口同时出现在 workbench、controls 和 help-mode 嵌入 command palette 的同源索引里。
+- 完整验证：已先确认红测失败，`agentdeck controls` 和 `workbench_example().control_registry` 最初都缺少 `scope=policy/card=control_mode_card/kind=set_mode`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 2 项通过；相关测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift -q` 5 项通过；`conda run -n agentdeck pytest -q` 240 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；临时项目 smoke 确认 `item_count=24`、`policy_count=2`，且 `set_mode_item.command=agentdeck policy set-mode --mode <mode>`、`safety=explicit_user`。
+
 ### Current - Route control mode through Leader chat
 
 - 扩展 `agentdeck leader chat` 自然语言入口：`"切换到审批模式"`、`"回到 ask 模式"`、`"开启 autonomous"` 等控制模式意图现在进入 `mode=policy`，嵌入 workbench 同源 `control_mode_card`，并返回显式 `agentdeck policy set-mode --mode <mode>` 作为 `next_command`。
