@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Preflight Leader provider switches
+
+- 扩展 `agentdeck leader set-provider` 响应：切换默认 Leader provider 后会直接返回 `ready`、`supported`、`missing_env`、`detail`、`command_path` 和 `setup_commands`，让终端/GUI 能在同一次显式切换后展示 backend readiness。
+- 新增 `agentdeck leader set-provider --require-ready`：目标 provider 不 ready 时拒绝写入 `.agentdeck/config.toml`，追加 `leader_provider_update_rejected` 审计事件，并返回非 0；默认不加该参数时仍允许人类显式切换到暂未 ready 的 provider，再用 `agentdeck doctor` / setup commands 修复环境。
+- 归一化 Leader provider readiness helper，`doctor` 和 `set-provider` 复用同一套 API-backed env 检查、CLI-backed command path 检查和 local fake provider ready 语义；不调用 provider、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入、不暴露 API key。
+- 同步 README、CLAUDE.md 和 AGENT.md，明确 provider switch 的 readiness 回显和 `--require-ready` 防呆边界。
+- 验证记录：已先确认红测失败，`leader set-provider` 最初缺少 readiness 字段且 argparse 不认识 `--require-ready`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_set_provider_updates_default_leader_config_and_records_event tests/test_agent_cli.py::test_leader_set_provider_require_ready_rejects_missing_cli_without_mutating_config -q` 通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_set_provider_updates_default_leader_config_and_records_event tests/test_agent_cli.py::test_leader_set_provider_require_ready_rejects_missing_cli_without_mutating_config tests/test_agent_cli.py::test_leader_set_provider_rejects_unknown_provider_without_mutating_config tests/test_agent_cli.py::test_doctor_reports_codex_cli_leader_ready_from_local_command tests/test_agent_cli.py::test_workbench_marks_codex_cli_leader_as_local_cli_backed tests/test_leader_cli.py::test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning -q` 7 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 309 项通过。
+
 ### Current - Add CLI backend checks to doctor diagnostics
 
 - 扩展 `agentdeck doctor` 顶层 provider diagnostics：除了当前配置 Leader 的 `configured_leader` 外，现在还返回 `deepseek`、`openai_compatible`、`codex_cli` 和 `claude_cli` 四个 provider check。

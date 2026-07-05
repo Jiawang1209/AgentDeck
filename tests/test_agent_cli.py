@@ -302,6 +302,7 @@ def test_leader_set_provider_updates_default_leader_config_and_records_event(
     tmp_path, monkeypatch, capsys
 ) -> None:
     root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli, "_command_path", lambda command: "/opt/bin/codex" if command == "codex" else None)
 
     exit_code = cli.main(
         [
@@ -322,6 +323,12 @@ def test_leader_set_provider_updates_default_leader_config_and_records_event(
         "provider": "codex-cli",
         "model": "codex-default",
         "approval_mode": "confirm",
+        "ready": True,
+        "supported": True,
+        "missing_env": [],
+        "detail": "codex is available",
+        "command_path": "/opt/bin/codex",
+        "setup_commands": ['codex login', 'codex doctor'],
         "config_path": str(root / ".agentdeck" / "config.toml"),
         "doctor_command": "agentdeck doctor",
         "workbench_command": "agentdeck workbench",
@@ -333,6 +340,36 @@ def test_leader_set_provider_updates_default_leader_config_and_records_event(
     assert '"event_type": "leader_provider_updated"' in events
     assert '"provider": "codex-cli"' in events
     assert '"model": "codex-default"' in events
+
+
+def test_leader_set_provider_require_ready_rejects_missing_cli_without_mutating_config(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_before = (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
+    monkeypatch.setattr(cli, "_command_path", lambda command: None)
+
+    exit_code = cli.main(
+        [
+            "leader",
+            "set-provider",
+            "--provider",
+            "claude-cli",
+            "--model",
+            "claude-default",
+            "--require-ready",
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "leader provider is not ready: claude is not found on PATH" in captured.err
+    assert (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8") == config_before
+    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event_type": "leader_provider_update_rejected"' in events
+    assert '"provider": "claude-cli"' in events
+    assert '"reason": "provider_not_ready"' in events
 
 
 def test_leader_set_provider_rejects_unknown_provider_without_mutating_config(

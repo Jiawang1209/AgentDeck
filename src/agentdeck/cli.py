@@ -398,7 +398,34 @@ def _doctor_cli_provider_check(provider: str) -> dict[str, object]:
 def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object] | None:
     if config is None:
         return None
-    provider = config.leader.provider
+    return _leader_provider_readiness(
+        agent_id=config.leader.agent_id,
+        provider=config.leader.provider,
+        model=config.leader.model,
+        approval_mode=config.leader.approval_mode,
+    )
+
+
+def _leader_provider_readiness(
+    *,
+    agent_id: str,
+    provider: str,
+    model: str,
+    approval_mode: str,
+) -> dict[str, object]:
+    if provider == "fake":
+        return {
+            "agent_id": agent_id,
+            "provider": provider,
+            "model": model,
+            "approval_mode": approval_mode,
+            "ready": True,
+            "supported": True,
+            "missing_env": [],
+            "detail": "fake provider is local and ready",
+            "command_path": None,
+            "setup_commands": _provider_setup_commands(provider),
+        }
     required_env = {
         "deepseek": "DEEPSEEK_API_KEY",
         "openai-compatible": "AGENTDECK_LEADER_API_KEY",
@@ -411,10 +438,10 @@ def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object]
         command_path = _command_path(cli_command)
         ready = command_path is not None
         return {
-            "agent_id": config.leader.agent_id,
+            "agent_id": agent_id,
             "provider": provider,
-            "model": config.leader.model,
-            "approval_mode": config.leader.approval_mode,
+            "model": model,
+            "approval_mode": approval_mode,
             "ready": ready,
             "supported": True,
             "missing_env": [],
@@ -424,10 +451,10 @@ def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object]
         }
     if required_env is None:
         return {
-            "agent_id": config.leader.agent_id,
+            "agent_id": agent_id,
             "provider": provider,
-            "model": config.leader.model,
-            "approval_mode": config.leader.approval_mode,
+            "model": model,
+            "approval_mode": approval_mode,
             "ready": False,
             "supported": False,
             "missing_env": [],
@@ -438,10 +465,10 @@ def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object]
     ready = bool(os.environ.get(required_env))
     detail = f"{required_env} is set" if ready else f"{required_env} is not set; provider calls are disabled"
     return {
-        "agent_id": config.leader.agent_id,
+        "agent_id": agent_id,
         "provider": provider,
-        "model": config.leader.model,
-        "approval_mode": config.leader.approval_mode,
+        "model": model,
+        "approval_mode": approval_mode,
         "ready": ready,
         "supported": True,
         "missing_env": [] if ready else [required_env],
@@ -1917,7 +1944,35 @@ def leader_set_provider_command(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    requested_model = args.model or config.leader.model
+    readiness = _leader_provider_readiness(
+        agent_id=config.leader.agent_id,
+        provider=provider_name,
+        model=requested_model,
+        approval_mode=config.leader.approval_mode,
+    )
+    if args.require_ready and not readiness["ready"]:
+        store.append_event(
+            EventRecord.create(
+                "leader_provider_update_rejected",
+                {
+                    "provider": provider_name,
+                    "model": requested_model,
+                    "reason": "provider_not_ready",
+                    "detail": readiness["detail"],
+                    "config_source": ".agentdeck/config.toml:leader",
+                },
+            )
+        )
+        print(f"leader provider is not ready: {readiness['detail']}", file=sys.stderr)
+        return 1
     leader = update_leader_provider(project_root(), provider_name, args.model)
+    readiness = _leader_provider_readiness(
+        agent_id=leader.agent_id,
+        provider=leader.provider,
+        model=leader.model,
+        approval_mode=leader.approval_mode,
+    )
     store.append_event(
         EventRecord.create(
             "leader_provider_updated",
@@ -1935,6 +1990,12 @@ def leader_set_provider_command(args: argparse.Namespace) -> int:
             "provider": leader.provider,
             "model": leader.model,
             "approval_mode": leader.approval_mode,
+            "ready": readiness["ready"],
+            "supported": readiness["supported"],
+            "missing_env": readiness["missing_env"],
+            "detail": readiness["detail"],
+            "command_path": readiness["command_path"],
+            "setup_commands": readiness["setup_commands"],
             "config_path": str(config_path(project_root())),
             "doctor_command": "agentdeck doctor",
             "workbench_command": "agentdeck workbench",
@@ -6130,6 +6191,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Leader provider: fake, deepseek, openai-compatible, codex-cli, or claude-cli",
     )
     leader_set_provider.add_argument("--model", help="Default model label to record for new Leader plans")
+    leader_set_provider.add_argument(
+        "--require-ready",
+        action="store_true",
+        help="Reject the provider switch unless the target Leader backend is locally ready",
+    )
     leader_set_provider.set_defaults(func=leader_set_provider_command)
     leader_review = leader_subparsers.add_parser("review", help="Review plan progress and recommend next action")
     leader_review.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")

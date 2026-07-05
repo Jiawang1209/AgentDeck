@@ -496,10 +496,11 @@ agentdeck leader chat --provider claude-cli --model claude-default --message "�
 ```bash
 agentdeck leader set-provider --provider codex-cli --model codex-default
 agentdeck leader set-provider --provider claude-cli --model claude-default
+agentdeck leader set-provider --provider claude-cli --model claude-default --require-ready
 agentdeck doctor
 ```
 
-`leader set-provider` 只修改 `.agentdeck/config.toml` 的 `[leader] provider/model` 并追加审计事件，不调用 provider、不创建 plan、不审批、不派发。
+`leader set-provider` 会回显目标 Leader backend 的 `ready`、`supported`、`missing_env`、`detail`、`command_path` 和 `setup_commands`，方便终端或 GUI 立即展示切换后的可用性。默认情况下它仍允许人类显式切换到暂未 ready 的 provider，然后通过 `agentdeck doctor` / `setup_commands` 修复环境；如果加上 `--require-ready`，目标 provider 不可用时会拒绝写入配置、追加 `leader_provider_update_rejected` 审计事件，并保持 `.agentdeck/config.toml` 不变。该命令不调用 provider、不创建 plan、不审批、不派发。
 
 真实 provider 仍然只生成 plan 或 chat turn，不会自动创建 approval 或派发任务。Leader planning prompt 会把每个 worker 的 `agent_id`、`role`、`role_prompt`、provider 和 workspace mode 一起交给 provider，让 DeepSeek、OpenAI-compatible、Codex CLI 或 Claude CLI 都能按角色职责拆分任务。`codex-cli` / `claude-cli` 是 `agent_id=leader` 这个逻辑 Leader 的本地推理后端，不会复用 `planner`、`coder` 或 `reviewer` 的 worker pane，也不会让 Leader 自动拥有一个 tmux pane。CLI-backed Leader 可以解析纯 JSON stdout，或解析 Markdown fenced `json` block 中的 JSON plan；解析后仍必须通过同一审批 plan schema。
 
