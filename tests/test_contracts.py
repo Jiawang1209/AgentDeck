@@ -283,6 +283,18 @@ def test_validate_leader_chat_contract_accepts_example() -> None:
     assert result == {"ok": True, "errors": []}
 
 
+def test_validate_leader_chat_contract_reuses_continue_card_validator() -> None:
+    payload = leader_chat_example()
+    del payload["continue_card"]["pending"]["leader_errors"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["continue_card: missing pending field: leader_errors"],
+    }
+
+
 def test_validate_leader_chat_contract_reports_missing_explanation_field() -> None:
     payload = leader_chat_example()
     del payload["leader_explanation"]["safety"]

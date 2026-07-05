@@ -502,9 +502,9 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("leader_explanation must be an object")
     continue_card = payload.get("continue_card")
     if isinstance(continue_card, dict):
-        for field in CONTINUE_CARD_FIELDS:
-            if field not in continue_card:
-                errors.append(f"missing continue_card field: {field}")
+        continue_card_validation = validate_continue_contract(continue_card)
+        for error in continue_card_validation["errors"]:
+            errors.append(f"continue_card: {error}")
     elif "continue_card" in payload and continue_card is not None:
         errors.append("continue_card must be an object")
     return {"ok": not errors, "errors": errors}

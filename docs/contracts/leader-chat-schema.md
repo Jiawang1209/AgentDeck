@@ -67,6 +67,7 @@ Continue-mode responses include `continue_card`, which reuses the same recovery 
 ```
 
 `agentdeck contract leader-chat --example` exposes `example_continue_card_fields` and a stable continue-mode example so GUI clients can build recovery cards without guessing fields.
+When `continue_card` is present, `validate_leader_chat_contract()` reuses `validate_continue_contract()` and prefixes nested errors with `continue_card:`.
 
 ## Explanation
 

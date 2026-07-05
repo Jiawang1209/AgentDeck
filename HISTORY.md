@@ -4,6 +4,15 @@
 
 ## 2026-07-05
 
+### Current - Reuse continue card validator in Leader chat
+
+- `validate_leader_chat_contract()` 现在会对嵌入的 `continue_card` 复用 `validate_continue_contract()`，并把嵌套错误前缀为 `continue_card:`。
+- 防止自然语言 `继续` 响应接受一张独立 `agentdeck continue` 会拒绝的恢复卡片。
+- 新增测试先确认删除 `continue_card.pending.leader_errors` 曾被错误放行；实现后目标测试转绿。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 与 `AGENT.md`，记录 Leader chat continue card 必须复用同一套恢复卡片 validator。
+- 保持安全边界：本轮只强化 contract validation，不改变 runtime、审批、dispatch、tmux 输入或 state 写入语义。
+- 完整验证：`conda run -n agentdeck pytest tests/test_contracts.py -q` 24 项通过；`conda run -n agentdeck pytest -q` 107 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；smoke 确认正常 `leader_chat_example()` 通过，删除 `continue_card.pending.leader_errors` 后返回 `continue_card: missing pending field: leader_errors`。
+
 ### Current - Validate continue recovery card output
 
 - 新增 `validate_continue_contract()`，用于校验 `agentdeck continue` 输出是否满足 `CONTINUE_CARD_FIELDS`、`mode=continue`、ProjectView schema version、recommended_action 和 pending 字段契约。
