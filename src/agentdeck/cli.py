@@ -128,6 +128,7 @@ def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object]
             "supported": False,
             "missing_env": [],
             "detail": f"unsupported leader provider: {provider}",
+            "setup_commands": [],
         }
     ready = bool(os.environ.get(required_env))
     detail = f"{required_env} is set" if ready else f"{required_env} is not set; provider calls are disabled"
@@ -140,6 +141,7 @@ def _doctor_configured_leader(config: ProjectConfig | None) -> dict[str, object]
         "supported": True,
         "missing_env": [] if ready else [required_env],
         "detail": detail,
+        "setup_commands": _provider_setup_commands(provider),
     }
 
 

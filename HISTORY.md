@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add doctor setup commands
+
+- 扩展 `agentdeck doctor` 的 `configured_leader`：新增 `setup_commands`，复用 workbench/setup-mode 的 provider placeholder export 命令。
+- `configured_leader.setup_commands` 与 `provider_health.setup_commands` 保持一致，只包含占位符，不读取、回显或保存真实 API key；即使本地已设置真实 key，doctor 输出也必须保持 placeholder。
+- 更新 doctor CLI 测试，覆盖缺少 `DEEPSEEK_API_KEY`、设置 env 后 ready=true，以及真实 key 不会出现在 doctor JSON 输出。
+- 更新 `README.md`、`CLAUDE.md` 与 `AGENT.md`，明确 doctor 是同一 provider setup guidance 的诊断入口，不能暴露密钥值。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_doctor_reports_openai_compatible_provider_state tests/test_agent_cli.py::test_doctor_reports_configured_leader_ready_when_env_is_set tests/test_agent_cli.py::test_doctor_configured_leader_never_exposes_real_provider_key -q` 最初因 `configured_leader` 缺少 `setup_commands` 失败；实现后 doctor 目标测试 3 项通过；`conda run -n agentdeck pytest -q` 167 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `doctor-setup-commands-missing-ok` 与 `doctor-setup-commands-secret-redacted-ok`。
+
 ### Current - Add provider setup commands
 
 - 扩展 workbench/setup-mode `provider_health`：新增 `setup_commands`，为 DeepSeek 和 OpenAI-compatible Leader provider 提供可复制的 placeholder export 命令。

@@ -93,6 +93,11 @@ def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, 
         "supported": True,
         "missing_env": ["DEEPSEEK_API_KEY"],
         "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+        "setup_commands": [
+            'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
+            'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
+            'export DEEPSEEK_MODEL="deepseek-chat"',
+        ],
     }
     assert payload["deepseek"] == {
         "ok": False,
@@ -120,9 +125,33 @@ def test_doctor_reports_configured_leader_ready_when_env_is_set(tmp_path, monkey
         "supported": True,
         "missing_env": [],
         "detail": "DEEPSEEK_API_KEY is set",
+        "setup_commands": [
+            'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
+            'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
+            'export DEEPSEEK_MODEL="deepseek-chat"',
+        ],
     }
     assert payload["deepseek"]["ok"] is True
     assert exit_code == (0 if payload["tmux"]["ok"] else 1)
+
+
+def test_doctor_configured_leader_never_exposes_real_provider_key(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "real-secret-key")
+
+    cli.main(["doctor"])
+
+    rendered = capsys.readouterr().out
+    payload = json.loads(rendered)
+    assert payload["configured_leader"]["ready"] is True
+    assert payload["configured_leader"]["setup_commands"] == [
+        'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
+        'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
+        'export DEEPSEEK_MODEL="deepseek-chat"',
+    ]
+    assert "real-secret-key" not in rendered
 
 
 def test_events_lists_recent_event_tail(tmp_path, monkeypatch, capsys) -> None:
