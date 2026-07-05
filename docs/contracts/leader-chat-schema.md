@@ -132,6 +132,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
     "missing_env": ["DEEPSEEK_API_KEY"],
     "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
     "doctor_command": "agentdeck doctor",
+    "doctor_contract": "agentdeck contract doctor",
     "setup_commands": [
       "export DEEPSEEK_API_KEY=\"<your-deepseek-api-key>\"",
       "export DEEPSEEK_BASE_URL=\"https://api.deepseek.com/v1\"",
@@ -141,7 +142,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 }
 ```
 
-`provider_health` is a GUI-ready convenience field for setup-mode responses. It mirrors the workbench provider health card and never exposes API key values. `setup_commands` must only contain placeholder commands that a human can copy and edit outside AgentDeck. Setup-mode records a chat turn for history, but it must not create a plan, leader action, approval, message, job, inbox item, or tmux input.
+`provider_health` is a GUI-ready convenience field for setup-mode responses. It mirrors the workbench provider health card and never exposes API key values. `doctor_contract` points GUI clients to the doctor diagnostics schema, while `setup_commands` must only contain placeholder commands that a human can copy and edit outside AgentDeck. Setup-mode records a chat turn for history, but it must not create a plan, leader action, approval, message, job, inbox item, or tmux input.
 
 ## Explanation
 

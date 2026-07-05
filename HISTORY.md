@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Expose doctor contract from provider health
+
+- 扩展 workbench/setup-mode `provider_health`：新增 `doctor_contract="agentdeck contract doctor"`，让 GUI/TUI 不只知道下一步运行 `agentdeck doctor`，也能直接发现 doctor diagnostics schema。
+- `doctor_contract` 随 fake、unsupported 和真实 Leader provider health 一起输出；它不读取 env、不调用 provider、不暴露 API key。
+- 更新 workbench contract 字段、example fixture、自然语言 setup diagnostics 测试，以及 `README.md`、`docs/contracts/workbench-schema.md`、`docs/contracts/leader-chat-schema.md`、`CLAUDE.md` 和 `AGENT.md`。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_surfaces_provider_setup_as_active_operator_source tests/test_leader_cli.py::test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning -q` 最初因 `provider_health` 缺少 `doctor_contract` 失败；实现后目标测试通过；`conda run -n agentdeck pytest -q` 通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时项目 smoke 确认 `workbench-doctor-contract-ok` 与 `setup-chat-doctor-contract-ok`。
+
 ### Current - Add doctor contract discovery
 
 - 新增 `agentdeck contract doctor` 和 `agentdeck contract doctor --example`，为 GUI/TUI 暴露 doctor diagnostics 的 response_fields、configured_leader_fields 和 provider_check_fields。

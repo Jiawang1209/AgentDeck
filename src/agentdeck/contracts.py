@@ -266,6 +266,7 @@ WORKBENCH_PROVIDER_HEALTH_FIELDS = (
     "missing_env",
     "detail",
     "doctor_command",
+    "doctor_contract",
     "setup_commands",
 )
 
@@ -1491,6 +1492,7 @@ def workbench_example() -> dict[str, object]:
             "missing_env": [],
             "detail": "fake provider is local and ready",
             "doctor_command": "agentdeck doctor",
+            "doctor_contract": "agentdeck contract doctor",
             "setup_commands": [],
         },
         "runtime_card": {

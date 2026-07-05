@@ -301,6 +301,7 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
         "model": leader.get("model"),
         "approval_mode": leader.get("approval_mode"),
         "api_backed": provider not in ("", "fake"),
+        "doctor_contract": "agentdeck contract doctor",
     }
     provider_env = {
         "deepseek": "DEEPSEEK_API_KEY",

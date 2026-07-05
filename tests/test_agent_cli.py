@@ -471,6 +471,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "missing_env",
         "detail",
         "doctor_command",
+        "doctor_contract",
         "setup_commands",
     ]
     assert payload["runtime_card_fields"] == ["backend", "count", "by_status", "agents"]
@@ -639,6 +640,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "missing_env": ["DEEPSEEK_API_KEY"],
         "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
         "doctor_command": "agentdeck doctor",
+        "doctor_contract": "agentdeck contract doctor",
         "setup_commands": [
             'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
             'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',

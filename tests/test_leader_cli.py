@@ -411,6 +411,7 @@ def test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning
         "missing_env": ["DEEPSEEK_API_KEY"],
         "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
         "doctor_command": "agentdeck doctor",
+        "doctor_contract": "agentdeck contract doctor",
         "setup_commands": [
             'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
             'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
