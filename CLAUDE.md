@@ -126,6 +126,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck leader chat --message "继续"` 在 recovery source 为 `runtime` 时必须嵌入 `runtime_card`，复用 workbench runtime card 字段规则；它只展示 `agentdeck agent refresh` 入口，不自动 refresh、spawn、stop、capture 或发送 tmux 输入。
 - `agentdeck leader chat --message "查看 runtime"` / `"查看终端"` 必须进入只读 `mode=runtime`，嵌入同一张 `runtime_card` 并建议 `agentdeck agent list`；它不创建 plan/action/approval/message/job/inbox，也不执行任何 runtime 操作。
 - `agentdeck leader chat --message "查看队列"` / `"查看控制面"` 必须进入只读 `mode=queue`，嵌入 workbench 同源 `queue_card` / `operator_card` 并展示 next/apply/explicit controls；它不创建或应用 action、不审批、不派发、不 ack、不 refresh runtime、不发送 tmux 输入。
+- `agentdeck leader chat --message "查看角色"` / `"查看分工"` 必须进入只读 `mode=role`，嵌入 workbench 同源 `role_card` 并展示 assign-role 命令；它不修改 `.agentdeck/config.toml`、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入。
 - Leader actions queue contract 维护在 `docs/contracts/leader-actions-schema.md`，发现入口是 `agentdeck contract leader-actions`；payload、example fixture 和 `validate_leader_actions_contract()` 也在 `src/agentdeck/contracts.py`。
 - Leader action detail contract 维护在 `docs/contracts/leader-action-schema.md`，发现入口是 `agentdeck contract leader-action`；payload、example fixture 和 `validate_leader_action_contract()` 也在 `src/agentdeck/contracts.py`。
 - Approval queue contract 维护在 `docs/contracts/approvals-schema.md`，发现入口是 `agentdeck contract approvals`；payload、example fixture 和 `validate_approval_contract()` 也在 `src/agentdeck/contracts.py`。

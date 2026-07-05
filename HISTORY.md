@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add Leader role chat mode
+
+- 新增自然语言只读 role 意图：`agentdeck leader chat --message "查看角色"` / `"查看分工"` 会进入 `mode=role`，返回复用 workbench 投影的 `role_card`，展示每个 agent 的 role、provider、workspace_mode、role_prompt 和可复制的 `assign_command`。
+- 扩展 Leader chat response contract：新增顶层 `role_card`，`agentdeck contract leader-chat` 现在公开 `role_card_fields`、`role_agent_fields`、`example_role_card_fields` 和 `example_role_agent_fields`，供 GUI/自然语言壳发现角色配置字段。
+- `validate_leader_chat_contract()` 会校验 role card 和 role agent 字段；role chat mode 只记录 chat turn，不修改 `.agentdeck/config.toml`、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入。
+- 更新 `docs/contracts/leader-chat-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 role mode 是角色展示和显式 assign-role 入口，不代表自动配置许可。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_roles_without_mutating_state -q` 最初返回 `mode=plan`；实现后目标测试通过，leader/contract 扩展测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 124 项通过；`conda run -n agentdeck pytest -q` 196 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `leader-chat-role-mode-smoke-ok`。
+
 ### Current - Add Leader queue chat mode
 
 - 新增自然语言只读 queue/operator 意图：`agentdeck leader chat --message "查看队列"` / `"查看控制面"` 会进入 `mode=queue`，返回复用 workbench 投影的 `queue_card` 和 `operator_card`，并展示当前 active queue、next_command、preview/apply/explicit controls 和 blocker。

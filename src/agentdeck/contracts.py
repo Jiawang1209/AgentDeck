@@ -355,6 +355,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "runtime_card",
     "queue_card",
     "operator_card",
+    "role_card",
 )
 
 CONTINUE_CARD_FIELDS = (
@@ -717,6 +718,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
+        "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
+        "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
     }
@@ -733,6 +736,8 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
         payload["example_operator_card_fields"] = list(example["operator_card"])
+        payload["example_role_card_fields"] = list(example["role_card"])
+        payload["example_role_agent_fields"] = list(example["role_card"]["agents"][0])
         payload["example_leader_chat"] = example
     return payload
 
@@ -1317,6 +1322,26 @@ def _validate_operator_card_contract(errors: list[str], operator_card: dict[str,
         errors.append(f"{prefix}: operator_card.can_apply must be a boolean")
 
 
+def _validate_role_card_contract(errors: list[str], role_card: dict[str, object], *, prefix: str) -> None:
+    for field in WORKBENCH_ROLE_CARD_FIELDS:
+        if field not in role_card:
+            errors.append(f"{prefix}: missing role_card field: {field}")
+    if "count" in role_card and not isinstance(role_card.get("count"), int):
+        errors.append(f"{prefix}: role_card.count must be an integer")
+    role_agents = role_card.get("agents")
+    if isinstance(role_agents, list):
+        if role_agents:
+            first_agent = role_agents[0]
+            if isinstance(first_agent, dict):
+                for field in WORKBENCH_ROLE_AGENT_FIELDS:
+                    if field not in first_agent:
+                        errors.append(f"{prefix}: missing role agent field: {field}")
+            else:
+                errors.append(f"{prefix}: role_card.agents items must be objects")
+    elif "agents" in role_card:
+        errors.append(f"{prefix}: role_card.agents must be a list")
+
+
 def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, object]:
     errors: list[str] = []
     for field in LEADER_CHAT_RESPONSE_FIELDS:
@@ -1378,6 +1403,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append("operator_card: next_command must match operator_card.next_command")
     elif "operator_card" in payload and operator_card is not None:
         errors.append("operator_card must be an object")
+    role_card = payload.get("role_card")
+    if isinstance(role_card, dict):
+        _validate_role_card_contract(errors, role_card, prefix="role_card")
+    elif "role_card" in payload and role_card is not None:
+        errors.append("role_card must be an object")
     return {"ok": not errors, "errors": errors}
 
 
@@ -1791,6 +1821,7 @@ def leader_chat_example() -> dict[str, object]:
     runtime_card = workbench_example()["runtime_card"]
     queue_card = workbench_example()["queue_card"]
     operator_card = workbench_example()["operator_card"]
+    role_card = workbench_example()["role_card"]
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -1820,6 +1851,7 @@ def leader_chat_example() -> dict[str, object]:
         "runtime_card": runtime_card,
         "queue_card": queue_card,
         "operator_card": operator_card,
+        "role_card": role_card,
     }
 
 

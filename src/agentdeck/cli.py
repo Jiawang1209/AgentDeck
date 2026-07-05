@@ -1646,6 +1646,24 @@ def _chat_wants_queue(message: str) -> bool:
     )
 
 
+def _chat_wants_role(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(
+        token in normalized
+        for token in [
+            "role",
+            "roles",
+            "role card",
+            "assign-role",
+            "角色",
+            "角色卡",
+            "分工",
+            "职责",
+            "人设",
+        ]
+    )
+
+
 def _chat_inbox_agent_id(message: str, config: ProjectConfig) -> str | None:
     normalized = message.strip().lower()
     mentions_inbox = any(token in normalized for token in ["inbox", "收件箱", "消息", "mailbox"])
@@ -1822,6 +1840,19 @@ def _leader_chat_explanation(
             "safety": recovery_action.get("safety"),
             "requires_explicit_user": bool(recovery_action.get("requires_explicit_user")),
         }
+    if mode == "role":
+        role_card = _workbench_role_card(project_view)
+        return {
+            "mode": mode,
+            "summary": "Leader recommends inspecting configured agent roles without mutating role assignments.",
+            "reason": "human asked to inspect role assignments",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": "role",
+            "action_status": "configured" if role_card.get("count") else "empty",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
     if mode == "inbox":
         head = _inbox_head_item(inbox_card) if isinstance(inbox_card, dict) else None
         head_inbox_id = head.get("inbox_id") if isinstance(head, dict) else None
@@ -1953,6 +1984,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "runtime_card": None,
             "queue_card": None,
             "operator_card": None,
+            "role_card": None,
             "result": result,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -2020,6 +2052,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "runtime_card": runtime_card,
             "queue_card": None,
             "operator_card": None,
+            "role_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2072,6 +2105,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "runtime_card": None,
             "queue_card": None,
             "operator_card": None,
+            "role_card": None,
             "provider_health": _workbench_provider_health(refreshed_project_view),
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -2125,6 +2159,60 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "runtime_card": runtime_card,
             "queue_card": None,
             "operator_card": None,
+            "role_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_role(args.message):
+        next_command = "agentdeck workbench"
+        turn = store.record_chat_turn(
+            mode="role",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="role",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "role",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        role_card = _workbench_role_card(refreshed_project_view)
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "role",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "role",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": role_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2190,6 +2278,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "runtime_card": None,
             "queue_card": queue_card,
             "operator_card": operator_card,
+            "role_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2269,6 +2358,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "runtime_card": None,
             "queue_card": None,
             "operator_card": None,
+            "role_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2347,6 +2437,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "runtime_card": None,
             "queue_card": None,
             "operator_card": None,
+            "role_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
@@ -2396,6 +2487,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "runtime_card": None,
             "queue_card": None,
             "operator_card": None,
+            "role_card": None,
         }
         store.append_event(
             EventRecord.create(
@@ -2479,6 +2571,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         "runtime_card": None,
         "queue_card": None,
         "operator_card": None,
+        "role_card": None,
     }
     store.append_event(
         EventRecord.create(

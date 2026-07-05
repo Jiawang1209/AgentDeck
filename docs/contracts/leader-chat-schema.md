@@ -18,6 +18,8 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "runtime_card_fields": [],
   "queue_card_fields": [],
   "operator_card_fields": [],
+  "role_card_fields": [],
+  "role_agent_fields": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view"
 }
@@ -50,7 +52,8 @@ The review-mode response shape is:
   "approval_card": null,
   "runtime_card": null,
   "queue_card": null,
-  "operator_card": null
+  "operator_card": null,
+  "role_card": null
 }
 ```
 
@@ -106,6 +109,22 @@ Runtime-mode responses are returned when the human asks to inspect `runtime`, `t
 ```
 
 Runtime-mode records a chat turn for history, but it must not create a plan, leader action, approval, message, job, inbox item, refresh stale panes, spawn/stop agents, capture pane output, or send tmux input.
+
+Role-mode responses are returned when the human asks to inspect roles, role prompts, responsibilities, or assign-role commands. They return `role_card`, reusing the same role projection as `agentdeck workbench`:
+
+```json
+{
+  "mode": "role",
+  "next_command": "agentdeck workbench",
+  "role_card": {
+    "count": 3,
+    "assign_command_template": "agentdeck agent assign-role --agent <agent_id> --role <role> --role-prompt <role_prompt>",
+    "agents": []
+  }
+}
+```
+
+When `role_card` is present, `validate_leader_chat_contract()` checks the same role card and role agent field lists exposed by `agentdeck contract workbench`. Role-mode records a chat turn for history, but it must not edit `.agentdeck/config.toml`, create plans/actions/approvals/messages/jobs/inbox items, or send tmux input.
 
 Queue-mode responses are returned when the human asks to inspect the queue, Leader actions, operator controls, or next-step buttons. They return `queue_card` and `operator_card`, reusing the same control projection as `agentdeck workbench`:
 
@@ -231,7 +250,8 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat approval-mode responses must reuse the `agentdeck approval list` queue contract through `approval_card`.
 - Chat runtime-mode responses must reuse the workbench runtime card through `runtime_card`.
 - Chat queue-mode responses must reuse the workbench queue and operator cards through `queue_card` and `operator_card`.
+- Chat role-mode responses must reuse the workbench role card through `role_card`.
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, or `runtime_card` when `recovery.recommended_action.source` points at those queues or runtime recovery.
 - Chat setup-mode responses may include `provider_health` and must recommend `agentdeck doctor` without calling the provider.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `continue_card` as a recovery affordance, `inbox_card` as the mailbox queue surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics, and `leader_explanation` as explanation.
