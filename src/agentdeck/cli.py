@@ -156,6 +156,18 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         if mode == "approve":
             return "Switch to approval mode"
         return "Request autonomous mode"
+    approval_match = re.fullmatch(
+        r"agentdeck approval (approve|reject|dispatch) --approval-id [^\s]+(?: --reason .+)?", command
+    )
+    if approval_match:
+        action = approval_match.group(1)
+        if action == "approve":
+            return "Approve approval"
+        if action == "reject":
+            return "Reject approval"
+        return "Dispatch approval"
+    if re.fullmatch(r"agentdeck ack --agent [^\s]+ --inbox-id [^\s]+", command):
+        return "Acknowledge inbox item"
     return "Next command"
 
 

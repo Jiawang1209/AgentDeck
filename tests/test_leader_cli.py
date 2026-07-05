@@ -1873,6 +1873,14 @@ def test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging(
     assert payload["leader_explanation"]["action_status"] == "pending"
     assert payload["leader_explanation"]["safety"] == "explicit_runtime"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Acknowledge inbox item",
+        "command": payload["next_command"],
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
 
     state_after = StateStore(root).load()
     assert state_after["inbox"]["planner"][0]["status"] == "pending"
@@ -1992,7 +2000,7 @@ def test_leader_chat_suggests_reject_for_pending_approval_without_rejecting(
     assert payload["leader_explanation"]["requires_explicit_user"] is True
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
-        "label": "Next command",
+        "label": "Reject approval",
         "command": payload["next_command"],
         "safety": "explicit_runtime",
         "enabled": False,
@@ -2058,6 +2066,14 @@ def test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching
         "enabled": True,
         "blocker": None,
     }
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Dispatch approval",
+        "command": payload["next_command"],
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
     assert payload["leader_explanation"]["action_kind"] == "approval_dispatch"
     assert payload["leader_explanation"]["recommended_action_id"] == approval_id
     assert payload["leader_explanation"]["action_status"] == "approved"
@@ -2101,7 +2117,7 @@ def test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned(
     assert payload["intent_card"]["embedded_card"] == "dispatch_preview_card"
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
-        "label": "Next command",
+        "label": "Dispatch approval",
         "command": payload["next_command"],
         "safety": "explicit_runtime",
         "enabled": False,
