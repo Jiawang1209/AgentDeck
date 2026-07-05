@@ -21,6 +21,7 @@ from .contracts import (
     leader_action_contract_response,
     leader_chat_contract_response,
     project_view_contract_response,
+    runtime_agent_controls,
     trace_contract_response,
     workbench_contract_response,
     validate_approval_contract,
@@ -688,6 +689,7 @@ def _workbench_runtime_card(project_view: dict[str, object]) -> dict[str, object
                     "capture_command": f"agentdeck agent capture --agent {agent_id} --lines 200",
                     "send_command_template": f"agentdeck agent send --agent {agent_id} --text <text>",
                     "inbox_command": f"agentdeck inbox --agent {agent_id}",
+                    "controls": runtime_agent_controls(agent_id, status == "running"),
                 }
             )
     return {

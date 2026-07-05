@@ -434,6 +434,7 @@ WORKBENCH_RUNTIME_AGENT_FIELDS = (
     "capture_command",
     "send_command_template",
     "inbox_command",
+    "controls",
 )
 
 WORKBENCH_ROLE_CARD_FIELDS = (
@@ -1696,6 +1697,86 @@ def events_example() -> dict[str, object]:
     }
 
 
+def runtime_agent_controls(agent_id: str, running: bool) -> list[dict[str, object]]:
+    if running:
+        return [
+            {
+                "kind": "capture",
+                "label": "Capture pane output",
+                "command": f"agentdeck agent capture --agent {agent_id} --lines 200",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "send",
+                "label": "Send input",
+                "command": f"agentdeck agent send --agent {agent_id} --text <text>",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "stop",
+                "label": "Stop pane",
+                "command": f"agentdeck agent stop --agent {agent_id}",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inbox",
+                "label": "Open inbox",
+                "command": f"agentdeck inbox --agent {agent_id}",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ]
+    return [
+        {
+            "kind": "spawn",
+            "label": "Spawn pane",
+            "command": f"agentdeck agent spawn --agent {agent_id}",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "capture",
+            "label": "Capture pane output",
+            "command": f"agentdeck agent capture --agent {agent_id} --lines 200",
+            "safety": "inspect",
+            "enabled": False,
+            "blocker": "agent is not running",
+        },
+        {
+            "kind": "send",
+            "label": "Send input",
+            "command": f"agentdeck agent send --agent {agent_id} --text <text>",
+            "safety": "explicit_runtime",
+            "enabled": False,
+            "blocker": "agent is not running",
+        },
+        {
+            "kind": "stop",
+            "label": "Stop pane",
+            "command": f"agentdeck agent stop --agent {agent_id}",
+            "safety": "explicit_runtime",
+            "enabled": False,
+            "blocker": "agent is not running",
+        },
+        {
+            "kind": "inbox",
+            "label": "Open inbox",
+            "command": f"agentdeck inbox --agent {agent_id}",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+
+
 def workbench_example() -> dict[str, object]:
     project_view = project_view_example()
     leader_action = project_view["leader_actions"]["items"][0]
@@ -1751,6 +1832,7 @@ def workbench_example() -> dict[str, object]:
                     "capture_command": "agentdeck agent capture --agent planner --lines 200",
                     "send_command_template": "agentdeck agent send --agent planner --text <text>",
                     "inbox_command": "agentdeck inbox --agent planner",
+                    "controls": runtime_agent_controls("planner", True),
                 },
                 {
                     "agent_id": "coder",
@@ -1766,6 +1848,7 @@ def workbench_example() -> dict[str, object]:
                     "capture_command": "agentdeck agent capture --agent coder --lines 200",
                     "send_command_template": "agentdeck agent send --agent coder --text <text>",
                     "inbox_command": "agentdeck inbox --agent coder",
+                    "controls": runtime_agent_controls("coder", False),
                 },
                 {
                     "agent_id": "reviewer",
@@ -1781,6 +1864,7 @@ def workbench_example() -> dict[str, object]:
                     "capture_command": "agentdeck agent capture --agent reviewer --lines 200",
                     "send_command_template": "agentdeck agent send --agent reviewer --text <text>",
                     "inbox_command": "agentdeck inbox --agent reviewer",
+                    "controls": runtime_agent_controls("reviewer", False),
                 },
             ],
         },

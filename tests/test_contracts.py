@@ -476,6 +476,22 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["runtime_card"]["agents"][0]["send_command_template"] == (
         "agentdeck agent send --agent planner --text <text>"
     )
+    assert example["runtime_card"]["agents"][0]["controls"][0] == {
+        "kind": "capture",
+        "label": "Capture pane output",
+        "command": "agentdeck agent capture --agent planner --lines 200",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert example["runtime_card"]["agents"][0]["controls"][1] == {
+        "kind": "send",
+        "label": "Send input",
+        "command": "agentdeck agent send --agent planner --text <text>",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
     assert set(example["role_card"]) == set(WORKBENCH_ROLE_CARD_FIELDS)
     assert set(example["role_card"]["agents"][0]) == set(WORKBENCH_ROLE_AGENT_FIELDS)
     assert set(example["ledger_card"]) == set(WORKBENCH_LEDGER_CARD_FIELDS)
@@ -551,6 +567,15 @@ def test_validate_workbench_contract_requires_runtime_agent_fields() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing runtime agent field: pane_id"]}
+
+
+def test_validate_workbench_contract_requires_runtime_agent_controls() -> None:
+    payload = workbench_example()
+    del payload["runtime_card"]["agents"][0]["controls"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing runtime agent field: controls"]}
 
 
 def test_validate_workbench_contract_requires_role_agent_fields() -> None:

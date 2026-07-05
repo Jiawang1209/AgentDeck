@@ -193,13 +193,31 @@ The card never exposes API key values and never calls the provider. It includes 
       "stop_command": "agentdeck agent stop --agent planner",
       "capture_command": "agentdeck agent capture --agent planner --lines 200",
       "send_command_template": "agentdeck agent send --agent planner --text <text>",
-      "inbox_command": "agentdeck inbox --agent planner"
+      "inbox_command": "agentdeck inbox --agent planner",
+      "controls": [
+        {
+          "kind": "capture",
+          "label": "Capture pane output",
+          "command": "agentdeck agent capture --agent planner --lines 200",
+          "safety": "inspect",
+          "enabled": true,
+          "blocker": null
+        },
+        {
+          "kind": "send",
+          "label": "Send input",
+          "command": "agentdeck agent send --agent planner --text <text>",
+          "safety": "explicit_runtime",
+          "enabled": true,
+          "blocker": null
+        }
+      ]
     }
   ]
 }
 ```
 
-The card does not capture pane output and does not prove task completion. It only surfaces the configured agent identity, role, provider, workspace mode, current runtime binding already present in ProjectView, and explicit runtime commands a GUI can render. `capture_command` is a read-only observation command. `send_command_template` is an explicit runtime input template and must not be executed automatically.
+The card does not capture pane output and does not prove task completion. It only surfaces the configured agent identity, role, provider, workspace mode, current runtime binding already present in ProjectView, and explicit runtime commands a GUI can render. `capture_command` is a read-only observation command. `send_command_template` is an explicit runtime input template and must not be executed automatically. GUI clients should prefer `controls[]` for rendering buttons; disabled controls include a `blocker` such as `agent is not running`.
 
 ## Role Card
 

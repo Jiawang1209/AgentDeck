@@ -601,6 +601,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "capture_command",
         "send_command_template",
         "inbox_command",
+        "controls",
     ]
     assert payload["role_card_fields"] == ["count", "agents", "assign_command_template"]
     assert payload["role_agent_fields"] == [
@@ -807,6 +808,53 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert planner_runtime["capture_command"] == "agentdeck agent capture --agent planner --lines 200"
     assert planner_runtime["send_command_template"] == "agentdeck agent send --agent planner --text <text>"
     assert planner_runtime["inbox_command"] == "agentdeck inbox --agent planner"
+    assert planner_runtime["controls"] == [
+        {
+            "kind": "capture",
+            "label": "Capture pane output",
+            "command": "agentdeck agent capture --agent planner --lines 200",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "send",
+            "label": "Send input",
+            "command": "agentdeck agent send --agent planner --text <text>",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "stop",
+            "label": "Stop pane",
+            "command": "agentdeck agent stop --agent planner",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "inbox",
+            "label": "Open inbox",
+            "command": "agentdeck inbox --agent planner",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+    coder_runtime = payload["runtime_card"]["agents"][1]
+    assert coder_runtime["status"] == "configured"
+    assert coder_runtime["controls"][0] == {
+        "kind": "spawn",
+        "label": "Spawn pane",
+        "command": "agentdeck agent spawn --agent coder",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert coder_runtime["controls"][1]["kind"] == "capture"
+    assert coder_runtime["controls"][1]["enabled"] is False
+    assert coder_runtime["controls"][1]["blocker"] == "agent is not running"
     assert payload["ledger_card"]["messages"]["count"] == 1
     assert payload["ledger_card"]["messages"]["items"][0]["trace_command"] == "agentdeck trace --id msg_workbench"
     assert payload["ledger_card"]["jobs"]["count"] == 1

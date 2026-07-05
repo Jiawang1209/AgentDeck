@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Add workbench runtime controls
+
+- 扩展 `agentdeck workbench` 的 `runtime_card.agents[]`：新增 `controls[]`，让 GUI/TUI 可以直接按按钮模型渲染可见 tmux runtime 的 capture、send、stop、spawn 和 inbox 操作。
+- 运行中的 agent 会暴露 enabled 的 capture/send/stop/inbox controls；未运行的 agent 会暴露 enabled 的 spawn/inbox controls，并把 capture/send/stop 标记为 disabled 且带 `agent is not running` blocker。
+- 扩展 workbench contract：`WORKBENCH_RUNTIME_AGENT_FIELDS`、`agentdeck contract workbench` 的 `runtime_agent_fields` 和 `workbench_example()` 现在包含 runtime `controls[]`；validator 会拒绝缺失 runtime agent controls 的 payload。
+- 更新 `docs/contracts/workbench-schema.md`、`README.md`、`CLAUDE.md` 和 `AGENT.md`，明确 GUI 应优先渲染 `controls[]`，且 send/spawn/stop 类 runtime control 仍需要人类显式触发。
+- 完整验证：先确认红测失败，`conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_runtime_agent_controls -q` 最初因 `runtime_agent_fields` 和 live/example runtime agent 缺少 `controls` 失败；实现后目标测试通过；同一目标测试组 4 项通过；`conda run -n agentdeck pytest -q` 185 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`git diff --check` 通过；临时 git 项目 smoke 确认 `workbench-runtime-controls-ok`。
+
 ### Current - Add workbench runtime pane commands
 
 - 扩展 `agentdeck workbench` 的 `runtime_card.agents[]`：新增 `capture_command` 和 `send_command_template`，让 GUI/TUI 可以从可见 tmux runtime 面板直接渲染“查看输出”和“显式发送输入”控制入口。
