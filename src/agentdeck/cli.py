@@ -4437,6 +4437,63 @@ def approval_reject_command(args: argparse.Namespace) -> int:
     return _approval_decision_command(args.approval_id, "rejected", args.reason)
 
 
+def _dispatch_approved_approval(
+    approval: dict[str, object],
+    *,
+    approval_id: str,
+    config: ProjectConfig,
+    store: StateStore,
+    backend: TmuxBackend,
+) -> dict[str, object]:
+    agent_id = str(approval.get("agent_id", ""))
+    agent = _agent_by_id(config, agent_id)
+    if agent is None:
+        raise ValueError(f"unknown agent: {agent_id}")
+    binding = store.agent_binding(agent_id)
+    if not binding or not binding.get("pane_id"):
+        raise RuntimeError(f"agent is not spawned: {agent_id}")
+    pane_id = str(binding["pane_id"])
+    task = str(approval.get("task", ""))
+    prompt = build_dispatch_prompt(agent, task)
+    records = store.create_dispatch_records("leader", agent.agent_id, task, prompt, pane_id)
+    message = records["message"]
+    attempt = records["attempt"]
+    job = records["job"]
+    backend.send_input(config.runtime, pane_id, prompt)
+    store.mark_approval_dispatched(
+        approval_id,
+        str(message["message_id"]),
+        str(attempt["attempt_id"]),
+        str(job["job_id"]),
+    )
+    store.append_event(
+        EventRecord.create(
+            "approval_dispatched",
+            {
+                "approval_id": approval_id,
+                "plan_id": approval.get("plan_id"),
+                "message_id": message["message_id"],
+                "agent_id": agent.agent_id,
+                "pane_id": pane_id,
+            },
+        )
+    )
+    inbox_card = _inbox_queue_payload(agent.agent_id, store)
+    validation = validate_inbox_contract(inbox_card)
+    if not validation["ok"]:
+        error = "; ".join(str(item) for item in validation["errors"])
+        raise ValueError(f"Inbox contract validation failed: {error}")
+    return {
+        "ok": True,
+        "approval_id": approval_id,
+        "message_id": message["message_id"],
+        "agent_id": agent.agent_id,
+        "pane_id": pane_id,
+        "trace_command": _trace_command(message["message_id"]),
+        "inbox_card": inbox_card,
+    }
+
+
 def approval_dispatch_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -4449,56 +4506,89 @@ def approval_dispatch_command(args: argparse.Namespace) -> int:
     if approval.get("status") != "approved":
         print(f"approval is not approved: {args.approval_id}", file=sys.stderr)
         return 1
-    agent_id = str(approval.get("agent_id", ""))
-    agent = _agent_by_id(config, agent_id)
-    if agent is None:
-        print(f"unknown agent: {agent_id}", file=sys.stderr)
+    try:
+        payload = _dispatch_approved_approval(
+            approval,
+            approval_id=args.approval_id,
+            config=config,
+            store=store,
+            backend=TmuxBackend(),
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
         return 1
-    binding, exit_code = _running_binding_or_error(store, agent_id)
-    if binding is None:
+    _print_json(payload)
+    return 0
+
+
+def approval_dispatch_ready_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
         return exit_code
-    pane_id = str(binding["pane_id"])
-    task = str(approval.get("task", ""))
-    prompt = build_dispatch_prompt(agent, task)
-    records = store.create_dispatch_records("leader", agent.agent_id, task, prompt, pane_id)
-    message = records["message"]
-    attempt = records["attempt"]
-    job = records["job"]
-    TmuxBackend().send_input(config.runtime, pane_id, prompt)
-    store.mark_approval_dispatched(
-        args.approval_id,
-        str(message["message_id"]),
-        str(attempt["attempt_id"]),
-        str(job["job_id"]),
-    )
+    if not args.confirm:
+        print("approval dispatch-ready requires --confirm", file=sys.stderr)
+        return 1
+    approvals = [
+        approval
+        for approval in store.load().get("approvals", [])
+        if isinstance(approval, dict) and approval.get("status") == "approved"
+    ]
+    backend = TmuxBackend()
+    results: list[dict[str, object]] = []
+    for approval in approvals:
+        approval_id = str(approval.get("approval_id", ""))
+        preview = _approval_dispatch_preview_card(approval, config, store)
+        blocker = preview.get("blocker")
+        if blocker:
+            results.append(
+                {
+                    "approval_id": approval_id,
+                    "status": "blocked",
+                    "agent_id": preview.get("agent_id"),
+                    "pane_id": preview.get("pane_id"),
+                    "blocker": blocker,
+                    "dispatch_command": preview.get("dispatch_command"),
+                }
+            )
+            continue
+        dispatched = _dispatch_approved_approval(
+            approval,
+            approval_id=approval_id,
+            config=config,
+            store=store,
+            backend=backend,
+        )
+        results.append(
+            {
+                "approval_id": approval_id,
+                "status": "dispatched",
+                "agent_id": dispatched["agent_id"],
+                "pane_id": dispatched["pane_id"],
+                "message_id": dispatched["message_id"],
+                "trace_command": dispatched["trace_command"],
+            }
+        )
+    dispatched_count = sum(1 for item in results if item.get("status") == "dispatched")
+    blocked_count = sum(1 for item in results if item.get("status") == "blocked")
     store.append_event(
         EventRecord.create(
-            "approval_dispatched",
+            "approval_dispatch_ready_completed",
             {
-                "approval_id": args.approval_id,
-                "plan_id": approval.get("plan_id"),
-                "message_id": message["message_id"],
-                "agent_id": agent.agent_id,
-                "pane_id": pane_id,
+                "dispatched_count": dispatched_count,
+                "blocked_count": blocked_count,
             },
         )
     )
-    inbox_card = _inbox_queue_payload(agent.agent_id, store)
-    validation = validate_inbox_contract(inbox_card)
-    if not validation["ok"]:
-        print("Inbox contract validation failed", file=sys.stderr)
-        for error in validation["errors"]:
-            print(f"- {error}", file=sys.stderr)
-        return 1
     _print_json(
         {
             "ok": True,
-            "approval_id": args.approval_id,
-            "message_id": message["message_id"],
-            "agent_id": agent.agent_id,
-            "pane_id": pane_id,
-            "trace_command": _trace_command(message["message_id"]),
-            "inbox_card": inbox_card,
+            "mode": "dispatch_ready",
+            "requires_explicit_user": True,
+            "safety": "explicit_runtime",
+            "dispatched_count": dispatched_count,
+            "blocked_count": blocked_count,
+            "skipped_count": blocked_count,
+            "results": results,
         }
     )
     return 0
@@ -4755,6 +4845,12 @@ def build_parser() -> argparse.ArgumentParser:
     approval_dispatch = approval_subparsers.add_parser("dispatch", help="Dispatch an approved item")
     approval_dispatch.add_argument("--approval-id", required=True, help="Approved approval id")
     approval_dispatch.set_defaults(func=approval_dispatch_command)
+    approval_dispatch_ready = approval_subparsers.add_parser(
+        "dispatch-ready",
+        help="Dispatch all approved approvals whose agent runtime is ready",
+    )
+    approval_dispatch_ready.add_argument("--confirm", action="store_true", help="Explicitly confirm batch dispatch")
+    approval_dispatch_ready.set_defaults(func=approval_dispatch_ready_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")

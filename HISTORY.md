@@ -4,6 +4,14 @@
 
 ## 2026-07-05
 
+### Current - Dispatch all runtime-ready approvals explicitly
+
+- 新增显式批量执行入口 `agentdeck approval dispatch-ready --confirm`：它只派发当前所有 `approved` 且目标 agent runtime ready 的审批项，blocked 项保持 `approved` 并在 `results[]` 中返回 `status=blocked`、`blocker` 和对应 `dispatch_command`。
+- 保持安全边界：不带 `--confirm` 时命令返回非 0，不写 state、不发送 tmux 输入；带 `--confirm` 仍逐项复用单条 `approval dispatch` 的 message/attempt/job/inbox/tmux 账本路径，不绕过审批、不 ack inbox。
+- 重构单条 approval dispatch 的内部实现，提取 `_dispatch_approved_approval()`，让单条和批量 dispatch 共享同一条 lineage 写入、tmux send、approval status 更新和 `approval_dispatched` 事件路径。
+- 同步 README、`docs/contracts/approvals-schema.md`、CLAUDE.md、AGENT.md 和测试，明确 `dispatch-ready --confirm` 是人类显式批量派发入口，不是自然语言自动派发。
+- 验证记录：已先确认红测失败，`agentdeck approval dispatch-ready` 最初不是合法子命令；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_approval_dispatch_ready_requires_confirm_and_dispatches_only_ready_items -q` 通过；单条 dispatch 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_approval_dispatch_ready_requires_confirm_and_dispatches_only_ready_items tests/test_leader_cli.py::test_approval_dispatch_sends_approved_step_to_agent_and_records_lineage tests/test_leader_cli.py::test_approval_dispatch_rejects_unapproved_item -q` 3 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 258 项通过；临时项目 smoke 使用 fake tmux backend 确认 `dispatch-ready-smoke-ok dispatched=1 blocked=1 messages=1 jobs=1 sends=1`。第一次 smoke 使用真实 tmux socket 和手写 pane id，因临时 tmux socket 不存在失败，随后用 fake backend 验证 CLI/state 语义通过。
+
 ### Current - Add controls to approval dispatch previews
 
 - 扩展 `dispatch_preview_card` 与 `dispatch_batch_preview_card.items[]`：每个派发预览现在都包含 GUI-ready `controls[]`，提供只读 `Inspect approval` 和显式 runtime `Dispatch approval` 两个控件。

@@ -3264,3 +3264,71 @@ def test_approval_dispatch_sends_approved_step_to_agent_and_records_lineage(tmp_
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "approval_dispatched"' in events
+
+
+def test_approval_dispatch_ready_requires_confirm_and_dispatches_only_ready_items(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--task", "批量显式派发"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    planner_approval_id = approvals[0]["approval_id"]
+    coder_approval_id = approvals[1]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", planner_approval_id])
+    capsys.readouterr()
+    cli.main(["approval", "approve", "--approval-id", coder_approval_id])
+    capsys.readouterr()
+
+    exit_code = cli.main(["approval", "dispatch-ready"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "requires --confirm" in captured.err
+    state = StateStore(root).load()
+    assert state["approvals"][0]["status"] == "approved"
+    assert state["approvals"][1]["status"] == "approved"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+    assert fake.sent == []
+
+    exit_code = cli.main(["approval", "dispatch-ready", "--confirm"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "dispatch_ready"
+    assert payload["requires_explicit_user"] is True
+    assert payload["safety"] == "explicit_runtime"
+    assert payload["dispatched_count"] == 1
+    assert payload["blocked_count"] == 1
+    assert payload["skipped_count"] == 1
+    assert payload["results"][0]["approval_id"] == planner_approval_id
+    assert payload["results"][0]["status"] == "dispatched"
+    assert payload["results"][0]["agent_id"] == "planner"
+    assert payload["results"][0]["pane_id"] == "%77"
+    assert payload["results"][0]["message_id"].startswith("msg_")
+    assert payload["results"][0]["trace_command"] == f"agentdeck trace --id {payload['results'][0]['message_id']}"
+    assert payload["results"][1] == {
+        "approval_id": coder_approval_id,
+        "status": "blocked",
+        "agent_id": "coder",
+        "pane_id": None,
+        "blocker": "agent is not spawned: coder",
+        "dispatch_command": f"agentdeck approval dispatch --approval-id {coder_approval_id}",
+    }
+    assert fake.sent and fake.sent[0][0] == "%77"
+
+    state = StateStore(root).load()
+    assert state["approvals"][0]["status"] == "dispatched"
+    assert state["approvals"][1]["status"] == "approved"
+    assert state["approvals"][0]["message_id"] == payload["results"][0]["message_id"]
+    assert len(state["messages"]) == 1
+    assert len(state["jobs"]) == 1
+    assert state["messages"][0]["to_agent"] == "planner"
+    assert state["inbox"]["planner"][0]["event_type"] == "task_request"

@@ -193,7 +193,8 @@ Worker 不应该：
 - `agentdeck approval approve --approval-id <id>` 将审批项标记为 `approved`。
 - `agentdeck approval reject --approval-id <id> --reason <text>` 将审批项标记为 `rejected`。
 - `agentdeck approval dispatch --approval-id <id>` 只接受 `approved` 审批项，并把对应 plan step 派发到目标 agent。
-- approval dispatch 是单步显式命令，不会自动连续派发整个 plan。
+- `agentdeck approval dispatch-ready --confirm` 是显式批量派发命令，只派发 approved 且目标 agent runtime ready 的审批项；blocked 项必须保留为 approved 并返回 blocker；不带 `--confirm` 必须失败且不得写 state 或发送 tmux 输入。
+- approval dispatch 默认是单步显式命令；批量派发只能通过 `dispatch-ready --confirm` 这种明确入口触发。
 
 以下动作必须进入审批：
 

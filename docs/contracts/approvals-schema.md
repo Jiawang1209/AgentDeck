@@ -63,6 +63,8 @@ Use `agentdeck contract approvals --example` to include a stable GUI-ready appro
 
 `agentdeck approval dispatch --approval-id <id>` is an explicit runtime command, not part of the read-only queue contract. On success it returns `trace_command` for the created message lineage and embeds the target agent's `inbox_card`, reusing the `agentdeck inbox --agent <id>` queue shape so GUI clients can show the worker mailbox head without reading state directly.
 
+`agentdeck approval dispatch-ready --confirm` is also an explicit runtime command. It batch-dispatches only approved approvals whose target agent has a ready runtime binding, reusing the same single-dispatch lineage path for each dispatched item. Blocked approvals stay approved and are returned as `results[]` items with `status=blocked`, `blocker`, and `dispatch_command`. Without `--confirm`, it must fail without mutating state or sending tmux input.
+
 ## Boundaries
 
 - The contract command is read-only.

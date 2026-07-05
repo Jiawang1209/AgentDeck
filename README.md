@@ -111,6 +111,7 @@ agentdeck approval list
 agentdeck approval approve --approval-id apv_xxx
 agentdeck approval reject --approval-id apv_xxx --reason "范围过大"
 agentdeck approval dispatch --approval-id apv_xxx
+agentdeck approval dispatch-ready --confirm
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
@@ -168,6 +169,7 @@ agentdeck approval create-from-plan --plan-id pln_xxx
 agentdeck approval list
 agentdeck approval approve --approval-id apv_xxx
 agentdeck approval dispatch --approval-id apv_xxx
+agentdeck approval dispatch-ready --confirm
 agentdeck dispatch --agent planner --task "设计消息账本"
 agentdeck inbox --agent planner
 agentdeck reply --agent planner --message-id msg_xxx --text "status: completed"
@@ -400,11 +402,14 @@ agentdeck approval list
 agentdeck approval approve --approval-id apv_xxx
 agentdeck approval reject --approval-id apv_xxx --reason "范围过大"
 agentdeck approval dispatch --approval-id apv_xxx
+agentdeck approval dispatch-ready --confirm
 ```
 
 `agentdeck approval list` 是人类审批队列的只读入口。每个 approval item 会包含 `approve_command`、`reject_command`、`dispatch_command`、`can_dispatch` 和 `dispatch_blocker`，方便 GUI 渲染审批按钮和阻塞原因；输出前会通过 `validate_approval_contract()` 自校验。契约见 `docs/contracts/approvals-schema.md`，可用 `agentdeck contract approvals --example` 发现。真正的 approve/reject/dispatch 仍必须由人类显式运行对应命令。
 
 `approval dispatch` 只接受 `approved` 状态的审批项，并把对应 plan step 转成现有 `dispatch -> message/attempt/job/inbox` 链路。成功响应会包含 `trace_command` 和目标 agent 的 `inbox_card`，方便 GUI 直接跳到 worker mailbox；它仍然是显式命令，不会自动连续派发整个 plan，也不会 ack inbox。
+
+`approval dispatch-ready --confirm` 是显式批量派发入口：它只处理当前所有 `approved` 且目标 agent runtime ready 的审批项，逐项复用单条 `approval dispatch` 的 message/attempt/job/inbox/tmux 账本路径；目标 agent 未启动或 runtime 不可用的审批项会保留为 `approved`，并在 `results[]` 中返回 `status=blocked`、`blocker` 和对应 `dispatch_command`。不带 `--confirm` 时命令返回非 0 且不会写 state 或发送 tmux 输入。
 
 返回结果包含：
 

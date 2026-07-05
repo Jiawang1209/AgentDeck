@@ -198,8 +198,8 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - `agentdeck leader action --action-id <id>` 是 action 执行前的只读详情入口；输出必须包含当前 `recovery`、`recommended_action` 和 `matches_recommended_action`，apply 前必须检查 `preview_command`、`can_apply`、`explicit_command` 和 `apply_blocker`。
 - `agentdeck leader apply-action --action-id <id>` 执行 safe apply 前必须通过 ProjectView contract 守门；当前只允许应用 `create_approvals`，不得自动应用 dispatch/capture 类 action。
 - 审批、dispatch 或恢复任务前优先用 `agentdeck plan list`、`agentdeck plan show --plan-id <id>` 和 `agentdeck plan status --plan-id <id>` 检查计划。
-- 使用 `agentdeck approval create-from-plan --plan-id <id>` 创建审批项，使用 `approval approve/reject` 更新状态；只有 approved approval 才能通过 `agentdeck approval dispatch --approval-id <id>` 派发。
-- `dispatch`、`approval dispatch`、`reply` 和 `capture-reply` 的成功 JSON 输出必须包含 `trace_command`，指向对应 message/reply lineage，供 GUI 和人类直接追踪；`approval dispatch` 成功响应还必须嵌入目标 agent 的同源 `inbox_card`，复用 `agentdeck inbox --agent <id>` 队列形状，但不得自动 ack 或连续派发；`reply` / `capture-reply` 当 reply 回流到某个 agent inbox 时也必须嵌入接收方 `inbox_card`，但不得自动 ack 或继续 review。
+- 使用 `agentdeck approval create-from-plan --plan-id <id>` 创建审批项，使用 `approval approve/reject` 更新状态；只有 approved approval 才能通过 `agentdeck approval dispatch --approval-id <id>` 派发；`agentdeck approval dispatch-ready --confirm` 是显式批量派发命令，只派发 approved 且目标 agent runtime ready 的审批项，blocked 项必须保留为 approved 并返回 blocker，不带 `--confirm` 必须失败且不得写 state 或发送 tmux 输入。
+- `dispatch`、`approval dispatch`、`approval dispatch-ready --confirm`、`reply` 和 `capture-reply` 的成功 JSON 输出必须包含或逐项包含 `trace_command`，指向对应 message/reply lineage，供 GUI 和人类直接追踪；`approval dispatch` 成功响应还必须嵌入目标 agent 的同源 `inbox_card`，复用 `agentdeck inbox --agent <id>` 队列形状，但不得自动 ack；`reply` / `capture-reply` 当 reply 回流到某个 agent inbox 时也必须嵌入接收方 `inbox_card`，但不得自动 ack 或继续 review。
 - Worker 输出结构化结果后，优先使用 `agentdeck capture-reply --agent <id> --message-id <id>` 从 pane 回收入账；手动 `reply` 作为兜底。
 - 使用 `agentdeck ack --agent <id> --inbox-id <id>` 时只能确认该 agent 最早的 pending inbox item；非 head item 必须等待前序 item ack 后再处理。
 - 先更新架构/README/agent 文档，再扩展行为。
