@@ -293,6 +293,32 @@ def test_validate_control_registry_card_contract_requires_role_assign_command() 
     }
 
 
+def test_validate_control_registry_card_contract_requires_inbox_preview_command() -> None:
+    payload = controls_example()
+    inbox_item = next(item for item in payload["items"] if item["scope"] == "inbox" and item["kind"] == "preview")
+    inbox_item["command"] = "agentdeck doctor"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: inbox preview command must use trace"],
+    }
+
+
+def test_validate_control_registry_card_contract_requires_inbox_ack_command() -> None:
+    payload = controls_example()
+    inbox_item = next(item for item in payload["items"] if item["scope"] == "inbox" and item["kind"] == "ack")
+    inbox_item["command"] = "agentdeck doctor"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: inbox ack command must use ack"],
+    }
+
+
 def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     contract_path = tmp_path / "agent-runtime-schema.md"
     contract_path.write_text("# Agent Runtime Contract\n", encoding="utf-8")

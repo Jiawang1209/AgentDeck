@@ -2558,6 +2558,12 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     errors.append("control_registry_card.items: role assign_role command must use agent assign-role")
                 if item.get("enabled") is False and not item.get("blocker"):
                     errors.append("control_registry_card.items: disabled role assign_role controls must include blocker")
+            if item.get("scope") == "inbox" and item.get("kind") == "preview":
+                if not str(item.get("command") or "").startswith("agentdeck trace --id "):
+                    errors.append("control_registry_card.items: inbox preview command must use trace")
+            if item.get("scope") == "inbox" and item.get("kind") == "ack":
+                if not str(item.get("command") or "").startswith("agentdeck ack --agent "):
+                    errors.append("control_registry_card.items: inbox ack command must use ack")
     elif "items" in control_registry_card:
         errors.append("control_registry_card.items must be a list")
 
