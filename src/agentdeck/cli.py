@@ -1834,6 +1834,11 @@ def _chat_wants_approval_approve(message: str) -> bool:
     return any(token in normalized for token in ["approve", "批准", "同意", "通过审批"])
 
 
+def _chat_wants_approval_reject(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(token in normalized for token in ["reject", "拒绝", "驳回", "否决"])
+
+
 def _chat_wants_approval_dispatch(message: str) -> bool:
     normalized = message.strip().lower()
     return any(token in normalized for token in ["dispatch", "派发", "发送", "执行审批"])
@@ -2054,11 +2059,15 @@ def _leader_chat_explanation(
         approved = _approved_approval_item(approval_card) if isinstance(approval_card, dict) else None
         selected = approved if approval_action_kind == "approval_dispatch" else pending
         approval_id = selected.get("approval_id") if isinstance(selected, dict) else None
-        safety = "explicit_runtime" if approval_action_kind in {"approval_approve", "approval_dispatch"} else "inspect"
+        safety = (
+            "explicit_runtime"
+            if approval_action_kind in {"approval_approve", "approval_reject", "approval_dispatch"}
+            else "inspect"
+        )
         return {
             "mode": mode,
             "summary": "Leader recommends inspecting the approval queue without mutating runtime state.",
-            "reason": "human asked to inspect or approve pending approvals",
+            "reason": "human asked to inspect or decide pending approvals",
             "next_command": next_command,
             "recommended_action_id": approval_id,
             "action_kind": approval_action_kind or "approval",
@@ -2660,12 +2669,15 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         pending_approval = _pending_approval_item(approval_card)
         approved_approval = _approved_approval_item(approval_card)
         wants_approve = _chat_wants_approval_approve(args.message)
+        wants_reject = _chat_wants_approval_reject(args.message)
         wants_dispatch = _chat_wants_approval_dispatch(args.message)
         next_command = (
             approved_approval.get("dispatch_command")
             if wants_dispatch
             and isinstance(approved_approval, dict)
             and approved_approval.get("dispatch_command")
+            else pending_approval.get("reject_command")
+            if wants_reject and isinstance(pending_approval, dict) and pending_approval.get("reject_command")
             else pending_approval.get("approve_command")
             if wants_approve and isinstance(pending_approval, dict) and pending_approval.get("approve_command")
             else "agentdeck approval list"
@@ -2673,6 +2685,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         approval_action_kind = (
             "approval_dispatch"
             if wants_dispatch and isinstance(approved_approval, dict)
+            else "approval_reject"
+            if wants_reject and isinstance(pending_approval, dict)
             else "approval_approve"
             if wants_approve and isinstance(pending_approval, dict)
             else "approval"

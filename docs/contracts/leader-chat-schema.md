@@ -315,7 +315,7 @@ Approval-mode responses include `approval_card`, which reuses the same queue sha
 }
 ```
 
-When `approval_card` is present, `validate_leader_chat_contract()` reuses `validate_approval_contract()` and prefixes nested errors with `approval_card:`. Approval-mode is read-only: it may recommend `agentdeck approval list`, the first pending approval's `approve_command`, or the first approved approval's `dispatch_command`, but it must not approve, reject, dispatch work, or send tmux input.
+When `approval_card` is present, `validate_leader_chat_contract()` reuses `validate_approval_contract()` and prefixes nested errors with `approval_card:`. Approval-mode is read-only: it may recommend `agentdeck approval list`, the first pending approval's `approve_command`, the first pending approval's `reject_command`, or the first approved approval's `dispatch_command`, but it must not approve, reject, dispatch work, or send tmux input.
 
 Setup-mode responses are returned when the human asks to inspect `doctor`, provider setup, API key, or local environment readiness. They are read-only and do not call the configured Leader provider:
 

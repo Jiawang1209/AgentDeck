@@ -4,6 +4,13 @@
 
 ## 2026-07-05
 
+### Current - Route approval reject chat to explicit command
+
+- 扩展自然语言 approval 模式：`agentdeck leader chat --message "拒绝当前审批"` 会推荐第一条 pending approval 的 `reject_command`，并标记 `action_kind=approval_reject`、`safety=explicit_runtime`、`requires_explicit_user=true`。
+- 保持人类审批边界：该 chat turn 只记录建议和 next_command，不修改 approval 状态、不创建 leader action、不 dispatch、不发送 tmux 输入。
+- 同步 `README.md`、`docs/contracts/leader-chat-schema.md`、`CLAUDE.md`、`AGENT.md` 和测试。
+- 完整验证：已先确认红测失败，approval chat 最初仍返回 `agentdeck approval list`；实现后 approval chat 目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_approval_queue_without_mutating_state tests/test_leader_cli.py::test_leader_chat_suggests_approve_for_pending_approval_without_approving tests/test_leader_cli.py::test_leader_chat_suggests_reject_for_pending_approval_without_rejecting tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching -q` 4 项通过；leader/contract 相关测试 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 141 项通过；`conda run -n agentdeck pytest -q` 213 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；临时 git 项目 smoke 确认 `leader-chat-approval-reject-smoke-ok` 且 approval 仍为 pending。
+
 ### Current - Surface Leader chat contract in workbench
 
 - 扩展 `workbench.contracts_card`：新增 `leader_chat_contract=agentdeck contract leader-chat`，让 GUI/TUI 从一屏工作台直接发现自然语言 Leader chat 响应契约和 capability placeholder discovery。

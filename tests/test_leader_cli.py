@@ -1245,6 +1245,43 @@ def test_leader_chat_suggests_approve_for_pending_approval_without_approving(
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_suggests_reject_for_pending_approval_without_rejecting(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "拒绝审批建议"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    approval_id = approvals[0]["approval_id"]
+
+    exit_code = cli.main(["leader", "chat", "--message", "拒绝当前审批"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "approval"
+    assert payload["next_command"] == f"agentdeck approval reject --approval-id {approval_id} --reason <reason>"
+    assert payload["approval_card"]["approvals"][0]["approval_id"] == approval_id
+    assert payload["approval_card"]["approvals"][0]["reject_command"] == payload["next_command"]
+    assert payload["approval_card"]["approvals"][0]["preview_command"] == "agentdeck approval list"
+    assert payload["leader_explanation"]["action_kind"] == "approval_reject"
+    assert payload["leader_explanation"]["recommended_action_id"] == approval_id
+    assert payload["leader_explanation"]["action_status"] == "pending"
+    assert payload["leader_explanation"]["safety"] == "explicit_runtime"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+
+    state_after = StateStore(root).load()
+    assert state_after["approvals"][0]["status"] == "pending"
+    assert state_after["chat_turns"][0]["mode"] == "approval"
+    assert state_after["chat_turns"][0]["next_command"] == (
+        f"agentdeck approval reject --approval-id {approval_id} --reason <reason>"
+    )
+    assert state_after["chat_turns"][0]["action_kind"] == "approval_reject"
+    assert state_after["leader_actions"] == []
+    assert state_after["messages"] == []
+    assert state_after["jobs"] == []
+
+
 def test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching(
     tmp_path, monkeypatch, capsys
 ) -> None:
