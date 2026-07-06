@@ -1190,6 +1190,22 @@ def test_validate_project_view_contract_reports_missing_trace_commands() -> None
     }
 
 
+def test_validate_project_view_contract_checks_every_summary_item_trace_command() -> None:
+    payload = project_view_example()
+    second_message = dict(payload["messages"]["items"][0])
+    second_message["message_id"] = "msg_second"
+    del second_message["trace_command"]
+    payload["messages"]["items"].append(second_message)
+    payload["messages"]["count"] = 2
+
+    result = validate_project_view_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing message item field at index 1: trace_command"],
+    }
+
+
 def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     contract_path = tmp_path / "leader-chat-schema.md"
     contract_path.write_text("# Leader Chat Contract\n", encoding="utf-8")

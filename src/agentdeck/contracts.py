@@ -2567,13 +2567,19 @@ def _validate_project_view_summary_items(
         return
     if not items:
         return
-    first_item = items[0]
-    if not isinstance(first_item, dict):
-        errors.append(f"{summary_name}.items must contain objects")
-        return
-    for field in fields:
-        if field not in first_item:
-            errors.append(f"missing {label} item field: {field}")
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            if index == 0:
+                errors.append(f"{summary_name}.items must contain objects")
+            else:
+                errors.append(f"{summary_name}.items[{index}] must be an object")
+            continue
+        for field in fields:
+            if field not in item:
+                if index == 0:
+                    errors.append(f"missing {label} item field: {field}")
+                else:
+                    errors.append(f"missing {label} item field at index {index}: {field}")
 
 
 def validate_continue_contract(payload: dict[str, object]) -> dict[str, object]:

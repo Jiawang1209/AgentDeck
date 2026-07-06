@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate every ProjectView summary trace command
+
+- 收紧 ProjectView 通信账本摘要契约：`validate_project_view_contract()` 现在会逐项校验 `messages.items[]`、`jobs.items[]`、`replies.items[]` 和 `artifacts.items[]`，不再只检查第一条摘要 item。
+- 每条 summary item 都必须保留 `trace_command`，确保 GUI、自然语言入口和人类都能从任何消息、job、reply 或 artifact 摘要行跳回完整 lineage。
+- 同步 ProjectView schema 文档与 AGENT/CLAUDE 约束，明确 artifact 摘要也属于 traceable ledger surface，不能把文件路径当成第二套状态源。
+- 保持控制边界：该校验只拒绝漂移 ProjectView payload，不调用 provider、不创建 plan/action/approval/message/job/reply/artifact/inbox、不读取 artifact 文件、不发送 tmux 输入、不读取 pane、不修改 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许第二条 `messages.items[]` 缺少 `trace_command` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_project_view_contract_checks_every_summary_item_trace_command tests/test_contracts.py::test_validate_project_view_contract_reports_missing_trace_commands tests/test_contracts.py::test_validate_project_view_contract_accepts_example -q` 3 项通过；ProjectView 聚焦回归 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 416 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 442 项通过。
+
 ### Current - Validate all ProjectView plan leader backends
 
 - 收紧 ProjectView plan list 契约：`validate_project_view_contract()` 现在会逐项校验 `plans.items[]` 的 `leader_backend`，不再只检查第一条示例 plan。

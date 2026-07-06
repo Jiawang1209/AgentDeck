@@ -184,7 +184,7 @@ The following blocks use a consistent summary pattern:
 
 Summary items intentionally omit long prompts and pane output. Use detail commands such as `agentdeck plan show --plan-id <id>`, `agentdeck plan status --plan-id <id>`, `agentdeck trace --id <id>`, and `agentdeck events --limit <n>` when a client needs more context.
 
-`messages.items[]`, `jobs.items[]`, `replies.items[]`, and `artifacts.items[]` must include `trace_command`. This gives GUI clients, natural-language shells, and humans a stable one-click path from summary rows to the full communication lineage while keeping `agentdeck trace --id <id>` as the detail source. Artifact trace commands should point at the closest linked message/job/reply lineage id, so the artifact remains recoverable without making filesystem paths a workflow source of truth.
+Every item in `messages.items[]`, `jobs.items[]`, `replies.items[]`, and `artifacts.items[]` must include `trace_command`. `validate_project_view_contract()` checks every summary item, not only the first row. This gives GUI clients, natural-language shells, and humans a stable one-click path from summary rows to the full communication lineage while keeping `agentdeck trace --id <id>` as the detail source. Artifact trace commands should point at the closest linked message/job/reply lineage id, so the artifact remains recoverable without making filesystem paths a workflow source of truth.
 
 ## Leader Actions
 
