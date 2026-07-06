@@ -2399,6 +2399,38 @@ def test_leader_chat_suggests_agent_stop_without_killing_pane(tmp_path, monkeypa
     assert payload["mode"] == "runtime"
     assert payload["message"] == "停止 planner"
     assert payload["next_command"] == "agentdeck agent stop --agent planner"
+    assert payload["runtime_action_card"] == {
+        "mode": "runtime_action",
+        "title": "Stop planner",
+        "action": "stop",
+        "agent_id": "planner",
+        "role": "planning",
+        "runtime_status": "running",
+        "pane_id": "%42",
+        "command": "agentdeck agent stop --agent planner",
+        "preview_text": None,
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": None,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect planner runtime",
+                "command": "agentdeck agent terminal --agent planner",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "stop",
+                "label": "Stop planner",
+                "command": "agentdeck agent stop --agent planner",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     assert payload["runtime_card"]["agents"][0]["agent_id"] == "planner"
     assert payload["runtime_card"]["agents"][0]["status"] == "running"
     assert payload["leader_explanation"]["mode"] == "runtime"
@@ -2411,7 +2443,30 @@ def test_leader_chat_suggests_agent_stop_without_killing_pane(tmp_path, monkeypa
     assert payload["leader_explanation"]["action_status"] == "running"
     assert payload["leader_explanation"]["safety"] == "explicit_runtime"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
-    assert payload["intent_card"]["embedded_card"] == "runtime_card"
+    assert payload["intent_card"]["embedded_card"] == "runtime_action_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "runtime_card",
+        "terminal_session_card",
+        "control_registry_card",
+    ]
+    assert payload["control_registry_card"]["filters"]["card"] == "runtime_action_card"
+    assert payload["control_registry_card"]["filters"]["control_id"].startswith(
+        "runtime_action:runtime_action_card:stop:planner:"
+    )
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "control_id": selected_control["control_id"],
+        "scope": "runtime_action",
+        "card": "runtime_action_card",
+        "agent_id": "planner",
+        "kind": "stop",
+        "label": "Stop planner",
+        "command": "agentdeck agent stop --agent planner",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert selected_control["control_id"].startswith("runtime_action:runtime_action_card:stop:planner:")
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
         "label": "Stop planner",

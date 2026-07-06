@@ -2097,7 +2097,13 @@ def _runtime_action_card_payload(
     )
     if target is None:
         return None
-    title = "Send input to {agent_id}".format(agent_id=agent_id) if action == "send" else "Runtime action"
+    title = (
+        "Send input to {agent_id}".format(agent_id=agent_id)
+        if action == "send"
+        else f"Stop {agent_id}"
+        if action == "stop"
+        else "Runtime action"
+    )
     controls = [
         _control(
             kind="inspect",
@@ -6718,6 +6724,13 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 preview_text=str(send_text),
             )
             if runtime_send_intent is not None
+            else _runtime_action_card_payload(
+                runtime_card,
+                action="stop",
+                agent_id=str(runtime_stop_agent_id),
+                command=str(next_command),
+            )
+            if runtime_stop_agent_id
             else None
         )
         control_registry_card = None

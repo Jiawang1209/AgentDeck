@@ -3214,6 +3214,29 @@ def test_validate_leader_chat_contract_rejects_runtime_action_control_drift() ->
     }
 
 
+def test_validate_leader_chat_contract_rejects_runtime_stop_action_control_drift() -> None:
+    payload = leader_chat_example()
+    payload["runtime_action_card"]["title"] = "Stop planner"
+    payload["runtime_action_card"]["action"] = "stop"
+    payload["runtime_action_card"]["command"] = "agentdeck agent stop --agent planner"
+    payload["runtime_action_card"]["preview_text"] = None
+    payload["runtime_action_card"]["controls"][1] = {
+        "kind": "stop",
+        "label": "Stop planner",
+        "command": "agentdeck agent refresh",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["runtime_action_card.controls: stop command must match card command"],
+    }
+
+
 def test_validate_leader_chat_contract_rejects_missing_secondary_provider_switch_card() -> None:
     payload = leader_chat_example()
     payload["provider_switch_card"] = None
