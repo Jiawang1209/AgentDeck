@@ -5,6 +5,7 @@ from typing import Protocol
 
 from agentdeck.models import ProjectConfig
 
+PROVIDER_PLAN_REQUIRED_FIELDS = ("goal", "summary", "steps")
 PROVIDER_PLAN_STEP_REQUIRED_FIELDS = ("step", "agent_id", "role", "task", "risk", "requires_approval")
 
 
@@ -25,6 +26,9 @@ class LeaderProvider(Protocol):
 def validate_provider_plan_schema(plan: object) -> dict[str, object]:
     if not isinstance(plan, dict):
         raise RuntimeError("provider plan content must be a JSON object")
+    for field in PROVIDER_PLAN_REQUIRED_FIELDS:
+        if field not in plan:
+            raise RuntimeError(f"provider plan missing required field: {field}")
     steps = plan.get("steps")
     if not isinstance(steps, list) or not steps:
         raise RuntimeError("provider plan must include non-empty steps")

@@ -175,6 +175,26 @@ def cli_plan_stdout_missing_step_agent_id() -> str:
     )
 
 
+def cli_plan_stdout_missing_goal() -> str:
+    return json.dumps(
+        {
+            "summary": "provider omitted a required top-level field",
+            "steps": [
+                {
+                    "step": 1,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "Plan the work",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                }
+            ],
+            "approval_required": True,
+            "dispatch_ready": False,
+        }
+    )
+
+
 def test_openai_compatible_provider_requires_api_key(monkeypatch) -> None:
     monkeypatch.delenv("AGENTDECK_LEADER_API_KEY", raising=False)
 
@@ -453,6 +473,27 @@ def test_cli_provider_rejects_plan_steps_missing_required_schema_fields(tmp_path
         raise AssertionError("provider should reject plan steps missing required schema fields")
 
 
+def test_cli_provider_rejects_plan_missing_required_top_level_fields(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_missing_goal(), stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    provider = CodexCliProvider()
+
+    try:
+        provider.plan(LeaderPlanRequest(task="拒绝缺顶层字段 CLI plan", config=config))
+    except RuntimeError as exc:
+        assert str(exc) == "provider plan missing required field: goal"
+    else:
+        raise AssertionError("provider should reject plans missing required top-level schema fields")
+
+
 def test_cli_provider_reports_subprocess_failure(tmp_path, monkeypatch) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -572,6 +613,50 @@ def test_openai_compatible_provider_rejects_plan_steps_missing_required_schema_f
         assert str(exc) == "provider plan step 1 missing required field: agent_id"
     else:
         raise AssertionError("provider should reject plan steps missing required schema fields")
+
+
+def test_openai_compatible_provider_rejects_plan_missing_required_top_level_fields(
+    tmp_path, monkeypatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    class MissingTopLevelFieldResponse:
+        def __enter__(self) -> "MissingTopLevelFieldResponse":
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": cli_plan_stdout_missing_goal(),
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen",
+        lambda _request, timeout: MissingTopLevelFieldResponse(),
+    )
+
+    provider = OpenAICompatibleProvider()
+
+    try:
+        provider.plan(LeaderPlanRequest(task="拒绝缺顶层字段 API plan", config=config))
+    except RuntimeError as exc:
+        assert str(exc) == "provider plan missing required field: goal"
+    else:
+        raise AssertionError("provider should reject plans missing required top-level schema fields")
 
 
 def test_openai_compatible_provider_uses_requested_model_over_environment(tmp_path, monkeypatch) -> None:
