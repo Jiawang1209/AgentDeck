@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate provider plan display field types
+
+- 继续收紧真实 Leader provider plan schema：共享 `validate_provider_plan_schema()` 现在要求顶层 `goal`、`summary` 必须是非空字符串，避免 GUI/审计面拿到空标题或不可展示摘要。
+- 同一 validator 现在要求每个 step 的 `agent_id`、`role`、`task`、`risk` 必须是非空字符串，避免 API-backed 或 CLI-backed provider 返回 `agent_id=null`、数字 agent id 或不可渲染 task/risk。
+- 保持上一轮 schema 与审批门约束：顶层仍必须包含 `goal`、`summary`、`steps`，`steps[]` 仍必须非空，每个 step 仍必须包含 `step`、`agent_id`、`role`、`task`、`risk`、`requires_approval`，通过 schema 后仍强制 `approval_required=true`、`dispatch_ready=false`，并要求每个 step 都 `requires_approval=true`。
+- 同步 README、Leader chat schema、AGENT/CLAUDE 约束，明确 Codex CLI、Claude CLI、DeepSeek 和 OpenAI-compatible 的 provider plan 不只是字段存在，还必须携带可展示、可调度的非空字符串字段；该收紧不创建 approval、dispatch、message/job/inbox，不复用 worker tmux pane，也不发送 tmux 输入。
+- 验证记录：已先确认红测失败，CLI-backed provider 最初接受空字符串 `goal`，API-backed provider 最初接受数字 `agent_id`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_cli_provider_rejects_blank_top_level_display_fields tests/test_provider_openai_compatible.py::test_openai_compatible_provider_rejects_non_string_step_display_fields tests/test_provider_openai_compatible.py::test_cli_provider_rejects_plan_missing_required_top_level_fields tests/test_provider_openai_compatible.py::test_openai_compatible_provider_rejects_plan_missing_required_top_level_fields tests/test_provider_openai_compatible.py::test_cli_provider_rejects_plan_steps_missing_required_schema_fields tests/test_provider_openai_compatible.py::test_openai_compatible_provider_rejects_plan_steps_missing_required_schema_fields tests/test_provider_openai_compatible.py::test_cli_provider_normalizes_missing_plan_control_flags tests/test_provider_openai_compatible.py::test_cli_provider_forces_approval_gates_when_provider_returns_unsafe_control_flags tests/test_provider_openai_compatible.py::test_openai_compatible_provider_forces_approval_gates_when_provider_returns_unsafe_control_flags -q` 9 项通过；provider 回归 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py -q` 21 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 442 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 474 项通过。
+
 ### Current - Validate provider plan top-level schema
 
 - 继续收紧真实 Leader provider plan schema：共享 `validate_provider_plan_schema()` 现在要求顶层 `goal`、`summary` 和 `steps` 字段存在，避免 API-backed 或 CLI-backed provider 返回缺少 GUI/审计摘要字段的半结构化 plan。
