@@ -3761,6 +3761,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         controls = intent_card.get("controls")
         if isinstance(controls, list):
             has_next_control = False
+            leader_status_refresh_control_ok = False
+            leader_status_card = payload.get("leader_status_card") if isinstance(payload.get("leader_status_card"), dict) else {}
+            expected_leader_status_refresh_command = (
+                leader_status_card.get("refresh_command")
+                if intent_card.get("embedded_card") == "leader_status_card"
+                else None
+            )
             for control in controls:
                 if isinstance(control, dict):
                     for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
@@ -3780,6 +3787,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                         and control.get("command") != expected_reply_waiting_trace_command
                     ):
                         errors.append("intent_card.controls: reply_waiting inspect must trace pending message")
+                    if control.get("kind") == "refresh" and expected_leader_status_refresh_command is not None:
+                        if control.get("command") == expected_leader_status_refresh_command:
+                            leader_status_refresh_control_ok = True
+                        if control.get("safety") != "inspect":
+                            errors.append("intent_card.controls: leader_status refresh must use safety=inspect")
                     placeholder_enabled = _command_has_placeholder(control.get("command")) and control.get("enabled") is not False
                     if placeholder_enabled:
                         errors.append("intent_card.controls: placeholder commands must be disabled")
@@ -3790,6 +3802,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                         errors.append("intent_card.controls: disabled controls must include blocker")
                 else:
                     errors.append("intent_card.controls items must be objects")
+            if expected_leader_status_refresh_command is not None and not leader_status_refresh_control_ok:
+                errors.append("intent_card.controls: leader_status refresh command must match leader_status_card.refresh_command")
             if intent_card.get("next_command") is not None and not has_next_control:
                 errors.append("intent_card.controls: next_command requires a next control")
         elif "controls" in intent_card:

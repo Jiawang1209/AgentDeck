@@ -6354,6 +6354,14 @@ def test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or
     assert payload["intent_card"]["embedded_card"] == "leader_status_card"
     assert payload["intent_card"]["read_only"] is True
     assert payload["intent_card"]["controls"][0] == {
+        "kind": "refresh",
+        "label": "Refresh Leader status",
+        "command": payload["leader_status_card"]["refresh_command"],
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["intent_card"]["controls"][1] == {
         "kind": "inspect",
         "label": "Inspect leader_status_card",
         "command": "agentdeck leader status",

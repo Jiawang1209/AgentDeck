@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Surface Leader status refresh in chat intent
+
+- 扩展自然语言 `mode=leader_status` 的 `intent_card.controls[]`：当响应嵌入 `leader_status_card` 时，intent card 会先暴露 `kind=refresh` / `label=Refresh Leader status` / `command=<leader_status_card.refresh_command>` / `safety=inspect`。
+- 该改动让 GUI/TUI 或自然语言壳在 `agentdeck leader chat --message "查看 Leader 状态"` / `"Leader 概览"` 响应中，可以直接从 intent card 渲染刷新按钮，而不必深入解析 embedded card controls。
+- 收紧 `validate_leader_chat_contract()`：`intent_card.embedded_card=leader_status_card` 时，必须存在 refresh control，且 command 必须匹配 `leader_status_card.refresh_command`、safety 必须是 `inspect`。
+- 保持只读边界：refresh control 只是命令投影，不调用 provider、不读取 tmux pane、不写 state、不创建 plan/action/approval/message/job/inbox，也不执行刷新命令。
+- 同步 `docs/contracts/leader-chat-schema.md`，明确 leader_status intent card 的 refresh control 规则。
+- 验证记录：已先确认红测失败，自然语言 `leader_status` intent card 最初只暴露 inspect control，validator 也会放过缺失 refresh control 的状态响应；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or_runtime tests/test_contracts.py::test_validate_leader_chat_contract_requires_leader_status_refresh_intent_control tests/test_contracts.py::test_validate_leader_chat_contract_rejects_leader_status_command_drift tests/test_contracts.py::test_validate_leader_chat_contract_reuses_leader_status_card_validator -q` 4 项通过；Leader/contract 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 347 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 494 项通过。
+
 ### Current - Add refresh control to Leader status card
 
 - 扩展 `agentdeck leader status` 只读状态卡：`controls[]` 第一项现在是 `kind=refresh` / `label=Refresh Leader status` / `command=agentdeck leader status` / `safety=inspect`，让 GUI/TUI 顶栏无需解析字段即可渲染刷新按钮。

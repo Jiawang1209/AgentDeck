@@ -179,6 +179,24 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     read_only = mode not in {"plan", "run_start", "review", "apply_action"} and action_kind != "approval_create"
     next_command = payload.get("next_command")
     controls: list[dict[str, object]] = []
+    if embedded_card == "leader_status_card":
+        leader_status_card = payload.get("leader_status_card")
+        refresh_command = (
+            leader_status_card.get("refresh_command")
+            if isinstance(leader_status_card, dict)
+            else None
+        )
+        if refresh_command:
+            controls.append(
+                {
+                    "kind": "refresh",
+                    "label": "Refresh Leader status",
+                    "command": refresh_command,
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                }
+            )
     inspect_command = _leader_chat_intent_inspect_command(embedded_card, payload)
     if inspect_command is not None:
         controls.append(
