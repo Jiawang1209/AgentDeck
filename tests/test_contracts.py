@@ -63,6 +63,7 @@ from agentdeck.contracts import (
     TRACE_REPLY_FIELDS,
     TRACE_TOP_LEVEL_FIELDS,
     WORKBENCH_AUDIT_CARD_FIELDS,
+    WORKBENCH_AUDIT_EVENT_FIELDS,
     WORKBENCH_CHANGE_SUMMARY_FIELDS,
     WORKBENCH_CONTRACTS_CARD_FIELDS,
     WORKBENCH_CONTROL_MODE_CARD_FIELDS,
@@ -1537,6 +1538,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert payload["run_progress_card_fields"] == list(RUN_PROGRESS_RESPONSE_FIELDS)
     assert payload["audit_card_fields"] == list(WORKBENCH_AUDIT_CARD_FIELDS)
+    assert payload["audit_event_fields"] == list(WORKBENCH_AUDIT_EVENT_FIELDS)
     assert payload["artifacts_card_fields"] == list(ARTIFACTS_RESPONSE_FIELDS)
     assert payload["artifact_summary_fields"] == list(ARTIFACTS_SUMMARY_FIELDS)
     assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
@@ -2173,6 +2175,21 @@ def test_validate_workbench_contract_requires_audit_fields() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["audit_card: missing audit_card field: events_command"]}
+
+
+def test_validate_workbench_contract_requires_every_audit_recent_event_fields() -> None:
+    payload = workbench_example()
+    second_event = {**payload["audit_card"]["recent_events"][0], "event_id": "evt_second"}
+    payload["audit_card"]["recent_events"].append(second_event)
+    payload["audit_card"]["event_count"] = 2
+    del payload["audit_card"]["recent_events"][1]["event_type"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["audit_card.recent_events[1] missing event field: event_type"],
+    }
 
 
 def test_validate_workbench_contract_requires_change_summary_fields() -> None:
@@ -2824,6 +2841,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_lineage_path_fields"] == list(example["lineage_card"]["recent_paths"][0])
     assert payload["example_audit_card_fields"] == payload["audit_card_fields"]
     assert payload["example_audit_card_fields"] == list(example["audit_card"])
+    assert payload["example_audit_event_fields"] == payload["audit_event_fields"]
+    assert payload["example_audit_event_fields"] == list(example["audit_card"]["recent_events"][0])
     assert example["audit_card"] == example["workbench_card"]["audit_card"]
     assert payload["artifacts_card_fields"] == list(ARTIFACTS_RESPONSE_FIELDS)
     assert payload["artifact_summary_fields"] == list(ARTIFACTS_SUMMARY_FIELDS)

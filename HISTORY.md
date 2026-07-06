@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate every workbench audit event
+
+- 收紧 Workbench audit card 契约：`validate_workbench_contract()` 现在会逐项校验 `audit_card.recent_events[]` 的 compact event summary 字段，不再只检查它是 list。
+- 新增可发现的 `audit_event_fields=["event_id","event_type","created_at"]`，并要求 `audit_card.event_count` 与 `recent_events[]` 长度一致，让 GUI/TUI 能稳定渲染最近审计时间线和恢复入口。
+- 同步 Workbench schema、AGENT/CLAUDE 约束，明确自然语言审计入口和 workbench audit card 都必须保留每条最近事件的 id/type/time，而不是要求 GUI 读取 raw JSONL event log 才能展示。
+- 保持控制边界：该校验只拒绝漂移 Workbench payload，不读取 raw event log、不创建 plan/action/approval/message/job/inbox、不 ack/approve/dispatch、不 capture、不读取 pane、不发送 tmux 输入、不写 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许第二条 `audit_card.recent_events[]` 缺少 `event_type` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_workbench_contract_requires_every_audit_recent_event_fields tests/test_contracts.py::test_validate_workbench_contract_requires_audit_fields tests/test_contracts.py::test_validate_workbench_contract_accepts_example -q` 3 项通过；contract discovery/audit 聚焦回归 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 424 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 450 项通过。
+
 ### Current - Validate every workbench role agent
 
 - 收紧 Workbench role card 契约：`validate_workbench_contract()` 现在会逐项校验 `role_card.agents[]`，不再只检查第一条 role row。

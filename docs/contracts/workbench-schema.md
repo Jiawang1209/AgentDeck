@@ -611,7 +611,7 @@ For approval dispatch recovery, `operator_card` derives runtime readiness from t
 }
 ```
 
-The card intentionally uses compact ProjectView recovery event summaries. Use `events_command` when a GUI needs the raw JSONL timeline.
+The card intentionally uses compact ProjectView recovery event summaries. `validate_workbench_contract()` validates every `recent_events[]` item for `event_id`, `event_type`, and `created_at`, and `event_count` must match the list length, so GUI clients can render a consistent recovery timeline without reading the raw event log. Use `events_command` when a GUI needs the raw JSONL timeline.
 
 ## Artifacts Card
 

@@ -1055,6 +1055,12 @@ WORKBENCH_AUDIT_CARD_FIELDS = (
     "events_command",
 )
 
+WORKBENCH_AUDIT_EVENT_FIELDS = (
+    "event_id",
+    "event_type",
+    "created_at",
+)
+
 WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "contracts_command",
     "contract_index_contract",
@@ -1473,6 +1479,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
+        "audit_event_fields": list(WORKBENCH_AUDIT_EVENT_FIELDS),
         "artifacts_card_fields": list(ARTIFACTS_RESPONSE_FIELDS),
         "artifact_summary_fields": list(ARTIFACTS_SUMMARY_FIELDS),
         "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
@@ -1544,6 +1551,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_lineage_card_fields"] = list(example["lineage_card"])
         payload["example_lineage_path_fields"] = list(example["lineage_card"]["recent_paths"][0])
         payload["example_audit_card_fields"] = list(example["audit_card"])
+        payload["example_audit_event_fields"] = list(example["audit_card"]["recent_events"][0])
         payload["example_artifacts_card_fields"] = list(example["artifacts_card"])
         payload["example_workbench_card_fields"] = list(example["workbench_card"])
         payload["example_control_mode_card_fields"] = list(example["control_mode_card"])
@@ -2139,6 +2147,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "run_progress_card_fields": list(RUN_PROGRESS_RESPONSE_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
+        "audit_event_fields": list(WORKBENCH_AUDIT_EVENT_FIELDS),
         "artifacts_card_fields": list(ARTIFACTS_RESPONSE_FIELDS),
         "artifact_summary_fields": list(ARTIFACTS_SUMMARY_FIELDS),
         "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
@@ -3386,7 +3395,18 @@ def _validate_audit_card_contract(errors: list[str], audit_card: dict[str, objec
     for field in WORKBENCH_AUDIT_CARD_FIELDS:
         if field not in audit_card:
             errors.append(f"{prefix}: missing audit_card field: {field}")
-    if "recent_events" in audit_card and not isinstance(audit_card.get("recent_events"), list):
+    recent_events = audit_card.get("recent_events")
+    if isinstance(recent_events, list):
+        for index, event in enumerate(recent_events):
+            if not isinstance(event, dict):
+                errors.append(f"{prefix}.recent_events[{index}] must be an object")
+                continue
+            for field in WORKBENCH_AUDIT_EVENT_FIELDS:
+                if field not in event:
+                    errors.append(f"{prefix}.recent_events[{index}] missing event field: {field}")
+        if isinstance(audit_card.get("event_count"), int) and audit_card.get("event_count") != len(recent_events):
+            errors.append(f"{prefix}: audit_card.event_count must match recent_events length")
+    elif "recent_events" in audit_card:
         errors.append(f"{prefix}: audit_card.recent_events must be a list")
     if "event_count" in audit_card and not isinstance(audit_card.get("event_count"), int):
         errors.append(f"{prefix}: audit_card.event_count must be an integer")
