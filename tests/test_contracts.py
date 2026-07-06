@@ -370,6 +370,9 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
         "attach_session",
         "open_controls",
         "refresh_runtime",
+        "select_pane",
+        "select_pane",
+        "select_pane",
     ]
 
 
@@ -684,6 +687,23 @@ def test_validate_control_registry_card_contract_requires_terminal_session_refre
     assert result == {
         "ok": False,
         "errors": ["control_registry_card.items: terminal_session refresh_runtime must use safety=explicit_runtime"],
+    }
+
+
+def test_validate_control_registry_card_contract_requires_terminal_session_select_pane_safety() -> None:
+    payload = controls_example()
+    terminal_item = next(
+        item
+        for item in payload["items"]
+        if item["scope"] == "terminal_session" and item["kind"] == "select_pane"
+    )
+    terminal_item["safety"] = "explicit_runtime"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: terminal_session select_pane must use safety=inspect"],
     }
 
 
@@ -1333,6 +1353,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         ("terminal_session", "terminal_session_card", "attach_session", None),
         ("terminal_session", "terminal_session_card", "open_controls", None),
         ("terminal_session", "terminal_session_card", "refresh_runtime", None),
+        ("terminal_session", "terminal_session_card", "select_pane", "planner"),
         ("runtime", "runtime_card", "terminal", "planner"),
         ("runtime", "runtime_card", "capture", "planner"),
         ("operator", "operator_card", "apply", None),
@@ -1358,6 +1379,14 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     )
     assert terminal_session_item["command"] == "agentdeck agent refresh"
     assert terminal_session_item["safety"] == "explicit_runtime"
+    select_pane_item = next(
+        item
+        for item in example["control_registry"]
+        if item["scope"] == "terminal_session" and item["kind"] == "select_pane"
+    )
+    assert select_pane_item["agent_id"] == "planner"
+    assert select_pane_item["command"] == example["terminal_session_card"]["terminals"][0]["select_pane_command"]
+    assert select_pane_item["safety"] == "inspect"
     assert set(example["provider_health"]) == set(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert example["provider_health"]["provider_backend"] == "local"
     assert example["provider_health"]["provider_transport"] == "local"

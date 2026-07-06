@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Index terminal select-pane controls in command palette
+
+- 扩展 workbench/control registry：`terminal_session_card.terminals[].controls[]` 现在会进入 `control_registry[]` 和 `agentdeck controls`，以 `scope=terminal_session` / `card=terminal_session_card` / `kind=select_pane` / `agent_id=<agent>` 暴露每个 agent 的 pane focus 控件。
+- 保持 GUI/TUI 可消费：`agentdeck controls --scope terminal_session --enabled-only` 现在能同时返回项目级 attach/open/refresh 和 running agent 的 enabled select-pane control；未 running agent 的 select-pane control 保留 disabled/blocker，可被普通 scope 查询看到但不会成为 `next_command`。
+- 扩展 control registry validator：terminal session `select_pane` item 必须使用 `safety=inspect`，enabled item 必须指向 tmux `select-pane -t` 命令，disabled item 的 command 必须为 `null` 且必须带 blocker。
+- 保持控制边界：命令面板只是只读投影和过滤/选择层，不自动 attach tmux、不 select pane、不 refresh runtime、不 capture pane、不 send input、不写 state。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/controls-schema.md`，明确 terminal_session scope 同时来自 card-level terminal controls 和 per-terminal item controls。
+- 验证记录：已先确认红测失败，live workbench 与 workbench example 的 `control_registry[]` 最初缺少 `kind=select_pane` item，validator 红测也因 controls example 缺少 select-pane item 失败；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_controls_filters_by_scope_and_enabled_without_mutating_state tests/test_agent_cli.py::test_controls_surfaces_terminal_session_select_pane_controls_when_filtered tests/test_agent_cli.py::test_controls_filters_by_query_without_mutating_state tests/test_agent_cli.py::test_controls_filters_by_control_id_without_mutating_state tests/test_agent_cli.py::test_controls_reports_unmatched_control_id_selection_without_mutating_state tests/test_agent_cli.py::test_controls_reports_filtered_out_control_id_selection_without_mutating_state tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_control_registry_card_contract_requires_terminal_session_select_pane_safety -q` 10 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 371 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 397 项通过。
+
 ### Current - Add select-pane controls to terminal session items
 
 - 扩展 `terminal_session_card.terminals[]`：每个 terminal item 现在都有 GUI-ready `controls[]`，running agent 暴露 `kind=select_pane` / `label=Select pane` / `safety=inspect` 的 select-pane 控件，未 running agent 保留 disabled 控件和 `agent is not running` blocker。

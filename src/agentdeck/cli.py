@@ -960,6 +960,18 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id=None,
         controls=terminal_session_card.get("controls"),
     )
+    terminal_session_items = (
+        terminal_session_card.get("terminals") if isinstance(terminal_session_card.get("terminals"), list) else []
+    )
+    for terminal in terminal_session_items:
+        if isinstance(terminal, dict):
+            _append_workbench_control_registry_items(
+                registry,
+                scope="terminal_session",
+                card="terminal_session_card",
+                agent_id=terminal.get("agent_id"),
+                controls=terminal.get("controls"),
+            )
     runtime_card = payload.get("runtime_card") if isinstance(payload.get("runtime_card"), dict) else {}
     runtime_agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
     for agent in runtime_agents:

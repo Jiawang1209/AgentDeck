@@ -3570,6 +3570,17 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                         errors.append(
                             "control_registry_card.items: terminal_session refresh_runtime command must be agentdeck agent refresh"
                         )
+                if item.get("kind") == "select_pane":
+                    if item.get("safety") != "inspect":
+                        errors.append("control_registry_card.items: terminal_session select_pane must use safety=inspect")
+                    if item.get("enabled") is True and " select-pane -t " not in str(item.get("command") or ""):
+                        errors.append(
+                            "control_registry_card.items: terminal_session select_pane command must use tmux select-pane"
+                        )
+                    if item.get("enabled") is False and item.get("command") is not None:
+                        errors.append(
+                            "control_registry_card.items: disabled terminal_session select_pane command must be null"
+                        )
         if duplicate_control_id:
             errors.append("control_registry_card.items: control_id values must be unique")
         if isinstance(selection, dict) and selection_fields_present:
@@ -4690,6 +4701,18 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         agent_id=None,
         controls=terminal_session_card.get("controls"),
     )
+    terminal_session_items = (
+        terminal_session_card.get("terminals") if isinstance(terminal_session_card.get("terminals"), list) else []
+    )
+    for terminal in terminal_session_items:
+        if isinstance(terminal, dict):
+            _append_control_registry_items(
+                registry,
+                scope="terminal_session",
+                card="terminal_session_card",
+                agent_id=terminal.get("agent_id"),
+                controls=terminal.get("controls"),
+            )
     runtime_card = payload.get("runtime_card") if isinstance(payload.get("runtime_card"), dict) else {}
     runtime_agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
     for agent in runtime_agents:
