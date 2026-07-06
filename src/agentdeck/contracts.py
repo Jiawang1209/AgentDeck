@@ -152,6 +152,14 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "recovery",
 )
 
+PROJECT_VIEW_LEADER_FIELDS = (
+    "agent_id",
+    "provider",
+    "model",
+    "approval_mode",
+    "leader_backend",
+)
+
 PROJECT_VIEW_RECOVERY_FIELDS = (
     "status",
     "reason",
@@ -1294,6 +1302,7 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "top_level_fields": list(PROJECT_VIEW_TOP_LEVEL_FIELDS),
+        "leader_fields": list(PROJECT_VIEW_LEADER_FIELDS),
         "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
         "recovery_pending_fields": list(PROJECT_VIEW_RECOVERY_PENDING_FIELDS),
         "recommended_action_fields": list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS),
@@ -1312,6 +1321,7 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         example = project_view_example()
         payload["example"] = True
         payload["example_top_level_fields"] = list(example)
+        payload["example_leader_fields"] = list(example["leader"])
         payload["example_recovery_fields"] = list(example["recovery"])
         payload["example_recovery_pending_fields"] = list(example["recovery"]["pending"])
         payload["example_recommended_action_fields"] = list(example["recovery"]["recommended_action"])
@@ -2347,6 +2357,18 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     for field in PROJECT_VIEW_TOP_LEVEL_FIELDS:
         if field not in payload:
             errors.append(f"missing top-level field: {field}")
+    leader = payload.get("leader")
+    if isinstance(leader, dict):
+        for field in PROJECT_VIEW_LEADER_FIELDS:
+            if field not in leader:
+                errors.append(f"missing leader field: {field}")
+        leader_backend = leader.get("leader_backend")
+        if isinstance(leader_backend, dict):
+            _validate_leader_backend(errors, "project_view.leader", leader_backend)
+        else:
+            errors.append("project_view.leader.leader_backend must be an object")
+    elif "leader" in payload:
+        errors.append("leader must be an object")
     recovery = payload.get("recovery")
     if isinstance(recovery, dict):
         for field in PROJECT_VIEW_RECOVERY_FIELDS:
@@ -4244,7 +4266,25 @@ def project_view_example() -> dict[str, object]:
         "project": "agentdeck-example",
         "root": "/workspace/agentdeck-example",
         "runtime_backend": "tmux",
-        "leader": {"agent_id": "leader", "provider": "fake", "model": "fake-plan", "approval_mode": "confirm"},
+        "leader": {
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "approval_mode": "confirm",
+            "leader_backend": {
+                "agent_id": "leader",
+                "provider": "fake",
+                "model": "fake-plan",
+                "provider_backend": "local",
+                "provider_transport": "local",
+                "reasoning_backend": "local-fake",
+                "runtime_kind": "logical_leader",
+                "pane_backed": False,
+                "pane_id": None,
+                "approval_required": True,
+                "dispatch_ready": False,
+            },
+        },
         "agents": [
             {
                 "agent_id": "planner",

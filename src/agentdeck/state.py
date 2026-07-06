@@ -1462,12 +1462,14 @@ class StateStore:
                     "runtime": binding,
                 }
             )
+        leader = asdict(config.leader)
+        leader["leader_backend"] = leader_backend_identity(config.leader.provider, config.leader.model)
         return ProjectView(
             schema_version=PROJECT_VIEW_SCHEMA_VERSION,
             project=config.name,
             root=config.root,
             runtime_backend=config.runtime.backend,
-            leader=asdict(config.leader),
+            leader=leader,
             agents=agents,
             state_path=str(self.state_path),
             plans=self._plan_summaries(state.get("plans", [])),

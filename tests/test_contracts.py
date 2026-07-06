@@ -851,6 +851,13 @@ def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -
     assert payload["contract_path"] == str(contract_path)
     assert payload["contract_exists"] is True
     assert payload["top_level_fields"] == list(PROJECT_VIEW_TOP_LEVEL_FIELDS)
+    assert payload["leader_fields"] == [
+        "agent_id",
+        "provider",
+        "model",
+        "approval_mode",
+        "leader_backend",
+    ]
     assert payload["recovery_fields"] == list(PROJECT_VIEW_RECOVERY_FIELDS)
     assert payload["recovery_pending_fields"] == list(PROJECT_VIEW_RECOVERY_PENDING_FIELDS)
     assert payload["recommended_action_fields"] == list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS)
@@ -939,6 +946,21 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
     assert payload["example_project_view"] == example
     assert payload["example_top_level_fields"] == payload["top_level_fields"]
     assert set(payload["example_top_level_fields"]) == set(example)
+    assert payload["example_leader_fields"] == payload["leader_fields"]
+    assert set(payload["example_leader_fields"]) == set(example["leader"])
+    assert example["leader"]["leader_backend"] == {
+        "agent_id": "leader",
+        "provider": "fake",
+        "model": "fake-plan",
+        "provider_backend": "local",
+        "provider_transport": "local",
+        "reasoning_backend": "local-fake",
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
     assert payload["example_recovery_fields"] == payload["recovery_fields"]
     assert set(payload["example_recovery_fields"]) == set(example["recovery"])
     assert payload["example_recovery_pending_fields"] == payload["recovery_pending_fields"]
@@ -972,6 +994,21 @@ def test_validate_project_view_contract_reports_missing_top_level_field() -> Non
     result = validate_project_view_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing top-level field: recovery"]}
+
+
+def test_validate_project_view_contract_reports_missing_leader_backend() -> None:
+    payload = project_view_example()
+    del payload["leader"]["leader_backend"]
+
+    result = validate_project_view_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "missing leader field: leader_backend",
+            "project_view.leader.leader_backend must be an object",
+        ],
+    }
 
 
 def test_validate_project_view_contract_reports_schema_version_mismatch() -> None:

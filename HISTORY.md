@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Surface Leader backend identity in ProjectView
+
+- 扩展 `agentdeck status` / ProjectView 顶层 `leader`：现在包含当前配置 provider/model 的 normalized `leader_backend`，让 GUI、自然语言入口和恢复工具在没有 plan/run 的情况下也能识别 fake、API-backed 或 CLI-backed Leader 来源。
+- 扩展 ProjectView contract discovery 与 example：新增 `leader_fields` / `example_leader_fields`，并让 `validate_project_view_contract()` 校验 `leader.leader_backend` 是 logical Leader identity，防止 ProjectView 源头和 workbench/run/review/summary provenance 分叉。
+- 保持控制边界：`leader.leader_backend` 只是只读 provenance，不表示 tmux pane 绑定、provider readiness、dispatch permission 或执行授权；`agentdeck status` 仍不调用 provider、不写 state、不读取 pane、不发送 tmux 输入。
+- 同步 `docs/contracts/project-view-schema.md`、README、AGENT.md 和 CLAUDE.md。
+- 验证记录：已先确认红测失败，`agentdeck contract project-view` 最初缺少 `leader_fields`，ProjectView example 与 live `agentdeck status` 的顶层 `leader` 最初缺少 `leader_backend`，validator 也未校验该字段；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_project_view_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_project_view_example_exports_gui_ready_status tests/test_agent_cli.py::test_status_includes_project_state_summaries tests/test_agent_cli.py::test_status_matches_project_view_contract_for_gui_clients tests/test_contracts.py::test_project_view_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_project_view_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_project_view_contract_reports_missing_leader_backend -q` 7 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 375 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 401 项通过。
+
 ### Current - Surface Leader backend identity on workbench
 
 - 扩展 `agentdeck workbench` 的 `leader_card`：现在直接暴露当前配置 provider/model 的 normalized `leader_backend`，让 GUI/TUI 在没有 plan 的情况下也能识别 fake、API-backed 或 CLI-backed Leader 来源。

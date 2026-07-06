@@ -114,7 +114,7 @@ Runtime state 默认写到 `.agentdeck/`，不要提交该目录。
 - 每次新增功能或用户可见行为变化都要 commit。
 - 每次开发内容都要同步更新 `HISTORY.md`，并和对应代码/文档改动放在同一次 commit 中。
 - 每次开发前先对照 `docs/roadmap/ultimate-goal-roadmap.md`，确认功能服务 Leader Agent、多 Agent 通信、可见 runtime、审批、恢复或 GUI 主线。
-- GUI、自然语言入口和 Leader chat loop 应优先消费 `agentdeck status` 的 ProjectView 摘要；不要直接散读 state 文件作为主入口。
+- GUI、自然语言入口和 Leader chat loop 应优先消费 `agentdeck status` 的 ProjectView 摘要；顶层 `leader.leader_backend` 必须作为当前配置 Leader provider/model 的 logical identity 来源，不表示 tmux pane、readiness 或授权；不要直接散读 state 文件作为主入口。
 - ProjectView 字段契约维护在 `docs/contracts/project-view-schema.md`；当前 `schema_version` 是 `project-view/v1`，任何 GUI、recovery 或自然语言入口改动都要保持该文档同步。
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`；不要在 Python 源码里重复手写版本字符串。
 - ProjectView contract discovery payload 和 example fixture 的源码入口是 `src/agentdeck/contracts.py`；CLI 只负责调用它。

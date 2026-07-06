@@ -8,7 +8,7 @@ The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in 
 
 Reusable contract response, payload, and example fixture helpers live in `src/agentdeck/contracts.py`. The CLI discovery command uses `project_view_contract_response()` directly so command output and reusable module output stay identical.
 
-Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
+Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_LEADER_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
 
 Use `validate_project_view_contract(payload)` from `src/agentdeck/contracts.py` to check any ProjectView-like payload against the v1 baseline contract.
 
@@ -30,7 +30,25 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
   "project": "repo-name",
   "root": "/absolute/project/root",
   "runtime_backend": "tmux",
-  "leader": {},
+  "leader": {
+    "agent_id": "leader",
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "approval_mode": "confirm",
+    "leader_backend": {
+      "agent_id": "leader",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "provider_backend": "api",
+      "provider_transport": "http",
+      "reasoning_backend": "api-llm",
+      "runtime_kind": "logical_leader",
+      "pane_backed": false,
+      "pane_id": null,
+      "approval_required": true,
+      "dispatch_ready": false
+    }
+  },
   "agents": [],
   "state_path": "/absolute/project/root/.agentdeck/state/state.json",
   "plans": {},
@@ -48,6 +66,8 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
 ```
 
 All ProjectView fields are read-only summaries. Commands that mutate state, send tmux input, dispatch work, or apply approvals must remain explicit commands with approval semantics.
+
+`leader` includes the configured Leader identity and `leader_backend`, a normalized logical Leader identity for the current provider/model. This lets GUI and natural-language shells render fake/API-backed/CLI-backed Leader provenance before any plan exists. It is not a tmux pane binding, provider readiness proof, dispatch permission, or execution authorization.
 
 `plans.items[]` includes the configured provider name plus normalized provenance labels: `provider_backend` is `local` for the fake dry-run provider, `api` for API-backed Leader providers such as DeepSeek or OpenAI-compatible backends, `cli` for local CLI-backed Leader providers such as Codex CLI or Claude Code CLI, and `unknown` for unrecognized legacy records; `provider_transport` is `local`, `http`, `subprocess`, or `unknown`. Each plan item also includes `leader_backend`, a normalized identity card that keeps `agent_id=leader`, provider/model, backend/transport, `reasoning_backend`, `runtime_kind=logical_leader`, `pane_backed=false`, `pane_id=null`, `approval_required=true`, and `dispatch_ready=false` together for GUI/audit rendering. GUI clients may render these as plan origin metadata, but they are not separate state sources or execution permissions.
 
@@ -68,6 +88,7 @@ Use `agentdeck contract project-view` to discover this contract from tools or GU
   "contract_path": "/absolute/repo/docs/contracts/project-view-schema.md",
   "contract_exists": true,
   "top_level_fields": [],
+  "leader_fields": [],
   "recovery_fields": [],
   "recovery_pending_fields": [],
   "recommended_action_fields": [],
