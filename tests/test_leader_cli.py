@@ -933,6 +933,49 @@ def test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_with
     assert payload["message"] == "配置 Codex CLI Leader"
     assert payload["next_command"] == "codex login"
     assert payload["provider_health"]["provider"] == "fake"
+    setup_card = payload["provider_setup_card"]
+    assert setup_card == {
+        "mode": "provider_setup",
+        "title": "Set up Leader provider",
+        "target_provider": "codex-cli",
+        "target_model": "codex-default",
+        "setup_commands": ["codex login", "codex doctor"],
+        "recommended_command": "codex login",
+        "recommended_control_id": setup_card["recommended_control_id"],
+        "followup_switch_command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+        "require_ready": False,
+        "safety": "explicit_user",
+        "requires_explicit_user": True,
+        "mutates_config": False,
+        "controls": [
+            {
+                "kind": "setup_provider",
+                "label": "Run provider setup",
+                "command": "codex login",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+                "control_id": setup_card["recommended_control_id"],
+            },
+            {
+                "kind": "setup_provider",
+                "label": "Run provider setup",
+                "command": "codex doctor",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+                "control_id": setup_card["controls"][1]["control_id"],
+            },
+            {
+                "kind": "set_provider",
+                "label": "Switch Leader provider",
+                "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     switch_card = payload["provider_switch_card"]
     assert switch_card["target_provider"] == "codex-cli"
     assert switch_card["target_model"] == "codex-default"
@@ -976,7 +1019,11 @@ def test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_with
         "requires_explicit_user": True,
     }
     assert payload["intent_card"]["embedded_card"] == "provider_health"
-    assert payload["intent_card"]["secondary_embedded_cards"] == ["provider_switch_card", "control_registry_card"]
+    assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "provider_setup_card",
+        "provider_switch_card",
+        "control_registry_card",
+    ]
     assert payload["intent_card"]["controls"][1] == {
         "kind": "next",
         "label": "Run provider setup",
@@ -1012,6 +1059,13 @@ def test_leader_chat_provider_setup_require_ready_intent_surfaces_guarded_follow
     assert payload["mode"] == "setup"
     assert payload["next_command"] == "claude auth"
     assert payload["leader_explanation"]["action_kind"] == "provider_setup"
+    setup_card = payload["provider_setup_card"]
+    assert setup_card["target_provider"] == "claude-cli"
+    assert setup_card["recommended_command"] == "claude auth"
+    assert setup_card["followup_switch_command"] == (
+        "agentdeck leader set-provider --provider claude-cli --model claude-default --require-ready"
+    )
+    assert setup_card["require_ready"] is True
     switch_card = payload["provider_switch_card"]
     assert switch_card["target_provider"] == "claude-cli"
     assert switch_card["target_model"] == "claude-default"
@@ -1047,7 +1101,11 @@ def test_leader_chat_provider_setup_require_ready_intent_surfaces_guarded_follow
             "blocker": None,
         },
     ]
-    assert payload["intent_card"]["secondary_embedded_cards"] == ["provider_switch_card", "control_registry_card"]
+    assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "provider_setup_card",
+        "provider_switch_card",
+        "control_registry_card",
+    ]
     assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
 
     state = StateStore(root).load()

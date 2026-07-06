@@ -462,6 +462,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "terminal_card",
     "dispatch_preview_card",
     "dispatch_batch_preview_card",
+    "provider_setup_card",
     "provider_switch_card",
     "agent_ready_card",
     "inbox_card",
@@ -495,6 +496,22 @@ LEADER_CHAT_PROVIDER_SWITCH_CARD_FIELDS = (
     "require_ready",
     "command",
     "diagnostics_command",
+    "safety",
+    "requires_explicit_user",
+    "mutates_config",
+    "controls",
+)
+
+LEADER_CHAT_PROVIDER_SETUP_CARD_FIELDS = (
+    "mode",
+    "title",
+    "target_provider",
+    "target_model",
+    "setup_commands",
+    "recommended_command",
+    "recommended_control_id",
+    "followup_switch_command",
+    "require_ready",
     "safety",
     "requires_explicit_user",
     "mutates_config",
@@ -1376,6 +1393,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_card_fields": list(LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_item_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
+        "provider_setup_card_fields": list(LEADER_CHAT_PROVIDER_SETUP_CARD_FIELDS),
         "provider_switch_card_fields": list(LEADER_CHAT_PROVIDER_SWITCH_CARD_FIELDS),
         "agent_ready_card_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
@@ -1442,6 +1460,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_dispatch_batch_preview_item_fields"] = list(
             LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS
         )
+        payload["example_provider_setup_card_fields"] = list(example["provider_setup_card"])
         payload["example_provider_switch_card_fields"] = list(example["provider_switch_card"])
         payload["example_agent_ready_card_fields"] = list(example["agent_ready_card"])
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
@@ -3165,6 +3184,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             ):
                 errors.append("intent_card.secondary_embedded_cards references missing provider_switch_card")
             if (
+                "provider_setup_card" in secondary_embedded_cards
+                and payload.get("provider_setup_card") is None
+            ):
+                errors.append("intent_card.secondary_embedded_cards references missing provider_setup_card")
+            if (
                 "control_registry_card" in secondary_embedded_cards
                 and payload.get("control_registry_card") is None
             ):
@@ -3395,6 +3419,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_capability_card_contract(errors, capability_card)
     elif "capability_card" in payload and capability_card is not None:
         errors.append("capability_card must be an object")
+    provider_setup_card = payload.get("provider_setup_card")
+    if isinstance(provider_setup_card, dict):
+        _validate_leader_chat_provider_setup_card_contract(errors, provider_setup_card)
+    elif "provider_setup_card" in payload and provider_setup_card is not None:
+        errors.append("provider_setup_card must be an object")
     control_registry_card = payload.get("control_registry_card")
     if isinstance(control_registry_card, dict):
         _validate_control_registry_card_contract(errors, control_registry_card)
@@ -3550,6 +3579,69 @@ def _validate_leader_chat_dispatch_batch_preview_card_contract(
             errors.append("dispatch_batch_preview_card.blocked_count must match blocked items")
     elif "items" in dispatch_batch_preview_card:
         errors.append("dispatch_batch_preview_card.items must be a list")
+
+
+def _validate_leader_chat_provider_setup_card_contract(
+    errors: list[str],
+    provider_setup_card: dict[str, object],
+) -> None:
+    for field in LEADER_CHAT_PROVIDER_SETUP_CARD_FIELDS:
+        if field not in provider_setup_card:
+            errors.append(f"missing provider_setup_card field: {field}")
+    if provider_setup_card.get("mode") != "provider_setup":
+        errors.append("provider_setup_card.mode must be provider_setup")
+    setup_commands = provider_setup_card.get("setup_commands")
+    if not isinstance(setup_commands, list) or not all(isinstance(command, str) for command in setup_commands):
+        errors.append("provider_setup_card.setup_commands must be a list of strings")
+        setup_command_values: list[str] = []
+    else:
+        setup_command_values = setup_commands
+    if provider_setup_card.get("recommended_command") not in setup_command_values:
+        errors.append("provider_setup_card.recommended_command must come from setup_commands")
+    if provider_setup_card.get("safety") != "explicit_user":
+        errors.append("provider_setup_card.safety must be explicit_user")
+    if provider_setup_card.get("requires_explicit_user") is not True:
+        errors.append("provider_setup_card.requires_explicit_user must be true")
+    if provider_setup_card.get("mutates_config") is not False:
+        errors.append("provider_setup_card.mutates_config must be false")
+    if not isinstance(provider_setup_card.get("require_ready"), bool):
+        errors.append("provider_setup_card.require_ready must be a boolean")
+    controls = provider_setup_card.get("controls")
+    setup_control_ids: list[str] = []
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("provider_setup_card.controls items must be objects")
+                continue
+            for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"provider_setup_card.controls: missing control field: {field}")
+            if control.get("kind") == "setup_provider":
+                if control.get("safety") != "explicit_user":
+                    errors.append("provider_setup_card.controls: setup_provider controls must use safety=explicit_user")
+                if control.get("command") not in setup_command_values:
+                    errors.append("provider_setup_card.controls: setup_provider command must come from setup_commands")
+                control_id = control.get("control_id")
+                if isinstance(control_id, str):
+                    setup_control_ids.append(control_id)
+                else:
+                    errors.append("provider_setup_card.controls: setup_provider controls must include control_id")
+            if control.get("kind") in {"set_provider", "guarded_set_provider"}:
+                if control.get("command") != provider_setup_card.get("followup_switch_command"):
+                    errors.append("provider_setup_card.controls: switch control command must match followup_switch_command")
+                if provider_setup_card.get("require_ready") is True and control.get("kind") != "guarded_set_provider":
+                    errors.append("provider_setup_card.controls: switch control kind must be guarded_set_provider when require_ready is true")
+                if provider_setup_card.get("require_ready") is False and control.get("kind") != "set_provider":
+                    errors.append("provider_setup_card.controls: switch control kind must be set_provider when require_ready is false")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append("provider_setup_card.controls: disabled controls must include blocker")
+    elif "controls" in provider_setup_card:
+        errors.append("provider_setup_card.controls must be a list")
+    recommended_control_id = provider_setup_card.get("recommended_control_id")
+    if recommended_control_id is not None and not isinstance(recommended_control_id, str):
+        errors.append("provider_setup_card.recommended_control_id must be a string or null")
+    if isinstance(recommended_control_id, str) and recommended_control_id not in setup_control_ids:
+        errors.append("provider_setup_card.recommended_control_id must match a setup_provider control")
 
 
 def _validate_leader_chat_provider_switch_card_contract(
@@ -4766,6 +4858,48 @@ def leader_chat_example() -> dict[str, object]:
             },
         ],
     }
+    provider_setup_card = {
+        "mode": "provider_setup",
+        "title": "Set up Leader provider",
+        "target_provider": "codex-cli",
+        "target_model": "codex-default",
+        "setup_commands": ["codex login", "codex doctor"],
+        "recommended_command": "codex login",
+        "recommended_control_id": "provider:provider_health:setup_provider:leader:example",
+        "followup_switch_command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+        "require_ready": False,
+        "safety": "explicit_user",
+        "requires_explicit_user": True,
+        "mutates_config": False,
+        "controls": [
+            {
+                "kind": "setup_provider",
+                "label": "Run provider setup",
+                "command": "codex login",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+                "control_id": "provider:provider_health:setup_provider:leader:example",
+            },
+            {
+                "kind": "setup_provider",
+                "label": "Run provider setup",
+                "command": "codex doctor",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+                "control_id": "provider:provider_health:setup_provider:leader:example-doctor",
+            },
+            {
+                "kind": "set_provider",
+                "label": "Switch Leader provider",
+                "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -4818,6 +4952,7 @@ def leader_chat_example() -> dict[str, object]:
         "terminal_card": terminal_card,
         "dispatch_preview_card": None,
         "dispatch_batch_preview_card": None,
+        "provider_setup_card": provider_setup_card,
         "provider_switch_card": provider_switch_card,
         "agent_ready_card": agent_ready_card,
         "inbox_card": None,

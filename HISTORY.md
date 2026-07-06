@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add provider setup card for GUI
+
+- 新增 `provider_setup_card`：自然语言 provider setup 响应现在会显式暴露 target provider/model、setup_commands、recommended_command、recommended_control_id、followup_switch_command、require_ready、explicit_user controls 和 `mutates_config=false`。
+- `intent_card.secondary_embedded_cards` 现在把 provider setup 流程拆成 `provider_setup_card`、`provider_switch_card` 和 `control_registry_card` 三张 GUI 可消费卡：setup checklist、后续显式切换确认、命令面板选择投影。
+- 扩展 `agentdeck contract leader-chat`：新增 `provider_setup_card_fields` / `example_provider_setup_card_fields`，并让 `validate_leader_chat_contract()` 校验 setup card 字段、recommended command、recommended control id 和 controls 对齐。
+- 保持控制边界：该响应只记录 chat turn，不修改 `.agentdeck/config.toml`、不调用当前或目标 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，provider setup 响应最初缺少 `provider_setup_card`，leader-chat contract 也缺少 `provider_setup_card_fields`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_leader_cli.py::test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_without_planning tests/test_leader_cli.py::test_leader_chat_provider_setup_require_ready_intent_surfaces_guarded_followup -q` 5 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 389 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 415 项通过。
+
 ### Current - Select recommended provider setup control
 
 - 扩展 provider setup 响应里的 `control_registry_card`：自然语言 `"配置 Codex CLI Leader"` 现在会找到推荐 setup command 对应的 `control_id`，并让 command palette selection 精确选中该 control。

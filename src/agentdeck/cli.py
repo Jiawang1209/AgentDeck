@@ -129,6 +129,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("runtime_card")
     if embedded_card == "runtime_card" and payload.get("terminal_session_card") is not None:
         secondary_embedded_cards.append("terminal_session_card")
+    if embedded_card == "provider_health" and payload.get("provider_setup_card") is not None:
+        secondary_embedded_cards.append("provider_setup_card")
     if embedded_card == "provider_health" and payload.get("provider_switch_card") is not None:
         secondary_embedded_cards.append("provider_switch_card")
     if embedded_card == "provider_health" and payload.get("control_registry_card") is not None:
@@ -365,6 +367,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("terminal_session_card", None)
     payload.setdefault("dispatch_preview_card", None)
     payload.setdefault("dispatch_batch_preview_card", None)
+    payload.setdefault("provider_setup_card", None)
     payload.setdefault("provider_switch_card", None)
     payload.setdefault("agent_ready_card", None)
     payload.setdefault("leader_summary_card", None)
@@ -1347,6 +1350,62 @@ def _control_registry_id_for_command(
             control_id = item.get("control_id")
             return str(control_id) if isinstance(control_id, str) and control_id else None
     return None
+
+
+def _leader_chat_provider_setup_card(
+    *,
+    target_provider: str,
+    target_model: str,
+    setup_commands: list[str],
+    recommended_command: str,
+    recommended_control_id: str | None,
+    followup_switch_command: str,
+    require_ready: bool,
+    control_registry_workbench: dict[str, object],
+) -> dict[str, object]:
+    controls: list[dict[str, object]] = []
+    for setup_command in setup_commands:
+        controls.append(
+            {
+                "kind": "setup_provider",
+                "label": "Run provider setup",
+                "command": setup_command,
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+                "control_id": _control_registry_id_for_command(
+                    control_registry_workbench,
+                    scope="provider",
+                    kind="setup_provider",
+                    command=setup_command,
+                ),
+            }
+        )
+    controls.append(
+        {
+            "kind": "guarded_set_provider" if require_ready else "set_provider",
+            "label": "Switch Leader provider if ready" if require_ready else "Switch Leader provider",
+            "command": followup_switch_command,
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+        }
+    )
+    return {
+        "mode": "provider_setup",
+        "title": "Set up Leader provider",
+        "target_provider": target_provider,
+        "target_model": target_model,
+        "setup_commands": setup_commands,
+        "recommended_command": recommended_command,
+        "recommended_control_id": recommended_control_id,
+        "followup_switch_command": followup_switch_command,
+        "require_ready": require_ready,
+        "safety": "explicit_user",
+        "requires_explicit_user": True,
+        "mutates_config": False,
+        "controls": controls,
+    }
 
 
 def _workbench_queue_card(
@@ -5684,6 +5743,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             kind="setup_provider",
             command=next_command,
         )
+        setup_commands = _provider_setup_commands(target_provider)
         target_model = next(
             (switch_model for switch_provider, switch_model, _label in LEADER_PROVIDER_SWITCHES if switch_provider == target_provider),
             "",
@@ -5697,6 +5757,16 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             target_model=target_model,
             require_ready=require_ready,
             command=provider_switch_command,
+        )
+        provider_setup_card = _leader_chat_provider_setup_card(
+            target_provider=target_provider,
+            target_model=target_model,
+            setup_commands=setup_commands,
+            recommended_command=next_command,
+            recommended_control_id=selected_setup_control_id,
+            followup_switch_command=provider_switch_command,
+            require_ready=require_ready,
+            control_registry_workbench=control_registry_workbench,
         )
         payload = {
             "ok": True,
@@ -5725,6 +5795,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "workbench_card": None,
             "provider_health": _workbench_provider_health(refreshed_project_view),
+            "provider_setup_card": provider_setup_card,
             "control_registry_card": leader_chat_control_registry_card(
                 control_registry_workbench,
                 scope="provider",

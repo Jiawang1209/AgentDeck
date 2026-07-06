@@ -1142,6 +1142,21 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["capture_card_fields"] == list(LEADER_CHAT_CAPTURE_CARD_FIELDS)
     assert payload["terminal_card_fields"] == list(LEADER_CHAT_TERMINAL_CARD_FIELDS)
     assert payload["dispatch_preview_card_fields"] == list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
+    assert payload["provider_setup_card_fields"] == [
+        "mode",
+        "title",
+        "target_provider",
+        "target_model",
+        "setup_commands",
+        "recommended_command",
+        "recommended_control_id",
+        "followup_switch_command",
+        "require_ready",
+        "safety",
+        "requires_explicit_user",
+        "mutates_config",
+        "controls",
+    ]
     assert payload["provider_switch_card_fields"] == EXPECTED_LEADER_CHAT_PROVIDER_SWITCH_CARD_FIELDS
     assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
