@@ -2268,6 +2268,7 @@ def test_validate_workbench_contract_requires_operator_apply_enabled_to_match_ca
 def test_validate_workbench_contract_requires_operator_explicit_enabled_to_match_blocker() -> None:
     payload = workbench_example()
     payload["operator_card"]["blocker"] = "requires runtime"
+    payload["operator_card"]["controls"][1]["blocker"] = "requires runtime"
     payload["operator_card"]["controls"][2]["blocker"] = "requires runtime"
     payload["operator_card"]["controls"][2]["enabled"] = True
     payload["control_registry"] = workbench_control_registry(payload)
@@ -2277,6 +2278,51 @@ def test_validate_workbench_contract_requires_operator_explicit_enabled_to_match
     assert result == {
         "ok": False,
         "errors": ["operator_card explicit control enabled must reflect explicit_command and blocker"],
+    }
+
+
+def test_validate_workbench_contract_requires_operator_preview_blocker_to_be_null() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["controls"][0]["blocker"] = "unexpected blocker"
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card preview control blocker must be null"],
+    }
+
+
+def test_validate_workbench_contract_requires_operator_apply_blocker_to_match_card() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["blocker"] = "requires runtime"
+    payload["operator_card"]["controls"][1]["blocker"] = "wrong blocker"
+    payload["operator_card"]["controls"][2]["enabled"] = False
+    payload["operator_card"]["controls"][2]["blocker"] = "requires runtime"
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card apply control blocker must match blocker"],
+    }
+
+
+def test_validate_workbench_contract_requires_operator_explicit_blocker_to_match_card() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["blocker"] = "requires runtime"
+    payload["operator_card"]["controls"][1]["blocker"] = "requires runtime"
+    payload["operator_card"]["controls"][2]["enabled"] = False
+    payload["operator_card"]["controls"][2]["blocker"] = "wrong blocker"
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card explicit control blocker must match blocker"],
     }
 
 

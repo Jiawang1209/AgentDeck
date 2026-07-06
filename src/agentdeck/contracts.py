@@ -3322,12 +3322,16 @@ def _validate_operator_card_control_alignment(errors: list[str], operator_card: 
             errors.append("operator_card preview control command must match preview_command")
         if kind == "preview" and control.get("enabled") != (operator_card.get("preview_command") is not None):
             errors.append("operator_card preview control enabled must reflect preview_command")
+        if kind == "preview" and control.get("blocker") is not None:
+            errors.append("operator_card preview control blocker must be null")
         if kind == "apply" and control.get("command") != operator_card.get("apply_command"):
             errors.append("operator_card apply control command must match apply_command")
         if kind == "apply" and control.get("enabled") != (
             operator_card.get("can_apply") is True and operator_card.get("apply_command") is not None
         ):
             errors.append("operator_card apply control enabled must reflect can_apply and apply_command")
+        if kind == "apply" and control.get("blocker") != operator_card.get("blocker"):
+            errors.append("operator_card apply control blocker must match blocker")
         if not dispatch_ready_operator and kind in ("explicit", "capture_reply") and control.get(
             "command"
         ) != operator_card.get("explicit_command"):
@@ -3336,6 +3340,12 @@ def _validate_operator_card_control_alignment(errors: list[str], operator_card: 
             operator_card.get("explicit_command") is not None and not operator_card.get("blocker")
         ):
             errors.append(f"operator_card {kind} control enabled must reflect explicit_command and blocker")
+        if not dispatch_ready_operator and kind in ("explicit", "capture_reply"):
+            expected_blocker = operator_card.get("blocker")
+            if expected_blocker is None and operator_card.get("explicit_command") is None:
+                expected_blocker = "no explicit command available"
+            if control.get("blocker") != expected_blocker:
+                errors.append(f"operator_card {kind} control blocker must match blocker")
 
 
 def _validate_operator_card_contract(errors: list[str], operator_card: dict[str, object], *, prefix: str) -> None:
