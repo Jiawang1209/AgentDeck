@@ -38,6 +38,7 @@ def validate_provider_plan_schema(plan: object, config: ProjectConfig | None = N
     if not isinstance(steps, list) or not steps:
         raise RuntimeError("provider plan must include non-empty steps")
     configured_agent_ids = {agent.agent_id for agent in config.agents} if config is not None else None
+    seen_step_numbers: set[int] = set()
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, dict):
             raise RuntimeError(f"provider plan step {index} must be an object")
@@ -46,6 +47,10 @@ def validate_provider_plan_schema(plan: object, config: ProjectConfig | None = N
                 raise RuntimeError(f"provider plan step {index} missing required field: {field}")
         if not isinstance(step.get("step"), int) or step["step"] <= 0:
             raise RuntimeError(f"provider plan step {index} field step must be a positive integer")
+        step_number = step["step"]
+        if step_number in seen_step_numbers:
+            raise RuntimeError(f"provider plan step {index} duplicates step number: {step_number}")
+        seen_step_numbers.add(step_number)
         for field in PROVIDER_PLAN_STEP_STRING_FIELDS:
             if not isinstance(step.get(field), str) or not step[field].strip():
                 raise RuntimeError(f"provider plan step {index} field {field} must be a non-empty string")
