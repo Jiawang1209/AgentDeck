@@ -575,6 +575,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "provider_health",
     "runtime_card",
     "agent_ready_card",
+    "terminal_session_card",
     "role_card",
     "ledger_card",
     "lineage_card",
@@ -782,6 +783,29 @@ AGENT_RUNTIME_READY_RESPONSE_FIELDS = (
     "refresh_command",
     "dispatch_ready_command",
     "runtime_card",
+)
+
+WORKBENCH_TERMINAL_SESSION_CARD_FIELDS = (
+    "mode",
+    "runtime_backend",
+    "session_name",
+    "attach_command",
+    "running_count",
+    "agent_count",
+    "open_terminals_command",
+    "refresh_command",
+    "terminals",
+)
+
+WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS = (
+    "agent_id",
+    "role",
+    "status",
+    "pane_id",
+    "terminal_command",
+    "select_pane_command",
+    "enabled",
+    "blocker",
 )
 
 WORKBENCH_ROLE_CARD_FIELDS = (
@@ -1686,6 +1710,8 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "agent_ready_card_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
+        "terminal_session_card_fields": list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS),
+        "terminal_session_item_fields": list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS),
         "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
         "runtime_control_fields": list(WORKBENCH_RUNTIME_CONTROL_FIELDS),
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
@@ -2529,6 +2555,36 @@ def _validate_agent_ready_card_contract(errors: list[str], agent_ready_card: dic
         errors.append("agent_ready_card.spawn_commands must be a list")
 
 
+def _validate_terminal_session_card_contract(
+    errors: list[str], terminal_session_card: dict[str, object]
+) -> None:
+    for field in WORKBENCH_TERMINAL_SESSION_CARD_FIELDS:
+        if field not in terminal_session_card:
+            errors.append(f"missing terminal_session_card field: {field}")
+    if terminal_session_card.get("mode") != "terminal_session":
+        errors.append("terminal_session_card.mode must be terminal_session")
+    for count_field in ("running_count", "agent_count"):
+        if count_field in terminal_session_card and not isinstance(terminal_session_card.get(count_field), int):
+            errors.append(f"terminal_session_card.{count_field} must be an integer")
+    terminals = terminal_session_card.get("terminals")
+    if isinstance(terminals, list):
+        for item in terminals:
+            if not isinstance(item, dict):
+                errors.append("terminal_session terminals must be objects")
+                continue
+            for field in WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS:
+                if field not in item:
+                    errors.append(f"missing terminal_session item field: {field}")
+            if "enabled" in item and not isinstance(item.get("enabled"), bool):
+                errors.append("terminal_session item enabled must be a boolean")
+            if item.get("enabled") is False and not item.get("blocker"):
+                errors.append("disabled terminal_session item requires blocker")
+            if item.get("enabled") is True and not item.get("select_pane_command"):
+                errors.append("enabled terminal_session item requires select_pane_command")
+    elif "terminals" in terminal_session_card:
+        errors.append("terminal_session_card.terminals must be a list")
+
+
 def _validate_queue_card_contract(errors: list[str], queue_card: dict[str, object], *, prefix: str) -> None:
     for field in WORKBENCH_QUEUE_CARD_FIELDS:
         if field not in queue_card:
@@ -3319,6 +3375,11 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("agent_ready_card.runtime_card must match runtime_card")
     elif "agent_ready_card" in payload:
         errors.append("agent_ready_card must be an object")
+    terminal_session_card = payload.get("terminal_session_card")
+    if isinstance(terminal_session_card, dict):
+        _validate_terminal_session_card_contract(errors, terminal_session_card)
+    elif "terminal_session_card" in payload:
+        errors.append("terminal_session_card must be an object")
     role_card = payload.get("role_card")
     if isinstance(role_card, dict):
         for field in WORKBENCH_ROLE_CARD_FIELDS:
@@ -4239,6 +4300,45 @@ def _agent_ready_card_from_runtime_card(runtime_card: dict[str, object]) -> dict
     }
 
 
+def _terminal_session_card_from_runtime_card(runtime_card: dict[str, object]) -> dict[str, object]:
+    agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
+    terminals: list[dict[str, object]] = []
+    running_count = 0
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        pane_id = agent.get("pane_id")
+        status = str(agent.get("status", "unknown"))
+        enabled = status == "running" and bool(pane_id)
+        if enabled:
+            running_count += 1
+        terminals.append(
+            {
+                "agent_id": agent.get("agent_id"),
+                "role": agent.get("role"),
+                "status": status,
+                "pane_id": pane_id,
+                "terminal_command": agent.get("terminal_command"),
+                "select_pane_command": (
+                    f"tmux -L agentdeck-multi-agent-explore select-pane -t {pane_id}" if enabled else None
+                ),
+                "enabled": enabled,
+                "blocker": None if enabled else "agent is not running",
+            }
+        )
+    return {
+        "mode": "terminal_session",
+        "runtime_backend": runtime_card.get("backend"),
+        "session_name": "agentdeck",
+        "attach_command": "tmux -L agentdeck-multi-agent-explore attach -t agentdeck",
+        "running_count": running_count,
+        "agent_count": len(terminals),
+        "open_terminals_command": "agentdeck controls",
+        "refresh_command": runtime_card.get("refresh_command"),
+        "terminals": terminals,
+    }
+
+
 def workbench_example() -> dict[str, object]:
     project_view = project_view_example()
     leader_action = project_view["leader_actions"]["items"][0]
@@ -4683,6 +4783,7 @@ def workbench_example() -> dict[str, object]:
         },
     }
     payload["agent_ready_card"] = _agent_ready_card_from_runtime_card(deepcopy(payload["runtime_card"]))
+    payload["terminal_session_card"] = _terminal_session_card_from_runtime_card(payload["runtime_card"])
     payload = {field: payload[field] for field in WORKBENCH_SNAPSHOT_FIELDS}
     payload["control_registry"] = workbench_control_registry(payload)
     return payload

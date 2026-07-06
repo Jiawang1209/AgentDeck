@@ -24,6 +24,8 @@ The contract command returns:
   "provider_health_fields": [],
   "runtime_card_fields": [],
   "agent_ready_card_fields": [],
+  "terminal_session_card_fields": [],
+  "terminal_session_item_fields": [],
   "runtime_agent_fields": [],
   "runtime_control_fields": [],
   "role_card_fields": [],
@@ -61,6 +63,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "provider_health": {},
   "runtime_card": {},
   "agent_ready_card": {},
+  "terminal_session_card": {},
   "role_card": {},
   "ledger_card": {},
   "lineage_card": {},
@@ -90,6 +93,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `provider_health` is derived from `project_view.leader.provider` and local environment availability.
 `runtime_card` is derived from `project_view.runtime_backend` and `project_view.agents[]`.
 `agent_ready_card` reuses the `agentdeck agent ready` response shape, is derived from the same `runtime_card`, and must pass the agent runtime ready card validator.
+`terminal_session_card` is derived from the same `runtime_card` and project tmux config so GUI/TUI clients can render a project terminal strip without calling each agent terminal command.
 `role_card` is derived from `project_view.agents[]` role configuration.
 `ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, `project_view.artifacts`, and `project_view.inbox`.
 `lineage_card` is a read-only path projection derived from the same ledger summaries plus visible inbox cards.
@@ -131,6 +135,37 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 ```
 
 The embedded `runtime_card` must match the same runtime projection shown at the top level. GUI/TUI clients can render `next_command` directly: multiple not-running agents use `agentdeck agent spawn-ready --confirm`, one not-running agent uses that agent's explicit spawn command, and an all-running workspace uses `agentdeck approval dispatch-ready --confirm`. Workbench only computes this card from ProjectView/runtime status; it must not inspect tmux, spawn panes, refresh runtime bindings, dispatch approvals, capture pane output, or send tmux input.
+
+## Terminal Session Card
+
+`terminal_session_card` is the workbench-level visible terminal overview:
+
+```json
+{
+  "mode": "terminal_session",
+  "runtime_backend": "tmux",
+  "session_name": "agentdeck",
+  "attach_command": "tmux -L agentdeck-example attach -t agentdeck",
+  "running_count": 1,
+  "agent_count": 3,
+  "open_terminals_command": "agentdeck controls",
+  "refresh_command": "agentdeck agent refresh",
+  "terminals": [
+    {
+      "agent_id": "planner",
+      "role": "planning",
+      "status": "running",
+      "pane_id": "%42",
+      "terminal_command": "agentdeck agent terminal --agent planner",
+      "select_pane_command": "tmux -L agentdeck-example select-pane -t %42",
+      "enabled": true,
+      "blocker": null
+    }
+  ]
+}
+```
+
+`attach_command` opens the configured project tmux session. Each enabled terminal item points to a running pane with `select_pane_command`; non-running agents stay visible but disabled with `blocker=agent is not running`. `open_terminals_command=agentdeck controls` lets GUI clients jump to the full command palette for per-agent terminal controls. This card is read-only: it does not attach tmux, select panes, inspect panes, capture output, send input, refresh bindings, spawn panes, stop panes, or write state.
 
 ## Watch Stream
 

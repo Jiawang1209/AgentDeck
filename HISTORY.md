@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Embed terminal session card in workbench snapshot
+
+- 扩展 `agentdeck workbench`：一屏快照现在嵌入只读 `terminal_session_card`，从同一张 `runtime_card` 和项目 tmux 配置派生 session attach 命令、running/agent 计数，以及每个 agent 的 terminal/select-pane affordance。
+- 扩展 workbench contract：`snapshot_fields` 新增 `terminal_session_card`，discovery 新增 `terminal_session_card_fields` / `terminal_session_item_fields`，`validate_workbench_contract()` 会校验项目级 terminal session card 与每个 terminal item。
+- 保持人类控制边界：workbench terminal session card 只生成命令字符串和 disabled blocker，不 attach tmux、不 select pane、不 capture、不 send、不 refresh、不 spawn/stop、不写 state。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/workbench-schema.md`，明确 `terminal_session_card` 是 GUI/TUI 可渲染的项目级终端条，不是终端操作执行器。
+- 验证记录：已先确认红测失败，workbench contract discovery、example 和 live snapshot 最初缺少 `terminal_session_card` / terminal session discovery 字段；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_terminal_session_card_fields tests/test_contracts.py::test_validate_workbench_contract_requires_terminal_session_item_fields -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 341 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 365 项通过。
+
 ### Current - Embed agent readiness card in workbench snapshot
 
 - 扩展 `agentdeck workbench`：一屏快照现在嵌入同源 `agent_ready_card`，复用 `agentdeck agent ready` 的 multi-agent runtime readiness response，供 GUI/TUI 直接渲染 prepare-all-agents、spawn-ready 和 dispatch-ready 下一步。

@@ -1384,6 +1384,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "provider_health",
         "runtime_card",
         "agent_ready_card",
+        "terminal_session_card",
         "role_card",
         "ledger_card",
         "lineage_card",
@@ -1456,6 +1457,27 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
     ]
     assert payload["runtime_card_fields"] == ["backend", "count", "by_status", "refresh_command", "agents"]
     assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
+    assert payload["terminal_session_card_fields"] == [
+        "mode",
+        "runtime_backend",
+        "session_name",
+        "attach_command",
+        "running_count",
+        "agent_count",
+        "open_terminals_command",
+        "refresh_command",
+        "terminals",
+    ]
+    assert payload["terminal_session_item_fields"] == [
+        "agent_id",
+        "role",
+        "status",
+        "pane_id",
+        "terminal_command",
+        "select_pane_command",
+        "enabled",
+        "blocker",
+    ]
     assert payload["runtime_agent_fields"] == [
         "agent_id",
         "role",
@@ -1948,6 +1970,48 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert payload["agent_ready_card"]["refresh_command"] == "agentdeck agent refresh"
     assert payload["agent_ready_card"]["dispatch_ready_command"] == "agentdeck approval dispatch-ready --confirm"
     assert payload["agent_ready_card"]["runtime_card"] == payload["runtime_card"]
+    assert payload["terminal_session_card"] == {
+        "mode": "terminal_session",
+        "runtime_backend": "tmux",
+        "session_name": "agentdeck",
+        "attach_command": "tmux -L agentdeck-repo attach -t agentdeck",
+        "running_count": 1,
+        "agent_count": 3,
+        "open_terminals_command": "agentdeck controls",
+        "refresh_command": "agentdeck agent refresh",
+        "terminals": [
+            {
+                "agent_id": "planner",
+                "role": "planning",
+                "status": "running",
+                "pane_id": "%42",
+                "terminal_command": "agentdeck agent terminal --agent planner",
+                "select_pane_command": "tmux -L agentdeck-repo select-pane -t %42",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "agent_id": "coder",
+                "role": "implementation",
+                "status": "configured",
+                "pane_id": None,
+                "terminal_command": "agentdeck agent terminal --agent coder",
+                "select_pane_command": None,
+                "enabled": False,
+                "blocker": "agent is not running",
+            },
+            {
+                "agent_id": "reviewer",
+                "role": "review",
+                "status": "configured",
+                "pane_id": None,
+                "terminal_command": "agentdeck agent terminal --agent reviewer",
+                "select_pane_command": None,
+                "enabled": False,
+                "blocker": "agent is not running",
+            },
+        ],
+    }
     assert payload["ledger_card"]["messages"]["count"] == 1
     assert payload["ledger_card"]["messages"]["items"][0]["trace_command"] == "agentdeck trace --id msg_workbench"
     assert payload["ledger_card"]["jobs"]["count"] == 1

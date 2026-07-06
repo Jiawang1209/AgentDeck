@@ -80,6 +80,8 @@ from agentdeck.contracts import (
     WORKBENCH_RUNTIME_CARD_FIELDS,
     WORKBENCH_RUNTIME_CONTROL_FIELDS,
     WORKBENCH_SNAPSHOT_FIELDS,
+    WORKBENCH_TERMINAL_SESSION_CARD_FIELDS,
+    WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS,
     agent_runtime_contract_payload,
     agent_runtime_contract_response,
     agent_runtime_example,
@@ -954,6 +956,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert "command_path" in payload["provider_health_fields"]
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
+    assert payload["terminal_session_card_fields"] == list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS)
+    assert payload["terminal_session_item_fields"] == list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
     assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
@@ -982,6 +986,10 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert set(example["agent_ready_card"]) == set(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
     assert example["agent_ready_card"]["runtime_card"] == example["runtime_card"]
     assert example["agent_ready_card"]["next_command"] == "agentdeck agent spawn-ready --confirm"
+    assert set(example["terminal_session_card"]) == set(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS)
+    assert set(example["terminal_session_card"]["terminals"][0]) == set(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS)
+    assert example["terminal_session_card"]["running_count"] == 1
+    assert example["terminal_session_card"]["terminals"][0]["select_pane_command"].endswith("select-pane -t %42")
     assert example["leader_inbox_card"]["items"][0]["event_type"] == "task_reply"
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
@@ -1214,6 +1222,30 @@ def test_validate_workbench_contract_requires_agent_ready_runtime_card_to_match_
     assert result == {
         "ok": False,
         "errors": ["agent_ready_card.runtime_card must match runtime_card"],
+    }
+
+
+def test_validate_workbench_contract_requires_terminal_session_card_fields() -> None:
+    payload = workbench_example()
+    del payload["terminal_session_card"]["attach_command"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing terminal_session_card field: attach_command"],
+    }
+
+
+def test_validate_workbench_contract_requires_terminal_session_item_fields() -> None:
+    payload = workbench_example()
+    del payload["terminal_session_card"]["terminals"][0]["enabled"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing terminal_session item field: enabled"],
     }
 
 

@@ -722,6 +722,7 @@ def _workbench_snapshot_payload(
     provider_health = _workbench_provider_health(project_view)
     runtime_card = _workbench_runtime_card(project_view)
     agent_ready_card = _agent_ready_card_payload(project_view)
+    terminal_session_card = _workbench_terminal_session_card(load_config(store.root), runtime_card)
     role_card = _workbench_role_card(project_view)
     ledger_card = _workbench_ledger_card(project_view)
     lineage_card = _workbench_lineage_card(project_view, inbox_card, leader_inbox_card)
@@ -743,6 +744,7 @@ def _workbench_snapshot_payload(
         "provider_health": provider_health,
         "runtime_card": runtime_card,
         "agent_ready_card": agent_ready_card,
+        "terminal_session_card": terminal_session_card,
         "role_card": role_card,
         "ledger_card": ledger_card,
         "lineage_card": lineage_card,
@@ -1730,6 +1732,44 @@ def _agent_ready_card_payload(project_view: dict[str, object]) -> dict[str, obje
         "refresh_command": runtime_card.get("refresh_command"),
         "dispatch_ready_command": dispatch_ready_command,
         "runtime_card": runtime_card,
+    }
+
+
+def _workbench_terminal_session_card(config: ProjectConfig, runtime_card: dict[str, object]) -> dict[str, object]:
+    agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
+    terminals: list[dict[str, object]] = []
+    running_count = 0
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        agent_id = str(agent.get("agent_id"))
+        status = str(agent.get("status", "unknown"))
+        pane_id = agent.get("pane_id")
+        enabled = status == "running" and bool(pane_id)
+        if enabled:
+            running_count += 1
+        terminals.append(
+            {
+                "agent_id": agent_id,
+                "role": agent.get("role"),
+                "status": status,
+                "pane_id": pane_id,
+                "terminal_command": agent.get("terminal_command"),
+                "select_pane_command": _tmux_select_pane_command(config, str(pane_id)) if enabled else None,
+                "enabled": enabled,
+                "blocker": None if enabled else "agent is not running",
+            }
+        )
+    return {
+        "mode": "terminal_session",
+        "runtime_backend": runtime_card.get("backend"),
+        "session_name": config.runtime.session_name,
+        "attach_command": _tmux_attach_command(config),
+        "running_count": running_count,
+        "agent_count": len(terminals),
+        "open_terminals_command": "agentdeck controls",
+        "refresh_command": runtime_card.get("refresh_command"),
+        "terminals": terminals,
     }
 
 
