@@ -2797,18 +2797,21 @@ def validate_inbox_contract(payload: dict[str, object]) -> dict[str, object]:
             errors.append(f"missing inbox queue field: {field}")
     items = payload.get("items")
     if isinstance(items, list):
-        if items:
-            first_item = items[0]
-            if isinstance(first_item, dict):
-                for field in INBOX_ITEM_FIELDS:
-                    if field not in first_item:
-                        errors.append(f"missing inbox item field: {field}")
-                if not isinstance(first_item.get("is_head"), bool):
-                    errors.append("is_head must be a boolean")
-                if not isinstance(first_item.get("can_ack"), bool):
-                    errors.append("can_ack must be a boolean")
-            else:
-                errors.append("inbox items must be objects")
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                errors.append("inbox items must be objects" if index == 0 else f"items[{index}] must be an object")
+                continue
+            for field in INBOX_ITEM_FIELDS:
+                if field not in item:
+                    errors.append(
+                        f"missing inbox item field: {field}"
+                        if index == 0
+                        else f"missing inbox item field at index {index}: {field}"
+                    )
+            if not isinstance(item.get("is_head"), bool):
+                errors.append("is_head must be a boolean" if index == 0 else f"items[{index}].is_head must be a boolean")
+            if not isinstance(item.get("can_ack"), bool):
+                errors.append("can_ack must be a boolean" if index == 0 else f"items[{index}].can_ack must be a boolean")
     elif "items" in payload:
         errors.append("items must be a list")
     return {"ok": not errors, "errors": errors}

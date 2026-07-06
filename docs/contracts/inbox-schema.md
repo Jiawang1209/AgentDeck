@@ -2,7 +2,7 @@
 
 `agentdeck inbox --agent <id>` is the read-only mailbox view for one AgentDeck mailbox owner.
 
-It does not acknowledge messages and does not replace ProjectView or trace. It lists one mailbox owner's inbox items, derives head-only ack metadata, links each item to trace, and validates the queue payload before printing JSON.
+It does not acknowledge messages and does not replace ProjectView or trace. It lists one mailbox owner's inbox items, derives head-only ack metadata, links each item to trace, and validates every queue item before printing JSON.
 
 `<id>` may be a configured worker agent id, such as `planner`, or the logical Leader mailbox owner `leader`. The logical Leader mailbox is for worker replies flowing back to the Leader; it is not a tmux/runtime agent and must not be treated as valid for spawn, send, capture, stop, or terminal commands.
 

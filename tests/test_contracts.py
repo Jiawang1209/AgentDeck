@@ -2368,6 +2368,18 @@ def test_validate_inbox_contract_requires_head_ack_fields() -> None:
     }
 
 
+def test_validate_inbox_contract_checks_every_inbox_item() -> None:
+    payload = inbox_example()
+    del payload["items"][1]["controls"]
+
+    result = validate_inbox_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing inbox item field at index 1: controls"],
+    }
+
+
 def test_leader_action_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     contract_path = tmp_path / "leader-action-schema.md"
     contract_path.write_text("# Leader Action Contract\n", encoding="utf-8")

@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate every inbox queue item
+
+- 收紧 inbox queue 契约：`validate_inbox_contract()` 现在会逐项校验 `items[]`，不再只检查第一条 inbox item。
+- 每条 inbox item 都必须保留 `controls[]`、`preview_command`、`trace_command`、`ack_command`、`is_head`、`can_ack` 和 `ack_blocker`，确保多消息 mailbox 中每条 task request / task reply 都能被 GUI 和自然语言壳稳定渲染。
+- 同步 inbox schema 文档，明确 `agentdeck inbox --agent <id>` 是逐项自校验的只读 mailbox，不会 ack 或替代 trace。
+- 保持控制边界：该校验只拒绝漂移 inbox payload，不 ack inbox、不创建 plan/action/approval/message/job/reply、不 dispatch、不 capture reply、不读取 pane、不发送 tmux 输入、不修改 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许第二条 `items[]` 缺少 `controls` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_inbox_contract_checks_every_inbox_item tests/test_contracts.py::test_validate_inbox_contract_requires_head_ack_fields tests/test_contracts.py::test_validate_inbox_contract_accepts_example -q` 3 项通过；inbox 聚焦回归 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 419 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 445 项通过。
+
 ### Current - Validate every approval queue item
 
 - 收紧 approval queue 契约：`validate_approval_contract()` 现在会逐项校验 `approvals[]`，不再只检查第一条 approval item。
