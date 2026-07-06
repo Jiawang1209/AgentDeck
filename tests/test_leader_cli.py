@@ -4810,6 +4810,27 @@ def test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching
             ],
         }
     assert payload["intent_card"]["embedded_card"] == "dispatch_preview_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "approval_card",
+        "control_registry_card",
+    ]
+    assert payload["control_registry_card"]["filters"]["card"] == "dispatch_preview_card"
+    assert payload["control_registry_card"]["filters"]["control_id"].startswith(
+        "dispatch_preview:dispatch_preview_card:dispatch:planner:"
+    )
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
+    assert payload["control_registry_card"]["selection"]["selected_control"] == {
+        "scope": "dispatch_preview",
+        "card": "dispatch_preview_card",
+        "kind": "dispatch",
+        "label": "Dispatch approval",
+        "command": payload["next_command"],
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": "planner",
+        "control_id": payload["control_registry_card"]["selection"]["requested_control_id"],
+    }
     assert payload["intent_card"]["controls"][0] == {
         "kind": "inspect",
         "label": "Inspect dispatch_preview_card",
@@ -4884,6 +4905,17 @@ def test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned(
         "blocker": "agent is not spawned: planner",
     }
     assert payload["intent_card"]["embedded_card"] == "dispatch_preview_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "approval_card",
+        "control_registry_card",
+    ]
+    assert payload["control_registry_card"]["filters"]["card"] == "dispatch_preview_card"
+    assert payload["control_registry_card"]["selection"]["next_command"] is None
+    assert payload["control_registry_card"]["selection"]["selected_control"]["kind"] == "dispatch"
+    assert payload["control_registry_card"]["selection"]["selected_control"]["enabled"] is False
+    assert payload["control_registry_card"]["selection"]["selected_control"]["blocker"] == (
+        "agent is not spawned: planner"
+    )
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
         "label": "Dispatch approval",
@@ -4893,6 +4925,38 @@ def test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned(
         "blocker": "agent is not spawned: planner",
     }
     assert payload["leader_explanation"]["action_kind"] == "approval_dispatch"
+
+
+def test_validate_leader_chat_contract_requires_dispatch_preview_registry_cards(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "校验派发预览 registry"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    approval_id = approvals[0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    bind_agent(root, "planner", "%42")
+
+    exit_code = cli.main(["leader", "chat", "--message", "派发当前审批"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["intent_card"]["secondary_embedded_cards"] = []
+    payload["control_registry_card"] = None
+
+    result = cli.validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include approval_card for approval_dispatch responses",
+            "intent_card.secondary_embedded_cards must include control_registry_card for approval_dispatch responses",
+            "control_registry_card is required for approval_dispatch responses",
+        ],
+    }
 
 
 def test_leader_chat_previews_all_approved_dispatches_without_dispatching(
@@ -4981,6 +5045,27 @@ def test_leader_chat_previews_all_approved_dispatches_without_dispatching(
         "blocker": "agent is not spawned: coder",
     }
     assert payload["intent_card"]["embedded_card"] == "dispatch_batch_preview_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "approval_card",
+        "control_registry_card",
+    ]
+    assert payload["control_registry_card"]["filters"]["card"] == "dispatch_batch_preview_card"
+    assert payload["control_registry_card"]["filters"]["control_id"].startswith(
+        "dispatch_batch_preview:dispatch_batch_preview_card:dispatch_ready:global:"
+    )
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
+    assert payload["control_registry_card"]["selection"]["selected_control"] == {
+        "scope": "dispatch_batch_preview",
+        "card": "dispatch_batch_preview_card",
+        "kind": "dispatch_ready",
+        "label": "Dispatch ready approvals",
+        "command": "agentdeck approval dispatch-ready --confirm",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": payload["control_registry_card"]["selection"]["requested_control_id"],
+    }
     assert payload["intent_card"]["controls"][0] == {
         "kind": "inspect",
         "label": "Inspect dispatch_batch_preview_card",
@@ -5012,6 +5097,41 @@ def test_leader_chat_previews_all_approved_dispatches_without_dispatching(
     assert state_after["messages"] == []
     assert state_after["jobs"] == []
     assert state_after.get("inbox", {}) == {}
+
+
+def test_validate_leader_chat_contract_requires_dispatch_batch_registry_cards(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "校验批量派发 registry"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    planner_approval_id = approvals[0]["approval_id"]
+    coder_approval_id = approvals[1]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", planner_approval_id])
+    capsys.readouterr()
+    cli.main(["approval", "approve", "--approval-id", coder_approval_id])
+    capsys.readouterr()
+    bind_agent(root, "planner", "%42")
+
+    exit_code = cli.main(["leader", "chat", "--message", "派发所有已审批"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["intent_card"]["secondary_embedded_cards"] = []
+    payload["control_registry_card"]["filters"]["card"] = "dispatch_preview_card"
+
+    result = cli.validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include approval_card for approval_dispatch_batch responses",
+            "intent_card.secondary_embedded_cards must include control_registry_card for approval_dispatch_batch responses",
+            "control_registry_card.filters.card must be dispatch_batch_preview_card for approval_dispatch_batch responses",
+        ],
+    }
 
 
 def test_leader_chat_persists_create_approvals_action_for_existing_plan(tmp_path, monkeypatch, capsys) -> None:

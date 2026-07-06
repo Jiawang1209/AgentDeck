@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add dispatch preview control registry
+
+- 扩展自然语言审批派发确认面：`agentdeck leader chat --message "派发当前审批"` 现在在 `dispatch_preview_card` 之外返回过滤到 `dispatch_preview_card` 的 `control_registry_card`，并让 selection 指向顶层 `agentdeck approval dispatch --approval-id <id>` 对应的 dispatch control。
+- 扩展批量派发确认面：`agentdeck leader chat --message "派发所有已审批"` 现在返回过滤到 `dispatch_batch_preview_card` 的 `control_registry_card`，selection 指向 `kind=dispatch_ready` 的 `agentdeck approval dispatch-ready --confirm` control；逐项 dispatch controls 也进入 registry，供 GUI/TUI 展示每条 approval 的单独派发入口和 blocker。
+- 收紧 leader-chat contract：`approval_dispatch` / `approval_dispatch_batch` 响应必须在 `intent_card.secondary_embedded_cards` 中列出 `approval_card` 与 `control_registry_card`，并要求 `control_registry_card.filters.card` 分别对齐 `dispatch_preview_card` / `dispatch_batch_preview_card`。
+- 保持控制边界：新增 registry 只是局部命令面板投影，不自动 approve/reject/dispatch/dispatch-ready，不创建 message/job/inbox，不发送 tmux 输入，不读取 pane，不修改 runtime state。
+- 验证记录：已先确认红测失败，`派发当前审批` / `派发所有已审批` 最初 `intent_card.secondary_embedded_cards=[]` 且缺少 dispatch preview 局部 `control_registry_card`，validator 也允许删除 registry companion；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching tests/test_leader_cli.py::test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned tests/test_leader_cli.py::test_leader_chat_previews_all_approved_dispatches_without_dispatching tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_dispatch_preview_registry_cards tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_dispatch_batch_registry_cards tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 7 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 410 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 436 项通过。
+
 ### Current - Add runtime spawn action card
 
 - 扩展自然语言单 Agent 启动入口：`agentdeck leader chat --message "启动 planner"` 现在以 `runtime_action_card(action=spawn)` 作为 primary embedded card，结构化展示目标 agent、role、runtime_status、pane_id、显式 `agentdeck agent spawn --agent <id>` 命令和 inspect/spawn controls。

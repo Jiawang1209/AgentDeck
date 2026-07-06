@@ -3302,6 +3302,27 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             ):
                 errors.append("intent_card.secondary_embedded_cards references missing control_registry_card")
             if (
+                "approval_card" in secondary_embedded_cards
+                and payload.get("approval_card") is None
+            ):
+                errors.append("intent_card.secondary_embedded_cards references missing approval_card")
+            if (
+                "dispatch_preview_card" in secondary_embedded_cards
+                and payload.get("dispatch_preview_card") is None
+            ):
+                errors.append("intent_card.secondary_embedded_cards references missing dispatch_preview_card")
+            if (
+                "dispatch_batch_preview_card" in secondary_embedded_cards
+                and payload.get("dispatch_batch_preview_card") is None
+            ):
+                errors.append("intent_card.secondary_embedded_cards references missing dispatch_batch_preview_card")
+            if explanation_action_kind in {"approval_dispatch", "approval_dispatch_batch"}:
+                for card_name in ["approval_card", "control_registry_card"]:
+                    if card_name not in secondary_embedded_cards:
+                        errors.append(
+                            f"intent_card.secondary_embedded_cards must include {card_name} for {explanation_action_kind} responses"
+                        )
+            if (
                 explanation_action_kind == "provider_setup"
                 and isinstance(payload.get("provider_setup_card"), dict)
                 and payload["provider_setup_card"].get("recommended_command") == payload.get("next_command")
@@ -3598,6 +3619,17 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
     control_registry_card = payload.get("control_registry_card")
     if isinstance(control_registry_card, dict):
         _validate_control_registry_card_contract(errors, control_registry_card)
+        filters = control_registry_card.get("filters")
+        if explanation_action_kind == "approval_dispatch" and isinstance(filters, dict):
+            if filters.get("card") != "dispatch_preview_card":
+                errors.append(
+                    "control_registry_card.filters.card must be dispatch_preview_card for approval_dispatch responses"
+                )
+        if explanation_action_kind == "approval_dispatch_batch" and isinstance(filters, dict):
+            if filters.get("card") != "dispatch_batch_preview_card":
+                errors.append(
+                    "control_registry_card.filters.card must be dispatch_batch_preview_card for approval_dispatch_batch responses"
+                )
         selection = control_registry_card.get("selection")
         if (
             explanation_action_kind == "provider_setup"
@@ -3611,6 +3643,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             )
     elif explanation_action_kind == "provider_setup":
         errors.append("control_registry_card is required for provider_setup setup responses")
+    elif explanation_action_kind in {"approval_dispatch", "approval_dispatch_batch"}:
+        errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif "control_registry_card" in payload and control_registry_card is not None:
         errors.append("control_registry_card must be an object")
     return {"ok": not errors, "errors": errors}

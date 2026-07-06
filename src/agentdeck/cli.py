@@ -136,6 +136,14 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("terminal_session_card")
     if embedded_card == "agent_ready_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "dispatch_preview_card" and payload.get("approval_card") is not None:
+        secondary_embedded_cards.append("approval_card")
+    if embedded_card == "dispatch_preview_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "dispatch_batch_preview_card" and payload.get("approval_card") is not None:
+        secondary_embedded_cards.append("approval_card")
+    if embedded_card == "dispatch_batch_preview_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "runtime_action_card" and payload.get("runtime_card") is not None:
         secondary_embedded_cards.append("runtime_card")
     if embedded_card == "runtime_action_card" and payload.get("startup_preview_card") is not None:
@@ -1134,6 +1142,42 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id=runtime_action_card.get("agent_id"),
         controls=runtime_action_card.get("controls"),
     )
+    dispatch_preview_card = (
+        payload.get("dispatch_preview_card") if isinstance(payload.get("dispatch_preview_card"), dict) else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="dispatch_preview",
+        card="dispatch_preview_card",
+        agent_id=dispatch_preview_card.get("agent_id"),
+        controls=dispatch_preview_card.get("controls"),
+    )
+    dispatch_batch_preview_card = (
+        payload.get("dispatch_batch_preview_card")
+        if isinstance(payload.get("dispatch_batch_preview_card"), dict)
+        else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="dispatch_batch_preview",
+        card="dispatch_batch_preview_card",
+        agent_id=None,
+        controls=dispatch_batch_preview_card.get("controls"),
+    )
+    dispatch_batch_items = (
+        dispatch_batch_preview_card.get("items")
+        if isinstance(dispatch_batch_preview_card.get("items"), list)
+        else []
+    )
+    for item in dispatch_batch_items:
+        if isinstance(item, dict):
+            _append_workbench_control_registry_items(
+                registry,
+                scope="dispatch_preview",
+                card="dispatch_preview_card",
+                agent_id=item.get("agent_id"),
+                controls=item.get("controls"),
+            )
     startup_preview_items = (
         startup_preview_card.get("items") if isinstance(startup_preview_card.get("items"), list) else []
     )
@@ -7244,6 +7288,34 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             if approval_action_kind == "approval_dispatch_batch"
             else None
         )
+        control_registry_card = None
+        if isinstance(dispatch_preview_card, dict) or isinstance(dispatch_batch_preview_card, dict):
+            registry_source = {
+                "approval_card": approval_card,
+                "dispatch_preview_card": dispatch_preview_card,
+                "dispatch_batch_preview_card": dispatch_batch_preview_card,
+            }
+            registry_items = _workbench_control_registry(registry_source)
+            registry_card_filter = (
+                "dispatch_batch_preview_card"
+                if isinstance(dispatch_batch_preview_card, dict)
+                else "dispatch_preview_card"
+            )
+            next_control_id = next(
+                (
+                    item.get("control_id")
+                    for item in registry_items
+                    if isinstance(item, dict)
+                    and item.get("card") == registry_card_filter
+                    and item.get("command") == next_command
+                ),
+                None,
+            )
+            control_registry_card = leader_chat_control_registry_card(
+                {"control_registry": registry_items},
+                card=registry_card_filter,
+                control_id=str(next_control_id) if next_control_id else None,
+            )
         turn = store.record_chat_turn(
             mode="approval",
             message=args.message,
@@ -7292,6 +7364,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "dispatch_preview_card": dispatch_preview_card,
             "dispatch_batch_preview_card": dispatch_batch_preview_card,
             "approval_card": approval_card,
+            "control_registry_card": control_registry_card,
             "runtime_card": None,
             "queue_card": None,
             "operator_card": None,
