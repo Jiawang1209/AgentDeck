@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Embed artifacts card in workbench snapshot
+
+- 扩展 `agentdeck workbench`：一屏快照现在嵌入同源 `artifacts_card`，复用 `agentdeck artifacts` 的 artifact index response shape，供 GUI/TUI 直接渲染 worker 产物索引。
+- 扩展 workbench contract：`snapshot_fields` 新增 `artifacts_card`，discovery 新增 `artifacts_card_fields` / `artifact_summary_fields` / `artifact_item_fields`，`validate_workbench_contract()` 会复用 `validate_artifacts_contract()` 校验嵌入产物卡片。
+- 保持人类控制边界：workbench artifacts card 只来自 ProjectView artifact 摘要，不读取产物文件内容、不读取 pane、不调用 provider、不写 state、不创建 chat turn、不 ack/approve/dispatch。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/workbench-schema.md`，明确 workbench artifact index 是只读 GUI 投影。
+- 验证记录：已先确认红测失败，workbench contract discovery 和 workbench snapshot 最初缺少 `artifacts_card` / artifacts discovery 字段；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_workbench_contract_reuses_artifacts_card_validator -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 335 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 359 项通过。
+
 ### Current - Add natural-language artifacts index view
 
 - 新增 `agentdeck leader chat --message "查看产物"` / `"artifacts"` / `"输出文件"`：自然语言入口现在可进入只读 `mode=artifacts`，嵌入同源 `artifacts_card`，展示 ProjectView artifact 摘要、trace 模板和契约入口，并建议 `agentdeck artifacts`。

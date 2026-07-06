@@ -727,6 +727,7 @@ def _workbench_snapshot_payload(
     queue_card = _workbench_queue_card(project_view, continue_card, active_queue_source)
     operator_card = _workbench_operator_card(project_view, continue_card, active_queue_source)
     audit_card = _workbench_audit_card(project_view)
+    artifacts_card = _artifacts_card_payload(project_view)
     contracts_card = _workbench_contracts_card()
     control_mode_card = _workbench_control_mode_card(project_view)
     run_progress_card = _workbench_run_progress_card(store)
@@ -745,6 +746,7 @@ def _workbench_snapshot_payload(
         "queue_card": queue_card,
         "operator_card": operator_card,
         "audit_card": audit_card,
+        "artifacts_card": artifacts_card,
         "contracts_card": contracts_card,
         "control_mode_card": control_mode_card,
         "recovery": recovery,

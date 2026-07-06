@@ -964,6 +964,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert payload["run_progress_card_fields"] == list(RUN_PROGRESS_RESPONSE_FIELDS)
     assert payload["audit_card_fields"] == list(WORKBENCH_AUDIT_CARD_FIELDS)
+    assert payload["artifacts_card_fields"] == list(ARTIFACTS_RESPONSE_FIELDS)
+    assert payload["artifact_summary_fields"] == list(ARTIFACTS_SUMMARY_FIELDS)
+    assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
     assert payload["contracts_card_fields"] == list(WORKBENCH_CONTRACTS_CARD_FIELDS)
     assert payload["change_summary_fields"] == list(WORKBENCH_CHANGE_SUMMARY_FIELDS)
     assert payload["control_registry_item_fields"] == list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
@@ -972,6 +975,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["example_snapshot_fields"] == payload["snapshot_fields"]
     assert set(payload["example_snapshot_fields"]) == set(example)
     assert example["leader_inbox_card"]["agent_id"] == "leader"
+    assert example["artifacts_card"] == artifacts_example()
     assert example["leader_inbox_card"]["items"][0]["event_type"] == "task_reply"
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
@@ -1156,6 +1160,18 @@ def test_validate_workbench_contract_reuses_run_progress_card_validator() -> Non
     assert result == {
         "ok": False,
         "errors": ["run_progress_card: run_progress.next_command must match review.next_command"],
+    }
+
+
+def test_validate_workbench_contract_reuses_artifacts_card_validator() -> None:
+    payload = workbench_example()
+    payload["artifacts_card"]["trace_command_template"] = "agentdeck trace"
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["artifacts_card: trace_command_template must be agentdeck trace --id <id>"],
     }
 
 

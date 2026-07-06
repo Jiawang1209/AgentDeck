@@ -11,6 +11,8 @@ from agentdeck.contracts import (
     AGENT_RUNTIME_REFRESH_AGENT_FIELDS,
     AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS,
     AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS,
+    ARTIFACTS_RESPONSE_FIELDS,
+    ARTIFACTS_SUMMARY_FIELDS,
     approval_contract_payload,
     approval_contract_response,
     agent_runtime_contract_payload,
@@ -38,6 +40,7 @@ from agentdeck.contracts import (
     leader_summary_contract_response,
     project_view_contract_payload,
     project_view_contract_response,
+    PROJECT_VIEW_ARTIFACT_ITEM_FIELDS,
     run_start_contract_payload,
     run_start_contract_response,
     trace_contract_payload,
@@ -1384,6 +1387,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "queue_card",
         "operator_card",
         "audit_card",
+        "artifacts_card",
         "contracts_card",
         "control_mode_card",
         "recovery",
@@ -1523,6 +1527,9 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "event_count",
         "events_command",
     ]
+    assert payload["artifacts_card_fields"] == list(ARTIFACTS_RESPONSE_FIELDS)
+    assert payload["artifact_summary_fields"] == list(ARTIFACTS_SUMMARY_FIELDS)
+    assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
     assert payload["contracts_card_fields"] == [
         "contracts_command",
         "contract_index_contract",
@@ -1930,6 +1937,21 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert payload["ledger_card"]["artifacts"]["items"][0]["artifact_id"] == "art_workbench"
     assert payload["ledger_card"]["artifacts"]["items"][0]["path"] == "docs/workbench-plan.md"
     assert payload["ledger_card"]["artifacts"]["items"][0]["trace_command"] == "agentdeck trace --id msg_workbench"
+    assert payload["artifacts_card"]["artifacts_command"] == "agentdeck artifacts"
+    assert payload["artifacts_card"]["trace_command_template"] == "agentdeck trace --id <id>"
+    assert payload["artifacts_card"]["artifacts"]["count"] == 1
+    assert payload["artifacts_card"]["artifacts"]["items"][0] == {
+        "artifact_id": "art_workbench",
+        "message_id": "msg_workbench",
+        "job_id": "job_workbench",
+        "reply_id": "rep_workbench",
+        "from_agent": "planner",
+        "path": "docs/workbench-plan.md",
+        "kind": "markdown",
+        "status": "created",
+        "created_at": "2026-07-04T00:00:03+00:00",
+        "trace_command": "agentdeck trace --id msg_workbench",
+    }
     assert payload["ledger_card"]["inbox"]["total"] == 1
     assert payload["ledger_card"]["inbox"]["heads"]["planner"]["inbox_id"] == "inb_workbench_head"
     assert payload["ledger_card"]["trace_commands"] == [

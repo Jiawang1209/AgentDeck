@@ -33,6 +33,9 @@ The contract command returns:
   "queue_card_fields": [],
   "operator_card_fields": [],
   "audit_card_fields": [],
+  "artifacts_card_fields": [],
+  "artifact_summary_fields": [],
+  "artifact_item_fields": [],
   "contracts_card_fields": [],
   "change_summary_fields": [],
   "control_registry_item_fields": []
@@ -61,6 +64,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "queue_card": {},
   "operator_card": {},
   "audit_card": {},
+  "artifacts_card": {},
   "contracts_card": {},
   "control_mode_card": {},
   "recovery": {},
@@ -87,6 +91,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `queue_card` is derived from `project_view.leader_actions`, `project_view.approvals`, `project_view.inbox`, and the recovery-driven next command.
 `operator_card` is derived from `recovery.recommended_action` and the active queue card. It is a renderable human-control descriptor, not an execution result.
 `audit_card` is derived from `recovery.latest_event` and `recovery.recent_events`.
+`artifacts_card` reuses the `agentdeck artifacts` response shape, is derived from `project_view.artifacts`, and must pass `validate_artifacts_contract()`.
 `contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Leader chat, and Leader review contracts.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
@@ -483,6 +488,31 @@ For approval dispatch recovery, `operator_card` derives runtime readiness from t
 
 The card intentionally uses compact ProjectView recovery event summaries. Use `events_command` when a GUI needs the raw JSONL timeline.
 
+## Artifacts Card
+
+`artifacts_card` is the GUI/TUI-ready worker output index embedded directly in the workbench snapshot:
+
+```json
+{
+  "ok": true,
+  "mode": "artifacts",
+  "schema_version": "project-view/v1",
+  "source_command": "agentdeck artifacts",
+  "project_view_contract": "agentdeck contract project-view",
+  "artifacts_contract": "agentdeck contract artifacts",
+  "artifacts_command": "agentdeck artifacts",
+  "trace_command_template": "agentdeck trace --id <id>",
+  "artifacts": {
+    "count": 1,
+    "by_status": {"created": 1},
+    "by_kind": {"file": 1},
+    "items": []
+  }
+}
+```
+
+The card reuses the standalone `agentdeck artifacts` contract and `validate_artifacts_contract()`. It is a ProjectView artifact summary only: it does not read artifact file contents, inspect tmux panes, call providers, write state, acknowledge inbox items, approve, dispatch, or send tmux input.
+
 ## Contracts Card
 
 ```json
@@ -522,4 +552,5 @@ When `recovery.recommended_action.source` is:
 - The command must pass `validate_workbench_contract()` before printing JSON.
 - GUI clients should treat this response as a single-screen projection of ProjectView, not a second state source.
 - `run_progress_card` is a read-only latest-run projection. It must not approve, dispatch, capture pane output, acknowledge inbox items, or send tmux input.
+- `artifacts_card` is the same read-only artifact index as `agentdeck artifacts`. It must not read output files or become a second artifact state source.
 - Runtime actions still require explicit commands or approval flow.

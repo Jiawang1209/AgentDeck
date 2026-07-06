@@ -579,6 +579,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "queue_card",
     "operator_card",
     "audit_card",
+    "artifacts_card",
     "contracts_card",
     "control_mode_card",
     "recovery",
@@ -1692,6 +1693,9 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "run_progress_card_fields": list(RUN_PROGRESS_RESPONSE_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
+        "artifacts_card_fields": list(ARTIFACTS_RESPONSE_FIELDS),
+        "artifact_summary_fields": list(ARTIFACTS_SUMMARY_FIELDS),
+        "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
         "contracts_card_fields": list(WORKBENCH_CONTRACTS_CARD_FIELDS),
         "change_summary_fields": list(WORKBENCH_CHANGE_SUMMARY_FIELDS),
         "control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
@@ -3461,6 +3465,13 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         _validate_audit_card_contract(errors, audit_card, prefix="audit_card")
     elif "audit_card" in payload:
         errors.append("audit_card must be an object")
+    artifacts_card = payload.get("artifacts_card")
+    if isinstance(artifacts_card, dict):
+        artifacts_validation = validate_artifacts_contract(artifacts_card)
+        for error in artifacts_validation["errors"]:
+            errors.append(f"artifacts_card: {error}")
+    elif "artifacts_card" in payload:
+        errors.append("artifacts_card must be an object")
     contracts_card = payload.get("contracts_card")
     if isinstance(contracts_card, dict):
         for field in WORKBENCH_CONTRACTS_CARD_FIELDS:
@@ -4457,6 +4468,7 @@ def workbench_example() -> dict[str, object]:
             "event_count": len(recovery["recent_events"]),
             "events_command": "agentdeck events --limit 20",
         },
+        "artifacts_card": artifacts_example(),
         "contracts_card": {
             "contracts_command": "agentdeck contract list",
             "contract_index_contract": "docs/contracts/contract-index-schema.md",
