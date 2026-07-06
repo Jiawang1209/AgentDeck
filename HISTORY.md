@@ -4,6 +4,16 @@
 
 ## 2026-07-07
 
+### Current - Surface ledger controls in command registry
+
+- 扩展 `agentdeck workbench` 的 `ledger_card`：新增 GUI-ready `controls[]`，其中 `kind=inspect` control 指向只读 `agentdeck workbench`，让 GUI/TUI 可以直接渲染通信账本卡入口。
+- 扩展 `agentdeck workbench` / `agentdeck controls` 的 `control_registry[]` 派生逻辑：现在会索引 `ledger_card.controls[]`，以 `scope=ledger` / `card=ledger_card` / `kind=inspect` 暴露通信账本命令面板项。
+- 扩展自然语言 `mode=ledger` 响应：`agentdeck leader chat --message "查看账本"` 继续保留顶层 `next_command` 指向第一条 `agentdeck trace --id <id>`，同时附带过滤到 ledger card 的 `control_registry_card`；selection 指向 `agentdeck workbench` inspect control，`intent_card.secondary_embedded_cards` 同步列出 `control_registry_card`。
+- 收紧契约守门：`validate_workbench_contract()` 会校验 ledger controls 字段、命令和 safety；`validate_leader_chat_contract()` 会拒绝缺少 ledger registry companion、secondary embedded card 漂移或 registry selection 与 `ledger_card` inspect control 不一致的响应；`validate_control_registry_card_contract()` 会校验 ledger registry item 必须是 inspect-only 的 `agentdeck workbench`。
+- 保持只读边界：ledger controls 和 registry companion 只是命令投影，不读取 tmux pane、不调用 provider、不创建 plan/action/approval/message/job/inbox、不 ack、不 dispatch、不 capture reply、不执行 trace/workbench 命令、不发送 tmux 输入。
+- 同步 README、`docs/contracts/workbench-schema.md`、`docs/contracts/controls-schema.md`、`docs/contracts/leader-chat-schema.md`、AGENT/CLAUDE 约束和测试。
+- 验证记录：已先确认红测失败，自然语言 `查看账本` 响应最初没有 `ledger_card.controls[]`，validator 也允许删除 ledger registry companion；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_ledger_without_mutating_state tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_ledger_registry_card -q` 2 项通过；Agent CLI/contract 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 328 项通过；Leader/contract 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 353 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 501 项通过。
+
 ### Current - Surface audit controls in command registry
 
 - 扩展 `agentdeck workbench` 的 `audit_card`：新增 GUI-ready `controls[]`，其中 `kind=inspect` control 指向只读 `agentdeck events --limit 20`，让 GUI/TUI 可以直接渲染最近审计时间线入口。

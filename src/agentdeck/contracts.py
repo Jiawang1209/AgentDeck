@@ -1009,6 +1009,7 @@ WORKBENCH_LEDGER_CARD_FIELDS = (
     "artifacts",
     "inbox",
     "trace_commands",
+    "controls",
 )
 
 WORKBENCH_LINEAGE_CARD_FIELDS = (
@@ -3575,6 +3576,35 @@ def _validate_ledger_card_contract(errors: list[str], ledger_card: dict[str, obj
                     )
     elif "trace_commands" in ledger_card:
         errors.append(_prefixed_contract_error(prefix, "ledger_card.trace_commands must be a list"))
+    controls = ledger_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append(_prefixed_contract_error(prefix, "ledger_card.controls items must be objects"))
+                continue
+            for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(
+                        _prefixed_contract_error(prefix, f"ledger_card.controls: missing control field: {field}")
+                    )
+            if control.get("kind") == "inspect":
+                if control.get("safety") != "inspect":
+                    errors.append(
+                        _prefixed_contract_error(prefix, "ledger_card.controls: inspect must use safety=inspect")
+                    )
+                if control.get("command") != "agentdeck workbench":
+                    errors.append(
+                        _prefixed_contract_error(
+                            prefix,
+                            "ledger_card.controls: inspect command must be agentdeck workbench",
+                        )
+                    )
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append(
+                    _prefixed_contract_error(prefix, "ledger_card.controls: disabled controls must include blocker")
+                )
+    elif "controls" in ledger_card:
+        errors.append(_prefixed_contract_error(prefix, "ledger_card.controls must be a list"))
 
 
 def _validate_lineage_card_contract(errors: list[str], lineage_card: dict[str, object], *, prefix: str) -> None:
@@ -3804,6 +3834,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             ):
                 errors.append(
                     "intent_card.secondary_embedded_cards must include control_registry_card for artifacts responses"
+                )
+            if (
+                explanation_action_kind == "ledger"
+                and payload.get("ledger_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for ledger responses"
                 )
             if (
                 explanation_action_kind == "audit"
@@ -4154,6 +4192,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         ):
             errors.append("control_registry_card.selection.next_command must match artifacts_card.artifacts_command")
         if (
+            explanation_action_kind == "ledger"
+            and isinstance(ledger_card, dict)
+            and isinstance(selection, dict)
+            and selection.get("next_command") != "agentdeck workbench"
+        ):
+            errors.append("control_registry_card.selection.next_command must match ledger_card inspect command")
+        if (
             explanation_action_kind == "audit"
             and isinstance(audit_card, dict)
             and isinstance(selection, dict)
@@ -4166,6 +4211,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("control_registry_card is required for leader_status responses")
     elif explanation_action_kind == "artifacts":
         errors.append("control_registry_card is required for artifacts responses")
+    elif explanation_action_kind == "ledger":
+        errors.append("control_registry_card is required for ledger responses")
     elif explanation_action_kind == "audit":
         errors.append("control_registry_card is required for audit responses")
     elif explanation_action_kind in {"approval_dispatch", "approval_dispatch_batch"}:
@@ -4901,6 +4948,11 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     errors.append("control_registry_card.items: artifacts inspect must use safety=inspect")
                 if item.get("command") != "agentdeck artifacts":
                     errors.append("control_registry_card.items: artifacts inspect command must be agentdeck artifacts")
+            if item.get("scope") == "ledger" and item.get("kind") == "inspect":
+                if item.get("safety") != "inspect":
+                    errors.append("control_registry_card.items: ledger inspect must use safety=inspect")
+                if item.get("command") != "agentdeck workbench":
+                    errors.append("control_registry_card.items: ledger inspect command must be agentdeck workbench")
             if item.get("scope") == "audit" and item.get("kind") == "inspect":
                 if item.get("safety") != "inspect":
                     errors.append("control_registry_card.items: audit inspect must use safety=inspect")
@@ -6289,6 +6341,19 @@ def role_agent_controls(agent_id: str) -> list[dict[str, object]]:
     ]
 
 
+def ledger_card_controls() -> list[dict[str, object]]:
+    return [
+        {
+            "kind": "inspect",
+            "label": "Inspect communication ledger",
+            "command": "agentdeck workbench",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
+
+
 def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, object]]:
     registry: list[dict[str, object]] = []
     leader_card = payload.get("leader_card") if isinstance(payload.get("leader_card"), dict) else {}
@@ -6367,6 +6432,14 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
                 agent_id=agent.get("agent_id"),
                 controls=agent.get("controls"),
             )
+    ledger_card = payload.get("ledger_card") if isinstance(payload.get("ledger_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="ledger",
+        card="ledger_card",
+        agent_id=None,
+        controls=ledger_card.get("controls"),
+    )
     inbox_card = payload.get("inbox_card") if isinstance(payload.get("inbox_card"), dict) else {}
     _append_inbox_control_registry_items(
         registry,
@@ -7038,6 +7111,7 @@ def workbench_example() -> dict[str, object]:
                 "agentdeck trace --id job_example",
                 "agentdeck trace --id rep_example",
             ],
+            "controls": ledger_card_controls(),
         },
         "lineage_card": {
             "mode": "lineage",

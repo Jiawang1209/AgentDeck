@@ -3293,6 +3293,23 @@ def test_leader_chat_inspects_ledger_without_mutating_state(tmp_path, monkeypatc
     assert payload["ledger_card"]["jobs"]["items"][0]["job_id"].startswith("job_")
     assert payload["ledger_card"]["inbox"]["total"] == 1
     assert payload["ledger_card"]["trace_commands"][0] == payload["next_command"]
+    assert payload["ledger_card"]["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect communication ledger",
+            "command": "agentdeck workbench",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
+    assert payload["control_registry_card"]["filters"]["scope"] == "ledger"
+    assert payload["control_registry_card"]["filters"]["card"] == "ledger_card"
+    assert payload["control_registry_card"]["filters"]["control_id"] == (
+        payload["control_registry_card"]["selection"]["requested_control_id"]
+    )
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == ["scope", "card", "control_id"]
+    assert payload["control_registry_card"]["item_count"] == 1
     assert payload["lineage_card"]["message_count"] == 1
     assert payload["lineage_card"]["job_count"] == 1
     assert payload["lineage_card"]["reply_count"] == 0
@@ -3319,6 +3336,31 @@ def test_leader_chat_inspects_ledger_without_mutating_state(tmp_path, monkeypatc
     assert payload["leader_explanation"]["safety"] == "inspect"
     assert payload["leader_explanation"]["requires_explicit_user"] is False
     assert payload["leader_explanation"]["next_command"] == payload["next_command"]
+    assert payload["intent_card"]["embedded_card"] == "ledger_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect ledger_card",
+        "command": "agentdeck workbench",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "ledger",
+        "card": "ledger_card",
+        "kind": "inspect",
+        "label": "Inspect communication ledger",
+        "command": "agentdeck workbench",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": selected_control["control_id"],
+    }
+    assert selected_control == payload["control_registry_card"]["items"][0]
+    assert payload["control_registry_card"]["selection"]["next_command"] == "agentdeck workbench"
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
     assert payload["project_view"]["chat_turns"]["items"][0]["mode"] == "ledger"
 
@@ -3331,6 +3373,32 @@ def test_leader_chat_inspects_ledger_without_mutating_state(tmp_path, monkeypatc
     assert state_after["inbox"]["planner"][0]["status"] == "pending"
     assert state_after["plans"] == []
     assert state_after["leader_actions"] == []
+
+
+def test_validate_leader_chat_contract_requires_ledger_registry_card(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["dispatch", "--agent", "planner", "--task", "设计消息账本"])
+    capsys.readouterr()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看账本"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for ledger responses",
+            "control_registry_card is required for ledger responses",
+        ],
+    }
 
 
 def test_leader_chat_inspects_audit_events_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
@@ -3972,7 +4040,7 @@ def test_leader_chat_help_filters_command_palette_without_planning(tmp_path, mon
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 65,
+        "item_count_before_filter": 66,
     }
     assert registry["item_count"] == len(registry["items"])
     assert registry["group_count"] == len(registry["groups"])
@@ -4009,7 +4077,7 @@ def test_leader_chat_help_filters_command_palette_by_query(tmp_path, monkeypatch
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 65,
+        "item_count_before_filter": 66,
     }
     assert registry["items"]
     assert all(
@@ -4049,7 +4117,7 @@ def test_leader_chat_help_filters_command_palette_by_control_id(tmp_path, monkey
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 65,
+        "item_count_before_filter": 66,
     }
     assert registry["items"] == [selected_item]
     assert registry["selection"] == {
@@ -4086,7 +4154,7 @@ def test_leader_chat_help_reports_unmatched_control_id_selection(tmp_path, monke
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 65,
+        "item_count_before_filter": 66,
     }
     assert registry["items"] == []
     assert registry["groups"] == []
@@ -4137,7 +4205,7 @@ def test_leader_chat_help_reports_filtered_out_control_id_selection(tmp_path, mo
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 65,
+        "item_count_before_filter": 66,
     }
     assert registry["items"] == []
     assert registry["groups"] == []
