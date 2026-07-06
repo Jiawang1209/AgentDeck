@@ -3050,6 +3050,54 @@ def test_leader_chat_help_reports_unmatched_control_id_selection(tmp_path, monke
     assert state_after["jobs"] == before["jobs"]
 
 
+def test_leader_chat_help_reports_filtered_out_control_id_selection(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.load()
+
+    exit_code = cli.main(["controls"])
+
+    assert exit_code == 0
+    controls_payload = json.loads(capsys.readouterr().out)
+    disabled_item = next(item for item in controls_payload["items"] if item["enabled"] is False)
+
+    exit_code = cli.main(
+        ["leader", "chat", "--message", f"命令面板 control_id {disabled_item['control_id']} enabled only"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "help"
+    registry = payload["control_registry_card"]
+    assert registry["filters"] == {
+        "scope": None,
+        "card": None,
+        "query": None,
+        "control_id": disabled_item["control_id"],
+        "enabled_only": True,
+        "item_count_before_filter": 45,
+    }
+    assert registry["items"] == []
+    assert registry["groups"] == []
+    assert registry["selection"] == {
+        "requested_control_id": disabled_item["control_id"],
+        "matched": False,
+        "matched_count": 0,
+        "selected_control": None,
+        "blocker": "control_id filtered out",
+        "next_command": None,
+    }
+
+    state_after = StateStore(root).load()
+    assert len(state_after["chat_turns"]) == len(before["chat_turns"]) + 1
+    assert state_after["chat_turns"][0]["mode"] == "help"
+    assert state_after["plans"] == before["plans"]
+    assert state_after["leader_actions"] == before["leader_actions"]
+    assert state_after["approvals"] == before["approvals"]
+    assert state_after["messages"] == before["messages"]
+    assert state_after["jobs"] == before["jobs"]
+
+
 def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

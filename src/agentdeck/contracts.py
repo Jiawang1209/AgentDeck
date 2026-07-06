@@ -1600,7 +1600,7 @@ def leader_chat_control_registry_card(
         enabled_only=enabled_only,
     )
     groups = _control_registry_groups(items)
-    selection = _control_registry_selection(items, control_id)
+    selection = _control_registry_selection(items, control_id, source_items=source_items)
     return {
         "mode": "control_registry",
         "title": "Command palette",
@@ -1655,19 +1655,31 @@ def _control_registry_search_text(item: dict[str, object]) -> str:
     return " ".join(str(item.get(field, "")) for field in searchable_fields).lower()
 
 
-def _control_registry_selection(items: list[object], control_id: str | None) -> dict[str, object]:
+def _control_registry_selection(
+    items: list[object],
+    control_id: str | None,
+    *,
+    source_items: list[object] | None = None,
+) -> dict[str, object]:
     matched_items = [
         item
         for item in items
         if isinstance(item, dict) and control_id is not None and item.get("control_id") == control_id
     ]
+    source_matched_items = [
+        item
+        for item in (source_items or items)
+        if isinstance(item, dict) and control_id is not None and item.get("control_id") == control_id
+    ]
     matched = len(matched_items) == 1
     if control_id is None or matched:
         blocker = None
-    elif not matched_items:
-        blocker = "control_id not found"
-    else:
+    elif matched_items:
         blocker = "control_id is not unique"
+    elif source_matched_items:
+        blocker = "control_id filtered out"
+    else:
+        blocker = "control_id not found"
     selected_control = matched_items[0] if matched else None
     next_command = (
         selected_control.get("command")

@@ -425,6 +425,27 @@ def test_validate_control_registry_card_contract_requires_unmatched_selection_bl
     }
 
 
+def test_control_registry_selection_marks_existing_control_id_filtered_out() -> None:
+    example = controls_example()
+    disabled_item = next(item for item in example["items"] if item["enabled"] is False)
+
+    payload = leader_chat_control_registry_card(
+        workbench_example(),
+        control_id=disabled_item["control_id"],
+        enabled_only=True,
+    )
+
+    assert payload["items"] == []
+    assert payload["selection"] == {
+        "requested_control_id": disabled_item["control_id"],
+        "matched": False,
+        "matched_count": 0,
+        "selected_control": None,
+        "blocker": "control_id filtered out",
+        "next_command": None,
+    }
+
+
 def test_validate_control_registry_card_contract_rejects_matched_selection_blocker() -> None:
     payload = controls_example()
     control_id = payload["items"][0]["control_id"]

@@ -3031,6 +3031,42 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
     assert StateStore(root).load() == before
 
 
+def test_controls_reports_filtered_out_control_id_selection_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.load()
+
+    exit_code = cli.main(["controls"])
+
+    assert exit_code == 0
+    first_payload = json.loads(capsys.readouterr().out)
+    disabled_item = next(item for item in first_payload["items"] if item["enabled"] is False)
+
+    exit_code = cli.main(["controls", "--control-id", disabled_item["control_id"], "--enabled-only"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["filters"] == {
+        "scope": None,
+        "card": None,
+        "query": None,
+        "control_id": disabled_item["control_id"],
+        "enabled_only": True,
+        "item_count_before_filter": 45,
+    }
+    assert payload["items"] == []
+    assert payload["groups"] == []
+    assert payload["selection"] == {
+        "requested_control_id": disabled_item["control_id"],
+        "matched": False,
+        "matched_count": 0,
+        "selected_control": None,
+        "blocker": "control_id filtered out",
+        "next_command": None,
+    }
+    assert StateStore(root).load() == before
+
+
 def test_controls_surfaces_dispatch_ready_operator_kind(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

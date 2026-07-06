@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Distinguish filtered command palette selections
+
+- 调整 `control_registry_card.selection.blocker`：当请求的 `control_id` 在源 `control_registry[]` 中存在、但被当前 scope/card/query/enabled-only 过滤条件排除时，返回 `control_id filtered out`；只有源 registry 中不存在该 id 时才返回 `control_id not found`。
+- 扩展 `leader_chat_control_registry_card()` / `_control_registry_selection()`：selection 生成现在同时查看未过滤 source registry 和过滤后的 `items[]`，但仍只把过滤后的 items 作为当前视图与 matched/selected_control 来源。
+- 同步 `agentdeck controls --control-id <id> --enabled-only` 与 `agentdeck leader chat --message "命令面板 control_id <id> enabled only"`：两条入口都能区分“ID 不存在”和“ID 被当前视图过滤掉”，仍然只读、不写 state、不调用 provider、不读取 pane、不执行任何 control/ack。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/controls-schema.md` 和 `docs/contracts/leader-chat-schema.md`，明确 filtered-out blocker 是 GUI/自然语言壳的选择态解释，不是授权或执行语义。
+- 验证记录：已先确认红测失败，源 registry 中存在但被 `--enabled-only` 排除的 disabled control 最初仍返回 `control_id not found`；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_control_registry_selection_marks_existing_control_id_filtered_out tests/test_agent_cli.py::test_controls_reports_filtered_out_control_id_selection_without_mutating_state tests/test_agent_cli.py::test_controls_reports_unmatched_control_id_selection_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_reports_filtered_out_control_id_selection tests/test_leader_cli.py::test_leader_chat_help_reports_unmatched_control_id_selection -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 365 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 389 项通过。
+
 ### Current - Add command palette selection next command
 
 - 扩展 `control_registry_card.selection`：新增只读 `next_command` 字段；只有 `filters.control_id` 精确命中且 selected control 自身 `enabled=true` 时才等于该 item 的 `command`，未请求、未命中或命中 disabled control 时为 `null`。
