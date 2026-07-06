@@ -484,6 +484,18 @@ def test_validate_control_registry_card_contract_requires_active_filter_keys_con
     }
 
 
+def test_validate_control_registry_card_contract_requires_unfiltered_count_to_match_items() -> None:
+    payload = controls_example()
+    payload["filters"]["item_count_before_filter"] = payload["item_count"] + 1
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.filters.item_count_before_filter must match item_count when unfiltered"],
+    }
+
+
 def test_validate_control_registry_card_contract_requires_selection_fields() -> None:
     payload = controls_example()
     del payload["selection"]["matched_count"]

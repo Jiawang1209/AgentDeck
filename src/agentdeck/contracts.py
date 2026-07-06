@@ -4500,6 +4500,14 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
             control_registry_card.get("item_count"), int
         ) and filters["item_count_before_filter"] < control_registry_card["item_count"]:
             errors.append("control_registry_card.filters.item_count_before_filter must be >= item_count")
+        if (
+            isinstance(filters.get("active_filter_keys"), list)
+            and filters.get("active_filter_keys") == []
+            and isinstance(filters.get("item_count_before_filter"), int)
+            and isinstance(control_registry_card.get("item_count"), int)
+            and filters["item_count_before_filter"] != control_registry_card["item_count"]
+        ):
+            errors.append("control_registry_card.filters.item_count_before_filter must match item_count when unfiltered")
     elif "filters" in control_registry_card:
         errors.append("control_registry_card.filters must be an object")
     selection = control_registry_card.get("selection")

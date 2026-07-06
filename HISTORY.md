@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate unfiltered control registry counts
+
+- 收紧 `control_registry_card.filters` 契约：当 `active_filter_keys=[]`、命令面板没有过滤条件时，`item_count_before_filter` 现在必须等于顶层 `item_count`，避免默认 GUI/TUI 命令面板显示错误的总数。
+- 过滤后的投影仍允许 `item_count_before_filter > item_count`，用于展示完整 workbench control registry 上下文；该字段只解释只读投影，不授权执行任何 command。
+- 同步 controls schema、AGENT/CLAUDE 约束，明确 filters/counts 仍然是从同一份 workbench registry 派生的 UI metadata，不是第二套控制状态。
+- 保持控制边界：该校验只拒绝漂移 `control_registry_card` payload，不创建 plan/action/approval/message/job/inbox，不 ack/approve/dispatch，不 spawn/refresh runtime，不读取 pane，不发送 tmux 输入，不写 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许默认未过滤 `item_count_before_filter=item_count+1` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_control_registry_card_contract_requires_unfiltered_count_to_match_items tests/test_contracts.py::test_validate_control_registry_card_contract_accepts_example tests/test_contracts.py::test_control_registry_selection_marks_existing_control_id_filtered_out tests/test_contracts.py::test_validate_control_registry_card_contract_requires_active_filter_keys_consistency tests/test_contracts.py::test_validate_control_registry_card_contract_requires_group_count_match -q` 5 项通过；真实 CLI/Leader help 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_agent_cli.py::test_controls_filters_by_scope_and_enabled_without_mutating_state tests/test_agent_cli.py::test_controls_filters_by_query_without_mutating_state tests/test_agent_cli.py::test_controls_filters_by_control_id_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_filters_command_palette_without_planning tests/test_leader_cli.py::test_leader_chat_help_filters_command_palette_by_control_id tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 8 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 429 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 455 项通过。
+
 ### Current - Validate workbench control registry source alignment
 
 - 收紧 Workbench control registry 契约：`validate_workbench_contract()` 现在要求 `control_registry[]` 精确匹配同一份 workbench cards 派生出的 controls，不再允许 GUI 命令面板成为第二套状态源。
