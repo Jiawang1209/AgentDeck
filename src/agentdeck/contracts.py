@@ -4118,6 +4118,11 @@ def _validate_leader_status_card_contract(errors: list[str], status_card: dict[s
                         errors.append(f"leader_status_card.controls: missing control field: {field}")
                 if control.get("kind") == "inspect" and control.get("safety") != "inspect":
                     errors.append("leader_status_card.controls: inspect controls must use safety=inspect")
+                if control.get("kind") == "refresh":
+                    if control.get("command") != status_card.get("refresh_command"):
+                        errors.append("leader_status_card.controls: refresh command must match refresh_command")
+                    if control.get("safety") != "inspect":
+                        errors.append("leader_status_card.controls: refresh controls must use safety=inspect")
                 if control.get("enabled") is False and not control.get("blocker"):
                     errors.append("leader_status_card.controls: disabled controls must include blocker")
             else:
@@ -7906,6 +7911,14 @@ def leader_status_example() -> dict[str, object]:
         "recovery": recovery,
         "next_command": recovery["next_command"],
         "controls": [
+            {
+                "kind": "refresh",
+                "label": "Refresh Leader status",
+                "command": "agentdeck leader status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
             {
                 "kind": "inspect",
                 "label": "Open project status",

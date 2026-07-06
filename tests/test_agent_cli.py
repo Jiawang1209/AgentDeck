@@ -726,6 +726,14 @@ def test_leader_status_surfaces_provider_and_queue_snapshot_without_mutating_sta
     assert payload["next_command"] == payload["recovery"]["next_command"]
     assert payload["controls"] == [
         {
+            "kind": "refresh",
+            "label": "Refresh Leader status",
+            "command": payload["refresh_command"],
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
             "kind": "inspect",
             "label": "Open project status",
             "command": "agentdeck status",

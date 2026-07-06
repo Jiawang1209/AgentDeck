@@ -26,7 +26,7 @@ The command does not call the configured Leader provider, read tmux pane output,
 - `queues`: compact pending queue counts for the Leader operator.
 - `recovery`: ProjectView recovery object.
 - `next_command`: `recovery.next_command`.
-- `controls`: inspect and explicit next-step controls.
+- `controls`: GUI-ready controls. The first item is `kind=refresh`, uses `safety=inspect`, and its `command` matches `refresh_command`; additional items expose project status, workbench, provider setup, and explicit next-step controls.
 
 ## Queue Fields
 

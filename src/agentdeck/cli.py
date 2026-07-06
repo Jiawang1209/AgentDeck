@@ -765,6 +765,12 @@ def _leader_status_payload(project_view: dict[str, object]) -> dict[str, object]
         "recovery": recovery,
         "next_command": next_command,
         "controls": [
+            _control(
+                kind="refresh",
+                label="Refresh Leader status",
+                command="agentdeck leader status",
+                safety="inspect",
+            ),
             _control(kind="inspect", label="Open project status", command="agentdeck status", safety="inspect"),
             _control(kind="inspect", label="Open workbench", command="agentdeck workbench", safety="inspect"),
             _control(kind="inspect", label="Inspect provider setup", command="agentdeck doctor", safety="inspect"),

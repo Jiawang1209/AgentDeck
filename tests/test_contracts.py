@@ -2938,6 +2938,14 @@ def test_leader_status_contract_response_includes_example_without_drift(tmp_path
     assert example["refresh_command"] == "agentdeck leader status"
     assert example["project_view_command"] == "agentdeck status"
     assert example["workbench_command"] == "agentdeck workbench"
+    assert example["controls"][0] == {
+        "kind": "refresh",
+        "label": "Refresh Leader status",
+        "command": example["refresh_command"],
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
 
 
 def test_validate_leader_summary_contract_accepts_example() -> None:
@@ -3423,6 +3431,7 @@ def test_validate_leader_chat_contract_rejects_leader_status_command_drift() -> 
         "errors": [
             "leader_status_card.source_command must be agentdeck leader status",
             "leader_status_card.refresh_command must be agentdeck leader status",
+            "leader_status_card.controls: refresh command must match refresh_command",
         ],
     }
 

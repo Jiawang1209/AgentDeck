@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add refresh control to Leader status card
+
+- 扩展 `agentdeck leader status` 只读状态卡：`controls[]` 第一项现在是 `kind=refresh` / `label=Refresh Leader status` / `command=agentdeck leader status` / `safety=inspect`，让 GUI/TUI 顶栏无需解析字段即可渲染刷新按钮。
+- 同步 `leader_status_example()` 和 `agentdeck contract leader-status --example`，确保 live payload、稳定示例和 contract discovery 的 control shape 一致。
+- 收紧 validator：`leader_status_card.controls[]` 中的 refresh control 必须匹配 `refresh_command`，且必须使用 `safety=inspect`。
+- 保持只读边界：refresh control 只是命令投影，不调用 provider、不读取 tmux pane、不写 state、不创建 plan/action/approval/message/job/inbox，也不执行刷新命令。
+- 同步 `docs/contracts/leader-status-schema.md`，明确 controls 第一项是 GUI-ready refresh control。
+- 验证记录：已先确认红测失败，live `agentdeck leader status` payload 和 contract example 最初缺少 `kind=refresh` control；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_status_surfaces_provider_and_queue_snapshot_without_mutating_state tests/test_contracts.py::test_leader_status_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_rejects_leader_status_command_drift -q` 3 项通过；Agent CLI/contract 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 325 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 493 项通过。
+
 ### Current - Validate Leader status command metadata
 
 - 收紧 `leader_status_card` contract validator：`source_command` 和 `refresh_command` 现在必须精确等于 `agentdeck leader status`，避免 GUI/TUI 或自然语言壳收到漂移的刷新/来源命令。
