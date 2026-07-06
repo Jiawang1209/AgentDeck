@@ -45,7 +45,7 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `safety`
 - `requires_explicit_user`
 
-`mode` must be `run_start`. `safety` must be `approval_gated`, and `requires_explicit_user` must be `true`.
+`mode` must be `run_start`. `safety` must be `approval_gated`, and `requires_explicit_user` must be `true`. Provider output is normalized before the run card is built: accepted plans must keep every step at `requires_approval=true`, and AgentDeck forces top-level `approval_required=true` and `dispatch_ready=false` even if the backend returned different control flags.
 
 `progress_response_fields` describes the live `agentdeck run --plan-id <id>` response:
 

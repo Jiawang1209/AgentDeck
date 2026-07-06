@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Force provider plans through approval gates
+
+- 收紧真实 Leader provider 输出归一化：`OpenAICompatibleProvider` / `DeepSeekProvider` 和 `CodexCliProvider` / `ClaudeCliProvider` 现在在 plan 通过 step 校验后强制写回 `approval_required=true`、`dispatch_ready=false`，即使后端返回了 `approval_required=false` 或 `dispatch_ready=true`。
+- 保留已有硬约束：每个 provider plan step 仍必须包含 `requires_approval=true`，否则 provider adapter 拒绝计划；CLI-backed Leader 仍通过本地 `codex exec` / `claude --print` 生成同一 JSON plan schema，不复用 worker tmux pane，不自动创建 approval、dispatch 或发送 tmux 输入。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/run-schema.md` 和 `docs/contracts/leader-chat-schema.md`，明确 provider 顶层 control flags 不是授权来源，AgentDeck 始终把 provider-backed planning 收敛到审批门前。
+- 验证记录：已先确认红测失败，CLI/API provider 返回 `approval_required=false`、`dispatch_ready=true` 时原实现会接受 `approval_required=false`；实现后目标测试 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_cli_provider_forces_approval_gates_when_provider_returns_unsafe_control_flags tests/test_provider_openai_compatible.py::test_openai_compatible_provider_forces_approval_gates_when_provider_returns_unsafe_control_flags -q` 2 项通过；provider 单测 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py -q` 15 项通过；Leader CLI 关键回归 3 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py tests/test_provider_openai_compatible.py -q` 381 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 392 项通过。
+
 ### Current - Add command palette active filter keys
 
 - 扩展 `control_registry_card.filters`：新增只读 `active_filter_keys` 字段，按 `scope`、`card`、`query`、`control_id`、`enabled_only` 稳定顺序列出当前生效过滤器，供 GUI/TUI 和自然语言壳直接渲染过滤 chip，而不需要从 raw filter values 反推。

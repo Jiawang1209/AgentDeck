@@ -113,5 +113,5 @@ class OpenAICompatibleProvider:
                 raise RuntimeError(f"provider plan step {index} is invalid")
             if step.get("requires_approval") is not True:
                 raise RuntimeError(f"provider plan step {index} must require approval")
-        plan["approval_required"] = bool(plan.get("approval_required", True))
-        plan["dispatch_ready"] = bool(plan.get("dispatch_ready", False))
+        plan["approval_required"] = True
+        plan["dispatch_ready"] = False

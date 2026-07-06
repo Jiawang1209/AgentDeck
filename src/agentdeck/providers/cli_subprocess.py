@@ -100,8 +100,8 @@ class CliLeaderProvider:
                 raise RuntimeError("provider plan steps must be objects")
             if step.get("requires_approval") is not True:
                 raise RuntimeError("provider plan steps must require approval")
-        plan["approval_required"] = bool(plan.get("approval_required", True))
-        plan["dispatch_ready"] = bool(plan.get("dispatch_ready", False))
+        plan["approval_required"] = True
+        plan["dispatch_ready"] = False
 
 
 class CodexCliProvider(CliLeaderProvider):

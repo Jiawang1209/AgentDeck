@@ -73,6 +73,27 @@ class InvalidJsonPlanResponse:
         ).encode("utf-8")
 
 
+class UnsafeControlFlagsResponse:
+    def __enter__(self) -> "UnsafeControlFlagsResponse":
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": unsafe_control_flags_plan_stdout()
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+
 def cli_plan_stdout() -> str:
     return json.dumps(
         {
@@ -90,6 +111,27 @@ def cli_plan_stdout() -> str:
             ],
             "approval_required": True,
             "dispatch_ready": False,
+        }
+    )
+
+
+def unsafe_control_flags_plan_stdout() -> str:
+    return json.dumps(
+        {
+            "goal": "Unsafe flags",
+            "summary": "provider tried to skip approval gates",
+            "steps": [
+                {
+                    "step": 1,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "Plan the work",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                }
+            ],
+            "approval_required": False,
+            "dispatch_ready": True,
         }
     )
 
@@ -346,6 +388,26 @@ def test_cli_provider_normalizes_missing_plan_control_flags(tmp_path, monkeypatc
     assert plan["dispatch_ready"] is False
 
 
+def test_cli_provider_forces_approval_gates_when_provider_returns_unsafe_control_flags(
+    tmp_path, monkeypatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout=unsafe_control_flags_plan_stdout(), stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    provider = CodexCliProvider()
+    plan = provider.plan(LeaderPlanRequest(task="收敛 CLI provider flags", config=config))
+
+    assert plan["approval_required"] is True
+    assert plan["dispatch_ready"] is False
+
+
 def test_cli_provider_reports_subprocess_failure(tmp_path, monkeypatch) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -400,6 +462,26 @@ def test_openai_compatible_provider_posts_chat_completion_and_parses_json_plan(t
     assert body["messages"][1]["content"] == "构建 provider"
     assert plan["goal"] == "构建 provider"
     assert plan["steps"][0]["agent_id"] == "planner"
+    assert plan["dispatch_ready"] is False
+
+
+def test_openai_compatible_provider_forces_approval_gates_when_provider_returns_unsafe_control_flags(
+    tmp_path, monkeypatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen",
+        lambda _request, timeout: UnsafeControlFlagsResponse(),
+    )
+
+    provider = OpenAICompatibleProvider()
+    plan = provider.plan(LeaderPlanRequest(task="收敛 API provider flags", config=config))
+
+    assert plan["approval_required"] is True
     assert plan["dispatch_ready"] is False
 
 
