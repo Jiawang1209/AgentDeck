@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Route Leader refresh aliases to status card
+
+- 新增自然语言只读别名：`agentdeck leader chat --message "leader refresh"` 和 `"刷新 Leader 状态"` 现在进入 `mode=leader_status`，复用与 `agentdeck leader status` 同源的 `leader_status_card`。
+- 该入口会返回上一轮新增的 `intent_card.controls[]` refresh control，方便 GUI/TUI 或自然语言壳把“刷新 Leader 状态”直接渲染为只读刷新按钮。
+- 扩展 `leader_status` capability 的 `example_messages`，加入 `刷新 Leader 状态` 和 `leader refresh`，让 help/命令面板能力发现也能展示 refresh 入口。
+- 保持窄路由和只读边界：只有包含 Leader 且带 status/overview/refresh/刷新等状态查看语义的消息会走状态卡；该入口只记录 chat turn 和审计事件，不调用 provider、不读取 tmux pane、不创建 plan/action/approval/message/job/inbox、不修改 runtime state，也不执行刷新命令。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、AGENT/CLAUDE 约束。
+- 验证记录：已先确认红测失败，`leader refresh` 最初会落入 provider planning 分支并调用 `leader_provider`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_refresh_alias_routes_to_leader_status_without_planning tests/test_leader_cli.py::test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or_runtime tests/test_leader_cli.py::test_leader_chat_overview_alias_routes_to_leader_status_without_planning tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning -q` 4 项通过；Leader/contract 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 348 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 495 项通过。
+
 ### Current - Surface Leader status refresh in chat intent
 
 - 扩展自然语言 `mode=leader_status` 的 `intent_card.controls[]`：当响应嵌入 `leader_status_card` 时，intent card 会先暴露 `kind=refresh` / `label=Refresh Leader status` / `command=<leader_status_card.refresh_command>` / `safety=inspect`。

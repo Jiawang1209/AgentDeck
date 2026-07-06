@@ -3811,8 +3811,10 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
     assert capabilities["leader_status"]["card"] == "leader_status_card"
     assert capabilities["leader_status"]["example_messages"] == [
         "查看 Leader 状态",
+        "刷新 Leader 状态",
         "Leader 概览",
         "leader status",
+        "leader refresh",
         "leader overview",
     ]
     assert capabilities["leader_status"]["controls"][0] == {
@@ -6401,6 +6403,33 @@ def test_leader_chat_overview_alias_routes_to_leader_status_without_planning(
     assert payload["mode"] == "leader_status"
     assert payload["leader_status_card"]["mode"] == "leader_status"
     assert payload["intent_card"]["embedded_card"] == "leader_status_card"
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+
+
+def test_leader_chat_refresh_alias_routes_to_leader_status_without_planning(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    def fail_provider(_name: str):
+        raise AssertionError("leader refresh alias must not call a planning provider")
+
+    monkeypatch.setattr(cli, "leader_provider", fail_provider)
+
+    exit_code = cli.main(["leader", "chat", "--message", "leader refresh"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "leader_status"
+    assert payload["leader_status_card"]["mode"] == "leader_status"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "refresh",
+        "label": "Refresh Leader status",
+        "command": payload["leader_status_card"]["refresh_command"],
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
     assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
 
 

@@ -4215,22 +4215,32 @@ def _chat_wants_leader_status(message: str) -> bool:
     explicit_phrases = {
         "leaderstatus",
         "leaderoverview",
+        "leaderrefresh",
         "/leaderstatus",
         "/leaderoverview",
+        "/leaderrefresh",
         "leader状态",
         "leader概览",
+        "leader刷新",
         "查看leader状态",
         "查看leader概览",
+        "刷新leader状态",
+        "刷新leader",
         "leader状态卡",
         "leader概览卡",
+        "leader刷新卡",
         "调度者状态",
         "调度者概览",
+        "调度者刷新",
         "查看调度者状态",
         "查看调度者概览",
+        "刷新调度者状态",
     }
     if normalized in explicit_phrases:
         return True
-    return "leader" in normalized and any(token in normalized for token in ("状态", "status", "健康", "概览", "overview"))
+    return "leader" in normalized and any(
+        token in normalized for token in ("状态", "status", "健康", "概览", "overview", "刷新", "refresh")
+    )
 
 
 def _chat_control_registry_filters(message: str) -> dict[str, object]:
