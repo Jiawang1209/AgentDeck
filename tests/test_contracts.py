@@ -304,6 +304,18 @@ def test_validate_run_start_contract_accepts_run_progress_example() -> None:
     assert result == {"ok": True, "errors": []}
 
 
+def test_validate_run_start_contract_requires_review_backend_to_match_progress_backend() -> None:
+    payload = run_progress_example()
+    payload["review"]["leader_backend"]["provider"] = "codex-cli"
+
+    result = validate_run_start_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["run_progress.review.leader_backend must match leader_backend"],
+    }
+
+
 def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     contract_path = tmp_path / "controls-schema.md"
     contract_path.write_text("# Controls Contract\n", encoding="utf-8")
@@ -2146,6 +2158,19 @@ def test_leader_review_contract_payload_is_reusable_without_cli(tmp_path: Path) 
     assert payload["contract_path"] == str(contract_path)
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == list(LEADER_REVIEW_RESPONSE_FIELDS)
+    assert payload["leader_backend_fields"] == [
+        "agent_id",
+        "provider",
+        "model",
+        "provider_backend",
+        "provider_transport",
+        "reasoning_backend",
+        "runtime_kind",
+        "pane_backed",
+        "pane_id",
+        "approval_required",
+        "dispatch_ready",
+    ]
     assert payload["control_fields"] == list(LEADER_REVIEW_CONTROL_FIELDS)
     assert payload["project_view_contract"] == "agentdeck contract project-view"
 
@@ -2160,6 +2185,7 @@ def test_leader_review_contract_response_includes_example_without_drift(tmp_path
     assert payload["example"] is True
     assert payload["example_leader_review"] == example
     assert payload["example_response_fields"] == payload["response_fields"]
+    assert payload["example_leader_backend_fields"] == list(example["leader_backend"])
     assert set(payload["example_response_fields"]) == set(example)
     assert payload["example_control_fields"] == payload["control_fields"]
     assert set(payload["example_control_fields"]) == set(example["controls"][0])
@@ -2168,6 +2194,18 @@ def test_leader_review_contract_response_includes_example_without_drift(tmp_path
     assert example["controls"][0]["command"] == "agentdeck trace --id msg_example"
     assert example["controls"][1]["command"] == example["next_command"]
     assert example["controls"][1]["safety"] == "explicit_runtime"
+
+
+def test_validate_leader_review_contract_requires_logical_leader_backend() -> None:
+    payload = leader_review_example()
+    payload["leader_backend"]["pane_backed"] = True
+
+    result = validate_leader_review_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["leader_review.leader_backend.runtime_kind must be logical_leader without a pane"],
+    }
 
 
 def test_validate_leader_review_contract_accepts_example() -> None:

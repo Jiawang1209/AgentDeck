@@ -212,6 +212,7 @@ def test_run_plan_id_returns_progress_card_without_dispatching(
     assert payload["task"] == "实现 run progress"
     assert payload["status"] == "planned"
     assert payload["leader_backend"] == started["leader_backend"]
+    assert payload["review"]["leader_backend"] == payload["leader_backend"]
     assert payload["counts"]["approved"] == 1
     assert payload["counts"]["pending"] == 2
     assert payload["review"]["next_action"] == "dispatch_approved"
@@ -4821,6 +4822,19 @@ def test_leader_review_recommends_next_dispatch_when_pending_approved_step_exist
     payload = json.loads(capsys.readouterr().out)
     assert payload["plan_id"] == plan_id
     assert payload["next_action"] == "dispatch_approved"
+    assert payload["leader_backend"] == {
+        "agent_id": "leader",
+        "provider": "fake",
+        "model": "fake-plan",
+        "provider_backend": "local",
+        "provider_transport": "local",
+        "reasoning_backend": "local-fake",
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
     assert payload["approval_id"] == approval_id
     assert payload["agent_id"] == "planner"
     assert payload["reason"] == "approved step is waiting for dispatch"

@@ -260,6 +260,7 @@ class StateStore:
 
     def leader_review(self, plan_id: str) -> dict[str, Any]:
         status = self.plan_status(plan_id)
+        leader_backend = status.get("leader_backend")
         state = self.load()
         replies = state.get("replies", [])
         replies_by_message = {reply.get("message_id"): reply for reply in replies}
@@ -272,6 +273,7 @@ class StateStore:
                     "approval_id": step.get("approval_id"),
                     "agent_id": step.get("agent_id"),
                     "counts": status["counts"],
+                    "leader_backend": leader_backend,
                 }
         dispatched_without_reply = []
         completed_replies = []
@@ -299,6 +301,7 @@ class StateStore:
                 "agent_id": step.get("agent_id"),
                 "message_id": step.get("message_id"),
                 "counts": status["counts"],
+                "leader_backend": leader_backend,
             }
         if completed_replies:
             return {
@@ -307,12 +310,14 @@ class StateStore:
                 "reason": "all dispatched steps have replies",
                 "replies": completed_replies,
                 "counts": status["counts"],
+                "leader_backend": leader_backend,
             }
         return {
             "plan_id": plan_id,
             "next_action": "wait_for_approval",
             "reason": "no approved or dispatched steps are ready",
             "counts": status["counts"],
+            "leader_backend": leader_backend,
         }
 
     def record_chat_turn(

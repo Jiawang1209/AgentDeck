@@ -192,7 +192,7 @@ Worker 不应该：
 - `agentdeck leader chat --message "apply action <id>"` 会复用 safe apply-action 白名单；当前只允许应用 `create_approvals`，runtime action 必须继续显式命令执行；safe apply 完成后的 `next_command` 必须来自刷新后 `recovery.next_command`，并且当 safe apply 创建 approvals 时必须嵌入同源 `approval_card` 供 GUI/对话层展示审批队列，但不得自动 approve/reject/dispatch 或发送 tmux 输入。
 - `agentdeck leader chat-history` 返回已持久化的 chat turns 摘要，用于恢复自然语言调度上下文；review turn 会包含 action_id/action_kind。
 - `agentdeck leader plan --task <text>` 会写入 `.agentdeck/state/state.json` 的 `plans[]`。
-- `agentdeck leader review --plan-id <id>` 会先通过 ProjectView contract 守门，再基于 plan status 和 replies 输出下一步建议；输出必须包含 `next_command` 和 GUI-ready `controls[]`，其中 `wait_for_reply` 推荐 `agentdeck capture-reply --agent <id> --message-id <id>` 但不执行 capture。
+- `agentdeck leader review --plan-id <id>` 会先通过 ProjectView contract 守门，再基于 plan status 和 replies 输出下一步建议；输出必须包含同源 `leader_backend`、`next_command` 和 GUI-ready `controls[]`，其中 `leader_backend` 必须保持逻辑 `agent_id=leader`、`runtime_kind=logical_leader`、`pane_backed=false`、`pane_id=null`，`wait_for_reply` 推荐 `agentdeck capture-reply --agent <id> --message-id <id>` 但不执行 capture。
 - `agentdeck leader next` 会先通过 ProjectView contract 守门，再把下一步建议写入 `leader_actions[]`，但不会执行命令；相同 pending action 已存在时会复用原 action_id。
 - `agentdeck leader actions` 返回已持久化的 action queue 摘要，包含顶层 `recommended_action_id`、每项 `is_recommended`、`preview_command` 和 `controls[]`。
 - `agentdeck leader action --action-id <id>` 返回单个 action 的只读详情，包含 `preview_command`、`can_apply`、`apply_command`、`explicit_command`、`apply_blocker`、当前 `recovery`、`recommended_action` 和 `matches_recommended_action`。

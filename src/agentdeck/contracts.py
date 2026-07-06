@@ -1005,6 +1005,7 @@ LEADER_REVIEW_RESPONSE_FIELDS = (
     "plan_id",
     "next_action",
     "reason",
+    "leader_backend",
     "approval_id",
     "agent_id",
     "message_id",
@@ -2226,6 +2227,7 @@ def leader_review_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "response_fields": list(LEADER_REVIEW_RESPONSE_FIELDS),
+        "leader_backend_fields": list(LEADER_BACKEND_FIELDS),
         "control_fields": list(LEADER_REVIEW_CONTROL_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",
@@ -2238,6 +2240,7 @@ def leader_review_contract_response(contract_path: Path, include_example: bool =
         example = leader_review_example()
         payload["example"] = True
         payload["example_response_fields"] = list(example)
+        payload["example_leader_backend_fields"] = list(example["leader_backend"])
         payload["example_control_fields"] = list(example["controls"][0])
         payload["example_leader_review"] = example
     return payload
@@ -2544,6 +2547,8 @@ def validate_run_start_contract(payload: dict[str, object]) -> dict[str, object]
                 errors.extend(f"review: {error}" for error in review_validation["errors"])
             if payload.get("next_command") != review.get("next_command"):
                 errors.append("run_progress.next_command must match review.next_command")
+            if isinstance(leader_backend, dict) and review.get("leader_backend") != leader_backend:
+                errors.append("run_progress.review.leader_backend must match leader_backend")
         else:
             errors.append("run_progress.review must be an object")
     approval_card = payload.get("approval_card")
@@ -2622,6 +2627,11 @@ def validate_leader_review_contract(payload: dict[str, object]) -> dict[str, obj
     for field in LEADER_REVIEW_RESPONSE_FIELDS:
         if field not in payload:
             errors.append(f"missing leader_review field: {field}")
+    leader_backend = payload.get("leader_backend")
+    if isinstance(leader_backend, dict):
+        _validate_leader_backend(errors, "leader_review", leader_backend)
+    else:
+        errors.append("leader_review.leader_backend must be an object")
     controls = payload.get("controls")
     if isinstance(controls, list):
         for control in controls:
@@ -5741,6 +5751,19 @@ def run_progress_example() -> dict[str, object]:
     approval_card = approval_example()
     approval_id = approval_card["approvals"][1]["approval_id"]
     next_command = f"agentdeck approval dispatch --approval-id {approval_id}"
+    leader_backend = {
+        "agent_id": "leader",
+        "provider": "fake",
+        "model": "fake-plan",
+        "provider_backend": "local",
+        "provider_transport": "local",
+        "reasoning_backend": "local-fake",
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "ok": True,
@@ -5751,19 +5774,7 @@ def run_progress_example() -> dict[str, object]:
         "provider": "fake",
         "provider_backend": "local",
         "provider_transport": "local",
-        "leader_backend": {
-            "agent_id": "leader",
-            "provider": "fake",
-            "model": "fake-plan",
-            "provider_backend": "local",
-            "provider_transport": "local",
-            "reasoning_backend": "local-fake",
-            "runtime_kind": "logical_leader",
-            "pane_backed": False,
-            "pane_id": None,
-            "approval_required": True,
-            "dispatch_ready": False,
-        },
+        "leader_backend": dict(leader_backend),
         "model": "fake-plan",
         "counts": {
             "steps": 2,
@@ -5794,6 +5805,7 @@ def run_progress_example() -> dict[str, object]:
             "agent_id": "coder",
             "message_id": None,
             "replies": [],
+            "leader_backend": dict(leader_backend),
             "next_command": next_command,
             "controls": [
                 {
@@ -6052,6 +6064,19 @@ def leader_review_example() -> dict[str, object]:
         "plan_id": "pln_example",
         "next_action": "wait_for_reply",
         "reason": "dispatched step has no reply yet",
+        "leader_backend": {
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
         "approval_id": None,
         "agent_id": "planner",
         "message_id": "msg_example",

@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Carry Leader backend identity through review
+
+- 扩展 `agentdeck leader review --plan-id <id>`：review 输出现在带同源 `leader_backend`，与被 review plan/run 的逻辑 Leader identity 保持一致。
+- 扩展嵌入链路：`agentdeck run --plan-id <id>` 的 `run_progress.review.leader_backend` 必须匹配顶层 `run_progress.leader_backend`，避免 GUI 在同一 run card 中看到漂移的 Leader 来源。
+- 扩展 leader-review contract discovery：`agentdeck contract leader-review` 新增 `leader_backend_fields`，`--example` 新增 `example_leader_backend_fields`，`validate_leader_review_contract()` 会拒绝 pane-backed 或非 logical Leader 的 review backend。
+- 保持控制边界：review 仍然只读建议下一步，不创建 approval、leader action、message/job/inbox/reply，不 capture pane、不 dispatch、不发送 tmux 输入；`leader_backend` 只是 plan/review provenance，不是 runtime binding 或授权来源。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/leader-review-schema.md`。
+- 验证记录：已先确认红测失败，`leader review` live 输出、leader-review contract discovery/example 和 validator 最初缺少 `leader_backend`；`run_progress.review.leader_backend` 最初也未被 validator 要求匹配顶层 `leader_backend`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_review_recommends_next_dispatch_when_pending_approved_step_exists tests/test_leader_cli.py::test_run_plan_id_returns_progress_card_without_dispatching tests/test_contracts.py::test_leader_review_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_review_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_review_contract_requires_logical_leader_backend tests/test_contracts.py::test_validate_run_start_contract_requires_review_backend_to_match_progress_backend tests/test_agent_cli.py::test_contract_leader_review_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_review_example_exports_gui_ready_response -q` 8 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 374 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 400 项通过。
+
 ### Current - Add normalized Leader backend identity to plans
 
 - 扩展 plan provenance：保存后的 plan record、`agentdeck leader plan` 输出、`agentdeck run` 的 `run_start` / `run_progress` card、Workbench 嵌入的 `run_progress_card`、ProjectView `plans.items[]` 和 `agentdeck plan list` 现在都会暴露同源 `leader_backend` 对象。

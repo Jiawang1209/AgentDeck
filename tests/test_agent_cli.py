@@ -3661,6 +3661,7 @@ def test_contract_leader_review_discovers_schema_for_gui_clients(capsys) -> None
     assert payload["contract_path"].endswith("docs/contracts/leader-review-schema.md")
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == expected["response_fields"]
+    assert payload["leader_backend_fields"] == expected["leader_backend_fields"]
     assert payload["control_fields"] == expected["control_fields"]
     assert payload["project_view_contract"] == "agentdeck contract project-view"
 
@@ -3674,7 +3675,9 @@ def test_contract_leader_review_example_exports_gui_ready_response(capsys) -> No
     assert payload == expected
     example = payload["example_leader_review"]
     assert payload["example_response_fields"] == payload["response_fields"]
+    assert payload["example_leader_backend_fields"] == payload["leader_backend_fields"]
     assert set(payload["example_response_fields"]) == set(example)
+    assert set(payload["example_leader_backend_fields"]) == set(example["leader_backend"])
     assert payload["example_control_fields"] == payload["control_fields"]
     assert set(payload["example_control_fields"]) == set(example["controls"][0])
     assert example["next_command"] == "agentdeck capture-reply --agent planner --message-id msg_example"
