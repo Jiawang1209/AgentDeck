@@ -3154,6 +3154,42 @@ def test_validate_leader_chat_contract_requires_control_registry_card_count() ->
     }
 
 
+def test_validate_leader_chat_contract_requires_queue_registry_selection_to_match_next_command() -> None:
+    payload = leader_chat_example()
+    next_command = payload["operator_card"]["apply_command"]
+    payload["mode"] = "queue"
+    payload["next_command"] = next_command
+    payload["queue_card"]["next_command"] = next_command
+    payload["operator_card"]["next_command"] = next_command
+    payload["leader_explanation"]["mode"] = "queue"
+    payload["leader_explanation"]["next_command"] = next_command
+    payload["intent_card"]["mode"] = "queue"
+    payload["intent_card"]["matched_intent"] = "queue"
+    payload["intent_card"]["embedded_card"] = "queue_card"
+    payload["intent_card"]["secondary_embedded_cards"] = ["control_registry_card"]
+    payload["intent_card"]["next_command"] = next_command
+    payload["intent_card"]["controls"][-1]["command"] = next_command
+    registry_items = workbench_control_registry({"queue_card": payload["queue_card"], "operator_card": payload["operator_card"]})
+    selected_control_id = next(
+        item["control_id"]
+        for item in registry_items
+        if item["card"] == "operator_card" and item["kind"] == "preview"
+    )
+    payload["control_registry_card"] = leader_chat_control_registry_card(
+        {"control_registry": registry_items},
+        scope="operator",
+        card="operator_card",
+        control_id=selected_control_id,
+    )
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.selection.next_command must match queue next_command"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_action_card_when_action_is_present() -> None:
     payload = leader_chat_example()
     payload["leader_action_card"] = None

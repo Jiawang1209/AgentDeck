@@ -3937,6 +3937,9 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                     "control_registry_card.filters.card must be dispatch_batch_preview_card for approval_dispatch_batch responses"
                 )
         selection = control_registry_card.get("selection")
+        if payload.get("mode") == "queue" and isinstance(selection, dict):
+            if selection.get("next_command") != payload.get("next_command"):
+                errors.append("control_registry_card.selection.next_command must match queue next_command")
         if (
             explanation_action_kind == "provider_setup"
             and isinstance(provider_setup_card, dict)

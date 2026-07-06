@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Validate queue registry selection alignment
+
+- 收紧 Leader chat queue-mode 契约：`validate_leader_chat_contract()` 现在要求 `mode=queue` 的 `control_registry_card.selection.next_command` 与顶层 `next_command` 一致。
+- 该校验会拒绝命令面板选中了另一个 enabled operator control 的漂移 payload，例如主操作区推荐 `apply`，但 registry selection 选中了 `preview`。
+- 保持上一轮新增的自然语言 queue/operator 控制面投影：`control_registry_card` 仍过滤到 `operator_card`，并由 `intent_card.secondary_embedded_cards[]` 暴露给 GUI/TUI。
+- 同步 Leader chat schema、README、AGENT/CLAUDE 约束，明确 queue registry selection 是同源 operator projection 的 contract gate，不是描述性提示。
+- 保持控制边界：该校验只拒绝漂移 Leader chat payload，不创建 plan/action/approval/message/job/inbox，不 apply/approve/reject/dispatch，不 ack，不 refresh runtime，不读取 pane，不发送 tmux 输入，不写 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许 queue mode 顶层 `next_command` 指向 apply 但 `control_registry_card.selection` 选中 preview control；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_queue_registry_selection_to_match_next_command tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_leader_cli.py::test_leader_chat_inspects_queue_without_applying_action tests/test_leader_cli.py::test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 441 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 467 项通过。
+
 ### Current - Surface queue operator control registry selection
 
 - 扩展自然语言 queue/operator 控制面：`agentdeck leader chat --message "查看队列"` / `"查看控制面"` 现在会附带过滤到 `operator_card` 的 `control_registry_card`。
