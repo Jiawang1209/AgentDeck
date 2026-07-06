@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Filter Leader help command palette
+
+- 扩展 `agentdeck leader chat --message "命令面板 ..."`：自然语言 help/command palette 入口现在可解析 scope/card/enabled-only 过滤语义，并把同一套 `control_registry_card.filters` 传给嵌入命令面板。
+- 新增本地只读解析：`命令面板 runtime enabled only` 会返回 `filters.scope=runtime`、`enabled_only=true`，并在过滤后派生 `items[]` 和 `groups[]`；普通 `查看 runtime` 仍走 runtime card，不被误路由到 help。
+- 保持人类控制边界：help 过滤只记录 chat turn 和展示命令面板，不创建 plan/action/approval/message/job，不调用 provider，不读取 pane，不发送 tmux 输入，不执行任何 control/ack。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/leader-chat-schema.md`，明确自然语言命令面板过滤复用 `agentdeck controls` 的只读 projection contract。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "命令面板 runtime enabled only"` 最初被 runtime intent 抢走并返回 `mode=runtime`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_help_filters_command_palette_without_planning tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning -q` 2 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 349 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 373 项通过。
+
 ### Current - Filter command palette controls
 
 - 扩展 `agentdeck controls`：新增只读 `--scope`、`--card` 和 `--enabled-only` 过滤参数，让 GUI/TUI 可以请求 runtime、terminal_session、inbox 等局部命令面板视图，而不必自行扫描完整 registry。

@@ -2893,6 +2893,42 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
     assert state_after["jobs"] == []
 
 
+def test_leader_chat_help_filters_command_palette_without_planning(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "命令面板 runtime enabled only"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "help"
+    registry = payload["control_registry_card"]
+    assert registry["filters"] == {
+        "scope": "runtime",
+        "card": None,
+        "enabled_only": True,
+        "item_count_before_filter": 45,
+    }
+    assert registry["item_count"] == len(registry["items"])
+    assert registry["group_count"] == len(registry["groups"])
+    assert {item["scope"] for item in registry["items"]} == {"runtime"}
+    assert all(item["enabled"] is True for item in registry["items"])
+    assert [group["group_id"] for group in registry["groups"]] == ["runtime:runtime_card"]
+    assert registry["groups"][0]["items"] == registry["items"]
+    assert payload["next_command"] == "agentdeck workbench"
+    assert payload["leader_explanation"]["action_kind"] == "help"
+
+    state_after = StateStore(root).load()
+    assert len(state_after["chat_turns"]) == len(before["chat_turns"]) + 1
+    assert state_after["chat_turns"][0]["mode"] == "help"
+    assert state_after["plans"] == before["plans"]
+    assert state_after["leader_actions"] == before["leader_actions"]
+    assert state_after["approvals"] == before["approvals"]
+    assert state_after["messages"] == before["messages"]
+    assert state_after["jobs"] == before["jobs"]
+
+
 def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

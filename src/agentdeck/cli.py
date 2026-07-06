@@ -3474,7 +3474,52 @@ def _chat_wants_help(message: str) -> bool:
         "命令面板",
         "commands",
         "capabilities",
-    }
+    } or any(
+        token in normalized
+        for token in [
+            "command palette",
+            "control registry",
+            "命令面板",
+            "命令列表",
+            "控制项列表",
+        ]
+    )
+
+
+def _chat_control_registry_filters(message: str) -> dict[str, object]:
+    normalized = message.strip().lower()
+    scope = None
+    scope_aliases: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("leader", ("leader", "leader_card", "调度者")),
+        ("provider", ("provider", "provider_health", "模型后端")),
+        ("policy", ("policy", "control_mode", "控制模式", "授权模式")),
+        ("terminal_session", ("terminal_session", "terminal session", "项目终端", "终端会话")),
+        ("role", ("role", "roles", "角色", "分工")),
+        ("runtime", ("runtime", "tmux", "pane", "terminal", "运行时", "终端", "面板")),
+        ("inbox", ("inbox", "mailbox", "收件箱", "消息箱")),
+        ("operator", ("operator", "主操作", "操作面", "下一步按钮")),
+    )
+    for candidate_scope, aliases in scope_aliases:
+        if any(alias in normalized for alias in aliases):
+            scope = candidate_scope
+            break
+    card = None
+    card_match = re.search(r"\b[A-Za-z0-9_]+_card\b", message)
+    if card_match:
+        card = card_match.group(0)
+    enabled_only = any(
+        token in normalized
+        for token in [
+            "enabled only",
+            "enabled-only",
+            "only enabled",
+            "可用",
+            "启用",
+            "只看可用",
+            "只显示可用",
+        ]
+    )
+    return {"scope": scope, "card": card, "enabled_only": enabled_only}
 
 
 def _chat_wants_setup(message: str) -> bool:
@@ -5000,6 +5045,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if refreshed_project_view is None:
             return 1
         control_registry_workbench = _workbench_snapshot_payload(refreshed_project_view, store, since_event_id=None)
+        control_registry_filters = _chat_control_registry_filters(args.message)
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -5027,7 +5073,12 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "workbench_card": None,
             "capability_card": leader_chat_capability_card(),
-            "control_registry_card": leader_chat_control_registry_card(control_registry_workbench),
+            "control_registry_card": leader_chat_control_registry_card(
+                control_registry_workbench,
+                scope=control_registry_filters["scope"] if isinstance(control_registry_filters["scope"], str) else None,
+                card=control_registry_filters["card"] if isinstance(control_registry_filters["card"], str) else None,
+                enabled_only=control_registry_filters["enabled_only"] is True,
+            ),
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
