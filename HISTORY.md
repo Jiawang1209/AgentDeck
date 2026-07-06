@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate every workbench runtime agent
+
+- 收紧 Workbench runtime card 契约：`validate_workbench_contract()` 现在会逐项校验 `runtime_card.agents[]` 以及每个 agent 的嵌套 `controls[]`，不再只检查第一条 visible runtime row。
+- 顶层 `runtime_card` 与 `agent_ready_card.runtime_card` 复用同一套 runtime 校验器；第一条 item 保持旧错误文案兼容，后续 item 使用 `runtime_card.agents[index]` / `controls[index]` 的 indexed 错误，方便 GUI/TUI 定位具体损坏的 Agent 终端入口。
+- 同步 Workbench schema、AGENT/CLAUDE 约束，明确多 Agent 终端工作台里的每个 terminal/capture/send control 都必须有完整 command、safety、enabled、blocker 字段，不能只保证第一个 Agent 可渲染。
+- 保持控制边界：该校验只拒绝漂移 Workbench payload，不 inspect tmux、不 attach/select pane、不 capture pane、不 spawn/stop/send、不 dispatch、不读取 pane、不写 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许第二条 `runtime_card.agents[]` 缺少 `controls` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_workbench_contract_requires_every_runtime_agent_fields -q` 1 项通过；runtime 附近契约回归 5 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 422 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 448 项通过。
+
 ### Current - Validate every trace lineage item
 
 - 收紧 trace lineage 契约：`validate_trace_contract()` 现在会逐项校验 `attempts[]`、`jobs[]`、`replies[]`、`artifacts[]` 和 `inbox_items[]`，不再只检查每个 lineage collection 的第一条 item。

@@ -3058,34 +3058,80 @@ def _validate_trace_items(
                 )
 
 
+def _prefixed_runtime_error(prefix: str, message: str) -> str:
+    return f"{prefix}: {message}" if prefix else message
+
+
+def _runtime_agent_field_error(index: int, field: str) -> str:
+    if index == 0:
+        return f"missing runtime agent field: {field}"
+    return f"runtime_card.agents[{index}] missing runtime agent field: {field}"
+
+
+def _runtime_control_field_error(agent_index: int, control_index: int, field: str) -> str:
+    if agent_index == 0 and control_index == 0:
+        return f"missing runtime control field: {field}"
+    return f"runtime_card.agents[{agent_index}].controls[{control_index}] missing runtime control field: {field}"
+
+
+def _runtime_agent_controls_type_error(index: int) -> str:
+    if index == 0:
+        return "runtime agent controls must be a list"
+    return f"runtime_card.agents[{index}].controls must be a list"
+
+
+def _runtime_agent_controls_item_error(agent_index: int, control_index: int) -> str:
+    if agent_index == 0 and control_index == 0:
+        return "runtime agent controls items must be objects"
+    return f"runtime_card.agents[{agent_index}].controls[{control_index}] must be an object"
+
+
+def _runtime_agent_item_error(index: int) -> str:
+    if index == 0:
+        return "runtime_card.agents items must be objects"
+    return f"runtime_card.agents[{index}] must be an object"
+
+
+def _validate_runtime_agents_contract(errors: list[str], agents: list[object], *, prefix: str) -> None:
+    for agent_index, agent in enumerate(agents):
+        if not isinstance(agent, dict):
+            errors.append(_prefixed_runtime_error(prefix, _runtime_agent_item_error(agent_index)))
+            continue
+        for field in WORKBENCH_RUNTIME_AGENT_FIELDS:
+            if field not in agent:
+                errors.append(_prefixed_runtime_error(prefix, _runtime_agent_field_error(agent_index, field)))
+        controls = agent.get("controls")
+        if isinstance(controls, list):
+            for control_index, control in enumerate(controls):
+                if isinstance(control, dict):
+                    for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                        if field not in control:
+                            errors.append(
+                                _prefixed_runtime_error(
+                                    prefix,
+                                    _runtime_control_field_error(agent_index, control_index, field),
+                                )
+                            )
+                else:
+                    errors.append(
+                        _prefixed_runtime_error(
+                            prefix,
+                            _runtime_agent_controls_item_error(agent_index, control_index),
+                        )
+                    )
+        elif "controls" in agent:
+            errors.append(_prefixed_runtime_error(prefix, _runtime_agent_controls_type_error(agent_index)))
+
+
 def _validate_runtime_card_contract(errors: list[str], runtime_card: dict[str, object], *, prefix: str) -> None:
     for field in WORKBENCH_RUNTIME_CARD_FIELDS:
         if field not in runtime_card:
-            errors.append(f"{prefix}: missing runtime_card field: {field}")
+            errors.append(_prefixed_runtime_error(prefix, f"missing runtime_card field: {field}"))
     agents = runtime_card.get("agents")
     if isinstance(agents, list):
-        if agents:
-            first_agent = agents[0]
-            if isinstance(first_agent, dict):
-                for field in WORKBENCH_RUNTIME_AGENT_FIELDS:
-                    if field not in first_agent:
-                        errors.append(f"{prefix}: missing runtime agent field: {field}")
-                controls = first_agent.get("controls")
-                if isinstance(controls, list):
-                    if controls:
-                        first_control = controls[0]
-                        if isinstance(first_control, dict):
-                            for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
-                                if field not in first_control:
-                                    errors.append(f"{prefix}: missing runtime control field: {field}")
-                        else:
-                            errors.append(f"{prefix}: runtime agent controls items must be objects")
-                elif "controls" in first_agent:
-                    errors.append(f"{prefix}: runtime agent controls must be a list")
-            else:
-                errors.append(f"{prefix}: runtime_card.agents items must be objects")
+        _validate_runtime_agents_contract(errors, agents, prefix=prefix)
     elif "agents" in runtime_card:
-        errors.append(f"{prefix}: runtime_card.agents must be a list")
+        errors.append(_prefixed_runtime_error(prefix, "runtime_card.agents must be a list"))
 
 
 def _validate_agent_ready_card_contract(errors: list[str], agent_ready_card: dict[str, object]) -> None:
@@ -4870,33 +4916,7 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
     runtime_card_is_valid = False
     if isinstance(runtime_card, dict):
         runtime_error_count = len(errors)
-        for field in WORKBENCH_RUNTIME_CARD_FIELDS:
-            if field not in runtime_card:
-                errors.append(f"missing runtime_card field: {field}")
-        agents = runtime_card.get("agents")
-        if isinstance(agents, list):
-            if agents:
-                first_agent = agents[0]
-                if isinstance(first_agent, dict):
-                    for field in WORKBENCH_RUNTIME_AGENT_FIELDS:
-                        if field not in first_agent:
-                            errors.append(f"missing runtime agent field: {field}")
-                    controls = first_agent.get("controls")
-                    if isinstance(controls, list):
-                        if controls:
-                            first_control = controls[0]
-                            if isinstance(first_control, dict):
-                                for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
-                                    if field not in first_control:
-                                        errors.append(f"missing runtime control field: {field}")
-                            else:
-                                errors.append("runtime agent controls items must be objects")
-                    elif "controls" in first_agent:
-                        errors.append("runtime agent controls must be a list")
-                else:
-                    errors.append("runtime_card.agents items must be objects")
-        elif "agents" in runtime_card:
-            errors.append("runtime_card.agents must be a list")
+        _validate_runtime_card_contract(errors, runtime_card, prefix="")
         runtime_card_is_valid = len(errors) == runtime_error_count
     elif "runtime_card" in payload:
         errors.append("runtime_card must be an object")

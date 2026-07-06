@@ -2053,6 +2053,24 @@ def test_validate_workbench_contract_requires_runtime_agent_controls() -> None:
     assert result == {"ok": False, "errors": ["missing runtime agent field: controls"]}
 
 
+def test_validate_workbench_contract_requires_every_runtime_agent_fields() -> None:
+    payload = workbench_example()
+    second_agent = {**payload["runtime_card"]["agents"][0], "agent_id": "coder"}
+    payload["runtime_card"]["agents"].append(second_agent)
+    del payload["runtime_card"]["agents"][1]["controls"]
+    payload["agent_ready_card"]["runtime_card"] = payload["runtime_card"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "runtime_card.agents[1] missing runtime agent field: controls",
+            "agent_ready_card.runtime_card: runtime_card.agents[1] missing runtime agent field: controls",
+        ],
+    }
+
+
 def test_validate_workbench_contract_requires_runtime_control_fields() -> None:
     payload = workbench_example()
     del payload["runtime_card"]["agents"][0]["controls"][0]["enabled"]
