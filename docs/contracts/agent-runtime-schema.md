@@ -73,6 +73,7 @@ Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready f
   "spawn_ready_command": "agentdeck agent spawn-ready --confirm",
   "refresh_command": "agentdeck agent refresh",
   "dispatch_ready_command": "agentdeck approval dispatch-ready --confirm",
+  "controls": [],
   "runtime_card": {}
 }
 ```
@@ -89,6 +90,7 @@ Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready f
 - `spawn_ready_command`: explicit batch startup command for all not-running configured agents.
 - `refresh_command`: explicit runtime reconciliation command.
 - `dispatch_ready_command`: explicit batch approval dispatch command for the later step after agents are running.
+- `controls`: GUI-ready controls for inspecting readiness, running the current startup/dispatch next command, and refreshing runtime bindings.
 - `runtime_card`: the same GUI-ready runtime card shape used by `agentdeck workbench`.
 
 The command does not inspect tmux, create panes, refresh bindings, send input, write events, or dispatch approvals.

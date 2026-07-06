@@ -105,5 +105,6 @@ Safety rules:
 - Provider `kind=set_provider` controls are explicit configuration commands only; `agentdeck controls` never runs them and never calls the selected provider.
 - Role `kind=assign_role` controls are explicit configuration templates only; `agentdeck controls` never fills placeholders or writes `.agentdeck/config.toml`.
 - Inbox `kind=ack` controls are explicit acknowledgement commands only; `agentdeck controls` never acknowledges inbox items.
+- Agent-ready `kind=spawn_ready`, `kind=refresh_runtime`, and `kind=dispatch_ready` controls are explicit runtime or approval commands only; `agentdeck controls` never spawns panes, refreshes bindings, or dispatches approvals.
 - Terminal session `kind=select_pane` controls are inspect-only pane focus commands; `agentdeck controls` never selects panes or attaches tmux by itself.
 - Runtime `kind=terminal` controls are inspect-only terminal card entry points; they do not attach tmux, capture pane output, send input, or mutate state.

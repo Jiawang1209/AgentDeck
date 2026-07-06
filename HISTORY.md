@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add agent-ready command controls
+
+- 扩展 `agentdeck agent ready`：readiness card 现在暴露 GUI-ready `controls[]`，包含只读 readiness inspect、显式 `spawn_ready`、显式 `refresh_runtime`，以及全员 running 后的 `dispatch_ready` 入口。
+- 扩展 workbench/controls 命令面板：`agent_ready_card.controls[]` 现在进入 `control_registry[]` / `agentdeck controls --card agent_ready_card`，使用 `scope=agent_ready`，让 GUI/TUI 不必解析 `next_command` 字符串即可渲染多 Agent 启动准备控制。
+- 扩展自然语言启动入口：`agentdeck leader chat --message "启动所有 agent"` 现在额外嵌入过滤到 `agent_ready_card` 的 `control_registry_card`，并让 selection 指向顶层 `next_command` 对应的启动 control；`intent_card.secondary_embedded_cards` 同步包含 `control_registry_card`。
+- 保持控制边界：所有新增 controls 只是命令投影，不自动 spawn pane、不 refresh runtime、不 dispatch approval、不 attach/select-pane、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，`agentdeck agent ready` 最初缺少 `controls`，live `启动所有 agent` 最初缺少 `control_registry_card` companion；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_agent_ready_outputs_startup_card_without_mutating_state tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_agent_cli.py::test_controls_filters_by_scope_and_enabled_without_mutating_state tests/test_agent_cli.py::test_controls_surfaces_agent_ready_card_controls_without_mutating_state tests/test_leader_cli.py::test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_agent_ready_secondary_cards tests/test_contracts.py::test_agent_runtime_contract_response_includes_example_without_drift tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 8 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 403 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 429 项通过。
+
 ### Current - Surface startup terminal companions
 
 - 扩展自然语言多 Agent 启动准备入口：`agentdeck leader chat --message "启动所有 agent"` 现在在 `intent_card.secondary_embedded_cards` 中显式列出 `runtime_card` 和 `terminal_session_card`。

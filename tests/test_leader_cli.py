@@ -1990,7 +1990,22 @@ def test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup(
     assert payload["intent_card"]["secondary_embedded_cards"] == [
         "runtime_card",
         "terminal_session_card",
+        "control_registry_card",
     ]
+    assert payload["control_registry_card"]["filters"]["card"] == "agent_ready_card"
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
+    assert payload["control_registry_card"]["selection"]["selected_control"] == {
+        "scope": "agent_ready",
+        "card": "agent_ready_card",
+        "kind": "spawn_ready",
+        "label": "Spawn ready agents",
+        "command": "agentdeck agent spawn-ready --confirm",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": payload["control_registry_card"]["selection"]["requested_control_id"],
+    }
     assert payload["intent_card"]["controls"][0] == {
         "kind": "inspect",
         "label": "Inspect agent_ready_card",
@@ -2045,6 +2060,7 @@ def test_validate_leader_chat_contract_requires_agent_ready_secondary_cards(
         "errors": [
             "intent_card.secondary_embedded_cards must include runtime_card for runtime_ready responses",
             "intent_card.secondary_embedded_cards must include terminal_session_card for runtime_ready responses",
+            "intent_card.secondary_embedded_cards must include control_registry_card for runtime_ready responses",
         ],
     }
 
@@ -3432,7 +3448,7 @@ def test_leader_chat_help_filters_command_palette_without_planning(tmp_path, mon
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 58,
+        "item_count_before_filter": 61,
     }
     assert registry["item_count"] == len(registry["items"])
     assert registry["group_count"] == len(registry["groups"])
@@ -3469,7 +3485,7 @@ def test_leader_chat_help_filters_command_palette_by_query(tmp_path, monkeypatch
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 58,
+        "item_count_before_filter": 61,
     }
     assert registry["items"]
     assert all(
@@ -3509,7 +3525,7 @@ def test_leader_chat_help_filters_command_palette_by_control_id(tmp_path, monkey
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 58,
+        "item_count_before_filter": 61,
     }
     assert registry["items"] == [selected_item]
     assert registry["selection"] == {
@@ -3546,7 +3562,7 @@ def test_leader_chat_help_reports_unmatched_control_id_selection(tmp_path, monke
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 58,
+        "item_count_before_filter": 61,
     }
     assert registry["items"] == []
     assert registry["groups"] == []
@@ -3597,7 +3613,7 @@ def test_leader_chat_help_reports_filtered_out_control_id_selection(tmp_path, mo
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 58,
+        "item_count_before_filter": 61,
     }
     assert registry["items"] == []
     assert registry["groups"] == []

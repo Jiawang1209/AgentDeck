@@ -161,6 +161,32 @@ def test_agent_ready_outputs_startup_card_without_mutating_state(tmp_path, monke
     ]
     assert payload["refresh_command"] == "agentdeck agent refresh"
     assert payload["dispatch_ready_command"] == "agentdeck approval dispatch-ready --confirm"
+    assert payload["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect readiness",
+            "command": "agentdeck agent ready",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "spawn_ready",
+            "label": "Spawn ready agents",
+            "command": "agentdeck agent spawn-ready --confirm",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "refresh_runtime",
+            "label": "Refresh runtime",
+            "command": "agentdeck agent refresh",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
     assert payload["runtime_card"]["by_status"] == {"running": 1, "configured": 2}
     assert payload["runtime_card"]["agents"][0]["agent_id"] == "planner"
     assert payload["runtime_card"]["agents"][0]["status"] == "running"
@@ -1122,6 +1148,7 @@ def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None
         "spawn_ready_command",
         "refresh_command",
         "dispatch_ready_command",
+        "controls",
         "runtime_card",
     ]
     assert payload["spawn_ready_response_fields"] == [
@@ -3229,7 +3256,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 58,
+        "item_count_before_filter": 61,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -3239,6 +3266,40 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
     assert payload["groups"][0]["items"] == payload["items"]
     assert payload["groups"][0]["enabled_count"] == len(payload["items"])
     assert payload["groups"][0]["disabled_count"] == 0
+    assert StateStore(root).load() == before
+
+
+def test_controls_surfaces_agent_ready_card_controls_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.load()
+
+    exit_code = cli.main(["controls", "--card", "agent_ready_card"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["filters"]["card"] == "agent_ready_card"
+    assert payload["item_count"] == 3
+    assert [item["kind"] for item in payload["items"]] == [
+        "inspect",
+        "spawn_ready",
+        "refresh_runtime",
+    ]
+    assert payload["items"][1] == {
+        "scope": "agent_ready",
+        "card": "agent_ready_card",
+        "kind": "spawn_ready",
+        "label": "Spawn ready agents",
+        "command": "agentdeck agent spawn-ready --confirm",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": payload["items"][1]["control_id"],
+    }
+    assert payload["groups"][0]["group_id"] == "agent_ready:agent_ready_card"
     assert StateStore(root).load() == before
 
 
@@ -3300,7 +3361,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 57,
+        "item_count_before_filter": 60,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -3343,7 +3404,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 58,
+        "item_count_before_filter": 61,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -3382,7 +3443,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 58,
+        "item_count_before_filter": 61,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -3415,7 +3476,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 58,
+        "item_count_before_filter": 61,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -3454,7 +3515,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 58,
+        "item_count_before_filter": 61,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

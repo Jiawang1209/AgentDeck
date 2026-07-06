@@ -824,6 +824,7 @@ def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) 
         "spawn_ready_command",
         "refresh_command",
         "dispatch_ready_command",
+        "controls",
         "runtime_card",
     ]
     assert payload["spawn_ready_response_fields"] == [

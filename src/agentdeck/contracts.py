@@ -873,6 +873,7 @@ AGENT_RUNTIME_READY_RESPONSE_FIELDS = (
     "spawn_ready_command",
     "refresh_command",
     "dispatch_ready_command",
+    "controls",
     "runtime_card",
 )
 
@@ -2962,6 +2963,39 @@ def _validate_agent_ready_card_contract(errors: list[str], agent_ready_card: dic
     spawn_commands = agent_ready_card.get("spawn_commands")
     if not isinstance(spawn_commands, list):
         errors.append("agent_ready_card.spawn_commands must be a list")
+    controls = agent_ready_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("agent_ready_card.controls items must be objects")
+                continue
+            for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"agent_ready_card.controls: missing control field: {field}")
+            if control.get("kind") == "inspect":
+                if control.get("safety") != "inspect":
+                    errors.append("agent_ready_card.controls: inspect must use safety=inspect")
+                if control.get("command") != "agentdeck agent ready":
+                    errors.append("agent_ready_card.controls: inspect command must be agentdeck agent ready")
+            if control.get("kind") == "spawn_ready":
+                if control.get("safety") != "explicit_runtime":
+                    errors.append("agent_ready_card.controls: spawn_ready must use safety=explicit_runtime")
+                if control.get("command") != "agentdeck agent spawn-ready --confirm":
+                    errors.append("agent_ready_card.controls: spawn_ready command must be agentdeck agent spawn-ready --confirm")
+            if control.get("kind") == "refresh_runtime":
+                if control.get("safety") != "explicit_runtime":
+                    errors.append("agent_ready_card.controls: refresh_runtime must use safety=explicit_runtime")
+                if control.get("command") != "agentdeck agent refresh":
+                    errors.append("agent_ready_card.controls: refresh_runtime command must be agentdeck agent refresh")
+            if control.get("kind") == "dispatch_ready":
+                if control.get("safety") != "explicit_runtime":
+                    errors.append("agent_ready_card.controls: dispatch_ready must use safety=explicit_runtime")
+                if control.get("command") != "agentdeck approval dispatch-ready --confirm":
+                    errors.append("agent_ready_card.controls: dispatch_ready command must be agentdeck approval dispatch-ready --confirm")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append("agent_ready_card.controls: disabled controls must include blocker")
+    elif "controls" in agent_ready_card:
+        errors.append("agent_ready_card.controls must be a list")
 
 
 def _validate_terminal_session_card_contract(
@@ -3229,7 +3263,7 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 explanation_action_kind == "runtime_ready"
                 and payload.get("agent_ready_card") is not None
             ):
-                for card_name in ["runtime_card", "terminal_session_card"]:
+                for card_name in ["runtime_card", "terminal_session_card", "control_registry_card"]:
                     if payload.get(card_name) is not None and card_name not in secondary_embedded_cards:
                         errors.append(
                             f"intent_card.secondary_embedded_cards must include {card_name} for runtime_ready responses"
@@ -4022,6 +4056,39 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     if item.get("enabled") is False and item.get("command") is not None:
                         errors.append(
                             "control_registry_card.items: disabled terminal_session select_pane command must be null"
+                        )
+            if item.get("scope") == "agent_ready":
+                if item.get("enabled") is False and not item.get("blocker"):
+                    errors.append("control_registry_card.items: disabled agent_ready controls must include blocker")
+                if item.get("kind") == "inspect":
+                    if item.get("safety") != "inspect":
+                        errors.append("control_registry_card.items: agent_ready inspect must use safety=inspect")
+                    if item.get("command") != "agentdeck agent ready":
+                        errors.append("control_registry_card.items: agent_ready inspect command must be agentdeck agent ready")
+                if item.get("kind") == "spawn_ready":
+                    if item.get("safety") != "explicit_runtime":
+                        errors.append("control_registry_card.items: agent_ready spawn_ready must use safety=explicit_runtime")
+                    if item.get("command") != "agentdeck agent spawn-ready --confirm":
+                        errors.append(
+                            "control_registry_card.items: agent_ready spawn_ready command must be agentdeck agent spawn-ready --confirm"
+                        )
+                if item.get("kind") == "refresh_runtime":
+                    if item.get("safety") != "explicit_runtime":
+                        errors.append(
+                            "control_registry_card.items: agent_ready refresh_runtime must use safety=explicit_runtime"
+                        )
+                    if item.get("command") != "agentdeck agent refresh":
+                        errors.append(
+                            "control_registry_card.items: agent_ready refresh_runtime command must be agentdeck agent refresh"
+                        )
+                if item.get("kind") == "dispatch_ready":
+                    if item.get("safety") != "explicit_runtime":
+                        errors.append(
+                            "control_registry_card.items: agent_ready dispatch_ready must use safety=explicit_runtime"
+                        )
+                    if item.get("command") != "agentdeck approval dispatch-ready --confirm":
+                        errors.append(
+                            "control_registry_card.items: agent_ready dispatch_ready command must be agentdeck approval dispatch-ready --confirm"
                         )
         if duplicate_control_id:
             errors.append("control_registry_card.items: control_id values must be unique")
@@ -5512,6 +5579,13 @@ def _agent_ready_card_from_runtime_card(runtime_card: dict[str, object]) -> dict
         if spawn_commands
         else dispatch_ready_command
     )
+    controls = _agent_ready_controls(
+        next_command=next_command,
+        spawn_commands=spawn_commands,
+        spawn_ready_command=spawn_ready_command,
+        refresh_command=str(runtime_card.get("refresh_command") or "agentdeck agent refresh"),
+        dispatch_ready_command=dispatch_ready_command,
+    )
     return {
         "ok": True,
         "mode": "agent_runtime_ready",
@@ -5525,8 +5599,73 @@ def _agent_ready_card_from_runtime_card(runtime_card: dict[str, object]) -> dict
         "spawn_ready_command": spawn_ready_command,
         "refresh_command": runtime_card.get("refresh_command"),
         "dispatch_ready_command": dispatch_ready_command,
+        "controls": controls,
         "runtime_card": runtime_card,
     }
+
+
+def _agent_ready_controls(
+    *,
+    next_command: str,
+    spawn_commands: list[str],
+    spawn_ready_command: str,
+    refresh_command: str,
+    dispatch_ready_command: str,
+) -> list[dict[str, object]]:
+    controls = [
+        {
+            "kind": "inspect",
+            "label": "Inspect readiness",
+            "command": "agentdeck agent ready",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
+    if next_command == spawn_ready_command:
+        controls.append(
+            {
+                "kind": "spawn_ready",
+                "label": "Spawn ready agents",
+                "command": spawn_ready_command,
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            }
+        )
+    elif next_command == dispatch_ready_command:
+        controls.append(
+            {
+                "kind": "dispatch_ready",
+                "label": "Dispatch ready approvals",
+                "command": dispatch_ready_command,
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            }
+        )
+    elif spawn_commands:
+        controls.append(
+            {
+                "kind": "spawn",
+                "label": "Spawn agent",
+                "command": spawn_commands[0],
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            }
+        )
+    controls.append(
+        {
+            "kind": "refresh_runtime",
+            "label": "Refresh runtime",
+            "command": refresh_command,
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        }
+    )
+    return controls
 
 
 def _terminal_session_card_from_runtime_card(runtime_card: dict[str, object]) -> dict[str, object]:
@@ -6152,6 +6291,32 @@ def agent_runtime_example() -> dict[str, object]:
             "spawn_ready_command": "agentdeck agent spawn-ready --confirm",
             "refresh_command": "agentdeck agent refresh",
             "dispatch_ready_command": "agentdeck approval dispatch-ready --confirm",
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "Inspect readiness",
+                    "command": "agentdeck agent ready",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "dispatch_ready",
+                    "label": "Dispatch ready approvals",
+                    "command": "agentdeck approval dispatch-ready --confirm",
+                    "safety": "explicit_runtime",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "refresh_runtime",
+                    "label": "Refresh runtime",
+                    "command": "agentdeck agent refresh",
+                    "safety": "explicit_runtime",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
             "runtime_card": {
                 "backend": "tmux",
                 "count": 1,
