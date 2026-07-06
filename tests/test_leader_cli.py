@@ -2991,6 +2991,12 @@ def test_leader_chat_help_filters_command_palette_by_control_id(tmp_path, monkey
         "item_count_before_filter": 45,
     }
     assert registry["items"] == [controls_payload["items"][0]]
+    assert registry["selection"] == {
+        "requested_control_id": control_id,
+        "matched": True,
+        "matched_count": 1,
+        "selected_control": controls_payload["items"][0],
+    }
     assert registry["groups"][0]["items"] == registry["items"]
 
     state_after = StateStore(root).load()

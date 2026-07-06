@@ -295,6 +295,12 @@ def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> No
         "disabled_count",
         "items",
     ]
+    assert payload["control_registry_selection_fields"] == [
+        "requested_control_id",
+        "matched",
+        "matched_count",
+        "selected_control",
+    ]
     assert payload["control_registry_filter_fields"] == [
         "scope",
         "card",
@@ -333,6 +339,12 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
     }
     assert example["item_count"] == len(example["items"])
     assert example["group_count"] == len(example["groups"])
+    assert example["selection"] == {
+        "requested_control_id": None,
+        "matched": False,
+        "matched_count": 0,
+        "selected_control": None,
+    }
     assert example["items"][0]["control_id"].startswith("leader:leader_card:chat:leader:")
     assert example["groups"][0]["items"][0]["control_id"] == example["items"][0]["control_id"]
     assert example["groups"][0] == {
@@ -381,6 +393,18 @@ def test_validate_control_registry_card_contract_requires_filter_fields() -> Non
     assert result == {
         "ok": False,
         "errors": ["control_registry_card.filters: missing filter field: enabled_only"],
+    }
+
+
+def test_validate_control_registry_card_contract_requires_selection_fields() -> None:
+    payload = controls_example()
+    del payload["selection"]["matched_count"]
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.selection: missing selection field: matched_count"],
     }
 
 

@@ -547,6 +547,7 @@ CONTROL_REGISTRY_CARD_FIELDS = (
     "source_command",
     "default_command",
     "filters",
+    "selection",
     "item_count",
     "items",
     "group_count",
@@ -573,6 +574,13 @@ CONTROL_REGISTRY_FILTER_FIELDS = (
     "control_id",
     "enabled_only",
     "item_count_before_filter",
+)
+
+CONTROL_REGISTRY_SELECTION_FIELDS = (
+    "requested_control_id",
+    "matched",
+    "matched_count",
+    "selected_control",
 )
 
 CONTINUE_CARD_FIELDS = (
@@ -1328,6 +1336,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "workbench_control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
         "control_registry_card_fields": list(LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS),
         "control_registry_group_fields": list(CONTROL_REGISTRY_GROUP_FIELDS),
+        "control_registry_selection_fields": list(CONTROL_REGISTRY_SELECTION_FIELDS),
         "control_registry_filter_fields": list(CONTROL_REGISTRY_FILTER_FIELDS),
         "capability_card_fields": list(LEADER_CHAT_CAPABILITY_CARD_FIELDS),
         "capability_item_fields": list(LEADER_CHAT_CAPABILITY_ITEM_FIELDS),
@@ -1589,6 +1598,7 @@ def leader_chat_control_registry_card(
         enabled_only=enabled_only,
     )
     groups = _control_registry_groups(items)
+    selection = _control_registry_selection(items, control_id)
     return {
         "mode": "control_registry",
         "title": "Command palette",
@@ -1602,6 +1612,7 @@ def leader_chat_control_registry_card(
             "enabled_only": enabled_only,
             "item_count_before_filter": len(source_items),
         },
+        "selection": selection,
         "item_count": len(items),
         "items": items,
         "group_count": len(groups),
@@ -1640,6 +1651,20 @@ def _filter_control_registry_items(
 def _control_registry_search_text(item: dict[str, object]) -> str:
     searchable_fields = ("scope", "card", "kind", "label", "command", "agent_id", "control_id")
     return " ".join(str(item.get(field, "")) for field in searchable_fields).lower()
+
+
+def _control_registry_selection(items: list[object], control_id: str | None) -> dict[str, object]:
+    matched_items = [
+        item
+        for item in items
+        if isinstance(item, dict) and control_id is not None and item.get("control_id") == control_id
+    ]
+    return {
+        "requested_control_id": control_id,
+        "matched": len(matched_items) == 1,
+        "matched_count": len(matched_items),
+        "selected_control": matched_items[0] if len(matched_items) == 1 else None,
+    }
 
 
 def _control_registry_groups(items: list[object]) -> list[dict[str, object]]:
@@ -1925,6 +1950,7 @@ def controls_contract_payload(contract_path: Path) -> dict[str, object]:
         "control_registry_card_fields": list(CONTROL_REGISTRY_CARD_FIELDS),
         "control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
         "control_registry_group_fields": list(CONTROL_REGISTRY_GROUP_FIELDS),
+        "control_registry_selection_fields": list(CONTROL_REGISTRY_SELECTION_FIELDS),
         "control_registry_filter_fields": list(CONTROL_REGISTRY_FILTER_FIELDS),
         "workbench_contract": "agentdeck contract workbench",
         "leader_chat_contract": "agentdeck contract leader-chat",
@@ -3297,6 +3323,27 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
             errors.append("control_registry_card.filters.item_count_before_filter must be >= item_count")
     elif "filters" in control_registry_card:
         errors.append("control_registry_card.filters must be an object")
+    selection = control_registry_card.get("selection")
+    selection_fields_present = False
+    if isinstance(selection, dict):
+        selection_fields_present = True
+        for field in CONTROL_REGISTRY_SELECTION_FIELDS:
+            if field not in selection:
+                errors.append(f"control_registry_card.selection: missing selection field: {field}")
+                selection_fields_present = False
+        if "requested_control_id" in selection and selection.get("requested_control_id") is not None and not isinstance(
+            selection.get("requested_control_id"), str
+        ):
+            errors.append("control_registry_card.selection.requested_control_id must be a string or null")
+        if "matched" in selection and not isinstance(selection.get("matched"), bool):
+            errors.append("control_registry_card.selection.matched must be a boolean")
+        if "matched_count" in selection and not isinstance(selection.get("matched_count"), int):
+            errors.append("control_registry_card.selection.matched_count must be an integer")
+        selected_control = selection.get("selected_control")
+        if "selected_control" in selection and selected_control is not None and not isinstance(selected_control, dict):
+            errors.append("control_registry_card.selection.selected_control must be an object or null")
+    elif "selection" in control_registry_card:
+        errors.append("control_registry_card.selection must be an object")
     items = control_registry_card.get("items")
     if isinstance(items, list):
         if control_registry_card.get("item_count") != len(items):
@@ -3375,6 +3422,22 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                         )
         if duplicate_control_id:
             errors.append("control_registry_card.items: control_id values must be unique")
+        if isinstance(selection, dict) and selection_fields_present:
+            requested_control_id = selection.get("requested_control_id")
+            matched_items = [
+                item
+                for item in items
+                if isinstance(item, dict) and requested_control_id is not None and item.get("control_id") == requested_control_id
+            ]
+            if selection.get("matched_count") != len(matched_items):
+                errors.append("control_registry_card.selection.matched_count must match matching items")
+            if selection.get("matched") != (len(matched_items) == 1):
+                errors.append("control_registry_card.selection.matched must reflect matching items")
+            expected_selected_control = matched_items[0] if len(matched_items) == 1 else None
+            if selection.get("selected_control") != expected_selected_control:
+                errors.append("control_registry_card.selection.selected_control must match selected item")
+            if isinstance(filters, dict) and selection.get("requested_control_id") != filters.get("control_id"):
+                errors.append("control_registry_card.selection.requested_control_id must match filters.control_id")
     elif "items" in control_registry_card:
         errors.append("control_registry_card.items must be a list")
     groups = control_registry_card.get("groups")

@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Add command palette selection metadata
+
+- 扩展 `control_registry_card`：新增顶层 `selection`，从 `filters.control_id` 和过滤后的 `items[]` 派生 requested_control_id、matched、matched_count 和 selected_control，方便 GUI/TUI 在命令面板中打开详情抽屉。
+- 扩展 controls / leader-chat contract discovery：新增 `control_registry_selection_fields`，并让 `agentdeck contract controls --example`、Leader help 嵌入命令面板和 live `agentdeck controls --control-id <id>` 都返回同一份 selection 形状。
+- 扩展 `validate_control_registry_card_contract()`：校验 selection 字段、类型、matched_count、matched、selected_control 与 `items[]` / `filters.control_id` 一致，避免 GUI 选中态和实际命令面板 item 漂移。
+- 保持人类控制边界：selection 只是只读投影，不写 state、不调用 provider、不读取 pane、不执行 control/ack，不授权任何命令；真正能否执行仍只看对应 item 的 `enabled`、`safety` 和 `blocker`。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/controls-schema.md` 和 `docs/contracts/leader-chat-schema.md`，明确 selection 是 GUI 选中态辅助，不是第二套状态源。
+- 验证记录：已先确认红测失败，contract discovery、contract example、live `agentdeck controls --control-id ...` 和 Leader help 嵌入命令面板最初都缺少 `selection`；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_controls_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_control_registry_card_contract_requires_selection_fields tests/test_agent_cli.py::test_controls_filters_by_control_id_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_filters_command_palette_by_control_id -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 356 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 380 项通过。
+
 ### Current - Filter command palette by control id
 
 - 扩展 `agentdeck controls`：新增只读 `--control-id <control_id>` 精确过滤，GUI/TUI 在拿到稳定 `control_id` 后可以重新定位同一个 command palette item，而不需要反查 label 或 command。

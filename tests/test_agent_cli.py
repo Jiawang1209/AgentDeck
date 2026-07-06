@@ -2985,6 +2985,12 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [first_payload["items"][0]]
+    assert payload["selection"] == {
+        "requested_control_id": control_id,
+        "matched": True,
+        "matched_count": 1,
+        "selected_control": first_payload["items"][0],
+    }
     assert payload["group_count"] == 1
     assert payload["groups"][0]["items"] == payload["items"]
     assert StateStore(root).load() == before
