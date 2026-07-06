@@ -157,6 +157,7 @@ from agentdeck.contracts import (
     validate_run_start_contract,
     validate_trace_contract,
     validate_workbench_contract,
+    workbench_control_registry,
 )
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
 
@@ -2194,6 +2195,45 @@ def test_validate_workbench_contract_requires_operator_fields() -> None:
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing operator_card field: controls"]}
+
+
+def test_validate_workbench_contract_requires_operator_preview_control_to_match_card() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["controls"][0]["command"] = "agentdeck trace --id wrong"
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card preview control command must match preview_command"],
+    }
+
+
+def test_validate_workbench_contract_requires_operator_apply_control_to_match_card() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["controls"][1]["command"] = "agentdeck leader apply-action --action-id wrong"
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card apply control command must match apply_command"],
+    }
+
+
+def test_validate_workbench_contract_requires_operator_explicit_control_to_match_card() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["controls"][2]["command"] = "agentdeck approval create-from-plan --plan-id wrong"
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card explicit control command must match explicit_command"],
+    }
 
 
 def test_validate_workbench_contract_requires_dispatch_ready_operator_command() -> None:

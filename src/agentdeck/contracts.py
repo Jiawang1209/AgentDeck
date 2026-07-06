@@ -3309,6 +3309,25 @@ def _validate_queue_card_project_view_alignment(
                 errors.append(f"queue_card.inbox.{field} must match project_view.inbox.{field}")
 
 
+def _validate_operator_card_control_alignment(errors: list[str], operator_card: dict[str, object]) -> None:
+    controls = operator_card.get("controls")
+    if not isinstance(controls, list):
+        return
+    dispatch_ready_operator = operator_card.get("action_kind") == "approval_dispatch_ready"
+    for control in controls:
+        if not isinstance(control, dict):
+            continue
+        kind = control.get("kind")
+        if kind == "preview" and control.get("command") != operator_card.get("preview_command"):
+            errors.append("operator_card preview control command must match preview_command")
+        if kind == "apply" and control.get("command") != operator_card.get("apply_command"):
+            errors.append("operator_card apply control command must match apply_command")
+        if not dispatch_ready_operator and kind in ("explicit", "capture_reply") and control.get(
+            "command"
+        ) != operator_card.get("explicit_command"):
+            errors.append(f"operator_card {kind} control command must match explicit_command")
+
+
 def _validate_operator_card_contract(errors: list[str], operator_card: dict[str, object], *, prefix: str) -> None:
     for field in WORKBENCH_OPERATOR_CARD_FIELDS:
         if field not in operator_card:
@@ -5149,6 +5168,7 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("operator_card.requires_explicit_user must be a boolean")
         if "can_apply" in operator_card and not isinstance(operator_card.get("can_apply"), bool):
             errors.append("operator_card.can_apply must be a boolean")
+        _validate_operator_card_control_alignment(errors, operator_card)
         if operator_card.get("action_kind") == "approval_dispatch_ready":
             dispatch_ready_command_valid = operator_card.get("command") == "agentdeck approval dispatch-ready --confirm"
             dispatch_ready_explicit_valid = (

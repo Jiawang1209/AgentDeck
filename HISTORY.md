@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate operator controls command alignment
+
+- 收紧 Workbench operator card 契约：`validate_workbench_contract()` 现在要求 `operator_card.controls[]` 中的 `preview`、`apply`、`explicit`、`capture_reply` 控件命令分别匹配同一张卡片的 `preview_command`、`apply_command` 和 `explicit_command`。
+- 该约束防止 GUI/TUI 渲染的人类操作按钮与兼容字段、审计说明或自然语言恢复提示显示不同命令，尤其保护最后一步 apply/explicit/capture reply 入口不漂移。
+- 同步 Workbench schema、AGENT/CLAUDE 约束，明确 `controls[]` 是 operator card 的 renderable button projection，不是第二套操作状态源。
+- 保持控制边界：该校验只拒绝漂移 Workbench payload，不创建 plan/action/approval/message/job/inbox，不 ack/approve/dispatch，不 capture reply，不读取 pane，不发送 tmux 输入，不写 runtime state。
+- 验证记录：已先确认红测失败，在重新派生 `control_registry[]` 后，validator 最初允许 operator preview/apply/explicit control command 与顶层字段不一致通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_workbench_contract_requires_operator_preview_control_to_match_card tests/test_contracts.py::test_validate_workbench_contract_requires_operator_apply_control_to_match_card tests/test_contracts.py::test_validate_workbench_contract_requires_operator_explicit_control_to_match_card tests/test_contracts.py::test_validate_workbench_contract_requires_dispatch_ready_operator_command tests/test_contracts.py::test_validate_workbench_contract_requires_dispatch_ready_operator_control_kind tests/test_contracts.py::test_validate_workbench_contract_accepts_example -q` 6 项通过；真实 workbench/queue/operator 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_workbench_surfaces_dispatch_ready_operator_for_multiple_approved_items tests/test_agent_cli.py::test_workbench_blocks_dispatch_operator_when_approved_agent_is_not_spawned tests/test_agent_cli.py::test_workbench_surfaces_capture_reply_operator_for_dispatched_step_waiting_for_reply tests/test_leader_cli.py::test_leader_chat_opens_workbench_snapshot_without_mutating_state tests/test_leader_cli.py::test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 7 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 432 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 458 项通过。
+
 ### Current - Validate unfiltered control registry counts
 
 - 收紧 `control_registry_card.filters` 契约：当 `active_filter_keys=[]`、命令面板没有过滤条件时，`item_count_before_filter` 现在必须等于顶层 `item_count`，避免默认 GUI/TUI 命令面板显示错误的总数。
