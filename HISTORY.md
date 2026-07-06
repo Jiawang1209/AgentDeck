@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate workbench ledger trace index coverage
+
+- 收紧 Workbench ledger card 契约：`validate_workbench_contract()` 现在要求 `ledger_card.trace_commands[]` 覆盖 messages/jobs/replies/artifacts 摘要中的每条 `trace_command`，不再只检查它是 list。
+- `trace_commands[]` 仍是 GUI/TUI 快速跳转用的 convenience index，不是第二套通信账本；完整 lineage 仍然通过 `agentdeck trace --id <id>` 查询。
+- 同步 Workbench schema、AGENT/CLAUDE 约束，明确自然语言账本入口和 workbench ledger card 不能显示有 traceable summary item 却遗漏对应 quick trace command。
+- 保持控制边界：该校验只拒绝漂移 Workbench payload，不创建 plan/action/approval/message/job/reply/artifact/inbox、不 ack、不 dispatch、不 capture reply、不读取 pane、不发送 tmux 输入、不写 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许 `ledger_card.trace_commands[]` 缺少 `agentdeck trace --id rep_example` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_workbench_contract_requires_ledger_trace_command_index_coverage tests/test_contracts.py::test_validate_workbench_contract_requires_ledger_trace_commands tests/test_contracts.py::test_validate_workbench_contract_accepts_example -q` 3 项通过；contract/leader/workbench 聚焦回归 5 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 425 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 451 项通过。
+
 ### Current - Validate every workbench audit event
 
 - 收紧 Workbench audit card 契约：`validate_workbench_contract()` 现在会逐项校验 `audit_card.recent_events[]` 的 compact event summary 字段，不再只检查它是 list。

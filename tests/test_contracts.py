@@ -2118,6 +2118,18 @@ def test_validate_workbench_contract_requires_ledger_trace_commands() -> None:
     assert result == {"ok": False, "errors": ["missing message item field: trace_command"]}
 
 
+def test_validate_workbench_contract_requires_ledger_trace_command_index_coverage() -> None:
+    payload = workbench_example()
+    payload["ledger_card"]["trace_commands"].remove("agentdeck trace --id rep_example")
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["ledger_card.trace_commands missing trace command: agentdeck trace --id rep_example"],
+    }
+
+
 def test_validate_workbench_contract_requires_queue_fields() -> None:
     payload = workbench_example()
     del payload["queue_card"]["refresh_command"]

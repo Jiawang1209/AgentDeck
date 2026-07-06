@@ -473,7 +473,7 @@ The card is configuration-only. It does not dispatch work or mutate roles; GUI c
 }
 ```
 
-`messages`, `jobs`, `replies`, and `artifacts` reuse the ProjectView summary shapes and must retain `trace_command` on each item. `artifacts` is the recoverable output summary for files or other deliverables produced by worker agents; it carries `artifact_id`, linked message/job/reply ids, `from_agent`, `path`, `kind`, `status`, and `created_at` without reading file contents. `inbox` reuses the ProjectView inbox summary so GUI clients can show mailbox heads without scanning per-agent inbox arrays. `trace_commands` is a de-duplicated convenience list for quick trace navigation; the detail source remains `agentdeck trace --id <id>`.
+`messages`, `jobs`, `replies`, and `artifacts` reuse the ProjectView summary shapes and must retain `trace_command` on each item. `artifacts` is the recoverable output summary for files or other deliverables produced by worker agents; it carries `artifact_id`, linked message/job/reply ids, `from_agent`, `path`, `kind`, `status`, and `created_at` without reading file contents. `inbox` reuses the ProjectView inbox summary so GUI clients can show mailbox heads without scanning per-agent inbox arrays. `trace_commands` is a de-duplicated convenience list for quick trace navigation and must include every summary item trace command from messages, jobs, replies, and artifacts; the detail source remains `agentdeck trace --id <id>`.
 
 ## Lineage Card
 

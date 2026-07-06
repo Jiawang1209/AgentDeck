@@ -3362,13 +3362,33 @@ def _validate_role_card_contract(errors: list[str], role_card: dict[str, object]
 def _validate_ledger_card_contract(errors: list[str], ledger_card: dict[str, object], *, prefix: str) -> None:
     for field in WORKBENCH_LEDGER_CARD_FIELDS:
         if field not in ledger_card:
-            errors.append(f"{prefix}: missing ledger_card field: {field}")
+            errors.append(_prefixed_contract_error(prefix, f"missing ledger_card field: {field}"))
     for section in ("messages", "jobs", "replies", "artifacts", "inbox"):
         if section in ledger_card and not isinstance(ledger_card.get(section), dict):
-            errors.append(f"{prefix}: ledger_card.{section} must be an object")
+            errors.append(_prefixed_contract_error(prefix, f"ledger_card.{section} must be an object"))
     trace_commands = ledger_card.get("trace_commands")
-    if "trace_commands" in ledger_card and not isinstance(trace_commands, list):
-        errors.append(f"{prefix}: ledger_card.trace_commands must be a list")
+    if isinstance(trace_commands, list):
+        if not all(isinstance(command, str) for command in trace_commands):
+            errors.append(_prefixed_contract_error(prefix, "ledger_card.trace_commands must contain strings"))
+        trace_command_set = {command for command in trace_commands if isinstance(command, str)}
+        for section in ("messages", "jobs", "replies", "artifacts"):
+            section_card = ledger_card.get(section)
+            items = section_card.get("items") if isinstance(section_card, dict) else None
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                trace_command = item.get("trace_command")
+                if isinstance(trace_command, str) and trace_command not in trace_command_set:
+                    errors.append(
+                        _prefixed_contract_error(
+                            prefix,
+                            f"ledger_card.trace_commands missing trace command: {trace_command}",
+                        )
+                    )
+    elif "trace_commands" in ledger_card:
+        errors.append(_prefixed_contract_error(prefix, "ledger_card.trace_commands must be a list"))
 
 
 def _validate_lineage_card_contract(errors: list[str], lineage_card: dict[str, object], *, prefix: str) -> None:
@@ -4998,9 +5018,7 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         errors.append("role_card must be an object")
     ledger_card = payload.get("ledger_card")
     if isinstance(ledger_card, dict):
-        for field in WORKBENCH_LEDGER_CARD_FIELDS:
-            if field not in ledger_card:
-                errors.append(f"missing ledger_card field: {field}")
+        _validate_ledger_card_contract(errors, ledger_card, prefix="")
         messages = ledger_card.get("messages")
         if isinstance(messages, dict):
             _validate_project_view_summary_items(
@@ -5025,9 +5043,6 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             )
         elif "artifacts" in ledger_card:
             errors.append("ledger_card.artifacts must be an object")
-        trace_commands = ledger_card.get("trace_commands")
-        if not isinstance(trace_commands, list):
-            errors.append("ledger_card.trace_commands must be a list")
     elif "ledger_card" in payload:
         errors.append("ledger_card must be an object")
     lineage_card = payload.get("lineage_card")
