@@ -2949,6 +2949,23 @@ def test_validate_leader_chat_contract_requires_provider_switch_card_fields() ->
     assert result == {"ok": False, "errors": ["missing provider_switch_card field: command"]}
 
 
+def test_validate_leader_chat_contract_requires_provider_setup_followup_to_match_switch_card() -> None:
+    payload = leader_chat_example()
+    payload["provider_setup_card"]["followup_switch_command"] = (
+        "agentdeck leader set-provider --provider claude-cli --model claude-default"
+    )
+    payload["provider_setup_card"]["controls"][2]["command"] = payload["provider_setup_card"][
+        "followup_switch_command"
+    ]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["provider_setup_card.followup_switch_command must match provider_switch_card.command"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_provider_switch_target_readiness_identity_match() -> None:
     payload = leader_chat_example()
     payload["provider_switch_card"]["target_readiness"]["provider"] = "claude-cli"
@@ -2999,6 +3016,8 @@ def test_validate_leader_chat_contract_requires_provider_switch_control_kind_to_
     payload["provider_switch_card"]["command"] = (
         "agentdeck leader set-provider --provider codex-cli --model codex-default --require-ready"
     )
+    payload["provider_setup_card"]["followup_switch_command"] = payload["provider_switch_card"]["command"]
+    payload["provider_setup_card"]["controls"][2]["command"] = payload["provider_switch_card"]["command"]
     payload["provider_switch_card"]["controls"][1]["command"] = payload["provider_switch_card"]["command"]
 
     result = validate_leader_chat_contract(payload)
@@ -3017,6 +3036,8 @@ def test_validate_leader_chat_contract_blocks_guarded_provider_switch_when_targe
     payload["provider_switch_card"]["command"] = (
         "agentdeck leader set-provider --provider codex-cli --model codex-default --require-ready"
     )
+    payload["provider_setup_card"]["followup_switch_command"] = payload["provider_switch_card"]["command"]
+    payload["provider_setup_card"]["controls"][2]["command"] = payload["provider_switch_card"]["command"]
     provider_control = payload["provider_switch_card"]["controls"][1]
     provider_control["kind"] = "guarded_set_provider"
     provider_control["label"] = "Switch Leader provider if ready"
@@ -3039,6 +3060,8 @@ def test_validate_leader_chat_contract_requires_setup_controls_for_blocked_guard
     payload["provider_switch_card"]["command"] = (
         "agentdeck leader set-provider --provider codex-cli --model codex-default --require-ready"
     )
+    payload["provider_setup_card"]["followup_switch_command"] = payload["provider_switch_card"]["command"]
+    payload["provider_setup_card"]["controls"][2]["command"] = payload["provider_switch_card"]["command"]
     provider_control = payload["provider_switch_card"]["controls"][1]
     provider_control["kind"] = "guarded_set_provider"
     provider_control["label"] = "Switch Leader provider if ready"

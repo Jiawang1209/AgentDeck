@@ -3422,6 +3422,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
     provider_setup_card = payload.get("provider_setup_card")
     if isinstance(provider_setup_card, dict):
         _validate_leader_chat_provider_setup_card_contract(errors, provider_setup_card)
+        provider_switch_card = payload.get("provider_switch_card")
+        has_provider_switch_errors = any("provider_switch_card" in error for error in errors)
+        if (
+            isinstance(provider_switch_card, dict)
+            and not has_provider_switch_errors
+            and provider_setup_card.get("followup_switch_command") != provider_switch_card.get("command")
+        ):
+            errors.append("provider_setup_card.followup_switch_command must match provider_switch_card.command")
     elif "provider_setup_card" in payload and provider_setup_card is not None:
         errors.append("provider_setup_card must be an object")
     control_registry_card = payload.get("control_registry_card")
