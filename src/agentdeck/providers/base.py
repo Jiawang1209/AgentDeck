@@ -37,7 +37,7 @@ def validate_provider_plan_schema(plan: object, config: ProjectConfig | None = N
     steps = plan.get("steps")
     if not isinstance(steps, list) or not steps:
         raise RuntimeError("provider plan must include non-empty steps")
-    configured_agent_ids = {agent.agent_id for agent in config.agents} if config is not None else None
+    configured_agent_roles = {agent.agent_id: agent.role for agent in config.agents} if config is not None else None
     seen_step_numbers: set[int] = set()
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, dict):
@@ -54,8 +54,15 @@ def validate_provider_plan_schema(plan: object, config: ProjectConfig | None = N
         for field in PROVIDER_PLAN_STEP_STRING_FIELDS:
             if not isinstance(step.get(field), str) or not step[field].strip():
                 raise RuntimeError(f"provider plan step {index} field {field} must be a non-empty string")
-        if configured_agent_ids is not None and step["agent_id"] not in configured_agent_ids:
+        if configured_agent_roles is not None and step["agent_id"] not in configured_agent_roles:
             raise RuntimeError(f"provider plan step {index} agent_id is not configured: {step['agent_id']}")
+        if configured_agent_roles is not None:
+            expected_role = configured_agent_roles[step["agent_id"]]
+            if step["role"] != expected_role:
+                raise RuntimeError(
+                    f"provider plan step {index} role does not match configured agent role for "
+                    f"{step['agent_id']}: expected {expected_role}, got {step['role']}"
+                )
         if step.get("requires_approval") is not True:
             raise RuntimeError(f"provider plan step {index} must require approval")
     expected_step_numbers = set(range(1, len(steps) + 1))

@@ -358,6 +358,27 @@ def cli_plan_stdout_non_contiguous_step_numbers() -> str:
     )
 
 
+def cli_plan_stdout_mismatched_agent_role() -> str:
+    return json.dumps(
+        {
+            "goal": "Malformed provider plan",
+            "summary": "provider returned a role that does not match the agent",
+            "steps": [
+                {
+                    "step": 1,
+                    "agent_id": "planner",
+                    "role": "implementation",
+                    "task": "Plan the work",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                }
+            ],
+            "approval_required": True,
+            "dispatch_ready": False,
+        }
+    )
+
+
 def test_openai_compatible_provider_requires_api_key(monkeypatch) -> None:
     monkeypatch.delenv("AGENTDECK_LEADER_API_KEY", raising=False)
 
@@ -767,6 +788,30 @@ def test_cli_provider_rejects_non_contiguous_step_numbers(tmp_path, monkeypatch)
         raise AssertionError("provider should reject non-contiguous step numbers")
 
 
+def test_cli_provider_rejects_role_that_does_not_match_agent(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_mismatched_agent_role(), stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    provider = CodexCliProvider()
+
+    try:
+        provider.plan(LeaderPlanRequest(task="拒绝角色错配 CLI plan", config=config))
+    except RuntimeError as exc:
+        assert (
+            str(exc)
+            == "provider plan step 1 role does not match configured agent role for planner: expected planning, got implementation"
+        )
+    else:
+        raise AssertionError("provider should reject roles that do not match configured agents")
+
+
 def test_cli_provider_reports_subprocess_failure(tmp_path, monkeypatch) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -1150,6 +1195,53 @@ def test_openai_compatible_provider_rejects_non_contiguous_step_numbers(
         assert str(exc) == "provider plan steps must be numbered 1..2 without gaps"
     else:
         raise AssertionError("provider should reject non-contiguous step numbers")
+
+
+def test_openai_compatible_provider_rejects_role_that_does_not_match_agent(
+    tmp_path, monkeypatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    class MismatchedRoleResponse:
+        def __enter__(self) -> "MismatchedRoleResponse":
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": cli_plan_stdout_mismatched_agent_role(),
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen",
+        lambda _request, timeout: MismatchedRoleResponse(),
+    )
+
+    provider = OpenAICompatibleProvider()
+
+    try:
+        provider.plan(LeaderPlanRequest(task="拒绝角色错配 API plan", config=config))
+    except RuntimeError as exc:
+        assert (
+            str(exc)
+            == "provider plan step 1 role does not match configured agent role for planner: expected planning, got implementation"
+        )
+    else:
+        raise AssertionError("provider should reject roles that do not match configured agents")
 
 
 def test_openai_compatible_provider_uses_requested_model_over_environment(tmp_path, monkeypatch) -> None:
