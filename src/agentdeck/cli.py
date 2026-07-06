@@ -189,6 +189,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card in ("queue_card", "operator_card") and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "control_mode_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "provider_health" and payload.get("provider_setup_card") is not None:
         secondary_embedded_cards.append("provider_setup_card")
     if embedded_card == "provider_health" and payload.get("provider_switch_card") is not None:
@@ -6361,6 +6363,26 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         refreshed_project_view = _project_view_payload_or_error(config, store)
         if refreshed_project_view is None:
             return 1
+        control_mode_card = _workbench_control_mode_card(refreshed_project_view)
+        registry_items = _workbench_control_registry({"control_mode_card": control_mode_card})
+        policy_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("scope") == "policy"
+                and item.get("card") == "control_mode_card"
+                and item.get("kind") == "set_mode"
+                and item.get("command") == next_command
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="policy",
+            card="control_mode_card",
+            control_id=str(policy_control_id) if policy_control_id else None,
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -6387,7 +6409,8 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "role_card": None,
             "ledger_card": None,
             "workbench_card": None,
-            "control_mode_card": _workbench_control_mode_card(refreshed_project_view),
+            "control_mode_card": control_mode_card,
+            "control_registry_card": control_registry_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

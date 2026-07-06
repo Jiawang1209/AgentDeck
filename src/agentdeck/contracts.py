@@ -3888,6 +3888,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append(
                     f"intent_card.secondary_embedded_cards must include control_registry_card for {explanation_action_kind} responses"
                 )
+            if (
+                explanation_action_kind == "policy_mode"
+                and payload.get("control_mode_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for policy_mode responses"
+                )
         elif "secondary_embedded_cards" in intent_card:
             errors.append("intent_card.secondary_embedded_cards must be a list")
         recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
@@ -4286,6 +4294,22 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append("control_registry_card.selection.selected_control.kind must be assign_role for role_assign responses")
             if selected_agent_id != recommended_action_id:
                 errors.append("control_registry_card.selection.selected_control.agent_id must match role_assign target")
+        if (
+            explanation_action_kind == "policy_mode"
+            and isinstance(selection, dict)
+        ):
+            selected_control = selection.get("selected_control")
+            selected_kind = selected_control.get("kind") if isinstance(selected_control, dict) else None
+            selected_command = selected_control.get("command") if isinstance(selected_control, dict) else None
+            selected_enabled = selected_control.get("enabled") if isinstance(selected_control, dict) else None
+            if selected_kind != "set_mode":
+                errors.append("control_registry_card.selection.selected_control.kind must be set_mode for policy_mode responses")
+            if selected_command != payload.get("next_command"):
+                errors.append("control_registry_card.selection.selected_control.command must match policy next_command")
+            if selected_enabled is True and selection.get("next_command") != payload.get("next_command"):
+                errors.append("control_registry_card.selection.next_command must match policy next_command for enabled policy controls")
+            if selected_enabled is False and selection.get("next_command") is not None:
+                errors.append("control_registry_card.selection.next_command must be null for disabled policy controls")
     elif explanation_action_kind == "provider_setup":
         errors.append("control_registry_card is required for provider_setup setup responses")
     elif explanation_action_kind == "leader_status":
@@ -4304,6 +4328,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif explanation_action_kind in {"role", "role_assign"}:
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
+    elif explanation_action_kind == "policy_mode":
+        errors.append("control_registry_card is required for policy_mode responses")
     elif explanation_action_kind in {"approval_dispatch", "approval_dispatch_batch"}:
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif "control_registry_card" in payload and control_registry_card is not None:

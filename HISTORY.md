@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Link policy chat to command registry controls
+
+- 扩展自然语言 policy mode：`agentdeck leader chat --message "切换到审批模式"` / `"回到 ask 模式"` / `"开启 autonomous 完全放权"` 现在会附带过滤到 `scope=policy` / `card=control_mode_card` 的 `control_registry_card`。
+- 扩展授权梯度 selection：ask/approve 这类 enabled `kind=set_mode` control 会让 registry `selection.next_command` 对齐顶层 `next_command`；autonomous 仍选中 disabled control，保留 `autonomous execution policy is not implemented` blocker，并保持 registry `selection.next_command=null`。
+- 收紧契约守门：`validate_leader_chat_contract()` 会拒绝缺少 policy registry companion 的响应，并要求 policy selection 指向顶层 policy next command 对应的 `kind=set_mode` control。
+- 保持安全边界：policy registry companion 不修改 `.agentdeck/config.toml`，不创建 plan/action/approval/message/job/inbox，不调用 provider，不读取 pane，不发送 tmux 输入；真正策略切换仍必须由人类显式运行 `agentdeck policy set-mode ...`。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、AGENT/CLAUDE 约束和测试。
+- 验证记录：已先确认红测失败，自然语言 policy 响应最初没有 `control_registry_card`，validator 也会放过缺少 registry companion 的 policy 响应；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_policy_mode_change_without_mutating_config tests/test_leader_cli.py::test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_policy_registry_card -q` 3 项通过；聚焦回归 7 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 328 项通过，`conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 358 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 506 项通过。
+
 ### Current - Link role chat to command registry controls
 
 - 扩展自然语言 role mode：`agentdeck leader chat --message "查看角色"` / `"查看分工"` 现在会附带过滤到 `scope=role` / `card=role_card` 的 `control_registry_card`，让 GUI/TUI 可以直接渲染角色编辑表单入口。

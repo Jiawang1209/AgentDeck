@@ -3896,6 +3896,26 @@ def test_leader_chat_suggests_policy_mode_change_without_mutating_config(
         "enabled": True,
         "blocker": None,
     }
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["control_registry_card"]["filters"]["scope"] == "policy"
+    assert payload["control_registry_card"]["filters"]["card"] == "control_mode_card"
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == ["scope", "card", "control_id"]
+    assert payload["control_registry_card"]["filters"]["item_count_before_filter"] == 4
+    assert payload["control_registry_card"]["item_count"] == 1
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "policy",
+        "card": "control_mode_card",
+        "kind": "set_mode",
+        "label": "Approval gated",
+        "command": "agentdeck policy set-mode --mode approve",
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": selected_control["control_id"],
+    }
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
     assert config_path.read_text(encoding="utf-8") == config_before
 
     state_after = StateStore(root).load()
@@ -3939,6 +3959,24 @@ def test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked(
         "enabled": True,
         "blocker": None,
     }
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["control_registry_card"]["filters"]["scope"] == "policy"
+    assert payload["control_registry_card"]["filters"]["card"] == "control_mode_card"
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == ["scope", "card", "control_id"]
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "policy",
+        "card": "control_mode_card",
+        "kind": "set_mode",
+        "label": "Autonomous bounded",
+        "command": "agentdeck policy set-mode --mode autonomous",
+        "safety": "delegated",
+        "enabled": False,
+        "blocker": "autonomous execution policy is not implemented",
+        "agent_id": None,
+        "control_id": selected_control["control_id"],
+    }
+    assert payload["control_registry_card"]["selection"]["next_command"] is None
     assert config_path.read_text(encoding="utf-8") == config_before
 
     state_after = StateStore(root).load()
@@ -3946,6 +3984,29 @@ def test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked(
     assert state_after["chat_turns"][0]["action_kind"] == "policy_mode"
     assert state_after["plans"] == []
     assert state_after["leader_actions"] == []
+
+
+def test_validate_leader_chat_contract_requires_policy_registry_card(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "切换到审批模式"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for policy_mode responses",
+            "control_registry_card is required for policy_mode responses",
+        ],
+    }
 
 
 def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, monkeypatch, capsys) -> None:
