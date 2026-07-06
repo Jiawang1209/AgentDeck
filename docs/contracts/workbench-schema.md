@@ -506,7 +506,7 @@ The card is configuration-only. It does not dispatch work or mutate roles; GUI c
 }
 ```
 
-`recent_paths[]` is a convenience projection, not a new ledger. It links message, job, reply, and inbox ids when they are visible in ProjectView or embedded inbox cards. `trace_command` is always the detail entry point; clients must still use `agentdeck trace --id <id>` for full lineage details. The card does not create messages, acknowledge inbox items, capture replies, read tmux panes, or send tmux input.
+`recent_paths[]` is a convenience projection, not a new ledger. It links message, job, reply, and inbox ids when they are visible in ProjectView or embedded inbox cards. The `message_count`, `job_count`, `reply_count`, and `inbox_count` values must cover the number of recent paths carrying each corresponding id, so GUI clients can trust that the visible path list never exceeds the summarized ledger counts. `trace_command` is always the detail entry point; clients must still use `agentdeck trace --id <id>` for full lineage details. The card does not create messages, acknowledge inbox items, capture replies, read tmux panes, or send tmux input.
 
 ## Queue Card
 

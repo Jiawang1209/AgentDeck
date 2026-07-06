@@ -1951,6 +1951,18 @@ def test_validate_workbench_contract_requires_lineage_card_fields() -> None:
     assert result == {"ok": False, "errors": ["missing lineage path field: trace_command"]}
 
 
+def test_validate_workbench_contract_requires_lineage_counts_to_cover_recent_paths() -> None:
+    payload = workbench_example()
+    payload["lineage_card"]["inbox_count"] = 0
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["lineage_card.inbox_count must cover recent_paths with inbox_id"],
+    }
+
+
 def test_validate_workbench_contract_requires_provider_health_fields() -> None:
     payload = workbench_example()
     del payload["provider_health"]["ready"]

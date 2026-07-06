@@ -3394,21 +3394,43 @@ def _validate_ledger_card_contract(errors: list[str], ledger_card: dict[str, obj
 def _validate_lineage_card_contract(errors: list[str], lineage_card: dict[str, object], *, prefix: str) -> None:
     for field in WORKBENCH_LINEAGE_CARD_FIELDS:
         if field not in lineage_card:
-            errors.append(f"{prefix}: missing lineage_card field: {field}")
+            errors.append(_prefixed_contract_error(prefix, f"missing lineage_card field: {field}"))
     for count_field in ("message_count", "job_count", "reply_count", "inbox_count"):
         if count_field in lineage_card and not isinstance(lineage_card.get(count_field), int):
-            errors.append(f"{prefix}: lineage_card.{count_field} must be an integer")
+            errors.append(_prefixed_contract_error(prefix, f"lineage_card.{count_field} must be an integer"))
     recent_paths = lineage_card.get("recent_paths")
     if isinstance(recent_paths, list):
+        path_counts = {"message": 0, "job": 0, "reply": 0, "inbox": 0}
         for path in recent_paths:
             if not isinstance(path, dict):
-                errors.append(f"{prefix}: lineage paths must be objects")
+                errors.append(_prefixed_contract_error(prefix, "lineage paths must be objects"))
                 continue
             for field in WORKBENCH_LINEAGE_PATH_FIELDS:
                 if field not in path:
-                    errors.append(f"{prefix}: missing lineage path field: {field}")
+                    errors.append(_prefixed_contract_error(prefix, f"missing lineage path field: {field}"))
+            if path.get("message_id"):
+                path_counts["message"] += 1
+            if path.get("job_id"):
+                path_counts["job"] += 1
+            if path.get("reply_id"):
+                path_counts["reply"] += 1
+            if path.get("inbox_id"):
+                path_counts["inbox"] += 1
+        for count_name, path_key in (
+            ("message_count", "message"),
+            ("job_count", "job"),
+            ("reply_count", "reply"),
+            ("inbox_count", "inbox"),
+        ):
+            if isinstance(lineage_card.get(count_name), int) and lineage_card.get(count_name) < path_counts[path_key]:
+                errors.append(
+                    _prefixed_contract_error(
+                        prefix,
+                        f"lineage_card.{count_name} must cover recent_paths with {path_key}_id",
+                    )
+                )
     elif "recent_paths" in lineage_card:
-        errors.append(f"{prefix}: lineage_card.recent_paths must be a list")
+        errors.append(_prefixed_contract_error(prefix, "lineage_card.recent_paths must be a list"))
 
 
 def _validate_audit_card_contract(errors: list[str], audit_card: dict[str, object], *, prefix: str) -> None:
@@ -5047,23 +5069,7 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         errors.append("ledger_card must be an object")
     lineage_card = payload.get("lineage_card")
     if isinstance(lineage_card, dict):
-        for field in WORKBENCH_LINEAGE_CARD_FIELDS:
-            if field not in lineage_card:
-                errors.append(f"missing lineage_card field: {field}")
-        for count_field in ("message_count", "job_count", "reply_count", "inbox_count"):
-            if count_field in lineage_card and not isinstance(lineage_card.get(count_field), int):
-                errors.append(f"lineage_card.{count_field} must be an integer")
-        recent_paths = lineage_card.get("recent_paths")
-        if isinstance(recent_paths, list):
-            for path in recent_paths:
-                if not isinstance(path, dict):
-                    errors.append("lineage paths must be objects")
-                    continue
-                for field in WORKBENCH_LINEAGE_PATH_FIELDS:
-                    if field not in path:
-                        errors.append(f"missing lineage path field: {field}")
-        elif "recent_paths" in lineage_card:
-            errors.append("lineage_card.recent_paths must be a list")
+        _validate_lineage_card_contract(errors, lineage_card, prefix="")
     elif "lineage_card" in payload:
         errors.append("lineage_card must be an object")
     queue_card = payload.get("queue_card")

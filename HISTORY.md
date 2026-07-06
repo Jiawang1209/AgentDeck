@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate workbench lineage counts
+
+- 收紧 Workbench lineage card 契约：`validate_workbench_contract()` 现在要求 `lineage_card.message_count`、`job_count`、`reply_count` 和 `inbox_count` 分别覆盖 `recent_paths[]` 中携带对应 id 的路径数，不再只检查 count 字段是整数。
+- 顶层 workbench 与嵌入 lineage card helper 复用同一套 lineage 校验器，避免自然语言账本视图和完整工作台对最近通信路径的判断分叉。
+- 同步 Workbench schema、AGENT/CLAUDE 约束，明确 `recent_paths[]` 是 GUI/TUI 的只读通信路径投影，计数必须覆盖列表内容，不能显示和路径不一致的恢复摘要。
+- 保持控制边界：该校验只拒绝漂移 Workbench payload，不创建 plan/action/approval/message/job/reply/inbox、不 ack、不 dispatch、不 capture reply、不读取 pane、不发送 tmux 输入、不写 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许 `lineage_card.inbox_count=0` 但有一条带 `inbox_id` 的 `recent_paths[]` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_workbench_contract_requires_lineage_counts_to_cover_recent_paths tests/test_contracts.py::test_validate_workbench_contract_requires_lineage_card_fields tests/test_contracts.py::test_validate_workbench_contract_accepts_example -q` 3 项通过；lineage 真实 workbench 聚焦回归 6 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 426 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 452 项通过。
+
 ### Current - Validate workbench ledger trace index coverage
 
 - 收紧 Workbench ledger card 契约：`validate_workbench_contract()` 现在要求 `ledger_card.trace_commands[]` 覆盖 messages/jobs/replies/artifacts 摘要中的每条 `trace_command`，不再只检查它是 list。
