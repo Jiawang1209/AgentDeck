@@ -1439,6 +1439,12 @@ def _workbench_leader_card(project_view: dict[str, object]) -> dict[str, object]
             ),
             _control(kind="actions", label="Leader actions", command="agentdeck leader actions", safety="inspect"),
             _control(
+                kind="refresh",
+                label="Refresh Leader status",
+                command="agentdeck leader status",
+                safety="inspect",
+            ),
+            _control(
                 kind="leader_status",
                 label="Leader status",
                 command="agentdeck leader status",

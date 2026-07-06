@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Add Leader status refresh control to workbench
+
+- 扩展 `agentdeck workbench` 的 `leader_card.controls[]`：新增 `kind=refresh` / `label=Refresh Leader status` / `command=agentdeck leader status` / `safety=inspect`，让 GUI/TUI 顶栏和命令面板能从 workbench 同源控制面发现 Leader 状态刷新动作。
+- `agentdeck controls` 会自动索引该 refresh control，以 `scope=leader` / `card=leader_card` / `kind=refresh` 暴露；它与 `kind=leader_status` 使用相同命令但表达不同意图，前者是刷新当前状态，后者是打开窄版 Leader status 视图。
+- 保持只读边界：refresh control 只是命令投影，不调用 provider、不读取 tmux pane、不写 state、不创建 plan/action/approval/message/job/inbox，也不执行刷新命令。
+- 同步 README、`docs/contracts/workbench-schema.md`、`docs/contracts/controls-schema.md`、AGENT/CLAUDE 约束和测试。
+- 验证记录：已先确认红测失败，workbench `leader_card.controls[]` 和 `agentdeck controls` 最初缺少 `kind=refresh`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state -q` 2 项通过；Agent CLI/contract 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 326 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 495 项通过。
+
 ### Current - Route Leader refresh aliases to status card
 
 - 新增自然语言只读别名：`agentdeck leader chat --message "leader refresh"` 和 `"刷新 Leader 状态"` 现在进入 `mode=leader_status`，复用与 `agentdeck leader status` 同源的 `leader_status_card`。

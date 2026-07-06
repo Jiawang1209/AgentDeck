@@ -3870,7 +3870,7 @@ def test_leader_chat_help_filters_command_palette_without_planning(tmp_path, mon
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-            "item_count_before_filter": 62,
+        "item_count_before_filter": 63,
     }
     assert registry["item_count"] == len(registry["items"])
     assert registry["group_count"] == len(registry["groups"])
@@ -3907,7 +3907,7 @@ def test_leader_chat_help_filters_command_palette_by_query(tmp_path, monkeypatch
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-            "item_count_before_filter": 62,
+        "item_count_before_filter": 63,
     }
     assert registry["items"]
     assert all(
@@ -3947,7 +3947,7 @@ def test_leader_chat_help_filters_command_palette_by_control_id(tmp_path, monkey
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-            "item_count_before_filter": 62,
+        "item_count_before_filter": 63,
     }
     assert registry["items"] == [selected_item]
     assert registry["selection"] == {
@@ -3984,7 +3984,7 @@ def test_leader_chat_help_reports_unmatched_control_id_selection(tmp_path, monke
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-            "item_count_before_filter": 62,
+        "item_count_before_filter": 63,
     }
     assert registry["items"] == []
     assert registry["groups"] == []
@@ -4035,7 +4035,7 @@ def test_leader_chat_help_reports_filtered_out_control_id_selection(tmp_path, mo
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-            "item_count_before_filter": 62,
+        "item_count_before_filter": 63,
     }
     assert registry["items"] == []
     assert registry["groups"] == []

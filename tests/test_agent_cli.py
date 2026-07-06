@@ -2067,6 +2067,14 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "blocker": None,
             },
             {
+                "kind": "refresh",
+                "label": "Refresh Leader status",
+                "command": "agentdeck leader status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
                 "kind": "leader_status",
                 "label": "Leader status",
                 "command": "agentdeck leader status",
@@ -3339,10 +3347,10 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
         "scope": "leader",
         "card": "leader_card",
         "label": "Leader",
-        "item_count": 6,
-        "enabled_count": 4,
+        "item_count": 7,
+        "enabled_count": 5,
         "disabled_count": 2,
-        "items": payload["items"][:6],
+        "items": payload["items"][:7],
     }
     control_ids = [item["control_id"] for item in payload["items"]]
     assert len(control_ids) == len(set(control_ids))
@@ -3369,12 +3377,19 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
         for item in payload["items"]
     } >= {
         ("leader", "leader_card", "continue", "leader"),
+        ("leader", "leader_card", "refresh", "leader"),
         ("leader", "leader_card", "leader_status", "leader"),
         ("policy", "control_mode_card", "set_mode", None),
         ("role", "role_card", "assign_role", "planner"),
         ("runtime", "runtime_card", "spawn", "planner"),
         ("operator", "operator_card", "explicit", None),
     }
+    refresh_item = next(
+        item for item in payload["items"] if item["scope"] == "leader" and item["card"] == "leader_card" and item["kind"] == "refresh"
+    )
+    assert refresh_item["label"] == "Refresh Leader status"
+    assert refresh_item["command"] == "agentdeck leader status"
+    assert refresh_item["safety"] == "inspect"
     policy_item = next(item for item in payload["items"] if item["card"] == "control_mode_card" and item["kind"] == "set_mode")
     assert policy_item == {
         "scope": "policy",
@@ -3436,7 +3451,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 62,
+        "item_count_before_filter": 63,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -3541,7 +3556,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 61,
+        "item_count_before_filter": 62,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -3584,7 +3599,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 62,
+        "item_count_before_filter": 63,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -3623,7 +3638,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 62,
+        "item_count_before_filter": 63,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -3656,7 +3671,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 62,
+        "item_count_before_filter": 63,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -3695,7 +3710,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 62,
+        "item_count_before_filter": 63,
     }
     assert payload["items"] == []
     assert payload["groups"] == []
