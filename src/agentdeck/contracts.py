@@ -545,6 +545,7 @@ CONTROL_REGISTRY_CARD_FIELDS = (
     "title",
     "source_command",
     "default_command",
+    "filters",
     "item_count",
     "items",
     "group_count",
@@ -562,6 +563,13 @@ CONTROL_REGISTRY_GROUP_FIELDS = (
     "enabled_count",
     "disabled_count",
     "items",
+)
+
+CONTROL_REGISTRY_FILTER_FIELDS = (
+    "scope",
+    "card",
+    "enabled_only",
+    "item_count_before_filter",
 )
 
 CONTINUE_CARD_FIELDS = (
@@ -1316,6 +1324,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "workbench_control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
         "control_registry_card_fields": list(LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS),
         "control_registry_group_fields": list(CONTROL_REGISTRY_GROUP_FIELDS),
+        "control_registry_filter_fields": list(CONTROL_REGISTRY_FILTER_FIELDS),
         "capability_card_fields": list(LEADER_CHAT_CAPABILITY_CARD_FIELDS),
         "capability_item_fields": list(LEADER_CHAT_CAPABILITY_ITEM_FIELDS),
         "capability_control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
@@ -1557,19 +1566,53 @@ def leader_chat_capability_card() -> dict[str, object]:
     }
 
 
-def leader_chat_control_registry_card(workbench_card: dict[str, object]) -> dict[str, object]:
-    items = workbench_card.get("control_registry") if isinstance(workbench_card.get("control_registry"), list) else []
+def leader_chat_control_registry_card(
+    workbench_card: dict[str, object],
+    *,
+    scope: str | None = None,
+    card: str | None = None,
+    enabled_only: bool = False,
+) -> dict[str, object]:
+    source_items = workbench_card.get("control_registry") if isinstance(workbench_card.get("control_registry"), list) else []
+    items = _filter_control_registry_items(source_items, scope=scope, card=card, enabled_only=enabled_only)
     groups = _control_registry_groups(items)
     return {
         "mode": "control_registry",
         "title": "Command palette",
         "source_command": "agentdeck workbench",
         "default_command": "agentdeck controls",
+        "filters": {
+            "scope": scope,
+            "card": card,
+            "enabled_only": enabled_only,
+            "item_count_before_filter": len(source_items),
+        },
         "item_count": len(items),
         "items": items,
         "group_count": len(groups),
         "groups": groups,
     }
+
+
+def _filter_control_registry_items(
+    items: list[object],
+    *,
+    scope: str | None,
+    card: str | None,
+    enabled_only: bool,
+) -> list[object]:
+    filtered: list[object] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if scope is not None and item.get("scope") != scope:
+            continue
+        if card is not None and item.get("card") != card:
+            continue
+        if enabled_only and item.get("enabled") is not True:
+            continue
+        filtered.append(item)
+    return filtered
 
 
 def _control_registry_groups(items: list[object]) -> list[dict[str, object]]:
@@ -1834,6 +1877,7 @@ def controls_contract_payload(contract_path: Path) -> dict[str, object]:
         "control_registry_card_fields": list(CONTROL_REGISTRY_CARD_FIELDS),
         "control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
         "control_registry_group_fields": list(CONTROL_REGISTRY_GROUP_FIELDS),
+        "control_registry_filter_fields": list(CONTROL_REGISTRY_FILTER_FIELDS),
         "workbench_contract": "agentdeck contract workbench",
         "leader_chat_contract": "agentdeck contract leader-chat",
     }
@@ -1847,6 +1891,7 @@ def controls_contract_response(contract_path: Path, include_example: bool = Fals
         payload["example_control_registry_card_fields"] = list(example)
         payload["example_control_registry_item_fields"] = list(example["items"][0])
         payload["example_control_registry_group_fields"] = list(example["groups"][0])
+        payload["example_control_registry_filter_fields"] = list(example["filters"])
         payload["example_control_registry_card"] = example
     return payload
 
@@ -3179,6 +3224,25 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
             errors.append(f"missing control_registry_card field: {field}")
     if control_registry_card.get("mode") != "control_registry":
         errors.append("control_registry_card.mode must be control_registry")
+    filters = control_registry_card.get("filters")
+    if isinstance(filters, dict):
+        for field in CONTROL_REGISTRY_FILTER_FIELDS:
+            if field not in filters:
+                errors.append(f"control_registry_card.filters: missing filter field: {field}")
+        if "scope" in filters and filters.get("scope") is not None and not isinstance(filters.get("scope"), str):
+            errors.append("control_registry_card.filters.scope must be a string or null")
+        if "card" in filters and filters.get("card") is not None and not isinstance(filters.get("card"), str):
+            errors.append("control_registry_card.filters.card must be a string or null")
+        if "enabled_only" in filters and not isinstance(filters.get("enabled_only"), bool):
+            errors.append("control_registry_card.filters.enabled_only must be a boolean")
+        if "item_count_before_filter" in filters and not isinstance(filters.get("item_count_before_filter"), int):
+            errors.append("control_registry_card.filters.item_count_before_filter must be an integer")
+        if isinstance(filters.get("item_count_before_filter"), int) and isinstance(
+            control_registry_card.get("item_count"), int
+        ) and filters["item_count_before_filter"] < control_registry_card["item_count"]:
+            errors.append("control_registry_card.filters.item_count_before_filter must be >= item_count")
+    elif "filters" in control_registry_card:
+        errors.append("control_registry_card.filters must be an object")
     items = control_registry_card.get("items")
     if isinstance(items, list):
         if control_registry_card.get("item_count") != len(items):

@@ -1913,7 +1913,7 @@ def workbench_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def controls_command(_args: argparse.Namespace) -> int:
+def controls_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
@@ -1921,7 +1921,12 @@ def controls_command(_args: argparse.Namespace) -> int:
     if project_view is None:
         return 1
     workbench_card = _workbench_snapshot_payload(project_view, store, since_event_id=None)
-    payload = leader_chat_control_registry_card(workbench_card)
+    payload = leader_chat_control_registry_card(
+        workbench_card,
+        scope=args.scope,
+        card=args.card,
+        enabled_only=args.enabled_only,
+    )
     validation = validate_control_registry_card_contract(payload)
     if not validation["ok"]:
         print("Control registry card contract validation failed", file=sys.stderr)
@@ -7071,6 +7076,9 @@ def build_parser() -> argparse.ArgumentParser:
     workbench.set_defaults(func=workbench_command)
 
     controls = subparsers.add_parser("controls", help="Show the GUI-ready command palette from the workbench")
+    controls.add_argument("--scope", help="Filter command palette controls by scope")
+    controls.add_argument("--card", help="Filter command palette controls by source card")
+    controls.add_argument("--enabled-only", action="store_true", help="Only include enabled command palette controls")
     controls.set_defaults(func=controls_command)
 
     policy = subparsers.add_parser("policy", help="Policy and control mode commands")

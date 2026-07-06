@@ -4,6 +4,16 @@
 
 ## 2026-07-06
 
+### Current - Filter command palette controls
+
+- 扩展 `agentdeck controls`：新增只读 `--scope`、`--card` 和 `--enabled-only` 过滤参数，让 GUI/TUI 可以请求 runtime、terminal_session、inbox 等局部命令面板视图，而不必自行扫描完整 registry。
+- 扩展 `control_registry_card.filters`：记录 scope、card、enabled_only 和 `item_count_before_filter`，并在过滤后再派生 `items[]`、`item_count`、`groups[]` 和 `group_count`，确保分组与当前投影一致。
+- 扩展 controls / leader-chat contract discovery：新增 `control_registry_filter_fields`，并让 `agentdeck contract controls --example` 与 `agentdeck contract leader-chat --example` 暴露稳定 filters 示例。
+- 扩展 `validate_control_registry_card_contract()`：校验 filters 必备字段、类型、`item_count_before_filter >= item_count`，继续拒绝漂移的 group/item 关系。
+- 保持人类控制边界：过滤参数只缩小只读投影，不写 state、不创建 chat turn、不调用 provider、不读取 pane、不发送 tmux 输入、不执行任何 control/ack，也不授权任何命令。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/controls-schema.md` 和 `docs/contracts/leader-chat-schema.md`，明确 command palette filters 是 GUI/TUI 消费层辅助，不是第二套控制状态。
+- 验证记录：已先确认红测失败，contract discovery 最初缺少 `control_registry_filter_fields`，controls / leader-chat 示例和 live `agentdeck controls --scope runtime --enabled-only` 最初缺少 `filters` 或不支持过滤参数；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_controls_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_control_registry_card_contract_requires_filter_fields tests/test_agent_cli.py::test_controls_filters_by_scope_and_enabled_without_mutating_state -q` 4 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 348 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 372 项通过。
+
 ### Current - Group command palette controls
 
 - 扩展 `agentdeck controls` / Leader help `control_registry_card`：新增 `group_count` 和 `groups[]`，按 `scope` + `card` 从同一批 `items[]` 派生命令面板分区，暴露 `group_id`、`label`、`item_count`、`enabled_count`、`disabled_count` 和组内 items，供 GUI/TUI 直接渲染分区工具栏。

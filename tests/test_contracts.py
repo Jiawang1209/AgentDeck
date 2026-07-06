@@ -294,6 +294,12 @@ def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> No
         "disabled_count",
         "items",
     ]
+    assert payload["control_registry_filter_fields"] == [
+        "scope",
+        "card",
+        "enabled_only",
+        "item_count_before_filter",
+    ]
     assert payload["workbench_contract"] == "agentdeck contract workbench"
     assert payload["leader_chat_contract"] == "agentdeck contract leader-chat"
 
@@ -314,6 +320,12 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
     assert example["mode"] == "control_registry"
     assert example["source_command"] == "agentdeck workbench"
     assert example["default_command"] == "agentdeck controls"
+    assert example["filters"] == {
+        "scope": None,
+        "card": None,
+        "enabled_only": False,
+        "item_count_before_filter": len(example["items"]),
+    }
     assert example["item_count"] == len(example["items"])
     assert example["group_count"] == len(example["groups"])
     assert example["groups"][0] == {
@@ -350,6 +362,18 @@ def test_validate_control_registry_card_contract_requires_group_count_match() ->
     assert result == {
         "ok": False,
         "errors": ["control_registry_card.groups: group item_count must match items length"],
+    }
+
+
+def test_validate_control_registry_card_contract_requires_filter_fields() -> None:
+    payload = controls_example()
+    del payload["filters"]["enabled_only"]
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.filters: missing filter field: enabled_only"],
     }
 
 
@@ -851,15 +875,12 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["control_mode_option_fields"] == list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS)
     assert payload["control_mode_control_fields"] == list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS)
     assert payload["workbench_control_registry_item_fields"] == list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
-    assert payload["control_registry_card_fields"] == [
-        "mode",
-        "title",
-        "source_command",
-        "default_command",
-        "item_count",
-        "items",
-        "group_count",
-        "groups",
+    assert payload["control_registry_card_fields"] == list(CONTROL_REGISTRY_CARD_FIELDS)
+    assert payload["control_registry_filter_fields"] == [
+        "scope",
+        "card",
+        "enabled_only",
+        "item_count_before_filter",
     ]
 
 
@@ -2185,6 +2206,7 @@ def test_validate_leader_chat_contract_accepts_example() -> None:
 def test_validate_leader_chat_contract_requires_control_registry_card_count() -> None:
     payload = leader_chat_example()
     payload["control_registry_card"]["item_count"] = 999
+    payload["control_registry_card"]["filters"]["item_count_before_filter"] = 999
 
     result = validate_leader_chat_contract(payload)
 

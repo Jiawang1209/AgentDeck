@@ -2883,6 +2883,32 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
     assert StateStore(root).load() == before
 
 
+def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.load()
+
+    exit_code = cli.main(["controls", "--scope", "runtime", "--enabled-only"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["filters"] == {
+        "scope": "runtime",
+        "card": None,
+        "enabled_only": True,
+        "item_count_before_filter": 45,
+    }
+    assert payload["item_count"] == len(payload["items"])
+    assert payload["group_count"] == len(payload["groups"])
+    assert {item["scope"] for item in payload["items"]} == {"runtime"}
+    assert all(item["enabled"] is True for item in payload["items"])
+    assert [group["group_id"] for group in payload["groups"]] == ["runtime:runtime_card"]
+    assert payload["groups"][0]["items"] == payload["items"]
+    assert payload["groups"][0]["enabled_count"] == len(payload["items"])
+    assert payload["groups"][0]["disabled_count"] == 0
+    assert StateStore(root).load() == before
+
+
 def test_controls_surfaces_dispatch_ready_operator_kind(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)
