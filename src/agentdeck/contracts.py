@@ -2534,18 +2534,18 @@ def _validate_project_view_plan_items(errors: list[str], payload: dict[str, obje
         return
     if not items:
         return
-    first_item = items[0]
-    if not isinstance(first_item, dict):
-        errors.append("plans.items must contain objects")
-        return
-    for field in PROJECT_VIEW_PLAN_ITEM_FIELDS:
-        if field not in first_item:
-            errors.append(f"missing plan item field: {field}")
-    leader_backend = first_item.get("leader_backend")
-    if isinstance(leader_backend, dict):
-        _validate_leader_backend(errors, "project_view.plans.items[0]", leader_backend)
-    else:
-        errors.append("project_view.plans.items[0].leader_backend must be an object")
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            errors.append(f"plans.items[{index}] must be an object")
+            continue
+        for field in PROJECT_VIEW_PLAN_ITEM_FIELDS:
+            if field not in item:
+                errors.append(f"missing plan item field at index {index}: {field}")
+        leader_backend = item.get("leader_backend")
+        if isinstance(leader_backend, dict):
+            _validate_leader_backend(errors, f"project_view.plans.items[{index}]", leader_backend)
+        else:
+            errors.append(f"project_view.plans.items[{index}].leader_backend must be an object")
 
 
 def _validate_project_view_summary_items(

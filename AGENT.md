@@ -91,7 +91,7 @@ Worker 不应该：
 - `agentdeck ack --agent <id> --inbox-id <id>` 只能确认该 agent 最早的 pending inbox item，不得越过 head。
 - `agentdeck trace --id <id>` 可用 message/attempt/job/reply/artifact/inbox 任意 ID 还原通信链路；artifact trace 只返回路径摘要，不读取文件内容。
 - `agentdeck events --limit <n>` 返回最近审计事件，不修改 state；`agentdeck events --since <event_id>` 返回 cursor 之后的审计事件和 cursor metadata，cursor 由 GUI/调用方持有，不得写入 AgentDeck state。
-- `agentdeck status` 返回 ProjectView 只读摘要，包含顶层 `leader.leader_backend`、agents、plans、approvals、messages、jobs、replies、artifacts、chat_turns、leader_actions、inbox 和 recovery，适合作为 GUI 与 Leader chat loop 的默认状态入口；`leader.leader_backend` 和 `plans.items[].leader_backend` 只表示当前配置或历史 plan 的 Leader provider/model logical identity，不表示 tmux pane、readiness 或授权。
+- `agentdeck status` 返回 ProjectView 只读摘要，包含顶层 `leader.leader_backend`、agents、plans、approvals、messages、jobs、replies、artifacts、chat_turns、leader_actions、inbox 和 recovery，适合作为 GUI 与 Leader chat loop 的默认状态入口；`leader.leader_backend` 和每个 `plans.items[].leader_backend` 只表示当前配置或历史 plan 的 Leader provider/model logical identity，不表示 tmux pane、readiness 或授权。
 - `agentdeck artifacts` 返回同源 ProjectView artifact 摘要和 trace 契约入口；它只读 state，不读取产物文件内容、不读取 pane、不调用 provider、不写 state，输出前必须通过 `validate_artifacts_contract()` 自校验。
 - ProjectView 详细字段契约见 `docs/contracts/project-view-schema.md`；当前 `schema_version` 是 `project-view/v1`，修改 status、recovery、GUI 或自然语言入口时必须同步该文档。
 - ProjectView schema version 的源码单一来源是 `src/agentdeck/models.py` 的 `PROJECT_VIEW_SCHEMA_VERSION`。

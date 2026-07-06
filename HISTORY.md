@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate all ProjectView plan leader backends
+
+- 收紧 ProjectView plan list 契约：`validate_project_view_contract()` 现在会逐项校验 `plans.items[]` 的 `leader_backend`，不再只检查第一条示例 plan。
+- 这保证历史上的每一条 Codex CLI / Claude CLI / DeepSeek / fake plan 都必须保持 `agent_id=leader`、`runtime_kind=logical_leader`、`pane_backed=false`、`pane_id=null`、`approval_required=true`、`dispatch_ready=false`，避免 GUI 或自然语言入口在多 plan 历史中误读第二条及之后的 plan provenance。
+- 同步 ProjectView schema 文档与 AGENT/CLAUDE 约束，明确 `plans.items[].leader_backend` 是每条历史 plan 的同源 provenance，不是 readiness、tmux pane 或执行授权。
+- 保持控制边界：该校验只拒绝漂移 ProjectView payload，不调用 provider、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入、不读取 pane、不修改 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许第二条 plan 的 `leader_backend.dispatch_ready=true` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_project_view_contract_checks_every_plan_item_leader_backend tests/test_contracts.py::test_validate_project_view_contract_requires_plan_item_logical_leader_backend tests/test_contracts.py::test_validate_project_view_contract_accepts_example -q` 3 项通过；ProjectView 聚焦回归 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 415 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 441 项通过。
+
 ### Current - Validate ProjectView plan leader backend
 
 - 收紧 ProjectView 历史 plan 契约：`plans.items[]` 现在正式暴露 `provider_backend`、`provider_transport` 和同源 `leader_backend`，用于区分 fake/API-backed/CLI-backed Leader 的 plan provenance。

@@ -1078,6 +1078,34 @@ def test_validate_project_view_contract_requires_plan_item_logical_leader_backen
     }
 
 
+def test_validate_project_view_contract_checks_every_plan_item_leader_backend() -> None:
+    payload = project_view_example()
+    second_plan = dict(payload["plans"]["items"][0])
+    second_plan["plan_id"] = "pln_second"
+    second_plan["leader_backend"] = {
+        "agent_id": "leader",
+        "provider": "codex-cli",
+        "model": "gpt-5-codex",
+        "provider_backend": "cli",
+        "provider_transport": "subprocess",
+        "reasoning_backend": "cli-subprocess",
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": True,
+    }
+    payload["plans"]["items"].append(second_plan)
+    payload["plans"]["count"] = 2
+
+    result = validate_project_view_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["project_view.plans.items[1].leader_backend.dispatch_ready must be false"],
+    }
+
+
 def test_validate_project_view_contract_reports_missing_top_level_field() -> None:
     payload = project_view_example()
     del payload["recovery"]
