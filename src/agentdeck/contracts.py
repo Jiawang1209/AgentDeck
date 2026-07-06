@@ -3208,6 +3208,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                         errors.append(
                             f"intent_card.secondary_embedded_cards must include {card_name} for provider_setup setup responses"
                         )
+            if (
+                explanation_action_kind == "provider_switch"
+                and payload.get("provider_switch_card") is not None
+                and "provider_switch_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include provider_switch_card for provider_switch setup responses"
+                )
         elif "secondary_embedded_cards" in intent_card:
             errors.append("intent_card.secondary_embedded_cards must be a list")
         recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}

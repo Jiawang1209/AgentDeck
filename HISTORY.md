@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Require provider switch secondary card
+
+- 收紧 live `provider_switch` leader-chat intent 契约：当 `leader_explanation.action_kind=provider_switch` 且响应包含 `provider_switch_card` 时，`intent_card.secondary_embedded_cards` 必须列出 `provider_switch_card`。
+- 这让 provider switch 与 provider setup 的 GUI intent surface 对齐，确保目标 provider 切换确认卡不会只出现在顶层 payload，却从自然语言路由卡片中消失。
+- 保持控制边界：该校验只拒绝漂移 payload，不执行 provider switch、不修改 `.agentdeck/config.toml`、不调用当前或目标 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，validator 最初允许 live `provider_switch` payload 保留 `provider_switch_card` 但清空 `intent_card.secondary_embedded_cards` 后仍通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_provider_switch_secondary_card tests/test_leader_cli.py::test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_provider_setup_secondary_cards -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 398 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 424 项通过。
+
 ### Current - Require provider setup secondary cards
 
 - 收紧 live `provider_setup` leader-chat intent 契约：`intent_card.secondary_embedded_cards` 必须列出 `provider_setup_card`、`provider_switch_card` 和 `control_registry_card`。

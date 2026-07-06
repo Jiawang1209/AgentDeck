@@ -1348,6 +1348,29 @@ def test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mu
     assert state.get("inbox", {}) == {}
 
 
+def test_validate_leader_chat_contract_requires_provider_switch_secondary_card(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project_with_default_leader(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(cli, "_command_path", lambda command: None)
+
+    exit_code = cli.main(["leader", "chat", "--message", "切换 Leader 到 Codex CLI"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = cli.validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include provider_switch_card for provider_switch setup responses"
+        ],
+    }
+
+
 def test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_command_without_mutating_config(
     tmp_path, monkeypatch, capsys
 ) -> None:
