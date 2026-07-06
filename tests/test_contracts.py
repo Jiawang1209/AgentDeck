@@ -1158,6 +1158,22 @@ def test_validate_project_view_contract_reports_missing_leader_action_recommenda
     }
 
 
+def test_validate_project_view_contract_checks_every_leader_action_item() -> None:
+    payload = project_view_example()
+    second_action = dict(payload["leader_actions"]["items"][0])
+    second_action["action_id"] = "act_second"
+    del second_action["controls"]
+    payload["leader_actions"]["items"].append(second_action)
+    payload["leader_actions"]["count"] = 2
+
+    result = validate_project_view_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing leader_actions item field at index 1: controls"],
+    }
+
+
 def test_validate_project_view_contract_reports_missing_recovery_pending_field() -> None:
     payload = project_view_example()
     del payload["recovery"]["pending"]["runtime_stale"]

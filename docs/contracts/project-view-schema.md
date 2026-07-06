@@ -188,7 +188,7 @@ Every item in `messages.items[]`, `jobs.items[]`, `replies.items[]`, and `artifa
 
 ## Leader Actions
 
-`leader_actions.items[]` exposes GUI-safe action affordance fields:
+Every item in `leader_actions.items[]` exposes GUI-safe action affordance fields. `validate_project_view_contract()` checks every Leader action item, not only the first row:
 
 ```json
 {

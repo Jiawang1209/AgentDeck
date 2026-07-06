@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate every ProjectView leader action item
+
+- 收紧 ProjectView Leader action queue 契约：`validate_project_view_contract()` 现在会逐项校验 `leader_actions.items[]`，不再只检查第一条 action item。
+- 每条 Leader action item 都必须保留 `controls[]`、`preview_command`、`can_apply`、`apply_command`、`explicit_command`、`apply_blocker` 和 `is_recommended` 等 GUI-safe action affordance 字段，确保未来 GUI 和自然语言壳不会在多 action 队列中丢失按钮、阻塞提示或推荐高亮。
+- 同步 ProjectView schema 文档与 AGENT/CLAUDE 约束，明确 `leader_actions.items[]` 是逐项可渲染的 action queue，不是只保证第一条 recommended action 的快捷摘要。
+- 保持控制边界：该校验只拒绝漂移 ProjectView payload，不 apply action、不创建 approval/message/job/inbox、不 approve/reject/dispatch、不读取 pane、不发送 tmux 输入、不修改 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许第二条 `leader_actions.items[]` 缺少 `controls` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_project_view_contract_checks_every_leader_action_item tests/test_contracts.py::test_validate_project_view_contract_reports_missing_leader_action_recommendation_fields tests/test_contracts.py::test_validate_project_view_contract_accepts_example -q` 3 项通过；ProjectView 聚焦回归 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 417 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 443 项通过。
+
 ### Current - Validate every ProjectView summary trace command
 
 - 收紧 ProjectView 通信账本摘要契约：`validate_project_view_contract()` 现在会逐项校验 `messages.items[]`、`jobs.items[]`、`replies.items[]` 和 `artifacts.items[]`，不再只检查第一条摘要 item。

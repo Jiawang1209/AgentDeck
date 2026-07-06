@@ -2506,11 +2506,21 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
                 errors.append(f"missing leader_actions field: {field}")
         items = leader_actions.get("items")
         if isinstance(items, list) and items:
-            first_item = items[0]
-            if isinstance(first_item, dict):
+            for index, item in enumerate(items):
+                if not isinstance(item, dict):
+                    errors.append(
+                        "leader_actions items must be objects"
+                        if index == 0
+                        else f"leader_actions.items[{index}] must be an object"
+                    )
+                    continue
                 for field in PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS:
-                    if field not in first_item:
-                        errors.append(f"missing leader_actions item field: {field}")
+                    if field not in item:
+                        errors.append(
+                            f"missing leader_actions item field: {field}"
+                            if index == 0
+                            else f"missing leader_actions item field at index {index}: {field}"
+                        )
     elif "leader_actions" in payload:
         errors.append("leader_actions must be an object")
     _validate_project_view_plan_items(errors, payload)
