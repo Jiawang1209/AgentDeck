@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Link Leader status chat to refresh registry control
+
+- 扩展自然语言 `mode=leader_status` 响应：`agentdeck leader chat --message "查看 Leader 状态"` / `"刷新 Leader 状态"` / `"leader refresh"` 现在除 `leader_status_card` 和 intent refresh control 外，还返回过滤到 `leader_card` 的 `control_registry_card`。
+- 该 registry companion 的 selection 指向 workbench `leader_card.controls[]` 中的 `kind=refresh` control，且 `selection.next_command` 匹配 `leader_status_card.refresh_command`，让 GUI/TUI 顶栏、intent card 和命令面板高亮同一个只读刷新动作。
+- 收紧 `validate_leader_chat_contract()`：`leader_status` 响应必须在 `intent_card.secondary_embedded_cards[]` 列出 `control_registry_card`，必须实际携带 registry card，且 registry selection 必须匹配 `leader_status_card.refresh_command`。
+- 保持只读边界：registry companion 只是同源命令投影，不调用 provider、不读取 tmux pane、不写 state、不创建 plan/action/approval/message/job/inbox，也不执行刷新命令。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、AGENT/CLAUDE 约束和测试。
+- 验证记录：已先确认红测失败，自然语言 `leader_status` 响应最初没有 `control_registry_card`，validator 也允许删除该 registry companion；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or_runtime tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_leader_status_registry_card tests/test_leader_cli.py::test_leader_chat_refresh_alias_routes_to_leader_status_without_planning tests/test_leader_cli.py::test_leader_chat_overview_alias_routes_to_leader_status_without_planning -q` 4 项通过；Leader/contract 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 349 项通过；Agent CLI/contract 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 326 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 496 项通过。
+
 ### Current - Add Leader status refresh control to workbench
 
 - 扩展 `agentdeck workbench` 的 `leader_card.controls[]`：新增 `kind=refresh` / `label=Refresh Leader status` / `command=agentdeck leader status` / `safety=inspect`，让 GUI/TUI 顶栏和命令面板能从 workbench 同源控制面发现 Leader 状态刷新动作。

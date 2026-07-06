@@ -6354,6 +6354,7 @@ def test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or
     assert payload["leader_explanation"]["safety"] == "inspect"
     assert payload["leader_explanation"]["requires_explicit_user"] is False
     assert payload["intent_card"]["embedded_card"] == "leader_status_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
     assert payload["intent_card"]["read_only"] is True
     assert payload["intent_card"]["controls"][0] == {
         "kind": "refresh",
@@ -6371,6 +6372,21 @@ def test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or
         "enabled": True,
         "blocker": None,
     }
+    registry = payload["control_registry_card"]
+    assert registry["filters"]["scope"] == "leader"
+    assert registry["filters"]["card"] == "leader_card"
+    assert registry["filters"]["control_id"] == registry["selection"]["requested_control_id"]
+    assert registry["filters"]["active_filter_keys"] == ["scope", "card", "control_id"]
+    assert registry["item_count"] == 1
+    refresh_item = registry["selection"]["selected_control"]
+    assert refresh_item == registry["items"][0]
+    assert refresh_item["scope"] == "leader"
+    assert refresh_item["card"] == "leader_card"
+    assert refresh_item["kind"] == "refresh"
+    assert refresh_item["label"] == "Refresh Leader status"
+    assert refresh_item["command"] == payload["leader_status_card"]["refresh_command"]
+    assert refresh_item["safety"] == "inspect"
+    assert registry["selection"]["next_command"] == payload["leader_status_card"]["refresh_command"]
     assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
 
     state_after = StateStore(root).load()
@@ -6384,6 +6400,29 @@ def test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or
     assert state_after["chat_turns"][-1]["mode"] == "leader_status"
     assert fake.sent == []
     assert fake.captured == []
+
+
+def test_validate_leader_chat_contract_requires_leader_status_registry_card(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看 Leader 状态"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = cli.validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for leader_status responses",
+            "control_registry_card is required for leader_status responses",
+        ],
+    }
 
 
 def test_leader_chat_overview_alias_routes_to_leader_status_without_planning(

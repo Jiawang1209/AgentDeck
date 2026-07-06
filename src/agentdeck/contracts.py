@@ -3740,6 +3740,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                         errors.append(
                             f"intent_card.secondary_embedded_cards must include {card_name} for runtime_ready responses"
                         )
+            if (
+                explanation_action_kind == "leader_status"
+                and payload.get("leader_status_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for leader_status responses"
+                )
         elif "secondary_embedded_cards" in intent_card:
             errors.append("intent_card.secondary_embedded_cards must be a list")
         recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
@@ -4066,8 +4074,17 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append(
                 "provider_setup_card.recommended_control_id must match control_registry_card.selection.requested_control_id"
             )
+        if (
+            explanation_action_kind == "leader_status"
+            and isinstance(leader_status_card, dict)
+            and isinstance(selection, dict)
+            and selection.get("next_command") != leader_status_card.get("refresh_command")
+        ):
+            errors.append("control_registry_card.selection.next_command must match leader_status_card.refresh_command")
     elif explanation_action_kind == "provider_setup":
         errors.append("control_registry_card is required for provider_setup setup responses")
+    elif explanation_action_kind == "leader_status":
+        errors.append("control_registry_card is required for leader_status responses")
     elif explanation_action_kind in {"approval_dispatch", "approval_dispatch_batch"}:
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif "control_registry_card" in payload and control_registry_card is not None:
@@ -6735,6 +6752,14 @@ def workbench_example() -> dict[str, object]:
                     "kind": "actions",
                     "label": "Leader actions",
                     "command": "agentdeck leader actions",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "refresh",
+                    "label": "Refresh Leader status",
+                    "command": "agentdeck leader status",
                     "safety": "inspect",
                     "enabled": True,
                     "blocker": None,

@@ -160,6 +160,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("terminal_session_card")
     if embedded_card == "runtime_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "leader_status_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if embedded_card in ("queue_card", "operator_card") and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "provider_health" and payload.get("provider_setup_card") is not None:
@@ -5973,6 +5975,26 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             return 1
         leader_status_card = _leader_status_payload(refreshed_project_view)
         next_command = leader_status_card.get("next_command")
+        workbench_card = _workbench_snapshot_payload(refreshed_project_view, store, since_event_id=None)
+        registry_items = workbench_card.get("control_registry") if isinstance(workbench_card.get("control_registry"), list) else []
+        refresh_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("scope") == "leader"
+                and item.get("card") == "leader_card"
+                and item.get("kind") == "refresh"
+                and item.get("command") == leader_status_card.get("refresh_command")
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            workbench_card,
+            scope="leader",
+            card="leader_card",
+            control_id=str(refresh_control_id) if refresh_control_id else None,
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -6001,6 +6023,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "workbench_card": None,
             "provider_health": leader_status_card.get("provider_health"),
+            "control_registry_card": control_registry_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

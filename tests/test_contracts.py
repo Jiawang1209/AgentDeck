@@ -165,6 +165,27 @@ from agentdeck.contracts import (
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
 
 
+def _attach_leader_status_registry_card(payload: dict[str, object], status_card: dict[str, object]) -> None:
+    workbench_card = workbench_example()
+    refresh_control_id = next(
+        item["control_id"]
+        for item in workbench_card["control_registry"]
+        if item["scope"] == "leader"
+        and item["card"] == "leader_card"
+        and item["kind"] == "refresh"
+        and item["command"] == status_card["refresh_command"]
+    )
+    payload["control_registry_card"] = leader_chat_control_registry_card(
+        workbench_card,
+        scope="leader",
+        card="leader_card",
+        control_id=refresh_control_id,
+    )
+    secondary_cards = payload["intent_card"].setdefault("secondary_embedded_cards", [])
+    if "control_registry_card" not in secondary_cards:
+        secondary_cards.append("control_registry_card")
+
+
 EXPECTED_LEADER_CHAT_PROVIDER_SWITCH_CARD_FIELDS = [
     "mode",
     "title",
@@ -431,10 +452,10 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
         "scope": "leader",
         "card": "leader_card",
         "label": "Leader",
-        "item_count": 6,
-        "enabled_count": 4,
+        "item_count": 7,
+        "enabled_count": 5,
         "disabled_count": 2,
-        "items": example["items"][:6],
+        "items": example["items"][:7],
     }
     terminal_group = next(group for group in example["groups"] if group["group_id"] == "terminal_session:terminal_session_card")
     assert terminal_group["label"] == "Terminal session"
@@ -1633,6 +1654,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         "continue",
         "review",
         "actions",
+        "refresh",
         "leader_status",
         "status",
     ]
@@ -3402,6 +3424,7 @@ def test_validate_leader_chat_contract_reuses_leader_status_card_validator() -> 
         },
     )
     payload["intent_card"]["controls"][-1]["command"] = status_card["next_command"]
+    _attach_leader_status_registry_card(payload, status_card)
     del status_card["queues"]["leader_errors"]
 
     result = validate_leader_chat_contract(payload)
@@ -3431,6 +3454,7 @@ def test_validate_leader_chat_contract_rejects_leader_status_command_drift() -> 
     payload["intent_card"]["read_only"] = True
     payload["intent_card"]["next_command"] = status_card["next_command"]
     payload["intent_card"]["requires_explicit_user"] = False
+    _attach_leader_status_registry_card(payload, status_card)
     status_card["source_command"] = "agentdeck status"
     status_card["refresh_command"] = "agentdeck workbench"
     payload["intent_card"]["controls"].insert(
@@ -3454,6 +3478,7 @@ def test_validate_leader_chat_contract_rejects_leader_status_command_drift() -> 
             "leader_status_card.source_command must be agentdeck leader status",
             "leader_status_card.refresh_command must be agentdeck leader status",
             "leader_status_card.controls: refresh command must match refresh_command",
+            "control_registry_card.selection.next_command must match leader_status_card.refresh_command",
         ],
     }
 
@@ -3495,6 +3520,7 @@ def test_validate_leader_chat_contract_requires_leader_status_refresh_intent_con
             "blocker": None,
         },
     ]
+    _attach_leader_status_registry_card(payload, status_card)
 
     result = validate_leader_chat_contract(payload)
 
