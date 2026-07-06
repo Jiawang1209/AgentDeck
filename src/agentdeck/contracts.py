@@ -386,6 +386,16 @@ ARTIFACTS_RESPONSE_FIELDS = (
     "trace_contract",
     "trace_command_template",
     "artifacts",
+    "controls",
+)
+
+ARTIFACTS_CONTROL_FIELDS = (
+    "kind",
+    "label",
+    "command",
+    "safety",
+    "enabled",
+    "blocker",
 )
 
 ARTIFACTS_SUMMARY_FIELDS = (
@@ -2537,6 +2547,7 @@ def artifacts_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "response_fields": list(ARTIFACTS_RESPONSE_FIELDS),
+        "control_fields": list(ARTIFACTS_CONTROL_FIELDS),
         "artifact_summary_fields": list(ARTIFACTS_SUMMARY_FIELDS),
         "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
     }
@@ -2548,6 +2559,7 @@ def artifacts_contract_response(contract_path: Path, include_example: bool = Fal
         example = artifacts_example()
         payload["example"] = True
         payload["example_response_fields"] = list(example)
+        payload["example_control_fields"] = list(example["controls"][0])
         payload["example_artifact_summary_fields"] = list(example["artifacts"])
         payload["example_artifact_item_fields"] = list(example["artifacts"]["items"][0])
         payload["example_artifacts"] = example
@@ -3110,6 +3122,24 @@ def validate_artifacts_contract(payload: dict[str, object]) -> dict[str, object]
         errors.append("trace_contract must be agentdeck contract trace")
     if payload.get("trace_command_template") != "agentdeck trace --id <id>":
         errors.append("trace_command_template must be agentdeck trace --id <id>")
+    controls = payload.get("controls")
+    if isinstance(controls, list):
+        for index, control in enumerate(controls):
+            if not isinstance(control, dict):
+                errors.append("artifacts controls must be objects")
+                continue
+            for field in ARTIFACTS_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"artifacts controls[{index}] missing control field: {field}")
+            if control.get("kind") == "inspect":
+                if control.get("command") != "agentdeck artifacts":
+                    errors.append("artifacts inspect control command must be agentdeck artifacts")
+                if control.get("safety") != "inspect":
+                    errors.append("artifacts inspect control must use safety=inspect")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append("artifacts disabled controls must include blocker")
+    elif "controls" in payload:
+        errors.append("artifacts controls must be a list")
     artifacts = payload.get("artifacts")
     if isinstance(artifacts, dict):
         for field in ARTIFACTS_SUMMARY_FIELDS:
@@ -3748,6 +3778,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append(
                     "intent_card.secondary_embedded_cards must include control_registry_card for leader_status responses"
                 )
+            if (
+                explanation_action_kind == "artifacts"
+                and payload.get("artifacts_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for artifacts responses"
+                )
         elif "secondary_embedded_cards" in intent_card:
             errors.append("intent_card.secondary_embedded_cards must be a list")
         recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
@@ -4081,10 +4119,19 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             and selection.get("next_command") != leader_status_card.get("refresh_command")
         ):
             errors.append("control_registry_card.selection.next_command must match leader_status_card.refresh_command")
+        if (
+            explanation_action_kind == "artifacts"
+            and isinstance(artifacts_card, dict)
+            and isinstance(selection, dict)
+            and selection.get("next_command") != artifacts_card.get("artifacts_command")
+        ):
+            errors.append("control_registry_card.selection.next_command must match artifacts_card.artifacts_command")
     elif explanation_action_kind == "provider_setup":
         errors.append("control_registry_card is required for provider_setup setup responses")
     elif explanation_action_kind == "leader_status":
         errors.append("control_registry_card is required for leader_status responses")
+    elif explanation_action_kind == "artifacts":
+        errors.append("control_registry_card is required for artifacts responses")
     elif explanation_action_kind in {"approval_dispatch", "approval_dispatch_batch"}:
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif "control_registry_card" in payload and control_registry_card is not None:
@@ -4813,6 +4860,11 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     errors.append("control_registry_card.items: role assign_role command must use agent assign-role")
                 if item.get("enabled") is False and not item.get("blocker"):
                     errors.append("control_registry_card.items: disabled role assign_role controls must include blocker")
+            if item.get("scope") == "artifacts" and item.get("kind") == "inspect":
+                if item.get("safety") != "inspect":
+                    errors.append("control_registry_card.items: artifacts inspect must use safety=inspect")
+                if item.get("command") != "agentdeck artifacts":
+                    errors.append("control_registry_card.items: artifacts inspect command must be agentdeck artifacts")
             if item.get("scope") == "inbox" and item.get("kind") == "preview":
                 if not str(item.get("command") or "").startswith("agentdeck trace --id "):
                     errors.append("control_registry_card.items: inbox preview command must use trace")
@@ -6291,6 +6343,14 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         card="operator_card",
         agent_id=None,
         controls=operator_card.get("controls"),
+    )
+    artifacts_card = payload.get("artifacts_card") if isinstance(payload.get("artifacts_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="artifacts",
+        card="artifacts_card",
+        agent_id=None,
+        controls=artifacts_card.get("controls"),
     )
     return registry
 
@@ -8101,4 +8161,14 @@ def artifacts_example() -> dict[str, object]:
         "trace_contract": "agentdeck contract trace",
         "trace_command_template": "agentdeck trace --id <id>",
         "artifacts": project_view_example()["artifacts"],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect artifacts",
+                "command": "agentdeck artifacts",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            }
+        ],
     }

@@ -4,6 +4,16 @@
 
 ## 2026-07-07
 
+### Current - Surface artifacts controls in command registry
+
+- 扩展 `agentdeck artifacts` 响应：现在返回 GUI-ready `controls[]`，其中 `kind=inspect` control 指向只读 `agentdeck artifacts`，让 GUI/TUI 不需要解析字段或命令字符串就能渲染产物索引入口。
+- 扩展 `agentdeck workbench` / `agentdeck controls` 的 `control_registry[]` 派生逻辑：现在会索引 `artifacts_card.controls[]`，以 `scope=artifacts` / `card=artifacts_card` / `kind=inspect` 暴露产物索引命令面板项。
+- 扩展自然语言 `mode=artifacts` 响应：`agentdeck leader chat --message "查看产物"` 现在返回同源 `artifacts_card`，并附带过滤到 artifacts card 的 `control_registry_card`；selection 指向 `agentdeck artifacts` inspect control，`intent_card.secondary_embedded_cards` 同步列出 `control_registry_card`。
+- 收紧契约守门：`validate_artifacts_contract()` 会校验 artifacts controls 字段、命令和 safety；`validate_leader_chat_contract()` 会拒绝缺少 artifacts registry companion、secondary embedded card 漂移或 registry selection 与 `agentdeck artifacts` 不一致的响应；`validate_control_registry_card_contract()` 会校验 artifacts registry item 必须是 inspect-only 的 `agentdeck artifacts`。
+- 保持只读边界：artifacts controls 和 registry companion 只是命令投影，不读取产物文件内容、不调用 provider、不读取 tmux pane、不创建 plan/action/approval/message/job/reply/artifact/inbox、不发送 tmux 输入，也不执行推荐命令。
+- 同步 README、`docs/contracts/artifacts-schema.md`、`docs/contracts/workbench-schema.md`、`docs/contracts/controls-schema.md`、`docs/contracts/leader-chat-schema.md`、AGENT/CLAUDE 约束和测试。
+- 验证记录：已先确认红测失败，`agentdeck artifacts` 最初缺少 `controls[]`，自然语言 `查看产物` 响应最初没有 `control_registry_card`，validator 也允许删除 artifacts registry companion；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_artifacts_without_reading_files_or_mutating_state tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_artifacts_registry_card tests/test_contracts.py::test_artifacts_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_artifacts_contract_response_includes_example_without_drift -q` 4 项通过；Agent CLI/contract 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 326 项通过；Leader/contract 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 350 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 497 项通过。
+
 ### Current - Link Leader status chat to refresh registry control
 
 - 扩展自然语言 `mode=leader_status` 响应：`agentdeck leader chat --message "查看 Leader 状态"` / `"刷新 Leader 状态"` / `"leader refresh"` 现在除 `leader_status_card` 和 intent refresh control 外，还返回过滤到 `leader_card` 的 `control_registry_card`。

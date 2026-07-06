@@ -3436,6 +3436,16 @@ def test_leader_chat_inspects_artifacts_without_reading_files_or_mutating_state(
     assert payload["next_command"] == "agentdeck artifacts"
     assert payload["artifacts_card"]["artifacts_command"] == "agentdeck artifacts"
     assert payload["artifacts_card"]["trace_command_template"] == "agentdeck trace --id <id>"
+    assert payload["artifacts_card"]["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect artifacts",
+            "command": "agentdeck artifacts",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
     assert payload["artifacts_card"]["artifacts"]["count"] == 1
     assert payload["artifacts_card"]["artifacts"]["items"][0] == {
         "artifact_id": "art_chat",
@@ -3455,6 +3465,7 @@ def test_leader_chat_inspects_artifacts_without_reading_files_or_mutating_state(
     assert payload["leader_explanation"]["safety"] == "inspect"
     assert payload["leader_explanation"]["requires_explicit_user"] is False
     assert payload["intent_card"]["embedded_card"] == "artifacts_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
     assert payload["intent_card"]["controls"][0] == {
         "kind": "inspect",
         "label": "Inspect artifacts_card",
@@ -3463,6 +3474,19 @@ def test_leader_chat_inspects_artifacts_without_reading_files_or_mutating_state(
         "enabled": True,
         "blocker": None,
     }
+    registry = payload["control_registry_card"]
+    assert registry["filters"]["scope"] == "artifacts"
+    assert registry["filters"]["card"] == "artifacts_card"
+    assert registry["filters"]["control_id"] == registry["selection"]["requested_control_id"]
+    assert registry["filters"]["active_filter_keys"] == ["scope", "card", "control_id"]
+    assert registry["item_count"] == 1
+    selected_control = registry["selection"]["selected_control"]
+    assert selected_control == registry["items"][0]
+    assert selected_control["scope"] == "artifacts"
+    assert selected_control["card"] == "artifacts_card"
+    assert selected_control["kind"] == "inspect"
+    assert selected_control["command"] == "agentdeck artifacts"
+    assert registry["selection"]["next_command"] == "agentdeck artifacts"
 
     state_after = StateStore(root).load()
     assert state_after["plans"] == state_before["plans"]
@@ -3477,6 +3501,27 @@ def test_leader_chat_inspects_artifacts_without_reading_files_or_mutating_state(
     assert state_after["chat_turns"][-1]["mode"] == "artifacts"
     assert state_after["chat_turns"][-1]["next_command"] == "agentdeck artifacts"
     assert state_after["chat_turns"][-1]["action_kind"] == "artifacts"
+
+
+def test_validate_leader_chat_contract_requires_artifacts_registry_card(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看产物"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = cli.validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for artifacts responses",
+            "control_registry_card is required for artifacts responses",
+        ],
+    }
 
 
 def test_leader_chat_opens_workbench_snapshot_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
@@ -3870,7 +3915,7 @@ def test_leader_chat_help_filters_command_palette_without_planning(tmp_path, mon
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 63,
+        "item_count_before_filter": 64,
     }
     assert registry["item_count"] == len(registry["items"])
     assert registry["group_count"] == len(registry["groups"])
@@ -3907,7 +3952,7 @@ def test_leader_chat_help_filters_command_palette_by_query(tmp_path, monkeypatch
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 63,
+        "item_count_before_filter": 64,
     }
     assert registry["items"]
     assert all(
@@ -3947,7 +3992,7 @@ def test_leader_chat_help_filters_command_palette_by_control_id(tmp_path, monkey
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 63,
+        "item_count_before_filter": 64,
     }
     assert registry["items"] == [selected_item]
     assert registry["selection"] == {
@@ -3984,7 +4029,7 @@ def test_leader_chat_help_reports_unmatched_control_id_selection(tmp_path, monke
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 63,
+        "item_count_before_filter": 64,
     }
     assert registry["items"] == []
     assert registry["groups"] == []
@@ -4035,7 +4080,7 @@ def test_leader_chat_help_reports_filtered_out_control_id_selection(tmp_path, mo
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 63,
+        "item_count_before_filter": 64,
     }
     assert registry["items"] == []
     assert registry["groups"] == []

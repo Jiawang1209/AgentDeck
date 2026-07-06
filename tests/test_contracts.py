@@ -980,10 +980,21 @@ def test_artifacts_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["example_artifacts"] == example
     assert payload["example_response_fields"] == payload["response_fields"]
     assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_control_fields"] == list(example["controls"][0])
     assert payload["example_artifact_summary_fields"] == payload["artifact_summary_fields"]
     assert set(payload["example_artifact_summary_fields"]) == set(example["artifacts"])
     assert payload["example_artifact_item_fields"] == payload["artifact_item_fields"]
     assert set(payload["example_artifact_item_fields"]) == set(example["artifacts"]["items"][0])
+    assert example["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect artifacts",
+            "command": "agentdeck artifacts",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
     assert validate_artifacts_contract(example) == {"ok": True, "errors": []}
 
 

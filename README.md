@@ -318,7 +318,7 @@ agentdeck leader chat --message "查看产物"
 agentdeck contract artifacts --example
 ```
 
-`agentdeck artifacts` 是只读产物索引，输出同源 ProjectView `artifacts` 摘要、`trace_command_template`、ProjectView contract 和 trace contract 入口；它不会读取产物文件内容，不读取 tmux pane，不调用 Leader provider，也不会修改 state。自然语言入口 `agentdeck leader chat --message "查看产物"` 会进入只读 `mode=artifacts`，嵌入同一张 `artifacts_card`，并把下一步保持为 `agentdeck artifacts`。输出前会通过 `validate_artifacts_contract()` 自校验，GUI/TUI 可以用 `agentdeck contract artifacts` 发现字段形状，再用每个 item 的 `trace_command` 或 `agentdeck trace --id <artifact_id>` 跳回完整通信链路。
+`agentdeck artifacts` 是只读产物索引，输出同源 ProjectView `artifacts` 摘要、`trace_command_template`、ProjectView contract、trace contract 入口和 GUI-ready `controls[]`；它不会读取产物文件内容，不读取 tmux pane，不调用 Leader provider，也不会修改 state。自然语言入口 `agentdeck leader chat --message "查看产物"` 会进入只读 `mode=artifacts`，嵌入同一张 `artifacts_card`，并把下一步保持为 `agentdeck artifacts`；同一响应还会附带过滤到 `scope=artifacts` / `card=artifacts_card` 的 `control_registry_card`，selection 指向 `kind=inspect` 的 `agentdeck artifacts` control。输出前会通过 `validate_artifacts_contract()` 自校验，GUI/TUI 可以用 `agentdeck contract artifacts` 发现字段形状，再用每个 item 的 `trace_command` 或 `agentdeck trace --id <artifact_id>` 跳回完整通信链路。
 
 ## ProjectView and Status
 
@@ -435,7 +435,7 @@ agentdeck plan status --plan-id pln_xxx
 
 当人类输入 `agentdeck leader chat --message "查看审计"`、`"最近事件"`、`"audit"` 或 `"recent events"` 这类 audit 意图时，chat 会进入只读 `mode=audit`：它复用 workbench 的 `audit_card`，返回 latest_event、recent_events、event_count 和 `events_command=agentdeck events --limit 20`，并把 `next_command` 指向同一条事件时间线命令。该模式只记录 chat turn 和对应审计事件，不创建 plan/action/approval/message/job/inbox，不 ack、不 approve、不 dispatch、不 capture、不读取 pane 输出、不发送 tmux 输入。
 
-当人类输入 `agentdeck leader chat --message "查看产物"`、`"artifacts"`、`"输出文件"` 或 `"交付物"` 这类产物索引意图时，chat 会进入只读 `mode=artifacts`：它复用 `agentdeck artifacts` 的 `artifacts_card`，只返回 artifact 摘要、trace 模板和 contract 入口，不读取产物文件内容。该模式只记录 chat turn 和对应审计事件，不创建 plan/action/approval/message/job/reply/artifact/inbox，不调用 provider、不读取 pane、不发送 tmux 输入；`intent_card.embedded_card=artifacts_card`，inspect/next control 都指向 `agentdeck artifacts`。
+当人类输入 `agentdeck leader chat --message "查看产物"`、`"artifacts"`、`"输出文件"` 或 `"交付物"` 这类产物索引意图时，chat 会进入只读 `mode=artifacts`：它复用 `agentdeck artifacts` 的 `artifacts_card`，只返回 artifact 摘要、trace 模板、contract 入口和 inspect control，不读取产物文件内容。该模式只记录 chat turn 和对应审计事件，不创建 plan/action/approval/message/job/reply/artifact/inbox，不调用 provider、不读取 pane、不发送 tmux 输入；`intent_card.embedded_card=artifacts_card`，`intent_card.secondary_embedded_cards=["control_registry_card"]`，inspect/next control 都指向 `agentdeck artifacts`，并且 `control_registry_card.selection` 会选中同一个 artifacts inspect control。
 
 当人类输入 `agentdeck leader chat --message "追踪 msg_xxx"`、`"trace job_xxx"`、`"追踪 art_xxx"` 或 `"查看 rep_xxx 链路"` 这类具体通信 ID 追踪意图时，chat 会进入只读 `mode=trace`：它复用 `agentdeck trace --id <id>` 的 `trace_card`，返回该 message lineage 下的 message、attempts、jobs、replies、artifacts 和 inbox_items，`intent_card.controls[]` next label 会使用 `Inspect trace`。该模式只记录 chat turn，不创建 plan/action/approval/message/job/inbox，不 ack、不 dispatch、不 capture reply、不读取 pane 输出、不发送 tmux 输入；未知 ID 会返回错误，不会落到 provider-backed planning。
 

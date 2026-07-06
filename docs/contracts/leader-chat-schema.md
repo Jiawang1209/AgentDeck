@@ -423,12 +423,14 @@ Artifacts-mode responses are returned when the human asks to inspect worker arti
     "project_view_contract": "agentdeck contract project-view",
     "trace_contract": "agentdeck contract trace",
     "trace_command_template": "agentdeck trace --id <id>",
+    "controls": [],
     "artifacts": {}
-  }
+  },
+  "control_registry_card": {}
 }
 ```
 
-When `artifacts_card` is present, `validate_leader_chat_contract()` reuses `validate_artifacts_contract()` and prefixes nested errors with `artifacts_card:`. Artifacts-mode records a chat turn and audit event for history, but it must not create plans/actions/approvals/messages/jobs/replies/artifacts/inbox items, call a provider, read artifact file contents, read pane output, or send tmux input.
+When `artifacts_card` is present, `validate_leader_chat_contract()` reuses `validate_artifacts_contract()` and prefixes nested errors with `artifacts_card:`. Live artifacts-mode responses also include a `control_registry_card` filtered to `scope=artifacts` / `card=artifacts_card`; its selection points at the `kind=inspect` control whose command is `agentdeck artifacts`, and `intent_card.secondary_embedded_cards[]` lists `control_registry_card` so GUI clients can highlight the same read-only artifact index action in the command palette. Artifacts-mode records a chat turn and audit event for history, but it must not create plans/actions/approvals/messages/jobs/replies/artifacts/inbox items, call a provider, read artifact file contents, read pane output, or send tmux input.
 
 Capture-mode responses are returned when the human asks to inspect one spawned agent pane output. They return `capture_card`, a GUI-ready read-only terminal snapshot:
 
@@ -767,7 +769,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat role-mode responses must reuse the workbench role card through `role_card`.
 - Chat ledger-mode responses must reuse the workbench ledger and lineage cards through `ledger_card` and `lineage_card`.
 - Chat audit-mode responses must reuse the workbench audit card through `audit_card`, recommend `agentdeck events --limit 20`, and remain read-only except for recording the chat turn and its audit event.
-- Chat artifacts-mode responses must reuse the artifacts contract through `artifacts_card`, recommend `agentdeck artifacts`, and remain read-only without reading artifact file contents.
+- Chat artifacts-mode responses must reuse the artifacts contract through `artifacts_card`, recommend `agentdeck artifacts`, include a `control_registry_card` filtered to the artifacts inspect control, list `control_registry_card` in `intent_card.secondary_embedded_cards`, and remain read-only without reading artifact file contents.
 - Chat workbench-mode responses must reuse the complete workbench snapshot through `workbench_card`; the leader-chat contract must expose terminal session card fields for the embedded `workbench_card.terminal_session_card` and `workbench_control_registry_item_fields` for the embedded `workbench_card.control_registry[]` command palette.
 - Chat policy-mode responses must reuse the workbench control mode projection through `control_mode_card`, recommend an explicit `agentdeck policy set-mode --mode <mode>` command, and use action-specific next labels for ask, approval, and autonomous requests. Policy-mode must not mutate `.agentdeck/config.toml`.
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, `runtime_card`, `terminal_session_card`, or `trace_card` when `recovery.recommended_action.source` points at those queues, runtime recovery, or a pending reply capture; stale runtime recovery should keep `intent_card.embedded_card=continue_card` and list `runtime_card` / `terminal_session_card` in `secondary_embedded_cards`; reply capture recovery should set `intent_card.embedded_card=trace_card`.

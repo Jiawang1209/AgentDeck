@@ -20,6 +20,7 @@ agentdeck contract artifacts --example
 - `trace_contract`: discovery command for full lineage details.
 - `trace_command_template`: command template for inspecting the lineage behind an artifact.
 - `artifacts`: ProjectView artifact summary.
+- `controls`: GUI-ready controls for the artifact index card.
 
 ## Artifact Summary Fields
 
@@ -41,8 +42,18 @@ agentdeck contract artifacts --example
 - `created_at`: artifact ledger timestamp.
 - `trace_command`: command for inspecting the communication lineage.
 
+## Control Fields
+
+- `kind`: control kind. The current artifact index control is `inspect`.
+- `label`: human-readable label for the control.
+- `command`: command to run explicitly. The inspect control must be `agentdeck artifacts`.
+- `safety`: safety class. The inspect control must use `inspect`.
+- `enabled`: whether the command can be shown as runnable.
+- `blocker`: reason a disabled control cannot be used, otherwise `null`.
+
 ## Safety
 
 - The command is read-only.
 - The command must pass `validate_artifacts_contract()` before printing JSON.
+- `controls[]` is a renderable command projection only. It does not authorize execution, read output files, call providers, inspect panes, or mutate AgentDeck state.
 - GUI clients should use `trace_command` or `agentdeck trace --id <artifact_id>` for lineage details and should not read `.agentdeck/state/` directly.
