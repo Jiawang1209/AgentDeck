@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate workbench control registry source alignment
+
+- 收紧 Workbench control registry 契约：`validate_workbench_contract()` 现在要求 `control_registry[]` 精确匹配同一份 workbench cards 派生出的 controls，不再允许 GUI 命令面板成为第二套状态源。
+- `workbench_control_registry()` 现在纳入 `agent_ready_card.controls[]`，输出 `scope=agent_ready` 的 inspect/spawn_ready/refresh_runtime 等启动准备入口，让 GUI/TUI 可以直接渲染多 Agent 启动准备动作，而不需要解析 `next_command` 字符串。
+- 同步 Workbench schema、AGENT/CLAUDE 约束，明确 control registry 来自 leader/provider/policy/agent_ready/terminal_session/role/runtime/inbox/operator controls，并且只能作为只读命令面板索引。
+- 保持控制边界：该校验只拒绝漂移 Workbench payload，不创建 plan/action/approval/message/job/inbox，不 ack/approve/dispatch，不 spawn/refresh runtime，不 capture reply，不读取 pane，不发送 tmux 输入，不写 runtime state。
+- 验证记录：已先确认红测失败，workbench 示例最初缺少 `scope=agent_ready` registry items，validator 最初允许 `control_registry=[]` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_control_registry_item_fields tests/test_contracts.py::test_validate_workbench_contract_requires_control_registry_to_match_cards tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_control_registry_card_contract_accepts_example -q` 5 项通过；根因修复回归 `conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_control_registry_item_fields tests/test_contracts.py::test_validate_workbench_contract_requires_control_registry_to_match_cards tests/test_contracts.py::test_validate_workbench_contract_requires_terminal_session_control_fields tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_leader_cli.py::test_leader_chat_opens_workbench_snapshot_without_mutating_state -q` 6 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 428 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 454 项通过。
+
 ### Current - Validate workbench queue source alignment
 
 - 收紧 Workbench queue card 契约：`validate_workbench_contract()` 现在要求 `queue_card.leader_actions`、`queue_card.approvals` 和 `queue_card.inbox` 的摘要字段匹配同一份 `project_view` snapshot，不再只检查这些 section 是 object。

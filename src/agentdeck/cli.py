@@ -1092,6 +1092,14 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id=None,
         controls=control_mode_card.get("active_controls"),
     )
+    agent_ready_card = payload.get("agent_ready_card") if isinstance(payload.get("agent_ready_card"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry,
+        scope="agent_ready",
+        card="agent_ready_card",
+        agent_id=None,
+        controls=agent_ready_card.get("controls"),
+    )
     terminal_session_card = (
         payload.get("terminal_session_card") if isinstance(payload.get("terminal_session_card"), dict) else {}
     )
@@ -1114,14 +1122,6 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
                 agent_id=terminal.get("agent_id"),
                 controls=terminal.get("controls"),
             )
-    agent_ready_card = payload.get("agent_ready_card") if isinstance(payload.get("agent_ready_card"), dict) else {}
-    _append_workbench_control_registry_items(
-        registry,
-        scope="agent_ready",
-        card="agent_ready_card",
-        agent_id=None,
-        controls=agent_ready_card.get("controls"),
-    )
     startup_preview_card = (
         payload.get("startup_preview_card") if isinstance(payload.get("startup_preview_card"), dict) else {}
     )

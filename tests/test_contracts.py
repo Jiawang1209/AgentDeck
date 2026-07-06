@@ -1631,6 +1631,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     } >= {
         ("leader", "leader_card", "continue", "leader"),
         ("policy", "control_mode_card", "set_mode", None),
+        ("agent_ready", "agent_ready_card", "inspect", None),
+        ("agent_ready", "agent_ready_card", "spawn_ready", None),
+        ("agent_ready", "agent_ready_card", "refresh_runtime", None),
         ("role", "role_card", "assign_role", "planner"),
         ("terminal_session", "terminal_session_card", "attach_session", None),
         ("terminal_session", "terminal_session_card", "open_controls", None),
@@ -1940,6 +1943,15 @@ def test_validate_workbench_contract_requires_control_registry_item_fields() -> 
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing control_registry item field: scope"]}
+
+
+def test_validate_workbench_contract_requires_control_registry_to_match_cards() -> None:
+    payload = workbench_example()
+    payload["control_registry"] = []
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {"ok": False, "errors": ["control_registry must match workbench card controls"]}
 
 
 def test_validate_workbench_contract_requires_lineage_card_fields() -> None:

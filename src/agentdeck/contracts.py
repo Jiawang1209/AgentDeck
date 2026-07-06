@@ -4963,31 +4963,39 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("control_mode_card.active_controls must be a list")
     elif "control_mode_card" in payload:
         errors.append("control_mode_card must be an object")
+    control_registry_shape_valid = False
     control_registry = payload.get("control_registry")
     if isinstance(control_registry, list):
+        control_registry_shape_valid = True
         control_ids: set[str] = set()
         duplicate_control_id = False
         for item in control_registry:
             if not isinstance(item, dict):
                 errors.append("control_registry items must be objects")
+                control_registry_shape_valid = False
                 continue
             for field in WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS:
                 if field not in item:
                     errors.append(f"missing control_registry item field: {field}")
+                    control_registry_shape_valid = False
             control_id = item.get("control_id")
             if "control_id" in item:
                 if not isinstance(control_id, str) or not control_id:
                     errors.append("control_registry item control_id must be a non-empty string")
+                    control_registry_shape_valid = False
                 elif control_id in control_ids:
                     duplicate_control_id = True
                 else:
                     control_ids.add(control_id)
             if "enabled" in item and not isinstance(item.get("enabled"), bool):
                 errors.append("control_registry item enabled must be a boolean")
+                control_registry_shape_valid = False
             if item.get("enabled") is False and not item.get("blocker"):
                 errors.append("disabled control_registry item requires blocker")
+                control_registry_shape_valid = False
         if duplicate_control_id:
             errors.append("control_registry control_id values must be unique")
+            control_registry_shape_valid = False
     elif "control_registry" in payload:
         errors.append("control_registry must be a list")
     provider_health = payload.get("provider_health")
@@ -5250,6 +5258,8 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         errors.append("approval active queue requires approval_card")
     if source == "leader_action" and not isinstance(payload.get("leader_action"), dict):
         errors.append("leader_action active queue requires leader_action")
+    if control_registry_shape_valid and not errors and control_registry != workbench_control_registry(payload):
+        errors.append("control_registry must match workbench card controls")
     return {"ok": not errors, "errors": errors}
 
 
@@ -5971,6 +5981,14 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         card="control_mode_card",
         agent_id=None,
         controls=control_mode_card.get("active_controls"),
+    )
+    agent_ready_card = payload.get("agent_ready_card") if isinstance(payload.get("agent_ready_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="agent_ready",
+        card="agent_ready_card",
+        agent_id=None,
+        controls=agent_ready_card.get("controls"),
     )
     terminal_session_card = (
         payload.get("terminal_session_card") if isinstance(payload.get("terminal_session_card"), dict) else {}
