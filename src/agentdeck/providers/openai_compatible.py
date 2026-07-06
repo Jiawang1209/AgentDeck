@@ -5,7 +5,7 @@ import os
 from json import JSONDecodeError
 from urllib import request
 
-from .base import LeaderPlanRequest
+from .base import LeaderPlanRequest, validate_provider_plan_schema
 
 
 class OpenAICompatibleProvider:
@@ -105,13 +105,4 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _validate_plan(plan: dict[str, object]) -> None:
-        steps = plan.get("steps")
-        if not isinstance(steps, list) or not steps:
-            raise RuntimeError("provider plan missing steps")
-        for index, step in enumerate(steps, start=1):
-            if not isinstance(step, dict):
-                raise RuntimeError(f"provider plan step {index} is invalid")
-            if step.get("requires_approval") is not True:
-                raise RuntimeError(f"provider plan step {index} must require approval")
-        plan["approval_required"] = True
-        plan["dispatch_ready"] = False
+        validate_provider_plan_schema(plan)

@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from json import JSONDecodeError
 
-from .base import LeaderPlanRequest
+from .base import LeaderPlanRequest, validate_provider_plan_schema
 
 
 class CliLeaderProvider:
@@ -94,17 +94,7 @@ class CliLeaderProvider:
         raise RuntimeError("provider plan content is not valid JSON")
 
     def _validate_plan(self, plan: object) -> None:
-        if not isinstance(plan, dict):
-            raise RuntimeError("provider plan content must be a JSON object")
-        if not isinstance(plan.get("steps"), list) or not plan["steps"]:
-            raise RuntimeError("provider plan must include non-empty steps")
-        for step in plan["steps"]:
-            if not isinstance(step, dict):
-                raise RuntimeError("provider plan steps must be objects")
-            if step.get("requires_approval") is not True:
-                raise RuntimeError("provider plan steps must require approval")
-        plan["approval_required"] = True
-        plan["dispatch_ready"] = False
+        validate_provider_plan_schema(plan)
 
 
 class CodexCliProvider(CliLeaderProvider):

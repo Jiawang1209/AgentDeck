@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate shared provider plan step schema
+
+- 收紧真实 Leader provider plan schema：API-backed OpenAI-compatible/DeepSeek 路径和 CLI-backed Codex/Claude 路径现在复用同一个 provider plan schema validator。
+- 该 validator 要求 provider 返回的 plan 是 JSON object，`steps[]` 非空，且每个 step 必须包含 `step`、`agent_id`、`role`、`task`、`risk`、`requires_approval`；缺字段会明确报错，例如 `provider plan step 1 missing required field: agent_id`。
+- 继续保留审批门归一化：通过 schema 的 provider plan 会被强制设为 `approval_required=true`、`dispatch_ready=false`，并要求每个 step 都 `requires_approval=true`。
+- 同步 README、Leader chat schema、AGENT/CLAUDE 约束，明确 Codex CLI、Claude CLI、DeepSeek 和 OpenAI-compatible 都必须产出同一份可审批 plan schema；CLI-backed Leader 仍只是 `agent_id=leader` 的 subprocess reasoning backend，不复用 worker tmux pane，不自动 dispatch 或发送 tmux 输入。
+- 验证记录：已先确认红测失败，CLI-backed 和 API-backed provider 最初都会接受缺少 `agent_id` 的 step；实现共享 validator 后聚焦测试 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_cli_provider_rejects_plan_steps_missing_required_schema_fields tests/test_provider_openai_compatible.py::test_openai_compatible_provider_rejects_plan_steps_missing_required_schema_fields tests/test_provider_openai_compatible.py::test_cli_provider_normalizes_missing_plan_control_flags tests/test_provider_openai_compatible.py::test_cli_provider_forces_approval_gates_when_provider_returns_unsafe_control_flags tests/test_provider_openai_compatible.py::test_openai_compatible_provider_forces_approval_gates_when_provider_returns_unsafe_control_flags tests/test_provider_openai_compatible.py::test_openai_compatible_provider_reports_invalid_json_plan -q` 6 项通过；provider 回归 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py -q` 17 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 442 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 470 项通过。
+
 ### Current - Validate runtime action registry selection alignment
 
 - 收紧 Leader chat runtime-action 契约：`validate_leader_chat_contract()` 现在要求 `runtime_send` / `runtime_stop` / `runtime_refresh` / `runtime_spawn` 响应中的 `control_registry_card.selection.next_command` 必须等于 `runtime_action_card.command`。

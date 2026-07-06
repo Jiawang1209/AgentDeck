@@ -68,7 +68,7 @@ Use `agentdeck contract leader-chat --example` to include a stable GUI-ready res
 
 Live `agentdeck leader chat` responses are validated against this contract before JSON is printed. If validation fails, the command exits non-zero, writes the contract errors to stderr, records the failure in `leader_errors[]`, appends a `leader_chat_contract_failed` event, and does not print a partial chat response.
 
-Provider-backed planning modes normalize provider control flags before chat payloads are built: accepted plans must keep every step at `requires_approval=true`, and AgentDeck forces top-level `approval_required=true` and `dispatch_ready=false` even if an API-backed or CLI-backed backend returns different values.
+Provider-backed planning modes validate the same provider plan schema before chat payloads are built: accepted plans must include non-empty `steps[]`; every step must include `step`, `agent_id`, `role`, `task`, `risk`, and `requires_approval`; every step must keep `requires_approval=true`; and AgentDeck forces top-level `approval_required=true` and `dispatch_ready=false` even if an API-backed or CLI-backed backend returns different values.
 
 ## Response Shape
 
