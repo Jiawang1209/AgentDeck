@@ -65,6 +65,8 @@ class CliLeaderProvider:
                 "Every step must require human approval before dispatch.",
                 "Required schema: goal, summary, steps, approval_required, dispatch_ready.",
                 "Each step must include: step, agent_id, role, task, risk, requires_approval.",
+                "Step numbers must be 1..n without duplicates or gaps.",
+                "Use only listed worker agent_id values and copy each worker role exactly.",
                 f"Available worker agents: {json.dumps(workers, ensure_ascii=False)}",
                 f"Goal: {request.task}",
             ]

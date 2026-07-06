@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Align provider planning prompts with schema rules
+
+- 同步真实 Leader provider prompt 与共享 provider plan schema：API-backed OpenAI-compatible/DeepSeek system prompt 和 CLI-backed Codex/Claude stdin prompt 现在都会明确要求 step 编号为 `1..n` 且不能重复/跳号。
+- 同一组 prompt 现在也明确要求只能使用列出的 worker `agent_id`，并且每个 step 的 `role` 必须完全复制对应 worker 的配置 role，减少真实 LLM 输出后被 schema validator 拒绝的概率。
+- 保持人类审批与逻辑 Leader 边界：prompt 增强只影响 plan 生成上下文，不创建 approval、dispatch、message/job/inbox，不复用 worker tmux pane，也不发送 tmux 输入；validator 仍是最终守门。
+- 同步 README、Leader chat schema、AGENT/CLAUDE 约束，明确 provider prompt 和 provider plan validator 使用同一套可审批、可排序、角色化 worker schema。
+- 验证记录：已先确认红测失败，DeepSeek/OpenAI-compatible system prompt 和 Codex CLI stdin prompt 最初都缺少 `Step numbers must be 1..n without duplicates or gaps.` 与 `Use only listed worker agent_id values and copy each worker role exactly.`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_deepseek_provider_uses_deepseek_env_and_openai_compatible_plan_shape tests/test_provider_openai_compatible.py::test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_claude_cli_provider_runs_print_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_openai_compatible_provider_posts_chat_completion_and_parses_json_plan -q` 4 项通过；provider 回归 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py -q` 31 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 442 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 484 项通过。
+
 ### Current - Validate provider plan agent role match
 
 - 继续收紧真实 Leader provider plan schema：共享 `validate_provider_plan_schema()` 现在会用当前项目配置校验每个 step 的 `role` 必须匹配目标 `agent_id` 的配置角色，避免 provider 把 `planner` 标成 `implementation` 这类身份错位。
