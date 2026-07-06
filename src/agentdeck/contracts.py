@@ -712,6 +712,7 @@ WORKBENCH_PROVIDER_HEALTH_FIELDS = (
     "api_backed",
     "provider_backend",
     "provider_transport",
+    "leader_backend",
     "supported",
     "ready",
     "missing_env",
@@ -3947,6 +3948,11 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("provider_health.provider_backend must be a string")
         if "provider_transport" in provider_health and not isinstance(provider_health.get("provider_transport"), str):
             errors.append("provider_health.provider_transport must be a string")
+        leader_backend = provider_health.get("leader_backend")
+        if isinstance(leader_backend, dict):
+            _validate_leader_backend(errors, "provider_health", leader_backend)
+        else:
+            errors.append("provider_health.leader_backend must be an object")
         if "missing_env" in provider_health and not isinstance(provider_health.get("missing_env"), list):
             errors.append("provider_health.missing_env must be a list")
         if "setup_commands" in provider_health and not isinstance(provider_health.get("setup_commands"), list):
@@ -5170,6 +5176,19 @@ def workbench_example() -> dict[str, object]:
             "api_backed": False,
             "provider_backend": "local",
             "provider_transport": "local",
+            "leader_backend": {
+                "agent_id": "leader",
+                "provider": "fake",
+                "model": "fake-plan",
+                "provider_backend": "local",
+                "provider_transport": "local",
+                "reasoning_backend": "local-fake",
+                "runtime_kind": "logical_leader",
+                "pane_backed": False,
+                "pane_id": None,
+                "approval_required": True,
+                "dispatch_ready": False,
+            },
             "supported": True,
             "ready": True,
             "missing_env": [],

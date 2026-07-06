@@ -1148,6 +1148,8 @@ def _workbench_provider_health(project_view: dict[str, object]) -> dict[str, obj
         "api_backed": provider in ("deepseek", "openai-compatible"),
         "provider_backend": leader_provider_backend(provider),
         "provider_transport": leader_provider_transport(provider),
+        "leader_backend": leader.get("leader_backend")
+        or leader_backend_identity(provider, str(leader.get("model") or "")),
         "command_path": None,
         "doctor_contract": "agentdeck contract doctor",
         "controls": _leader_provider_controls(provider),

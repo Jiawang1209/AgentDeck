@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Surface Leader backend identity in provider health
+
+- 扩展 `agentdeck workbench` 的 `provider_health`：现在包含当前配置 provider/model 的 normalized `leader_backend`，让 GUI setup/provider switch 面板在同一张 readiness card 里识别 fake、API-backed 或 CLI-backed Leader reasoning backend。
+- 扩展 workbench/leader-chat contract discovery 与 example：`provider_health_fields` 新增 `leader_backend`，leader-chat setup mode 继续复用同一组 provider health 字段，避免 GUI 为 setup 对话另写 schema。
+- 扩展 `validate_workbench_contract()`：现在会拒绝缺失或非 logical Leader 的 `provider_health.leader_backend`，防止 readiness 投影丢失 Leader 身份 provenance。
+- 保持控制边界：`provider_health.leader_backend` 只是 setup/diagnostics provenance，不表示 provider readiness、tmux pane 绑定、dispatch permission 或执行授权；provider health 仍不调用 provider、不写 state、不读取 pane、不发送 tmux 输入。
+- 同步 `docs/contracts/workbench-schema.md`、`docs/contracts/leader-chat-schema.md`、README、AGENT.md 和 CLAUDE.md。
+- 验证记录：已先确认红测失败，`agentdeck contract workbench` / `agentdeck contract leader-chat` 的 `provider_health_fields`、live `agentdeck workbench` 的 DeepSeek/Codex CLI `provider_health`、workbench example、leader-chat example 和 validator 最初都缺少 `leader_backend`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_workbench_marks_codex_cli_leader_as_local_cli_backed tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_provider_health_leader_backend tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 7 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 376 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 402 项通过。
+
 ### Current - Surface Leader backend identity in doctor diagnostics
 
 - 扩展 `agentdeck doctor` 的 `configured_leader`：现在包含当前配置 provider/model 的 normalized `leader_backend`，让 GUI setup/diagnostics 页面也能复用 ProjectView/workbench/run/review/summary 的 Leader 身份语言。

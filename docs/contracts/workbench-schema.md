@@ -313,6 +313,19 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
   "api_backed": true,
   "provider_backend": "api",
   "provider_transport": "http",
+  "leader_backend": {
+    "agent_id": "leader",
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "provider_backend": "api",
+    "provider_transport": "http",
+    "reasoning_backend": "api-llm",
+    "runtime_kind": "logical_leader",
+    "pane_backed": false,
+    "pane_id": null,
+    "approval_required": true,
+    "dispatch_ready": false
+  },
   "supported": true,
   "ready": false,
   "missing_env": ["DEEPSEEK_API_KEY"],
@@ -346,7 +359,7 @@ The card never exposes API keys and does not call the provider. `api_backed` onl
 }
 ```
 
-The card never exposes API key values and never calls the provider. It includes the configured Leader identity and model so GUI clients can render provider setup next to the Leader card without joining another state source. `provider_backend` is `local`, `api`, `cli`, or `unknown`; `provider_transport` is `local`, `http`, `subprocess`, or `unknown`. For API-backed providers such as `deepseek` and `openai-compatible`, readiness is based on the required local environment variable and `command_path` is `null`. For CLI-backed providers such as `codex-cli` and `claude-cli`, readiness is based on whether the local command is available on PATH, and `command_path` exposes the resolved executable path when available. GUI clients can render `doctor_command` as the next diagnostic action, read `doctor_contract` for the doctor diagnostics schema, and show `setup_commands` as copyable placeholder commands; placeholders must never be replaced with real secret values in AgentDeck output. `controls[]` exposes explicit `agentdeck leader set-provider` commands for supported Leader backends: `kind=set_provider` is the normal explicit switch, while `kind=guarded_set_provider` appends `--require-ready` so the later explicit command refuses to write config when the target backend is not ready. The current provider controls are disabled with `already current provider`; other controls require `safety=explicit_user` and only change the default Leader provider/model after the human runs the command. `validate_workbench_contract()` rejects missing provider provenance fields, non-string provenance values, provider controls that do not use `safety=explicit_user`, do not point at `agentdeck leader set-provider --provider ...`, omit `--require-ready` for `guarded_set_provider`, or are disabled without a blocker.
+The card never exposes API key values and never calls the provider. It includes the configured Leader identity and model so GUI clients can render provider setup next to the Leader card without joining another state source. `provider_backend` is `local`, `api`, `cli`, or `unknown`; `provider_transport` is `local`, `http`, `subprocess`, or `unknown`. `leader_backend` mirrors the normalized logical Leader identity used by ProjectView, plan/run/review/summary, and doctor diagnostics, so setup screens can distinguish API-backed, CLI-backed, and local fake Leader reasoning backends without parsing provider strings. For API-backed providers such as `deepseek` and `openai-compatible`, readiness is based on the required local environment variable and `command_path` is `null`. For CLI-backed providers such as `codex-cli` and `claude-cli`, readiness is based on whether the local command is available on PATH, and `command_path` exposes the resolved executable path when available. GUI clients can render `doctor_command` as the next diagnostic action, read `doctor_contract` for the doctor diagnostics schema, and show `setup_commands` as copyable placeholder commands; placeholders must never be replaced with real secret values in AgentDeck output. `controls[]` exposes explicit `agentdeck leader set-provider` commands for supported Leader backends: `kind=set_provider` is the normal explicit switch, while `kind=guarded_set_provider` appends `--require-ready` so the later explicit command refuses to write config when the target backend is not ready. The current provider controls are disabled with `already current provider`; other controls require `safety=explicit_user` and only change the default Leader provider/model after the human runs the command. `validate_workbench_contract()` rejects missing provider provenance fields, missing or invalid `leader_backend`, non-string provenance values, provider controls that do not use `safety=explicit_user`, do not point at `agentdeck leader set-provider --provider ...`, omit `--require-ready` for `guarded_set_provider`, or are disabled without a blocker.
 
 ## Runtime Card
 

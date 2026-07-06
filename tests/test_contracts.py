@@ -1110,6 +1110,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["terminal_session_control_fields"] == list(WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS)
     assert payload["terminal_session_item_fields"] == list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS)
     assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
+    assert "leader_backend" in payload["provider_health_fields"]
     assert "provider_backend" in payload["provider_health_fields"]
     assert "provider_transport" in payload["provider_health_fields"]
     assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
@@ -1350,6 +1351,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert "command_path" in payload["provider_health_fields"]
     assert "provider_backend" in payload["provider_health_fields"]
     assert "provider_transport" in payload["provider_health_fields"]
+    assert "leader_backend" in payload["provider_health_fields"]
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
     assert payload["terminal_session_card_fields"] == list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS)
@@ -1808,6 +1810,21 @@ def test_validate_workbench_contract_requires_provider_health_provenance_strings
         "errors": [
             "provider_health.provider_backend must be a string",
             "provider_health.provider_transport must be a string",
+        ],
+    }
+
+
+def test_validate_workbench_contract_requires_provider_health_leader_backend() -> None:
+    payload = workbench_example()
+    del payload["provider_health"]["leader_backend"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "missing provider_health field: leader_backend",
+            "provider_health.leader_backend must be an object",
         ],
     }
 
@@ -2538,6 +2555,7 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_provider_health_fields"] == list(example["provider_health"])
     assert example["provider_health"]["provider_backend"] == "local"
     assert example["provider_health"]["provider_transport"] == "local"
+    assert example["provider_health"]["leader_backend"]["provider_backend"] == "local"
     assert payload["example_queue_card_fields"] == payload["queue_card_fields"]
     assert payload["example_queue_card_fields"] == list(example["queue_card"])
     assert payload["example_operator_card_fields"] == payload["operator_card_fields"]
