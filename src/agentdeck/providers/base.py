@@ -44,6 +44,8 @@ def validate_provider_plan_schema(plan: object, config: ProjectConfig | None = N
         for field in PROVIDER_PLAN_STEP_REQUIRED_FIELDS:
             if field not in step:
                 raise RuntimeError(f"provider plan step {index} missing required field: {field}")
+        if not isinstance(step.get("step"), int) or step["step"] <= 0:
+            raise RuntimeError(f"provider plan step {index} field step must be a positive integer")
         for field in PROVIDER_PLAN_STEP_STRING_FIELDS:
             if not isinstance(step.get(field), str) or not step[field].strip():
                 raise RuntimeError(f"provider plan step {index} field {field} must be a non-empty string")

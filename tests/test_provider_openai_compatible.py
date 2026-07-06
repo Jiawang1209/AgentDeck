@@ -258,6 +258,48 @@ def cli_plan_stdout_unknown_agent() -> str:
     )
 
 
+def cli_plan_stdout_non_positive_step_number() -> str:
+    return json.dumps(
+        {
+            "goal": "Malformed provider plan",
+            "summary": "provider returned an unusable step number",
+            "steps": [
+                {
+                    "step": 0,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "Plan the work",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                }
+            ],
+            "approval_required": True,
+            "dispatch_ready": False,
+        }
+    )
+
+
+def cli_plan_stdout_non_integer_step_number() -> str:
+    return json.dumps(
+        {
+            "goal": "Malformed provider plan",
+            "summary": "provider returned an unusable step number",
+            "steps": [
+                {
+                    "step": "one",
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "Plan the work",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                }
+            ],
+            "approval_required": True,
+            "dispatch_ready": False,
+        }
+    )
+
+
 def test_openai_compatible_provider_requires_api_key(monkeypatch) -> None:
     monkeypatch.delenv("AGENTDECK_LEADER_API_KEY", raising=False)
 
@@ -599,6 +641,27 @@ def test_cli_provider_rejects_steps_for_unconfigured_agents(tmp_path, monkeypatc
         raise AssertionError("provider should reject steps for unconfigured agents")
 
 
+def test_cli_provider_rejects_non_positive_step_numbers(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout=cli_plan_stdout_non_positive_step_number(), stderr="")
+
+    monkeypatch.setattr("agentdeck.providers.cli_subprocess.subprocess.run", fake_run)
+
+    provider = CodexCliProvider()
+
+    try:
+        provider.plan(LeaderPlanRequest(task="拒绝不可排序 CLI plan", config=config))
+    except RuntimeError as exc:
+        assert str(exc) == "provider plan step 1 field step must be a positive integer"
+    else:
+        raise AssertionError("provider should reject non-positive step numbers")
+
+
 def test_cli_provider_reports_subprocess_failure(tmp_path, monkeypatch) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -850,6 +913,50 @@ def test_openai_compatible_provider_rejects_steps_for_unconfigured_agents(
         assert str(exc) == "provider plan step 1 agent_id is not configured: ghost"
     else:
         raise AssertionError("provider should reject steps for unconfigured agents")
+
+
+def test_openai_compatible_provider_rejects_non_integer_step_numbers(
+    tmp_path, monkeypatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    monkeypatch.setenv("AGENTDECK_LEADER_API_KEY", "test-key")
+
+    class NonIntegerStepResponse:
+        def __enter__(self) -> "NonIntegerStepResponse":
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": cli_plan_stdout_non_integer_step_number(),
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        "agentdeck.providers.openai_compatible.request.urlopen",
+        lambda _request, timeout: NonIntegerStepResponse(),
+    )
+
+    provider = OpenAICompatibleProvider()
+
+    try:
+        provider.plan(LeaderPlanRequest(task="拒绝不可排序 API plan", config=config))
+    except RuntimeError as exc:
+        assert str(exc) == "provider plan step 1 field step must be a positive integer"
+    else:
+        raise AssertionError("provider should reject non-integer step numbers")
 
 
 def test_openai_compatible_provider_uses_requested_model_over_environment(tmp_path, monkeypatch) -> None:
