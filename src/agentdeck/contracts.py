@@ -81,6 +81,12 @@ CONTRACT_INDEX_SPECS = (
         "leader-chat-schema.md",
     ),
     (
+        "leader-status",
+        "agentdeck contract leader-status",
+        "agentdeck contract leader-status --example",
+        "leader-status-schema.md",
+    ),
+    (
         "leader-actions",
         "agentdeck contract leader-actions",
         "agentdeck contract leader-actions --example",
@@ -1151,6 +1157,29 @@ LEADER_SUMMARY_RESPONSE_FIELDS = (
     "review_command",
     "steps",
     "controls",
+)
+
+LEADER_STATUS_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "schema_version",
+    "project_view_command",
+    "workbench_command",
+    "leader",
+    "provider_health",
+    "latest_plan",
+    "queues",
+    "recovery",
+    "next_command",
+    "controls",
+)
+
+LEADER_STATUS_QUEUE_FIELDS = (
+    "leader_actions_pending",
+    "approvals_pending",
+    "approvals_approved",
+    "leader_inbox_pending",
+    "leader_errors",
 )
 
 LEADER_SUMMARY_STEP_FIELDS = (
@@ -2407,6 +2436,38 @@ def leader_summary_contract_response(contract_path: Path, include_example: bool 
         payload["example_artifact_fields"] = list(example["steps"][0]["artifacts"][0])
         payload["example_control_fields"] = list(example["controls"][0])
         payload["example_leader_summary"] = example
+    return payload
+
+
+def leader_status_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "status_command": "agentdeck leader status",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(LEADER_STATUS_RESPONSE_FIELDS),
+        "leader_fields": list(PROJECT_VIEW_LEADER_FIELDS),
+        "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
+        "latest_plan_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
+        "queue_fields": list(LEADER_STATUS_QUEUE_FIELDS),
+        "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
+        "control_fields": list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+        "workbench_contract": "agentdeck contract workbench",
+    }
+
+
+def leader_status_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = leader_status_contract_payload(contract_path)
+    if include_example:
+        example = leader_status_example()
+        payload["example"] = True
+        payload["example_response_fields"] = list(example)
+        payload["example_provider_health_fields"] = list(example["provider_health"])
+        payload["example_queue_fields"] = list(example["queues"])
+        payload["example_control_fields"] = list(example["controls"][0])
+        payload["example_leader_status"] = example
     return payload
 
 
@@ -7734,6 +7795,64 @@ def leader_summary_example() -> dict[str, object]:
                 "label": "Trace step",
                 "command": "agentdeck trace --id msg_example",
                 "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+
+
+def leader_status_example() -> dict[str, object]:
+    project_view = project_view_example()
+    recovery = project_view["recovery"]
+    return {
+        "ok": True,
+        "mode": "leader_status",
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_command": "agentdeck status",
+        "workbench_command": "agentdeck workbench",
+        "leader": project_view["leader"],
+        "provider_health": workbench_example()["provider_health"],
+        "latest_plan": project_view["plans"]["items"][0],
+        "queues": {
+            "leader_actions_pending": 1,
+            "approvals_pending": 0,
+            "approvals_approved": 0,
+            "leader_inbox_pending": 0,
+            "leader_errors": 0,
+        },
+        "recovery": recovery,
+        "next_command": recovery["next_command"],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Open project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Open workbench",
+                "command": "agentdeck workbench",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Inspect provider setup",
+                "command": "agentdeck doctor",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "next",
+                "label": "Continue",
+                "command": recovery["next_command"],
+                "safety": recovery["recommended_action"]["safety"],
                 "enabled": True,
                 "blocker": None,
             },

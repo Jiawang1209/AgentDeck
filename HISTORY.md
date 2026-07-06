@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Add read-only Leader status card
+
+- 新增 `agentdeck leader status` 只读状态卡：先通过 ProjectView contract 守门，再复用 workbench 同源 `provider_health`，聚合 logical Leader、provider readiness/setup、latest_plan、queue counts、recovery、next_command 和 GUI-ready controls。
+- 该命令服务北极星中的 Leader Agent、恢复入口和未来 GUI 顶栏：可以快速判断当前 Leader 是 API-backed、CLI-backed 还是 fake，是否需要 provider setup，以及下一步应该看 `doctor`、`continue`、审批、inbox 或工作台。
+- 保持人类审批和只读边界：`leader status` 不调用 Leader provider、不读取 tmux pane、不写 state、不创建 plan/action/approval/message/job/inbox，也不执行任何推荐命令；所有 controls 仍只是显式命令投影。
+- 新增 `docs/contracts/leader-status-schema.md`、`agentdeck contract leader-status` 和 contract index 项，提供稳定 payload/example discovery；同步 README、AGENT/CLAUDE 约束。
+- 验证记录：已先确认红测失败，`agentdeck leader status` 最初不是合法子命令，`leader_status_contract_payload` 也不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_status_surfaces_provider_and_queue_snapshot_without_mutating_state tests/test_agent_cli.py::test_leader_status_handles_empty_project_without_provider_or_runtime_calls -q` 2 项通过；contract 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_leader_status_discovers_schema_for_gui_clients tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli tests/test_contracts.py::test_leader_status_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_status_contract_response_includes_example_without_drift -q` 4 项通过；合并聚焦测试 6 项通过；CLI/contract 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 323 项通过；Leader/provider 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_provider_openai_compatible.py -q` 155 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 489 项通过。
+
 ### Current - Align provider planning prompts with schema rules
 
 - 同步真实 Leader provider prompt 与共享 provider plan schema：API-backed OpenAI-compatible/DeepSeek system prompt 和 CLI-backed Codex/Claude stdin prompt 现在都会明确要求 step 编号为 `1..n` 且不能重复/跳号。

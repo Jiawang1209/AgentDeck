@@ -39,6 +39,7 @@ from .contracts import (
     leader_chat_contract_response,
     leader_chat_intent_placeholder_blocker,
     leader_review_contract_response,
+    leader_status_contract_response,
     leader_summary_contract_response,
     project_view_contract_response,
     runtime_agent_controls,
@@ -711,6 +712,66 @@ def status_command(_args: argparse.Namespace) -> int:
         return 1
     _print_json(payload)
     return 0
+
+
+def leader_status_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    _print_json(_leader_status_payload(project_view))
+    return 0
+
+
+def _leader_status_payload(project_view: dict[str, object]) -> dict[str, object]:
+    recovery = project_view.get("recovery") if isinstance(project_view.get("recovery"), dict) else {}
+    recommended_action = (
+        recovery.get("recommended_action") if isinstance(recovery.get("recommended_action"), dict) else None
+    )
+    plans = project_view.get("plans") if isinstance(project_view.get("plans"), dict) else {}
+    plan_items = plans.get("items") if isinstance(plans.get("items"), list) else []
+    latest_plan = plan_items[-1] if plan_items else None
+    approvals = project_view.get("approvals") if isinstance(project_view.get("approvals"), dict) else {}
+    leader_actions = project_view.get("leader_actions") if isinstance(project_view.get("leader_actions"), dict) else {}
+    inbox = project_view.get("inbox") if isinstance(project_view.get("inbox"), dict) else {}
+    inbox_by_status = inbox.get("by_status") if isinstance(inbox.get("by_status"), dict) else {}
+    leader_errors = project_view.get("leader_errors") if isinstance(project_view.get("leader_errors"), dict) else {}
+    leader_action_status = leader_actions.get("by_status") if isinstance(leader_actions.get("by_status"), dict) else {}
+    next_command = recovery.get("next_command") if isinstance(recovery, dict) else None
+    return {
+        "ok": True,
+        "mode": "leader_status",
+        "schema_version": project_view.get("schema_version"),
+        "project_view_command": "agentdeck status",
+        "workbench_command": "agentdeck workbench",
+        "leader": project_view.get("leader"),
+        "provider_health": _workbench_provider_health(project_view),
+        "latest_plan": latest_plan,
+        "queues": {
+            "leader_actions_pending": int(leader_action_status.get("pending", 0)),
+            "approvals_pending": int(approvals.get("pending", 0)),
+            "approvals_approved": int(approvals.get("approved", 0)),
+            "leader_inbox_pending": int(inbox_by_status.get("pending", 0)),
+            "leader_errors": int(leader_errors.get("count", 0)),
+        },
+        "recovery": recovery,
+        "next_command": next_command,
+        "controls": [
+            _control(kind="inspect", label="Open project status", command="agentdeck status", safety="inspect"),
+            _control(kind="inspect", label="Open workbench", command="agentdeck workbench", safety="inspect"),
+            _control(kind="inspect", label="Inspect provider setup", command="agentdeck doctor", safety="inspect"),
+            _control(
+                kind="next",
+                label="Continue",
+                command=next_command,
+                safety=recommended_action.get("safety") if isinstance(recommended_action, dict) else None,
+                enabled=next_command is not None,
+                blocker=None if next_command is not None else "next command unavailable",
+            ),
+        ],
+    }
 
 
 def artifacts_command(_args: argparse.Namespace) -> int:
@@ -2547,6 +2608,13 @@ def contract_list_command(_args: argparse.Namespace) -> int:
 def contract_leader_chat_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-chat-schema.md"
     payload = leader_chat_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_leader_status_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-status-schema.md"
+    payload = leader_status_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -8120,6 +8188,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_leader_chat.add_argument("--example", action="store_true", help="Include a GUI-ready Leader chat example")
     contract_leader_chat.set_defaults(func=contract_leader_chat_command)
+    contract_leader_status = contract_subparsers.add_parser(
+        "leader-status",
+        help="Show Leader status response contract discovery metadata",
+    )
+    contract_leader_status.add_argument(
+        "--example",
+        action="store_true",
+        help="Include a GUI-ready Leader status example",
+    )
+    contract_leader_status.set_defaults(func=contract_leader_status_command)
     contract_continue = contract_subparsers.add_parser(
         "continue",
         help="Show continue recovery card contract discovery metadata",
@@ -8294,6 +8372,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     leader = subparsers.add_parser("leader", help="Leader planning commands")
     leader_subparsers = leader.add_subparsers(dest="leader_command")
+    leader_status = leader_subparsers.add_parser(
+        "status",
+        help="Show a read-only GUI-ready Leader status snapshot",
+    )
+    leader_status.set_defaults(func=leader_status_command)
     leader_plan = leader_subparsers.add_parser("plan", help="Create a plan without dispatching work")
     leader_plan.add_argument("--task", required=True, help="Goal for the Leader Agent to plan")
     leader_plan.add_argument("--provider", help="Leader provider to use; defaults to .agentdeck/config.toml")

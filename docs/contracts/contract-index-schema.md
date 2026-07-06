@@ -41,6 +41,7 @@ The index currently lists these contract names in order:
 - `controls`
 - `agent-runtime`
 - `leader-chat`
+- `leader-status`
 - `leader-actions`
 - `leader-review`
 - `leader-summary`

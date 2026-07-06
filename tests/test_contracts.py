@@ -110,6 +110,9 @@ from agentdeck.contracts import (
     leader_action_contract_payload,
     leader_action_contract_response,
     leader_action_example,
+    leader_status_contract_payload,
+    leader_status_contract_response,
+    leader_status_example,
     leader_actions_contract_payload,
     leader_actions_contract_response,
     leader_actions_example,
@@ -192,6 +195,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "controls-schema.md",
         "agent-runtime-schema.md",
         "leader-chat-schema.md",
+        "leader-status-schema.md",
         "leader-actions-schema.md",
         "leader-action-schema.md",
         "leader-review-schema.md",
@@ -211,7 +215,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 17
+    assert payload["count"] == 18
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -223,6 +227,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "controls",
         "agent-runtime",
         "leader-chat",
+        "leader-status",
         "leader-actions",
         "leader-review",
         "leader-summary",
@@ -2854,6 +2859,63 @@ def test_leader_summary_contract_response_includes_example_without_drift(tmp_pat
     assert set(payload["example_control_fields"]) == set(example["controls"][0])
     assert example["plan_status_command"] == "agentdeck plan status --plan-id pln_example"
     assert example["review_command"] == "agentdeck leader review --plan-id pln_example"
+
+
+def test_leader_status_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-status-schema.md"
+    contract_path.write_text("# Leader Status Contract\n", encoding="utf-8")
+
+    payload = leader_status_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["status_command"] == "agentdeck leader status"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["response_fields"] == [
+        "ok",
+        "mode",
+        "schema_version",
+        "project_view_command",
+        "workbench_command",
+        "leader",
+        "provider_health",
+        "latest_plan",
+        "queues",
+        "recovery",
+        "next_command",
+        "controls",
+    ]
+    assert payload["queue_fields"] == [
+        "leader_actions_pending",
+        "approvals_pending",
+        "approvals_approved",
+        "leader_inbox_pending",
+        "leader_errors",
+    ]
+
+
+def test_leader_status_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "leader-status-schema.md"
+    contract_path.write_text("# Leader Status Contract\n", encoding="utf-8")
+
+    payload = leader_status_contract_response(contract_path, include_example=True)
+    example = leader_status_example()
+
+    assert payload["example"] is True
+    assert payload["example_leader_status"] == example
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_provider_health_fields"] == payload["provider_health_fields"]
+    assert set(payload["example_provider_health_fields"]) == set(example["provider_health"])
+    assert payload["example_queue_fields"] == payload["queue_fields"]
+    assert set(payload["example_queue_fields"]) == set(example["queues"])
+    assert payload["example_control_fields"] == payload["control_fields"]
+    assert set(payload["example_control_fields"]) == set(example["controls"][0])
+    assert example["mode"] == "leader_status"
+    assert example["project_view_command"] == "agentdeck status"
+    assert example["workbench_command"] == "agentdeck workbench"
 
 
 def test_validate_leader_summary_contract_accepts_example() -> None:

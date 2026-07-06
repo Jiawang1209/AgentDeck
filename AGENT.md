@@ -107,6 +107,7 @@ Worker 不应该：
 - Leader actions queue contract 见 `docs/contracts/leader-actions-schema.md`；`agentdeck contract leader-actions --example` 会返回稳定队列示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Leader review response contract 见 `docs/contracts/leader-review-schema.md`；`agentdeck contract leader-review --example` 会返回稳定 review 响应示例，字段常量、example fixture 和 validator 都在 `src/agentdeck/contracts.py`。修改 `leader review` 的 `next_command` 或 `controls[]` 时必须同步该 contract，并保持 live 输出通过 `validate_leader_review_contract()` 守门。
 - Leader summary response contract 见 `docs/contracts/leader-summary-schema.md`；`agentdeck contract leader-summary --example` 会返回稳定 summary 响应示例，字段常量、example fixture 和 validator 都在 `src/agentdeck/contracts.py`。它只读聚合 replies/artifacts，不调用 provider、不写 state；live summary、workbench 嵌入 `leader_summary_card` 和自然语言 summary mode 必须携带同一份 normalized `leader_backend`，该字段只表示逻辑 Leader 推理后端来源，不表示 tmux pane 或执行授权；修改 `leader summary` 的 `leader_backend`、`steps[]`、`artifacts[]` 或 `controls[]` 时必须同步该 contract，并保持 live 输出通过 `validate_leader_summary_contract()` 守门。
+- Leader status contract 见 `docs/contracts/leader-status-schema.md`；`agentdeck contract leader-status --example` 会返回稳定 Leader status 示例，字段常量和 example fixture 在 `src/agentdeck/contracts.py`。`agentdeck leader status` 必须先通过 ProjectView contract 守门，再复用 workbench 同源 `provider_health`，只读公开 logical Leader、provider readiness/setup、latest_plan、queue counts、recovery、next_command 和 controls；它不得调用 provider、读取 tmux pane、写 state、创建 plan/action/approval/message/job/inbox 或执行任何推荐命令。
 - Leader action detail contract 见 `docs/contracts/leader-action-schema.md`；`agentdeck contract leader-action --example` 会返回稳定 action detail 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Approval queue contract 见 `docs/contracts/approvals-schema.md`；`agentdeck contract approvals --example` 会返回稳定 approval queue 和 dispatch-ready 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
 - Inbox queue contract 见 `docs/contracts/inbox-schema.md`；`agentdeck contract inbox --example` 会返回稳定 inbox 示例，字段常量和 validator 都在 `src/agentdeck/contracts.py`。
@@ -117,6 +118,7 @@ Worker 不应该：
 - `agentdeck contract project-view` 返回 ProjectView 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定示例，供 GUI 原型使用。
 - `agentdeck contract list` 返回契约总目录，不读取或修改项目 state；GUI/TUI 启动时应优先用它发现可消费 contract，而不是在前端硬编码所有子命令。
 - `agentdeck contract leader-chat` 返回自然语言 Leader chat 响应契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定响应示例，供 GUI 原型使用。
+- `agentdeck contract leader-status` 返回只读 Leader status 契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定状态卡示例，供 GUI 顶栏、自然语言壳和恢复入口使用。
 - `agentdeck contract continue` 返回顶层 continue 恢复卡片契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定恢复卡片示例，供 GUI 原型使用。
 - `agentdeck contract workbench` 返回工作台快照契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定一屏 workbench 示例，供 GUI/TUI 原型使用。
 - `agentdeck contract controls` 返回独立命令面板契约发现元数据，不读取或修改项目 state；`--example` 会附带稳定 control registry card 示例，供 GUI/TUI 原型使用。

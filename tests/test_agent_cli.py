@@ -35,6 +35,7 @@ from agentdeck.contracts import (
     leader_action_contract_response,
     leader_chat_contract_payload,
     leader_chat_contract_response,
+    leader_status_contract_payload,
     leader_review_contract_payload,
     leader_review_contract_response,
     leader_summary_contract_payload,
@@ -49,6 +50,7 @@ from agentdeck.contracts import (
     trace_contract_response,
     validate_trace_contract,
     validate_project_view_contract,
+    WORKBENCH_PROVIDER_HEALTH_FIELDS,
 )
 from agentdeck.state import StateStore
 
@@ -636,6 +638,146 @@ def test_continue_surfaces_cli_provider_setup_when_command_is_missing(
     assert StateStore(root).load() == state_before
 
 
+def test_leader_status_surfaces_provider_and_queue_snapshot_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    store = StateStore(root)
+    state = store.load()
+    state["plans"].append(
+        {
+            "plan_id": "pln_status",
+            "task": "构建 Leader 状态卡",
+            "provider": "fake",
+            "model": "fake-plan",
+            "status": "planned",
+            "dispatch_ready": False,
+            "created_at": "2026-07-07T00:00:00+00:00",
+            "plan": {
+                "steps": [
+                    {
+                        "step": 1,
+                        "agent_id": "planner",
+                        "role": "planning",
+                        "task": "设计状态卡",
+                        "risk": "needs review",
+                        "requires_approval": True,
+                    }
+                ]
+            },
+        }
+    )
+    state["approvals"].append(
+        {
+            "approval_id": "apv_status",
+            "plan_id": "pln_status",
+            "step": 1,
+            "agent_id": "planner",
+            "role": "planning",
+            "task": "设计状态卡",
+            "risk": "needs review",
+            "status": "pending",
+            "created_at": "2026-07-07T00:00:00+00:00",
+        }
+    )
+    state["inbox"] = {
+        "leader": [
+            {
+                "inbox_id": "inb_leader_status",
+                "event_type": "task_reply",
+                "message_id": "msg_status",
+                "reply_id": "rep_status",
+                "from_agent": "planner",
+                "to_agent": "leader",
+                "task": "状态卡建议",
+                "status": "pending",
+                "created_at": "2026-07-07T00:00:01+00:00",
+            }
+        ]
+    }
+    store.save(state)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "leader_status"
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["project_view_command"] == "agentdeck status"
+    assert payload["workbench_command"] == "agentdeck workbench"
+    assert payload["provider_health"]["provider"] == "deepseek"
+    assert payload["provider_health"]["ready"] is False
+    assert payload["provider_health"]["missing_env"] == ["DEEPSEEK_API_KEY"]
+    assert payload["latest_plan"]["plan_id"] == "pln_status"
+    assert payload["latest_plan"]["step_count"] == 1
+    assert payload["queues"] == {
+        "leader_actions_pending": 0,
+        "approvals_pending": 1,
+        "approvals_approved": 0,
+        "leader_inbox_pending": 1,
+        "leader_errors": 0,
+    }
+    assert payload["recovery"]["status"] == "approval_required"
+    assert payload["next_command"] == payload["recovery"]["next_command"]
+    assert payload["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Open project status",
+            "command": "agentdeck status",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "inspect",
+            "label": "Open workbench",
+            "command": "agentdeck workbench",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "inspect",
+            "label": "Inspect provider setup",
+            "command": "agentdeck doctor",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "next",
+            "label": "Continue",
+            "command": payload["next_command"],
+            "safety": payload["recovery"]["recommended_action"]["safety"],
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+    assert StateStore(root).load() == state_before
+
+
+def test_leader_status_handles_empty_project_without_provider_or_runtime_calls(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli, "leader_provider", lambda _name: (_ for _ in ()).throw(AssertionError("no provider call")))
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["latest_plan"] is None
+    assert payload["queues"]["approvals_pending"] == 0
+    assert payload["next_command"] == "agentdeck doctor"
+    assert payload["provider_health"]["provider_backend"] == "api"
+    assert payload["provider_health"]["provider_transport"] == "http"
+    assert StateStore(root).load() == state_before
+
+
 def test_continue_promotes_multiple_approved_approvals_to_dispatch_ready(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -953,6 +1095,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "controls",
         "agent-runtime",
         "leader-chat",
+        "leader-status",
         "leader-actions",
         "leader-review",
         "leader-summary",
@@ -1379,6 +1522,23 @@ def test_contract_leader_summary_discovers_schema_for_gui_clients(capsys) -> Non
         "trace_command",
     ]
     assert payload["artifact_fields"] == ["artifact_id", "path", "kind", "status", "trace_command"]
+    assert payload["control_fields"] == ["kind", "label", "command", "safety", "enabled", "blocker"]
+
+
+def test_contract_leader_status_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "leader-status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = leader_status_contract_payload(Path(payload["contract_path"]))
+    assert payload == expected
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["status_command"] == "agentdeck leader status"
+    assert payload["contract_path"].endswith("docs/contracts/leader-status-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert payload["control_fields"] == ["kind", "label", "command", "safety", "enabled", "blocker"]
 
 
