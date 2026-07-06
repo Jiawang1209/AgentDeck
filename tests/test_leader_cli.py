@@ -1102,6 +1102,29 @@ def test_validate_leader_chat_contract_requires_provider_setup_action_cards(
     }
 
 
+def test_validate_leader_chat_contract_requires_provider_setup_secondary_cards(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "配置 Codex CLI Leader"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = cli.validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include provider_setup_card for provider_setup setup responses",
+            "intent_card.secondary_embedded_cards must include provider_switch_card for provider_setup setup responses",
+            "intent_card.secondary_embedded_cards must include control_registry_card for provider_setup setup responses",
+        ],
+    }
+
+
 def test_leader_chat_provider_setup_require_ready_intent_surfaces_guarded_followup(
     tmp_path, monkeypatch, capsys
 ) -> None:

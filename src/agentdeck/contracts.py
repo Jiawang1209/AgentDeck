@@ -3155,6 +3155,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append(f"missing leader_explanation field: {field}")
     elif "leader_explanation" in payload:
         errors.append("leader_explanation must be an object")
+    explanation_action_kind = (
+        explanation.get("action_kind")
+        if isinstance(explanation, dict)
+        else None
+    )
     intent_card = payload.get("intent_card")
     if isinstance(intent_card, dict):
         for field in LEADER_CHAT_INTENT_CARD_FIELDS:
@@ -3193,6 +3198,16 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 and payload.get("control_registry_card") is None
             ):
                 errors.append("intent_card.secondary_embedded_cards references missing control_registry_card")
+            if (
+                explanation_action_kind == "provider_setup"
+                and isinstance(payload.get("provider_setup_card"), dict)
+                and payload["provider_setup_card"].get("recommended_command") == payload.get("next_command")
+            ):
+                for card_name in ["provider_setup_card", "provider_switch_card", "control_registry_card"]:
+                    if payload.get(card_name) is not None and card_name not in secondary_embedded_cards:
+                        errors.append(
+                            f"intent_card.secondary_embedded_cards must include {card_name} for provider_setup setup responses"
+                        )
         elif "secondary_embedded_cards" in intent_card:
             errors.append("intent_card.secondary_embedded_cards must be a list")
         recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
@@ -3300,11 +3315,6 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
     elif "dispatch_batch_preview_card" in payload and dispatch_batch_preview_card is not None:
         errors.append("dispatch_batch_preview_card must be an object")
     provider_switch_card = payload.get("provider_switch_card")
-    explanation_action_kind = (
-        explanation.get("action_kind")
-        if isinstance(explanation, dict)
-        else None
-    )
     if isinstance(provider_switch_card, dict):
         _validate_leader_chat_provider_switch_card_contract(errors, provider_switch_card)
         if explanation_action_kind == "provider_switch" and provider_switch_card.get("command") != payload.get("next_command"):
