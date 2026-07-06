@@ -3564,9 +3564,15 @@ def _validate_leader_chat_provider_switch_card_contract(
         for field in DOCTOR_CONFIGURED_LEADER_FIELDS:
             if field not in target_readiness:
                 errors.append(f"missing provider_switch_card target_readiness field: {field}")
+        if target_readiness.get("provider") != provider_switch_card.get("target_provider"):
+            errors.append("provider_switch_card.target_readiness.provider must match target_provider")
+        if target_readiness.get("model") != provider_switch_card.get("target_model"):
+            errors.append("provider_switch_card.target_readiness.model must match target_model")
         leader_backend = target_readiness.get("leader_backend")
         if isinstance(leader_backend, dict):
             _validate_leader_backend(errors, "provider_switch_card.target_readiness", leader_backend)
+            if isinstance(target_leader_backend, dict) and leader_backend != target_leader_backend:
+                errors.append("provider_switch_card.target_readiness.leader_backend must match target_leader_backend")
         else:
             errors.append("provider_switch_card.target_readiness.leader_backend must be an object")
         if "ready" in target_readiness and not isinstance(target_readiness.get("ready"), bool):

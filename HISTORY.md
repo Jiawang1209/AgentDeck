@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate provider switch target identity consistency
+
+- 收紧 `provider_switch_card` 契约：`target_readiness.provider` / `target_readiness.model` 现在必须匹配 `target_provider` / `target_model`，避免 GUI 把一个目标 provider 的切换按钮和另一个 provider 的 readiness 混在一起渲染。
+- 收紧 backend identity：`target_readiness.leader_backend` 必须匹配 `target_leader_backend`，确保目标 readiness 和目标 logical Leader identity 指向同一个 API-backed / CLI-backed / fake Leader reasoning backend。
+- 保持控制边界：这些校验只用于拒绝漂移的 leader-chat payload，不执行 provider switch、不修改 `.agentdeck/config.toml`、不调用 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 同步 `docs/contracts/leader-chat-schema.md`、README、AGENT.md 和 CLAUDE.md。
+- 验证记录：已先确认红测失败，validator 最初允许 `provider_switch_card.target_readiness.provider/model` 与 target provider/model 不一致，也允许 `target_readiness.leader_backend` 与 `target_leader_backend` 漂移；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_provider_switch_target_readiness_identity_match tests/test_contracts.py::test_validate_leader_chat_contract_requires_provider_switch_backend_identity_match -q` 2 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 380 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 406 项通过。
+
 ### Current - Link provider switch card from intent routing
 
 - 扩展 provider-switch setup 的 `intent_card`：现在保持 `embedded_card=provider_health` 作为当前 provider 诊断主卡片，同时在 `secondary_embedded_cards` 中显式列出 `provider_switch_card`，让 GUI 能从同一个自然语言响应渲染当前状态和目标切换确认面板。

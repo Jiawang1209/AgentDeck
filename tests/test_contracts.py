@@ -2915,6 +2915,36 @@ def test_validate_leader_chat_contract_requires_provider_switch_card_fields() ->
     assert result == {"ok": False, "errors": ["missing provider_switch_card field: command"]}
 
 
+def test_validate_leader_chat_contract_requires_provider_switch_target_readiness_identity_match() -> None:
+    payload = leader_chat_example()
+    payload["provider_switch_card"]["target_readiness"]["provider"] = "claude-cli"
+    payload["provider_switch_card"]["target_readiness"]["model"] = "claude-default"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "provider_switch_card.target_readiness.provider must match target_provider",
+            "provider_switch_card.target_readiness.model must match target_model",
+        ],
+    }
+
+
+def test_validate_leader_chat_contract_requires_provider_switch_backend_identity_match() -> None:
+    payload = leader_chat_example()
+    payload["provider_switch_card"]["target_readiness"]["leader_backend"]["provider"] = "claude-cli"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "provider_switch_card.target_readiness.leader_backend must match target_leader_backend"
+        ],
+    }
+
+
 def test_validate_leader_chat_contract_rejects_missing_secondary_runtime_card() -> None:
     payload = leader_chat_example()
     payload["runtime_card"] = None
