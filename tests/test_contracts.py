@@ -2312,15 +2312,16 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_runtime_card_fields"] == payload["runtime_card_fields"]
     assert payload["example_runtime_card_fields"] == list(example["runtime_card"])
     assert payload["example_terminal_session_card_fields"] == payload["terminal_session_card_fields"]
-    assert payload["example_terminal_session_card_fields"] == list(example["workbench_card"]["terminal_session_card"])
+    assert payload["example_terminal_session_card_fields"] == list(example["terminal_session_card"])
     assert payload["example_terminal_session_control_fields"] == payload["terminal_session_control_fields"]
     assert payload["example_terminal_session_control_fields"] == list(
-        example["workbench_card"]["terminal_session_card"]["controls"][0]
+        example["terminal_session_card"]["controls"][0]
     )
     assert payload["example_terminal_session_item_fields"] == payload["terminal_session_item_fields"]
     assert payload["example_terminal_session_item_fields"] == list(
-        example["workbench_card"]["terminal_session_card"]["terminals"][0]
+        example["terminal_session_card"]["terminals"][0]
     )
+    assert example["terminal_session_card"] == example["workbench_card"]["terminal_session_card"]
     assert payload["example_provider_health_fields"] == payload["provider_health_fields"]
     assert payload["example_provider_health_fields"] == list(example["provider_health"])
     assert example["provider_health"]["provider_backend"] == "local"

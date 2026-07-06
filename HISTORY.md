@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Embed terminal session card in runtime chat
+
+- 扩展自然语言 runtime 观察面：`agentdeck leader chat --message "查看 runtime"` / `"查看终端"` 在返回 `runtime_card` 的同时，现在会返回同源顶层 `terminal_session_card`，供 GUI/TUI 直接渲染项目级 tmux terminal strip。
+- `terminal_session_card` 复用 workbench terminal session card 形状，包含 session_name、attach_command、refresh_command、controls[] 和 terminals[] 的 select-pane affordance；它只是可见命令投影。
+- 保持控制边界：runtime chat 不 attach tmux、不 select pane、不 refresh runtime、不 capture/read pane、不 send input、不写 runtime state、不创建 plan/action/approval/message/job/inbox。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/leader-chat-schema.md`，明确该字段是 GUI contract，不是 runtime 执行许可。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "查看 runtime"` 最初缺少顶层 `terminal_session_card`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_runtime_without_mutating_state tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 367 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 393 项通过。
+
 ### Current - Expose terminal session fields in leader chat contract
 
 - 扩展 Leader chat contract discovery：`agentdeck contract leader-chat` 现在公开 `terminal_session_card_fields`、`terminal_session_control_fields` 和 `terminal_session_item_fields`，复用 workbench terminal session 字段常量。

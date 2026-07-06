@@ -348,6 +348,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("trace_card", None)
     payload.setdefault("capture_card", None)
     payload.setdefault("terminal_card", None)
+    payload.setdefault("terminal_session_card", None)
     payload.setdefault("dispatch_preview_card", None)
     payload.setdefault("dispatch_batch_preview_card", None)
     payload.setdefault("agent_ready_card", None)
@@ -6034,6 +6035,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if refreshed_project_view is None:
             return 1
         runtime_card = _workbench_runtime_card(refreshed_project_view)
+        terminal_session_card = _workbench_terminal_session_card(config, runtime_card)
         agent_ready_card = _agent_ready_card_payload(refreshed_project_view) if runtime_ready else None
         if isinstance(agent_ready_card, dict):
             next_command = agent_ready_card.get("next_command")
@@ -6060,6 +6062,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "approval_card": None,
             "agent_ready_card": agent_ready_card,
             "runtime_card": runtime_card,
+            "terminal_session_card": terminal_session_card,
             "queue_card": None,
             "operator_card": None,
             "role_card": None,

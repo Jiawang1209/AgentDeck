@@ -458,6 +458,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "trace_card",
     "approval_card",
     "runtime_card",
+    "terminal_session_card",
     "queue_card",
     "operator_card",
     "role_card",
@@ -3154,6 +3155,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_runtime_card_contract(errors, runtime_card, prefix="runtime_card")
     elif "runtime_card" in payload and runtime_card is not None:
         errors.append("runtime_card must be an object")
+    terminal_session_card = payload.get("terminal_session_card")
+    if isinstance(terminal_session_card, dict):
+        _validate_terminal_session_card_contract(errors, terminal_session_card)
+    elif "terminal_session_card" in payload and terminal_session_card is not None:
+        errors.append("terminal_session_card must be an object")
     queue_card = payload.get("queue_card")
     if isinstance(queue_card, dict):
         _validate_queue_card_contract(errors, queue_card, prefix="queue_card")
@@ -4392,6 +4398,7 @@ def leader_chat_example() -> dict[str, object]:
         "trace_card": None,
         "approval_card": None,
         "runtime_card": runtime_card,
+        "terminal_session_card": workbench_card["terminal_session_card"],
         "queue_card": queue_card,
         "operator_card": operator_card,
         "role_card": role_card,

@@ -1350,6 +1350,17 @@ def test_leader_chat_inspects_runtime_without_mutating_state(tmp_path, monkeypat
     assert payload["runtime_card"]["agents"][0]["controls"][1]["command"] == (
         "agentdeck agent capture --agent planner --lines 200"
     )
+    assert payload["terminal_session_card"]["mode"] == "terminal_session"
+    assert payload["terminal_session_card"]["session_name"] == "agentdeck"
+    assert payload["terminal_session_card"]["running_count"] == 1
+    assert payload["terminal_session_card"]["refresh_command"] == "agentdeck agent refresh"
+    assert payload["terminal_session_card"]["controls"][0]["command"] == (
+        "tmux -L agentdeck-repo attach -t agentdeck"
+    )
+    assert payload["terminal_session_card"]["terminals"][0]["agent_id"] == "planner"
+    assert payload["terminal_session_card"]["terminals"][0]["select_pane_command"] == (
+        "tmux -L agentdeck-repo select-pane -t %42"
+    )
     assert payload["leader_explanation"]["mode"] == "runtime"
     assert payload["leader_explanation"]["action_kind"] == "runtime"
     assert payload["leader_explanation"]["action_status"] == "running"
