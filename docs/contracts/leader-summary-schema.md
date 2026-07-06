@@ -2,7 +2,7 @@
 
 `agentdeck leader summary --plan-id <id>` is the read-only aggregation surface for a saved Leader plan after dispatched worker steps have replies. It inspects local plan status, replies, and artifacts, then returns a deterministic summary card for humans, GUI clients, and natural-language shells.
 
-It does not call a Leader provider, synthesize new LLM output, create approvals, dispatch work, capture pane output, write replies, acknowledge inbox items, create artifacts, or persist Leader actions.
+It does not call a Leader provider, synthesize new LLM output, create approvals, dispatch work, capture pane output, write replies, acknowledge inbox items, create artifacts, or persist Leader actions. `leader_backend` is provenance for GUI/audit rendering; it is not a tmux pane binding, runtime readiness proof, or execution authorization.
 
 Discovery:
 
@@ -18,6 +18,7 @@ agentdeck contract leader-summary --example
 - `contract_path`: local Markdown schema path.
 - `contract_exists`: whether this document exists in the checkout.
 - `response_fields`: ordered top-level fields returned by `agentdeck leader summary --plan-id <id>`.
+- `leader_backend_fields`: ordered fields for the normalized logical Leader backend card.
 - `step_fields`: ordered fields for each item in `steps[]`.
 - `artifact_fields`: ordered fields for each item in a step `artifacts[]`.
 - `control_fields`: ordered fields for each GUI-ready item in `controls[]`.
@@ -36,6 +37,7 @@ The live summary response is a deterministic aggregation card:
 - `status`: `ready` when at least one dispatched step has a reply, otherwise `waiting`.
 - `provider`: provider that created the saved plan.
 - `model`: model label recorded with the saved plan.
+- `leader_backend`: normalized logical Leader identity for the summarized plan, including `agent_id=leader`, provider/model, backend/transport, `reasoning_backend`, `runtime_kind=logical_leader`, `pane_backed=false`, `pane_id=null`, `approval_required=true`, and `dispatch_ready=false`.
 - `counts`: plan-status counters for approvals and dispatch state.
 - `reply_count`: number of dispatched steps with replies.
 - `artifact_count`: number of artifacts attached to summarized steps.

@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Carry Leader backend identity through summary
+
+- 扩展 `agentdeck leader summary --plan-id <id>`：summary card 现在携带同源 normalized `leader_backend`，与 plan/start/review 阶段的逻辑 Leader 身份一致，方便 GUI/TUI 和审计面板区分 fake、API-backed 与 CLI-backed Leader 后端。
+- Workbench 嵌入的 `leader_summary_card` 和自然语言 summary mode 复用同一份 summary payload，因此也会保留相同 `leader_backend`；该字段仍只表示 `agent_id=leader` 的推理后端来源，不表示 tmux pane、runtime readiness 或执行授权。
+- 扩展 `agentdeck contract leader-summary` / `--example`：新增 `leader_backend_fields` 与 example backend 字段发现，并让 `validate_leader_summary_contract()` 校验 normalized Leader backend，防止 summary/card 悄悄丢失 provider provenance。
+- 同步 `docs/contracts/leader-summary-schema.md`、README、AGENT.md 和 CLAUDE.md，明确 leader summary 的 backend provenance 是只读显示与审计字段，不能绕过审批或触发派发。
+- 验证记录：已先确认红测失败，leader summary live 输出、workbench 嵌入 `leader_summary_card`、自然语言 summary card 和 leader-summary contract discovery/example 最初缺少 `leader_backend`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_summary_returns_replies_and_artifacts_without_mutating_state tests/test_leader_cli.py::test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions tests/test_agent_cli.py::test_workbench_embeds_summary_card_when_latest_plan_is_ready_to_summarize tests/test_contracts.py::test_leader_summary_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_summary_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_summary_contract_requires_response_step_artifact_and_control_fields tests/test_agent_cli.py::test_contract_leader_summary_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_summary_example_exports_gui_ready_response -q` 8 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 374 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 400 项通过。
+
 ### Current - Carry Leader backend identity through review
 
 - 扩展 `agentdeck leader review --plan-id <id>`：review 输出现在带同源 `leader_backend`，与被 review plan/run 的逻辑 Leader identity 保持一致。

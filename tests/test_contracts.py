@@ -2250,6 +2250,19 @@ def test_leader_summary_contract_payload_is_reusable_without_cli(tmp_path: Path)
     assert payload["contract_path"] == str(contract_path)
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == list(LEADER_SUMMARY_RESPONSE_FIELDS)
+    assert payload["leader_backend_fields"] == [
+        "agent_id",
+        "provider",
+        "model",
+        "provider_backend",
+        "provider_transport",
+        "reasoning_backend",
+        "runtime_kind",
+        "pane_backed",
+        "pane_id",
+        "approval_required",
+        "dispatch_ready",
+    ]
     assert payload["step_fields"] == list(LEADER_SUMMARY_STEP_FIELDS)
     assert payload["artifact_fields"] == list(LEADER_SUMMARY_ARTIFACT_FIELDS)
     assert payload["control_fields"] == list(LEADER_SUMMARY_CONTROL_FIELDS)
@@ -2267,7 +2280,9 @@ def test_leader_summary_contract_response_includes_example_without_drift(tmp_pat
     assert payload["example"] is True
     assert payload["example_leader_summary"] == example
     assert payload["example_response_fields"] == payload["response_fields"]
+    assert payload["example_leader_backend_fields"] == payload["leader_backend_fields"]
     assert set(payload["example_response_fields"]) == set(example)
+    assert set(payload["example_leader_backend_fields"]) == set(example["leader_backend"])
     assert payload["example_step_fields"] == payload["step_fields"]
     assert set(payload["example_step_fields"]) == set(example["steps"][0])
     assert payload["example_artifact_fields"] == payload["artifact_fields"]
@@ -2287,6 +2302,7 @@ def test_validate_leader_summary_contract_accepts_example() -> None:
 def test_validate_leader_summary_contract_requires_response_step_artifact_and_control_fields() -> None:
     payload = leader_summary_example()
     del payload["summary"]
+    del payload["leader_backend"]["agent_id"]
     del payload["steps"][0]["reply_text"]
     del payload["steps"][0]["artifacts"][0]["trace_command"]
     del payload["controls"][0]["safety"]
@@ -2297,6 +2313,7 @@ def test_validate_leader_summary_contract_requires_response_step_artifact_and_co
         "ok": False,
         "errors": [
             "missing leader_summary field: summary",
+            "leader_summary.leader_backend missing field: agent_id",
             "missing leader summary step field: reply_text",
             "missing leader summary artifact field: trace_command",
             "missing leader summary control field: safety",

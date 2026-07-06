@@ -4943,7 +4943,8 @@ def test_leader_review_summarizes_when_all_dispatched_steps_have_replies(tmp_pat
     fake = FakeTmuxBackend()
     monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
     cli.main(["leader", "plan", "--task", "review completed"])
-    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    planned = json.loads(capsys.readouterr().out)
+    plan_id = planned["plan_id"]
     cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
     approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
     cli.main(["approval", "approve", "--approval-id", approval_id])
@@ -5095,6 +5096,19 @@ def test_leader_summary_returns_replies_and_artifacts_without_mutating_state(
     assert payload["status"] == "ready"
     assert payload["reply_count"] == 1
     assert payload["artifact_count"] == 1
+    assert payload["leader_backend"] == {
+        "agent_id": "leader",
+        "provider": "fake",
+        "model": "fake-plan",
+        "provider_backend": "local",
+        "provider_transport": "local",
+        "reasoning_backend": "local-fake",
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
     assert payload["summary"] == "1 dispatched step has replies; 1 artifact recorded."
     assert payload["plan_status_command"] == "agentdeck plan status --plan-id pln_summary"
     assert payload["review_command"] == "agentdeck leader review --plan-id pln_summary"
@@ -5160,7 +5174,8 @@ def test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions
     fake = FakeTmuxBackend()
     monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
     cli.main(["leader", "plan", "--task", "review completed"])
-    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    planned = json.loads(capsys.readouterr().out)
+    plan_id = planned["plan_id"]
     cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
     approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
     cli.main(["approval", "approve", "--approval-id", approval_id])
@@ -5195,6 +5210,7 @@ def test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions
     assert payload["next_command"] == f"agentdeck leader summary --plan-id {plan_id}"
     assert payload["review"]["next_action"] == "summarize"
     assert payload["leader_summary_card"]["plan_id"] == plan_id
+    assert payload["leader_summary_card"]["leader_backend"] == planned["leader_backend"]
     assert payload["leader_summary_card"]["reply_count"] == 1
     assert payload["leader_summary_card"]["artifact_count"] == 1
     assert payload["leader_summary_card"]["steps"][0]["message_id"] == message_id

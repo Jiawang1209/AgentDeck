@@ -1252,6 +1252,7 @@ def test_contract_leader_summary_discovers_schema_for_gui_clients(capsys) -> Non
         "status",
         "provider",
         "model",
+        "leader_backend",
         "counts",
         "reply_count",
         "artifact_count",
@@ -1260,6 +1261,19 @@ def test_contract_leader_summary_discovers_schema_for_gui_clients(capsys) -> Non
         "review_command",
         "steps",
         "controls",
+    ]
+    assert payload["leader_backend_fields"] == [
+        "agent_id",
+        "provider",
+        "model",
+        "provider_backend",
+        "provider_transport",
+        "reasoning_backend",
+        "runtime_kind",
+        "pane_backed",
+        "pane_id",
+        "approval_required",
+        "dispatch_ready",
     ]
     assert payload["step_fields"] == [
         "step",
@@ -1289,7 +1303,9 @@ def test_contract_leader_summary_example_exports_gui_ready_response(capsys) -> N
     assert payload == expected
     example = payload["example_leader_summary"]
     assert payload["example_response_fields"] == payload["response_fields"]
+    assert payload["example_leader_backend_fields"] == payload["leader_backend_fields"]
     assert set(payload["example_response_fields"]) == set(example)
+    assert set(payload["example_leader_backend_fields"]) == set(example["leader_backend"])
     assert payload["example_step_fields"] == payload["step_fields"]
     assert set(payload["example_step_fields"]) == set(example["steps"][0])
     assert payload["example_artifact_fields"] == payload["artifact_fields"]
@@ -2563,7 +2579,8 @@ def test_workbench_embeds_summary_card_when_latest_plan_is_ready_to_summarize(
     fake = FakeTmuxBackend()
     monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
     cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "总结 workbench"])
-    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    started = json.loads(capsys.readouterr().out)
+    plan_id = started["plan_id"]
     cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
     approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
     cli.main(["approval", "approve", "--approval-id", approval_id])
@@ -2591,6 +2608,7 @@ def test_workbench_embeds_summary_card_when_latest_plan_is_ready_to_summarize(
     summary_card = payload["leader_summary_card"]
     assert summary_card["plan_id"] == plan_id
     assert summary_card["status"] == "ready"
+    assert summary_card["leader_backend"] == started["leader_backend"]
     assert summary_card["reply_count"] == 1
     assert summary_card["artifact_count"] == 1
     assert summary_card["summary"] == "1 dispatched step has replies; 1 artifact recorded."

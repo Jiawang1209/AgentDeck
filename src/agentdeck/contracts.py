@@ -1030,6 +1030,7 @@ LEADER_SUMMARY_RESPONSE_FIELDS = (
     "status",
     "provider",
     "model",
+    "leader_backend",
     "counts",
     "reply_count",
     "artifact_count",
@@ -2253,6 +2254,7 @@ def leader_summary_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "response_fields": list(LEADER_SUMMARY_RESPONSE_FIELDS),
+        "leader_backend_fields": list(LEADER_BACKEND_FIELDS),
         "step_fields": list(LEADER_SUMMARY_STEP_FIELDS),
         "artifact_fields": list(LEADER_SUMMARY_ARTIFACT_FIELDS),
         "control_fields": list(LEADER_SUMMARY_CONTROL_FIELDS),
@@ -2269,6 +2271,7 @@ def leader_summary_contract_response(contract_path: Path, include_example: bool 
         example = leader_summary_example()
         payload["example"] = True
         payload["example_response_fields"] = list(example)
+        payload["example_leader_backend_fields"] = list(example["leader_backend"])
         payload["example_step_fields"] = list(example["steps"][0])
         payload["example_artifact_fields"] = list(example["steps"][0]["artifacts"][0])
         payload["example_control_fields"] = list(example["controls"][0])
@@ -2584,7 +2587,7 @@ def _validate_leader_backend(
     for field in LEADER_BACKEND_FIELDS:
         if field not in leader_backend:
             errors.append(f"{prefix}.leader_backend missing field: {field}")
-    if leader_backend.get("agent_id") != "leader":
+    if "agent_id" in leader_backend and leader_backend.get("agent_id") != "leader":
         errors.append(f"{prefix}.leader_backend.agent_id must be leader")
     if (
         leader_backend.get("runtime_kind") != "logical_leader"
@@ -2664,6 +2667,11 @@ def validate_leader_summary_contract(payload: dict[str, object]) -> dict[str, ob
     for field in LEADER_SUMMARY_RESPONSE_FIELDS:
         if field not in payload:
             errors.append(f"missing leader_summary field: {field}")
+    leader_backend = payload.get("leader_backend")
+    if isinstance(leader_backend, dict):
+        _validate_leader_backend(errors, "leader_summary", leader_backend)
+    else:
+        errors.append("leader_summary.leader_backend must be an object")
     plan_id = payload.get("plan_id")
     if plan_id:
         if payload.get("plan_status_command") != f"agentdeck plan status --plan-id {plan_id}":
@@ -6111,6 +6119,19 @@ def leader_summary_example() -> dict[str, object]:
         "status": "ready",
         "provider": "fake",
         "model": "fake-plan",
+        "leader_backend": {
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
         "counts": {
             "steps": 1,
             "approvals": 1,

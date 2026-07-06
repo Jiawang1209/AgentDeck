@@ -3279,6 +3279,12 @@ def _leader_summary_payload(store: StateStore, plan_id: str) -> dict[str, object
         "status": "ready" if reply_count else "waiting",
         "provider": plan.get("provider"),
         "model": plan.get("model"),
+        "leader_backend": plan_status.get("leader_backend")
+        or leader_backend_identity(
+            str(plan.get("provider") or ""),
+            str(plan.get("model") or ""),
+            bool(plan.get("dispatch_ready", False)),
+        ),
         "counts": plan_status.get("counts"),
         "reply_count": reply_count,
         "artifact_count": artifact_count,
