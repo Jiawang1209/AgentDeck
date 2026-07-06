@@ -1132,6 +1132,7 @@ LEADER_CHAT_INTENT_CARD_FIELDS = (
     "matched_intent",
     "route_source",
     "embedded_card",
+    "secondary_embedded_cards",
     "read_only",
     "next_command",
     "requires_explicit_user",
@@ -3010,6 +3011,19 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append(f"missing intent_card field: {field}")
         if intent_card.get("next_command") != payload.get("next_command"):
             errors.append("intent_card: next_command must match response next_command")
+        secondary_embedded_cards = intent_card.get("secondary_embedded_cards")
+        if isinstance(secondary_embedded_cards, list):
+            if not all(isinstance(card_name, str) for card_name in secondary_embedded_cards):
+                errors.append("intent_card.secondary_embedded_cards must contain strings")
+            if intent_card.get("embedded_card") in secondary_embedded_cards:
+                errors.append("intent_card.secondary_embedded_cards must not repeat embedded_card")
+            if (
+                "terminal_session_card" in secondary_embedded_cards
+                and payload.get("terminal_session_card") is None
+            ):
+                errors.append("intent_card.secondary_embedded_cards references missing terminal_session_card")
+        elif "secondary_embedded_cards" in intent_card:
+            errors.append("intent_card.secondary_embedded_cards must be a list")
         recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
         recommended_action = recovery.get("recommended_action") if isinstance(recovery, dict) else None
         if (
@@ -4365,6 +4379,7 @@ def leader_chat_example() -> dict[str, object]:
             "matched_intent": "continue",
             "route_source": "local_rule",
             "embedded_card": "continue_card",
+            "secondary_embedded_cards": [],
             "read_only": True,
             "next_command": next_command,
             "requires_explicit_user": False,

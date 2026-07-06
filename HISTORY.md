@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Mark runtime terminal session as secondary intent card
+
+- 扩展 Leader chat `intent_card`：新增 `secondary_embedded_cards` 字段，用于告诉 GUI/TUI 同一响应中哪些 companion cards 应随主卡一起渲染，但不得作为第二套状态源或授权来源。
+- 自然语言 `agentdeck leader chat --message "查看 runtime"` / `"查看终端"` 现在保持 `intent_card.embedded_card=runtime_card`，同时设置 `intent_card.secondary_embedded_cards=["terminal_session_card"]`，让 GUI 可明确渲染项目级 tmux terminal strip。
+- 扩展 `validate_leader_chat_contract()`：校验 `secondary_embedded_cards` 必须是字符串列表、不得重复主 `embedded_card`，并且引用 `terminal_session_card` 时顶层必须实际存在该卡片。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/leader-chat-schema.md`，明确该字段只是渲染提示，不代表自动 attach/select/refresh/capture/send/write 权限。
+- 验证记录：已先确认红测失败，runtime chat 的 `intent_card` 最初缺少 `secondary_embedded_cards`，contract discovery 最初也缺少该 intent 字段；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_runtime_without_mutating_state tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 367 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 393 项通过。
+
 ### Current - Embed terminal session card in runtime chat
 
 - 扩展自然语言 runtime 观察面：`agentdeck leader chat --message "查看 runtime"` / `"查看终端"` 在返回 `runtime_card` 的同时，现在会返回同源顶层 `terminal_session_card`，供 GUI/TUI 直接渲染项目级 tmux terminal strip。

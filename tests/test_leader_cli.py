@@ -913,6 +913,7 @@ def test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mu
         "matched_intent": "setup",
         "route_source": "local_rule",
         "embedded_card": "provider_health",
+        "secondary_embedded_cards": [],
         "read_only": True,
         "next_command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
         "requires_explicit_user": True,
@@ -1361,6 +1362,8 @@ def test_leader_chat_inspects_runtime_without_mutating_state(tmp_path, monkeypat
     assert payload["terminal_session_card"]["terminals"][0]["select_pane_command"] == (
         "tmux -L agentdeck-repo select-pane -t %42"
     )
+    assert payload["intent_card"]["embedded_card"] == "runtime_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["terminal_session_card"]
     assert payload["leader_explanation"]["mode"] == "runtime"
     assert payload["leader_explanation"]["action_kind"] == "runtime"
     assert payload["leader_explanation"]["action_status"] == "running"
@@ -2073,6 +2076,7 @@ def test_leader_chat_role_assignment_intent_suggests_explicit_command_without_mu
         "matched_intent": "role",
         "route_source": "local_rule",
         "embedded_card": "role_card",
+        "secondary_embedded_cards": [],
         "read_only": True,
         "next_command": "agentdeck agent assign-role --agent planner --role 架构师 --role-prompt '你负责架构师。'",
         "requires_explicit_user": True,
@@ -2163,6 +2167,7 @@ def test_leader_chat_task_assignment_intent_creates_pending_approval_without_dis
         "matched_intent": "approval",
         "route_source": "local_rule",
         "embedded_card": "approval_card",
+        "secondary_embedded_cards": [],
         "read_only": False,
         "next_command": f"agentdeck approval approve --approval-id {approval_id}",
         "requires_explicit_user": True,
@@ -2249,6 +2254,7 @@ def test_leader_chat_capture_reply_intent_suggests_explicit_command_without_capt
         "matched_intent": "capture",
         "route_source": "local_rule",
         "embedded_card": "trace_card",
+        "secondary_embedded_cards": [],
         "read_only": True,
         "next_command": expected_command,
         "requires_explicit_user": True,
@@ -2622,6 +2628,7 @@ def test_leader_chat_opens_workbench_snapshot_without_mutating_state(tmp_path, m
         "matched_intent": "workbench",
         "route_source": "local_rule",
         "embedded_card": "workbench_card",
+        "secondary_embedded_cards": [],
         "read_only": True,
         "next_command": payload["next_command"],
         "requires_explicit_user": False,

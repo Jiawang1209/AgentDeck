@@ -124,6 +124,9 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         if payload.get(card_name) is not None:
             embedded_card = card_name
             break
+    secondary_embedded_cards: list[str] = []
+    if embedded_card == "runtime_card" and payload.get("terminal_session_card") is not None:
+        secondary_embedded_cards.append("terminal_session_card")
     route_source = "provider_plan" if mode in {"plan", "run_start"} else "state_review" if mode in {"review", "summary"} else "local_rule"
     action_kind = explanation.get("action_kind")
     read_only = mode not in {"plan", "run_start", "review", "apply_action"} and action_kind != "approval_create"
@@ -160,6 +163,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "matched_intent": mode,
         "route_source": route_source,
         "embedded_card": embedded_card,
+        "secondary_embedded_cards": secondary_embedded_cards,
         "read_only": read_only,
         "next_command": next_command,
         "requires_explicit_user": explanation.get("requires_explicit_user"),

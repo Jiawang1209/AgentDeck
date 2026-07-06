@@ -2291,6 +2291,7 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert set(payload["example_explanation_fields"]) == set(example["leader_explanation"])
     assert payload["example_intent_card_fields"] == payload["intent_card_fields"]
     assert payload["example_intent_card_fields"] == list(example["intent_card"])
+    assert "secondary_embedded_cards" in payload["intent_card_fields"]
     assert payload["example_intent_control_fields"] == payload["intent_control_fields"]
     assert payload["example_intent_control_fields"] == list(example["intent_card"]["controls"][0])
     assert payload["example_leader_action_card_fields"] == payload["leader_action_card_fields"]
