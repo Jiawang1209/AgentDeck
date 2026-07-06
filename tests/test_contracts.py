@@ -2697,6 +2697,22 @@ def test_validate_leader_actions_contract_requires_applyability_fields() -> None
     }
 
 
+def test_validate_leader_actions_contract_checks_every_action_item() -> None:
+    payload = leader_actions_example()
+    second_action = dict(payload["actions"][0])
+    second_action["action_id"] = "act_second"
+    del second_action["controls"]
+    payload["actions"].append(second_action)
+    payload["count"] = 2
+
+    result = validate_leader_actions_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing leader action item field at index 1: controls"],
+    }
+
+
 def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
     contract_path = tmp_path / "leader-chat-schema.md"
     contract_path.write_text("# Leader Chat Contract\n", encoding="utf-8")

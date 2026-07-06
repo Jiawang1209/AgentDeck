@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate every Leader actions queue item
+
+- 收紧独立 Leader actions queue 契约：`validate_leader_actions_contract()` 现在会逐项校验 `actions[]`，不再只检查第一条 action item。
+- 每条 Leader action item 都必须保留 `controls[]`、`preview_command`、`can_apply`、`apply_command`、`explicit_command`、`apply_blocker` 和 `is_recommended` 等 GUI-safe action affordance 字段，与 ProjectView `leader_actions.items[]` 的逐项契约保持一致。
+- 同步 Leader actions schema 文档，明确 `agentdeck leader actions` 会逐项自校验，仍然只是只读 action queue，不会 apply action 或 dispatch runtime work。
+- 保持控制边界：该校验只拒绝漂移 Leader actions payload，不 apply action、不创建 approval/message/job/inbox、不 approve/reject/dispatch、不读取 pane、不发送 tmux 输入、不修改 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许第二条 `actions[]` 缺少 `controls` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_actions_contract_checks_every_action_item tests/test_contracts.py::test_validate_leader_actions_contract_requires_applyability_fields tests/test_contracts.py::test_validate_leader_actions_contract_accepts_example -q` 3 项通过；Leader actions 聚焦回归 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 420 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 446 项通过。
+
 ### Current - Validate every inbox queue item
 
 - 收紧 inbox queue 契约：`validate_inbox_contract()` 现在会逐项校验 `items[]`，不再只检查第一条 inbox item。

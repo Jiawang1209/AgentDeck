@@ -2,7 +2,7 @@
 
 `agentdeck leader actions` is the read-only queue view for persisted Leader action suggestions.
 
-It does not execute actions and does not replace ProjectView. It validates ProjectView first, lists stored Leader actions, derives applyability fields for each item, marks the current recovery recommendation, and validates the queue payload before printing JSON.
+It does not execute actions and does not replace ProjectView. It validates ProjectView first, lists stored Leader actions, derives applyability fields for each item, marks the current recovery recommendation, and validates every queue item before printing JSON.
 
 Use `agentdeck contract leader-actions` to discover this contract:
 

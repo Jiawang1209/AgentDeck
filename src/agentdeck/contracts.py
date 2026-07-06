@@ -2937,14 +2937,21 @@ def validate_leader_actions_contract(payload: dict[str, object]) -> dict[str, ob
             errors.append(f"missing leader_actions field: {field}")
     actions = payload.get("actions")
     if isinstance(actions, list):
-        if actions:
-            first_action = actions[0]
-            if isinstance(first_action, dict):
-                for field in PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS:
-                    if field not in first_action:
-                        errors.append(f"missing leader action item field: {field}")
-            else:
-                errors.append("leader actions items must be objects")
+        for index, action in enumerate(actions):
+            if not isinstance(action, dict):
+                errors.append(
+                    "leader actions items must be objects"
+                    if index == 0
+                    else f"leader actions items[{index}] must be an object"
+                )
+                continue
+            for field in PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS:
+                if field not in action:
+                    errors.append(
+                        f"missing leader action item field: {field}"
+                        if index == 0
+                        else f"missing leader action item field at index {index}: {field}"
+                    )
     elif "actions" in payload:
         errors.append("actions must be a list")
     return {"ok": not errors, "errors": errors}
