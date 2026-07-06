@@ -570,6 +570,9 @@ def _leader_chat_provider_switch_card(
     )
     control_kind = "guarded_set_provider" if require_ready else "set_provider"
     control_label = "Switch Leader provider if ready" if require_ready else "Switch Leader provider"
+    target_ready = target_readiness.get("ready") is True
+    provider_control_enabled = not require_ready or target_ready
+    provider_control_blocker = None if provider_control_enabled else "target provider is not ready"
     return {
         "mode": "provider_switch",
         "title": "Switch Leader provider",
@@ -599,8 +602,8 @@ def _leader_chat_provider_switch_card(
                 "label": control_label,
                 "command": command,
                 "safety": "explicit_user",
-                "enabled": True,
-                "blocker": None,
+                "enabled": provider_control_enabled,
+                "blocker": provider_control_blocker,
             },
         ],
     }

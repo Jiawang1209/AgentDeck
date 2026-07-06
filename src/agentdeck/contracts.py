@@ -3625,6 +3625,20 @@ def _validate_leader_chat_provider_switch_card_contract(
                     errors.append(
                         "provider_switch_card.controls: provider control kind must be set_provider when require_ready is false"
                     )
+                target_not_ready = (
+                    provider_switch_card.get("require_ready") is True
+                    and isinstance(target_readiness, dict)
+                    and target_readiness.get("ready") is False
+                )
+                if target_not_ready and control.get("kind") == "guarded_set_provider":
+                    if control.get("enabled") is not False:
+                        errors.append(
+                            "provider_switch_card.controls: guarded provider control must be disabled when target is not ready"
+                        )
+                    if control.get("blocker") != "target provider is not ready":
+                        errors.append(
+                            "provider_switch_card.controls: disabled guarded provider control must use target provider is not ready blocker"
+                        )
             if control.get("enabled") is False and not control.get("blocker"):
                 errors.append("provider_switch_card.controls: disabled controls must include blocker")
     elif "controls" in provider_switch_card:

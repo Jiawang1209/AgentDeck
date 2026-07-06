@@ -2977,6 +2977,28 @@ def test_validate_leader_chat_contract_requires_provider_switch_control_kind_to_
     }
 
 
+def test_validate_leader_chat_contract_blocks_guarded_provider_switch_when_target_is_not_ready() -> None:
+    payload = leader_chat_example()
+    payload["provider_switch_card"]["require_ready"] = True
+    payload["provider_switch_card"]["command"] = (
+        "agentdeck leader set-provider --provider codex-cli --model codex-default --require-ready"
+    )
+    provider_control = payload["provider_switch_card"]["controls"][1]
+    provider_control["kind"] = "guarded_set_provider"
+    provider_control["label"] = "Switch Leader provider if ready"
+    provider_control["command"] = payload["provider_switch_card"]["command"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "provider_switch_card.controls: guarded provider control must be disabled when target is not ready",
+            "provider_switch_card.controls: disabled guarded provider control must use target provider is not ready blocker",
+        ],
+    }
+
+
 def test_validate_leader_chat_contract_rejects_missing_secondary_runtime_card() -> None:
     payload = leader_chat_example()
     payload["runtime_card"] = None

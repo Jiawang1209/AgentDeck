@@ -1113,8 +1113,8 @@ def test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_comma
         "label": "Switch Leader provider if ready",
         "command": expected_command,
         "safety": "explicit_user",
-        "enabled": True,
-        "blocker": None,
+        "enabled": False,
+        "blocker": "target provider is not ready",
     }
     assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
     assert (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8") == config_before

@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Block guarded provider switch when target is not ready
+
+- 收紧 `provider_switch_card` 的 require-ready 控件语义：当自然语言 provider switch 带 `"要求可用"` / `"先预检"` / `"必须可用"` 且目标 provider 当前不可用时，`guarded_set_provider` control 现在会 disabled，并给出 `target provider is not ready` blocker。
+- 扩展 `validate_leader_chat_contract()`：`require_ready=true` 且 `target_readiness.ready=false` 时，契约会拒绝仍然 enabled 的 guarded provider control，也会拒绝缺少标准 blocker 的 disabled guarded control。
+- 保持控制边界：普通 provider switch intent 仍只建议命令；require-ready intent 也只渲染确认卡和显式命令，不修改 `.agentdeck/config.toml`、不调用 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 同步 `docs/contracts/leader-chat-schema.md`、README、AGENT.md 和 CLAUDE.md。
+- 验证记录：已先确认红测失败，`provider_switch_card.controls[1]` 最初在目标 Claude CLI 不可用且 `require_ready=true` 时仍为 enabled，validator 也允许该漂移；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_command_without_mutating_config tests/test_contracts.py::test_validate_leader_chat_contract_blocks_guarded_provider_switch_when_target_is_not_ready -q` 2 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 383 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 409 项通过。
+
 ### Current - Validate provider switch controls alignment
 
 - 收紧 `provider_switch_card.controls[]` 契约：inspect control 的 command 现在必须匹配 `diagnostics_command`，避免 GUI 的诊断按钮和 card 顶层诊断入口分叉。
