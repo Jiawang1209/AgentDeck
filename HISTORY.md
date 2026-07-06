@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Align provider setup recommended control
+
+- 收紧 `provider_setup_card` 契约：`recommended_control_id` 不仅必须指向 `setup_provider` control，还必须指向 `command == recommended_command` 的那一个 control。
+- 这保证 GUI 渲染 provider setup checklist 时，高亮 control、顶层 `next_command` 和推荐 setup 命令不会分叉。
+- 保持控制边界：该校验只拒绝漂移 payload，不执行 setup、不切换 provider、不修改 `.agentdeck/config.toml`、不调用 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，validator 最初允许 `recommended_control_id` 指向 `codex doctor` 但 `recommended_command` 仍为 `codex login`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_provider_setup_recommended_control_to_match_command tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_leader_cli.py::test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_without_planning -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 393 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 419 项通过。
+
 ### Current - Align provider setup target identity with switch card
 
 - 继续收紧 `provider_setup_card` / `provider_switch_card` 交叉契约：setup card 的 `target_provider`、`target_model` 和 `require_ready` 必须分别匹配 switch card 的目标 provider/model 和 require-ready 状态。

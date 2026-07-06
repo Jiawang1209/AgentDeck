@@ -3622,6 +3622,7 @@ def _validate_leader_chat_provider_setup_card_contract(
         errors.append("provider_setup_card.require_ready must be a boolean")
     controls = provider_setup_card.get("controls")
     setup_control_ids: list[str] = []
+    setup_control_commands_by_id: dict[str, str] = {}
     if isinstance(controls, list):
         for control in controls:
             if not isinstance(control, dict):
@@ -3638,6 +3639,9 @@ def _validate_leader_chat_provider_setup_card_contract(
                 control_id = control.get("control_id")
                 if isinstance(control_id, str):
                     setup_control_ids.append(control_id)
+                    command = control.get("command")
+                    if isinstance(command, str):
+                        setup_control_commands_by_id[control_id] = command
                 else:
                     errors.append("provider_setup_card.controls: setup_provider controls must include control_id")
             if control.get("kind") in {"set_provider", "guarded_set_provider"}:
@@ -3656,6 +3660,12 @@ def _validate_leader_chat_provider_setup_card_contract(
         errors.append("provider_setup_card.recommended_control_id must be a string or null")
     if isinstance(recommended_control_id, str) and recommended_control_id not in setup_control_ids:
         errors.append("provider_setup_card.recommended_control_id must match a setup_provider control")
+    if (
+        isinstance(recommended_control_id, str)
+        and recommended_control_id in setup_control_commands_by_id
+        and setup_control_commands_by_id[recommended_control_id] != provider_setup_card.get("recommended_command")
+    ):
+        errors.append("provider_setup_card.recommended_control_id must point at recommended_command control")
 
 
 def _validate_leader_chat_provider_switch_card_contract(
