@@ -1909,6 +1909,11 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_audit_card_fields"] == payload["audit_card_fields"]
     assert payload["example_audit_card_fields"] == list(example["audit_card"])
     assert example["audit_card"] == example["workbench_card"]["audit_card"]
+    assert payload["artifacts_card_fields"] == list(ARTIFACTS_RESPONSE_FIELDS)
+    assert payload["artifact_summary_fields"] == list(ARTIFACTS_SUMMARY_FIELDS)
+    assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
+    assert payload["example_artifacts_card_fields"] == payload["artifacts_card_fields"]
+    assert payload["example_artifacts_card_fields"] == list(example["artifacts_card"])
     assert example["trace_card"] is None
     assert payload["example_workbench_card_fields"] == payload["workbench_card_fields"]
     assert payload["example_workbench_card_fields"] == list(example["workbench_card"])
@@ -2000,6 +2005,18 @@ def test_validate_leader_chat_contract_reuses_leader_summary_card_validator() ->
     assert result == {
         "ok": False,
         "errors": ["leader_summary_card: missing leader_summary field: summary"],
+    }
+
+
+def test_validate_leader_chat_contract_reuses_artifacts_card_validator() -> None:
+    payload = leader_chat_example()
+    payload["artifacts_card"]["artifacts_command"] = "agentdeck status"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["artifacts_card: artifacts_command must be agentdeck artifacts"],
     }
 
 

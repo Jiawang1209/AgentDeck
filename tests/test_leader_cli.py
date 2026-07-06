@@ -2459,6 +2459,93 @@ def test_leader_chat_inspects_audit_events_without_mutating_state(tmp_path, monk
     assert state_after["chat_turns"][-1]["action_kind"] == "audit"
 
 
+def test_leader_chat_inspects_artifacts_without_reading_files_or_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["artifacts"] = [
+        {
+            "artifact_id": "art_chat",
+            "message_id": "msg_chat_artifact",
+            "job_id": "job_chat_artifact",
+            "reply_id": "rep_chat_artifact",
+            "from_agent": "planner",
+            "path": "docs/architecture/chat-artifact.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    store.save(state)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看产物"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "artifacts"
+    assert payload["message"] == "查看产物"
+    assert payload["plan_id"] is None
+    assert payload["review"] is None
+    assert payload["leader_action"] is None
+    assert payload["leader_action_card"] is None
+    assert payload["continue_card"] is None
+    assert payload["inbox_card"] is None
+    assert payload["approval_card"] is None
+    assert payload["runtime_card"] is None
+    assert payload["queue_card"] is None
+    assert payload["operator_card"] is None
+    assert payload["role_card"] is None
+    assert payload["ledger_card"] is None
+    assert payload["workbench_card"] is None
+    assert payload["next_command"] == "agentdeck artifacts"
+    assert payload["artifacts_card"]["artifacts_command"] == "agentdeck artifacts"
+    assert payload["artifacts_card"]["trace_command_template"] == "agentdeck trace --id <id>"
+    assert payload["artifacts_card"]["artifacts"]["count"] == 1
+    assert payload["artifacts_card"]["artifacts"]["items"][0] == {
+        "artifact_id": "art_chat",
+        "message_id": "msg_chat_artifact",
+        "job_id": "job_chat_artifact",
+        "reply_id": "rep_chat_artifact",
+        "from_agent": "planner",
+        "path": "docs/architecture/chat-artifact.md",
+        "kind": "markdown",
+        "status": "created",
+        "created_at": "2026-07-04T00:00:00+00:00",
+        "trace_command": "agentdeck trace --id msg_chat_artifact",
+    }
+    assert payload["leader_explanation"]["mode"] == "artifacts"
+    assert payload["leader_explanation"]["action_kind"] == "artifacts"
+    assert payload["leader_explanation"]["action_status"] == "has_artifacts"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["intent_card"]["embedded_card"] == "artifacts_card"
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect artifacts_card",
+        "command": "agentdeck artifacts",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    state_after = StateStore(root).load()
+    assert state_after["plans"] == state_before["plans"]
+    assert state_after["approvals"] == state_before["approvals"]
+    assert state_after["leader_actions"] == state_before["leader_actions"]
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["jobs"] == state_before["jobs"]
+    assert state_after["replies"] == state_before["replies"]
+    assert state_after["artifacts"] == state_before["artifacts"]
+    assert state_after.get("inbox", {}) == state_before.get("inbox", {})
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert state_after["chat_turns"][-1]["mode"] == "artifacts"
+    assert state_after["chat_turns"][-1]["next_command"] == "agentdeck artifacts"
+    assert state_after["chat_turns"][-1]["action_kind"] == "artifacts"
+
+
 def test_leader_chat_opens_workbench_snapshot_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_agent(root, "planner", "%42")

@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Add natural-language artifacts index view
+
+- 新增 `agentdeck leader chat --message "查看产物"` / `"artifacts"` / `"输出文件"`：自然语言入口现在可进入只读 `mode=artifacts`，嵌入同源 `artifacts_card`，展示 ProjectView artifact 摘要、trace 模板和契约入口，并建议 `agentdeck artifacts`。
+- 抽出 `_artifacts_card_payload()`，让独立 `agentdeck artifacts` 与自然语言 artifacts 视图共享同一 response shape，避免 GUI/TUI 消费两套产物索引字段。
+- 扩展 leader-chat contract：响应字段新增 `artifacts_card`，discovery 新增 `artifacts_card_fields` / `artifact_summary_fields` / `artifact_item_fields` / `example_artifacts_card_fields`，`validate_leader_chat_contract()` 会复用 `validate_artifacts_contract()` 校验嵌入产物卡片。
+- 保持人类控制边界：artifacts chat 只记录 chat turn 和对应审计事件，不创建 plan/action/approval/message/job/reply/artifact/inbox，不调用 provider、不读取产物文件内容、不读取 pane 输出、不发送 tmux 输入。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/leader-chat-schema.md`，明确自然语言产物入口是只读 artifact index 投影。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "查看产物"` 最初会落入旧 provider plan 路径；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_artifacts_without_reading_files_or_mutating_state tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_reuses_artifacts_card_validator tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 334 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 358 项通过。
+
 ### Current - Add natural-language audit timeline view
 
 - 新增 `agentdeck leader chat --message "查看审计"` / `"最近事件"`：自然语言入口现在可进入只读 `mode=audit`，嵌入 workbench 同源 `audit_card`，展示 latest_event、recent_events、event_count 和 `events_command=agentdeck events --limit 20`。

@@ -35,6 +35,9 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "lineage_card_fields": [],
   "lineage_path_fields": [],
   "audit_card_fields": [],
+  "artifacts_card_fields": [],
+  "artifact_summary_fields": [],
+  "artifact_item_fields": [],
   "trace_card_fields": [],
   "trace_message_fields": [],
   "trace_attempt_fields": [],
@@ -96,6 +99,7 @@ The review-mode response shape is:
   "role_card": null,
   "ledger_card": null,
   "lineage_card": null,
+  "artifacts_card": null,
   "workbench_card": null,
   "control_mode_card": null,
   "capability_card": null
@@ -341,6 +345,25 @@ Ledger-mode responses are returned when the human asks to inspect the communicat
 ```
 
 When `ledger_card` or `lineage_card` is present, `validate_leader_chat_contract()` checks the same ledger and lineage field lists exposed by `agentdeck contract workbench`. Ledger-mode records a chat turn for history, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, dispatch work, capture replies, read pane output, or send tmux input.
+
+Artifacts-mode responses are returned when the human asks to inspect worker artifacts, outputs, deliverables, or `产物`. They return `artifacts_card`, reusing the same shape as `agentdeck artifacts`:
+
+```json
+{
+  "mode": "artifacts",
+  "next_command": "agentdeck artifacts",
+  "artifacts_card": {
+    "schema_version": "project-view/v1",
+    "artifacts_command": "agentdeck artifacts",
+    "project_view_contract": "agentdeck contract project-view",
+    "trace_contract": "agentdeck contract trace",
+    "trace_command_template": "agentdeck trace --id <id>",
+    "artifacts": {}
+  }
+}
+```
+
+When `artifacts_card` is present, `validate_leader_chat_contract()` reuses `validate_artifacts_contract()` and prefixes nested errors with `artifacts_card:`. Artifacts-mode records a chat turn and audit event for history, but it must not create plans/actions/approvals/messages/jobs/replies/artifacts/inbox items, call a provider, read artifact file contents, read pane output, or send tmux input.
 
 Capture-mode responses are returned when the human asks to inspect one spawned agent pane output. They return `capture_card`, a GUI-ready read-only terminal snapshot:
 
@@ -634,9 +657,10 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat role-mode responses must reuse the workbench role card through `role_card`.
 - Chat ledger-mode responses must reuse the workbench ledger and lineage cards through `ledger_card` and `lineage_card`.
 - Chat audit-mode responses must reuse the workbench audit card through `audit_card`, recommend `agentdeck events --limit 20`, and remain read-only except for recording the chat turn and its audit event.
+- Chat artifacts-mode responses must reuse the artifacts contract through `artifacts_card`, recommend `agentdeck artifacts`, and remain read-only without reading artifact file contents.
 - Chat workbench-mode responses must reuse the complete workbench snapshot through `workbench_card`; the leader-chat contract must expose `workbench_control_registry_item_fields` for the embedded `workbench_card.control_registry[]` command palette.
 - Chat policy-mode responses must reuse the workbench control mode projection through `control_mode_card`, recommend an explicit `agentdeck policy set-mode --mode <mode>` command, and use action-specific next labels for ask, approval, and autonomous requests. Policy-mode must not mutate `.agentdeck/config.toml`.
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, `runtime_card`, or `trace_card` when `recovery.recommended_action.source` points at those queues, runtime recovery, or a pending reply capture; reply capture recovery should set `intent_card.embedded_card=trace_card`.
 - Chat setup-mode responses may include `provider_health`; diagnostics intents recommend `agentdeck doctor`, while provider switch intents recommend a concrete `agentdeck leader set-provider ...` command. Neither form calls the provider or mutates provider config.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `run_start_card` as the approval-gated run start surface, `run_progress_card` as the read-only run progress surface, `leader_summary_card` as the deterministic reply/artifact summary surface, `capture_card` as the selected visible pane snapshot surface, `dispatch_preview_card` as the explicit dispatch confirmation preview, `dispatch_batch_preview_card` as the multi-approval dispatch checklist, `agent_ready_card` as the multi-agent runtime readiness/startup surface, `inbox_card` as the mailbox queue surface, `trace_card` as the selected inbox/message lineage evidence surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `audit_card` as the recent audit timeline surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics and provider switch command context, and `leader_explanation` as safety/reason explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `run_start_card` as the approval-gated run start surface, `run_progress_card` as the read-only run progress surface, `leader_summary_card` as the deterministic reply/artifact summary surface, `capture_card` as the selected visible pane snapshot surface, `dispatch_preview_card` as the explicit dispatch confirmation preview, `dispatch_batch_preview_card` as the multi-approval dispatch checklist, `agent_ready_card` as the multi-agent runtime readiness/startup surface, `inbox_card` as the mailbox queue surface, `trace_card` as the selected inbox/message lineage evidence surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `audit_card` as the recent audit timeline surface, `artifacts_card` as the read-only artifact index surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics and provider switch command context, and `leader_explanation` as safety/reason explanation.

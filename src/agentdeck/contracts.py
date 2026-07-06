@@ -458,6 +458,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "ledger_card",
     "lineage_card",
     "audit_card",
+    "artifacts_card",
     "workbench_card",
     "control_mode_card",
     "capability_card",
@@ -1247,6 +1248,9 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
+        "artifacts_card_fields": list(ARTIFACTS_RESPONSE_FIELDS),
+        "artifact_summary_fields": list(ARTIFACTS_SUMMARY_FIELDS),
+        "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
         "trace_card_fields": list(TRACE_TOP_LEVEL_FIELDS),
         "trace_message_fields": list(TRACE_MESSAGE_FIELDS),
         "trace_attempt_fields": list(TRACE_ATTEMPT_FIELDS),
@@ -1302,6 +1306,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_lineage_card_fields"] = list(example["lineage_card"])
         payload["example_lineage_path_fields"] = list(example["lineage_card"]["recent_paths"][0])
         payload["example_audit_card_fields"] = list(example["audit_card"])
+        payload["example_artifacts_card_fields"] = list(example["artifacts_card"])
         payload["example_workbench_card_fields"] = list(example["workbench_card"])
         payload["example_control_mode_card_fields"] = list(example["control_mode_card"])
         payload["example_workbench_control_registry_item_fields"] = list(
@@ -1417,6 +1422,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "safety": "inspect",
             "requires_explicit_user": False,
             "card": "audit_card",
+        },
+        {
+            "mode": "artifacts",
+            "label": "Inspect artifacts",
+            "description": "Inspect worker artifact indexes without reading file contents.",
+            "example_messages": ["查看产物", "artifacts"],
+            "command": "agentdeck artifacts",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "artifacts_card",
         },
         {
             "mode": "queue",
@@ -2805,6 +2820,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_audit_card_contract(errors, audit_card, prefix="audit_card")
     elif "audit_card" in payload and audit_card is not None:
         errors.append("audit_card must be an object")
+    artifacts_card = payload.get("artifacts_card")
+    if isinstance(artifacts_card, dict):
+        artifacts_validation = validate_artifacts_contract(artifacts_card)
+        for error in artifacts_validation["errors"]:
+            errors.append(f"artifacts_card: {error}")
+    elif "artifacts_card" in payload and artifacts_card is not None:
+        errors.append("artifacts_card must be an object")
     trace_card = payload.get("trace_card")
     if isinstance(trace_card, dict):
         trace_card_validation = validate_trace_contract(trace_card)
@@ -3718,6 +3740,7 @@ def leader_chat_example() -> dict[str, object]:
     role_card = workbench_example()["role_card"]
     ledger_card = workbench_example()["ledger_card"]
     lineage_card = workbench_example()["lineage_card"]
+    artifacts_card = artifacts_example()
     workbench_card = workbench_example()
     audit_card = workbench_card["audit_card"]
     control_mode_card = workbench_card["control_mode_card"]
@@ -3789,6 +3812,7 @@ def leader_chat_example() -> dict[str, object]:
         "ledger_card": ledger_card,
         "lineage_card": lineage_card,
         "audit_card": audit_card,
+        "artifacts_card": artifacts_card,
         "workbench_card": workbench_card,
         "control_mode_card": control_mode_card,
         "capability_card": capability_card,

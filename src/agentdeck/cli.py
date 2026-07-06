@@ -111,6 +111,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "role_card",
         "ledger_card",
         "audit_card",
+        "artifacts_card",
         "control_mode_card",
         "provider_health",
         "capability_card",
@@ -274,6 +275,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         audit_card = payload.get("audit_card")
         command = audit_card.get("events_command") if isinstance(audit_card, dict) else None
         return str(command) if command else "agentdeck events --limit 20"
+    if embedded_card == "artifacts_card":
+        return "agentdeck artifacts"
     if embedded_card == "trace_card":
         trace_card = payload.get("trace_card")
         query_id = trace_card.get("query_id") if isinstance(trace_card, dict) else None
@@ -339,6 +342,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("control_mode_card", None)
     payload.setdefault("lineage_card", None)
     payload.setdefault("audit_card", None)
+    payload.setdefault("artifacts_card", None)
     payload.setdefault("trace_card", None)
     payload.setdefault("capture_card", None)
     payload.setdefault("terminal_card", None)
@@ -561,14 +565,7 @@ def artifacts_command(_args: argparse.Namespace) -> int:
     project_view = _project_view_payload_or_error(config, store)
     if project_view is None:
         return 1
-    payload = {
-        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
-        "artifacts_command": "agentdeck artifacts",
-        "project_view_contract": "agentdeck contract project-view",
-        "trace_contract": "agentdeck contract trace",
-        "trace_command_template": "agentdeck trace --id <id>",
-        "artifacts": project_view.get("artifacts"),
-    }
+    payload = _artifacts_card_payload(project_view)
     validation = validate_artifacts_contract(payload)
     if not validation["ok"]:
         print("Artifacts contract validation failed", file=sys.stderr)
@@ -577,6 +574,17 @@ def artifacts_command(_args: argparse.Namespace) -> int:
         return 1
     _print_json(payload)
     return 0
+
+
+def _artifacts_card_payload(project_view: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "artifacts_command": "agentdeck artifacts",
+        "project_view_contract": "agentdeck contract project-view",
+        "trace_contract": "agentdeck contract trace",
+        "trace_command_template": "agentdeck trace --id <id>",
+        "artifacts": project_view.get("artifacts"),
+    }
 
 
 def events_command(args: argparse.Namespace) -> int:
@@ -3508,6 +3516,23 @@ def _chat_wants_audit(message: str) -> bool:
     )
 
 
+def _chat_wants_artifacts(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(
+        token in normalized
+        for token in [
+            "artifact",
+            "artifacts",
+            "outputs",
+            "deliverables",
+            "产物",
+            "成果",
+            "输出文件",
+            "交付物",
+        ]
+    )
+
+
 def _chat_wants_runtime(message: str) -> bool:
     normalized = message.strip().lower()
     return any(
@@ -4128,6 +4153,20 @@ def _leader_chat_explanation(
             "recommended_action_id": run_progress_card.get("plan_id"),
             "action_kind": "run_progress",
             "action_status": run_progress_card.get("status"),
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
+    if mode == "artifacts":
+        artifacts = project_view.get("artifacts") if isinstance(project_view.get("artifacts"), dict) else {}
+        count = artifacts.get("count") if isinstance(artifacts, dict) else 0
+        return {
+            "mode": mode,
+            "summary": "Leader recommends inspecting the artifact index without reading file contents.",
+            "reason": "human asked to inspect worker artifacts",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": "artifacts",
+            "action_status": "has_artifacts" if count else "empty",
             "safety": "inspect",
             "requires_explicit_user": False,
         }
@@ -5643,6 +5682,68 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "role_card": None,
             "ledger_card": None,
             "audit_card": audit_card,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_artifacts(args.message):
+        next_command = "agentdeck artifacts"
+        turn = store.record_chat_turn(
+            mode="artifacts",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="artifacts",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "artifacts",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        artifacts_card = _artifacts_card_payload(refreshed_project_view)
+        validation = validate_artifacts_contract(artifacts_card)
+        if not validation["ok"]:
+            print("Artifacts contract validation failed", file=sys.stderr)
+            for error in validation["errors"]:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "artifacts",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "artifacts",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "artifacts_card": artifacts_card,
             "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
