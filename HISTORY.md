@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate every workbench role agent
+
+- 收紧 Workbench role card 契约：`validate_workbench_contract()` 现在会逐项校验 `role_card.agents[]`，不再只检查第一条 role row。
+- 顶层 `role_card` 与嵌入 role card helper 复用同一套 role agent 校验器；第一条 item 保持旧错误文案兼容，后续 item 使用 `role_card.agents[index]` 的 indexed 错误，方便 GUI/TUI 定位具体损坏的角色指派行。
+- 同步 Workbench schema、AGENT/CLAUDE 约束，明确多 Agent 角色视图里的每个 Agent 都必须公开 role、role_prompt、assign_command 和 assign-role control surface，不能只保证第一个 Agent 可指派。
+- 保持控制边界：该校验只拒绝漂移 Workbench payload，不修改 `.agentdeck/config.toml`、不创建 plan/action/approval/message/job/inbox、不 dispatch、不发送 tmux 输入、不写 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许第二条 `role_card.agents[]` 缺少 `assign_command` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_workbench_contract_requires_role_agent_fields tests/test_contracts.py::test_validate_workbench_contract_requires_every_role_agent_fields -q` 2 项通过；runtime/role 聚焦回归 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 423 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 449 项通过。
+
 ### Current - Validate every workbench runtime agent
 
 - 收紧 Workbench runtime card 契约：`validate_workbench_contract()` 现在会逐项校验 `runtime_card.agents[]` 以及每个 agent 的嵌套 `controls[]`，不再只检查第一条 visible runtime row。

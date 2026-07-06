@@ -451,7 +451,7 @@ The card does not capture pane output and does not prove task completion. It onl
 }
 ```
 
-The card is configuration-only. It does not dispatch work or mutate roles; GUI clients must run `assign_command` or a completed `assign_role` control explicitly when a human changes a role. `controls[]` are intentionally disabled templates until the GUI supplies concrete `role` and `role_prompt` values, and they must be preserved as `scope=role` / `kind=assign_role` items in `control_registry[]`.
+The card is configuration-only. It does not dispatch work or mutate roles; GUI clients must run `assign_command` or a completed `assign_role` control explicitly when a human changes a role. `validate_workbench_contract()` validates every `role_card.agents[]` item, not just the first role row, so each configured Agent must expose the same role, prompt, assign command, and GUI control surface. `controls[]` are intentionally disabled templates until the GUI supplies concrete `role` and `role_prompt` values, and they must be preserved as `scope=role` / `kind=assign_role` items in `control_registry[]`.
 
 ## Ledger Card
 

@@ -3058,7 +3058,7 @@ def _validate_trace_items(
                 )
 
 
-def _prefixed_runtime_error(prefix: str, message: str) -> str:
+def _prefixed_contract_error(prefix: str, message: str) -> str:
     return f"{prefix}: {message}" if prefix else message
 
 
@@ -3095,11 +3095,11 @@ def _runtime_agent_item_error(index: int) -> str:
 def _validate_runtime_agents_contract(errors: list[str], agents: list[object], *, prefix: str) -> None:
     for agent_index, agent in enumerate(agents):
         if not isinstance(agent, dict):
-            errors.append(_prefixed_runtime_error(prefix, _runtime_agent_item_error(agent_index)))
+            errors.append(_prefixed_contract_error(prefix, _runtime_agent_item_error(agent_index)))
             continue
         for field in WORKBENCH_RUNTIME_AGENT_FIELDS:
             if field not in agent:
-                errors.append(_prefixed_runtime_error(prefix, _runtime_agent_field_error(agent_index, field)))
+                errors.append(_prefixed_contract_error(prefix, _runtime_agent_field_error(agent_index, field)))
         controls = agent.get("controls")
         if isinstance(controls, list):
             for control_index, control in enumerate(controls):
@@ -3107,31 +3107,31 @@ def _validate_runtime_agents_contract(errors: list[str], agents: list[object], *
                     for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
                         if field not in control:
                             errors.append(
-                                _prefixed_runtime_error(
+                                _prefixed_contract_error(
                                     prefix,
                                     _runtime_control_field_error(agent_index, control_index, field),
                                 )
                             )
                 else:
                     errors.append(
-                        _prefixed_runtime_error(
+                        _prefixed_contract_error(
                             prefix,
                             _runtime_agent_controls_item_error(agent_index, control_index),
                         )
                     )
         elif "controls" in agent:
-            errors.append(_prefixed_runtime_error(prefix, _runtime_agent_controls_type_error(agent_index)))
+            errors.append(_prefixed_contract_error(prefix, _runtime_agent_controls_type_error(agent_index)))
 
 
 def _validate_runtime_card_contract(errors: list[str], runtime_card: dict[str, object], *, prefix: str) -> None:
     for field in WORKBENCH_RUNTIME_CARD_FIELDS:
         if field not in runtime_card:
-            errors.append(_prefixed_runtime_error(prefix, f"missing runtime_card field: {field}"))
+            errors.append(_prefixed_contract_error(prefix, f"missing runtime_card field: {field}"))
     agents = runtime_card.get("agents")
     if isinstance(agents, list):
         _validate_runtime_agents_contract(errors, agents, prefix=prefix)
     elif "agents" in runtime_card:
-        errors.append(_prefixed_runtime_error(prefix, "runtime_card.agents must be a list"))
+        errors.append(_prefixed_contract_error(prefix, "runtime_card.agents must be a list"))
 
 
 def _validate_agent_ready_card_contract(errors: list[str], agent_ready_card: dict[str, object]) -> None:
@@ -3279,36 +3279,75 @@ def _validate_operator_card_contract(errors: list[str], operator_card: dict[str,
         errors.append(f"{prefix}: operator_card.can_apply must be a boolean")
 
 
+def _role_agent_field_error(index: int, field: str) -> str:
+    if index == 0:
+        return f"missing role agent field: {field}"
+    return f"role_card.agents[{index}] missing role agent field: {field}"
+
+
+def _role_control_field_error(agent_index: int, control_index: int, field: str) -> str:
+    if agent_index == 0 and control_index == 0:
+        return f"missing role control field: {field}"
+    return f"role_card.agents[{agent_index}].controls[{control_index}] missing role control field: {field}"
+
+
+def _role_agent_controls_type_error(index: int) -> str:
+    if index == 0:
+        return "role agent controls must be a list"
+    return f"role_card.agents[{index}].controls must be a list"
+
+
+def _role_agent_controls_item_error(agent_index: int, control_index: int) -> str:
+    if agent_index == 0 and control_index == 0:
+        return "role agent controls items must be objects"
+    return f"role_card.agents[{agent_index}].controls[{control_index}] must be an object"
+
+
+def _role_agent_item_error(index: int) -> str:
+    if index == 0:
+        return "role_card.agents items must be objects"
+    return f"role_card.agents[{index}] must be an object"
+
+
+def _validate_role_agents_contract(errors: list[str], role_agents: list[object], *, prefix: str) -> None:
+    for agent_index, agent in enumerate(role_agents):
+        if not isinstance(agent, dict):
+            errors.append(_prefixed_contract_error(prefix, _role_agent_item_error(agent_index)))
+            continue
+        for field in WORKBENCH_ROLE_AGENT_FIELDS:
+            if field not in agent:
+                errors.append(_prefixed_contract_error(prefix, _role_agent_field_error(agent_index, field)))
+        controls = agent.get("controls")
+        if isinstance(controls, list):
+            for control_index, control in enumerate(controls):
+                if isinstance(control, dict):
+                    for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                        if field not in control:
+                            errors.append(
+                                _prefixed_contract_error(
+                                    prefix,
+                                    _role_control_field_error(agent_index, control_index, field),
+                                )
+                            )
+                else:
+                    errors.append(
+                        _prefixed_contract_error(prefix, _role_agent_controls_item_error(agent_index, control_index))
+                    )
+        elif "controls" in agent:
+            errors.append(_prefixed_contract_error(prefix, _role_agent_controls_type_error(agent_index)))
+
+
 def _validate_role_card_contract(errors: list[str], role_card: dict[str, object], *, prefix: str) -> None:
     for field in WORKBENCH_ROLE_CARD_FIELDS:
         if field not in role_card:
-            errors.append(f"{prefix}: missing role_card field: {field}")
+            errors.append(_prefixed_contract_error(prefix, f"missing role_card field: {field}"))
     if "count" in role_card and not isinstance(role_card.get("count"), int):
-        errors.append(f"{prefix}: role_card.count must be an integer")
+        errors.append(_prefixed_contract_error(prefix, "role_card.count must be an integer"))
     role_agents = role_card.get("agents")
     if isinstance(role_agents, list):
-        if role_agents:
-            first_agent = role_agents[0]
-            if isinstance(first_agent, dict):
-                for field in WORKBENCH_ROLE_AGENT_FIELDS:
-                    if field not in first_agent:
-                        errors.append(f"{prefix}: missing role agent field: {field}")
-                controls = first_agent.get("controls")
-                if isinstance(controls, list):
-                    if controls:
-                        first_control = controls[0]
-                        if isinstance(first_control, dict):
-                            for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
-                                if field not in first_control:
-                                    errors.append(f"{prefix}: missing role control field: {field}")
-                        else:
-                            errors.append(f"{prefix}: role agent controls items must be objects")
-                elif "controls" in first_agent:
-                    errors.append(f"{prefix}: role agent controls must be a list")
-            else:
-                errors.append(f"{prefix}: role_card.agents items must be objects")
+        _validate_role_agents_contract(errors, role_agents, prefix=prefix)
     elif "agents" in role_card:
-        errors.append(f"{prefix}: role_card.agents must be a list")
+        errors.append(_prefixed_contract_error(prefix, "role_card.agents must be a list"))
 
 
 def _validate_ledger_card_contract(errors: list[str], ledger_card: dict[str, object], *, prefix: str) -> None:
@@ -4934,35 +4973,7 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         errors.append("terminal_session_card must be an object")
     role_card = payload.get("role_card")
     if isinstance(role_card, dict):
-        for field in WORKBENCH_ROLE_CARD_FIELDS:
-            if field not in role_card:
-                errors.append(f"missing role_card field: {field}")
-        if "count" in role_card and not isinstance(role_card.get("count"), int):
-            errors.append("role_card.count must be an integer")
-        role_agents = role_card.get("agents")
-        if isinstance(role_agents, list):
-            if role_agents:
-                first_agent = role_agents[0]
-                if isinstance(first_agent, dict):
-                    for field in WORKBENCH_ROLE_AGENT_FIELDS:
-                        if field not in first_agent:
-                            errors.append(f"missing role agent field: {field}")
-                    controls = first_agent.get("controls")
-                    if isinstance(controls, list):
-                        if controls:
-                            first_control = controls[0]
-                            if isinstance(first_control, dict):
-                                for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
-                                    if field not in first_control:
-                                        errors.append(f"missing role control field: {field}")
-                            else:
-                                errors.append("role agent controls items must be objects")
-                    elif "controls" in first_agent:
-                        errors.append("role agent controls must be a list")
-                else:
-                    errors.append("role_card.agents items must be objects")
-        elif "agents" in role_card:
-            errors.append("role_card.agents must be a list")
+        _validate_role_card_contract(errors, role_card, prefix="")
     elif "role_card" in payload:
         errors.append("role_card must be an object")
     ledger_card = payload.get("ledger_card")

@@ -2089,6 +2089,20 @@ def test_validate_workbench_contract_requires_role_agent_fields() -> None:
     assert result == {"ok": False, "errors": ["missing role agent field: assign_command"]}
 
 
+def test_validate_workbench_contract_requires_every_role_agent_fields() -> None:
+    payload = workbench_example()
+    second_agent = {**payload["role_card"]["agents"][0], "agent_id": "coder"}
+    payload["role_card"]["agents"].append(second_agent)
+    del payload["role_card"]["agents"][1]["assign_command"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["role_card.agents[1] missing role agent field: assign_command"],
+    }
+
+
 def test_validate_workbench_contract_requires_ledger_trace_commands() -> None:
     payload = workbench_example()
     payload["ledger_card"]["messages"] = {
