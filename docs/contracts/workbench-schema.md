@@ -23,6 +23,7 @@ The contract command returns:
   "leader_card_fields": [],
   "provider_health_fields": [],
   "runtime_card_fields": [],
+  "agent_ready_card_fields": [],
   "runtime_agent_fields": [],
   "runtime_control_fields": [],
   "role_card_fields": [],
@@ -59,6 +60,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "leader_card": {},
   "provider_health": {},
   "runtime_card": {},
+  "agent_ready_card": {},
   "role_card": {},
   "ledger_card": {},
   "lineage_card": {},
@@ -87,6 +89,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `leader_card` is derived from `project_view.leader`.
 `provider_health` is derived from `project_view.leader.provider` and local environment availability.
 `runtime_card` is derived from `project_view.runtime_backend` and `project_view.agents[]`.
+`agent_ready_card` reuses the `agentdeck agent ready` response shape, is derived from the same `runtime_card`, and must pass the agent runtime ready card validator.
 `role_card` is derived from `project_view.agents[]` role configuration.
 `ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, `project_view.artifacts`, and `project_view.inbox`.
 `lineage_card` is a read-only path projection derived from the same ledger summaries plus visible inbox cards.
@@ -101,6 +104,33 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `run_progress_card` is `null` when there is no plan; otherwise it reuses the latest plan's `agentdeck run --plan-id <id>` response shape and must pass `validate_run_start_contract()`.
 `next_command` must equal `continue_card.next_command`.
 `change_summary` is computed from the audit event ledger and is never persisted as a cursor.
+
+## Agent Ready Card
+
+`agent_ready_card` is the workbench startup/readiness projection for multi-agent runtime state:
+
+```json
+{
+  "ok": true,
+  "mode": "agent_runtime_ready",
+  "runtime_backend": "tmux",
+  "total_count": 3,
+  "running_count": 1,
+  "not_running_count": 2,
+  "all_running": false,
+  "next_command": "agentdeck agent spawn-ready --confirm",
+  "spawn_commands": [
+    "agentdeck agent spawn --agent coder",
+    "agentdeck agent spawn --agent reviewer"
+  ],
+  "spawn_ready_command": "agentdeck agent spawn-ready --confirm",
+  "refresh_command": "agentdeck agent refresh",
+  "dispatch_ready_command": "agentdeck approval dispatch-ready --confirm",
+  "runtime_card": {}
+}
+```
+
+The embedded `runtime_card` must match the same runtime projection shown at the top level. GUI/TUI clients can render `next_command` directly: multiple not-running agents use `agentdeck agent spawn-ready --confirm`, one not-running agent uses that agent's explicit spawn command, and an all-running workspace uses `agentdeck approval dispatch-ready --confirm`. Workbench only computes this card from ProjectView/runtime status; it must not inspect tmux, spawn panes, refresh runtime bindings, dispatch approvals, capture pane output, or send tmux input.
 
 ## Watch Stream
 

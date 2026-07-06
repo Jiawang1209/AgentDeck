@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Embed agent readiness card in workbench snapshot
+
+- 扩展 `agentdeck workbench`：一屏快照现在嵌入同源 `agent_ready_card`，复用 `agentdeck agent ready` 的 multi-agent runtime readiness response，供 GUI/TUI 直接渲染 prepare-all-agents、spawn-ready 和 dispatch-ready 下一步。
+- 扩展 workbench contract：`snapshot_fields` 新增 `agent_ready_card`，discovery 新增 `agent_ready_card_fields`，`validate_workbench_contract()` 会复用 agent runtime ready card validator 校验嵌入 readiness card。
+- 保持人类控制边界：workbench readiness card 只从 ProjectView/runtime card 派生，不 inspect tmux、不 spawn/refresh/dispatch、不 capture pane、不发送 tmux input、不写 state。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/workbench-schema.md`，明确 workbench readiness card 是可见 tmux runtime 的只读启动准备投影。
+- 验证记录：已先确认红测失败，workbench contract discovery、example 和 live snapshot 最初缺少 `agent_ready_card` / `agent_ready_card_fields`；新增同源性红测确认 validator 最初未拒绝 `agent_ready_card.runtime_card` 漂移；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_reuses_agent_ready_card_validator tests/test_contracts.py::test_validate_workbench_contract_requires_agent_ready_runtime_card_to_match_top_level_runtime -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 339 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 363 项通过。
+
 ### Current - Embed Leader summary card in workbench snapshot
 
 - 扩展 `agentdeck workbench`：当最新 plan 的本地 `leader review` 已进入 `next_action=summarize` 时，一屏快照会嵌入同源 `leader_summary_card`，复用 `agentdeck leader summary --plan-id <id>` 的只读结果聚合面。

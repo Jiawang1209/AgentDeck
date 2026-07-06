@@ -953,6 +953,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert "command_path" in payload["provider_health_fields"]
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
+    assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
     assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
@@ -978,6 +979,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["leader_inbox_card"]["agent_id"] == "leader"
     assert example["artifacts_card"] == artifacts_example()
     assert example["leader_summary_card"] == leader_summary_example()
+    assert set(example["agent_ready_card"]) == set(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
+    assert example["agent_ready_card"]["runtime_card"] == example["runtime_card"]
+    assert example["agent_ready_card"]["next_command"] == "agentdeck agent spawn-ready --confirm"
     assert example["leader_inbox_card"]["items"][0]["event_type"] == "task_reply"
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
@@ -1186,6 +1190,30 @@ def test_validate_workbench_contract_reuses_leader_summary_card_validator() -> N
     assert result == {
         "ok": False,
         "errors": ["leader_summary_card: missing leader_summary field: summary"],
+    }
+
+
+def test_validate_workbench_contract_reuses_agent_ready_card_validator() -> None:
+    payload = workbench_example()
+    del payload["agent_ready_card"]["next_command"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["agent_ready_card: missing ready field: next_command"],
+    }
+
+
+def test_validate_workbench_contract_requires_agent_ready_runtime_card_to_match_top_level_runtime() -> None:
+    payload = workbench_example()
+    payload["agent_ready_card"]["runtime_card"] = {**payload["runtime_card"], "count": 99}
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["agent_ready_card.runtime_card must match runtime_card"],
     }
 
 

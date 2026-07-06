@@ -10,6 +10,7 @@ from agentdeck.contracts import (
     AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
     AGENT_RUNTIME_REFRESH_AGENT_FIELDS,
     AGENT_RUNTIME_REFRESH_RESPONSE_FIELDS,
+    AGENT_RUNTIME_READY_RESPONSE_FIELDS,
     AGENT_RUNTIME_TERMINAL_RESPONSE_FIELDS,
     ARTIFACTS_RESPONSE_FIELDS,
     ARTIFACTS_SUMMARY_FIELDS,
@@ -1382,6 +1383,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "leader_card",
         "provider_health",
         "runtime_card",
+        "agent_ready_card",
         "role_card",
         "ledger_card",
         "lineage_card",
@@ -1453,6 +1455,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "controls",
     ]
     assert payload["runtime_card_fields"] == ["backend", "count", "by_status", "refresh_command", "agents"]
+    assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
     assert payload["runtime_agent_fields"] == [
         "agent_id",
         "role",
@@ -1930,6 +1933,21 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert coder_runtime["controls"][2]["kind"] == "capture"
     assert coder_runtime["controls"][2]["enabled"] is False
     assert coder_runtime["controls"][2]["blocker"] == "agent is not running"
+    assert payload["agent_ready_card"]["mode"] == "agent_runtime_ready"
+    assert payload["agent_ready_card"]["runtime_backend"] == "tmux"
+    assert payload["agent_ready_card"]["total_count"] == 3
+    assert payload["agent_ready_card"]["running_count"] == 1
+    assert payload["agent_ready_card"]["not_running_count"] == 2
+    assert payload["agent_ready_card"]["all_running"] is False
+    assert payload["agent_ready_card"]["next_command"] == "agentdeck agent spawn-ready --confirm"
+    assert payload["agent_ready_card"]["spawn_commands"] == [
+        "agentdeck agent spawn --agent coder",
+        "agentdeck agent spawn --agent reviewer",
+    ]
+    assert payload["agent_ready_card"]["spawn_ready_command"] == "agentdeck agent spawn-ready --confirm"
+    assert payload["agent_ready_card"]["refresh_command"] == "agentdeck agent refresh"
+    assert payload["agent_ready_card"]["dispatch_ready_command"] == "agentdeck approval dispatch-ready --confirm"
+    assert payload["agent_ready_card"]["runtime_card"] == payload["runtime_card"]
     assert payload["ledger_card"]["messages"]["count"] == 1
     assert payload["ledger_card"]["messages"]["items"][0]["trace_command"] == "agentdeck trace --id msg_workbench"
     assert payload["ledger_card"]["jobs"]["count"] == 1

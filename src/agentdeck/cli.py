@@ -721,6 +721,7 @@ def _workbench_snapshot_payload(
     leader_card = _workbench_leader_card(project_view)
     provider_health = _workbench_provider_health(project_view)
     runtime_card = _workbench_runtime_card(project_view)
+    agent_ready_card = _agent_ready_card_payload(project_view)
     role_card = _workbench_role_card(project_view)
     ledger_card = _workbench_ledger_card(project_view)
     lineage_card = _workbench_lineage_card(project_view, inbox_card, leader_inbox_card)
@@ -741,6 +742,7 @@ def _workbench_snapshot_payload(
         "leader_card": leader_card,
         "provider_health": provider_health,
         "runtime_card": runtime_card,
+        "agent_ready_card": agent_ready_card,
         "role_card": role_card,
         "ledger_card": ledger_card,
         "lineage_card": lineage_card,

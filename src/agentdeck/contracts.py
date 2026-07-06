@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 from .models import PROJECT_VIEW_SCHEMA_VERSION
@@ -573,6 +574,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "leader_card",
     "provider_health",
     "runtime_card",
+    "agent_ready_card",
     "role_card",
     "ledger_card",
     "lineage_card",
@@ -1683,6 +1685,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "control_mode_control_fields": list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
+        "agent_ready_card_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
         "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
         "runtime_control_fields": list(WORKBENCH_RUNTIME_CONTROL_FIELDS),
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
@@ -3276,7 +3279,9 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
     elif "provider_health" in payload:
         errors.append("provider_health must be an object")
     runtime_card = payload.get("runtime_card")
+    runtime_card_is_valid = False
     if isinstance(runtime_card, dict):
+        runtime_error_count = len(errors)
         for field in WORKBENCH_RUNTIME_CARD_FIELDS:
             if field not in runtime_card:
                 errors.append(f"missing runtime_card field: {field}")
@@ -3304,8 +3309,16 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
                     errors.append("runtime_card.agents items must be objects")
         elif "agents" in runtime_card:
             errors.append("runtime_card.agents must be a list")
+        runtime_card_is_valid = len(errors) == runtime_error_count
     elif "runtime_card" in payload:
         errors.append("runtime_card must be an object")
+    agent_ready_card = payload.get("agent_ready_card")
+    if isinstance(agent_ready_card, dict):
+        _validate_agent_ready_card_contract(errors, agent_ready_card)
+        if runtime_card_is_valid and agent_ready_card.get("runtime_card") != runtime_card:
+            errors.append("agent_ready_card.runtime_card must match runtime_card")
+    elif "agent_ready_card" in payload:
+        errors.append("agent_ready_card must be an object")
     role_card = payload.get("role_card")
     if isinstance(role_card, dict):
         for field in WORKBENCH_ROLE_CARD_FIELDS:
@@ -4185,6 +4198,47 @@ def leader_provider_controls(current_provider: str) -> list[dict[str, object]]:
     return controls
 
 
+def _agent_ready_card_from_runtime_card(runtime_card: dict[str, object]) -> dict[str, object]:
+    agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
+    running_count = 0
+    spawn_commands: list[str] = []
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        if agent.get("status") == "running" and agent.get("pane_id"):
+            running_count += 1
+            continue
+        spawn_command = agent.get("spawn_command")
+        if spawn_command:
+            spawn_commands.append(str(spawn_command))
+    total_count = len(agents)
+    not_running_count = total_count - running_count
+    spawn_ready_command = "agentdeck agent spawn-ready --confirm"
+    dispatch_ready_command = "agentdeck approval dispatch-ready --confirm"
+    next_command = (
+        spawn_ready_command
+        if len(spawn_commands) > 1
+        else spawn_commands[0]
+        if spawn_commands
+        else dispatch_ready_command
+    )
+    return {
+        "ok": True,
+        "mode": "agent_runtime_ready",
+        "runtime_backend": runtime_card.get("backend"),
+        "total_count": total_count,
+        "running_count": running_count,
+        "not_running_count": not_running_count,
+        "all_running": not_running_count == 0,
+        "next_command": next_command,
+        "spawn_commands": spawn_commands,
+        "spawn_ready_command": spawn_ready_command,
+        "refresh_command": runtime_card.get("refresh_command"),
+        "dispatch_ready_command": dispatch_ready_command,
+        "runtime_card": runtime_card,
+    }
+
+
 def workbench_example() -> dict[str, object]:
     project_view = project_view_example()
     leader_action = project_view["leader_actions"]["items"][0]
@@ -4628,6 +4682,8 @@ def workbench_example() -> dict[str, object]:
             "new_events": [],
         },
     }
+    payload["agent_ready_card"] = _agent_ready_card_from_runtime_card(deepcopy(payload["runtime_card"]))
+    payload = {field: payload[field] for field in WORKBENCH_SNAPSHOT_FIELDS}
     payload["control_registry"] = workbench_control_registry(payload)
     return payload
 
