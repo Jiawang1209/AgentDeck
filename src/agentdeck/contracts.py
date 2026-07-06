@@ -573,6 +573,7 @@ CONTROL_REGISTRY_FILTER_FIELDS = (
     "query",
     "control_id",
     "enabled_only",
+    "active_filter_keys",
     "item_count_before_filter",
 )
 
@@ -1612,6 +1613,13 @@ def leader_chat_control_registry_card(
             "query": query,
             "control_id": control_id,
             "enabled_only": enabled_only,
+            "active_filter_keys": _control_registry_active_filter_keys(
+                scope=scope,
+                card=card,
+                query=query,
+                control_id=control_id,
+                enabled_only=enabled_only,
+            ),
             "item_count_before_filter": len(source_items),
         },
         "selection": selection,
@@ -1620,6 +1628,28 @@ def leader_chat_control_registry_card(
         "group_count": len(groups),
         "groups": groups,
     }
+
+
+def _control_registry_active_filter_keys(
+    *,
+    scope: str | None,
+    card: str | None,
+    query: str | None,
+    control_id: str | None,
+    enabled_only: bool,
+) -> list[str]:
+    keys: list[str] = []
+    if scope is not None:
+        keys.append("scope")
+    if card is not None:
+        keys.append("card")
+    if query is not None:
+        keys.append("query")
+    if control_id is not None:
+        keys.append("control_id")
+    if enabled_only:
+        keys.append("enabled_only")
+    return keys
 
 
 def _filter_control_registry_items(
@@ -3344,6 +3374,25 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
             errors.append("control_registry_card.filters.control_id must be a string or null")
         if "enabled_only" in filters and not isinstance(filters.get("enabled_only"), bool):
             errors.append("control_registry_card.filters.enabled_only must be a boolean")
+        if "active_filter_keys" in filters and not isinstance(filters.get("active_filter_keys"), list):
+            errors.append("control_registry_card.filters.active_filter_keys must be a list")
+        if isinstance(filters.get("active_filter_keys"), list):
+            active_filter_keys = filters["active_filter_keys"]
+            allowed_filter_keys = {"scope", "card", "query", "control_id", "enabled_only"}
+            if not all(isinstance(key, str) for key in active_filter_keys):
+                errors.append("control_registry_card.filters.active_filter_keys must contain strings")
+            elif any(key not in allowed_filter_keys for key in active_filter_keys):
+                errors.append("control_registry_card.filters.active_filter_keys contains unknown filter key")
+            else:
+                expected_filter_keys = _control_registry_active_filter_keys(
+                    scope=filters.get("scope") if isinstance(filters.get("scope"), str) else None,
+                    card=filters.get("card") if isinstance(filters.get("card"), str) else None,
+                    query=filters.get("query") if isinstance(filters.get("query"), str) else None,
+                    control_id=filters.get("control_id") if isinstance(filters.get("control_id"), str) else None,
+                    enabled_only=filters.get("enabled_only") is True,
+                )
+                if active_filter_keys != expected_filter_keys:
+                    errors.append("control_registry_card.filters.active_filter_keys must match active filters")
         if "item_count_before_filter" in filters and not isinstance(filters.get("item_count_before_filter"), int):
             errors.append("control_registry_card.filters.item_count_before_filter must be an integer")
         if isinstance(filters.get("item_count_before_filter"), int) and isinstance(

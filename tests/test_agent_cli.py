@@ -2916,6 +2916,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "query": None,
         "control_id": None,
         "enabled_only": True,
+        "active_filter_keys": ["scope", "enabled_only"],
         "item_count_before_filter": 45,
     }
     assert payload["item_count"] == len(payload["items"])
@@ -2944,6 +2945,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "query": "terminal",
         "control_id": None,
         "enabled_only": False,
+        "active_filter_keys": ["query"],
         "item_count_before_filter": 45,
     }
     assert payload["item_count"] == len(payload["items"])
@@ -2982,6 +2984,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "query": None,
         "control_id": control_id,
         "enabled_only": False,
+        "active_filter_keys": ["control_id"],
         "item_count_before_filter": 45,
     }
     assert payload["item_count"] == 1
@@ -3014,6 +3017,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "query": None,
         "control_id": "missing:control",
         "enabled_only": False,
+        "active_filter_keys": ["control_id"],
         "item_count_before_filter": 45,
     }
     assert payload["item_count"] == 0
@@ -3052,6 +3056,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "query": None,
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
+        "active_filter_keys": ["control_id", "enabled_only"],
         "item_count_before_filter": 45,
     }
     assert payload["items"] == []

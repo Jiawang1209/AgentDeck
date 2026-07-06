@@ -310,6 +310,7 @@ def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> No
         "query",
         "control_id",
         "enabled_only",
+        "active_filter_keys",
         "item_count_before_filter",
     ]
     assert payload["workbench_contract"] == "agentdeck contract workbench"
@@ -338,6 +339,7 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
         "query": None,
         "control_id": None,
         "enabled_only": False,
+        "active_filter_keys": [],
         "item_count_before_filter": len(example["items"]),
     }
     assert example["item_count"] == len(example["items"])
@@ -401,6 +403,18 @@ def test_validate_control_registry_card_contract_requires_filter_fields() -> Non
     }
 
 
+def test_validate_control_registry_card_contract_requires_active_filter_keys_consistency() -> None:
+    payload = controls_example()
+    payload["filters"]["active_filter_keys"] = ["enabled_only"]
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.filters.active_filter_keys must match active filters"],
+    }
+
+
 def test_validate_control_registry_card_contract_requires_selection_fields() -> None:
     payload = controls_example()
     del payload["selection"]["matched_count"]
@@ -435,6 +449,7 @@ def test_control_registry_selection_marks_existing_control_id_filtered_out() -> 
         enabled_only=True,
     )
 
+    assert payload["filters"]["active_filter_keys"] == ["control_id", "enabled_only"]
     assert payload["items"] == []
     assert payload["selection"] == {
         "requested_control_id": disabled_item["control_id"],
@@ -1017,6 +1032,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
         "query",
         "control_id",
         "enabled_only",
+        "active_filter_keys",
         "item_count_before_filter",
     ]
 

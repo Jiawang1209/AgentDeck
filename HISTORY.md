@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add command palette active filter keys
+
+- 扩展 `control_registry_card.filters`：新增只读 `active_filter_keys` 字段，按 `scope`、`card`、`query`、`control_id`、`enabled_only` 稳定顺序列出当前生效过滤器，供 GUI/TUI 和自然语言壳直接渲染过滤 chip，而不需要从 raw filter values 反推。
+- 扩展 `leader_chat_control_registry_card()`：`agentdeck controls` 与 `agentdeck leader chat --message "命令面板 ..."` 的嵌入命令面板都返回同一份 active filter metadata；字段仍只描述只读投影，不写 state、不调用 provider、不读取 pane、不授权或执行任何 control。
+- 扩展 `validate_control_registry_card_contract()`：要求 filters 包含 `active_filter_keys`，校验其类型、允许的 key，并拒绝和实际 filter values 不一致的 payload，避免 GUI 契约漂移。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/controls-schema.md` 和 `docs/contracts/leader-chat-schema.md`，明确 active filter keys 是 GUI 过滤状态元数据，不是执行策略或授权来源。
+- 验证记录：已先确认红测失败，contract example、validator、live `agentdeck controls --scope runtime --enabled-only` 和 Leader help 嵌入命令面板最初都缺少或不校验 `filters.active_filter_keys`；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_control_registry_card_contract_requires_active_filter_keys_consistency tests/test_contracts.py::test_control_registry_selection_marks_existing_control_id_filtered_out tests/test_agent_cli.py::test_controls_filters_by_scope_and_enabled_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_filters_command_palette_without_planning -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 366 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 390 项通过。
+
 ### Current - Distinguish filtered command palette selections
 
 - 调整 `control_registry_card.selection.blocker`：当请求的 `control_id` 在源 `control_registry[]` 中存在、但被当前 scope/card/query/enabled-only 过滤条件排除时，返回 `control_id filtered out`；只有源 registry 中不存在该 id 时才返回 `control_id not found`。
