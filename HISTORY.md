@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate workbench queue source alignment
+
+- 收紧 Workbench queue card 契约：`validate_workbench_contract()` 现在要求 `queue_card.leader_actions`、`queue_card.approvals` 和 `queue_card.inbox` 的摘要字段匹配同一份 `project_view` snapshot，不再只检查这些 section 是 object。
+- `leader_actions.count/pending/recommended_action_id`、`approvals.count/pending/approved`、`inbox.total/by_agent` 都必须与 ProjectView 同源，确保 GUI/TUI 状态栏不会显示与详细队列卡不一致的数字。
+- 同步 Workbench schema、AGENT/CLAUDE 约束，明确 `queue_card` 是只读 queue overview，不是第二套队列状态源，也不授权执行。
+- 保持控制边界：该校验只拒绝漂移 Workbench payload，不创建 plan/action/approval/message/job/inbox、不 ack/approve/dispatch、不 capture reply、不读取 pane、不发送 tmux 输入、不写 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许 `queue_card.leader_actions.count=99` 与 `project_view.leader_actions.count` 不一致通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_workbench_contract_requires_queue_card_to_match_project_view_counts tests/test_contracts.py::test_validate_workbench_contract_requires_queue_fields tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 4 项通过；真实 workbench 队列回归 6 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 427 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 453 项通过。
+
 ### Current - Validate workbench lineage counts
 
 - 收紧 Workbench lineage card 契约：`validate_workbench_contract()` 现在要求 `lineage_card.message_count`、`job_count`、`reply_count` 和 `inbox_count` 分别覆盖 `recent_paths[]` 中携带对应 id 的路径数，不再只检查 count 字段是整数。

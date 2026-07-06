@@ -3272,10 +3272,41 @@ def _validate_terminal_session_card_contract(
 def _validate_queue_card_contract(errors: list[str], queue_card: dict[str, object], *, prefix: str) -> None:
     for field in WORKBENCH_QUEUE_CARD_FIELDS:
         if field not in queue_card:
-            errors.append(f"{prefix}: missing queue_card field: {field}")
+            errors.append(_prefixed_contract_error(prefix, f"missing queue_card field: {field}"))
     for section in ("leader_actions", "approvals", "inbox"):
         if section in queue_card and not isinstance(queue_card.get(section), dict):
-            errors.append(f"{prefix}: queue_card.{section} must be an object")
+            errors.append(_prefixed_contract_error(prefix, f"queue_card.{section} must be an object"))
+
+
+def _validate_queue_card_project_view_alignment(
+    errors: list[str], queue_card: dict[str, object], project_view: dict[str, object]
+) -> None:
+    leader_actions = queue_card.get("leader_actions")
+    project_leader_actions = project_view.get("leader_actions")
+    if isinstance(leader_actions, dict) and isinstance(project_leader_actions, dict):
+        leader_status = project_leader_actions.get("by_status")
+        expected_pending = leader_status.get("pending", 0) if isinstance(leader_status, dict) else 0
+        for field, expected_value in (
+            ("count", project_leader_actions.get("count")),
+            ("pending", expected_pending),
+            ("recommended_action_id", project_leader_actions.get("recommended_action_id")),
+        ):
+            if field in leader_actions and leader_actions.get(field) != expected_value:
+                errors.append(f"queue_card.leader_actions.{field} must match project_view.leader_actions.{field}")
+
+    approvals = queue_card.get("approvals")
+    project_approvals = project_view.get("approvals")
+    if isinstance(approvals, dict) and isinstance(project_approvals, dict):
+        for field in ("count", "pending", "approved"):
+            if field in approvals and approvals.get(field) != project_approvals.get(field):
+                errors.append(f"queue_card.approvals.{field} must match project_view.approvals.{field}")
+
+    inbox = queue_card.get("inbox")
+    project_inbox = project_view.get("inbox")
+    if isinstance(inbox, dict) and isinstance(project_inbox, dict):
+        for field in ("total", "by_agent"):
+            if field in inbox and inbox.get(field) != project_inbox.get(field):
+                errors.append(f"queue_card.inbox.{field} must match project_view.inbox.{field}")
 
 
 def _validate_operator_card_contract(errors: list[str], operator_card: dict[str, object], *, prefix: str) -> None:
@@ -5074,18 +5105,15 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         errors.append("lineage_card must be an object")
     queue_card = payload.get("queue_card")
     if isinstance(queue_card, dict):
-        for field in WORKBENCH_QUEUE_CARD_FIELDS:
-            if field not in queue_card:
-                errors.append(f"missing queue_card field: {field}")
+        _validate_queue_card_contract(errors, queue_card, prefix="")
         if "active_queue_source" in queue_card and payload.get("active_queue_source") != queue_card.get(
             "active_queue_source"
         ):
             errors.append("active_queue_source must match queue_card.active_queue_source")
         if "next_command" in queue_card and payload.get("next_command") != queue_card.get("next_command"):
             errors.append("next_command must match queue_card.next_command")
-        for section in ("leader_actions", "approvals", "inbox"):
-            if section in queue_card and not isinstance(queue_card.get(section), dict):
-                errors.append(f"queue_card.{section} must be an object")
+        if isinstance(project_view, dict):
+            _validate_queue_card_project_view_alignment(errors, queue_card, project_view)
     elif "queue_card" in payload:
         errors.append("queue_card must be an object")
     operator_card = payload.get("operator_card")

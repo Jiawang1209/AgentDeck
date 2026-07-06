@@ -537,7 +537,7 @@ The card is configuration-only. It does not dispatch work or mutate roles; GUI c
 }
 ```
 
-The card summarizes queues only. GUI clients should use `leader_action`, `approval_card`, `inbox_card`, or the listed commands for details and explicit execution.
+The card summarizes queues only. Its `leader_actions`, `approvals`, and `inbox` summaries must match the same `project_view` snapshot, so GUI status bars do not drift from the detailed cards. GUI clients should use `leader_action`, `approval_card`, `inbox_card`, or the listed commands for details and explicit execution.
 
 ## Operator Card
 

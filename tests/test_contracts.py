@@ -2151,6 +2151,18 @@ def test_validate_workbench_contract_requires_queue_fields() -> None:
     assert result == {"ok": False, "errors": ["missing queue_card field: refresh_command"]}
 
 
+def test_validate_workbench_contract_requires_queue_card_to_match_project_view_counts() -> None:
+    payload = workbench_example()
+    payload["queue_card"]["leader_actions"]["count"] = 99
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["queue_card.leader_actions.count must match project_view.leader_actions.count"],
+    }
+
+
 def test_validate_workbench_contract_requires_operator_fields() -> None:
     payload = workbench_example()
     del payload["operator_card"]["controls"]
