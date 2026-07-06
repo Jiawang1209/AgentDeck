@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Add terminal session card to runtime recovery chat
+
+- 扩展 recovery-first `agentdeck leader chat --message "继续"`：当 ProjectView recovery 指向 stale runtime 时，响应现在在 `runtime_card` 之外同步返回同源顶层 `terminal_session_card`，供 GUI/TUI 在恢复页直接渲染项目级 tmux terminal strip。
+- 保持 `continue_card` 作为主恢复卡：`intent_card.embedded_card=continue_card`，并通过 `intent_card.secondary_embedded_cards=["runtime_card","terminal_session_card"]` 明确同响应 companion cards。
+- 扩展 `validate_leader_chat_contract()`：`secondary_embedded_cards` 引用 `runtime_card` 时，顶层必须实际存在该卡片；继续保留 terminal session 引用校验。
+- 保持控制边界：continue runtime recovery 不 attach tmux、不 select pane、不 refresh runtime、不 spawn/stop、不 capture/read pane、不 send input、不写 runtime state、不创建新的 leader action/message/job/inbox。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/leader-chat-schema.md`，明确恢复态 terminal session card 是 GUI contract，不是 runtime 执行许可。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "继续"` 的 stale runtime recovery 最初缺少顶层 `terminal_session_card`；validator 也最初未拒绝缺失的 secondary `runtime_card` 引用；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_continue_embeds_runtime_card_for_stale_runtime tests/test_contracts.py::test_validate_leader_chat_contract_rejects_missing_secondary_runtime_card tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 368 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 394 项通过。
+
 ### Current - Mark runtime terminal session as secondary intent card
 
 - 扩展 Leader chat `intent_card`：新增 `secondary_embedded_cards` 字段，用于告诉 GUI/TUI 同一响应中哪些 companion cards 应随主卡一起渲染，但不得作为第二套状态源或授权来源。

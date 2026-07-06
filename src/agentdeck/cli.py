@@ -125,7 +125,11 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
             embedded_card = card_name
             break
     secondary_embedded_cards: list[str] = []
+    if embedded_card == "continue_card" and payload.get("runtime_card") is not None:
+        secondary_embedded_cards.append("runtime_card")
     if embedded_card == "runtime_card" and payload.get("terminal_session_card") is not None:
+        secondary_embedded_cards.append("terminal_session_card")
+    if "runtime_card" in secondary_embedded_cards and payload.get("terminal_session_card") is not None:
         secondary_embedded_cards.append("terminal_session_card")
     route_source = "provider_plan" if mode in {"plan", "run_start"} else "state_review" if mode in {"review", "summary"} else "local_rule"
     action_kind = explanation.get("action_kind")
@@ -5187,6 +5191,11 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             if isinstance(recommended_action, dict) and recommended_action.get("source") == "runtime"
             else None
         )
+        terminal_session_card = (
+            _workbench_terminal_session_card(config, runtime_card)
+            if isinstance(runtime_card, dict)
+            else None
+        )
         trace_card = (
             _trace_card_for_query(store, recommended_action.get("target_id"))
             if isinstance(recommended_action, dict) and recommended_action.get("source") == "reply"
@@ -5216,6 +5225,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "inbox_card": inbox_card,
             "approval_card": approval_card,
             "runtime_card": runtime_card,
+            "terminal_session_card": terminal_session_card,
             "queue_card": None,
             "operator_card": None,
             "role_card": None,

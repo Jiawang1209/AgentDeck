@@ -3018,6 +3018,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             if intent_card.get("embedded_card") in secondary_embedded_cards:
                 errors.append("intent_card.secondary_embedded_cards must not repeat embedded_card")
             if (
+                "runtime_card" in secondary_embedded_cards
+                and payload.get("runtime_card") is None
+            ):
+                errors.append("intent_card.secondary_embedded_cards references missing runtime_card")
+            if (
                 "terminal_session_card" in secondary_embedded_cards
                 and payload.get("terminal_session_card") is None
             ):

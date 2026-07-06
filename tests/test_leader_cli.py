@@ -1227,6 +1227,14 @@ def test_leader_chat_continue_embeds_runtime_card_for_stale_runtime(tmp_path, mo
         "enabled": True,
         "blocker": None,
     }
+    assert payload["terminal_session_card"]["mode"] == "terminal_session"
+    assert payload["terminal_session_card"]["running_count"] == 0
+    assert payload["terminal_session_card"]["refresh_command"] == "agentdeck agent refresh"
+    assert payload["terminal_session_card"]["terminals"][0]["agent_id"] == "planner"
+    assert payload["terminal_session_card"]["terminals"][0]["enabled"] is False
+    assert payload["terminal_session_card"]["terminals"][0]["blocker"] == "agent is not running"
+    assert payload["intent_card"]["embedded_card"] == "continue_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["runtime_card", "terminal_session_card"]
     assert payload["inbox_card"] is None
     assert payload["approval_card"] is None
     assert payload["leader_explanation"]["action_kind"] == "runtime"

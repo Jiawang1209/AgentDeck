@@ -2654,6 +2654,19 @@ def test_validate_leader_chat_contract_reports_missing_intent_card_field() -> No
     assert result == {"ok": False, "errors": ["missing intent_card field: route_source"]}
 
 
+def test_validate_leader_chat_contract_rejects_missing_secondary_runtime_card() -> None:
+    payload = leader_chat_example()
+    payload["runtime_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = ["runtime_card"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card.secondary_embedded_cards references missing runtime_card"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_intent_next_command_match() -> None:
     payload = leader_chat_example()
     payload["intent_card"]["next_command"] = "agentdeck workbench"
