@@ -799,6 +799,8 @@ def test_leader_chat_setup_intent_surfaces_provider_diagnostics_without_planning
         "model": "deepseek-chat",
         "approval_mode": "confirm",
         "api_backed": True,
+        "provider_backend": "api",
+        "provider_transport": "http",
         "supported": True,
         "ready": False,
         "missing_env": ["DEEPSEEK_API_KEY"],

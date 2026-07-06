@@ -411,6 +411,8 @@ DOCTOR_CONFIGURED_LEADER_FIELDS = (
     "provider",
     "model",
     "approval_mode",
+    "provider_backend",
+    "provider_transport",
     "ready",
     "supported",
     "missing_env",
@@ -422,6 +424,8 @@ DOCTOR_CONFIGURED_LEADER_FIELDS = (
 DOCTOR_PROVIDER_CHECK_FIELDS = (
     "ok",
     "detail",
+    "provider_backend",
+    "provider_transport",
     "command_path",
     "setup_commands",
 )
@@ -694,6 +698,8 @@ WORKBENCH_PROVIDER_HEALTH_FIELDS = (
     "model",
     "approval_mode",
     "api_backed",
+    "provider_backend",
+    "provider_transport",
     "supported",
     "ready",
     "missing_env",
@@ -3776,6 +3782,10 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("provider_health.supported must be a boolean")
         if "ready" in provider_health and not isinstance(provider_health.get("ready"), bool):
             errors.append("provider_health.ready must be a boolean")
+        if "provider_backend" in provider_health and not isinstance(provider_health.get("provider_backend"), str):
+            errors.append("provider_health.provider_backend must be a string")
+        if "provider_transport" in provider_health and not isinstance(provider_health.get("provider_transport"), str):
+            errors.append("provider_health.provider_transport must be a string")
         if "missing_env" in provider_health and not isinstance(provider_health.get("missing_env"), list):
             errors.append("provider_health.missing_env must be a list")
         if "setup_commands" in provider_health and not isinstance(provider_health.get("setup_commands"), list):
@@ -4401,6 +4411,8 @@ def doctor_example() -> dict[str, object]:
             "provider": "deepseek",
             "model": "deepseek-chat",
             "approval_mode": "confirm",
+            "provider_backend": "api",
+            "provider_transport": "http",
             "ready": False,
             "supported": True,
             "missing_env": ["DEEPSEEK_API_KEY"],
@@ -4415,6 +4427,8 @@ def doctor_example() -> dict[str, object]:
         "deepseek": {
             "ok": False,
             "detail": "DEEPSEEK_API_KEY is not set; provider calls are disabled",
+            "provider_backend": "api",
+            "provider_transport": "http",
             "command_path": None,
             "setup_commands": [
                 'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
@@ -4425,6 +4439,8 @@ def doctor_example() -> dict[str, object]:
         "openai_compatible": {
             "ok": False,
             "detail": "AGENTDECK_LEADER_API_KEY is not set; provider calls are disabled",
+            "provider_backend": "api",
+            "provider_transport": "http",
             "command_path": None,
             "setup_commands": [
                 'export AGENTDECK_LEADER_API_KEY="<your-provider-api-key>"',
@@ -4435,12 +4451,16 @@ def doctor_example() -> dict[str, object]:
         "codex_cli": {
             "ok": True,
             "detail": "codex is available",
+            "provider_backend": "cli",
+            "provider_transport": "subprocess",
             "command_path": "/usr/local/bin/codex",
             "setup_commands": ["codex login", "codex doctor"],
         },
         "claude_cli": {
             "ok": False,
             "detail": "claude is not found on PATH",
+            "provider_backend": "cli",
+            "provider_transport": "subprocess",
             "command_path": None,
             "setup_commands": ["claude auth", "claude doctor"],
         },
@@ -4917,6 +4937,8 @@ def workbench_example() -> dict[str, object]:
             "model": "fake-plan",
             "approval_mode": "confirm",
             "api_backed": False,
+            "provider_backend": "local",
+            "provider_transport": "local",
             "supported": True,
             "ready": True,
             "missing_env": [],

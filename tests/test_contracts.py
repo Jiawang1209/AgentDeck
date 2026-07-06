@@ -1096,6 +1096,8 @@ def test_doctor_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None
         "provider",
         "model",
         "approval_mode",
+        "provider_backend",
+        "provider_transport",
         "ready",
         "supported",
         "missing_env",
@@ -1103,7 +1105,14 @@ def test_doctor_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None
         "command_path",
         "setup_commands",
     ]
-    assert payload["provider_check_fields"] == ["ok", "detail", "command_path", "setup_commands"]
+    assert payload["provider_check_fields"] == [
+        "ok",
+        "detail",
+        "provider_backend",
+        "provider_transport",
+        "command_path",
+        "setup_commands",
+    ]
     assert payload["workbench_contract"] == "agentdeck contract workbench"
     assert payload["leader_chat_contract"] == "agentdeck contract leader-chat"
     assert payload["leader_review_contract"] == "agentdeck contract leader-review"
@@ -1217,6 +1226,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["control_mode_control_fields"] == list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS)
     assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert "command_path" in payload["provider_health_fields"]
+    assert "provider_backend" in payload["provider_health_fields"]
+    assert "provider_transport" in payload["provider_health_fields"]
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
     assert payload["terminal_session_card_fields"] == list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS)
@@ -1332,6 +1343,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert terminal_session_item["command"] == "agentdeck agent refresh"
     assert terminal_session_item["safety"] == "explicit_runtime"
     assert set(example["provider_health"]) == set(WORKBENCH_PROVIDER_HEALTH_FIELDS)
+    assert example["provider_health"]["provider_backend"] == "local"
+    assert example["provider_health"]["provider_transport"] == "local"
     assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert example["runtime_card"]["agents"][0]["capture_command"] == (
@@ -1607,6 +1620,22 @@ def test_validate_workbench_contract_requires_provider_health_booleans() -> None
     result = validate_workbench_contract(payload)
 
     assert result == {"ok": False, "errors": ["provider_health.ready must be a boolean"]}
+
+
+def test_validate_workbench_contract_requires_provider_health_provenance_strings() -> None:
+    payload = workbench_example()
+    payload["provider_health"]["provider_backend"] = ["api"]
+    payload["provider_health"]["provider_transport"] = ["http"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "provider_health.provider_backend must be a string",
+            "provider_health.provider_transport must be a string",
+        ],
+    }
 
 
 def test_validate_workbench_contract_requires_provider_switch_control_safety() -> None:

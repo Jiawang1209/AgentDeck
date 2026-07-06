@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add provider health backend and transport provenance
+
+- 扩展 Leader provider setup/diagnostics provenance：`agentdeck doctor` 的 `configured_leader`、顶层 `deepseek` / `openai_compatible` / `codex_cli` / `claude_cli` checks，以及 workbench `provider_health` 现在都会暴露 `provider_backend` 和 `provider_transport`。
+- 复用统一映射：fake 为 `local/local`，DeepSeek 与 OpenAI-compatible 为 `api/http`，Codex CLI 与 Claude CLI 为 `cli/subprocess`，未知 legacy provider 为 `unknown/unknown`，避免 GUI 从 provider 名称自行反推调用通道。
+- 扩展 workbench/doctor contract fixture 和 validator：`provider_health_fields`、doctor configured leader fields、provider check fields 都包含 provenance 字段；`validate_workbench_contract()` 会拒绝非字符串 provider provenance。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/workbench-schema.md` 和 `docs/contracts/doctor-schema.md`，明确这些字段只用于 setup/GUI provenance，不是授权、dispatch 或 runtime 执行依据。
+- 验证记录：已先确认红测失败，workbench validator 最初不校验 provider provenance；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_doctor_reports_openai_compatible_provider_state tests/test_agent_cli.py::test_doctor_reports_codex_cli_leader_ready_from_local_command tests/test_agent_cli.py::test_leader_set_provider_updates_default_leader_config_and_records_event tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_marks_codex_cli_leader_as_local_cli_backed tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_provider_health_provenance_strings -q` 7 项通过；doctor/workbench 聚焦回归 11 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 367 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 393 项通过。
+
 ### Current - Add plan provider transport provenance
 
 - 扩展 plan provenance：保存后的 plan record、`agentdeck leader plan` 输出、ProjectView `plans.items[]`、`agentdeck plan list`、`run_start` 和 `run_progress` card 现在都会暴露 `provider_transport`，取值为 `local`、`http`、`subprocess` 或 `unknown`。
