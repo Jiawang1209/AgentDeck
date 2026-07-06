@@ -3446,6 +3446,17 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
     control_registry_card = payload.get("control_registry_card")
     if isinstance(control_registry_card, dict):
         _validate_control_registry_card_contract(errors, control_registry_card)
+        selection = control_registry_card.get("selection")
+        if (
+            explanation_action_kind == "provider_setup"
+            and isinstance(provider_setup_card, dict)
+            and isinstance(selection, dict)
+            and provider_setup_card.get("recommended_command") == payload.get("next_command")
+            and provider_setup_card.get("recommended_control_id") != selection.get("requested_control_id")
+        ):
+            errors.append(
+                "provider_setup_card.recommended_control_id must match control_registry_card.selection.requested_control_id"
+            )
     elif "control_registry_card" in payload and control_registry_card is not None:
         errors.append("control_registry_card must be an object")
     return {"ok": not errors, "errors": errors}

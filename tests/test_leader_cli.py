@@ -1045,6 +1045,37 @@ def test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_with
     assert state["chat_turns"][0]["action_kind"] == "provider_setup"
 
 
+def test_validate_leader_chat_contract_requires_provider_setup_registry_selection_to_match_recommended_control(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "配置 Codex CLI Leader"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    registry = payload["control_registry_card"]
+    registry["filters"]["control_id"] = None
+    registry["filters"]["active_filter_keys"] = ["scope", "query"]
+    registry["selection"] = {
+        "requested_control_id": None,
+        "matched": False,
+        "matched_count": 0,
+        "selected_control": None,
+        "blocker": None,
+        "next_command": None,
+    }
+
+    result = cli.validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "provider_setup_card.recommended_control_id must match control_registry_card.selection.requested_control_id"
+        ],
+    }
+
+
 def test_leader_chat_provider_setup_require_ready_intent_surfaces_guarded_followup(
     tmp_path, monkeypatch, capsys
 ) -> None:
