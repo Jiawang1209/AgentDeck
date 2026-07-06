@@ -158,6 +158,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("terminal_session_card")
     if embedded_card == "runtime_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
+    if embedded_card in ("queue_card", "operator_card") and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "provider_health" and payload.get("provider_setup_card") is not None:
         secondary_embedded_cards.append("provider_setup_card")
     if embedded_card == "provider_health" and payload.get("provider_switch_card") is not None:
@@ -7208,6 +7210,27 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         next_command = _queue_mode_next_command(continue_card, operator_card)
         queue_card["next_command"] = next_command
         operator_card["next_command"] = next_command
+        registry_source = {
+            "queue_card": queue_card,
+            "operator_card": operator_card,
+        }
+        registry_items = _workbench_control_registry(registry_source)
+        next_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("card") == "operator_card"
+                and item.get("command") == next_command
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="operator",
+            card="operator_card",
+            control_id=str(next_control_id) if next_control_id else None,
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -7231,6 +7254,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "runtime_card": None,
             "queue_card": queue_card,
             "operator_card": operator_card,
+            "control_registry_card": control_registry_card,
             "role_card": None,
             "ledger_card": None,
             "workbench_card": None,

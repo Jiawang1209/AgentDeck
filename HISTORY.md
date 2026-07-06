@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Surface queue operator control registry selection
+
+- 扩展自然语言 queue/operator 控制面：`agentdeck leader chat --message "查看队列"` / `"查看控制面"` 现在会附带过滤到 `operator_card` 的 `control_registry_card`。
+- 该 `control_registry_card.selection` 会选中与顶层 `next_command` 对应的 operator control；普通 Leader action queue 会选中 `kind=apply`，批量审批派发 queue 会选中 `kind=dispatch_ready`，且 `selection.next_command` 与顶层 `next_command` 对齐。
+- `intent_card.secondary_embedded_cards[]` 现在会在 queue/operator 模式列出 `control_registry_card`，让 GUI/TUI 可以同屏渲染主操作按钮和命令面板选中项，而不需要重新扫描 controls。
+- 同步 Leader chat schema、README、AGENT/CLAUDE 约束，明确该 registry 只是同源 operator projection，不是第二套队列状态源或执行授权。
+- 保持控制边界：该模式仍只记录 chat turn，不创建新的 `leader_actions[]`，不 apply action，不 approve/reject/dispatch，不 ack，不 refresh runtime，不读取 pane，不发送 tmux 输入，不写 runtime state。
+- 验证记录：已先确认红测失败，queue mode 最初返回 `control_registry_card=null`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching -q` 1 项通过；补充普通 action queue 和契约回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_queue_without_applying_action tests/test_leader_cli.py::test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 4 项通过；leader/contract 聚焦回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_queue_without_applying_action tests/test_leader_cli.py::test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_validate_control_registry_card_contract_accepts_example -q` 6 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 440 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 466 项通过。
+
 ### Current - Validate dispatch-ready operator control state
 
 - 收紧 Workbench `approval_dispatch_ready` operator 契约：当多条 approved approvals 被提升为批量派发入口时，`dispatch_ready` control 的 `enabled` 和 `blocker` 必须与同一张 `operator_card.blocker` 对齐。

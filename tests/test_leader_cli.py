@@ -2778,6 +2778,22 @@ def test_leader_chat_inspects_queue_without_applying_action(tmp_path, monkeypatc
     assert payload["operator_card"]["can_apply"] is True
     assert payload["operator_card"]["controls"][0]["command"] == payload["operator_card"]["preview_command"]
     assert payload["operator_card"]["controls"][1]["command"] == payload["next_command"]
+    assert payload["control_registry_card"]["filters"]["scope"] == "operator"
+    assert payload["control_registry_card"]["filters"]["card"] == "operator_card"
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
+    assert payload["control_registry_card"]["selection"]["selected_control"] == {
+        "control_id": payload["control_registry_card"]["selection"]["selected_control"]["control_id"],
+        "scope": "operator",
+        "card": "operator_card",
+        "kind": "apply",
+        "label": "Apply",
+        "command": payload["next_command"],
+        "safety": "safe_apply",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+    }
+    assert "control_registry_card" in payload["intent_card"]["secondary_embedded_cards"]
     assert payload["leader_explanation"]["mode"] == "queue"
     assert payload["leader_explanation"]["recommended_action_id"] == action_id
     assert payload["leader_explanation"]["action_kind"] == "leader_action"
@@ -2844,6 +2860,22 @@ def test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching(
     assert payload["operator_card"]["command"] == payload["next_command"]
     assert payload["operator_card"]["controls"][-1]["kind"] == "dispatch_ready"
     assert payload["operator_card"]["controls"][-1]["label"] == "Dispatch ready approvals"
+    assert payload["control_registry_card"]["filters"]["scope"] == "operator"
+    assert payload["control_registry_card"]["filters"]["card"] == "operator_card"
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
+    assert payload["control_registry_card"]["selection"]["selected_control"] == {
+        "control_id": payload["control_registry_card"]["selection"]["selected_control"]["control_id"],
+        "scope": "operator",
+        "card": "operator_card",
+        "kind": "dispatch_ready",
+        "label": "Dispatch ready approvals",
+        "command": "agentdeck approval dispatch-ready --confirm",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+    }
+    assert "control_registry_card" in payload["intent_card"]["secondary_embedded_cards"]
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
         "label": "Dispatch ready approvals",
