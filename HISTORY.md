@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add command palette selection blockers
+
+- 扩展 `control_registry_card.selection`：新增只读 `blocker` 字段，用于解释 `filters.control_id` 精确定位未命中的原因；未请求 control id 和成功命中时为 `null`，未命中时为 `control_id not found`。
+- 扩展 `validate_control_registry_card_contract()`：要求 selection 字段包含 blocker，要求未命中 control id 必须给出 blocker，并拒绝命中态携带 blocker，避免 GUI 在 selected_control 为空时自行猜测原因。
+- 同步 `agentdeck controls --control-id <id>` 与 `agentdeck leader chat --message "命令面板 control_id <id>"`：两条入口都返回同一份 selection blocker 语义，仍然只读、不写 state、不调用 provider、不读取 pane、不执行任何 control/ack。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/controls-schema.md` 和 `docs/contracts/leader-chat-schema.md`，明确 selection blocker 是 GUI/自然语言壳的选择态解释，不是授权或执行语义。
+- 验证记录：已先确认红测失败，contract discovery、contract example、live `agentdeck controls --control-id ...`、Leader help 嵌入命令面板和 validator 最初都缺少 `selection.blocker` 或未强制未命中 blocker；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_controls_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_control_registry_card_contract_requires_unmatched_selection_blocker tests/test_contracts.py::test_validate_control_registry_card_contract_rejects_matched_selection_blocker tests/test_agent_cli.py::test_controls_filters_by_control_id_without_mutating_state tests/test_agent_cli.py::test_controls_reports_unmatched_control_id_selection_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_filters_command_palette_by_control_id tests/test_leader_cli.py::test_leader_chat_help_reports_unmatched_control_id_selection -q` 8 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 360 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 384 项通过。
+
 ### Current - Add command palette selection metadata
 
 - 扩展 `control_registry_card`：新增顶层 `selection`，从 `filters.control_id` 和过滤后的 `items[]` 派生 requested_control_id、matched、matched_count 和 selected_control，方便 GUI/TUI 在命令面板中打开详情抽屉。

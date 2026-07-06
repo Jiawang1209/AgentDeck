@@ -2996,6 +2996,7 @@ def test_leader_chat_help_filters_command_palette_by_control_id(tmp_path, monkey
         "matched": True,
         "matched_count": 1,
         "selected_control": controls_payload["items"][0],
+        "blocker": None,
     }
     assert registry["groups"][0]["items"] == registry["items"]
 
@@ -3003,6 +3004,47 @@ def test_leader_chat_help_filters_command_palette_by_control_id(tmp_path, monkey
     assert state_after["chat_turns"][0]["mode"] == "help"
     assert state_after["plans"] == []
     assert state_after["leader_actions"] == []
+
+
+def test_leader_chat_help_reports_unmatched_control_id_selection(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "命令面板 control_id missing:control"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "help"
+    registry = payload["control_registry_card"]
+    assert registry["filters"] == {
+        "scope": None,
+        "card": None,
+        "query": None,
+        "control_id": "missing:control",
+        "enabled_only": False,
+        "item_count_before_filter": 45,
+    }
+    assert registry["items"] == []
+    assert registry["groups"] == []
+    assert registry["selection"] == {
+        "requested_control_id": "missing:control",
+        "matched": False,
+        "matched_count": 0,
+        "selected_control": None,
+        "blocker": "control_id not found",
+    }
+    assert payload["next_command"] == "agentdeck workbench"
+    assert payload["leader_explanation"]["action_kind"] == "help"
+
+    state_after = StateStore(root).load()
+    assert len(state_after["chat_turns"]) == len(before["chat_turns"]) + 1
+    assert state_after["chat_turns"][0]["mode"] == "help"
+    assert state_after["plans"] == before["plans"]
+    assert state_after["leader_actions"] == before["leader_actions"]
+    assert state_after["approvals"] == before["approvals"]
+    assert state_after["messages"] == before["messages"]
+    assert state_after["jobs"] == before["jobs"]
 
 
 def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:

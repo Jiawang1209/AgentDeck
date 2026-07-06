@@ -213,8 +213,16 @@ Help-mode also includes `control_registry_card`, a read-only command palette sna
     "scope": null,
     "card": null,
     "query": null,
+    "control_id": null,
     "enabled_only": false,
     "item_count_before_filter": 1
+  },
+  "selection": {
+    "requested_control_id": null,
+    "matched": false,
+    "matched_count": 0,
+    "selected_control": null,
+    "blocker": null
   },
   "item_count": 1,
   "items": [
@@ -227,7 +235,8 @@ Help-mode also includes `control_registry_card`, a read-only command palette sna
       "safety": "inspect",
       "enabled": true,
       "blocker": null,
-      "agent_id": "leader"
+      "agent_id": "leader",
+      "control_id": "leader:leader_card:continue:leader:7b40ec8c28"
     }
   ],
   "group_count": 1,
@@ -250,7 +259,8 @@ Help-mode also includes `control_registry_card`, a read-only command palette sna
           "safety": "inspect",
           "enabled": true,
           "blocker": null,
-          "agent_id": "leader"
+          "agent_id": "leader",
+          "control_id": "leader:leader_card:continue:leader:7b40ec8c28"
         }
       ]
     }
@@ -258,7 +268,7 @@ Help-mode also includes `control_registry_card`, a read-only command palette sna
 }
 ```
 
-Help-mode is returned when the human asks `帮助`, `help`, `/help`, `你能做什么`, `有哪些能力`, `命令面板`, `commands`, or `capabilities`. Command-palette messages may include the same read-only filter intent as `agentdeck controls`; for example, `命令面板 runtime enabled only` returns a `control_registry_card` with `filters.scope=runtime` and `filters.enabled_only=true`; `命令面板 搜索 terminal` returns `filters.query=terminal`; `命令面板 control_id <id>` returns `filters.control_id=<id>` and a `selection` object pointing at the matching stable control item. It records a chat turn, recommends `agentdeck workbench`, embeds `capability_card` and `control_registry_card`, and must not create a plan, leader action, approval, message, job, inbox item, inspect tmux panes, call the provider, or send tmux input. The capability entries, controls, registry items, filters, selection, and registry groups describe available commands; they are not permission to auto-run those commands. `control_registry_card.filters`, `control_registry_card.selection`, and `control_registry_card.groups[]` follow the same read-only projection contract as `agentdeck controls`: filters narrow the returned `items[]`, selection is derived from `filters.control_id` and `items[]`, then groups are derived from those filtered items.
+Help-mode is returned when the human asks `帮助`, `help`, `/help`, `你能做什么`, `有哪些能力`, `命令面板`, `commands`, or `capabilities`. Command-palette messages may include the same read-only filter intent as `agentdeck controls`; for example, `命令面板 runtime enabled only` returns a `control_registry_card` with `filters.scope=runtime` and `filters.enabled_only=true`; `命令面板 搜索 terminal` returns `filters.query=terminal`; `命令面板 control_id <id>` returns `filters.control_id=<id>` and a `selection` object pointing at the matching stable control item. If the requested id is not present in the filtered registry, `selection.matched=false`, `selection.selected_control=null`, and `selection.blocker="control_id not found"`. It records a chat turn, recommends `agentdeck workbench`, embeds `capability_card` and `control_registry_card`, and must not create a plan, leader action, approval, message, job, inbox item, inspect tmux panes, call the provider, or send tmux input. The capability entries, controls, registry items, filters, selection, and registry groups describe available commands; they are not permission to auto-run those commands. `control_registry_card.filters`, `control_registry_card.selection`, and `control_registry_card.groups[]` follow the same read-only projection contract as `agentdeck controls`: filters narrow the returned `items[]`, selection is derived from `filters.control_id` and `items[]`, then groups are derived from those filtered items.
 
 Continue-mode responses include `continue_card`, which reuses the same recovery card shape as `agentdeck continue`:
 

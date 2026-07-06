@@ -109,6 +109,7 @@ from agentdeck.contracts import (
     leader_actions_contract_payload,
     leader_actions_contract_response,
     leader_actions_example,
+    leader_chat_control_registry_card,
     leader_review_contract_payload,
     leader_review_contract_response,
     leader_review_example,
@@ -300,6 +301,7 @@ def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> No
         "matched",
         "matched_count",
         "selected_control",
+        "blocker",
     ]
     assert payload["control_registry_filter_fields"] == [
         "scope",
@@ -344,6 +346,7 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
         "matched": False,
         "matched_count": 0,
         "selected_control": None,
+        "blocker": None,
     }
     assert example["items"][0]["control_id"].startswith("leader:leader_card:chat:leader:")
     assert example["groups"][0]["items"][0]["control_id"] == example["items"][0]["control_id"]
@@ -405,6 +408,32 @@ def test_validate_control_registry_card_contract_requires_selection_fields() -> 
     assert result == {
         "ok": False,
         "errors": ["control_registry_card.selection: missing selection field: matched_count"],
+    }
+
+
+def test_validate_control_registry_card_contract_requires_unmatched_selection_blocker() -> None:
+    payload = leader_chat_control_registry_card(workbench_example(), control_id="missing:control")
+    payload["selection"]["blocker"] = None
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.selection: unmatched control_id requires blocker"],
+    }
+
+
+def test_validate_control_registry_card_contract_rejects_matched_selection_blocker() -> None:
+    payload = controls_example()
+    control_id = payload["items"][0]["control_id"]
+    payload = leader_chat_control_registry_card(workbench_example(), control_id=control_id)
+    payload["selection"]["blocker"] = "unexpected"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.selection: matched control_id must not include blocker"],
     }
 
 

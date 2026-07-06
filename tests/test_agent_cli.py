@@ -2990,9 +2990,41 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "matched": True,
         "matched_count": 1,
         "selected_control": first_payload["items"][0],
+        "blocker": None,
     }
     assert payload["group_count"] == 1
     assert payload["groups"][0]["items"] == payload["items"]
+    assert StateStore(root).load() == before
+
+
+def test_controls_reports_unmatched_control_id_selection_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.load()
+
+    exit_code = cli.main(["controls", "--control-id", "missing:control"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["filters"] == {
+        "scope": None,
+        "card": None,
+        "query": None,
+        "control_id": "missing:control",
+        "enabled_only": False,
+        "item_count_before_filter": 45,
+    }
+    assert payload["item_count"] == 0
+    assert payload["items"] == []
+    assert payload["group_count"] == 0
+    assert payload["groups"] == []
+    assert payload["selection"] == {
+        "requested_control_id": "missing:control",
+        "matched": False,
+        "matched_count": 0,
+        "selected_control": None,
+        "blocker": "control_id not found",
+    }
     assert StateStore(root).load() == before
 
 
