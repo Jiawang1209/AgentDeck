@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
 from pathlib import Path
 
@@ -737,6 +738,7 @@ WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS = (
     "enabled",
     "blocker",
     "agent_id",
+    "control_id",
 )
 
 AGENT_RUNTIME_AGENT_ITEM_FIELDS = (
@@ -1623,7 +1625,7 @@ def _filter_control_registry_items(
 
 
 def _control_registry_search_text(item: dict[str, object]) -> str:
-    searchable_fields = ("scope", "card", "kind", "label", "command", "agent_id")
+    searchable_fields = ("scope", "card", "kind", "label", "command", "agent_id", "control_id")
     return " ".join(str(item.get(field, "")) for field in searchable_fields).lower()
 
 
@@ -1673,6 +1675,27 @@ def _control_registry_group_label(scope: str, card: str) -> str:
         ("operator", "operator_card"): "Operator",
     }
     return labels.get((scope, card), card.replace("_", " ").strip().title() or scope.replace("_", " ").title())
+
+
+def control_registry_item_id(item: dict[str, object]) -> str:
+    scope = _control_registry_id_part(item.get("scope"))
+    card = _control_registry_id_part(item.get("card"))
+    kind = _control_registry_id_part(item.get("kind"))
+    agent_id = item.get("agent_id")
+    agent = _control_registry_id_part(agent_id) if agent_id is not None else "global"
+    fingerprint_fields = ("scope", "card", "kind", "agent_id", "label", "command")
+    fingerprint = "\x1f".join(str(item.get(field, "")) for field in fingerprint_fields)
+    digest = hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()[:10]
+    return f"{scope}:{card}:{kind}:{agent}:{digest}"
+
+
+def _control_registry_id_part(value: object) -> str:
+    text = str(value or "none").lower()
+    sanitized = "".join(
+        char if ("a" <= char <= "z" or "0" <= char <= "9" or char in "._-") else "_"
+        for char in text
+    )
+    return sanitized.strip("_") or "none"
 
 
 def leader_chat_action_card(action: dict[str, object]) -> dict[str, object]:
@@ -3261,6 +3284,8 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
     if isinstance(items, list):
         if control_registry_card.get("item_count") != len(items):
             errors.append("control_registry_card.item_count must match items length")
+        control_ids: set[str] = set()
+        duplicate_control_id = False
         for item in items:
             if not isinstance(item, dict):
                 errors.append("control_registry_card.items must be objects")
@@ -3268,6 +3293,14 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
             for field in WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS:
                 if field not in item:
                     errors.append(f"control_registry_card.items: missing item field: {field}")
+            control_id = item.get("control_id")
+            if "control_id" in item:
+                if not isinstance(control_id, str) or not control_id:
+                    errors.append("control_registry_card.items: control_id must be a non-empty string")
+                elif control_id in control_ids:
+                    duplicate_control_id = True
+                else:
+                    control_ids.add(control_id)
             if item.get("scope") == "provider" and item.get("kind") in {"set_provider", "guarded_set_provider"}:
                 if item.get("safety") != "explicit_user":
                     errors.append("control_registry_card.items: provider set_provider must use safety=explicit_user")
@@ -3323,6 +3356,8 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                         errors.append(
                             "control_registry_card.items: terminal_session refresh_runtime command must be agentdeck agent refresh"
                         )
+        if duplicate_control_id:
+            errors.append("control_registry_card.items: control_id values must be unique")
     elif "items" in control_registry_card:
         errors.append("control_registry_card.items must be a list")
     groups = control_registry_card.get("groups")
@@ -3523,6 +3558,8 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         errors.append("control_mode_card must be an object")
     control_registry = payload.get("control_registry")
     if isinstance(control_registry, list):
+        control_ids: set[str] = set()
+        duplicate_control_id = False
         for item in control_registry:
             if not isinstance(item, dict):
                 errors.append("control_registry items must be objects")
@@ -3530,10 +3567,20 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             for field in WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS:
                 if field not in item:
                     errors.append(f"missing control_registry item field: {field}")
+            control_id = item.get("control_id")
+            if "control_id" in item:
+                if not isinstance(control_id, str) or not control_id:
+                    errors.append("control_registry item control_id must be a non-empty string")
+                elif control_id in control_ids:
+                    duplicate_control_id = True
+                else:
+                    control_ids.add(control_id)
             if "enabled" in item and not isinstance(item.get("enabled"), bool):
                 errors.append("control_registry item enabled must be a boolean")
             if item.get("enabled") is False and not item.get("blocker"):
                 errors.append("disabled control_registry item requires blocker")
+        if duplicate_control_id:
+            errors.append("control_registry control_id values must be unique")
     elif "control_registry" in payload:
         errors.append("control_registry must be a list")
     provider_health = payload.get("provider_health")
@@ -4456,19 +4503,19 @@ def _append_control_registry_items(
     for control in controls:
         if not isinstance(control, dict):
             continue
-        registry.append(
-            {
-                "scope": scope,
-                "card": card,
-                "kind": control.get("kind"),
-                "label": control.get("label"),
-                "command": control.get("command"),
-                "safety": control.get("safety"),
-                "enabled": control.get("enabled"),
-                "blocker": control.get("blocker"),
-                "agent_id": agent_id,
-            }
-        )
+        item = {
+            "scope": scope,
+            "card": card,
+            "kind": control.get("kind"),
+            "label": control.get("label"),
+            "command": control.get("command"),
+            "safety": control.get("safety"),
+            "enabled": control.get("enabled"),
+            "blocker": control.get("blocker"),
+            "agent_id": agent_id,
+        }
+        item["control_id"] = control_registry_item_id(item)
+        registry.append(item)
 
 
 LEADER_PROVIDER_SWITCHES: tuple[tuple[str, str, str], ...] = (

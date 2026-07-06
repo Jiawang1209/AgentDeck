@@ -284,6 +284,7 @@ def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> No
     assert payload["contract_exists"] is True
     assert payload["control_registry_card_fields"] == list(CONTROL_REGISTRY_CARD_FIELDS)
     assert payload["control_registry_item_fields"] == list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
+    assert "control_id" in payload["control_registry_item_fields"]
     assert payload["control_registry_group_fields"] == [
         "group_id",
         "scope",
@@ -330,6 +331,8 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
     }
     assert example["item_count"] == len(example["items"])
     assert example["group_count"] == len(example["groups"])
+    assert example["items"][0]["control_id"].startswith("leader:leader_card:chat:leader:")
+    assert example["groups"][0]["items"][0]["control_id"] == example["items"][0]["control_id"]
     assert example["groups"][0] == {
         "group_id": "leader:leader_card",
         "scope": "leader",
@@ -376,6 +379,30 @@ def test_validate_control_registry_card_contract_requires_filter_fields() -> Non
     assert result == {
         "ok": False,
         "errors": ["control_registry_card.filters: missing filter field: enabled_only"],
+    }
+
+
+def test_validate_control_registry_card_contract_requires_control_id() -> None:
+    payload = controls_example()
+    del payload["items"][0]["control_id"]
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: missing item field: control_id"],
+    }
+
+
+def test_validate_control_registry_card_contract_requires_unique_control_id() -> None:
+    payload = controls_example()
+    payload["items"][1]["control_id"] = payload["items"][0]["control_id"]
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: control_id values must be unique"],
     }
 
 
@@ -1143,7 +1170,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         "enabled": False,
         "blocker": "requires message text",
         "agent_id": "leader",
+        "control_id": example["control_registry"][0]["control_id"],
     }
+    assert example["control_registry"][0]["control_id"].startswith("leader:leader_card:chat:leader:")
     assert {
         (item["scope"], item["card"], item["kind"], item["agent_id"])
         for item in example["control_registry"]

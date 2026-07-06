@@ -1613,6 +1613,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "enabled",
         "blocker",
         "agent_id",
+        "control_id",
     ]
     assert payload["project_view_contract"] == "agentdeck contract project-view"
     assert payload["continue_contract"] == "agentdeck contract continue"
@@ -2061,11 +2062,12 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             },
         ],
     }
-    assert [
+    terminal_session_controls = [
         item
         for item in payload["control_registry"]
         if item["scope"] == "terminal_session" and item["card"] == "terminal_session_card"
-    ] == [
+    ]
+    assert terminal_session_controls == [
         {
             "scope": "terminal_session",
             "card": "terminal_session_card",
@@ -2076,6 +2078,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             "enabled": True,
             "blocker": None,
             "agent_id": None,
+            "control_id": terminal_session_controls[0]["control_id"],
         },
         {
             "scope": "terminal_session",
@@ -2087,6 +2090,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             "enabled": True,
             "blocker": None,
             "agent_id": None,
+            "control_id": terminal_session_controls[1]["control_id"],
         },
         {
             "scope": "terminal_session",
@@ -2098,6 +2102,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             "enabled": True,
             "blocker": None,
             "agent_id": None,
+            "control_id": terminal_session_controls[2]["control_id"],
         },
     ]
     assert payload["ledger_card"]["messages"]["count"] == 1
@@ -2226,6 +2231,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "enabled": False,
         "blocker": "requires message text",
         "agent_id": "leader",
+        "control_id": payload["control_registry"][0]["control_id"],
     }
     provider_controls = [
         item
@@ -2242,6 +2248,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "enabled": True,
         "blocker": None,
         "agent_id": "leader",
+        "control_id": provider_controls[0]["control_id"],
     }
     assert any(item["command"].endswith("--provider codex-cli --model codex-default") for item in provider_controls)
     guarded_provider_controls = [
@@ -2270,6 +2277,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "enabled": False,
         "blocker": "requires role and role_prompt",
         "agent_id": "planner",
+        "control_id": role_controls[0]["control_id"],
     }
     assert {
         (item["scope"], item["card"], item["kind"], item["agent_id"])
@@ -2297,6 +2305,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "enabled": True,
         "blocker": None,
         "agent_id": "planner",
+        "control_id": inbox_ack_control["control_id"],
     }
     assert payload["audit_card"]["latest_event"] == payload["recovery"]["latest_event"]
     assert payload["audit_card"]["latest_event"]["event_type"] == "workbench_second_event"
@@ -2788,6 +2797,7 @@ def test_workbench_embeds_leader_inbox_card_when_worker_reply_returns_to_leader(
         "enabled": True,
         "blocker": None,
         "agent_id": "leader",
+        "control_id": leader_inbox_controls[-1]["control_id"],
     }
 
 
@@ -2816,6 +2826,11 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
         "disabled_count": 2,
         "items": payload["items"][:5],
     }
+    control_ids = [item["control_id"] for item in payload["items"]]
+    assert len(control_ids) == len(set(control_ids))
+    assert all(isinstance(control_id, str) and control_id for control_id in control_ids)
+    assert payload["items"][0]["control_id"].startswith("leader:leader_card:chat:leader:")
+    assert payload["groups"][0]["items"][0]["control_id"] == payload["items"][0]["control_id"]
     runtime_group = next(group for group in payload["groups"] if group["group_id"] == "runtime:runtime_card")
     assert runtime_group["label"] == "Runtime"
     assert len(runtime_group["items"]) == len([item for item in payload["items"] if item["scope"] == "runtime"])
@@ -2829,6 +2844,7 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
         "enabled": False,
         "blocker": "requires message text",
         "agent_id": "leader",
+        "control_id": payload["items"][0]["control_id"],
     }
     assert {
         (item["scope"], item["card"], item["kind"], item["agent_id"])
@@ -2851,6 +2867,7 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
         "enabled": False,
         "blocker": "already current mode",
         "agent_id": None,
+        "control_id": policy_item["control_id"],
     }
     approve_item = next(
         item
@@ -2879,6 +2896,7 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
         "enabled": False,
         "blocker": "requires role and role_prompt",
         "agent_id": "planner",
+        "control_id": role_items[0]["control_id"],
     }
     assert StateStore(root).load() == before
 
@@ -3007,6 +3025,7 @@ def test_controls_surfaces_dispatch_ready_operator_kind(tmp_path, monkeypatch, c
         "enabled": True,
         "blocker": None,
         "agent_id": None,
+        "control_id": dispatch_item["control_id"],
     }
     state_after = StateStore(root).load()
     assert state_after["messages"] == []

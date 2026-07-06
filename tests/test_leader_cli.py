@@ -2772,7 +2772,11 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "enabled": False,
         "blocker": "requires message text",
         "agent_id": "leader",
+        "control_id": payload["control_registry_card"]["items"][0]["control_id"],
     }
+    assert payload["control_registry_card"]["items"][0]["control_id"].startswith(
+        "leader:leader_card:chat:leader:"
+    )
     assert {
         (item["scope"], item["card"], item["kind"], item["agent_id"])
         for item in payload["control_registry_card"]["items"]

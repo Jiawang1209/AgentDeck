@@ -25,6 +25,7 @@ from .contracts import (
     approval_contract_response,
     artifacts_contract_response,
     contract_index_response,
+    control_registry_item_id,
     continue_contract_response,
     controls_contract_response,
     doctor_contract_response,
@@ -1014,19 +1015,20 @@ def _append_workbench_control_registry_items(
     for control in controls:
         if not isinstance(control, dict):
             continue
-        registry.append(
-            {
-                "scope": scope,
-                "card": card,
-                "kind": control.get("kind"),
-                "label": control.get("label"),
-                "command": control.get("command"),
-                "safety": control.get("safety"),
-                "enabled": control.get("enabled"),
-                "blocker": control.get("blocker"),
-                "agent_id": agent_id,
-            }
-        )
+        item = {
+            "scope": scope,
+            "card": card,
+            "kind": control.get("kind"),
+            "label": control.get("label"),
+            "command": control.get("command"),
+            "safety": control.get("safety"),
+            "enabled": control.get("enabled"),
+            "blocker": control.get("blocker"),
+            "agent_id": agent_id,
+        }
+        item["control_id"] = control_registry_item_id(item)
+        registry.append(item)
+
 
 def _workbench_change_summary(store: StateStore, since_event_id: str | None) -> dict[str, object]:
     events = store.list_events(1000000)

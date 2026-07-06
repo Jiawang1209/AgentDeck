@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add stable command palette control ids
+
+- 扩展 workbench `control_registry[]` / `agentdeck controls` / Leader help `control_registry_card`：每个命令面板 item 现在都有 deterministic `control_id`，从 scope、card、kind、agent_id、label 和 command 派生，供 GUI/TUI 用作稳定 render key 或审计关联键。
+- 扩展 controls/workbench contract：`control_registry_item_fields` 新增 `control_id`，`validate_control_registry_card_contract()` 与 `validate_workbench_contract()` 会拒绝缺失、空值或重复的 control id，避免 GUI 列表 key 漂移。
+- 保持人类控制边界：`control_id` 不是授权令牌，不会绕过 `enabled`、`safety` 或 `blocker`；`agentdeck controls` 和 help-mode 命令面板仍只投影同一次 workbench snapshot，不写 state、不调用 provider、不读取 pane、不执行任何 control。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/controls-schema.md` 和 `docs/contracts/workbench-schema.md`，明确 `control_id` 是 UI/审计稳定键，不是执行语义。
+- 验证记录：已先确认红测失败，contract discovery、contract example、live `agentdeck controls` 和 Leader help 嵌入命令面板最初都缺少 `control_id`；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_controls_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_control_registry_card_contract_requires_control_id tests/test_contracts.py::test_validate_control_registry_card_contract_requires_unique_control_id tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning -q` 6 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 353 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 377 项通过。
+
 ### Current - Search command palette controls
 
 - 扩展 `agentdeck controls`：新增只读 `--query <text>` 搜索过滤，按 control 的 scope、card、kind、label、command 和 agent_id 匹配命令面板项，方便 GUI/TUI 做命令面板搜索框。
