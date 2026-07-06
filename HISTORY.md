@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Route provider setup intents to control registry
+
+- 扩展 `agentdeck leader chat`：当用户输入 `"配置 Codex CLI Leader"`、`"登录 Codex CLI"`、`"安装 Claude CLI"` 等 provider setup 意图时，进入只读 `mode=setup`，而不是落入 provider-backed plan。
+- setup intent 现在返回当前 `provider_health`、provider-filtered `control_registry_card`、allowlist 中第一条 setup command 作为 `next_command`，并把 `leader_explanation.action_kind` 标记为 `provider_setup`。
+- 扩展 `intent_card`：provider setup 响应以 `provider_health` 为 embedded card，在 `secondary_embedded_cards` 中包含 `control_registry_card`，next control label 使用 `Run provider setup`，供 GUI 直接渲染修复按钮。
+- 扩展 `validate_leader_chat_contract()`：当 `intent_card.secondary_embedded_cards` 引用 `control_registry_card` 时，顶层必须存在对应卡片，避免自然语言路由和 GUI 卡片投影分叉。
+- 保持控制边界：provider setup intent 只记录 chat turn，不修改 `.agentdeck/config.toml`、不调用当前或目标 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "配置 Codex CLI Leader"` 最初进入 `mode=plan`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_without_planning tests/test_contracts.py::test_validate_leader_chat_contract_rejects_missing_secondary_control_registry_card -q` 2 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 388 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 414 项通过。
+
 ### Current - Surface provider setup commands in control registry
 
 - 扩展 `provider_health.controls[]`：每个 supported Leader provider 现在除了 `kind=set_provider` 和 `kind=guarded_set_provider`，还会暴露 `kind=setup_provider` controls，把 DeepSeek/OpenAI-compatible placeholder export、`codex login` / `codex doctor`、`claude auth` / `claude doctor` 变成 GUI/TUI 命令面板可发现的显式修复入口。

@@ -919,6 +919,62 @@ def test_leader_chat_setup_commands_never_expose_real_provider_key(
     assert "real-secret-key" not in rendered
 
 
+def test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_without_planning(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "配置 Codex CLI Leader"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "setup"
+    assert payload["message"] == "配置 Codex CLI Leader"
+    assert payload["next_command"] == "codex login"
+    assert payload["provider_switch_card"] is None
+    assert payload["provider_health"]["provider"] == "fake"
+    registry = payload["control_registry_card"]
+    assert registry["filters"]["scope"] == "provider"
+    assert registry["filters"]["query"] == "codex"
+    assert [item["command"] for item in registry["items"] if item["kind"] == "setup_provider"] == [
+        "codex login",
+        "codex doctor",
+    ]
+    assert payload["leader_explanation"] == {
+        "mode": "setup",
+        "summary": "Leader recommends explicit provider setup commands without mutating provider config.",
+        "reason": "human asked to configure a Leader provider",
+        "next_command": "codex login",
+        "recommended_action_id": "codex-cli",
+        "action_kind": "provider_setup",
+        "action_status": "suggested",
+        "safety": "explicit_user",
+        "requires_explicit_user": True,
+    }
+    assert payload["intent_card"]["embedded_card"] == "provider_health"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["intent_card"]["controls"][1] == {
+        "kind": "next",
+        "label": "Run provider setup",
+        "command": "codex login",
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+
+    state = StateStore(root).load()
+    assert state["plans"] == before["plans"]
+    assert state["leader_actions"] == before["leader_actions"]
+    assert state["approvals"] == before["approvals"]
+    assert state["messages"] == before["messages"]
+    assert state["jobs"] == before["jobs"]
+    assert state["chat_turns"][0]["mode"] == "setup"
+    assert state["chat_turns"][0]["next_command"] == "codex login"
+    assert state["chat_turns"][0]["action_kind"] == "provider_setup"
+
+
 def test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config(
     tmp_path, monkeypatch, capsys
 ) -> None:

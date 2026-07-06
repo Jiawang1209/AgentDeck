@@ -3164,6 +3164,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 and payload.get("provider_switch_card") is None
             ):
                 errors.append("intent_card.secondary_embedded_cards references missing provider_switch_card")
+            if (
+                "control_registry_card" in secondary_embedded_cards
+                and payload.get("control_registry_card") is None
+            ):
+                errors.append("intent_card.secondary_embedded_cards references missing control_registry_card")
         elif "secondary_embedded_cards" in intent_card:
             errors.append("intent_card.secondary_embedded_cards must be a list")
         recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}

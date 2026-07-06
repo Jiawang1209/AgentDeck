@@ -131,6 +131,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("terminal_session_card")
     if embedded_card == "provider_health" and payload.get("provider_switch_card") is not None:
         secondary_embedded_cards.append("provider_switch_card")
+    if embedded_card == "provider_health" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if "runtime_card" in secondary_embedded_cards and payload.get("terminal_session_card") is not None:
         secondary_embedded_cards.append("terminal_session_card")
     route_source = "provider_plan" if mode in {"plan", "run_start"} else "state_review" if mode in {"review", "summary"} else "local_rule"
@@ -208,6 +210,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Assign role"
     if re.fullmatch(r"agentdeck leader set-provider --provider [^\s]+ --model [^\s]+(?: --require-ready)?", command):
         return "Switch Leader provider"
+    if _provider_for_setup_command(command) is not None:
+        return "Run provider setup"
     approval_match = re.fullmatch(
         r"agentdeck approval (approve|reject|dispatch) --approval-id [^\s]+(?: --reason .+)?", command
     )
@@ -1319,6 +1323,13 @@ def _provider_setup_commands(provider: str) -> list[str]:
     if provider == "claude-cli":
         return ["claude auth", "claude doctor"]
     return []
+
+
+def _provider_for_setup_command(command: str) -> str | None:
+    for provider, _model, _label in LEADER_PROVIDER_SWITCHES:
+        if command in _provider_setup_commands(provider):
+            return provider
+    return None
 
 
 def _workbench_queue_card(
@@ -3749,6 +3760,40 @@ def _chat_wants_setup(message: str) -> bool:
     )
 
 
+def _chat_provider_setup_intent(message: str) -> tuple[str, str, str] | None:
+    normalized = message.strip().lower()
+    mentions_setup = any(
+        token in normalized
+        for token in [
+            "配置",
+            "设置",
+            "安装",
+            "登录",
+            "认证",
+            "setup",
+            "configure",
+            "install",
+            "login",
+            "auth",
+        ]
+    )
+    if not mentions_setup:
+        return None
+    aliases: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+        ("codex-cli", "codex", ("codex cli", "codex-cli", "codex")),
+        ("claude-cli", "claude", ("claude code", "claude cli", "claude-cli", "claude")),
+        ("deepseek", "deepseek", ("deepseek", "deep seek", "深度求索")),
+        ("openai-compatible", "openai", ("openai-compatible", "openai compatible", "openai兼容", "openai 兼容")),
+    )
+    for provider, query, provider_aliases in aliases:
+        if not any(alias in normalized for alias in provider_aliases):
+            continue
+        setup_commands = _provider_setup_commands(provider)
+        if setup_commands:
+            return provider, query, setup_commands[0]
+    return None
+
+
 def _chat_provider_switch_intent(message: str) -> tuple[str, str, bool] | None:
     normalized = message.strip().lower()
     mentions_switch = any(
@@ -4578,6 +4623,19 @@ def _leader_chat_explanation(
                 "recommended_action_id": provider_switch_match.group(1),
                 "action_kind": "provider_switch",
                 "action_status": "suggested" if provider_switch_match.group(1) != provider else "already_current",
+                "safety": "explicit_user",
+                "requires_explicit_user": True,
+            }
+        setup_provider = _provider_for_setup_command(str(next_command or ""))
+        if setup_provider is not None:
+            return {
+                "mode": mode,
+                "summary": "Leader recommends explicit provider setup commands without mutating provider config.",
+                "reason": "human asked to configure a Leader provider",
+                "next_command": next_command,
+                "recommended_action_id": setup_provider,
+                "action_kind": "provider_setup",
+                "action_status": "suggested",
                 "safety": "explicit_user",
                 "requires_explicit_user": True,
             }
@@ -5566,6 +5624,69 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "workbench_card": None,
             "provider_health": provider_health,
             "provider_switch_card": provider_switch_card,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    provider_setup_intent = _chat_provider_setup_intent(args.message)
+    if provider_setup_intent is not None:
+        target_provider, query, next_command = provider_setup_intent
+        turn = store.record_chat_turn(
+            mode="setup",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="provider_setup",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "setup",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        control_registry_workbench = _workbench_snapshot_payload(refreshed_project_view, store, since_event_id=None)
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "setup",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "setup",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
+            "provider_health": _workbench_provider_health(refreshed_project_view),
+            "control_registry_card": leader_chat_control_registry_card(
+                control_registry_workbench,
+                scope="provider",
+                query=query,
+            ),
+            "provider_switch_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
