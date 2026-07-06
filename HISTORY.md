@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Surface Leader backend identity on workbench
+
+- 扩展 `agentdeck workbench` 的 `leader_card`：现在直接暴露当前配置 provider/model 的 normalized `leader_backend`，让 GUI/TUI 在没有 plan 的情况下也能识别 fake、API-backed 或 CLI-backed Leader 来源。
+- 扩展 workbench contract 与 example：`leader_card_fields` 新增 `leader_backend`，`validate_workbench_contract()` 会拒绝缺失或非 logical Leader 的 backend identity，防止 GUI 顶层 Leader 卡片和 plan/run/review/summary provenance 分叉。
+- 保持控制边界：`leader_card.leader_backend` 只是只读显示与审计 provenance，不表示 tmux pane 绑定、provider readiness、dispatch permission 或执行授权；workbench 仍不调用 provider、不写 state、不读取 pane、不发送 tmux 输入。
+- 同步 `docs/contracts/workbench-schema.md`、README、AGENT.md 和 CLAUDE.md。
+- 验证记录：已先确认红测失败，`agentdeck contract workbench` 的 `leader_card_fields`、live `agentdeck workbench` 的 `leader_card`、Codex CLI Leader workbench 投影、workbench example 和 validator 最初都缺少 `leader_backend`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_workbench_marks_codex_cli_leader_as_local_cli_backed tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_leader_fields -q` 5 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 374 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 400 项通过。
+
 ### Current - Carry Leader backend identity through summary
 
 - 扩展 `agentdeck leader summary --plan-id <id>`：summary card 现在携带同源 normalized `leader_backend`，与 plan/start/review 阶段的逻辑 Leader 身份一致，方便 GUI/TUI 和审计面板区分 fake、API-backed 与 CLI-backed Leader 后端。

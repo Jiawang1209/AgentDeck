@@ -1460,6 +1460,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "model",
         "approval_mode",
         "api_backed",
+        "leader_backend",
         "chat_command",
         "continue_command",
         "review_command_template",
@@ -1752,6 +1753,19 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "model": "deepseek-chat",
         "approval_mode": "confirm",
         "api_backed": True,
+        "leader_backend": {
+            "agent_id": "leader",
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "provider_backend": "api",
+            "provider_transport": "http",
+            "reasoning_backend": "api-llm",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
         "chat_command": "agentdeck leader chat --message <text>",
         "continue_command": "agentdeck continue",
         "review_command_template": "agentdeck leader review --plan-id <plan_id>",
@@ -2637,6 +2651,19 @@ def test_workbench_marks_codex_cli_leader_as_local_cli_backed(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["leader_card"]["api_backed"] is False
+    assert payload["leader_card"]["leader_backend"] == {
+        "agent_id": "leader",
+        "provider": "codex-cli",
+        "model": "codex-default",
+        "provider_backend": "cli",
+        "provider_transport": "subprocess",
+        "reasoning_backend": "cli-subprocess",
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
     provider_health = payload["provider_health"]
     assert {key: value for key, value in provider_health.items() if key != "controls"} == {
         "agent_id": "leader",

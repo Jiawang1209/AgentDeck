@@ -646,6 +646,7 @@ WORKBENCH_LEADER_CARD_FIELDS = (
     "model",
     "approval_mode",
     "api_backed",
+    "leader_backend",
     "chat_command",
     "continue_command",
     "review_command_template",
@@ -3818,6 +3819,11 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
                 errors.append(f"missing leader_card field: {field}")
         if "api_backed" in leader_card and not isinstance(leader_card.get("api_backed"), bool):
             errors.append("leader_card.api_backed must be a boolean")
+        leader_backend = leader_card.get("leader_backend")
+        if isinstance(leader_backend, dict):
+            _validate_leader_backend(errors, "leader_card", leader_backend)
+        else:
+            errors.append("leader_card.leader_backend must be an object")
         controls = leader_card.get("controls")
         if isinstance(controls, list):
             for control in controls:
@@ -5039,6 +5045,19 @@ def workbench_example() -> dict[str, object]:
             "model": "fake-plan",
             "approval_mode": "confirm",
             "api_backed": False,
+            "leader_backend": {
+                "agent_id": "leader",
+                "provider": "fake",
+                "model": "fake-plan",
+                "provider_backend": "local",
+                "provider_transport": "local",
+                "reasoning_backend": "local-fake",
+                "runtime_kind": "logical_leader",
+                "pane_backed": False,
+                "pane_id": None,
+                "approval_required": True,
+                "dispatch_ready": False,
+            },
             "chat_command": "agentdeck leader chat --message <text>",
             "continue_command": "agentdeck continue",
             "review_command_template": "agentdeck leader review --plan-id <plan_id>",

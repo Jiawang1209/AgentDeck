@@ -1102,6 +1102,7 @@ def _workbench_leader_card(project_view: dict[str, object]) -> dict[str, object]
         "model": leader.get("model"),
         "approval_mode": leader.get("approval_mode"),
         "api_backed": provider in ("deepseek", "openai-compatible"),
+        "leader_backend": leader_backend_identity(provider, str(leader.get("model") or "")),
         "chat_command": "agentdeck leader chat --message <text>",
         "continue_command": "agentdeck continue",
         "review_command_template": "agentdeck leader review --plan-id <plan_id>",

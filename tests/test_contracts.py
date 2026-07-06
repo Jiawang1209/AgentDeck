@@ -1354,6 +1354,19 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
     assert set(example["leader_card"]) == set(WORKBENCH_LEADER_CARD_FIELDS)
+    assert example["leader_card"]["leader_backend"] == {
+        "agent_id": "leader",
+        "provider": "fake",
+        "model": "fake-plan",
+        "provider_backend": "local",
+        "provider_transport": "local",
+        "reasoning_backend": "local-fake",
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
     assert example["leader_card"]["review_command_template"] == "agentdeck leader review --plan-id <plan_id>"
     assert [control["kind"] for control in example["leader_card"]["controls"]] == [
         "chat",
@@ -1660,11 +1673,17 @@ def test_validate_workbench_contract_requires_terminal_session_select_pane_contr
 
 def test_validate_workbench_contract_requires_leader_fields() -> None:
     payload = workbench_example()
-    del payload["leader_card"]["api_backed"]
+    del payload["leader_card"]["leader_backend"]
 
     result = validate_workbench_contract(payload)
 
-    assert result == {"ok": False, "errors": ["missing leader_card field: api_backed"]}
+    assert result == {
+        "ok": False,
+        "errors": [
+            "missing leader_card field: leader_backend",
+            "leader_card.leader_backend must be an object",
+        ],
+    }
 
 
 def test_validate_workbench_contract_requires_leader_control_fields() -> None:
