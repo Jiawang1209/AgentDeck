@@ -2358,6 +2358,48 @@ def test_validate_workbench_contract_requires_dispatch_ready_operator_control_ki
     }
 
 
+def test_validate_workbench_contract_requires_dispatch_ready_operator_enabled_to_match_blocker() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["action_kind"] = "approval_dispatch_ready"
+    payload["operator_card"]["command"] = "agentdeck approval dispatch-ready --confirm"
+    payload["operator_card"]["explicit_command"] = "agentdeck approval dispatch-ready --confirm"
+    payload["operator_card"]["blocker"] = "no approved approvals have running agents"
+    payload["operator_card"]["controls"][1]["blocker"] = "no approved approvals have running agents"
+    payload["operator_card"]["controls"][-1]["kind"] = "dispatch_ready"
+    payload["operator_card"]["controls"][-1]["command"] = "agentdeck approval dispatch-ready --confirm"
+    payload["operator_card"]["controls"][-1]["enabled"] = True
+    payload["operator_card"]["controls"][-1]["blocker"] = "no approved approvals have running agents"
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card approval_dispatch_ready control enabled must reflect blocker"],
+    }
+
+
+def test_validate_workbench_contract_requires_dispatch_ready_operator_blocker_to_match_card() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["action_kind"] = "approval_dispatch_ready"
+    payload["operator_card"]["command"] = "agentdeck approval dispatch-ready --confirm"
+    payload["operator_card"]["explicit_command"] = "agentdeck approval dispatch-ready --confirm"
+    payload["operator_card"]["blocker"] = "no approved approvals have running agents"
+    payload["operator_card"]["controls"][1]["blocker"] = "no approved approvals have running agents"
+    payload["operator_card"]["controls"][-1]["kind"] = "dispatch_ready"
+    payload["operator_card"]["controls"][-1]["command"] = "agentdeck approval dispatch-ready --confirm"
+    payload["operator_card"]["controls"][-1]["enabled"] = False
+    payload["operator_card"]["controls"][-1]["blocker"] = "wrong blocker"
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card approval_dispatch_ready control blocker must match blocker"],
+    }
+
+
 def test_validate_workbench_contract_requires_audit_fields() -> None:
     payload = workbench_example()
     del payload["audit_card"]["events_command"]

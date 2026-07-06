@@ -5215,6 +5215,10 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
                 for control in dispatch_controls:
                     if control.get("kind") != "dispatch_ready":
                         errors.append("operator_card approval_dispatch_ready control kind must be dispatch_ready")
+                    if control.get("enabled") != (operator_card.get("blocker") is None):
+                        errors.append("operator_card approval_dispatch_ready control enabled must reflect blocker")
+                    if control.get("blocker") != operator_card.get("blocker"):
+                        errors.append("operator_card approval_dispatch_ready control blocker must match blocker")
     elif "operator_card" in payload:
         errors.append("operator_card must be an object")
     run_progress_card = payload.get("run_progress_card")

@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Validate dispatch-ready operator control state
+
+- 收紧 Workbench `approval_dispatch_ready` operator 契约：当多条 approved approvals 被提升为批量派发入口时，`dispatch_ready` control 的 `enabled` 和 `blocker` 必须与同一张 `operator_card.blocker` 对齐。
+- `dispatch_ready.enabled` 必须反映顶层 blocker 是否为空，`dispatch_ready.blocker` 必须等于 `operator_card.blocker`；既有 command/kind 校验继续要求它使用 `agentdeck approval dispatch-ready --confirm` 和 `kind=dispatch_ready`。
+- 该约束防止 GUI/TUI 或自然语言控制面在批量派发场景中显示可点击但实际 blocked 的按钮，或显示与主 operator card 不一致的阻塞原因。
+- 同步 Workbench schema、README、AGENT/CLAUDE 约束，明确批量派发 control 也是同源 operator projection，不是第二套派发状态源。
+- 保持控制边界：该校验只拒绝漂移 Workbench payload，不创建 plan/action/approval/message/job/inbox，不 ack/approve/dispatch，不 spawn/refresh runtime，不读取 pane，不发送 tmux 输入，不写 runtime state。
+- 验证记录：已先确认红测失败，在重新派生 `control_registry[]` 后，validator 最初允许 blocked 的 dispatch-ready control 保持 enabled，且允许 dispatch-ready blocker 与 `operator_card.blocker` 不一致；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_workbench_contract_requires_dispatch_ready_operator_enabled_to_match_blocker tests/test_contracts.py::test_validate_workbench_contract_requires_dispatch_ready_operator_blocker_to_match_card tests/test_contracts.py::test_validate_workbench_contract_requires_dispatch_ready_operator_command tests/test_contracts.py::test_validate_workbench_contract_requires_dispatch_ready_operator_control_kind tests/test_contracts.py::test_validate_workbench_contract_requires_operator_preview_blocker_to_be_null tests/test_contracts.py::test_validate_workbench_contract_requires_operator_apply_blocker_to_match_card tests/test_contracts.py::test_validate_workbench_contract_requires_operator_explicit_blocker_to_match_card tests/test_contracts.py::test_validate_workbench_contract_accepts_example -q` 8 项通过；真实 workbench/controls/Leader chat 批量派发回归 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_surfaces_dispatch_ready_operator_for_multiple_approved_items tests/test_agent_cli.py::test_workbench_blocks_dispatch_operator_when_approved_agent_is_not_spawned tests/test_agent_cli.py::test_controls_surfaces_dispatch_ready_operator_kind tests/test_leader_cli.py::test_leader_chat_queue_surfaces_dispatch_ready_operator_without_dispatching tests/test_leader_cli.py::test_leader_chat_previews_all_approved_dispatches_without_dispatching tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_dispatch_batch_registry_cards tests/test_leader_cli.py::test_validate_leader_chat_contract_rejects_dispatch_batch_registry_item_drift tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 8 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 440 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 466 项通过。
+
 ### Current - Validate operator control blocker alignment
 
 - 收紧 Workbench operator card 契约：`validate_workbench_contract()` 现在要求 `operator_card.controls[]` 的 `blocker` 与同一张卡片的顶层阻塞状态一致。
