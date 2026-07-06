@@ -573,6 +573,19 @@ def _leader_chat_provider_switch_card(
     target_ready = target_readiness.get("ready") is True
     provider_control_enabled = not require_ready or target_ready
     provider_control_blocker = None if provider_control_enabled else "target provider is not ready"
+    setup_controls = []
+    if not provider_control_enabled and isinstance(target_readiness.get("setup_commands"), list):
+        setup_controls = [
+            {
+                "kind": "setup",
+                "label": "Run provider setup",
+                "command": str(setup_command),
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            }
+            for setup_command in target_readiness["setup_commands"]
+        ]
     return {
         "mode": "provider_switch",
         "title": "Switch Leader provider",
@@ -605,6 +618,7 @@ def _leader_chat_provider_switch_card(
                 "enabled": provider_control_enabled,
                 "blocker": provider_control_blocker,
             },
+            *setup_controls,
         ],
     }
 

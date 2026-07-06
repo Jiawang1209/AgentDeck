@@ -3601,6 +3601,16 @@ def _validate_leader_chat_provider_switch_card_contract(
         errors.append("provider_switch_card.command must include --require-ready when require_ready is true")
     controls = provider_switch_card.get("controls")
     if isinstance(controls, list):
+        setup_commands = (
+            target_readiness.get("setup_commands")
+            if isinstance(target_readiness, dict) and isinstance(target_readiness.get("setup_commands"), list)
+            else []
+        )
+        setup_control_commands = [
+            control.get("command")
+            for control in controls
+            if isinstance(control, dict) and control.get("kind") == "setup"
+        ]
         for control in controls:
             if not isinstance(control, dict):
                 errors.append("provider_switch_card.controls items must be objects")
@@ -3639,6 +3649,22 @@ def _validate_leader_chat_provider_switch_card_contract(
                         errors.append(
                             "provider_switch_card.controls: disabled guarded provider control must use target provider is not ready blocker"
                         )
+                    if (
+                        control.get("enabled") is False
+                        and control.get("blocker") == "target provider is not ready"
+                        and setup_commands
+                        and setup_control_commands != setup_commands
+                    ):
+                        errors.append(
+                            "provider_switch_card.controls: blocked guarded provider switch must include setup controls for target_readiness.setup_commands"
+                        )
+            if control.get("kind") == "setup":
+                if control.get("safety") != "explicit_user":
+                    errors.append("provider_switch_card.controls: setup controls must use safety=explicit_user")
+                if control.get("command") not in setup_commands:
+                    errors.append(
+                        "provider_switch_card.controls: setup control command must come from target_readiness.setup_commands"
+                    )
             if control.get("enabled") is False and not control.get("blocker"):
                 errors.append("provider_switch_card.controls: disabled controls must include blocker")
     elif "controls" in provider_switch_card:
