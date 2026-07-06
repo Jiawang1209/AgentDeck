@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add terminal session controls to workbench
+
+- 扩展 `terminal_session_card`：新增 GUI-ready `controls[]`，直接暴露 `attach_session`、`open_controls` 和 `refresh_runtime` 三个按钮语义，避免 GUI/TUI 解析命令字段才能渲染项目级终端条。
+- 扩展 workbench contract：discovery 新增 `terminal_session_control_fields`，`validate_workbench_contract()` 会校验 terminal session controls 的字段、disabled blocker、attach/open/refresh 命令和 safety 对齐。
+- 保持人类控制边界：`attach_session` / `open_controls` 是 inspect control，`refresh_runtime` 是 explicit_runtime control；workbench 仍不 attach tmux、不 select pane、不 capture、不 send、不 refresh、不 spawn/stop、不写 state。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/workbench-schema.md`，明确 terminal session controls 是可渲染按钮语义，不是自动执行许可。
+- 验证记录：已先确认红测失败，contract import 最初缺少 `WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_terminal_session_control_fields -q` 4 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 342 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 366 项通过。
+
 ### Current - Embed terminal session card in workbench snapshot
 
 - 扩展 `agentdeck workbench`：一屏快照现在嵌入只读 `terminal_session_card`，从同一张 `runtime_card` 和项目 tmux 配置派生 session attach 命令、running/agent 计数，以及每个 agent 的 terminal/select-pane affordance。

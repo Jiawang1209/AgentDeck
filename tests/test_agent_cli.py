@@ -1466,7 +1466,16 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "agent_count",
         "open_terminals_command",
         "refresh_command",
+        "controls",
         "terminals",
+    ]
+    assert payload["terminal_session_control_fields"] == [
+        "kind",
+        "label",
+        "command",
+        "safety",
+        "enabled",
+        "blocker",
     ]
     assert payload["terminal_session_item_fields"] == [
         "agent_id",
@@ -1979,6 +1988,32 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "agent_count": 3,
         "open_terminals_command": "agentdeck controls",
         "refresh_command": "agentdeck agent refresh",
+        "controls": [
+            {
+                "kind": "attach_session",
+                "label": "Attach session",
+                "command": "tmux -L agentdeck-repo attach -t agentdeck",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "open_controls",
+                "label": "Open terminal controls",
+                "command": "agentdeck controls",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "refresh_runtime",
+                "label": "Refresh runtime",
+                "command": "agentdeck agent refresh",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
         "terminals": [
             {
                 "agent_id": "planner",

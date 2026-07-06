@@ -25,6 +25,7 @@ The contract command returns:
   "runtime_card_fields": [],
   "agent_ready_card_fields": [],
   "terminal_session_card_fields": [],
+  "terminal_session_control_fields": [],
   "terminal_session_item_fields": [],
   "runtime_agent_fields": [],
   "runtime_control_fields": [],
@@ -150,6 +151,24 @@ The embedded `runtime_card` must match the same runtime projection shown at the 
   "agent_count": 3,
   "open_terminals_command": "agentdeck controls",
   "refresh_command": "agentdeck agent refresh",
+  "controls": [
+    {
+      "kind": "attach_session",
+      "label": "Attach session",
+      "command": "tmux -L agentdeck-example attach -t agentdeck",
+      "safety": "inspect",
+      "enabled": true,
+      "blocker": null
+    },
+    {
+      "kind": "refresh_runtime",
+      "label": "Refresh runtime",
+      "command": "agentdeck agent refresh",
+      "safety": "explicit_runtime",
+      "enabled": true,
+      "blocker": null
+    }
+  ],
   "terminals": [
     {
       "agent_id": "planner",
@@ -165,7 +184,7 @@ The embedded `runtime_card` must match the same runtime projection shown at the 
 }
 ```
 
-`attach_command` opens the configured project tmux session. Each enabled terminal item points to a running pane with `select_pane_command`; non-running agents stay visible but disabled with `blocker=agent is not running`. `open_terminals_command=agentdeck controls` lets GUI clients jump to the full command palette for per-agent terminal controls. This card is read-only: it does not attach tmux, select panes, inspect panes, capture output, send input, refresh bindings, spawn panes, stop panes, or write state.
+`attach_command` opens the configured project tmux session. Each enabled terminal item points to a running pane with `select_pane_command`; non-running agents stay visible but disabled with `blocker=agent is not running`. `controls[]` exposes render-ready buttons: `attach_session` and `open_controls` use `safety=inspect`, while `refresh_runtime` uses `safety=explicit_runtime` and must match `refresh_command`. `open_terminals_command=agentdeck controls` lets GUI clients jump to the full command palette for per-agent terminal controls. This card is read-only: it does not attach tmux, select panes, inspect panes, capture output, send input, refresh bindings, spawn panes, stop panes, or write state.
 
 ## Watch Stream
 

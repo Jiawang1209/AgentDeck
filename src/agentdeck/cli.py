@@ -1769,6 +1769,32 @@ def _workbench_terminal_session_card(config: ProjectConfig, runtime_card: dict[s
         "agent_count": len(terminals),
         "open_terminals_command": "agentdeck controls",
         "refresh_command": runtime_card.get("refresh_command"),
+        "controls": [
+            {
+                "kind": "attach_session",
+                "label": "Attach session",
+                "command": _tmux_attach_command(config),
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "open_controls",
+                "label": "Open terminal controls",
+                "command": "agentdeck controls",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "refresh_runtime",
+                "label": "Refresh runtime",
+                "command": runtime_card.get("refresh_command"),
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
         "terminals": terminals,
     }
 

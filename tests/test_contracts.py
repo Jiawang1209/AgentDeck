@@ -81,6 +81,7 @@ from agentdeck.contracts import (
     WORKBENCH_RUNTIME_CONTROL_FIELDS,
     WORKBENCH_SNAPSHOT_FIELDS,
     WORKBENCH_TERMINAL_SESSION_CARD_FIELDS,
+    WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS,
     WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS,
     agent_runtime_contract_payload,
     agent_runtime_contract_response,
@@ -957,6 +958,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
     assert payload["terminal_session_card_fields"] == list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS)
+    assert payload["terminal_session_control_fields"] == list(WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS)
     assert payload["terminal_session_item_fields"] == list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
@@ -987,6 +989,12 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["agent_ready_card"]["runtime_card"] == example["runtime_card"]
     assert example["agent_ready_card"]["next_command"] == "agentdeck agent spawn-ready --confirm"
     assert set(example["terminal_session_card"]) == set(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS)
+    assert set(example["terminal_session_card"]["controls"][0]) == set(WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS)
+    assert [control["kind"] for control in example["terminal_session_card"]["controls"]] == [
+        "attach_session",
+        "open_controls",
+        "refresh_runtime",
+    ]
     assert set(example["terminal_session_card"]["terminals"][0]) == set(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS)
     assert example["terminal_session_card"]["running_count"] == 1
     assert example["terminal_session_card"]["terminals"][0]["select_pane_command"].endswith("select-pane -t %42")
@@ -1246,6 +1254,18 @@ def test_validate_workbench_contract_requires_terminal_session_item_fields() -> 
     assert result == {
         "ok": False,
         "errors": ["missing terminal_session item field: enabled"],
+    }
+
+
+def test_validate_workbench_contract_requires_terminal_session_control_fields() -> None:
+    payload = workbench_example()
+    del payload["terminal_session_card"]["controls"][0]["safety"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing terminal_session control field: safety"],
     }
 
 

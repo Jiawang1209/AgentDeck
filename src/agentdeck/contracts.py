@@ -794,7 +794,17 @@ WORKBENCH_TERMINAL_SESSION_CARD_FIELDS = (
     "agent_count",
     "open_terminals_command",
     "refresh_command",
+    "controls",
     "terminals",
+)
+
+WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS = (
+    "kind",
+    "label",
+    "command",
+    "safety",
+    "enabled",
+    "blocker",
 )
 
 WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS = (
@@ -1711,6 +1721,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "agent_ready_card_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
         "terminal_session_card_fields": list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS),
+        "terminal_session_control_fields": list(WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS),
         "terminal_session_item_fields": list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS),
         "runtime_agent_fields": list(WORKBENCH_RUNTIME_AGENT_FIELDS),
         "runtime_control_fields": list(WORKBENCH_RUNTIME_CONTROL_FIELDS),
@@ -2566,6 +2577,33 @@ def _validate_terminal_session_card_contract(
     for count_field in ("running_count", "agent_count"):
         if count_field in terminal_session_card and not isinstance(terminal_session_card.get(count_field), int):
             errors.append(f"terminal_session_card.{count_field} must be an integer")
+    controls = terminal_session_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("terminal_session controls must be objects")
+                continue
+            for field in WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"missing terminal_session control field: {field}")
+            if "enabled" in control and not isinstance(control.get("enabled"), bool):
+                errors.append("terminal_session control enabled must be a boolean")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append("disabled terminal_session control requires blocker")
+            if control.get("kind") == "attach_session":
+                if "safety" in control and control.get("safety") != "inspect":
+                    errors.append("terminal_session attach_session control must use safety=inspect")
+                if not str(control.get("command") or "").startswith("tmux "):
+                    errors.append("terminal_session attach_session control must use a tmux command")
+            if control.get("kind") == "open_controls" and control.get("command") != "agentdeck controls":
+                errors.append("terminal_session open_controls command must be agentdeck controls")
+            if control.get("kind") == "refresh_runtime":
+                if "safety" in control and control.get("safety") != "explicit_runtime":
+                    errors.append("terminal_session refresh_runtime control must use safety=explicit_runtime")
+                if control.get("command") != terminal_session_card.get("refresh_command"):
+                    errors.append("terminal_session refresh_runtime command must match refresh_command")
+    elif "controls" in terminal_session_card:
+        errors.append("terminal_session_card.controls must be a list")
     terminals = terminal_session_card.get("terminals")
     if isinstance(terminals, list):
         for item in terminals:
@@ -4335,6 +4373,32 @@ def _terminal_session_card_from_runtime_card(runtime_card: dict[str, object]) ->
         "agent_count": len(terminals),
         "open_terminals_command": "agentdeck controls",
         "refresh_command": runtime_card.get("refresh_command"),
+        "controls": [
+            {
+                "kind": "attach_session",
+                "label": "Attach session",
+                "command": "tmux -L agentdeck-multi-agent-explore attach -t agentdeck",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "open_controls",
+                "label": "Open terminal controls",
+                "command": "agentdeck controls",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "refresh_runtime",
+                "label": "Refresh runtime",
+                "command": runtime_card.get("refresh_command"),
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
         "terminals": terminals,
     }
 
