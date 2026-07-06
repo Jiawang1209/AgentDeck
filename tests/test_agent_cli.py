@@ -2969,7 +2969,8 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
 
     assert exit_code == 0
     first_payload = json.loads(capsys.readouterr().out)
-    control_id = first_payload["items"][0]["control_id"]
+    selected_item = next(item for item in first_payload["items"] if item["enabled"] is True)
+    control_id = selected_item["control_id"]
 
     exit_code = cli.main(["controls", "--control-id", control_id])
 
@@ -2984,13 +2985,14 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "item_count_before_filter": 45,
     }
     assert payload["item_count"] == 1
-    assert payload["items"] == [first_payload["items"][0]]
+    assert payload["items"] == [selected_item]
     assert payload["selection"] == {
         "requested_control_id": control_id,
         "matched": True,
         "matched_count": 1,
-        "selected_control": first_payload["items"][0],
+        "selected_control": selected_item,
         "blocker": None,
+        "next_command": selected_item["command"],
     }
     assert payload["group_count"] == 1
     assert payload["groups"][0]["items"] == payload["items"]
@@ -3024,6 +3026,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "matched_count": 0,
         "selected_control": None,
         "blocker": "control_id not found",
+        "next_command": None,
     }
     assert StateStore(root).load() == before
 

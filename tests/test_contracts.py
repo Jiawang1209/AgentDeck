@@ -302,6 +302,7 @@ def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> No
         "matched_count",
         "selected_control",
         "blocker",
+        "next_command",
     ]
     assert payload["control_registry_filter_fields"] == [
         "scope",
@@ -347,6 +348,7 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
         "matched_count": 0,
         "selected_control": None,
         "blocker": None,
+        "next_command": None,
     }
     assert example["items"][0]["control_id"].startswith("leader:leader_card:chat:leader:")
     assert example["groups"][0]["items"][0]["control_id"] == example["items"][0]["control_id"]
@@ -434,6 +436,34 @@ def test_validate_control_registry_card_contract_rejects_matched_selection_block
     assert result == {
         "ok": False,
         "errors": ["control_registry_card.selection: matched control_id must not include blocker"],
+    }
+
+
+def test_validate_control_registry_card_contract_requires_selection_next_command_to_match_enabled_item() -> None:
+    example = controls_example()
+    enabled_item = next(item for item in example["items"] if item["enabled"] is True)
+    payload = leader_chat_control_registry_card(workbench_example(), control_id=enabled_item["control_id"])
+    payload["selection"]["next_command"] = "agentdeck wrong"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.selection.next_command must match selected enabled command"],
+    }
+
+
+def test_validate_control_registry_card_contract_rejects_disabled_selection_next_command() -> None:
+    example = controls_example()
+    disabled_item = next(item for item in example["items"] if item["enabled"] is False)
+    payload = leader_chat_control_registry_card(workbench_example(), control_id=disabled_item["control_id"])
+    payload["selection"]["next_command"] = disabled_item["command"]
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.selection.next_command must be null when selected control is disabled or unmatched"],
     }
 
 

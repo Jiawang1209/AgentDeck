@@ -2974,7 +2974,8 @@ def test_leader_chat_help_filters_command_palette_by_control_id(tmp_path, monkey
 
     assert exit_code == 0
     controls_payload = json.loads(capsys.readouterr().out)
-    control_id = controls_payload["items"][0]["control_id"]
+    selected_item = next(item for item in controls_payload["items"] if item["enabled"] is True)
+    control_id = selected_item["control_id"]
 
     exit_code = cli.main(["leader", "chat", "--message", f"命令面板 control_id {control_id}"])
 
@@ -2990,13 +2991,14 @@ def test_leader_chat_help_filters_command_palette_by_control_id(tmp_path, monkey
         "enabled_only": False,
         "item_count_before_filter": 45,
     }
-    assert registry["items"] == [controls_payload["items"][0]]
+    assert registry["items"] == [selected_item]
     assert registry["selection"] == {
         "requested_control_id": control_id,
         "matched": True,
         "matched_count": 1,
-        "selected_control": controls_payload["items"][0],
+        "selected_control": selected_item,
         "blocker": None,
+        "next_command": selected_item["command"],
     }
     assert registry["groups"][0]["items"] == registry["items"]
 
@@ -3033,6 +3035,7 @@ def test_leader_chat_help_reports_unmatched_control_id_selection(tmp_path, monke
         "matched_count": 0,
         "selected_control": None,
         "blocker": "control_id not found",
+        "next_command": None,
     }
     assert payload["next_command"] == "agentdeck workbench"
     assert payload["leader_explanation"]["action_kind"] == "help"

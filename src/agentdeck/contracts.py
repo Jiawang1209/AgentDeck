@@ -582,6 +582,7 @@ CONTROL_REGISTRY_SELECTION_FIELDS = (
     "matched_count",
     "selected_control",
     "blocker",
+    "next_command",
 )
 
 CONTINUE_CARD_FIELDS = (
@@ -1667,12 +1668,19 @@ def _control_registry_selection(items: list[object], control_id: str | None) -> 
         blocker = "control_id not found"
     else:
         blocker = "control_id is not unique"
+    selected_control = matched_items[0] if matched else None
+    next_command = (
+        selected_control.get("command")
+        if isinstance(selected_control, dict) and selected_control.get("enabled") is True
+        else None
+    )
     return {
         "requested_control_id": control_id,
         "matched": matched,
         "matched_count": len(matched_items),
-        "selected_control": matched_items[0] if matched else None,
+        "selected_control": selected_control,
         "blocker": blocker,
+        "next_command": next_command,
     }
 
 
@@ -3353,6 +3361,10 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
             errors.append("control_registry_card.selection.selected_control must be an object or null")
         if "blocker" in selection and selection.get("blocker") is not None and not isinstance(selection.get("blocker"), str):
             errors.append("control_registry_card.selection.blocker must be a string or null")
+        if "next_command" in selection and selection.get("next_command") is not None and not isinstance(
+            selection.get("next_command"), str
+        ):
+            errors.append("control_registry_card.selection.next_command must be a string or null")
     elif "selection" in control_registry_card:
         errors.append("control_registry_card.selection must be an object")
     items = control_registry_card.get("items")
@@ -3456,6 +3468,15 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                 errors.append("control_registry_card.selection: matched control_id must not include blocker")
             elif requested_control_id is not None and len(matched_items) != 1 and not blocker:
                 errors.append("control_registry_card.selection: unmatched control_id requires blocker")
+            selected_enabled = isinstance(expected_selected_control, dict) and expected_selected_control.get("enabled") is True
+            if selected_enabled:
+                expected_next_command = expected_selected_control.get("command")
+                if selection.get("next_command") != expected_next_command:
+                    errors.append("control_registry_card.selection.next_command must match selected enabled command")
+            elif selection.get("next_command") is not None:
+                errors.append(
+                    "control_registry_card.selection.next_command must be null when selected control is disabled or unmatched"
+                )
     elif "items" in control_registry_card:
         errors.append("control_registry_card.items must be a list")
     groups = control_registry_card.get("groups")

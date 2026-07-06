@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add command palette selection next command
+
+- 扩展 `control_registry_card.selection`：新增只读 `next_command` 字段；只有 `filters.control_id` 精确命中且 selected control 自身 `enabled=true` 时才等于该 item 的 `command`，未请求、未命中或命中 disabled control 时为 `null`。
+- 扩展 `validate_control_registry_card_contract()`：要求 selection 字段包含 next_command，校验其类型，并拒绝 enabled 命中时 command 漂移或 disabled/unmatched 选择态携带 next_command。
+- 同步 `agentdeck controls --control-id <id>` 与 `agentdeck leader chat --message "命令面板 control_id <id>"`：两条入口都返回同一份 selection next_command 语义，仍然只读、不写 state、不调用 provider、不读取 pane、不执行任何 control/ack。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/controls-schema.md` 和 `docs/contracts/leader-chat-schema.md`，明确 selection next_command 是 GUI/自然语言壳的 enabled 选中态投影，不是授权或自动执行许可。
+- 验证记录：已先确认红测失败，contract discovery、contract example、live `agentdeck controls --control-id ...`、Leader help 嵌入命令面板和 validator 最初都缺少 `selection.next_command` 或未强制 next_command 与 enabled selected item 对齐；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_controls_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_control_registry_card_contract_requires_selection_next_command_to_match_enabled_item tests/test_contracts.py::test_validate_control_registry_card_contract_rejects_disabled_selection_next_command tests/test_agent_cli.py::test_controls_filters_by_control_id_without_mutating_state tests/test_agent_cli.py::test_controls_reports_unmatched_control_id_selection_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_filters_command_palette_by_control_id tests/test_leader_cli.py::test_leader_chat_help_reports_unmatched_control_id_selection -q` 8 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 362 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 386 项通过。
+
 ### Current - Add command palette selection blockers
 
 - 扩展 `control_registry_card.selection`：新增只读 `blocker` 字段，用于解释 `filters.control_id` 精确定位未命中的原因；未请求 control id 和成功命中时为 `null`，未命中时为 `control_id not found`。
