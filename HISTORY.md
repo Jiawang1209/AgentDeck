@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Require provider setup action cards
+
+- 收紧 live `provider_setup` leader-chat 契约：只要 `leader_explanation.action_kind=provider_setup`，响应就必须包含 `provider_setup_card`、`provider_switch_card` 和 `control_registry_card`。
+- 这避免坏 payload 通过删除 `intent_card.secondary_embedded_cards` 引用绕过 GUI 卡片要求，保证自然语言 provider setup 始终有 setup checklist、后续切换确认和命令面板 selection 三个可渲染表面。
+- 保持控制边界：该校验只拒绝漂移 payload，不执行 setup、不切换 provider、不修改 `.agentdeck/config.toml`、不调用 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，validator 最初允许 live `provider_setup` payload 删除三张 GUI 卡并清空 `intent_card.secondary_embedded_cards` 后仍通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_provider_setup_action_cards tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_provider_setup_registry_selection_to_match_recommended_control tests/test_leader_cli.py::test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_without_planning -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 396 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 422 项通过。
+
 ### Current - Align provider setup registry selection
 
 - 收紧 live `provider_setup` leader-chat 跨卡契约：`provider_setup_card.recommended_control_id` 必须匹配 `control_registry_card.selection.requested_control_id`。

@@ -3311,6 +3311,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append("provider_switch_card.command must match response next_command")
     elif explanation_action_kind == "provider_switch":
         errors.append("provider_switch_card is required for provider_switch setup responses")
+    elif explanation_action_kind == "provider_setup":
+        errors.append("provider_switch_card is required for provider_setup setup responses")
     elif "provider_switch_card" in payload and provider_switch_card is not None:
         errors.append("provider_switch_card must be an object")
     agent_ready_card = payload.get("agent_ready_card")
@@ -3441,6 +3443,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append("provider_setup_card.require_ready must match provider_switch_card.require_ready")
             if provider_setup_card.get("followup_switch_command") != provider_switch_card.get("command"):
                 errors.append("provider_setup_card.followup_switch_command must match provider_switch_card.command")
+    elif explanation_action_kind == "provider_setup":
+        errors.append("provider_setup_card is required for provider_setup setup responses")
     elif "provider_setup_card" in payload and provider_setup_card is not None:
         errors.append("provider_setup_card must be an object")
     control_registry_card = payload.get("control_registry_card")
@@ -3457,6 +3461,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append(
                 "provider_setup_card.recommended_control_id must match control_registry_card.selection.requested_control_id"
             )
+    elif explanation_action_kind == "provider_setup":
+        errors.append("control_registry_card is required for provider_setup setup responses")
     elif "control_registry_card" in payload and control_registry_card is not None:
         errors.append("control_registry_card must be an object")
     return {"ok": not errors, "errors": errors}
