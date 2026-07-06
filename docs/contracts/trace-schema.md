@@ -63,7 +63,7 @@ Use `agentdeck contract trace --example` to include a stable GUI-ready lineage f
 }
 ```
 
-`attempts[]` records execution attempts for the message.
+`attempts[]` records execution attempts for the message. `validate_trace_contract()` checks every item in each lineage collection, not only the first row.
 
 `jobs[]` records runtime dispatch facts such as agent id, pane id, and job status.
 

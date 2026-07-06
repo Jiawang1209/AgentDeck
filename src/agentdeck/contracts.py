@@ -3041,13 +3041,21 @@ def _validate_trace_items(
         return
     if not collection:
         return
-    first_item = collection[0]
-    if not isinstance(first_item, dict):
-        errors.append(f"{collection_name} items must be objects")
-        return
-    for field in fields:
-        if field not in first_item:
-            errors.append(f"missing {label} field: {field}")
+    for index, item in enumerate(collection):
+        if not isinstance(item, dict):
+            errors.append(
+                f"{collection_name} items must be objects"
+                if index == 0
+                else f"{collection_name}[{index}] must be an object"
+            )
+            continue
+        for field in fields:
+            if field not in item:
+                errors.append(
+                    f"missing {label} field: {field}"
+                    if index == 0
+                    else f"missing {label} field at index {index}: {field}"
+                )
 
 
 def _validate_runtime_card_contract(errors: list[str], runtime_card: dict[str, object], *, prefix: str) -> None:

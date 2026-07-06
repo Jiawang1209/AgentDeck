@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate every trace lineage item
+
+- 收紧 trace lineage 契约：`validate_trace_contract()` 现在会逐项校验 `attempts[]`、`jobs[]`、`replies[]`、`artifacts[]` 和 `inbox_items[]`，不再只检查每个 lineage collection 的第一条 item。
+- 每条 trace lineage item 都必须保留对应字段，确保 GUI、自然语言入口和人类在查看完整通信链路时不会因为第二条及之后的 job/reply/artifact/inbox item 缺字段而丢失上下文。
+- 同步 trace schema 文档，明确 `agentdeck trace --id <id>` 是逐项自校验的只读通信账本视图，不读取 pane 文本、不写 state。
+- 保持控制边界：该校验只拒绝漂移 trace payload，不创建 plan/action/approval/message/job/reply/artifact/inbox、不 ack、不 dispatch、不 capture reply、不读取 pane、不发送 tmux 输入、不修改 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许第二条 `jobs[]` 缺少 `pane_id` 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_trace_contract_checks_every_lineage_item tests/test_contracts.py::test_validate_trace_contract_reports_missing_reply_field tests/test_contracts.py::test_validate_trace_contract_accepts_example -q` 3 项通过；trace 聚焦回归 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 421 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 447 项通过。
+
 ### Current - Validate every Leader actions queue item
 
 - 收紧独立 Leader actions queue 契约：`validate_leader_actions_contract()` 现在会逐项校验 `actions[]`，不再只检查第一条 action item。

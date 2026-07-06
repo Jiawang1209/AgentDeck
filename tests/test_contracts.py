@@ -3941,6 +3941,21 @@ def test_validate_trace_contract_reports_missing_reply_field() -> None:
     assert result == {"ok": False, "errors": ["missing reply field: reply_id"]}
 
 
+def test_validate_trace_contract_checks_every_lineage_item() -> None:
+    payload = trace_example()
+    second_job = dict(payload["jobs"][0])
+    second_job["job_id"] = "job_second"
+    del second_job["pane_id"]
+    payload["jobs"].append(second_job)
+
+    result = validate_trace_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing job field at index 1: pane_id"],
+    }
+
+
 def test_validate_trace_contract_reports_missing_artifact_field() -> None:
     payload = trace_example()
     del payload["artifacts"][0]["artifact_id"]
