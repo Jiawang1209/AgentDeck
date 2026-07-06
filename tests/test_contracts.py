@@ -2966,6 +2966,36 @@ def test_validate_leader_chat_contract_requires_provider_setup_followup_to_match
     }
 
 
+def test_validate_leader_chat_contract_requires_provider_setup_target_to_match_switch_card() -> None:
+    payload = leader_chat_example()
+    payload["provider_setup_card"]["target_provider"] = "claude-cli"
+    payload["provider_setup_card"]["target_model"] = "claude-default"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "provider_setup_card.target_provider must match provider_switch_card.target_provider",
+            "provider_setup_card.target_model must match provider_switch_card.target_model",
+        ],
+    }
+
+
+def test_validate_leader_chat_contract_requires_provider_setup_require_ready_to_match_switch_card() -> None:
+    payload = leader_chat_example()
+    payload["provider_setup_card"]["require_ready"] = True
+    payload["provider_setup_card"]["controls"][2]["kind"] = "guarded_set_provider"
+    payload["provider_setup_card"]["controls"][2]["label"] = "Switch Leader provider if ready"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["provider_setup_card.require_ready must match provider_switch_card.require_ready"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_provider_switch_target_readiness_identity_match() -> None:
     payload = leader_chat_example()
     payload["provider_switch_card"]["target_readiness"]["provider"] = "claude-cli"

@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Align provider setup target identity with switch card
+
+- 继续收紧 `provider_setup_card` / `provider_switch_card` 交叉契约：setup card 的 `target_provider`、`target_model` 和 `require_ready` 必须分别匹配 switch card 的目标 provider/model 和 require-ready 状态。
+- 这与上一轮 `followup_switch_command` 对齐规则一起，保证 GUI 渲染 provider setup checklist、后续切换确认卡和命令面板时不会出现目标 provider 或预检语义分叉。
+- 保持控制边界：该校验只拒绝漂移 payload，不执行 setup、不切换 provider、不修改 `.agentdeck/config.toml`、不调用 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，validator 最初允许 `provider_setup_card.target_provider/target_model/require_ready` 与 `provider_switch_card` 漂移；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_provider_setup_target_to_match_switch_card tests/test_contracts.py::test_validate_leader_chat_contract_requires_provider_setup_require_ready_to_match_switch_card tests/test_contracts.py::test_validate_leader_chat_contract_requires_provider_setup_followup_to_match_switch_card tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 392 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 418 项通过。
+
 ### Current - Align provider setup and switch follow-up commands
 
 - 收紧 leader-chat contract：当 `provider_setup_card` 和 `provider_switch_card` 同时存在时，`provider_setup_card.followup_switch_command` 必须匹配 `provider_switch_card.command`。

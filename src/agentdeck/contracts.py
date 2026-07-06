@@ -3427,9 +3427,15 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         if (
             isinstance(provider_switch_card, dict)
             and not has_provider_switch_errors
-            and provider_setup_card.get("followup_switch_command") != provider_switch_card.get("command")
         ):
-            errors.append("provider_setup_card.followup_switch_command must match provider_switch_card.command")
+            if provider_setup_card.get("target_provider") != provider_switch_card.get("target_provider"):
+                errors.append("provider_setup_card.target_provider must match provider_switch_card.target_provider")
+            if provider_setup_card.get("target_model") != provider_switch_card.get("target_model"):
+                errors.append("provider_setup_card.target_model must match provider_switch_card.target_model")
+            if provider_setup_card.get("require_ready") != provider_switch_card.get("require_ready"):
+                errors.append("provider_setup_card.require_ready must match provider_switch_card.require_ready")
+            if provider_setup_card.get("followup_switch_command") != provider_switch_card.get("command"):
+                errors.append("provider_setup_card.followup_switch_command must match provider_switch_card.command")
     elif "provider_setup_card" in payload and provider_setup_card is not None:
         errors.append("provider_setup_card must be an object")
     control_registry_card = payload.get("control_registry_card")
