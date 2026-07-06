@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Align provider setup recommended command
+
+- 收紧 live `provider_setup` leader-chat 契约：当 `leader_explanation.action_kind=provider_setup` 时，`provider_setup_card.recommended_command` 必须匹配顶层 `next_command`。
+- 这保证 GUI 渲染 provider setup 主按钮、命令面板 selection 和 setup checklist 时，只有一个推荐命令事实源。
+- 保持控制边界：该校验只拒绝漂移 payload，不执行 setup、不切换 provider、不修改 `.agentdeck/config.toml`、不调用 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，validator 最初允许 live `provider_setup` 响应里的 `recommended_command` 与顶层 `next_command` 漂移；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_provider_setup_recommended_command_to_match_next_command tests/test_contracts.py::test_validate_leader_chat_contract_requires_provider_setup_recommended_control_to_match_command tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 394 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 420 项通过。
+
 ### Current - Align provider setup recommended control
 
 - 收紧 `provider_setup_card` 契约：`recommended_control_id` 不仅必须指向 `setup_provider` control，还必须指向 `command == recommended_command` 的那一个 control。

@@ -3422,6 +3422,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
     provider_setup_card = payload.get("provider_setup_card")
     if isinstance(provider_setup_card, dict):
         _validate_leader_chat_provider_setup_card_contract(errors, provider_setup_card)
+        if (
+            explanation_action_kind == "provider_setup"
+            and provider_setup_card.get("recommended_command") != payload.get("next_command")
+        ):
+            errors.append("provider_setup_card.recommended_command must match next_command")
         provider_switch_card = payload.get("provider_switch_card")
         has_provider_switch_errors = any("provider_switch_card" in error for error in errors)
         if (

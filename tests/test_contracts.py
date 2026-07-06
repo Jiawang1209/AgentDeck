@@ -2982,6 +2982,18 @@ def test_validate_leader_chat_contract_requires_provider_setup_recommended_contr
     }
 
 
+def test_validate_leader_chat_contract_requires_provider_setup_recommended_command_to_match_next_command() -> None:
+    payload = leader_chat_example()
+    payload["leader_explanation"]["action_kind"] = "provider_setup"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["provider_setup_card.recommended_command must match next_command"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_provider_setup_target_to_match_switch_card() -> None:
     payload = leader_chat_example()
     payload["provider_setup_card"]["target_provider"] = "claude-cli"
