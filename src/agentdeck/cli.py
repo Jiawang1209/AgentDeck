@@ -3760,7 +3760,28 @@ def _chat_wants_setup(message: str) -> bool:
     )
 
 
-def _chat_provider_setup_intent(message: str) -> tuple[str, str, str] | None:
+def _chat_wants_require_ready(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(
+        token in normalized
+        for token in [
+            "require-ready",
+            "require ready",
+            "ready first",
+            "ready-only",
+            "先预检",
+            "预检",
+            "要求可用",
+            "必须可用",
+            "确保可用",
+            "不可用就拒绝",
+            "可用再切",
+            "ready 再切",
+        ]
+    )
+
+
+def _chat_provider_setup_intent(message: str) -> tuple[str, str, str, bool] | None:
     normalized = message.strip().lower()
     mentions_setup = any(
         token in normalized
@@ -3790,11 +3811,13 @@ def _chat_provider_setup_intent(message: str) -> tuple[str, str, str] | None:
             continue
         setup_commands = _provider_setup_commands(provider)
         if setup_commands:
-            return provider, query, setup_commands[0]
+            return provider, query, setup_commands[0], _chat_wants_require_ready(message)
     return None
 
 
 def _chat_provider_switch_intent(message: str) -> tuple[str, str, bool] | None:
+    if _chat_provider_setup_intent(message) is not None:
+        return None
     normalized = message.strip().lower()
     mentions_switch = any(
         token in normalized
@@ -3812,23 +3835,7 @@ def _chat_provider_switch_intent(message: str) -> tuple[str, str, bool] | None:
     )
     if not mentions_switch:
         return None
-    require_ready = any(
-        token in normalized
-        for token in [
-            "require-ready",
-            "require ready",
-            "ready first",
-            "ready-only",
-            "先预检",
-            "预检",
-            "要求可用",
-            "必须可用",
-            "确保可用",
-            "不可用就拒绝",
-            "可用再切",
-            "ready 再切",
-        ]
-    )
+    require_ready = _chat_wants_require_ready(message)
     aliases: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("codex-cli", ("codex cli", "codex-cli", "codex")),
         ("claude-cli", ("claude code", "claude cli", "claude-cli", "claude")),
@@ -5629,7 +5636,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
 
     provider_setup_intent = _chat_provider_setup_intent(args.message)
     if provider_setup_intent is not None:
-        target_provider, query, next_command = provider_setup_intent
+        target_provider, query, next_command, require_ready = provider_setup_intent
         turn = store.record_chat_turn(
             mode="setup",
             message=args.message,
@@ -5659,11 +5666,13 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "",
         )
         provider_switch_command = f"agentdeck leader set-provider --provider {target_provider} --model {target_model}"
+        if require_ready:
+            provider_switch_command = f"{provider_switch_command} --require-ready"
         provider_switch_card = _leader_chat_provider_switch_card(
             refreshed_project_view,
             target_provider=target_provider,
             target_model=target_model,
-            require_ready=False,
+            require_ready=require_ready,
             command=provider_switch_command,
         )
         payload = {

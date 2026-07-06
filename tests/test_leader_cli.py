@@ -990,6 +990,69 @@ def test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_with
     assert state["chat_turns"][0]["action_kind"] == "provider_setup"
 
 
+def test_leader_chat_provider_setup_require_ready_intent_surfaces_guarded_followup(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    before = StateStore(root).load()
+    monkeypatch.setattr(cli, "_command_path", lambda command: None)
+
+    exit_code = cli.main(["leader", "chat", "--message", "配置 Claude CLI Leader，必须可用再切换"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "setup"
+    assert payload["next_command"] == "claude auth"
+    assert payload["leader_explanation"]["action_kind"] == "provider_setup"
+    switch_card = payload["provider_switch_card"]
+    assert switch_card["target_provider"] == "claude-cli"
+    assert switch_card["target_model"] == "claude-default"
+    assert switch_card["target_readiness"]["ready"] is False
+    assert switch_card["target_readiness"]["setup_commands"] == ["claude auth", "claude doctor"]
+    assert switch_card["require_ready"] is True
+    assert switch_card["command"] == (
+        "agentdeck leader set-provider --provider claude-cli --model claude-default --require-ready"
+    )
+    assert switch_card["controls"][1] == {
+        "kind": "guarded_set_provider",
+        "label": "Switch Leader provider if ready",
+        "command": "agentdeck leader set-provider --provider claude-cli --model claude-default --require-ready",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "target provider is not ready",
+    }
+    assert switch_card["controls"][2:] == [
+        {
+            "kind": "setup",
+            "label": "Run provider setup",
+            "command": "claude auth",
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "setup",
+            "label": "Run provider setup",
+            "command": "claude doctor",
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["provider_switch_card", "control_registry_card"]
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+
+    state = StateStore(root).load()
+    assert state["plans"] == before["plans"]
+    assert state["leader_actions"] == before["leader_actions"]
+    assert state["approvals"] == before["approvals"]
+    assert state["messages"] == before["messages"]
+    assert state["jobs"] == before["jobs"]
+    assert state["chat_turns"][0]["mode"] == "setup"
+    assert state["chat_turns"][0]["next_command"] == "claude auth"
+    assert state["chat_turns"][0]["action_kind"] == "provider_setup"
+
+
 def test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config(
     tmp_path, monkeypatch, capsys
 ) -> None:

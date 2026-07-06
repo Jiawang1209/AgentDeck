@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Guard provider setup follow-up switch
+
+- 扩展 provider setup 自然语言路由：`agentdeck leader chat --message "配置 Claude CLI Leader，必须可用再切换"` 现在会优先进入 `provider_setup`，而不是因为包含“切换”落入直接 provider switch。
+- 顶层 `next_command` 仍保持第一条 setup command，例如 `claude auth`；同一响应里的 `provider_switch_card` 会把后续切换命令标记为 `--require-ready`，并在目标 CLI 不可用时禁用 guarded switch control，保留 `claude auth` / `claude doctor` setup controls。
+- 提炼 require-ready intent 解析，让 provider switch intent 和 provider setup follow-up 复用同一组 `"要求可用"`、`"先预检"`、`"必须可用"` 等触发词。
+- 保持控制边界：该响应只记录 chat turn，不修改 `.agentdeck/config.toml`、不调用当前或目标 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，`"配置 Claude CLI Leader，必须可用再切换"` 最初被直接路由为 `provider_switch` 并把顶层 `next_command` 设成 `agentdeck leader set-provider ... --require-ready`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_provider_setup_require_ready_intent_surfaces_guarded_followup tests/test_leader_cli.py::test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_without_planning tests/test_leader_cli.py::test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_command_without_mutating_config -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 389 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 415 项通过。
+
 ### Current - Attach provider switch follow-up to setup intents
 
 - 扩展自然语言 provider setup：`agentdeck leader chat --message "配置 Codex CLI Leader"` 现在除 `provider_health` 和 provider-filtered `control_registry_card` 外，还会返回目标 `provider_switch_card`。
