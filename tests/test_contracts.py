@@ -780,6 +780,19 @@ def test_validate_control_registry_card_contract_requires_inbox_ack_command() ->
     }
 
 
+def test_validate_control_registry_card_contract_requires_audit_inspect_command() -> None:
+    payload = controls_example()
+    audit_item = next(item for item in payload["items"] if item["scope"] == "audit" and item["kind"] == "inspect")
+    audit_item["command"] = "agentdeck workbench"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: audit inspect command must be agentdeck events --limit 20"],
+    }
+
+
 def test_validate_control_registry_card_contract_requires_terminal_session_attach_command() -> None:
     payload = controls_example()
     terminal_item = next(
@@ -1710,6 +1723,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         ("terminal_session", "terminal_session_card", "select_pane", "planner"),
         ("runtime", "runtime_card", "terminal", "planner"),
         ("runtime", "runtime_card", "capture", "planner"),
+        ("audit", "audit_card", "inspect", None),
         ("operator", "operator_card", "apply", None),
     }
     policy_item = next(
@@ -1741,6 +1755,11 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert select_pane_item["agent_id"] == "planner"
     assert select_pane_item["command"] == example["terminal_session_card"]["terminals"][0]["select_pane_command"]
     assert select_pane_item["safety"] == "inspect"
+    audit_item = next(
+        item for item in example["control_registry"] if item["scope"] == "audit" and item["kind"] == "inspect"
+    )
+    assert audit_item["command"] == "agentdeck events --limit 20"
+    assert audit_item["safety"] == "inspect"
     assert set(example["provider_health"]) == set(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert example["provider_health"]["provider_backend"] == "local"
     assert example["provider_health"]["provider_transport"] == "local"

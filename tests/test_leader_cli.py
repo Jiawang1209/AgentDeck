@@ -6,6 +6,7 @@ import subprocess
 
 from agentdeck import cli
 from agentdeck.config import write_default_config
+from agentdeck.contracts import validate_leader_chat_contract
 from agentdeck.providers.fake import FakeLeaderProvider
 from agentdeck.state import StateStore
 
@@ -3358,8 +3359,25 @@ def test_leader_chat_inspects_audit_events_without_mutating_state(tmp_path, monk
     assert payload["role_card"] is None
     assert payload["ledger_card"] is None
     assert payload["workbench_card"] is None
+    assert payload["control_registry_card"]["filters"]["scope"] == "audit"
+    assert payload["control_registry_card"]["filters"]["card"] == "audit_card"
+    assert payload["control_registry_card"]["filters"]["control_id"] == (
+        payload["control_registry_card"]["selection"]["requested_control_id"]
+    )
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == ["scope", "card", "control_id"]
+    assert payload["control_registry_card"]["item_count"] == 1
     assert payload["next_command"] == "agentdeck events --limit 20"
     assert payload["audit_card"]["events_command"] == payload["next_command"]
+    assert payload["audit_card"]["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect audit events",
+            "command": "agentdeck events --limit 20",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
     assert payload["audit_card"]["latest_event"]["event_type"] == "leader_chat_turn"
     assert payload["audit_card"]["recent_events"][0]["event_type"] == "manual_checkpoint"
     assert payload["audit_card"]["event_count"] == len(payload["audit_card"]["recent_events"])
@@ -3369,6 +3387,7 @@ def test_leader_chat_inspects_audit_events_without_mutating_state(tmp_path, monk
     assert payload["leader_explanation"]["safety"] == "inspect"
     assert payload["leader_explanation"]["requires_explicit_user"] is False
     assert payload["intent_card"]["embedded_card"] == "audit_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
     assert payload["intent_card"]["controls"][0] == {
         "kind": "inspect",
         "label": "Inspect audit_card",
@@ -3377,6 +3396,21 @@ def test_leader_chat_inspects_audit_events_without_mutating_state(tmp_path, monk
         "enabled": True,
         "blocker": None,
     }
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "audit",
+        "card": "audit_card",
+        "kind": "inspect",
+        "label": "Inspect audit events",
+        "command": "agentdeck events --limit 20",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": selected_control["control_id"],
+    }
+    assert selected_control == payload["control_registry_card"]["items"][0]
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
 
     state_after = StateStore(root).load()
     assert state_after["plans"] == state_before["plans"]
@@ -3390,6 +3424,29 @@ def test_leader_chat_inspects_audit_events_without_mutating_state(tmp_path, monk
     assert state_after["chat_turns"][-1]["mode"] == "audit"
     assert state_after["chat_turns"][-1]["next_command"] == "agentdeck events --limit 20"
     assert state_after["chat_turns"][-1]["action_kind"] == "audit"
+
+
+def test_validate_leader_chat_contract_requires_audit_registry_card(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    store.append_event(cli.EventRecord.create("manual_checkpoint", {"note": "before audit chat"}))
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看审计"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for audit responses",
+            "control_registry_card is required for audit responses",
+        ],
+    }
 
 
 def test_leader_chat_inspects_artifacts_without_reading_files_or_mutating_state(
@@ -3915,7 +3972,7 @@ def test_leader_chat_help_filters_command_palette_without_planning(tmp_path, mon
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 64,
+        "item_count_before_filter": 65,
     }
     assert registry["item_count"] == len(registry["items"])
     assert registry["group_count"] == len(registry["groups"])
@@ -3952,7 +4009,7 @@ def test_leader_chat_help_filters_command_palette_by_query(tmp_path, monkeypatch
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 64,
+        "item_count_before_filter": 65,
     }
     assert registry["items"]
     assert all(
@@ -3992,7 +4049,7 @@ def test_leader_chat_help_filters_command_palette_by_control_id(tmp_path, monkey
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 64,
+        "item_count_before_filter": 65,
     }
     assert registry["items"] == [selected_item]
     assert registry["selection"] == {
@@ -4029,7 +4086,7 @@ def test_leader_chat_help_reports_unmatched_control_id_selection(tmp_path, monke
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 64,
+        "item_count_before_filter": 65,
     }
     assert registry["items"] == []
     assert registry["groups"] == []
@@ -4080,7 +4137,7 @@ def test_leader_chat_help_reports_filtered_out_control_id_selection(tmp_path, mo
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 64,
+        "item_count_before_filter": 65,
     }
     assert registry["items"] == []
     assert registry["groups"] == []

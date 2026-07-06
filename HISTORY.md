@@ -4,6 +4,16 @@
 
 ## 2026-07-07
 
+### Current - Surface audit controls in command registry
+
+- 扩展 `agentdeck workbench` 的 `audit_card`：新增 GUI-ready `controls[]`，其中 `kind=inspect` control 指向只读 `agentdeck events --limit 20`，让 GUI/TUI 可以直接渲染最近审计时间线入口。
+- 扩展 `agentdeck workbench` / `agentdeck controls` 的 `control_registry[]` 派生逻辑：现在会索引 `audit_card.controls[]`，以 `scope=audit` / `card=audit_card` / `kind=inspect` 暴露审计事件命令面板项。
+- 扩展自然语言 `mode=audit` 响应：`agentdeck leader chat --message "查看审计"` 现在返回同源 `audit_card`，并附带过滤到 audit card 的 `control_registry_card`；selection 指向 `agentdeck events --limit 20` inspect control，`intent_card.secondary_embedded_cards` 同步列出 `control_registry_card`。
+- 收紧契约守门：`validate_workbench_contract()` 会校验 audit controls 字段、命令和 safety；`validate_leader_chat_contract()` 会拒绝缺少 audit registry companion、secondary embedded card 漂移或 registry selection 与 `audit_card.events_command` 不一致的响应；`validate_control_registry_card_contract()` 会校验 audit registry item 必须是 inspect-only 的 `agentdeck events --limit 20`。
+- 保持只读边界：audit controls 和 registry companion 只是命令投影，不读取 tmux pane、不调用 provider、不创建 plan/action/approval/message/job/inbox、不 ack、不 approve、不 dispatch、不 capture、不发送 tmux 输入，也不执行事件命令。
+- 同步 README、`docs/contracts/workbench-schema.md`、`docs/contracts/controls-schema.md`、`docs/contracts/leader-chat-schema.md`、AGENT/CLAUDE 约束和测试。
+- 验证记录：已先确认红测失败，自然语言 `查看审计` 响应最初没有 `control_registry_card`，validator 也允许删除 audit registry companion；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_audit_events_without_mutating_state tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_audit_registry_card -q` 2 项通过；Agent CLI/contract 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 327 项通过；Leader/contract 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 352 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 499 项通过。
+
 ### Current - Surface artifacts controls in command registry
 
 - 扩展 `agentdeck artifacts` 响应：现在返回 GUI-ready `controls[]`，其中 `kind=inspect` control 指向只读 `agentdeck artifacts`，让 GUI/TUI 不需要解析字段或命令字符串就能渲染产物索引入口。

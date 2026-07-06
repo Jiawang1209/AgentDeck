@@ -164,6 +164,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "artifacts_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "audit_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if embedded_card in ("queue_card", "operator_card") and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "provider_health" and payload.get("provider_setup_card") is not None:
@@ -1345,6 +1347,14 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id=None,
         controls=artifacts_card.get("controls"),
     )
+    audit_card = payload.get("audit_card") if isinstance(payload.get("audit_card"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry,
+        scope="audit",
+        card="audit_card",
+        agent_id=None,
+        controls=audit_card.get("controls"),
+    )
     return registry
 
 
@@ -1752,6 +1762,14 @@ def _workbench_audit_card(project_view: dict[str, object]) -> dict[str, object]:
         "recent_events": recent_events,
         "event_count": len(recent_events),
         "events_command": "agentdeck events --limit 20",
+        "controls": [
+            _control(
+                kind="inspect",
+                label="Inspect audit events",
+                command="agentdeck events --limit 20",
+                safety="inspect",
+            )
+        ],
     }
 
 
@@ -6878,6 +6896,25 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if refreshed_project_view is None:
             return 1
         audit_card = _workbench_audit_card(refreshed_project_view)
+        registry_items = _workbench_control_registry({"audit_card": audit_card})
+        audit_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("scope") == "audit"
+                and item.get("card") == "audit_card"
+                and item.get("kind") == "inspect"
+                and item.get("command") == next_command
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="audit",
+            card="audit_card",
+            control_id=str(audit_control_id) if audit_control_id else None,
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -6905,6 +6942,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "audit_card": audit_card,
             "workbench_card": None,
+            "control_registry_card": control_registry_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

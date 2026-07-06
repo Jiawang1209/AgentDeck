@@ -1070,6 +1070,7 @@ WORKBENCH_AUDIT_CARD_FIELDS = (
     "recent_events",
     "event_count",
     "events_command",
+    "controls",
 )
 
 WORKBENCH_AUDIT_EVENT_FIELDS = (
@@ -3637,6 +3638,24 @@ def _validate_audit_card_contract(errors: list[str], audit_card: dict[str, objec
         errors.append(f"{prefix}: audit_card.recent_events must be a list")
     if "event_count" in audit_card and not isinstance(audit_card.get("event_count"), int):
         errors.append(f"{prefix}: audit_card.event_count must be an integer")
+    controls = audit_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append(f"{prefix}.controls items must be objects")
+                continue
+            for field in WORKBENCH_LEADER_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"{prefix}.controls: missing control field: {field}")
+            if control.get("kind") == "inspect":
+                if "events_command" in audit_card and control.get("command") != audit_card.get("events_command"):
+                    errors.append(f"{prefix}.controls: inspect command must match audit_card.events_command")
+                if control.get("safety") != "inspect":
+                    errors.append(f"{prefix}.controls: inspect controls must use safety=inspect")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append(f"{prefix}.controls: disabled controls must include blocker")
+    elif "controls" in audit_card:
+        errors.append(f"{prefix}: audit_card.controls must be a list")
 
 
 def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, object]:
@@ -3785,6 +3804,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             ):
                 errors.append(
                     "intent_card.secondary_embedded_cards must include control_registry_card for artifacts responses"
+                )
+            if (
+                explanation_action_kind == "audit"
+                and payload.get("audit_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for audit responses"
                 )
         elif "secondary_embedded_cards" in intent_card:
             errors.append("intent_card.secondary_embedded_cards must be a list")
@@ -4126,12 +4153,21 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             and selection.get("next_command") != artifacts_card.get("artifacts_command")
         ):
             errors.append("control_registry_card.selection.next_command must match artifacts_card.artifacts_command")
+        if (
+            explanation_action_kind == "audit"
+            and isinstance(audit_card, dict)
+            and isinstance(selection, dict)
+            and selection.get("next_command") != audit_card.get("events_command")
+        ):
+            errors.append("control_registry_card.selection.next_command must match audit_card.events_command")
     elif explanation_action_kind == "provider_setup":
         errors.append("control_registry_card is required for provider_setup setup responses")
     elif explanation_action_kind == "leader_status":
         errors.append("control_registry_card is required for leader_status responses")
     elif explanation_action_kind == "artifacts":
         errors.append("control_registry_card is required for artifacts responses")
+    elif explanation_action_kind == "audit":
+        errors.append("control_registry_card is required for audit responses")
     elif explanation_action_kind in {"approval_dispatch", "approval_dispatch_batch"}:
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif "control_registry_card" in payload and control_registry_card is not None:
@@ -4865,6 +4901,13 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     errors.append("control_registry_card.items: artifacts inspect must use safety=inspect")
                 if item.get("command") != "agentdeck artifacts":
                     errors.append("control_registry_card.items: artifacts inspect command must be agentdeck artifacts")
+            if item.get("scope") == "audit" and item.get("kind") == "inspect":
+                if item.get("safety") != "inspect":
+                    errors.append("control_registry_card.items: audit inspect must use safety=inspect")
+                if item.get("command") != "agentdeck events --limit 20":
+                    errors.append(
+                        "control_registry_card.items: audit inspect command must be agentdeck events --limit 20"
+                    )
             if item.get("scope") == "inbox" and item.get("kind") == "preview":
                 if not str(item.get("command") or "").startswith("agentdeck trace --id "):
                     errors.append("control_registry_card.items: inbox preview command must use trace")
@@ -6352,6 +6395,14 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         agent_id=None,
         controls=artifacts_card.get("controls"),
     )
+    audit_card = payload.get("audit_card") if isinstance(payload.get("audit_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="audit",
+        card="audit_card",
+        agent_id=None,
+        controls=audit_card.get("controls"),
+    )
     return registry
 
 
@@ -7083,6 +7134,16 @@ def workbench_example() -> dict[str, object]:
             "recent_events": recovery["recent_events"],
             "event_count": len(recovery["recent_events"]),
             "events_command": "agentdeck events --limit 20",
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "Inspect audit events",
+                    "command": "agentdeck events --limit 20",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                }
+            ],
         },
         "artifacts_card": artifacts_example(),
         "leader_summary_card": leader_summary_example(),
