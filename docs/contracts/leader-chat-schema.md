@@ -331,7 +331,7 @@ Runtime recovery responses include `runtime_card`, which reuses the same runtime
 }
 ```
 
-Runtime chat responses also include a top-level `terminal_session_card`, derived from that same `runtime_card` and the project tmux configuration. It reuses the workbench terminal session card shape so GUI/TUI clients can render the project terminal strip directly, including the session attach command, refresh command, project controls, and per-agent select-pane affordances.
+Runtime chat responses also include a top-level `terminal_session_card`, derived from that same `runtime_card` and the project tmux configuration. It reuses the workbench terminal session card shape so GUI/TUI clients can render the project terminal strip directly, including the session attach command, refresh command, project controls, and each terminal item's `controls[]` select-pane button.
 
 When `runtime_card` or `terminal_session_card` is present, `validate_leader_chat_contract()` checks the same runtime and terminal session field lists exposed by `agentdeck contract workbench`. Runtime-mode is read-only: it may recommend `agentdeck agent refresh` or show attach/select-pane commands, but it must not attach tmux, select panes, refresh, spawn, stop, capture pane output, or send tmux input by itself.
 

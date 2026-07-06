@@ -1784,6 +1784,8 @@ def _workbench_terminal_session_card(config: ProjectConfig, runtime_card: dict[s
         enabled = status == "running" and bool(pane_id)
         if enabled:
             running_count += 1
+        select_pane_command = _tmux_select_pane_command(config, str(pane_id)) if enabled else None
+        blocker = None if enabled else "agent is not running"
         terminals.append(
             {
                 "agent_id": agent_id,
@@ -1791,9 +1793,19 @@ def _workbench_terminal_session_card(config: ProjectConfig, runtime_card: dict[s
                 "status": status,
                 "pane_id": pane_id,
                 "terminal_command": agent.get("terminal_command"),
-                "select_pane_command": _tmux_select_pane_command(config, str(pane_id)) if enabled else None,
+                "select_pane_command": select_pane_command,
                 "enabled": enabled,
-                "blocker": None if enabled else "agent is not running",
+                "blocker": blocker,
+                "controls": [
+                    {
+                        "kind": "select_pane",
+                        "label": "Select pane",
+                        "command": select_pane_command,
+                        "safety": "inspect",
+                        "enabled": enabled,
+                        "blocker": blocker,
+                    }
+                ],
             }
         )
     return {

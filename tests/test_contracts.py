@@ -1275,6 +1275,16 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         "refresh_runtime",
     ]
     assert set(example["terminal_session_card"]["terminals"][0]) == set(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS)
+    assert example["terminal_session_card"]["terminals"][0]["controls"] == [
+        {
+            "kind": "select_pane",
+            "label": "Select pane",
+            "command": example["terminal_session_card"]["terminals"][0]["select_pane_command"],
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
     assert example["terminal_session_card"]["running_count"] == 1
     assert example["terminal_session_card"]["terminals"][0]["select_pane_command"].endswith("select-pane -t %42")
     assert example["leader_inbox_card"]["items"][0]["event_type"] == "task_reply"
@@ -1559,6 +1569,20 @@ def test_validate_workbench_contract_requires_terminal_session_control_fields() 
     assert result == {
         "ok": False,
         "errors": ["missing terminal_session control field: safety"],
+    }
+
+
+def test_validate_workbench_contract_requires_terminal_session_select_pane_control_to_match_item() -> None:
+    payload = workbench_example()
+    payload["terminal_session_card"]["terminals"][0]["controls"][0]["command"] = (
+        "tmux -L agentdeck-multi-agent-explore select-pane -t %99"
+    )
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["terminal_session select_pane command must match select_pane_command"],
     }
 
 

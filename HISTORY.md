@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Add select-pane controls to terminal session items
+
+- 扩展 `terminal_session_card.terminals[]`：每个 terminal item 现在都有 GUI-ready `controls[]`，running agent 暴露 `kind=select_pane` / `label=Select pane` / `safety=inspect` 的 select-pane 控件，未 running agent 保留 disabled 控件和 `agent is not running` blocker。
+- 同步 workbench/leader-chat contract discovery：`terminal_session_item_fields` 新增 `controls`，example 和 live workbench payload 都使用同一字段形状，避免 GUI 解析 `select_pane_command` 才能渲染按钮。
+- 扩展 validator：terminal item `select_pane` control 必须使用 `safety=inspect`，command 必须匹配同 item 的 `select_pane_command`，enabled 必须与 item enabled 一致，disabled control 必须带 blocker。
+- 保持控制边界：这些 controls 只是可见命令投影，不代表 workbench/leader chat 自动 select pane、attach tmux、capture、send、refresh 或写 state。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/workbench-schema.md` 和 `docs/contracts/leader-chat-schema.md`，明确 per-terminal controls 是 GUI contract。
+- 验证记录：已先确认红测失败，live workbench 和 workbench contract example 最初缺少 `terminal_session_card.terminals[].controls`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 2 项通过；负向 validator 测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_workbench_contract_requires_terminal_session_select_pane_control_to_match_item -q` 1 项通过；本轮最终聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_terminal_session_item_fields tests/test_contracts.py::test_validate_workbench_contract_requires_terminal_session_select_pane_control_to_match_item -q` 5 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 369 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 395 项通过。
+
 ### Current - Add terminal session card to runtime recovery chat
 
 - 扩展 recovery-first `agentdeck leader chat --message "继续"`：当 ProjectView recovery 指向 stale runtime 时，响应现在在 `runtime_card` 之外同步返回同源顶层 `terminal_session_card`，供 GUI/TUI 在恢复页直接渲染项目级 tmux terminal strip。

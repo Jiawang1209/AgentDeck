@@ -1516,6 +1516,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "select_pane_command",
         "enabled",
         "blocker",
+        "controls",
     ]
     assert payload["runtime_agent_fields"] == [
         "agent_id",
@@ -2057,6 +2058,16 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "select_pane_command": "tmux -L agentdeck-repo select-pane -t %42",
                 "enabled": True,
                 "blocker": None,
+                "controls": [
+                    {
+                        "kind": "select_pane",
+                        "label": "Select pane",
+                        "command": "tmux -L agentdeck-repo select-pane -t %42",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    }
+                ],
             },
             {
                 "agent_id": "coder",
@@ -2067,6 +2078,16 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "select_pane_command": None,
                 "enabled": False,
                 "blocker": "agent is not running",
+                "controls": [
+                    {
+                        "kind": "select_pane",
+                        "label": "Select pane",
+                        "command": None,
+                        "safety": "inspect",
+                        "enabled": False,
+                        "blocker": "agent is not running",
+                    }
+                ],
             },
             {
                 "agent_id": "reviewer",
@@ -2077,6 +2098,16 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "select_pane_command": None,
                 "enabled": False,
                 "blocker": "agent is not running",
+                "controls": [
+                    {
+                        "kind": "select_pane",
+                        "label": "Select pane",
+                        "command": None,
+                        "safety": "inspect",
+                        "enabled": False,
+                        "blocker": "agent is not running",
+                    }
+                ],
             },
         ],
     }

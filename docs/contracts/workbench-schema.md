@@ -178,13 +178,23 @@ The embedded `runtime_card` must match the same runtime projection shown at the 
       "terminal_command": "agentdeck agent terminal --agent planner",
       "select_pane_command": "tmux -L agentdeck-example select-pane -t %42",
       "enabled": true,
-      "blocker": null
+      "blocker": null,
+      "controls": [
+        {
+          "kind": "select_pane",
+          "label": "Select pane",
+          "command": "tmux -L agentdeck-example select-pane -t %42",
+          "safety": "inspect",
+          "enabled": true,
+          "blocker": null
+        }
+      ]
     }
   ]
 }
 ```
 
-`attach_command` opens the configured project tmux session. Each enabled terminal item points to a running pane with `select_pane_command`; non-running agents stay visible but disabled with `blocker=agent is not running`. `controls[]` exposes render-ready buttons: `attach_session` and `open_controls` use `safety=inspect`, while `refresh_runtime` uses `safety=explicit_runtime` and must match `refresh_command`. `open_terminals_command=agentdeck controls` lets GUI clients jump to the full command palette for per-agent terminal controls. This card is read-only: it does not attach tmux, select panes, inspect panes, capture output, send input, refresh bindings, spawn panes, stop panes, or write state.
+`attach_command` opens the configured project tmux session. Each terminal item exposes its own `controls[]` with `kind=select_pane`, `label=Select pane`, `safety=inspect`, and a command that matches `select_pane_command`; running panes are enabled, while non-running agents stay visible with a disabled select-pane control and `blocker=agent is not running`. The card-level `controls[]` exposes render-ready project buttons: `attach_session` and `open_controls` use `safety=inspect`, while `refresh_runtime` uses `safety=explicit_runtime` and must match `refresh_command`. `open_terminals_command=agentdeck controls` lets GUI clients jump to the full command palette for broader runtime controls. This card is read-only: it does not attach tmux, select panes, inspect panes, capture output, send input, refresh bindings, spawn panes, stop panes, or write state.
 
 ## Watch Stream
 

@@ -860,6 +860,7 @@ WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS = (
     "select_pane_command",
     "enabled",
     "blocker",
+    "controls",
 )
 
 WORKBENCH_ROLE_CARD_FIELDS = (
@@ -2886,6 +2887,26 @@ def _validate_terminal_session_card_contract(
                 errors.append("disabled terminal_session item requires blocker")
             if item.get("enabled") is True and not item.get("select_pane_command"):
                 errors.append("enabled terminal_session item requires select_pane_command")
+            item_controls = item.get("controls")
+            if isinstance(item_controls, list):
+                for control in item_controls:
+                    if not isinstance(control, dict):
+                        errors.append("terminal_session item controls must be objects")
+                        continue
+                    for field in WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS:
+                        if field not in control:
+                            errors.append(f"missing terminal_session item control field: {field}")
+                    if control.get("kind") == "select_pane":
+                        if control.get("safety") != "inspect":
+                            errors.append("terminal_session select_pane control must use safety=inspect")
+                        if control.get("command") != item.get("select_pane_command"):
+                            errors.append("terminal_session select_pane command must match select_pane_command")
+                        if "enabled" in item and control.get("enabled") != item.get("enabled"):
+                            errors.append("terminal_session select_pane enabled must match item enabled")
+                    if control.get("enabled") is False and not control.get("blocker"):
+                        errors.append("disabled terminal_session item control requires blocker")
+            elif "controls" in item:
+                errors.append("terminal_session item controls must be a list")
     elif "terminals" in terminal_session_card:
         errors.append("terminal_session_card.terminals must be a list")
 
@@ -4852,6 +4873,8 @@ def _terminal_session_card_from_runtime_card(runtime_card: dict[str, object]) ->
         enabled = status == "running" and bool(pane_id)
         if enabled:
             running_count += 1
+        select_pane_command = f"tmux -L agentdeck-multi-agent-explore select-pane -t {pane_id}" if enabled else None
+        blocker = None if enabled else "agent is not running"
         terminals.append(
             {
                 "agent_id": agent.get("agent_id"),
@@ -4859,11 +4882,19 @@ def _terminal_session_card_from_runtime_card(runtime_card: dict[str, object]) ->
                 "status": status,
                 "pane_id": pane_id,
                 "terminal_command": agent.get("terminal_command"),
-                "select_pane_command": (
-                    f"tmux -L agentdeck-multi-agent-explore select-pane -t {pane_id}" if enabled else None
-                ),
+                "select_pane_command": select_pane_command,
                 "enabled": enabled,
-                "blocker": None if enabled else "agent is not running",
+                "blocker": blocker,
+                "controls": [
+                    {
+                        "kind": "select_pane",
+                        "label": "Select pane",
+                        "command": select_pane_command,
+                        "safety": "inspect",
+                        "enabled": enabled,
+                        "blocker": blocker,
+                    }
+                ],
             }
         )
     return {
