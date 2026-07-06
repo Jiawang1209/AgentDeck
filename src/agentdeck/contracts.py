@@ -3833,6 +3833,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                     "intent_card.secondary_embedded_cards must include control_registry_card for leader_status responses"
                 )
             if (
+                explanation_action_kind == "leader_summary"
+                and payload.get("leader_summary_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for leader_summary responses"
+                )
+            if (
                 explanation_action_kind == "artifacts"
                 and payload.get("artifacts_card") is not None
                 and "control_registry_card" not in secondary_embedded_cards
@@ -4198,6 +4206,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         ):
             errors.append("control_registry_card.selection.next_command must match leader_status_card.refresh_command")
         if (
+            explanation_action_kind == "leader_summary"
+            and isinstance(leader_summary_card, dict)
+            and isinstance(selection, dict)
+            and selection.get("next_command") != payload.get("next_command")
+        ):
+            errors.append("control_registry_card.selection.next_command must match leader_summary next_command")
+        if (
             explanation_action_kind == "artifacts"
             and isinstance(artifacts_card, dict)
             and isinstance(selection, dict)
@@ -4229,6 +4244,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("control_registry_card is required for provider_setup setup responses")
     elif explanation_action_kind == "leader_status":
         errors.append("control_registry_card is required for leader_status responses")
+    elif explanation_action_kind == "leader_summary":
+        errors.append("control_registry_card is required for leader_summary responses")
     elif explanation_action_kind == "artifacts":
         errors.append("control_registry_card is required for artifacts responses")
     elif explanation_action_kind == "ledger":
@@ -6489,6 +6506,18 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         card="artifacts_card",
         agent_id=None,
         controls=artifacts_card.get("controls"),
+    )
+    leader_summary_card = (
+        payload.get("leader_summary_card")
+        if isinstance(payload.get("leader_summary_card"), dict)
+        else {}
+    )
+    _append_control_registry_items(
+        registry,
+        scope="leader_summary",
+        card="leader_summary_card",
+        agent_id="leader",
+        controls=leader_summary_card.get("controls"),
     )
     audit_card = payload.get("audit_card") if isinstance(payload.get("audit_card"), dict) else {}
     _append_control_registry_items(

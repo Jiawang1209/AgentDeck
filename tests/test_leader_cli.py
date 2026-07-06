@@ -6456,6 +6456,14 @@ def test_leader_summary_returns_replies_and_artifacts_without_mutating_state(
     ]
     assert payload["controls"] == [
         {
+            "kind": "summary",
+            "label": "View summary",
+            "command": "agentdeck leader summary --plan-id pln_summary",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
             "kind": "plan_status",
             "label": "Plan status",
             "command": "agentdeck plan status --plan-id pln_summary",
@@ -6534,6 +6542,7 @@ def test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions
     assert payload["leader_summary_card"]["steps"][0]["reply_text"].startswith("status: completed")
     assert payload["leader_summary_card"]["steps"][0]["artifacts"][0]["path"] == "docs/done.md"
     assert payload["intent_card"]["embedded_card"] == "leader_summary_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
     assert payload["intent_card"]["read_only"] is True
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
@@ -6543,6 +6552,25 @@ def test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions
         "enabled": True,
         "blocker": None,
     }
+    assert payload["control_registry_card"]["filters"]["scope"] == "leader_summary"
+    assert payload["control_registry_card"]["filters"]["card"] == "leader_summary_card"
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == ["scope", "card", "control_id"]
+    assert payload["control_registry_card"]["filters"]["item_count_before_filter"] == 4
+    assert payload["control_registry_card"]["item_count"] == 1
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "leader_summary",
+        "card": "leader_summary_card",
+        "kind": "summary",
+        "label": "View summary",
+        "command": f"agentdeck leader summary --plan-id {plan_id}",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": "leader",
+        "control_id": selected_control["control_id"],
+    }
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
     assert payload["leader_explanation"]["action_kind"] == "leader_summary"
     assert payload["leader_explanation"]["safety"] == "inspect"
     assert payload["leader_explanation"]["requires_explicit_user"] is False
@@ -6560,6 +6588,46 @@ def test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions
     assert state_after["chat_turns"][-1]["next_command"] == f"agentdeck leader summary --plan-id {plan_id}"
     assert fake.sent == sent_before
     assert fake.captured == captured_before
+
+
+def test_validate_leader_chat_contract_requires_summary_registry_card(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--task", "review completed"])
+    planned = json.loads(capsys.readouterr().out)
+    plan_id = planned["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    cli.main(["reply", "--agent", "planner", "--message-id", message_id, "--text", "done"])
+    reply_payload = json.loads(capsys.readouterr().out)
+    inbox_id = reply_payload["inbox_card"]["items"][0]["inbox_id"]
+    cli.main(["ack", "--agent", "leader", "--inbox-id", inbox_id])
+    capsys.readouterr()
+
+    exit_code = cli.main(["leader", "chat", "--message", "总结当前计划"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for leader_summary responses",
+            "control_registry_card is required for leader_summary responses",
+        ],
+    }
 
 
 def test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or_runtime(

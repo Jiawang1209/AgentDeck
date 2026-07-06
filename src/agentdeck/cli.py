@@ -173,6 +173,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "leader_status_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "leader_summary_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "artifacts_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "ledger_card" and payload.get("control_registry_card") is not None:
@@ -1367,6 +1369,18 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         card="artifacts_card",
         agent_id=None,
         controls=artifacts_card.get("controls"),
+    )
+    leader_summary_card = (
+        payload.get("leader_summary_card")
+        if isinstance(payload.get("leader_summary_card"), dict)
+        else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="leader_summary",
+        card="leader_summary_card",
+        agent_id="leader",
+        controls=leader_summary_card.get("controls"),
     )
     audit_card = payload.get("audit_card") if isinstance(payload.get("audit_card"), dict) else {}
     _append_workbench_control_registry_items(
@@ -3960,6 +3974,12 @@ def _leader_summary_payload(store: StateStore, plan_id: str) -> dict[str, object
         )
     controls = [
         _control(
+            kind="summary",
+            label="View summary",
+            command=f"agentdeck leader summary --plan-id {plan_id}",
+            safety="inspect",
+        ),
+        _control(
             kind="plan_status",
             label="Plan status",
             command=f"agentdeck plan status --plan-id {plan_id}",
@@ -6203,6 +6223,24 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             return 1
         next_command = f"agentdeck leader summary --plan-id {plan_id}"
         summary_card = _leader_summary_payload(store, plan_id)
+        registry_items = _workbench_control_registry({"leader_summary_card": summary_card})
+        summary_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("scope") == "leader_summary"
+                and item.get("card") == "leader_summary_card"
+                and item.get("command") == next_command
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="leader_summary",
+            card="leader_summary_card",
+            control_id=str(summary_control_id) if summary_control_id else None,
+        )
         turn = store.record_chat_turn(
             mode="summary",
             message=args.message,
@@ -6253,6 +6291,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": None,
+            "control_registry_card": control_registry_card,
             "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)

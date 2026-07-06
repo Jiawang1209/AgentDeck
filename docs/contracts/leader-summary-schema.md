@@ -45,7 +45,7 @@ The live summary response is a deterministic aggregation card:
 - `plan_status_command`: read-only command for the underlying plan status.
 - `review_command`: read-only command to rerun Leader review.
 - `steps`: per-step reply and artifact aggregation.
-- `controls`: GUI-ready controls for status, review, and trace inspection.
+- `controls`: GUI-ready controls for summary, status, review, and trace inspection.
 
 Each `steps[]` item uses:
 
@@ -73,9 +73,9 @@ Each artifact item uses:
 
 Each control item uses:
 
-- `kind`: stable control identifier, such as `plan_status`, `review`, or `trace`.
+- `kind`: stable control identifier, such as `summary`, `plan_status`, `review`, or `trace`.
 - `label`: display label.
-- `command`: CLI command to inspect status, rerun review, or trace lineage.
+- `command`: CLI command to reopen the summary, inspect status, rerun review, or trace lineage.
 - `safety`: safety class; summary controls are read-only `inspect` controls.
 - `enabled`: whether the control can be shown as runnable.
 - `blocker`: reason the control is disabled, or `null`.

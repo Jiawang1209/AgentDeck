@@ -3027,6 +3027,14 @@ def test_workbench_embeds_summary_card_when_latest_plan_is_ready_to_summarize(
     assert summary_card["steps"][0]["reply_text"].startswith("status: completed")
     assert summary_card["steps"][0]["artifacts"][0]["path"] == "docs/workbench-summary.md"
     assert summary_card["controls"][-1]["command"] == f"agentdeck trace --id {message_id}"
+    summary_registry_items = [
+        item
+        for item in payload["control_registry"]
+        if item["scope"] == "leader_summary" and item["card"] == "leader_summary_card"
+    ]
+    assert [item["kind"] for item in summary_registry_items] == ["summary", "plan_status", "review", "trace"]
+    assert summary_registry_items[0]["command"] == f"agentdeck leader summary --plan-id {plan_id}"
+    assert summary_registry_items[0]["safety"] == "inspect"
 
     assert StateStore(root).load() == state_before
 

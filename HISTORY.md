@@ -4,6 +4,16 @@
 
 ## 2026-07-07
 
+### Current - Link Leader summary chat to command registry controls
+
+- 扩展 `agentdeck leader summary --plan-id <id>`：`leader_summary_card.controls[]` 现在包含 `kind=summary` / `command=agentdeck leader summary --plan-id <id>` / `safety=inspect` 的自检入口，和既有 plan status、review、trace 控件一起组成完整收尾控制面。
+- 扩展 `agentdeck workbench` / `agentdeck controls` 的 registry 派生：现在会索引 `leader_summary_card.controls[]`，以 `scope=leader_summary` / `card=leader_summary_card` 暴露 summary、plan_status、review 和 trace 只读控件。
+- 扩展自然语言 summary mode：`agentdeck leader chat --message "总结当前计划"` 会附带过滤到 `leader_summary_card` 的 `control_registry_card`，selection 指向与顶层 `next_command` 相同的 `kind=summary` inspect control，`intent_card.secondary_embedded_cards[]` 同步列出该 registry companion。
+- 收紧契约守门：`validate_leader_chat_contract()` 会拒绝缺少 summary registry companion 的响应，并要求 registry selection 的 `next_command` 与 summary 响应顶层 `next_command` 对齐。
+- 保持只读边界：summary registry companion 不创建 plan/action/approval/message/job/reply/artifact/inbox，不调用 provider，不读取 pane，不 capture reply，不 dispatch，不 ack，不发送 tmux 输入；所有 summary controls 都是 inspect-only。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、`docs/contracts/leader-summary-schema.md`、AGENT/CLAUDE 约束和测试。
+- 验证记录：已先确认红测失败，自然语言 summary 响应最初没有 `control_registry_card`，validator 也会放过缺少 registry companion 的 summary 响应；实现后目标测试 3 项通过，summary/workbench 聚焦回归 10 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 328 项通过，`conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 355 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 503 项通过。
+
 ### Current - Link inbox chat to command registry controls
 
 - 扩展自然语言 `mode=inbox` 响应：`agentdeck leader chat --message "查看 planner inbox"` / `"查看 leader inbox"` / `"确认 planner 当前 inbox"` 现在会附带过滤到 `scope=inbox` / `card=inbox_card` 的 `control_registry_card`。
