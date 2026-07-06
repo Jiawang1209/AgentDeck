@@ -1332,6 +1332,23 @@ def _provider_for_setup_command(command: str) -> str | None:
     return None
 
 
+def _control_registry_id_for_command(
+    workbench_card: dict[str, object],
+    *,
+    scope: str,
+    kind: str,
+    command: str,
+) -> str | None:
+    registry = workbench_card.get("control_registry") if isinstance(workbench_card.get("control_registry"), list) else []
+    for item in registry:
+        if not isinstance(item, dict):
+            continue
+        if item.get("scope") == scope and item.get("kind") == kind and item.get("command") == command:
+            control_id = item.get("control_id")
+            return str(control_id) if isinstance(control_id, str) and control_id else None
+    return None
+
+
 def _workbench_queue_card(
     project_view: dict[str, object], continue_card: dict[str, object], active_queue_source: str
 ) -> dict[str, object]:
@@ -5661,6 +5678,12 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if refreshed_project_view is None:
             return 1
         control_registry_workbench = _workbench_snapshot_payload(refreshed_project_view, store, since_event_id=None)
+        selected_setup_control_id = _control_registry_id_for_command(
+            control_registry_workbench,
+            scope="provider",
+            kind="setup_provider",
+            command=next_command,
+        )
         target_model = next(
             (switch_model for switch_provider, switch_model, _label in LEADER_PROVIDER_SWITCHES if switch_provider == target_provider),
             "",
@@ -5706,6 +5729,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 control_registry_workbench,
                 scope="provider",
                 query=query,
+                control_id=selected_setup_control_id,
             ),
             "provider_switch_card": provider_switch_card,
         }

@@ -952,10 +952,18 @@ def test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_with
     registry = payload["control_registry_card"]
     assert registry["filters"]["scope"] == "provider"
     assert registry["filters"]["query"] == "codex"
-    assert [item["command"] for item in registry["items"] if item["kind"] == "setup_provider"] == [
-        "codex login",
-        "codex doctor",
-    ]
+    assert [item["command"] for item in registry["items"] if item["kind"] == "setup_provider"] == ["codex login"]
+    selected_setup_control = next(item for item in registry["items"] if item["command"] == "codex login")
+    assert registry["filters"]["control_id"] == selected_setup_control["control_id"]
+    assert registry["filters"]["active_filter_keys"] == ["scope", "query", "control_id"]
+    assert registry["selection"] == {
+        "requested_control_id": selected_setup_control["control_id"],
+        "matched": True,
+        "matched_count": 1,
+        "selected_control": selected_setup_control,
+        "blocker": None,
+        "next_command": "codex login",
+    }
     assert payload["leader_explanation"] == {
         "mode": "setup",
         "summary": "Leader recommends explicit provider setup commands without mutating provider config.",

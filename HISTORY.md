@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Select recommended provider setup control
+
+- 扩展 provider setup 响应里的 `control_registry_card`：自然语言 `"配置 Codex CLI Leader"` 现在会找到推荐 setup command 对应的 `control_id`，并让 command palette selection 精确选中该 control。
+- `control_registry_card.selection.selected_control.command` 和 `selection.next_command` 现在会与顶层 `next_command` 对齐，例如都是 `codex login`，方便 GUI 直接渲染被推荐的主操作按钮和详情抽屉。
+- 该 selection 仍复用既有 `control_id` 过滤语义，只读收窄命令面板投影，不成为授权令牌，也不执行 setup command。
+- 保持控制边界：该响应只记录 chat turn，不修改 `.agentdeck/config.toml`、不调用当前或目标 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，provider setup `control_registry_card.filters.control_id` 最初为 `null`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_without_planning tests/test_leader_cli.py::test_leader_chat_provider_setup_require_ready_intent_surfaces_guarded_followup -q` 2 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 389 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 415 项通过。
+
 ### Current - Guard provider setup follow-up switch
 
 - 扩展 provider setup 自然语言路由：`agentdeck leader chat --message "配置 Claude CLI Leader，必须可用再切换"` 现在会优先进入 `provider_setup`，而不是因为包含“切换”落入直接 provider switch。
