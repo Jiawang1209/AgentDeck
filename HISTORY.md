@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Route Leader chat status intent to status card
+
+- 新增自然语言只读入口：`agentdeck leader chat --message "查看 Leader 状态"` / `"leader status"` 现在进入 `mode=leader_status`，嵌入与 `agentdeck leader status` 同源的 `leader_status_card`。
+- chat 响应会把顶层 `provider_health` 和 `next_command` 与 `leader_status_card` 对齐，并让 `intent_card.embedded_card=leader_status_card`、inspect control 指向 `agentdeck leader status`，方便终端壳和未来 GUI 直接复用同一张 Leader 状态卡。
+- 保持北极星人类控制边界：该入口只记录 chat turn 和审计事件，不调用 Leader provider、不读取 tmux pane、不创建 plan/action/approval/message/job/inbox、不修改 runtime state，也不执行推荐命令。
+- 扩展 `agentdeck contract leader-chat` discovery/example/validator，公开 `leader_status_card_fields` 和 `leader_status_queue_fields`，并校验嵌入状态卡字段、queue fields、provider_health 对齐和 next_command 对齐；同步 README、Leader chat contract、AGENT/CLAUDE 约束。
+- 验证记录：已先确认红测失败，`查看 Leader 状态` 最初会落入 provider planning 分支并调用 `leader_provider`，`leader-chat` contract 也缺少 `leader_status_card_fields` 和嵌入卡 validator；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or_runtime tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_reuses_leader_status_card_validator -q` 5 项通过；相关回归 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 344 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 491 项通过。
+
 ### Current - Add read-only Leader status card
 
 - 新增 `agentdeck leader status` 只读状态卡：先通过 ProjectView contract 守门，再复用 workbench 同源 `provider_health`，聚合 logical Leader、provider readiness/setup、latest_plan、queue counts、recovery、next_command 和 GUI-ready controls。

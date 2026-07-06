@@ -475,6 +475,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "leader_action",
     "leader_action_card",
     "leader_summary_card",
+    "leader_status_card",
     "continue_card",
     "run_start_card",
     "run_progress_card",
@@ -1499,6 +1500,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "terminal_session_card_fields": list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS),
         "terminal_session_control_fields": list(WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS),
         "terminal_session_item_fields": list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS),
+        "leader_status_card_fields": list(LEADER_STATUS_RESPONSE_FIELDS),
+        "leader_status_queue_fields": list(LEADER_STATUS_QUEUE_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
@@ -1571,6 +1574,8 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_terminal_session_card_fields"] = list(terminal_session_card)
         payload["example_terminal_session_control_fields"] = list(terminal_session_card["controls"][0])
         payload["example_terminal_session_item_fields"] = list(terminal_session_card["terminals"][0])
+        payload["example_leader_status_card_fields"] = list(example["leader_status_card"])
+        payload["example_leader_status_queue_fields"] = list(example["leader_status_card"]["queues"])
         payload["example_provider_health_fields"] = list(example["provider_health"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
         payload["example_operator_card_fields"] = list(example["operator_card"])
@@ -3864,6 +3869,16 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append(f"leader_summary_card: {error}")
     elif "leader_summary_card" in payload and leader_summary_card is not None:
         errors.append("leader_summary_card must be an object")
+    leader_status_card = payload.get("leader_status_card")
+    if isinstance(leader_status_card, dict):
+        _validate_leader_status_card_contract(errors, leader_status_card)
+        if payload.get("mode") == "leader_status":
+            if leader_status_card.get("next_command") != payload.get("next_command"):
+                errors.append("leader_status_card.next_command must match response next_command")
+            if leader_status_card.get("provider_health") != payload.get("provider_health"):
+                errors.append("leader_status_card.provider_health must match response provider_health")
+    elif "leader_status_card" in payload and leader_status_card is not None:
+        errors.append("leader_status_card must be an object")
     inbox_card = payload.get("inbox_card")
     if isinstance(inbox_card, dict):
         inbox_card_validation = validate_inbox_contract(inbox_card)
@@ -4054,6 +4069,45 @@ def _validate_leader_chat_action_card_contract(errors: list[str], action_card: d
                 errors.append("leader_action_card.controls items must be objects")
     elif "controls" in action_card:
         errors.append("leader_action_card.controls must be a list")
+
+
+def _validate_leader_status_card_contract(errors: list[str], status_card: dict[str, object]) -> None:
+    for field in LEADER_STATUS_RESPONSE_FIELDS:
+        if field not in status_card:
+            errors.append(f"missing leader_status_card field: {field}")
+    if status_card.get("mode") != "leader_status":
+        errors.append("leader_status_card.mode must be leader_status")
+    provider_health = status_card.get("provider_health")
+    if isinstance(provider_health, dict):
+        for field in WORKBENCH_PROVIDER_HEALTH_FIELDS:
+            if field not in provider_health:
+                errors.append(f"leader_status_card: missing provider_health field: {field}")
+    elif "provider_health" in status_card:
+        errors.append("leader_status_card.provider_health must be an object")
+    queues = status_card.get("queues")
+    if isinstance(queues, dict):
+        for field in LEADER_STATUS_QUEUE_FIELDS:
+            if field not in queues:
+                errors.append(f"leader_status_card: missing queue field: {field}")
+            elif not isinstance(queues.get(field), int):
+                errors.append(f"leader_status_card.queues.{field} must be an integer")
+    elif "queues" in status_card:
+        errors.append("leader_status_card.queues must be an object")
+    controls = status_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if isinstance(control, dict):
+                for field in WORKBENCH_CONTROL_MODE_CONTROL_FIELDS:
+                    if field not in control:
+                        errors.append(f"leader_status_card.controls: missing control field: {field}")
+                if control.get("kind") == "inspect" and control.get("safety") != "inspect":
+                    errors.append("leader_status_card.controls: inspect controls must use safety=inspect")
+                if control.get("enabled") is False and not control.get("blocker"):
+                    errors.append("leader_status_card.controls: disabled controls must include blocker")
+            else:
+                errors.append("leader_status_card.controls items must be objects")
+    elif "controls" in status_card:
+        errors.append("leader_status_card.controls must be a list")
 
 
 def _validate_leader_chat_capture_card_contract(errors: list[str], capture_card: dict[str, object]) -> None:
@@ -5674,6 +5728,7 @@ def leader_chat_example() -> dict[str, object]:
     }
     leader_action_card = leader_chat_action_card(leader_action)
     leader_summary_card = leader_summary_example()
+    leader_status_card = leader_status_example()
     run_start_card = run_start_example()
     run_progress_card = run_progress_example()
     provider_switch_card = {
@@ -5835,6 +5890,7 @@ def leader_chat_example() -> dict[str, object]:
         "leader_action": leader_action,
         "leader_action_card": leader_action_card,
         "leader_summary_card": leader_summary_card,
+        "leader_status_card": leader_status_card,
         "continue_card": continue_card,
         "run_start_card": run_start_card,
         "run_progress_card": run_progress_card,

@@ -1297,6 +1297,20 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["terminal_session_card_fields"] == list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS)
     assert payload["terminal_session_control_fields"] == list(WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS)
     assert payload["terminal_session_item_fields"] == list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS)
+    assert payload["leader_status_card_fields"] == [
+        "ok",
+        "mode",
+        "schema_version",
+        "project_view_command",
+        "workbench_command",
+        "leader",
+        "provider_health",
+        "latest_plan",
+        "queues",
+        "recovery",
+        "next_command",
+        "controls",
+    ]
     assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert "leader_backend" in payload["provider_health_fields"]
     assert "provider_backend" in payload["provider_health_fields"]
@@ -3338,6 +3352,36 @@ def test_validate_leader_chat_contract_reuses_leader_summary_card_validator() ->
     assert result == {
         "ok": False,
         "errors": ["leader_summary_card: missing leader_summary field: summary"],
+    }
+
+
+def test_validate_leader_chat_contract_reuses_leader_status_card_validator() -> None:
+    payload = leader_chat_example()
+    status_card = leader_status_example()
+    payload["mode"] = "leader_status"
+    payload["leader_status_card"] = status_card
+    payload["provider_health"] = status_card["provider_health"]
+    payload["next_command"] = status_card["next_command"]
+    payload["leader_explanation"]["mode"] = "leader_status"
+    payload["leader_explanation"]["next_command"] = status_card["next_command"]
+    payload["leader_explanation"]["action_kind"] = "leader_status"
+    payload["leader_explanation"]["action_status"] = "action_required"
+    payload["leader_explanation"]["safety"] = "inspect"
+    payload["leader_explanation"]["requires_explicit_user"] = False
+    payload["intent_card"]["mode"] = "leader_status"
+    payload["intent_card"]["matched_intent"] = "leader_status"
+    payload["intent_card"]["embedded_card"] = "leader_status_card"
+    payload["intent_card"]["read_only"] = True
+    payload["intent_card"]["next_command"] = status_card["next_command"]
+    payload["intent_card"]["requires_explicit_user"] = False
+    payload["intent_card"]["controls"][-1]["command"] = status_card["next_command"]
+    del status_card["queues"]["leader_errors"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["leader_status_card: missing queue field: leader_errors"],
     }
 
 

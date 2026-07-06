@@ -18,6 +18,8 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "intent_control_fields": [],
   "leader_action_card_fields": [],
   "leader_summary_card_fields": [],
+  "leader_status_card_fields": [],
+  "leader_status_queue_fields": [],
   "continue_card_fields": [],
   "run_start_card_fields": [],
   "run_progress_card_fields": [],
@@ -91,6 +93,7 @@ The review-mode response shape is:
   "leader_action": {},
   "leader_action_card": {},
   "leader_summary_card": null,
+  "leader_status_card": null,
   "continue_card": null,
   "run_start_card": null,
   "run_progress_card": null,
@@ -139,6 +142,8 @@ The review-mode response shape is:
 ```
 
 The card is derived from the same action detail and does not introduce a second action state source. GUI and natural-language shells should render its `controls[]`, `preview_command`, `apply_command`, `explicit_command`, and `apply_blocker`, while still treating the underlying `leader_action` and ProjectView recovery as the authority.
+
+`leader_status_card` is the same read-only status projection returned by `agentdeck leader status`. Natural-language messages such as `查看 Leader 状态` or `leader status` enter `mode=leader_status`, embed this card, mirror its `provider_health` and `next_command` at the top level, and expose `intent_card.embedded_card=leader_status_card` with an inspect control for `agentdeck leader status`. The card is derived from the validated ProjectView and workbench provider health projection; it may record the chat turn for history, but it must not call a Leader provider, inspect tmux panes, create plans, actions, approvals, messages, jobs, or inbox items, or execute any recommended command.
 
 `intent_card` is the stable routing card for GUI and natural-language shells:
 

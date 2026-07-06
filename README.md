@@ -69,6 +69,7 @@ agentdeck contract trace
 agentdeck contract trace --example
 agentdeck contract artifacts
 agentdeck contract artifacts --example
+agentdeck leader status
 agentdeck agent list
 agentdeck agent ready
 agentdeck agent spawn-ready --confirm
@@ -80,6 +81,7 @@ agentdeck agent refresh
 agentdeck agent stop --agent planner
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
 agentdeck leader chat --message "帮我设计自动 reply extraction"
+agentdeck leader chat --message "查看 Leader 状态"
 agentdeck leader chat --message "查看运行进度"
 agentdeck leader chat --message "查看产物"
 agentdeck leader chat --message "打开工作台"
@@ -171,6 +173,7 @@ agentdeck doctor
 agentdeck project init
 agentdeck status
 agentdeck workbench
+agentdeck leader status
 agentdeck controls
 agentdeck controls --scope runtime --enabled-only
 agentdeck controls --card terminal_session_card
@@ -179,6 +182,7 @@ agentdeck controls --control-id leader:leader_card:chat:leader:6fd87159ea
 agentdeck agent list
 agentdeck agent stop --agent planner
 agentdeck leader chat --message "帮我设计自动 reply extraction"
+agentdeck leader chat --message "查看 Leader 状态"
 agentdeck leader chat-history
 agentdeck leader plan --task "设计自动 reply extraction"
 agentdeck leader review --plan-id pln_xxx
@@ -318,9 +322,9 @@ agentdeck contract artifacts --example
 
 `agentdeck status` 是当前面向 CLI、自然语言入口和未来 GUI 的统一只读 ProjectView。它会返回项目配置、Leader、agents runtime binding、state_path，以及 plans、approvals、messages、jobs、replies、artifacts、chat_turns、leader_errors、leader_actions、inbox、recovery 的轻量摘要。顶层 `leader.leader_backend` 会暴露当前配置 provider/model 的 normalized logical Leader identity，供 GUI 在没有 plan 时也能识别 fake、API-backed 或 CLI-backed Leader 来源；它不是 tmux pane 绑定、provider readiness 证明或执行授权。
 
-`agentdeck leader status` 是面向终端和未来 GUI 的窄版 Leader 状态卡。它先校验 ProjectView，再复用 workbench 的 `provider_health`，输出当前 logical Leader、provider readiness/setup、latest_plan、队列计数、recovery、next_command 和 inspect/next controls。它不调用 Leader provider、不读取 tmux pane、不写 state、不创建 plan/action/approval/message/job/inbox，也不执行推荐命令；适合 GUI 顶栏或自然语言壳快速回答“Leader 现在能不能规划，下一步该看 doctor、审批、inbox 还是继续”。
+`agentdeck leader status` 是面向终端和未来 GUI 的窄版 Leader 状态卡。它先校验 ProjectView，再复用 workbench 的 `provider_health`，输出当前 logical Leader、provider readiness/setup、latest_plan、队列计数、recovery、next_command 和 inspect/next controls。它不调用 Leader provider、不读取 tmux pane、不写 state、不创建 plan/action/approval/message/job/inbox，也不执行推荐命令；适合 GUI 顶栏或自然语言壳快速回答“Leader 现在能不能规划，下一步该看 doctor、审批、inbox 还是继续”。自然语言 `agentdeck leader chat --message "查看 Leader 状态"` 会进入只读 `mode=leader_status`，嵌入同一张 `leader_status_card`，并把顶层 `provider_health` / `next_command` 与状态卡对齐；该入口只记录 chat turn，不调用 provider、不读取 tmux、不创建调度对象。
 
-详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract list` 会返回所有 GUI 可消费契约的发现命令、example 命令和本地文档路径，方便 GUI 启动时做能力 discovery；字段契约见 `docs/contracts/contract-index-schema.md`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract doctor` 会发现本地诊断字段，`--example` 会附带稳定 doctor diagnostics 示例。`agentdeck contract events` 会发现审计时间线字段，`--example` 会附带稳定 events timeline 示例。`agentdeck contract run` 会发现 `agentdeck run --task <text>` 的 approval-gated start card 字段和 `agentdeck run --plan-id <id>` 的 read-only progress card 字段，`--example` 会附带稳定 run_start/run_progress 示例。`agentdeck contract workbench` 会发现工作台快照字段，包括嵌入 `agentdeck agent ready` 的 `agent_ready_card_fields` 和项目级 `terminal_session_card_fields`、`terminal_session_control_fields`，`--example` 会附带稳定的一屏 workbench 示例。`agentdeck contract controls` 会发现独立命令面板 card、filter、item 和 group 字段，`--example` 会附带稳定 control registry card 示例。`agentdeck contract agent-runtime` 会发现 `agent list/ready/spawn-ready/spawn/terminal/capture/send/refresh/stop` 的命令模板、ready/spawn-ready/terminal/capture/refresh 响应字段和 runtime control 字段，`--example` 会附带稳定的可见 tmux runtime 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，包括 setup-mode `provider_health_fields`、workbench 嵌入的 `terminal_session_card_fields` / `terminal_session_control_fields` / `terminal_session_item_fields`、inbox trace intent 可选嵌入的 `trace_card` 字段和 summary intent 可嵌入的 `leader_summary_card` 字段，`--example` 会附带包含 `leader_explanation`、provider health 与 terminal session 示例字段的稳定响应示例。`agentdeck contract leader-status` 会发现 `agentdeck leader status` 的只读 Leader 状态卡字段，包括 `provider_health_fields`、latest plan、queue fields、recovery 和 controls，`--example` 会附带稳定状态卡示例。`agentdeck contract leader-actions` 会发现 Leader action queue 字段，`--example` 会附带稳定队列示例。`agentdeck contract leader-review` 会发现 `agentdeck leader review --plan-id <id>` 的 response 字段、`leader_backend_fields` 和 `controls[]` 字段，`--example` 会附带稳定 review 响应示例。`agentdeck contract leader-summary` 会发现 `agentdeck leader summary --plan-id <id>` 的 response、`leader_backend_fields`、steps、artifacts 和 controls 字段，`--example` 会附带稳定 summary 响应示例。`agentdeck contract leader-action` 会发现单个 Leader action 详情字段，`--example` 会附带稳定 action detail 示例。`agentdeck contract approvals` 会发现人类审批队列字段和 dispatch-ready 批量派发响应字段，`--example` 会附带稳定 approval queue 与 dispatch-ready 示例。`agentdeck contract inbox` 会发现单 agent mailbox 字段，`--example` 会附带稳定 inbox 示例。`agentdeck contract trace` 会发现通信 lineage 的 message/attempt/job/reply/artifact/inbox 字段，`--example` 会附带稳定 trace 示例。`agentdeck contract artifacts` 会发现只读产物索引字段，`--example` 会附带稳定 artifacts 示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck doctor`、`agentdeck events`、`agentdeck run`、`agentdeck workbench`、`agentdeck controls`、`agentdeck agent list`、`agentdeck agent ready`、`agentdeck agent spawn-ready --confirm`、`agentdeck agent terminal --agent <id>`、`agentdeck agent refresh`、`agentdeck status`、`agentdeck artifacts`、`agentdeck leader chat`、`agentdeck leader status`、`agentdeck leader actions`、`agentdeck leader review`、`agentdeck leader summary`、`agentdeck leader action`、`agentdeck approval list`、`agentdeck inbox` 和 `agentdeck trace`，不要把 tmux pane 或 state 文件当成第二套状态源。
+详细字段契约见 `docs/contracts/project-view-schema.md`。当前契约版本为 `schema_version: "project-view/v1"`。`agentdeck contract list` 会返回所有 GUI 可消费契约的发现命令、example 命令和本地文档路径，方便 GUI 启动时做能力 discovery；字段契约见 `docs/contracts/contract-index-schema.md`。`agentdeck contract project-view` 会返回契约版本、文档路径和关键字段摘要，方便 GUI 或外部集成做 discovery；加 `--example` 会附带一份 GUI-ready ProjectView 示例。`agentdeck contract doctor` 会发现本地诊断字段，`--example` 会附带稳定 doctor diagnostics 示例。`agentdeck contract events` 会发现审计时间线字段，`--example` 会附带稳定 events timeline 示例。`agentdeck contract run` 会发现 `agentdeck run --task <text>` 的 approval-gated start card 字段和 `agentdeck run --plan-id <id>` 的 read-only progress card 字段，`--example` 会附带稳定 run_start/run_progress 示例。`agentdeck contract workbench` 会发现工作台快照字段，包括嵌入 `agentdeck agent ready` 的 `agent_ready_card_fields` 和项目级 `terminal_session_card_fields`、`terminal_session_control_fields`，`--example` 会附带稳定的一屏 workbench 示例。`agentdeck contract controls` 会发现独立命令面板 card、filter、item 和 group 字段，`--example` 会附带稳定 control registry card 示例。`agentdeck contract agent-runtime` 会发现 `agent list/ready/spawn-ready/spawn/terminal/capture/send/refresh/stop` 的命令模板、ready/spawn-ready/terminal/capture/refresh 响应字段和 runtime control 字段，`--example` 会附带稳定的可见 tmux runtime 示例。`agentdeck contract leader-chat` 会发现自然语言 Leader chat 响应字段，包括 `leader_status_card_fields` / `leader_status_queue_fields`、setup-mode `provider_health_fields`、workbench 嵌入的 `terminal_session_card_fields` / `terminal_session_control_fields` / `terminal_session_item_fields`、inbox trace intent 可选嵌入的 `trace_card` 字段和 summary intent 可嵌入的 `leader_summary_card` 字段，`--example` 会附带包含 `leader_explanation`、Leader status card、provider health 与 terminal session 示例字段的稳定响应示例。`agentdeck contract leader-status` 会发现 `agentdeck leader status` 的只读 Leader 状态卡字段，包括 `provider_health_fields`、latest plan、queue fields、recovery 和 controls，`--example` 会附带稳定状态卡示例。`agentdeck contract leader-actions` 会发现 Leader action queue 字段，`--example` 会附带稳定队列示例。`agentdeck contract leader-review` 会发现 `agentdeck leader review --plan-id <id>` 的 response 字段、`leader_backend_fields` 和 `controls[]` 字段，`--example` 会附带稳定 review 响应示例。`agentdeck contract leader-summary` 会发现 `agentdeck leader summary --plan-id <id>` 的 response、`leader_backend_fields`、steps、artifacts 和 controls 字段，`--example` 会附带稳定 summary 响应示例。`agentdeck contract leader-action` 会发现单个 Leader action 详情字段，`--example` 会附带稳定 action detail 示例。`agentdeck contract approvals` 会发现人类审批队列字段和 dispatch-ready 批量派发响应字段，`--example` 会附带稳定 approval queue 与 dispatch-ready 示例。`agentdeck contract inbox` 会发现单 agent mailbox 字段，`--example` 会附带稳定 inbox 示例。`agentdeck contract trace` 会发现通信 lineage 的 message/attempt/job/reply/artifact/inbox 字段，`--example` 会附带稳定 trace 示例。`agentdeck contract artifacts` 会发现只读产物索引字段，`--example` 会附带稳定 artifacts 示例。GUI、自然语言入口和恢复工具应优先按这些契约消费 `agentdeck doctor`、`agentdeck events`、`agentdeck run`、`agentdeck workbench`、`agentdeck controls`、`agentdeck agent list`、`agentdeck agent ready`、`agentdeck agent spawn-ready --confirm`、`agentdeck agent terminal --agent <id>`、`agentdeck agent refresh`、`agentdeck status`、`agentdeck artifacts`、`agentdeck leader chat`、`agentdeck leader status`、`agentdeck leader actions`、`agentdeck leader review`、`agentdeck leader summary`、`agentdeck leader action`、`agentdeck approval list`、`agentdeck inbox` 和 `agentdeck trace`，不要把 tmux pane 或 state 文件当成第二套状态源。
 
 `status.messages.items[]`、`status.jobs.items[]`、`status.replies.items[]` 和 `status.artifacts.items[]` 会包含 `trace_command`，GUI 可以直接把摘要行或产物行链接到 `agentdeck trace --id <id>`，不用散读 state 或拼接命令。artifact 摘要只暴露 artifact id、关联 message/job/reply id、from_agent、path、kind、status 和 created_at，不读取文件内容。
 
@@ -358,6 +362,7 @@ AgentDeck 已提供第一版 plan-only Leader 能力：
 
 ```bash
 agentdeck leader chat --message "帮我设计自动 reply extraction"
+agentdeck leader chat --message "查看 Leader 状态"
 agentdeck leader chat --message "查看运行进度"
 agentdeck leader chat --message "继续"
 agentdeck leader chat --message "打开工作台"

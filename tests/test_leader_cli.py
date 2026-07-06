@@ -6307,6 +6307,56 @@ def test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions
     assert fake.captured == captured_before
 
 
+def test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or_runtime(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    def fail_provider(_name: str):
+        raise AssertionError("leader status chat intent must not call a planning provider")
+
+    monkeypatch.setattr(cli, "leader_provider", fail_provider)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看 Leader 状态"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "leader_status"
+    assert payload["leader_status_card"]["mode"] == "leader_status"
+    assert payload["leader_status_card"]["leader"] == payload["project_view"]["leader"]
+    assert payload["leader_status_card"]["provider_health"] == payload["provider_health"]
+    assert payload["leader_status_card"]["next_command"] == payload["next_command"]
+    assert payload["leader_explanation"]["action_kind"] == "leader_status"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert payload["intent_card"]["embedded_card"] == "leader_status_card"
+    assert payload["intent_card"]["read_only"] is True
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect leader_status_card",
+        "command": "agentdeck leader status",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+
+    state_after = StateStore(root).load()
+    assert state_after["plans"] == state_before["plans"]
+    assert state_after["leader_actions"] == state_before["leader_actions"]
+    assert state_after["approvals"] == state_before["approvals"]
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["jobs"] == state_before["jobs"]
+    assert state_after.get("inbox", {}) == state_before.get("inbox", {})
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert state_after["chat_turns"][-1]["mode"] == "leader_status"
+    assert fake.sent == []
+    assert fake.captured == []
+
+
 def test_leader_summary_refuses_contract_violation(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "坏 summary 不能输出"])

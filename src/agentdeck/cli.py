@@ -99,6 +99,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "run_start_card",
         "run_progress_card",
         "leader_summary_card",
+        "leader_status_card",
         "capture_card",
         "terminal_card",
         "dispatch_preview_card",
@@ -294,6 +295,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
             else None
         )
         return str(command) if command else None
+    if embedded_card == "leader_status_card":
+        return "agentdeck leader status"
     if embedded_card == "runtime_card":
         return "agentdeck agent list"
     if embedded_card == "agent_ready_card":
@@ -398,6 +401,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("control_registry_card", None)
     payload.setdefault("control_mode_card", None)
     payload.setdefault("provider_health", None)
+    payload.setdefault("leader_status_card", None)
     payload.setdefault("lineage_card", None)
     payload.setdefault("audit_card", None)
     payload.setdefault("artifacts_card", None)
@@ -4174,6 +4178,22 @@ def _chat_wants_help(message: str) -> bool:
     )
 
 
+def _chat_wants_leader_status(message: str) -> bool:
+    normalized = message.strip().lower().replace(" ", "")
+    explicit_phrases = {
+        "leaderstatus",
+        "/leaderstatus",
+        "leader状态",
+        "查看leader状态",
+        "leader状态卡",
+        "调度者状态",
+        "查看调度者状态",
+    }
+    if normalized in explicit_phrases:
+        return True
+    return "leader" in normalized and any(token in normalized for token in ("状态", "status", "健康"))
+
+
 def _chat_control_registry_filters(message: str) -> dict[str, object]:
     normalized = message.strip().lower()
     control_id = _chat_control_registry_control_id(message)
@@ -5113,6 +5133,18 @@ def _leader_chat_explanation(
             "safety": "inspect",
             "requires_explicit_user": False,
         }
+    if mode == "leader_status":
+        return {
+            "mode": mode,
+            "summary": "Leader is showing its read-only status card without planning or dispatching work.",
+            "reason": "human asked to inspect Leader status",
+            "next_command": next_command,
+            "recommended_action_id": "leader",
+            "action_kind": "leader_status",
+            "action_status": recovery.get("status") if isinstance(recovery, dict) else None,
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
     if mode == "setup":
         leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
         provider = leader.get("provider")
@@ -5855,6 +5887,65 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 else None,
                 enabled_only=control_registry_filters["enabled_only"] is True,
             ),
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_leader_status(args.message):
+        initial_status_card = _leader_status_payload(project_view)
+        next_command = initial_status_card.get("next_command")
+        turn = store.record_chat_turn(
+            mode="leader_status",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="leader_status",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "leader_status",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        leader_status_card = _leader_status_payload(refreshed_project_view)
+        next_command = leader_status_card.get("next_command")
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "leader_status",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "leader_status",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "leader_status_card": leader_status_card,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
+            "provider_health": leader_status_card.get("provider_health"),
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
