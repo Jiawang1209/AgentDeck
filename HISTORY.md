@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add startup preview card
+
+- 扩展自然语言多 Agent 启动准备入口：`agentdeck leader chat --message "启动所有 agent"` 现在额外返回 `startup_preview_card`，把显式启动命令展开成待启动 agent 清单、单 agent spawn 命令、terminal 命令、blocker 和 per-agent inspect/spawn controls。
+- 扩展 `agentdeck contract leader-chat`：新增 `startup_preview_card_fields`、`startup_preview_item_fields`、稳定 example 字段和 validator，校验 count/ready_count/blocked_count、顶层 spawn_ready control 与 `spawn_ready_command`、item spawn controls 与单 agent `spawn_command` 对齐。
+- 收紧 runtime_ready intent surface：当响应包含 startup preview 时，`intent_card.secondary_embedded_cards` 必须包含 `startup_preview_card`，与 `runtime_card`、`terminal_session_card`、`control_registry_card` 一起供 GUI/TUI 同屏渲染执行前确认。
+- 保持控制边界：`startup_preview_card` 只是执行前 checklist，不自动 spawn pane、不 refresh runtime、不 dispatch approval、不 attach/select-pane、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，测试最初无法导入 `LEADER_CHAT_STARTUP_PREVIEW_CARD_FIELDS`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_rejects_startup_preview_control_drift -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 404 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 430 项通过。
+
 ### Current - Add agent-ready command controls
 
 - 扩展 `agentdeck agent ready`：readiness card 现在暴露 GUI-ready `controls[]`，包含只读 readiness inspect、显式 `spawn_ready`、显式 `refresh_runtime`，以及全员 running 后的 `dispatch_ready` 入口。

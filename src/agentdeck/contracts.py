@@ -462,6 +462,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "terminal_card",
     "dispatch_preview_card",
     "dispatch_batch_preview_card",
+    "startup_preview_card",
     "provider_setup_card",
     "provider_switch_card",
     "agent_ready_card",
@@ -588,6 +589,32 @@ LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS = (
     "items",
     "requires_explicit_user",
     "safety",
+    "blocker",
+    "controls",
+)
+
+LEADER_CHAT_STARTUP_PREVIEW_CARD_FIELDS = (
+    "mode",
+    "title",
+    "next_command",
+    "spawn_ready_command",
+    "count",
+    "ready_count",
+    "blocked_count",
+    "requires_explicit_user",
+    "safety",
+    "blocker",
+    "items",
+    "controls",
+)
+
+LEADER_CHAT_STARTUP_PREVIEW_ITEM_FIELDS = (
+    "agent_id",
+    "role",
+    "runtime_status",
+    "pane_id",
+    "spawn_command",
+    "terminal_command",
     "blocker",
     "controls",
 )
@@ -1394,6 +1421,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_card_fields": list(LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_item_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
+        "startup_preview_card_fields": list(LEADER_CHAT_STARTUP_PREVIEW_CARD_FIELDS),
+        "startup_preview_item_fields": list(LEADER_CHAT_STARTUP_PREVIEW_ITEM_FIELDS),
         "provider_setup_card_fields": list(LEADER_CHAT_PROVIDER_SETUP_CARD_FIELDS),
         "provider_switch_card_fields": list(LEADER_CHAT_PROVIDER_SWITCH_CARD_FIELDS),
         "agent_ready_card_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
@@ -1461,6 +1490,8 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_dispatch_batch_preview_item_fields"] = list(
             LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS
         )
+        payload["example_startup_preview_card_fields"] = list(example["startup_preview_card"])
+        payload["example_startup_preview_item_fields"] = list(example["startup_preview_card"]["items"][0])
         payload["example_provider_setup_card_fields"] = list(example["provider_setup_card"])
         payload["example_provider_switch_card_fields"] = list(example["provider_switch_card"])
         payload["example_agent_ready_card_fields"] = list(example["agent_ready_card"])
@@ -3217,6 +3248,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             if intent_card.get("embedded_card") in secondary_embedded_cards:
                 errors.append("intent_card.secondary_embedded_cards must not repeat embedded_card")
             if (
+                "startup_preview_card" in secondary_embedded_cards
+                and payload.get("startup_preview_card") is None
+            ):
+                errors.append("intent_card.secondary_embedded_cards references missing startup_preview_card")
+            if (
                 "runtime_card" in secondary_embedded_cards
                 and payload.get("runtime_card") is None
             ):
@@ -3263,7 +3299,7 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 explanation_action_kind == "runtime_ready"
                 and payload.get("agent_ready_card") is not None
             ):
-                for card_name in ["runtime_card", "terminal_session_card", "control_registry_card"]:
+                for card_name in ["startup_preview_card", "runtime_card", "terminal_session_card", "control_registry_card"]:
                     if payload.get(card_name) is not None and card_name not in secondary_embedded_cards:
                         errors.append(
                             f"intent_card.secondary_embedded_cards must include {card_name} for runtime_ready responses"
@@ -3376,6 +3412,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_leader_chat_dispatch_batch_preview_card_contract(errors, dispatch_batch_preview_card)
     elif "dispatch_batch_preview_card" in payload and dispatch_batch_preview_card is not None:
         errors.append("dispatch_batch_preview_card must be an object")
+    startup_preview_card = payload.get("startup_preview_card")
+    if isinstance(startup_preview_card, dict):
+        _validate_leader_chat_startup_preview_card_contract(errors, startup_preview_card)
+        if explanation_action_kind == "runtime_ready" and startup_preview_card.get("next_command") != payload.get("next_command"):
+            errors.append("startup_preview_card.next_command must match response next_command")
+    elif "startup_preview_card" in payload and startup_preview_card is not None:
+        errors.append("startup_preview_card must be an object")
     provider_switch_card = payload.get("provider_switch_card")
     if isinstance(provider_switch_card, dict):
         _validate_leader_chat_provider_switch_card_contract(errors, provider_switch_card)
@@ -3687,6 +3730,98 @@ def _validate_leader_chat_dispatch_batch_preview_card_contract(
             errors.append("dispatch_batch_preview_card.blocked_count must match blocked items")
     elif "items" in dispatch_batch_preview_card:
         errors.append("dispatch_batch_preview_card.items must be a list")
+
+
+def _validate_leader_chat_startup_preview_card_contract(
+    errors: list[str], startup_preview_card: dict[str, object]
+) -> None:
+    for field in LEADER_CHAT_STARTUP_PREVIEW_CARD_FIELDS:
+        if field not in startup_preview_card:
+            errors.append(f"missing startup_preview_card field: {field}")
+    if startup_preview_card.get("mode") != "startup_preview":
+        errors.append("startup_preview_card.mode must be startup_preview")
+    if startup_preview_card.get("requires_explicit_user") is not True:
+        errors.append("startup_preview_card.requires_explicit_user must be true")
+    if startup_preview_card.get("safety") != "explicit_runtime":
+        errors.append("startup_preview_card.safety must be explicit_runtime")
+    items = startup_preview_card.get("items")
+    ready_count = 0
+    blocked_count = 0
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                errors.append("startup_preview_card.items items must be objects")
+                continue
+            for field in LEADER_CHAT_STARTUP_PREVIEW_ITEM_FIELDS:
+                if field not in item:
+                    errors.append(f"startup_preview_card.items: missing item field: {field}")
+            if not str(item.get("spawn_command") or "").startswith("agentdeck agent spawn --agent "):
+                errors.append("startup_preview_card.items: spawn_command must use agent spawn")
+            if not str(item.get("terminal_command") or "").startswith("agentdeck agent terminal --agent "):
+                errors.append("startup_preview_card.items: terminal_command must use agent terminal")
+            if item.get("blocker"):
+                blocked_count += 1
+            else:
+                ready_count += 1
+            controls = item.get("controls")
+            if isinstance(controls, list):
+                for control in controls:
+                    if not isinstance(control, dict):
+                        errors.append("startup_preview_card.items.controls items must be objects")
+                        continue
+                    for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                        if field not in control:
+                            errors.append(f"startup_preview_card.items.controls: missing control field: {field}")
+                    if control.get("kind") == "inspect" and control.get("safety") != "inspect":
+                        errors.append("startup_preview_card.items.controls: inspect controls must use safety=inspect")
+                    if control.get("kind") == "spawn":
+                        if control.get("command") != item.get("spawn_command"):
+                            errors.append("startup_preview_card.items.controls: spawn command must match item spawn_command")
+                        if control.get("safety") != "explicit_runtime":
+                            errors.append("startup_preview_card.items.controls: spawn controls must use safety=explicit_runtime")
+                        expected_enabled = item.get("blocker") is None
+                        if control.get("enabled") is not expected_enabled:
+                            errors.append("startup_preview_card.items.controls: spawn enabled must match blocker")
+                        if item.get("blocker") and control.get("blocker") != item.get("blocker"):
+                            errors.append("startup_preview_card.items.controls: spawn blocker must match item blocker")
+                    if control.get("enabled") is False and not control.get("blocker"):
+                        errors.append("startup_preview_card.items.controls: disabled controls must include blocker")
+            elif "controls" in item:
+                errors.append("startup_preview_card.items.controls must be a list")
+    elif "items" in startup_preview_card:
+        errors.append("startup_preview_card.items must be a list")
+    if isinstance(startup_preview_card.get("count"), int) and isinstance(items, list):
+        if startup_preview_card.get("count") != len(items):
+            errors.append("startup_preview_card.count must match items length")
+    if startup_preview_card.get("ready_count") != ready_count:
+        errors.append("startup_preview_card.ready_count must match unblocked items")
+    if startup_preview_card.get("blocked_count") != blocked_count:
+        errors.append("startup_preview_card.blocked_count must match blocked items")
+    controls = startup_preview_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("startup_preview_card.controls items must be objects")
+                continue
+            for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"startup_preview_card.controls: missing control field: {field}")
+            if control.get("kind") == "inspect" and control.get("safety") != "inspect":
+                errors.append("startup_preview_card.controls: inspect controls must use safety=inspect")
+            if control.get("kind") == "spawn_ready":
+                if control.get("command") != startup_preview_card.get("spawn_ready_command"):
+                    errors.append("startup_preview_card.controls: spawn_ready command must match spawn_ready_command")
+                if control.get("safety") != "explicit_runtime":
+                    errors.append("startup_preview_card.controls: spawn_ready controls must use safety=explicit_runtime")
+                expected_enabled = bool(startup_preview_card.get("ready_count"))
+                if control.get("enabled") is not expected_enabled:
+                    errors.append("startup_preview_card.controls: spawn_ready enabled must match ready_count")
+                if startup_preview_card.get("blocker") and control.get("blocker") != startup_preview_card.get("blocker"):
+                    errors.append("startup_preview_card.controls: spawn_ready blocker must match card blocker")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append("startup_preview_card.controls: disabled controls must include blocker")
+    elif "controls" in startup_preview_card:
+        errors.append("startup_preview_card.controls must be a list")
 
 
 def _validate_leader_chat_provider_setup_card_contract(
@@ -4918,9 +5053,9 @@ def leader_chat_example() -> dict[str, object]:
     recovery = project_view["recovery"]
     next_command = recovery["next_command"]
     continue_card = continue_example()
-    agent_ready_card = agent_runtime_example()["ready"]
     terminal_card = agent_runtime_example()["terminal"]
     runtime_card = workbench_example()["runtime_card"]
+    agent_ready_card = _agent_ready_card_from_runtime_card(runtime_card)
     provider_health = workbench_example()["provider_health"]
     queue_card = workbench_example()["queue_card"]
     operator_card = workbench_example()["operator_card"]
@@ -4933,6 +5068,7 @@ def leader_chat_example() -> dict[str, object]:
     control_mode_card = workbench_card["control_mode_card"]
     capability_card = leader_chat_capability_card()
     control_registry_card = leader_chat_control_registry_card(workbench_card)
+    startup_preview_card = _startup_preview_card_from_agent_ready(agent_ready_card)
     leader_action_card = leader_chat_action_card(leader_action)
     leader_summary_card = leader_summary_example()
     run_start_card = run_start_example()
@@ -5103,6 +5239,7 @@ def leader_chat_example() -> dict[str, object]:
         "terminal_card": terminal_card,
         "dispatch_preview_card": None,
         "dispatch_batch_preview_card": None,
+        "startup_preview_card": startup_preview_card,
         "provider_setup_card": provider_setup_card,
         "provider_switch_card": provider_switch_card,
         "agent_ready_card": agent_ready_card,
@@ -5666,6 +5803,87 @@ def _agent_ready_controls(
         }
     )
     return controls
+
+
+def _startup_preview_card_from_agent_ready(agent_ready_card: dict[str, object]) -> dict[str, object]:
+    runtime_card = agent_ready_card.get("runtime_card") if isinstance(agent_ready_card.get("runtime_card"), dict) else {}
+    agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
+    items: list[dict[str, object]] = []
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        status = str(agent.get("status") or "unknown")
+        pane_id = agent.get("pane_id")
+        if status == "running" and pane_id:
+            continue
+        agent_id = str(agent.get("agent_id"))
+        spawn_command = str(agent.get("spawn_command") or f"agentdeck agent spawn --agent {agent_id}")
+        terminal_command = str(agent.get("terminal_command") or f"agentdeck agent terminal --agent {agent_id}")
+        blocker = None if spawn_command else f"missing spawn command: {agent_id}"
+        items.append(
+            {
+                "agent_id": agent_id,
+                "role": agent.get("role"),
+                "runtime_status": status,
+                "pane_id": pane_id,
+                "spawn_command": spawn_command,
+                "terminal_command": terminal_command,
+                "blocker": blocker,
+                "controls": [
+                    {
+                        "kind": "inspect",
+                        "label": "Inspect runtime",
+                        "command": "agentdeck agent ready",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                    {
+                        "kind": "spawn",
+                        "label": f"Spawn {agent_id}",
+                        "command": spawn_command,
+                        "safety": "explicit_runtime",
+                        "enabled": blocker is None,
+                        "blocker": blocker,
+                    },
+                ],
+            }
+        )
+    ready_count = sum(1 for item in items if item.get("blocker") is None)
+    blocked_count = len(items) - ready_count
+    spawn_ready_command = str(agent_ready_card.get("spawn_ready_command") or "agentdeck agent spawn-ready --confirm")
+    blocker = None if ready_count else "no agents need startup"
+    return {
+        "mode": "startup_preview",
+        "title": "Agent startup preview",
+        "next_command": str(agent_ready_card.get("next_command") or spawn_ready_command),
+        "spawn_ready_command": spawn_ready_command,
+        "count": len(items),
+        "ready_count": ready_count,
+        "blocked_count": blocked_count,
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": blocker,
+        "items": items,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect readiness",
+                "command": "agentdeck agent ready",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "spawn_ready",
+                "label": "Spawn ready agents",
+                "command": spawn_ready_command,
+                "safety": "explicit_runtime",
+                "enabled": ready_count > 0,
+                "blocker": blocker,
+            },
+        ],
+    }
 
 
 def _terminal_session_card_from_runtime_card(runtime_card: dict[str, object]) -> dict[str, object]:

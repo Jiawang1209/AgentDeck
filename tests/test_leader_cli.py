@@ -1976,6 +1976,92 @@ def test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup(
     ]
     assert payload["agent_ready_card"]["spawn_ready_command"] == "agentdeck agent spawn-ready --confirm"
     assert payload["agent_ready_card"]["runtime_card"] == payload["runtime_card"]
+    assert payload["startup_preview_card"] == {
+        "mode": "startup_preview",
+        "title": "Agent startup preview",
+        "next_command": "agentdeck agent spawn-ready --confirm",
+        "spawn_ready_command": "agentdeck agent spawn-ready --confirm",
+        "count": 2,
+        "ready_count": 2,
+        "blocked_count": 0,
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": None,
+        "items": [
+            {
+                "agent_id": "coder",
+                "role": "implementation",
+                "runtime_status": "configured",
+                "pane_id": None,
+                "spawn_command": "agentdeck agent spawn --agent coder",
+                "terminal_command": "agentdeck agent terminal --agent coder",
+                "blocker": None,
+                "controls": [
+                    {
+                        "kind": "inspect",
+                        "label": "Inspect runtime",
+                        "command": "agentdeck agent ready",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                    {
+                        "kind": "spawn",
+                        "label": "Spawn coder",
+                        "command": "agentdeck agent spawn --agent coder",
+                        "safety": "explicit_runtime",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                ],
+            },
+            {
+                "agent_id": "reviewer",
+                "role": "review",
+                "runtime_status": "configured",
+                "pane_id": None,
+                "spawn_command": "agentdeck agent spawn --agent reviewer",
+                "terminal_command": "agentdeck agent terminal --agent reviewer",
+                "blocker": None,
+                "controls": [
+                    {
+                        "kind": "inspect",
+                        "label": "Inspect runtime",
+                        "command": "agentdeck agent ready",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                    {
+                        "kind": "spawn",
+                        "label": "Spawn reviewer",
+                        "command": "agentdeck agent spawn --agent reviewer",
+                        "safety": "explicit_runtime",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                ],
+            },
+        ],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect readiness",
+                "command": "agentdeck agent ready",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "spawn_ready",
+                "label": "Spawn ready agents",
+                "command": "agentdeck agent spawn-ready --confirm",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     assert payload["leader_explanation"]["mode"] == "runtime"
     assert payload["leader_explanation"]["summary"] == (
         "Leader recommends explicitly preparing all configured agent runtimes without mutating runtime state."
@@ -1988,6 +2074,7 @@ def test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup(
     assert payload["leader_explanation"]["requires_explicit_user"] is True
     assert payload["intent_card"]["embedded_card"] == "agent_ready_card"
     assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "startup_preview_card",
         "runtime_card",
         "terminal_session_card",
         "control_registry_card",
@@ -2058,6 +2145,7 @@ def test_validate_leader_chat_contract_requires_agent_ready_secondary_cards(
     assert result == {
         "ok": False,
         "errors": [
+            "intent_card.secondary_embedded_cards must include startup_preview_card for runtime_ready responses",
             "intent_card.secondary_embedded_cards must include runtime_card for runtime_ready responses",
             "intent_card.secondary_embedded_cards must include terminal_session_card for runtime_ready responses",
             "intent_card.secondary_embedded_cards must include control_registry_card for runtime_ready responses",

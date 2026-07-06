@@ -38,6 +38,7 @@ from agentdeck.contracts import (
     LEADER_CHAT_INTENT_CARD_FIELDS,
     LEADER_CHAT_INTENT_CONTROL_FIELDS,
     LEADER_CHAT_RESPONSE_FIELDS,
+    LEADER_CHAT_STARTUP_PREVIEW_CARD_FIELDS,
     LEADER_CHAT_TERMINAL_CARD_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
     PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS,
@@ -1143,6 +1144,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["capture_card_fields"] == list(LEADER_CHAT_CAPTURE_CARD_FIELDS)
     assert payload["terminal_card_fields"] == list(LEADER_CHAT_TERMINAL_CARD_FIELDS)
     assert payload["dispatch_preview_card_fields"] == list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
+    assert payload["startup_preview_card_fields"] == list(LEADER_CHAT_STARTUP_PREVIEW_CARD_FIELDS)
     assert payload["provider_setup_card_fields"] == [
         "mode",
         "title",
@@ -2594,6 +2596,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_provider_switch_card_fields"] == payload["provider_switch_card_fields"]
     assert payload["example_provider_switch_card_fields"] == list(example["provider_switch_card"])
     assert example["provider_switch_card"]["mutates_config"] is False
+    assert payload["example_startup_preview_card_fields"] == payload["startup_preview_card_fields"]
+    assert payload["example_startup_preview_card_fields"] == list(example["startup_preview_card"])
     assert payload["example_agent_ready_card_fields"] == payload["agent_ready_card_fields"]
     assert payload["example_agent_ready_card_fields"] == list(example["agent_ready_card"])
     assert payload["example_runtime_card_fields"] == payload["runtime_card_fields"]
@@ -2819,6 +2823,18 @@ def test_validate_leader_chat_contract_checks_dispatch_batch_preview_counts() ->
             "dispatch_batch_preview_card.count must match items length",
             "dispatch_batch_preview_card.ready_count must match unblocked items",
         ],
+    }
+
+
+def test_validate_leader_chat_contract_rejects_startup_preview_control_drift() -> None:
+    payload = leader_chat_example()
+    payload["startup_preview_card"]["controls"][1]["command"] = "agentdeck agent refresh"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["startup_preview_card.controls: spawn_ready command must match spawn_ready_command"],
     }
 
 
