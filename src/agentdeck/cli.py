@@ -5654,6 +5654,18 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if refreshed_project_view is None:
             return 1
         control_registry_workbench = _workbench_snapshot_payload(refreshed_project_view, store, since_event_id=None)
+        target_model = next(
+            (switch_model for switch_provider, switch_model, _label in LEADER_PROVIDER_SWITCHES if switch_provider == target_provider),
+            "",
+        )
+        provider_switch_command = f"agentdeck leader set-provider --provider {target_provider} --model {target_model}"
+        provider_switch_card = _leader_chat_provider_switch_card(
+            refreshed_project_view,
+            target_provider=target_provider,
+            target_model=target_model,
+            require_ready=False,
+            command=provider_switch_command,
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -5686,7 +5698,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 scope="provider",
                 query=query,
             ),
-            "provider_switch_card": None,
+            "provider_switch_card": provider_switch_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

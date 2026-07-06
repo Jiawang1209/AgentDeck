@@ -932,8 +932,23 @@ def test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_with
     assert payload["mode"] == "setup"
     assert payload["message"] == "配置 Codex CLI Leader"
     assert payload["next_command"] == "codex login"
-    assert payload["provider_switch_card"] is None
     assert payload["provider_health"]["provider"] == "fake"
+    switch_card = payload["provider_switch_card"]
+    assert switch_card["target_provider"] == "codex-cli"
+    assert switch_card["target_model"] == "codex-default"
+    assert switch_card["target_readiness"]["provider"] == "codex-cli"
+    assert switch_card["target_readiness"]["setup_commands"] == ["codex login", "codex doctor"]
+    assert switch_card["require_ready"] is False
+    assert switch_card["command"] == "agentdeck leader set-provider --provider codex-cli --model codex-default"
+    assert switch_card["mutates_config"] is False
+    assert switch_card["controls"][1] == {
+        "kind": "set_provider",
+        "label": "Switch Leader provider",
+        "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+    }
     registry = payload["control_registry_card"]
     assert registry["filters"]["scope"] == "provider"
     assert registry["filters"]["query"] == "codex"
@@ -953,7 +968,7 @@ def test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_with
         "requires_explicit_user": True,
     }
     assert payload["intent_card"]["embedded_card"] == "provider_health"
-    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["provider_switch_card", "control_registry_card"]
     assert payload["intent_card"]["controls"][1] == {
         "kind": "next",
         "label": "Run provider setup",

@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Attach provider switch follow-up to setup intents
+
+- 扩展自然语言 provider setup：`agentdeck leader chat --message "配置 Codex CLI Leader"` 现在除 `provider_health` 和 provider-filtered `control_registry_card` 外，还会返回目标 `provider_switch_card`。
+- 顶层 `next_command` 仍保持第一条 allowlisted setup command，例如 `codex login`；`provider_switch_card.command` 只作为 setup 完成后的人类显式 `agentdeck leader set-provider --provider ...` 后续入口，避免把登录/认证和切换配置混成一次自动动作。
+- `intent_card.secondary_embedded_cards` 现在同时包含 `provider_switch_card` 和 `control_registry_card`，让 GUI 可以在同一个 setup 响应里渲染“先配置 provider，再显式切换 Leader”的完整引导流。
+- 保持控制边界：该响应只记录 chat turn，不修改 `.agentdeck/config.toml`、不调用当前或目标 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，`provider_switch_card` 最初为 `null`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_provider_setup_intent_surfaces_filtered_setup_controls_without_planning tests/test_leader_cli.py::test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config tests/test_contracts.py::test_validate_leader_chat_contract_rejects_missing_secondary_provider_switch_card tests/test_contracts.py::test_validate_leader_chat_contract_rejects_missing_secondary_control_registry_card -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 388 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 414 项通过。
+
 ### Current - Route provider setup intents to control registry
 
 - 扩展 `agentdeck leader chat`：当用户输入 `"配置 Codex CLI Leader"`、`"登录 Codex CLI"`、`"安装 Claude CLI"` 等 provider setup 意图时，进入只读 `mode=setup`，而不是落入 provider-backed plan。
