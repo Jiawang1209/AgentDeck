@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Add provider switch confirmation card
+
+- 扩展自然语言 `agentdeck leader chat` 的 provider switch setup 响应：当用户说“切换 Leader 到 Codex CLI / Claude Code / DeepSeek”时，除了 `provider_health` 和 `next_command`，现在还返回结构化 `provider_switch_card`。
+- `provider_switch_card` 暴露 current provider/model、target provider/model、target normalized `leader_backend`、与 `agentdeck leader set-provider --require-ready` 同源的 `target_readiness`、`require_ready`、显式 `command`、`diagnostics_command=agentdeck doctor`、`mutates_config=false` 和 GUI-ready controls。
+- 扩展 leader-chat contract discovery/example/validator：新增 `provider_switch_card_fields` 与 `example_provider_switch_card_fields`，并要求 provider-switch setup response 必须带该 card，card command 必须匹配 response `next_command`。
+- 保持控制边界：provider switch chat 仍只记录 chat turn，不修改 `.agentdeck/config.toml`、不调用当前或目标 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入；真正切换仍必须由人类显式运行 `agentdeck leader set-provider ...`。
+- 同步 `docs/contracts/leader-chat-schema.md`、README、AGENT.md 和 CLAUDE.md。
+- 验证记录：已先确认红测失败，provider switch live 输出最初缺少 `provider_switch_card`，leader-chat contract discovery/example 最初缺少 `provider_switch_card_fields` / `example_provider_switch_card_fields`，validator example 最初缺少该 card；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_command_without_mutating_config tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_requires_provider_switch_card_fields tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 6 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 377 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 403 项通过。
+
 ### Current - Surface Leader backend identity in provider health
 
 - 扩展 `agentdeck workbench` 的 `provider_health`：现在包含当前配置 provider/model 的 normalized `leader_backend`，让 GUI setup/provider switch 面板在同一张 readiness card 里识别 fake、API-backed 或 CLI-backed Leader reasoning backend。

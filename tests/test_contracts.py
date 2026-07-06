@@ -157,6 +157,25 @@ from agentdeck.contracts import (
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
 
 
+EXPECTED_LEADER_CHAT_PROVIDER_SWITCH_CARD_FIELDS = [
+    "mode",
+    "title",
+    "current_provider",
+    "current_model",
+    "target_provider",
+    "target_model",
+    "target_leader_backend",
+    "target_readiness",
+    "require_ready",
+    "command",
+    "diagnostics_command",
+    "safety",
+    "requires_explicit_user",
+    "mutates_config",
+    "controls",
+]
+
+
 def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None:
     docs = {
         "project-view-schema.md",
@@ -1104,6 +1123,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["capture_card_fields"] == list(LEADER_CHAT_CAPTURE_CARD_FIELDS)
     assert payload["terminal_card_fields"] == list(LEADER_CHAT_TERMINAL_CARD_FIELDS)
     assert payload["dispatch_preview_card_fields"] == list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
+    assert payload["provider_switch_card_fields"] == EXPECTED_LEADER_CHAT_PROVIDER_SWITCH_CARD_FIELDS
     assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert payload["terminal_session_card_fields"] == list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS)
@@ -2536,6 +2556,9 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_run_progress_card_fields"] == list(example["run_progress_card"])
     assert payload["example_terminal_card_fields"] == payload["terminal_card_fields"]
     assert set(payload["example_terminal_card_fields"]) == set(example["terminal_card"])
+    assert payload["example_provider_switch_card_fields"] == payload["provider_switch_card_fields"]
+    assert payload["example_provider_switch_card_fields"] == list(example["provider_switch_card"])
+    assert example["provider_switch_card"]["mutates_config"] is False
     assert payload["example_agent_ready_card_fields"] == payload["agent_ready_card_fields"]
     assert payload["example_agent_ready_card_fields"] == list(example["agent_ready_card"])
     assert payload["example_runtime_card_fields"] == payload["runtime_card_fields"]
@@ -2881,6 +2904,15 @@ def test_validate_leader_chat_contract_reports_missing_intent_card_field() -> No
     result = validate_leader_chat_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing intent_card field: route_source"]}
+
+
+def test_validate_leader_chat_contract_requires_provider_switch_card_fields() -> None:
+    payload = leader_chat_example()
+    del payload["provider_switch_card"]["command"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {"ok": False, "errors": ["missing provider_switch_card field: command"]}
 
 
 def test_validate_leader_chat_contract_rejects_missing_secondary_runtime_card() -> None:

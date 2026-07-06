@@ -359,6 +359,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("terminal_session_card", None)
     payload.setdefault("dispatch_preview_card", None)
     payload.setdefault("dispatch_batch_preview_card", None)
+    payload.setdefault("provider_switch_card", None)
     payload.setdefault("agent_ready_card", None)
     payload.setdefault("leader_summary_card", None)
     payload.setdefault("run_start_card", None)
@@ -541,6 +542,65 @@ def _leader_provider_readiness(
         "detail": detail,
         "command_path": None,
         "setup_commands": _provider_setup_commands(provider),
+    }
+
+
+def _leader_chat_provider_switch_card(
+    project_view: dict[str, object],
+    *,
+    target_provider: str,
+    target_model: str,
+    require_ready: bool,
+    command: str,
+) -> dict[str, object]:
+    leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
+    approval_mode = str(leader.get("approval_mode") or "confirm")
+    target_readiness = _leader_provider_readiness(
+        agent_id="leader",
+        provider=target_provider,
+        model=target_model,
+        approval_mode=approval_mode,
+    )
+    target_leader_backend = (
+        target_readiness.get("leader_backend")
+        if isinstance(target_readiness.get("leader_backend"), dict)
+        else leader_backend_identity(target_provider, target_model)
+    )
+    control_kind = "guarded_set_provider" if require_ready else "set_provider"
+    control_label = "Switch Leader provider if ready" if require_ready else "Switch Leader provider"
+    return {
+        "mode": "provider_switch",
+        "title": "Switch Leader provider",
+        "current_provider": leader.get("provider"),
+        "current_model": leader.get("model"),
+        "target_provider": target_provider,
+        "target_model": target_model,
+        "target_leader_backend": target_leader_backend,
+        "target_readiness": target_readiness,
+        "require_ready": require_ready,
+        "command": command,
+        "diagnostics_command": "agentdeck doctor",
+        "safety": "explicit_user",
+        "requires_explicit_user": True,
+        "mutates_config": False,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect provider setup",
+                "command": "agentdeck doctor",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": control_kind,
+                "label": control_label,
+                "command": command,
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
     }
 
 
@@ -5440,6 +5500,13 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if refreshed_project_view is None:
             return 1
         provider_health = _workbench_provider_health(refreshed_project_view)
+        provider_switch_card = _leader_chat_provider_switch_card(
+            refreshed_project_view,
+            target_provider=target_provider,
+            target_model=target_model,
+            require_ready=require_ready,
+            command=next_command,
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -5467,6 +5534,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "workbench_card": None,
             "provider_health": provider_health,
+            "provider_switch_card": provider_switch_card,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

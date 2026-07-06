@@ -462,6 +462,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "terminal_card",
     "dispatch_preview_card",
     "dispatch_batch_preview_card",
+    "provider_switch_card",
     "agent_ready_card",
     "inbox_card",
     "trace_card",
@@ -480,6 +481,24 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "provider_health",
     "capability_card",
     "control_registry_card",
+)
+
+LEADER_CHAT_PROVIDER_SWITCH_CARD_FIELDS = (
+    "mode",
+    "title",
+    "current_provider",
+    "current_model",
+    "target_provider",
+    "target_model",
+    "target_leader_backend",
+    "target_readiness",
+    "require_ready",
+    "command",
+    "diagnostics_command",
+    "safety",
+    "requires_explicit_user",
+    "mutates_config",
+    "controls",
 )
 
 LEADER_CHAT_ACTION_CARD_FIELDS = (
@@ -1357,6 +1376,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_card_fields": list(LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_item_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
+        "provider_switch_card_fields": list(LEADER_CHAT_PROVIDER_SWITCH_CARD_FIELDS),
         "agent_ready_card_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
         "terminal_session_card_fields": list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS),
@@ -1422,6 +1442,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_dispatch_batch_preview_item_fields"] = list(
             LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS
         )
+        payload["example_provider_switch_card_fields"] = list(example["provider_switch_card"])
         payload["example_agent_ready_card_fields"] = list(example["agent_ready_card"])
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
         terminal_session_card = example["workbench_card"]["terminal_session_card"]
@@ -3244,6 +3265,20 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_leader_chat_dispatch_batch_preview_card_contract(errors, dispatch_batch_preview_card)
     elif "dispatch_batch_preview_card" in payload and dispatch_batch_preview_card is not None:
         errors.append("dispatch_batch_preview_card must be an object")
+    provider_switch_card = payload.get("provider_switch_card")
+    explanation_action_kind = (
+        explanation.get("action_kind")
+        if isinstance(explanation, dict)
+        else None
+    )
+    if isinstance(provider_switch_card, dict):
+        _validate_leader_chat_provider_switch_card_contract(errors, provider_switch_card)
+        if explanation_action_kind == "provider_switch" and provider_switch_card.get("command") != payload.get("next_command"):
+            errors.append("provider_switch_card.command must match response next_command")
+    elif explanation_action_kind == "provider_switch":
+        errors.append("provider_switch_card is required for provider_switch setup responses")
+    elif "provider_switch_card" in payload and provider_switch_card is not None:
+        errors.append("provider_switch_card must be an object")
     agent_ready_card = payload.get("agent_ready_card")
     if isinstance(agent_ready_card, dict):
         _validate_agent_ready_card_contract(errors, agent_ready_card)
@@ -3505,6 +3540,74 @@ def _validate_leader_chat_dispatch_batch_preview_card_contract(
             errors.append("dispatch_batch_preview_card.blocked_count must match blocked items")
     elif "items" in dispatch_batch_preview_card:
         errors.append("dispatch_batch_preview_card.items must be a list")
+
+
+def _validate_leader_chat_provider_switch_card_contract(
+    errors: list[str],
+    provider_switch_card: dict[str, object],
+) -> None:
+    for field in LEADER_CHAT_PROVIDER_SWITCH_CARD_FIELDS:
+        if field not in provider_switch_card:
+            errors.append(f"missing provider_switch_card field: {field}")
+    target_leader_backend = provider_switch_card.get("target_leader_backend")
+    if isinstance(target_leader_backend, dict):
+        _validate_leader_backend(errors, "provider_switch_card.target", target_leader_backend)
+    elif "target_leader_backend" in provider_switch_card:
+        errors.append("provider_switch_card.target_leader_backend must be an object")
+    target_readiness = provider_switch_card.get("target_readiness")
+    if isinstance(target_readiness, dict):
+        for field in DOCTOR_CONFIGURED_LEADER_FIELDS:
+            if field not in target_readiness:
+                errors.append(f"missing provider_switch_card target_readiness field: {field}")
+        leader_backend = target_readiness.get("leader_backend")
+        if isinstance(leader_backend, dict):
+            _validate_leader_backend(errors, "provider_switch_card.target_readiness", leader_backend)
+        else:
+            errors.append("provider_switch_card.target_readiness.leader_backend must be an object")
+        if "ready" in target_readiness and not isinstance(target_readiness.get("ready"), bool):
+            errors.append("provider_switch_card.target_readiness.ready must be a boolean")
+        if "supported" in target_readiness and not isinstance(target_readiness.get("supported"), bool):
+            errors.append("provider_switch_card.target_readiness.supported must be a boolean")
+        if "missing_env" in target_readiness and not isinstance(target_readiness.get("missing_env"), list):
+            errors.append("provider_switch_card.target_readiness.missing_env must be a list")
+        if "setup_commands" in target_readiness and not isinstance(target_readiness.get("setup_commands"), list):
+            errors.append("provider_switch_card.target_readiness.setup_commands must be a list")
+    elif "target_readiness" in provider_switch_card:
+        errors.append("provider_switch_card.target_readiness must be an object")
+    if "require_ready" in provider_switch_card and not isinstance(provider_switch_card.get("require_ready"), bool):
+        errors.append("provider_switch_card.require_ready must be a boolean")
+    if provider_switch_card.get("safety") != "explicit_user":
+        errors.append("provider_switch_card.safety must be explicit_user")
+    if provider_switch_card.get("requires_explicit_user") is not True:
+        errors.append("provider_switch_card.requires_explicit_user must be true")
+    if provider_switch_card.get("mutates_config") is not False:
+        errors.append("provider_switch_card.mutates_config must be false")
+    command = str(provider_switch_card.get("command") or "")
+    has_command = "command" in provider_switch_card
+    if has_command and not command.startswith("agentdeck leader set-provider --provider "):
+        errors.append("provider_switch_card.command must use leader set-provider")
+    if has_command and provider_switch_card.get("require_ready") is True and "--require-ready" not in command:
+        errors.append("provider_switch_card.command must include --require-ready when require_ready is true")
+    controls = provider_switch_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("provider_switch_card.controls items must be objects")
+                continue
+            for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"provider_switch_card.controls: missing control field: {field}")
+            if control.get("kind") == "inspect" and control.get("safety") != "inspect":
+                errors.append("provider_switch_card.controls: inspect controls must use safety=inspect")
+            if control.get("kind") in {"set_provider", "guarded_set_provider"}:
+                if control.get("safety") != "explicit_user":
+                    errors.append("provider_switch_card.controls: provider controls must use safety=explicit_user")
+                if has_command and control.get("command") != provider_switch_card.get("command"):
+                    errors.append("provider_switch_card.controls: provider control command must match card command")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append("provider_switch_card.controls: disabled controls must include blocker")
+    elif "controls" in provider_switch_card:
+        errors.append("provider_switch_card.controls must be a list")
 
 
 def _validate_control_registry_card_contract(errors: list[str], control_registry_card: dict[str, object]) -> None:
@@ -4511,6 +4614,78 @@ def leader_chat_example() -> dict[str, object]:
     leader_summary_card = leader_summary_example()
     run_start_card = run_start_example()
     run_progress_card = run_progress_example()
+    provider_switch_card = {
+        "mode": "provider_switch",
+        "title": "Switch Leader provider",
+        "current_provider": "fake",
+        "current_model": "fake-plan",
+        "target_provider": "codex-cli",
+        "target_model": "codex-default",
+        "target_leader_backend": {
+            "agent_id": "leader",
+            "provider": "codex-cli",
+            "model": "codex-default",
+            "provider_backend": "cli",
+            "provider_transport": "subprocess",
+            "reasoning_backend": "cli-subprocess",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
+        "target_readiness": {
+            "agent_id": "leader",
+            "provider": "codex-cli",
+            "model": "codex-default",
+            "approval_mode": "confirm",
+            "provider_backend": "cli",
+            "provider_transport": "subprocess",
+            "leader_backend": {
+                "agent_id": "leader",
+                "provider": "codex-cli",
+                "model": "codex-default",
+                "provider_backend": "cli",
+                "provider_transport": "subprocess",
+                "reasoning_backend": "cli-subprocess",
+                "runtime_kind": "logical_leader",
+                "pane_backed": False,
+                "pane_id": None,
+                "approval_required": True,
+                "dispatch_ready": False,
+            },
+            "ready": False,
+            "supported": True,
+            "missing_env": [],
+            "detail": "codex is not found on PATH",
+            "command_path": None,
+            "setup_commands": ["codex login", "codex doctor"],
+        },
+        "require_ready": False,
+        "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+        "diagnostics_command": "agentdeck doctor",
+        "safety": "explicit_user",
+        "requires_explicit_user": True,
+        "mutates_config": False,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect provider setup",
+                "command": "agentdeck doctor",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "set_provider",
+                "label": "Switch Leader provider",
+                "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     return {
         "ok": True,
         "turn_id": "cht_example",
@@ -4563,6 +4738,7 @@ def leader_chat_example() -> dict[str, object]:
         "terminal_card": terminal_card,
         "dispatch_preview_card": None,
         "dispatch_batch_preview_card": None,
+        "provider_switch_card": provider_switch_card,
         "agent_ready_card": agent_ready_card,
         "inbox_card": None,
         "trace_card": None,

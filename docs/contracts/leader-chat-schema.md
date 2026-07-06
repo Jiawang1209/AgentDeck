@@ -663,7 +663,50 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 }
 ```
 
-`provider_health` is a GUI-ready convenience field for setup-mode responses and a top-level leader-chat response field; non-setup modes may leave it as `null`. `agentdeck contract leader-chat` exposes `provider_health_fields`, reusing the workbench provider health field list, so GUI clients can discover `provider_backend`, `provider_transport`, and normalized `leader_backend` without parsing the workbench schema. The card never exposes API key values. `provider_health.leader_backend` mirrors the logical Leader identity used by workbench/provider diagnostics and is provenance only; it does not prove readiness, bind a tmux pane, or authorize execution. `doctor_contract` points GUI clients to the doctor diagnostics schema, while `setup_commands` must only contain placeholder commands that a human can copy and edit outside AgentDeck. Provider switch controls in the mirrored card must remain `kind=set_provider` with `safety=explicit_user` and a concrete `agentdeck leader set-provider --provider ...` command; disabled provider controls must include a blocker. When setup-mode is a provider switch intent, `next_command` may be a concrete `agentdeck leader set-provider --provider <provider> --model <model>` command, `leader_explanation.action_kind` is `provider_switch`, `safety` is `explicit_user`, and `requires_explicit_user=true`; the response still only suggests the command and must not mutate `.agentdeck/config.toml`. Setup-mode records a chat turn for history, but it must not create a plan, leader action, approval, message, job, inbox item, or tmux input.
+`provider_health` is a GUI-ready convenience field for setup-mode responses and a top-level leader-chat response field; non-setup modes may leave it as `null`. `agentdeck contract leader-chat` exposes `provider_health_fields`, reusing the workbench provider health field list, so GUI clients can discover `provider_backend`, `provider_transport`, and normalized `leader_backend` without parsing the workbench schema. The card never exposes API key values. `provider_health.leader_backend` mirrors the logical Leader identity used by workbench/provider diagnostics and is provenance only; it does not prove readiness, bind a tmux pane, or authorize execution. `doctor_contract` points GUI clients to the doctor diagnostics schema, while `setup_commands` must only contain placeholder commands that a human can copy and edit outside AgentDeck. Provider switch controls in the mirrored card must remain `kind=set_provider` with `safety=explicit_user` and a concrete `agentdeck leader set-provider --provider ...` command; disabled provider controls must include a blocker. When setup-mode is a provider switch intent, `next_command` may be a concrete `agentdeck leader set-provider --provider <provider> --model <model>` command, `leader_explanation.action_kind` is `provider_switch`, `safety` is `explicit_user`, and `requires_explicit_user=true`; the response also includes `provider_switch_card`, a structured confirmation card for GUI clients. The response still only suggests the command and must not mutate `.agentdeck/config.toml`. Setup-mode records a chat turn for history, but it must not create a plan, leader action, approval, message, job, inbox item, or tmux input.
+
+`provider_switch_card` is present when setup mode is a provider-switch intent:
+
+```json
+{
+  "mode": "provider_switch",
+  "title": "Switch Leader provider",
+  "current_provider": "deepseek",
+  "current_model": "deepseek-chat",
+  "target_provider": "codex-cli",
+  "target_model": "codex-default",
+  "target_leader_backend": {
+    "agent_id": "leader",
+    "provider": "codex-cli",
+    "model": "codex-default",
+    "provider_backend": "cli",
+    "provider_transport": "subprocess",
+    "reasoning_backend": "cli-subprocess",
+    "runtime_kind": "logical_leader",
+    "pane_backed": false,
+    "pane_id": null,
+    "approval_required": true,
+    "dispatch_ready": false
+  },
+  "target_readiness": {
+    "provider": "codex-cli",
+    "ready": false,
+    "supported": true,
+    "missing_env": [],
+    "detail": "codex is not found on PATH",
+    "command_path": null
+  },
+  "require_ready": false,
+  "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+  "diagnostics_command": "agentdeck doctor",
+  "safety": "explicit_user",
+  "requires_explicit_user": true,
+  "mutates_config": false,
+  "controls": []
+}
+```
+
+`target_readiness` uses the same readiness shape as `agentdeck doctor` configured Leader diagnostics and the same readiness check used by `agentdeck leader set-provider --require-ready`. `mutates_config=false` means this card is a confirmation surface only; the config changes only after a human explicitly runs `command`.
 
 ## Explanation
 
@@ -716,6 +759,6 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat workbench-mode responses must reuse the complete workbench snapshot through `workbench_card`; the leader-chat contract must expose terminal session card fields for the embedded `workbench_card.terminal_session_card` and `workbench_control_registry_item_fields` for the embedded `workbench_card.control_registry[]` command palette.
 - Chat policy-mode responses must reuse the workbench control mode projection through `control_mode_card`, recommend an explicit `agentdeck policy set-mode --mode <mode>` command, and use action-specific next labels for ask, approval, and autonomous requests. Policy-mode must not mutate `.agentdeck/config.toml`.
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, `runtime_card`, `terminal_session_card`, or `trace_card` when `recovery.recommended_action.source` points at those queues, runtime recovery, or a pending reply capture; stale runtime recovery should keep `intent_card.embedded_card=continue_card` and list `runtime_card` / `terminal_session_card` in `secondary_embedded_cards`; reply capture recovery should set `intent_card.embedded_card=trace_card`.
-- Chat setup-mode responses include `provider_health` with the same normalized `leader_backend` provenance as workbench; diagnostics intents recommend `agentdeck doctor`, while provider switch intents recommend a concrete `agentdeck leader set-provider ...` command. Neither form calls the provider or mutates provider config. Non-setup responses may keep `provider_health=null`.
+- Chat setup-mode responses include `provider_health` with the same normalized `leader_backend` provenance as workbench; diagnostics intents recommend `agentdeck doctor`, while provider switch intents recommend a concrete `agentdeck leader set-provider ...` command and include `provider_switch_card` for target readiness, target backend identity, require-ready state, and explicit controls. Neither form calls the provider or mutates provider config. Non-setup responses may keep `provider_health=null` and `provider_switch_card=null`.
 - Runtime actions still require explicit commands or approval flow.
-- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `run_start_card` as the approval-gated run start surface, `run_progress_card` as the read-only run progress surface, `leader_summary_card` as the deterministic reply/artifact summary surface, `capture_card` as the selected visible pane snapshot surface, `dispatch_preview_card` as the explicit dispatch confirmation preview, `dispatch_batch_preview_card` as the multi-approval dispatch checklist, `agent_ready_card` as the multi-agent runtime readiness/startup surface, `inbox_card` as the mailbox queue surface, `trace_card` as the selected inbox/message lineage evidence surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `audit_card` as the recent audit timeline surface, `artifacts_card` as the read-only artifact index surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics and provider switch command context, and `leader_explanation` as safety/reason explanation.
+- GUI clients should treat `project_view` and `leader_actions` as state, `intent_card` as the natural-language routing explanation and next-command control source, `capability_card` as the command discovery surface, `continue_card` as a recovery affordance, `run_start_card` as the approval-gated run start surface, `run_progress_card` as the read-only run progress surface, `leader_summary_card` as the deterministic reply/artifact summary surface, `capture_card` as the selected visible pane snapshot surface, `dispatch_preview_card` as the explicit dispatch confirmation preview, `dispatch_batch_preview_card` as the multi-approval dispatch checklist, `provider_switch_card` as the explicit Leader provider switch confirmation surface, `agent_ready_card` as the multi-agent runtime readiness/startup surface, `inbox_card` as the mailbox queue surface, `trace_card` as the selected inbox/message lineage evidence surface, `approval_card` as the human approval queue surface, `runtime_card` as the visible tmux runtime surface, `role_card` as the role assignment surface, `ledger_card` as the communication ledger surface, `lineage_card` as the communication path surface, `audit_card` as the recent audit timeline surface, `artifacts_card` as the read-only artifact index surface, `workbench_card` as the full dashboard snapshot, `control_mode_card` as the explicit control-mode policy surface, `workbench_card.control_registry[]` as the full-dashboard command palette index, `queue_card` as the queue status surface, `operator_card` as the explicit control surface, setup-mode `provider_health` as provider diagnostics and provider switch command context, and `leader_explanation` as safety/reason explanation.

@@ -925,6 +925,7 @@ def test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mu
     root = prepare_project_with_default_leader(tmp_path, monkeypatch)
     config_before = (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(cli, "_command_path", lambda command: None)
 
     exit_code = cli.main(["leader", "chat", "--message", "切换 Leader 到 Codex CLI"])
 
@@ -940,6 +941,78 @@ def test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mu
     assert payload["inbox_card"] is None
     assert payload["approval_card"] is None
     assert payload["provider_health"]["provider"] == "deepseek"
+    assert payload["provider_switch_card"] == {
+        "mode": "provider_switch",
+        "title": "Switch Leader provider",
+        "current_provider": "deepseek",
+        "current_model": "deepseek-chat",
+        "target_provider": "codex-cli",
+        "target_model": "codex-default",
+        "target_leader_backend": {
+            "agent_id": "leader",
+            "provider": "codex-cli",
+            "model": "codex-default",
+            "provider_backend": "cli",
+            "provider_transport": "subprocess",
+            "reasoning_backend": "cli-subprocess",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
+        "target_readiness": {
+            "agent_id": "leader",
+            "provider": "codex-cli",
+            "model": "codex-default",
+            "approval_mode": "confirm",
+            "provider_backend": "cli",
+            "provider_transport": "subprocess",
+            "leader_backend": {
+                "agent_id": "leader",
+                "provider": "codex-cli",
+                "model": "codex-default",
+                "provider_backend": "cli",
+                "provider_transport": "subprocess",
+                "reasoning_backend": "cli-subprocess",
+                "runtime_kind": "logical_leader",
+                "pane_backed": False,
+                "pane_id": None,
+                "approval_required": True,
+                "dispatch_ready": False,
+            },
+            "ready": False,
+            "supported": True,
+            "missing_env": [],
+            "detail": "codex is not found on PATH",
+            "command_path": None,
+            "setup_commands": ["codex login", "codex doctor"],
+        },
+        "require_ready": False,
+        "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+        "diagnostics_command": "agentdeck doctor",
+        "safety": "explicit_user",
+        "requires_explicit_user": True,
+        "mutates_config": False,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect provider setup",
+                "command": "agentdeck doctor",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "set_provider",
+                "label": "Switch Leader provider",
+                "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     assert payload["leader_explanation"] == {
         "mode": "setup",
         "summary": "Leader recommends an explicit provider switch command without mutating provider config.",
@@ -1001,6 +1074,7 @@ def test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_comma
     root = prepare_project_with_default_leader(tmp_path, monkeypatch)
     config_before = (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(cli, "_command_path", lambda command: None)
 
     exit_code = cli.main(["leader", "chat", "--message", "切换 Leader 到 Claude CLI，要求可用"])
 
@@ -1022,6 +1096,20 @@ def test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_comma
     assert payload["intent_card"]["controls"][1] == {
         "kind": "next",
         "label": "Switch Leader provider",
+        "command": expected_command,
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["provider_switch_card"]["target_provider"] == "claude-cli"
+    assert payload["provider_switch_card"]["target_model"] == "claude-default"
+    assert payload["provider_switch_card"]["require_ready"] is True
+    assert payload["provider_switch_card"]["target_readiness"]["ready"] is False
+    assert payload["provider_switch_card"]["target_readiness"]["detail"] == "claude is not found on PATH"
+    assert payload["provider_switch_card"]["command"] == expected_command
+    assert payload["provider_switch_card"]["controls"][1] == {
+        "kind": "guarded_set_provider",
+        "label": "Switch Leader provider if ready",
         "command": expected_command,
         "safety": "explicit_user",
         "enabled": True,
