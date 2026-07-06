@@ -4237,6 +4237,34 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                         errors.append(
                             "control_registry_card.items: agent_ready dispatch_ready command must be agentdeck approval dispatch-ready --confirm"
                         )
+            if item.get("scope") == "startup_preview":
+                if item.get("enabled") is False and not item.get("blocker"):
+                    errors.append("control_registry_card.items: disabled startup_preview controls must include blocker")
+                if item.get("kind") == "inspect":
+                    if item.get("safety") != "inspect":
+                        errors.append("control_registry_card.items: startup_preview inspect must use safety=inspect")
+                    if item.get("command") != "agentdeck agent ready":
+                        errors.append(
+                            "control_registry_card.items: startup_preview inspect command must be agentdeck agent ready"
+                        )
+                if item.get("kind") == "spawn":
+                    if item.get("safety") != "explicit_runtime":
+                        errors.append(
+                            "control_registry_card.items: startup_preview spawn must use safety=explicit_runtime"
+                        )
+                    if not str(item.get("command") or "").startswith("agentdeck agent spawn --agent "):
+                        errors.append(
+                            "control_registry_card.items: startup_preview spawn command must use agent spawn"
+                        )
+                if item.get("kind") == "spawn_ready":
+                    if item.get("safety") != "explicit_runtime":
+                        errors.append(
+                            "control_registry_card.items: startup_preview spawn_ready must use safety=explicit_runtime"
+                        )
+                    if item.get("command") != "agentdeck agent spawn-ready --confirm":
+                        errors.append(
+                            "control_registry_card.items: startup_preview spawn_ready command must be agentdeck agent spawn-ready --confirm"
+                        )
         if duplicate_control_id:
             errors.append("control_registry_card.items: control_id values must be unique")
         if isinstance(selection, dict) and selection_fields_present:

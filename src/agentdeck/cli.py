@@ -139,6 +139,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("startup_preview_card")
     if embedded_card == "runtime_card" and payload.get("terminal_session_card") is not None:
         secondary_embedded_cards.append("terminal_session_card")
+    if embedded_card == "runtime_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "provider_health" and payload.get("provider_setup_card") is not None:
         secondary_embedded_cards.append("provider_setup_card")
     if embedded_card == "provider_health" and payload.get("provider_switch_card") is not None:
@@ -1098,6 +1100,28 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id=None,
         controls=agent_ready_card.get("controls"),
     )
+    startup_preview_card = (
+        payload.get("startup_preview_card") if isinstance(payload.get("startup_preview_card"), dict) else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="startup_preview",
+        card="startup_preview_card",
+        agent_id=None,
+        controls=startup_preview_card.get("controls"),
+    )
+    startup_preview_items = (
+        startup_preview_card.get("items") if isinstance(startup_preview_card.get("items"), list) else []
+    )
+    for item in startup_preview_items:
+        if isinstance(item, dict):
+            _append_workbench_control_registry_items(
+                registry,
+                scope="startup_preview",
+                card="startup_preview_card",
+                agent_id=item.get("agent_id"),
+                controls=item.get("controls"),
+            )
     runtime_card = payload.get("runtime_card") if isinstance(payload.get("runtime_card"), dict) else {}
     runtime_agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
     for agent in runtime_agents:
@@ -6615,9 +6639,10 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if isinstance(agent_ready_card, dict):
             next_command = agent_ready_card.get("next_command")
         control_registry_card = None
-        if isinstance(agent_ready_card, dict):
+        if isinstance(agent_ready_card, dict) or isinstance(startup_preview_card, dict):
             registry_source = {
                 "agent_ready_card": agent_ready_card,
+                "startup_preview_card": startup_preview_card,
                 "runtime_card": runtime_card,
                 "terminal_session_card": terminal_session_card,
             }
@@ -6630,9 +6655,10 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 ),
                 None,
             )
+            registry_card_filter = "agent_ready_card" if isinstance(agent_ready_card, dict) else "startup_preview_card"
             control_registry_card = leader_chat_control_registry_card(
                 {"control_registry": registry_items},
-                card="agent_ready_card",
+                card=registry_card_filter,
                 control_id=str(next_control_id) if next_control_id else None,
             )
         payload = {

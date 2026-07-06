@@ -1989,7 +1989,22 @@ def test_leader_chat_suggests_agent_spawn_without_mutating_runtime(tmp_path, mon
     assert payload["intent_card"]["secondary_embedded_cards"] == [
         "startup_preview_card",
         "terminal_session_card",
+        "control_registry_card",
     ]
+    assert payload["control_registry_card"]["filters"]["card"] == "startup_preview_card"
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
+    assert payload["control_registry_card"]["selection"]["selected_control"] == {
+        "scope": "startup_preview",
+        "card": "startup_preview_card",
+        "kind": "spawn",
+        "label": "Spawn planner",
+        "command": "agentdeck agent spawn --agent planner",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": payload["control_registry_card"]["selection"]["requested_control_id"],
+    }
     assert payload["intent_card"]["requires_explicit_user"] is True
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",

@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Select startup preview controls
+
+- 扩展自然语言单 Agent 启动控制面：`agentdeck leader chat --message "启动 planner"` 现在返回过滤到 `startup_preview_card` 的 `control_registry_card`，并让 `selection.selected_control` 指向顶层 `next_command` 对应的 spawn control。
+- 扩展 runtime intent companion：单 agent spawn 响应的 `intent_card.secondary_embedded_cards` 现在包含 `startup_preview_card`、`terminal_session_card` 和 `control_registry_card`，让 GUI/TUI 可以从 intent surface 发现 runtime 总览、启动前确认、终端条和已选中的执行 control。
+- 扩展 control registry 投影：`startup_preview_card.controls[]` 和每个 `startup_preview_card.items[].controls[]` 会进入 registry，使用 `scope=startup_preview` / `card=startup_preview_card`，validator 会校验 inspect/spawn/spawn_ready 的 command、safety、enabled/blocker 基本语义。
+- 保持控制边界：新增 registry 只是只读命令面板投影，不自动 spawn pane、不 refresh runtime、不 dispatch approval、不 attach/select-pane、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，`启动 planner` 最初没有在 runtime companion 中列出 `control_registry_card`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_agent_spawn_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_rejects_startup_preview_control_drift -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 404 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 430 项通过。
+
 ### Current - Add single-agent startup preview
 
 - 扩展自然语言单 Agent 启动入口：`agentdeck leader chat --message "启动 planner"` 现在返回过滤到目标 agent 的 `startup_preview_card`，展示目标 role、runtime status、pane、单 agent spawn 命令、terminal 命令和 per-agent inspect/spawn controls。
