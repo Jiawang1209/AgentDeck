@@ -297,6 +297,7 @@ def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> No
     assert payload["control_registry_filter_fields"] == [
         "scope",
         "card",
+        "query",
         "enabled_only",
         "item_count_before_filter",
     ]
@@ -323,6 +324,7 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
     assert example["filters"] == {
         "scope": None,
         "card": None,
+        "query": None,
         "enabled_only": False,
         "item_count_before_filter": len(example["items"]),
     }
@@ -879,6 +881,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["control_registry_filter_fields"] == [
         "scope",
         "card",
+        "query",
         "enabled_only",
         "item_count_before_filter",
     ]

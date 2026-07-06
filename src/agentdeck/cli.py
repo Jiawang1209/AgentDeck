@@ -1925,6 +1925,7 @@ def controls_command(args: argparse.Namespace) -> int:
         workbench_card,
         scope=args.scope,
         card=args.card,
+        query=args.query,
         enabled_only=args.enabled_only,
     )
     validation = validate_control_registry_card_contract(payload)
@@ -3488,21 +3489,23 @@ def _chat_wants_help(message: str) -> bool:
 
 def _chat_control_registry_filters(message: str) -> dict[str, object]:
     normalized = message.strip().lower()
+    query = _chat_control_registry_query(message)
     scope = None
-    scope_aliases: tuple[tuple[str, tuple[str, ...]], ...] = (
-        ("leader", ("leader", "leader_card", "调度者")),
-        ("provider", ("provider", "provider_health", "模型后端")),
-        ("policy", ("policy", "control_mode", "控制模式", "授权模式")),
-        ("terminal_session", ("terminal_session", "terminal session", "项目终端", "终端会话")),
-        ("role", ("role", "roles", "角色", "分工")),
-        ("runtime", ("runtime", "tmux", "pane", "terminal", "运行时", "终端", "面板")),
-        ("inbox", ("inbox", "mailbox", "收件箱", "消息箱")),
-        ("operator", ("operator", "主操作", "操作面", "下一步按钮")),
-    )
-    for candidate_scope, aliases in scope_aliases:
-        if any(alias in normalized for alias in aliases):
-            scope = candidate_scope
-            break
+    if query is None:
+        scope_aliases: tuple[tuple[str, tuple[str, ...]], ...] = (
+            ("leader", ("leader", "leader_card", "调度者")),
+            ("provider", ("provider", "provider_health", "模型后端")),
+            ("policy", ("policy", "control_mode", "控制模式", "授权模式")),
+            ("terminal_session", ("terminal_session", "terminal session", "项目终端", "终端会话")),
+            ("role", ("role", "roles", "角色", "分工")),
+            ("runtime", ("runtime", "tmux", "pane", "terminal", "运行时", "终端", "面板")),
+            ("inbox", ("inbox", "mailbox", "收件箱", "消息箱")),
+            ("operator", ("operator", "主操作", "操作面", "下一步按钮")),
+        )
+        for candidate_scope, aliases in scope_aliases:
+            if any(alias in normalized for alias in aliases):
+                scope = candidate_scope
+                break
     card = None
     card_match = re.search(r"\b[A-Za-z0-9_]+_card\b", message)
     if card_match:
@@ -3519,7 +3522,21 @@ def _chat_control_registry_filters(message: str) -> dict[str, object]:
             "只显示可用",
         ]
     )
-    return {"scope": scope, "card": card, "enabled_only": enabled_only}
+    return {"scope": scope, "card": card, "query": query, "enabled_only": enabled_only}
+
+
+def _chat_control_registry_query(message: str) -> str | None:
+    patterns = [
+        r"(?:搜索|查找|筛选)\s+(?P<query>.+)",
+        r"(?:search|query|find|filter)\s+(?P<query>.+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if not match:
+            continue
+        query = match.group("query").strip(" \t\r\n\"'`：:，,。.!！?")
+        return query or None
+    return None
 
 
 def _chat_wants_setup(message: str) -> bool:
@@ -5077,6 +5094,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 control_registry_workbench,
                 scope=control_registry_filters["scope"] if isinstance(control_registry_filters["scope"], str) else None,
                 card=control_registry_filters["card"] if isinstance(control_registry_filters["card"], str) else None,
+                query=control_registry_filters["query"] if isinstance(control_registry_filters["query"], str) else None,
                 enabled_only=control_registry_filters["enabled_only"] is True,
             ),
         }
@@ -7129,6 +7147,7 @@ def build_parser() -> argparse.ArgumentParser:
     controls = subparsers.add_parser("controls", help="Show the GUI-ready command palette from the workbench")
     controls.add_argument("--scope", help="Filter command palette controls by scope")
     controls.add_argument("--card", help="Filter command palette controls by source card")
+    controls.add_argument("--query", help="Search command palette controls by label, kind, command, scope, card, or agent")
     controls.add_argument("--enabled-only", action="store_true", help="Only include enabled command palette controls")
     controls.set_defaults(func=controls_command)
 

@@ -568,6 +568,7 @@ CONTROL_REGISTRY_GROUP_FIELDS = (
 CONTROL_REGISTRY_FILTER_FIELDS = (
     "scope",
     "card",
+    "query",
     "enabled_only",
     "item_count_before_filter",
 )
@@ -1571,10 +1572,11 @@ def leader_chat_control_registry_card(
     *,
     scope: str | None = None,
     card: str | None = None,
+    query: str | None = None,
     enabled_only: bool = False,
 ) -> dict[str, object]:
     source_items = workbench_card.get("control_registry") if isinstance(workbench_card.get("control_registry"), list) else []
-    items = _filter_control_registry_items(source_items, scope=scope, card=card, enabled_only=enabled_only)
+    items = _filter_control_registry_items(source_items, scope=scope, card=card, query=query, enabled_only=enabled_only)
     groups = _control_registry_groups(items)
     return {
         "mode": "control_registry",
@@ -1584,6 +1586,7 @@ def leader_chat_control_registry_card(
         "filters": {
             "scope": scope,
             "card": card,
+            "query": query,
             "enabled_only": enabled_only,
             "item_count_before_filter": len(source_items),
         },
@@ -1599,9 +1602,11 @@ def _filter_control_registry_items(
     *,
     scope: str | None,
     card: str | None,
+    query: str | None,
     enabled_only: bool,
 ) -> list[object]:
     filtered: list[object] = []
+    normalized_query = query.lower() if query else None
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -1609,10 +1614,17 @@ def _filter_control_registry_items(
             continue
         if card is not None and item.get("card") != card:
             continue
+        if normalized_query is not None and normalized_query not in _control_registry_search_text(item):
+            continue
         if enabled_only and item.get("enabled") is not True:
             continue
         filtered.append(item)
     return filtered
+
+
+def _control_registry_search_text(item: dict[str, object]) -> str:
+    searchable_fields = ("scope", "card", "kind", "label", "command", "agent_id")
+    return " ".join(str(item.get(field, "")) for field in searchable_fields).lower()
 
 
 def _control_registry_groups(items: list[object]) -> list[dict[str, object]]:
@@ -3233,6 +3245,8 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
             errors.append("control_registry_card.filters.scope must be a string or null")
         if "card" in filters and filters.get("card") is not None and not isinstance(filters.get("card"), str):
             errors.append("control_registry_card.filters.card must be a string or null")
+        if "query" in filters and filters.get("query") is not None and not isinstance(filters.get("query"), str):
+            errors.append("control_registry_card.filters.query must be a string or null")
         if "enabled_only" in filters and not isinstance(filters.get("enabled_only"), bool):
             errors.append("control_registry_card.filters.enabled_only must be a boolean")
         if "item_count_before_filter" in filters and not isinstance(filters.get("item_count_before_filter"), int):

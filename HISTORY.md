@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Search command palette controls
+
+- 扩展 `agentdeck controls`：新增只读 `--query <text>` 搜索过滤，按 control 的 scope、card、kind、label、command 和 agent_id 匹配命令面板项，方便 GUI/TUI 做命令面板搜索框。
+- 扩展 `control_registry_card.filters`：新增 `query` 字段，并让 `item_count`、`items[]`、`group_count` 和 `groups[]` 都从过滤/搜索后的投影派生。
+- 扩展自然语言 help 命令面板：`agentdeck leader chat --message "命令面板 搜索 terminal"` 会复用同一套 query filter，返回匹配 terminal 的 control registry card。
+- 保持人类控制边界：query 只缩小只读投影，不写 state、不创建 plan/action/approval/message/job，不调用 provider，不读取 pane，不发送 tmux 输入，不执行任何 control/ack。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/controls-schema.md` 和 `docs/contracts/leader-chat-schema.md`，明确 query 是 command palette projection 字段，不是执行语义。
+- 验证记录：已先确认红测失败，contract discovery 最初缺少 `query` filter 字段，`agentdeck controls --query terminal` 最初是 argparse unknown argument，自然语言 `命令面板 搜索 terminal` 最初把 terminal 误判为 runtime scope；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_controls_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_controls_filters_by_query_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_filters_command_palette_by_query tests/test_leader_cli.py::test_leader_chat_help_filters_command_palette_without_planning -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 351 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 375 项通过。
+
 ### Current - Filter Leader help command palette
 
 - 扩展 `agentdeck leader chat --message "命令面板 ..."`：自然语言 help/command palette 入口现在可解析 scope/card/enabled-only 过滤语义，并把同一套 `control_registry_card.filters` 传给嵌入命令面板。

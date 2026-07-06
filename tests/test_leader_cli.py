@@ -2907,6 +2907,7 @@ def test_leader_chat_help_filters_command_palette_without_planning(tmp_path, mon
     assert registry["filters"] == {
         "scope": "runtime",
         "card": None,
+        "query": None,
         "enabled_only": True,
         "item_count_before_filter": 45,
     }
@@ -2927,6 +2928,37 @@ def test_leader_chat_help_filters_command_palette_without_planning(tmp_path, mon
     assert state_after["approvals"] == before["approvals"]
     assert state_after["messages"] == before["messages"]
     assert state_after["jobs"] == before["jobs"]
+
+
+def test_leader_chat_help_filters_command_palette_by_query(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "命令面板 搜索 terminal"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "help"
+    registry = payload["control_registry_card"]
+    assert registry["filters"] == {
+        "scope": None,
+        "card": None,
+        "query": "terminal",
+        "enabled_only": False,
+        "item_count_before_filter": 45,
+    }
+    assert registry["items"]
+    assert all(
+        "terminal"
+        in " ".join(
+            str(item.get(field, ""))
+            for field in ["scope", "card", "kind", "label", "command", "agent_id"]
+        ).lower()
+        for item in registry["items"]
+    )
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "help"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
 
 
 def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, monkeypatch, capsys) -> None:
