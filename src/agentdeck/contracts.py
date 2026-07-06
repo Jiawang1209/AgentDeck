@@ -1325,6 +1325,9 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "dispatch_batch_preview_item_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
         "agent_ready_card_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
+        "terminal_session_card_fields": list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS),
+        "terminal_session_control_fields": list(WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS),
+        "terminal_session_item_fields": list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
@@ -1387,6 +1390,10 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         )
         payload["example_agent_ready_card_fields"] = list(example["agent_ready_card"])
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
+        terminal_session_card = example["workbench_card"]["terminal_session_card"]
+        payload["example_terminal_session_card_fields"] = list(terminal_session_card)
+        payload["example_terminal_session_control_fields"] = list(terminal_session_card["controls"][0])
+        payload["example_terminal_session_item_fields"] = list(terminal_session_card["terminals"][0])
         payload["example_provider_health_fields"] = list(example["provider_health"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
         payload["example_operator_card_fields"] = list(example["operator_card"])

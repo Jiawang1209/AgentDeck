@@ -27,6 +27,9 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "dispatch_batch_preview_item_fields": [],
   "agent_ready_card_fields": [],
   "runtime_card_fields": [],
+  "terminal_session_card_fields": [],
+  "terminal_session_control_fields": [],
+  "terminal_session_item_fields": [],
   "queue_card_fields": [],
   "operator_card_fields": [],
   "role_card_fields": [],
@@ -368,7 +371,7 @@ Workbench-mode responses are returned when the human asks to open the full workb
 }
 ```
 
-When `workbench_card` is present, `validate_leader_chat_contract()` reuses `validate_workbench_contract()` and prefixes nested errors with `workbench_card:`. `agentdeck contract leader-chat` exposes `workbench_control_registry_item_fields` so natural-language shells can render the embedded `workbench_card.control_registry[]` command palette without parsing the workbench schema separately. Workbench-mode records a chat turn for history, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, approve approvals, dispatch work, refresh runtime, capture pane output, read pane output, or send tmux input.
+When `workbench_card` is present, `validate_leader_chat_contract()` reuses `validate_workbench_contract()` and prefixes nested errors with `workbench_card:`. `agentdeck contract leader-chat` exposes `terminal_session_card_fields`, `terminal_session_control_fields`, `terminal_session_item_fields`, and `workbench_control_registry_item_fields` so natural-language shells can render the embedded project-level terminal session bar and command palette without parsing the workbench schema separately. Workbench-mode records a chat turn for history, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, approve approvals, dispatch work, refresh runtime, capture pane output, read pane output, attach tmux, select panes, or send tmux input.
 
 Ledger-mode responses are returned when the human asks to inspect the communication ledger, message lineage, or trace commands. They return `ledger_card` and `lineage_card`, reusing the same projections as `agentdeck workbench`:
 
@@ -706,7 +709,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 - Chat ledger-mode responses must reuse the workbench ledger and lineage cards through `ledger_card` and `lineage_card`.
 - Chat audit-mode responses must reuse the workbench audit card through `audit_card`, recommend `agentdeck events --limit 20`, and remain read-only except for recording the chat turn and its audit event.
 - Chat artifacts-mode responses must reuse the artifacts contract through `artifacts_card`, recommend `agentdeck artifacts`, and remain read-only without reading artifact file contents.
-- Chat workbench-mode responses must reuse the complete workbench snapshot through `workbench_card`; the leader-chat contract must expose `workbench_control_registry_item_fields` for the embedded `workbench_card.control_registry[]` command palette.
+- Chat workbench-mode responses must reuse the complete workbench snapshot through `workbench_card`; the leader-chat contract must expose terminal session card fields for the embedded `workbench_card.terminal_session_card` and `workbench_control_registry_item_fields` for the embedded `workbench_card.control_registry[]` command palette.
 - Chat policy-mode responses must reuse the workbench control mode projection through `control_mode_card`, recommend an explicit `agentdeck policy set-mode --mode <mode>` command, and use action-specific next labels for ask, approval, and autonomous requests. Policy-mode must not mutate `.agentdeck/config.toml`.
 - Chat continue-mode responses may embed `inbox_card`, `approval_card`, `runtime_card`, or `trace_card` when `recovery.recommended_action.source` points at those queues, runtime recovery, or a pending reply capture; reply capture recovery should set `intent_card.embedded_card=trace_card`.
 - Chat setup-mode responses include `provider_health`; diagnostics intents recommend `agentdeck doctor`, while provider switch intents recommend a concrete `agentdeck leader set-provider ...` command. Neither form calls the provider or mutates provider config. Non-setup responses may keep `provider_health=null`.

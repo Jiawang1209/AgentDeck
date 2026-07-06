@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Expose terminal session fields in leader chat contract
+
+- 扩展 Leader chat contract discovery：`agentdeck contract leader-chat` 现在公开 `terminal_session_card_fields`、`terminal_session_control_fields` 和 `terminal_session_item_fields`，复用 workbench terminal session 字段常量。
+- `agentdeck contract leader-chat --example` 同步返回 `example_terminal_session_card_fields`、`example_terminal_session_control_fields` 和 `example_terminal_session_item_fields`，让 GUI/自然语言壳可以发现嵌入 `workbench_card.terminal_session_card` 的项目级终端条字段。
+- 保持控制边界：这些字段只用于渲染 terminal session attach/open/refresh/select-pane affordances；leader chat workbench mode 不 attach tmux、不 select pane、不 refresh runtime、不读取 pane、不发送输入、不写 state。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/leader-chat-schema.md`，明确 terminal session discovery 是 GUI 契约，不是 runtime 执行许可。
+- 验证记录：已先确认红测失败，`agentdeck contract leader-chat` 最初缺少 terminal session 字段；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 2 项通过；leader-chat workbench/contract 聚焦回归 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 367 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 393 项通过。
+
 ### Current - Expose provider health in leader chat contract
 
 - 扩展 Leader chat response contract：`provider_health` 现在是正式顶层 response field，非 setup mode 可为 `null`；setup diagnostics/provider switch mode 继续嵌入 workbench 同源 provider health card。
