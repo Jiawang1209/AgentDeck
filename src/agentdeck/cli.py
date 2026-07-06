@@ -175,6 +175,10 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "leader_summary_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "run_progress_card" and payload.get("approval_card") is not None:
+        secondary_embedded_cards.append("approval_card")
+    if embedded_card == "run_progress_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "artifacts_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "ledger_card" and payload.get("control_registry_card") is not None:
@@ -1221,6 +1225,18 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         card="agent_ready_card",
         agent_id=None,
         controls=agent_ready_card.get("controls"),
+    )
+    run_progress_card = (
+        payload.get("run_progress_card")
+        if isinstance(payload.get("run_progress_card"), dict)
+        else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="run_progress",
+        card="run_progress_card",
+        agent_id="leader",
+        controls=run_progress_card.get("controls"),
     )
     terminal_session_card = (
         payload.get("terminal_session_card") if isinstance(payload.get("terminal_session_card"), dict) else {}
@@ -5904,6 +5920,26 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             for error in validation["errors"]:
                 print(f"- {error}", file=sys.stderr)
             return 1
+        plan_status_command = f"agentdeck plan status --plan-id {run_progress_plan_id}"
+        registry_items = _workbench_control_registry({"run_progress_card": run_progress_card})
+        run_progress_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("scope") == "run_progress"
+                and item.get("card") == "run_progress_card"
+                and item.get("kind") == "plan_status"
+                and item.get("command") == plan_status_command
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="run_progress",
+            card="run_progress_card",
+            control_id=str(run_progress_control_id) if run_progress_control_id else None,
+        )
         turn = store.record_chat_turn(
             mode="run_progress",
             message=args.message,
@@ -5954,6 +5990,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": None,
+            "control_registry_card": control_registry_card,
             "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)

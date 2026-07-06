@@ -336,6 +336,26 @@ def test_leader_chat_run_progress_intent_returns_read_only_card_without_dispatch
         "enabled": True,
         "blocker": None,
     }
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["approval_card", "control_registry_card"]
+    assert payload["control_registry_card"]["filters"]["scope"] == "run_progress"
+    assert payload["control_registry_card"]["filters"]["card"] == "run_progress_card"
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == ["scope", "card", "control_id"]
+    assert payload["control_registry_card"]["filters"]["item_count_before_filter"] == 6
+    assert payload["control_registry_card"]["item_count"] == 1
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "run_progress",
+        "card": "run_progress_card",
+        "kind": "plan_status",
+        "label": "Plan status",
+        "command": f"agentdeck plan status --plan-id {plan_id}",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": "leader",
+        "control_id": selected_control["control_id"],
+    }
+    assert payload["control_registry_card"]["selection"]["next_command"] == f"agentdeck plan status --plan-id {plan_id}"
     assert run_progress_card["mode"] == "run_progress"
     assert run_progress_card["plan_id"] == plan_id
     assert run_progress_card["counts"]["approved"] == 1
@@ -357,6 +377,34 @@ def test_leader_chat_run_progress_intent_returns_read_only_card_without_dispatch
     assert state_after["chat_turns"][-1]["plan_id"] == plan_id
     assert fake.sent == []
     assert fake.captured == []
+
+
+def test_validate_leader_chat_contract_requires_run_progress_registry_card(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["run", "--task", "验证 run progress registry companion"])
+    started = json.loads(capsys.readouterr().out)
+    plan_id = started["plan_id"]
+
+    exit_code = cli.main(["leader", "chat", "--message", f"查看运行进度 {plan_id}"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for run_progress responses",
+            "control_registry_card is required for run_progress responses",
+        ],
+    }
 
 
 def test_leader_chat_run_progress_without_plan_id_uses_latest_plan_without_dispatching(

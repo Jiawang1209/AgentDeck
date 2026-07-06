@@ -3841,6 +3841,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                     "intent_card.secondary_embedded_cards must include control_registry_card for leader_summary responses"
                 )
             if (
+                explanation_action_kind == "run_progress"
+                and payload.get("run_progress_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for run_progress responses"
+                )
+            if (
                 explanation_action_kind == "artifacts"
                 and payload.get("artifacts_card") is not None
                 and "control_registry_card" not in secondary_embedded_cards
@@ -4213,6 +4221,18 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         ):
             errors.append("control_registry_card.selection.next_command must match leader_summary next_command")
         if (
+            explanation_action_kind == "run_progress"
+            and isinstance(run_progress_card, dict)
+            and isinstance(selection, dict)
+        ):
+            expected_plan_status_command = f"agentdeck plan status --plan-id {run_progress_card.get('plan_id')}"
+            selected_control = selection.get("selected_control")
+            selected_kind = selected_control.get("kind") if isinstance(selected_control, dict) else None
+            if selected_kind != "plan_status":
+                errors.append("control_registry_card.selection.selected_control.kind must be plan_status for run_progress responses")
+            if selection.get("next_command") != expected_plan_status_command:
+                errors.append("control_registry_card.selection.next_command must match run_progress plan_status command")
+        if (
             explanation_action_kind == "artifacts"
             and isinstance(artifacts_card, dict)
             and isinstance(selection, dict)
@@ -4246,6 +4266,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("control_registry_card is required for leader_status responses")
     elif explanation_action_kind == "leader_summary":
         errors.append("control_registry_card is required for leader_summary responses")
+    elif explanation_action_kind == "run_progress":
+        errors.append("control_registry_card is required for run_progress responses")
     elif explanation_action_kind == "artifacts":
         errors.append("control_registry_card is required for artifacts responses")
     elif explanation_action_kind == "ledger":
@@ -6426,6 +6448,18 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         card="agent_ready_card",
         agent_id=None,
         controls=agent_ready_card.get("controls"),
+    )
+    run_progress_card = (
+        payload.get("run_progress_card")
+        if isinstance(payload.get("run_progress_card"), dict)
+        else {}
+    )
+    _append_control_registry_items(
+        registry,
+        scope="run_progress",
+        card="run_progress_card",
+        agent_id="leader",
+        controls=run_progress_card.get("controls"),
     )
     terminal_session_card = (
         payload.get("terminal_session_card") if isinstance(payload.get("terminal_session_card"), dict) else {}

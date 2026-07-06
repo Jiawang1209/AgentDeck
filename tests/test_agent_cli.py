@@ -2977,6 +2977,22 @@ def test_workbench_embeds_latest_run_progress_card_without_mutating_state(
     assert run_progress_card["counts"]["pending"] == 2
     assert run_progress_card["review"]["next_action"] == "dispatch_approved"
     assert run_progress_card["next_command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
+    run_progress_registry_items = [
+        item
+        for item in payload["control_registry"]
+        if item["scope"] == "run_progress" and item["card"] == "run_progress_card"
+    ]
+    assert [item["kind"] for item in run_progress_registry_items] == [
+        "plan_status",
+        "review",
+        "approval_queue",
+        "next",
+        "continue",
+        "workbench",
+    ]
+    assert run_progress_registry_items[0]["command"] == f"agentdeck plan status --plan-id {plan_id}"
+    assert run_progress_registry_items[3]["command"] == run_progress_card["next_command"]
+    assert run_progress_registry_items[3]["safety"] == "explicit_runtime"
 
     assert StateStore(root).load() == state_before
 

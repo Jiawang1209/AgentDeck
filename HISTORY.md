@@ -4,6 +4,16 @@
 
 ## 2026-07-07
 
+### Current - Link run progress chat to command registry controls
+
+- 扩展 `agentdeck workbench` / `agentdeck controls` 的 registry 派生：现在会索引 `run_progress_card.controls[]`，以 `scope=run_progress` / `card=run_progress_card` 暴露 plan_status、review、approval_queue、next、continue 和 workbench 控件。
+- 扩展自然语言 run-progress mode：`agentdeck leader chat --message "查看运行进度"` / `"查看运行进度 <plan_id>"` 会附带过滤到 `run_progress_card` 的 `control_registry_card`，selection 指向该 plan 的 `kind=plan_status` inspect control。
+- 保持语义分离：run-progress registry selection 只高亮只读进度入口；顶层 `next_command` 仍保留真正下一步，例如显式 dispatch approved approval 或 summary 命令。
+- 收紧契约守门：`validate_leader_chat_contract()` 会拒绝缺少 run-progress registry companion 的响应，并要求 registry selection 指向同 plan 的 plan status inspect control。
+- 保持只读边界：run-progress registry companion 不创建 plan/action/approval/message/job/reply/artifact/inbox，不调用 provider，不读取 pane，不 capture reply，不 approve，不 dispatch，不 ack，不发送 tmux 输入；explicit runtime 的 next control 仍需人类显式执行。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、AGENT/CLAUDE 约束和测试。
+- 验证记录：已先确认红测失败，自然语言 run-progress 响应最初没有 `control_registry_card`，validator 也会放过缺少 registry companion 的 run-progress 响应；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_latest_run_progress_card_without_mutating_state tests/test_leader_cli.py::test_leader_chat_run_progress_intent_returns_read_only_card_without_dispatching tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_run_progress_registry_card -q` 3 项通过；聚焦回归 6 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 328 项通过，`conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 356 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 504 项通过。
+
 ### Current - Link Leader summary chat to command registry controls
 
 - 扩展 `agentdeck leader summary --plan-id <id>`：`leader_summary_card.controls[]` 现在包含 `kind=summary` / `command=agentdeck leader summary --plan-id <id>` / `safety=inspect` 的自检入口，和既有 plan status、review、trace 控件一起组成完整收尾控制面。
