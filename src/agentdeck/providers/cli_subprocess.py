@@ -34,7 +34,7 @@ class CliLeaderProvider:
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
             raise RuntimeError(f"{self.name} failed: {detail}")
-        return self._parse_plan(result.stdout)
+        return self._parse_plan(result.stdout, request)
 
     def _command_for_request(self, request: LeaderPlanRequest) -> list[str]:
         if not request.model:
@@ -70,10 +70,10 @@ class CliLeaderProvider:
             ]
         )
 
-    def _parse_plan(self, stdout: str) -> dict[str, object]:
+    def _parse_plan(self, stdout: str, request: LeaderPlanRequest) -> dict[str, object]:
         text = stdout.strip()
         plan = self._load_json_plan(text)
-        self._validate_plan(plan)
+        self._validate_plan(plan, request)
         return plan
 
     def _load_json_plan(self, text: str) -> object:
@@ -93,8 +93,8 @@ class CliLeaderProvider:
             raise RuntimeError("provider plan content contains multiple JSON plans")
         raise RuntimeError("provider plan content is not valid JSON")
 
-    def _validate_plan(self, plan: object) -> None:
-        validate_provider_plan_schema(plan)
+    def _validate_plan(self, plan: object, request: LeaderPlanRequest) -> None:
+        validate_provider_plan_schema(plan, config=request.config)
 
 
 class CodexCliProvider(CliLeaderProvider):

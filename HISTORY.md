@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate provider plan configured agent targets
+
+- 继续收紧真实 Leader provider plan schema：共享 `validate_provider_plan_schema()` 现在会用当前项目配置校验每个 step 的 `agent_id` 必须指向已配置 worker agent，避免 provider 生成无法 dispatch 到可见 tmux runtime 的任务。
+- CLI-backed Codex/Claude 和 API-backed OpenAI-compatible/DeepSeek 路径都会复用同一校验；未知 agent 会明确报错，例如 `provider plan step 1 agent_id is not configured: ghost`。
+- 保持上一轮 schema 与审批门约束：顶层仍必须包含非空字符串 `goal`、非空字符串 `summary` 和非空 `steps`，每个 step 仍必须包含 `step`、非空字符串 `agent_id`、`role`、`task`、`risk`、`requires_approval`，通过 schema 后仍强制 `approval_required=true`、`dispatch_ready=false`，并要求每个 step 都 `requires_approval=true`。
+- 同步 README、Leader chat schema、AGENT/CLAUDE 约束，明确真实 Leader provider 的 `agent_id` 不只是可展示字段，还必须是当前配置里可由审批和 tmux runtime 继续处理的 worker agent；该收紧不创建 approval、dispatch、message/job/inbox，不复用 worker tmux pane，也不发送 tmux 输入。
+- 验证记录：已先确认红测失败，CLI-backed 和 API-backed provider 最初都会接受 `agent_id=ghost` 的 step；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_cli_provider_rejects_steps_for_unconfigured_agents tests/test_provider_openai_compatible.py::test_openai_compatible_provider_rejects_steps_for_unconfigured_agents tests/test_provider_openai_compatible.py::test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_openai_compatible_provider_posts_chat_completion_and_parses_json_plan -q` 4 项通过；provider 回归 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py -q` 23 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 442 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 476 项通过。
+
 ### Current - Validate provider plan display field types
 
 - 继续收紧真实 Leader provider plan schema：共享 `validate_provider_plan_schema()` 现在要求顶层 `goal`、`summary` 必须是非空字符串，避免 GUI/审计面拿到空标题或不可展示摘要。

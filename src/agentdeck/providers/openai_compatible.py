@@ -56,7 +56,7 @@ class OpenAICompatibleProvider:
         with request.urlopen(req, timeout=self.timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
         plan = self._extract_plan(data)
-        self._validate_plan(plan)
+        self._validate_plan(plan, plan_request)
         return plan
 
     def _system_prompt(self, request: LeaderPlanRequest) -> str:
@@ -104,5 +104,5 @@ class OpenAICompatibleProvider:
         return parsed
 
     @staticmethod
-    def _validate_plan(plan: dict[str, object]) -> None:
-        validate_provider_plan_schema(plan)
+    def _validate_plan(plan: dict[str, object], request: LeaderPlanRequest) -> None:
+        validate_provider_plan_schema(plan, config=request.config)
