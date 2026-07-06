@@ -2946,6 +2946,18 @@ def test_validate_leader_chat_contract_requires_explanation_next_command_to_matc
     }
 
 
+def test_validate_leader_chat_contract_requires_explanation_requires_explicit_user_to_match_intent() -> None:
+    payload = leader_chat_example()
+    payload["leader_explanation"]["requires_explicit_user"] = True
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["leader_explanation.requires_explicit_user must match intent_card.requires_explicit_user"],
+    }
+
+
 def test_validate_leader_chat_contract_reports_missing_intent_card_field() -> None:
     payload = leader_chat_example()
     del payload["intent_card"]["route_source"]

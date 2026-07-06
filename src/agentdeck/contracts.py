@@ -3169,6 +3169,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append(f"missing intent_card field: {field}")
         if intent_card.get("next_command") != payload.get("next_command"):
             errors.append("intent_card: next_command must match response next_command")
+        if (
+            isinstance(explanation, dict)
+            and "requires_explicit_user" in explanation
+            and "requires_explicit_user" in intent_card
+            and explanation.get("requires_explicit_user") != intent_card.get("requires_explicit_user")
+        ):
+            errors.append("leader_explanation.requires_explicit_user must match intent_card.requires_explicit_user")
         secondary_embedded_cards = intent_card.get("secondary_embedded_cards")
         if isinstance(secondary_embedded_cards, list):
             if not all(isinstance(card_name, str) for card_name in secondary_embedded_cards):

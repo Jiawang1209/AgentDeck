@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Align explicit-user flags
+
+- 收紧 leader-chat 全局契约：`leader_explanation.requires_explicit_user` 必须匹配 `intent_card.requires_explicit_user`。
+- 这保证 GUI 的解释区和控制区对“是否需要人类显式执行/确认”给出同一个答案，避免人类审批边界在自然语言壳中分叉。
+- 保持控制边界：该校验只拒绝漂移 payload，不执行命令、不修改 `.agentdeck/config.toml`、不调用 provider、不创建额外 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，validator 最初允许 `leader_explanation.requires_explicit_user` 与 `intent_card.requires_explicit_user` 漂移；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_explanation_requires_explicit_user_to_match_intent tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_reports_missing_explanation_field tests/test_contracts.py::test_validate_leader_chat_contract_reports_missing_intent_card_field -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 400 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 426 项通过。
+
 ### Current - Align leader explanation next command
 
 - 收紧 leader-chat 全局契约：`leader_explanation.next_command` 必须匹配顶层响应 `next_command`，与已有 `intent_card.next_command` 对齐规则形成同一条 GUI 主操作事实源。
