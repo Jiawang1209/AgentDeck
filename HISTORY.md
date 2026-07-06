@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Filter command palette by control id
+
+- 扩展 `agentdeck controls`：新增只读 `--control-id <control_id>` 精确过滤，GUI/TUI 在拿到稳定 `control_id` 后可以重新定位同一个 command palette item，而不需要反查 label 或 command。
+- 扩展 Leader help 命令面板：`agentdeck leader chat --message "命令面板 control_id <id>"` 会复用同一套 `control_registry_card.filters.control_id`，返回匹配的稳定 control item。
+- 扩展 controls / leader-chat contract：`control_registry_filter_fields` 新增 `control_id`，`filters` 现在同时记录 scope、card、query、control_id、enabled_only 和 `item_count_before_filter`。
+- 保持人类控制边界：control-id 精确定位只缩小只读投影，不写 state、不调用 provider、不读取 pane、不创建 plan/action/approval/message/job/inbox、不执行任何 control 或 ack，也不授权任何命令。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/controls-schema.md` 和 `docs/contracts/leader-chat-schema.md`，明确 `--control-id` / `命令面板 control_id <id>` 是只读定位能力。
+- 验证记录：已先确认红测失败，contract filter fields 最初缺少 `control_id`，`agentdeck controls --control-id ...` 最初是 unknown argument，自然语言 `命令面板 control_id ...` 最初会被 ID 中的 card/scope 片段误解析；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_controls_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_controls_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_controls_filters_by_control_id_without_mutating_state tests/test_leader_cli.py::test_leader_chat_help_filters_command_palette_by_control_id -q` 4 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 355 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 379 项通过。
+
 ### Current - Add stable command palette control ids
 
 - 扩展 workbench `control_registry[]` / `agentdeck controls` / Leader help `control_registry_card`：每个命令面板 item 现在都有 deterministic `control_id`，从 scope、card、kind、agent_id、label 和 command 派生，供 GUI/TUI 用作稳定 render key 或审计关联键。

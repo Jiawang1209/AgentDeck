@@ -570,6 +570,7 @@ CONTROL_REGISTRY_FILTER_FIELDS = (
     "scope",
     "card",
     "query",
+    "control_id",
     "enabled_only",
     "item_count_before_filter",
 )
@@ -1575,10 +1576,18 @@ def leader_chat_control_registry_card(
     scope: str | None = None,
     card: str | None = None,
     query: str | None = None,
+    control_id: str | None = None,
     enabled_only: bool = False,
 ) -> dict[str, object]:
     source_items = workbench_card.get("control_registry") if isinstance(workbench_card.get("control_registry"), list) else []
-    items = _filter_control_registry_items(source_items, scope=scope, card=card, query=query, enabled_only=enabled_only)
+    items = _filter_control_registry_items(
+        source_items,
+        scope=scope,
+        card=card,
+        query=query,
+        control_id=control_id,
+        enabled_only=enabled_only,
+    )
     groups = _control_registry_groups(items)
     return {
         "mode": "control_registry",
@@ -1589,6 +1598,7 @@ def leader_chat_control_registry_card(
             "scope": scope,
             "card": card,
             "query": query,
+            "control_id": control_id,
             "enabled_only": enabled_only,
             "item_count_before_filter": len(source_items),
         },
@@ -1605,6 +1615,7 @@ def _filter_control_registry_items(
     scope: str | None,
     card: str | None,
     query: str | None,
+    control_id: str | None,
     enabled_only: bool,
 ) -> list[object]:
     filtered: list[object] = []
@@ -1617,6 +1628,8 @@ def _filter_control_registry_items(
         if card is not None and item.get("card") != card:
             continue
         if normalized_query is not None and normalized_query not in _control_registry_search_text(item):
+            continue
+        if control_id is not None and item.get("control_id") != control_id:
             continue
         if enabled_only and item.get("enabled") is not True:
             continue
@@ -3270,6 +3283,10 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
             errors.append("control_registry_card.filters.card must be a string or null")
         if "query" in filters and filters.get("query") is not None and not isinstance(filters.get("query"), str):
             errors.append("control_registry_card.filters.query must be a string or null")
+        if "control_id" in filters and filters.get("control_id") is not None and not isinstance(
+            filters.get("control_id"), str
+        ):
+            errors.append("control_registry_card.filters.control_id must be a string or null")
         if "enabled_only" in filters and not isinstance(filters.get("enabled_only"), bool):
             errors.append("control_registry_card.filters.enabled_only must be a boolean")
         if "item_count_before_filter" in filters and not isinstance(filters.get("item_count_before_filter"), int):

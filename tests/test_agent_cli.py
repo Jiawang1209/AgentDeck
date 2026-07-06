@@ -2914,6 +2914,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "scope": "runtime",
         "card": None,
         "query": None,
+        "control_id": None,
         "enabled_only": True,
         "item_count_before_filter": 45,
     }
@@ -2941,6 +2942,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "scope": None,
         "card": None,
         "query": "terminal",
+        "control_id": None,
         "enabled_only": False,
         "item_count_before_filter": 45,
     }
@@ -2955,6 +2957,36 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         ).lower()
         for item in payload["items"]
     )
+    assert StateStore(root).load() == before
+
+
+def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.load()
+
+    exit_code = cli.main(["controls"])
+
+    assert exit_code == 0
+    first_payload = json.loads(capsys.readouterr().out)
+    control_id = first_payload["items"][0]["control_id"]
+
+    exit_code = cli.main(["controls", "--control-id", control_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["filters"] == {
+        "scope": None,
+        "card": None,
+        "query": None,
+        "control_id": control_id,
+        "enabled_only": False,
+        "item_count_before_filter": 45,
+    }
+    assert payload["item_count"] == 1
+    assert payload["items"] == [first_payload["items"][0]]
+    assert payload["group_count"] == 1
+    assert payload["groups"][0]["items"] == payload["items"]
     assert StateStore(root).load() == before
 
 

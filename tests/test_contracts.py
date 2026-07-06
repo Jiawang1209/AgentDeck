@@ -299,6 +299,7 @@ def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> No
         "scope",
         "card",
         "query",
+        "control_id",
         "enabled_only",
         "item_count_before_filter",
     ]
@@ -326,6 +327,7 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
         "scope": None,
         "card": None,
         "query": None,
+        "control_id": None,
         "enabled_only": False,
         "item_count_before_filter": len(example["items"]),
     }
@@ -909,6 +911,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
         "scope",
         "card",
         "query",
+        "control_id",
         "enabled_only",
         "item_count_before_filter",
     ]

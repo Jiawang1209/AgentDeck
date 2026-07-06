@@ -2912,6 +2912,7 @@ def test_leader_chat_help_filters_command_palette_without_planning(tmp_path, mon
         "scope": "runtime",
         "card": None,
         "query": None,
+        "control_id": None,
         "enabled_only": True,
         "item_count_before_filter": 45,
     }
@@ -2947,6 +2948,7 @@ def test_leader_chat_help_filters_command_palette_by_query(tmp_path, monkeypatch
         "scope": None,
         "card": None,
         "query": "terminal",
+        "control_id": None,
         "enabled_only": False,
         "item_count_before_filter": 45,
     }
@@ -2959,6 +2961,38 @@ def test_leader_chat_help_filters_command_palette_by_query(tmp_path, monkeypatch
         ).lower()
         for item in registry["items"]
     )
+    state_after = StateStore(root).load()
+    assert state_after["chat_turns"][0]["mode"] == "help"
+    assert state_after["plans"] == []
+    assert state_after["leader_actions"] == []
+
+
+def test_leader_chat_help_filters_command_palette_by_control_id(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["controls"])
+
+    assert exit_code == 0
+    controls_payload = json.loads(capsys.readouterr().out)
+    control_id = controls_payload["items"][0]["control_id"]
+
+    exit_code = cli.main(["leader", "chat", "--message", f"命令面板 control_id {control_id}"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "help"
+    registry = payload["control_registry_card"]
+    assert registry["filters"] == {
+        "scope": None,
+        "card": None,
+        "query": None,
+        "control_id": control_id,
+        "enabled_only": False,
+        "item_count_before_filter": 45,
+    }
+    assert registry["items"] == [controls_payload["items"][0]]
+    assert registry["groups"][0]["items"] == registry["items"]
+
     state_after = StateStore(root).load()
     assert state_after["chat_turns"][0]["mode"] == "help"
     assert state_after["plans"] == []

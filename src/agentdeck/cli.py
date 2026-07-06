@@ -1928,6 +1928,7 @@ def controls_command(args: argparse.Namespace) -> int:
         scope=args.scope,
         card=args.card,
         query=args.query,
+        control_id=args.control_id,
         enabled_only=args.enabled_only,
     )
     validation = validate_control_registry_card_contract(payload)
@@ -3491,9 +3492,10 @@ def _chat_wants_help(message: str) -> bool:
 
 def _chat_control_registry_filters(message: str) -> dict[str, object]:
     normalized = message.strip().lower()
+    control_id = _chat_control_registry_control_id(message)
     query = _chat_control_registry_query(message)
     scope = None
-    if query is None:
+    if query is None and control_id is None:
         scope_aliases: tuple[tuple[str, tuple[str, ...]], ...] = (
             ("leader", ("leader", "leader_card", "调度者")),
             ("provider", ("provider", "provider_health", "模型后端")),
@@ -3509,7 +3511,7 @@ def _chat_control_registry_filters(message: str) -> dict[str, object]:
                 scope = candidate_scope
                 break
     card = None
-    card_match = re.search(r"\b[A-Za-z0-9_]+_card\b", message)
+    card_match = re.search(r"\b[A-Za-z0-9_]+_card\b", message) if control_id is None else None
     if card_match:
         card = card_match.group(0)
     enabled_only = any(
@@ -3524,7 +3526,20 @@ def _chat_control_registry_filters(message: str) -> dict[str, object]:
             "只显示可用",
         ]
     )
-    return {"scope": scope, "card": card, "query": query, "enabled_only": enabled_only}
+    return {"scope": scope, "card": card, "query": query, "control_id": control_id, "enabled_only": enabled_only}
+
+
+def _chat_control_registry_control_id(message: str) -> str | None:
+    patterns = [
+        r"(?:control_id|control id|控件id|控制id|id)\s+(?P<control_id>[A-Za-z0-9_.:-]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if not match:
+            continue
+        control_id = match.group("control_id").strip(" \t\r\n\"'`：:，,。.!！?")
+        return control_id or None
+    return None
 
 
 def _chat_control_registry_query(message: str) -> str | None:
@@ -5097,6 +5112,9 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 scope=control_registry_filters["scope"] if isinstance(control_registry_filters["scope"], str) else None,
                 card=control_registry_filters["card"] if isinstance(control_registry_filters["card"], str) else None,
                 query=control_registry_filters["query"] if isinstance(control_registry_filters["query"], str) else None,
+                control_id=control_registry_filters["control_id"]
+                if isinstance(control_registry_filters["control_id"], str)
+                else None,
                 enabled_only=control_registry_filters["enabled_only"] is True,
             ),
         }
@@ -7150,6 +7168,7 @@ def build_parser() -> argparse.ArgumentParser:
     controls.add_argument("--scope", help="Filter command palette controls by scope")
     controls.add_argument("--card", help="Filter command palette controls by source card")
     controls.add_argument("--query", help="Search command palette controls by label, kind, command, scope, card, or agent")
+    controls.add_argument("--control-id", help="Filter command palette controls by stable control_id")
     controls.add_argument("--enabled-only", action="store_true", help="Only include enabled command palette controls")
     controls.set_defaults(func=controls_command)
 
