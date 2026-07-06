@@ -2236,6 +2236,50 @@ def test_validate_workbench_contract_requires_operator_explicit_control_to_match
     }
 
 
+def test_validate_workbench_contract_requires_operator_preview_enabled_to_match_command() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["preview_command"] = None
+    payload["operator_card"]["controls"][0]["command"] = None
+    payload["operator_card"]["controls"][0]["enabled"] = True
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card preview control enabled must reflect preview_command"],
+    }
+
+
+def test_validate_workbench_contract_requires_operator_apply_enabled_to_match_can_apply() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["can_apply"] = False
+    payload["operator_card"]["controls"][1]["enabled"] = True
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card apply control enabled must reflect can_apply and apply_command"],
+    }
+
+
+def test_validate_workbench_contract_requires_operator_explicit_enabled_to_match_blocker() -> None:
+    payload = workbench_example()
+    payload["operator_card"]["blocker"] = "requires runtime"
+    payload["operator_card"]["controls"][2]["blocker"] = "requires runtime"
+    payload["operator_card"]["controls"][2]["enabled"] = True
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["operator_card explicit control enabled must reflect explicit_command and blocker"],
+    }
+
+
 def test_validate_workbench_contract_requires_dispatch_ready_operator_command() -> None:
     payload = workbench_example()
     payload["operator_card"]["action_kind"] = "approval_dispatch_ready"
