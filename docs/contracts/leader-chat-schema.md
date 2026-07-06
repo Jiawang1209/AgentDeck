@@ -726,7 +726,7 @@ Setup-mode responses are returned when the human asks to inspect `doctor`, provi
 }
 ```
 
-`safety=plan_only` means the Leader only created a plan record. `safety=safe_apply` means the action can be applied through `agentdeck leader apply-action`. `safety=explicit_runtime` means the user must run the explicit command, such as dispatch, capture-reply, inbox ack, approval approve, or approval dispatch. `safety=safe_apply_completed` means a safe apply action already completed and the response may include `result_count`. `safety=inspect` means the response is only recommending or performing a read-only inspection command such as pane capture.
+`leader_explanation.next_command` must match the top-level response `next_command`, so GUI clients can render the explanation and primary action without reconciling two different recommendations. `safety=plan_only` means the Leader only created a plan record. `safety=safe_apply` means the action can be applied through `agentdeck leader apply-action`. `safety=explicit_runtime` means the user must run the explicit command, such as dispatch, capture-reply, inbox ack, approval approve, or approval dispatch. `safety=safe_apply_completed` means a safe apply action already completed and the response may include `result_count`. `safety=inspect` means the response is only recommending or performing a read-only inspection command such as pane capture.
 `safety=approval_gated` means the Leader created a plan plus pending approvals, but runtime execution still waits for explicit human approval and dispatch.
 
 ## Boundaries

@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Align leader explanation next command
+
+- 收紧 leader-chat 全局契约：`leader_explanation.next_command` 必须匹配顶层响应 `next_command`，与已有 `intent_card.next_command` 对齐规则形成同一条 GUI 主操作事实源。
+- 这避免 GUI 在解释区和主操作按钮中展示两个不同下一步命令，尤其保护 provider setup/switch、runtime、approval 和 recovery 等自然语言入口的一致性。
+- 保持控制边界：该校验只拒绝漂移 payload，不执行命令、不修改 `.agentdeck/config.toml`、不调用 provider、不创建额外 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，validator 最初允许 `leader_explanation.next_command` 与顶层 `next_command` 漂移；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_explanation_next_command_to_match_response tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_requires_intent_next_command_match -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 399 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 425 项通过。
+
 ### Current - Require provider switch secondary card
 
 - 收紧 live `provider_switch` leader-chat intent 契约：当 `leader_explanation.action_kind=provider_switch` 且响应包含 `provider_switch_card` 时，`intent_card.secondary_embedded_cards` 必须列出 `provider_switch_card`。

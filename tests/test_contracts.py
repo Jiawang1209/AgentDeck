@@ -2875,6 +2875,7 @@ def test_validate_leader_chat_contract_reuses_run_start_card_validator() -> None
     payload = leader_chat_example()
     payload["mode"] = "run_start"
     payload["next_command"] = payload["run_start_card"]["next_command"]
+    payload["leader_explanation"]["next_command"] = payload["next_command"]
     payload["intent_card"]["mode"] = "run_start"
     payload["intent_card"]["matched_intent"] = "run_start"
     payload["intent_card"]["embedded_card"] = "run_start_card"
@@ -2899,6 +2900,7 @@ def test_validate_leader_chat_contract_reuses_run_progress_card_validator() -> N
     payload = leader_chat_example()
     payload["mode"] = "run_progress"
     payload["next_command"] = payload["run_progress_card"]["next_command"]
+    payload["leader_explanation"]["next_command"] = payload["next_command"]
     payload["intent_card"]["mode"] = "run_progress"
     payload["intent_card"]["matched_intent"] = "run_progress"
     payload["intent_card"]["embedded_card"] = "run_progress_card"
@@ -2911,6 +2913,7 @@ def test_validate_leader_chat_contract_reuses_run_progress_card_validator() -> N
     payload["operator_card"] = None
     payload["run_progress_card"]["next_command"] = "agentdeck workbench"
     payload["next_command"] = payload["run_progress_card"]["next_command"]
+    payload["leader_explanation"]["next_command"] = payload["next_command"]
     payload["intent_card"]["next_command"] = payload["next_command"]
     payload["intent_card"]["controls"][0]["command"] = payload["next_command"]
 
@@ -2929,6 +2932,18 @@ def test_validate_leader_chat_contract_reports_missing_explanation_field() -> No
     result = validate_leader_chat_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing leader_explanation field: safety"]}
+
+
+def test_validate_leader_chat_contract_requires_explanation_next_command_to_match_response() -> None:
+    payload = leader_chat_example()
+    payload["leader_explanation"]["next_command"] = "agentdeck workbench"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["leader_explanation.next_command must match response next_command"],
+    }
 
 
 def test_validate_leader_chat_contract_reports_missing_intent_card_field() -> None:
@@ -3390,6 +3405,7 @@ def test_validate_leader_chat_contract_requires_disabled_control_blocker() -> No
 def test_validate_leader_chat_contract_requires_placeholder_intent_controls_disabled() -> None:
     payload = leader_chat_example()
     payload["next_command"] = "agentdeck approval reject --approval-id apv_example --reason <reason>"
+    payload["leader_explanation"]["next_command"] = payload["next_command"]
     payload["intent_card"]["next_command"] = payload["next_command"]
     payload["queue_card"] = None
     payload["operator_card"] = None
@@ -3413,6 +3429,7 @@ def test_validate_leader_chat_contract_requires_placeholder_intent_controls_disa
 def test_validate_leader_chat_contract_requires_placeholder_intent_blocker_match() -> None:
     payload = leader_chat_example()
     payload["next_command"] = "agentdeck approval reject --approval-id apv_example --reason <reason>"
+    payload["leader_explanation"]["next_command"] = payload["next_command"]
     payload["intent_card"]["next_command"] = payload["next_command"]
     payload["queue_card"] = None
     payload["operator_card"] = None

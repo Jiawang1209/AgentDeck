@@ -3153,6 +3153,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         for field in LEADER_CHAT_EXPLANATION_FIELDS:
             if field not in explanation:
                 errors.append(f"missing leader_explanation field: {field}")
+        if explanation.get("next_command") != payload.get("next_command"):
+            errors.append("leader_explanation.next_command must match response next_command")
     elif "leader_explanation" in payload:
         errors.append("leader_explanation must be an object")
     explanation_action_kind = (
