@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Link role chat to command registry controls
+
+- 扩展自然语言 role mode：`agentdeck leader chat --message "查看角色"` / `"查看分工"` 现在会附带过滤到 `scope=role` / `card=role_card` 的 `control_registry_card`，让 GUI/TUI 可以直接渲染角色编辑表单入口。
+- 扩展自然语言 role assignment：`agentdeck leader chat --message "把 planner 设为 架构师"` 会继续只建议显式 `agentdeck agent assign-role ...`，同时让 registry selection 指向目标 agent 的 disabled `kind=assign_role` 模板 control；顶层 `next_command` 和 intent next control 保留填好参数后的可执行命令。
+- 收紧契约守门：`validate_leader_chat_contract()` 会拒绝缺少 role registry companion 的响应，并要求 `role_assign` registry selection 指向目标 agent 的 assign_role control。
+- 保持安全边界：role registry companion 不修改 `.agentdeck/config.toml`，不创建 plan/action/approval/message/job/inbox，不调用 provider，不读取 pane，不发送 tmux 输入；disabled 模板 control 只是表单入口，不能替代显式 next command。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、AGENT/CLAUDE 约束和测试。
+- 验证记录：已先确认红测失败，自然语言 role 响应最初没有 `control_registry_card`，validator 也会放过缺少 registry companion 的 role 响应；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_inspects_roles_without_mutating_state tests/test_leader_cli.py::test_leader_chat_role_assignment_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_role_registry_card -q` 3 项通过；聚焦回归 7 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 328 项通过，`conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 357 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 505 项通过。
+
 ### Current - Link run progress chat to command registry controls
 
 - 扩展 `agentdeck workbench` / `agentdeck controls` 的 registry 派生：现在会索引 `run_progress_card.controls[]`，以 `scope=run_progress` / `card=run_progress_card` 暴露 plan_status、review、approval_queue、next、continue 和 workbench 控件。

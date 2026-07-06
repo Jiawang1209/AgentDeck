@@ -253,7 +253,7 @@ agentdeck agent assign-role \
 agentdeck dispatch --agent planner --task "设计消息账本"
 ```
 
-`agentdeck workbench` 的 `role_card.agents[]` 会同时暴露每个 agent 的 `assign_command` 和 disabled `controls[]` 模板；`agentdeck controls` 会把它们索引为 `scope=role` / `kind=assign_role`。GUI 可以把这个 control 渲染成角色编辑表单，但必须先由人类填写具体 `role` 和 `role_prompt`，再显式运行完成后的 `agentdeck agent assign-role ...` 命令。
+`agentdeck workbench` 的 `role_card.agents[]` 会同时暴露每个 agent 的 `assign_command` 和 disabled `controls[]` 模板；`agentdeck controls` 会把它们索引为 `scope=role` / `kind=assign_role`。自然语言 `agentdeck leader chat --message "查看角色"` 会附带过滤到 `role_card` 的 `control_registry_card`；自然语言角色指派会让 registry selection 指向目标 agent 的 disabled assign-role 模板，同时把填好参数后的显式 `agentdeck agent assign-role ...` 放在顶层 `next_command` 和 intent next control。GUI 可以把这个 control 渲染成角色编辑表单，但必须先由人类填写具体 `role` 和 `role_prompt`，再显式运行完成后的命令。
 
 `agentdeck workbench` 的 `leader_card.controls[]` 也会进入 `agentdeck controls`，以 `scope=leader` 暴露 `chat`、`continue`、`review`、`actions`、`refresh`、`leader_status` 和完整 ProjectView `status`。其中 `refresh` 与 `leader_status` 都指向窄版 `agentdeck leader status`：`refresh` 适合 GUI 顶栏刷新当前 Leader/provider/recovery 状态，`leader_status` 适合命令面板打开窄版状态入口；二者都是 inspect control，不会调用 provider、读取 tmux 或写 state。
 

@@ -171,6 +171,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "inbox_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "role_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "leader_status_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "leader_summary_card" and payload.get("control_registry_card") is not None:
@@ -7454,6 +7456,25 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if refreshed_project_view is None:
             return 1
         role_card = _workbench_role_card(refreshed_project_view)
+        registry_items = _workbench_control_registry({"role_card": role_card})
+        role_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("scope") == "role"
+                and item.get("card") == "role_card"
+                and item.get("kind") == "assign_role"
+                and item.get("agent_id") == role_agent_id
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="role",
+            card="role_card",
+            control_id=str(role_control_id) if role_control_id else None,
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -7478,6 +7499,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": role_card,
+            "control_registry_card": control_registry_card,
             "ledger_card": None,
             "workbench_card": None,
         }
@@ -7590,6 +7612,11 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if refreshed_project_view is None:
             return 1
         role_card = _workbench_role_card(refreshed_project_view)
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": _workbench_control_registry({"role_card": role_card})},
+            scope="role",
+            card="role_card",
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -7614,6 +7641,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "queue_card": None,
             "operator_card": None,
             "role_card": role_card,
+            "control_registry_card": control_registry_card,
             "ledger_card": None,
             "workbench_card": None,
         }

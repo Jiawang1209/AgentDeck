@@ -2969,6 +2969,25 @@ def test_leader_chat_inspects_roles_without_mutating_state(tmp_path, monkeypatch
     assert payload["role_card"]["agents"][0]["assign_command"].startswith(
         "agentdeck agent assign-role --agent planner --role planning"
     )
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["control_registry_card"]["filters"]["scope"] == "role"
+    assert payload["control_registry_card"]["filters"]["card"] == "role_card"
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == ["scope", "card"]
+    assert payload["control_registry_card"]["item_count"] == 3
+    assert payload["control_registry_card"]["items"][0] == {
+        "scope": "role",
+        "card": "role_card",
+        "kind": "assign_role",
+        "label": "Assign role",
+        "command": "agentdeck agent assign-role --agent planner --role <role> --role-prompt <role_prompt>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires role and role_prompt",
+        "agent_id": "planner",
+        "control_id": payload["control_registry_card"]["items"][0]["control_id"],
+    }
+    assert payload["control_registry_card"]["selection"]["selected_control"] is None
+    assert payload["control_registry_card"]["selection"]["next_command"] is None
     assert payload["leader_explanation"]["mode"] == "role"
     assert payload["leader_explanation"]["action_kind"] == "role"
     assert payload["leader_explanation"]["action_status"] == "configured"
@@ -3026,12 +3045,13 @@ def test_leader_chat_role_assignment_intent_suggests_explicit_command_without_mu
         "safety": "explicit_user",
         "requires_explicit_user": True,
     }
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
     assert payload["intent_card"] == {
         "mode": "role",
         "matched_intent": "role",
         "route_source": "local_rule",
         "embedded_card": "role_card",
-        "secondary_embedded_cards": [],
+        "secondary_embedded_cards": ["control_registry_card"],
         "read_only": True,
         "next_command": "agentdeck agent assign-role --agent planner --role 架构师 --role-prompt '你负责架构师。'",
         "requires_explicit_user": True,
@@ -3054,6 +3074,24 @@ def test_leader_chat_role_assignment_intent_suggests_explicit_command_without_mu
             },
         ],
     }
+    assert payload["control_registry_card"]["filters"]["scope"] == "role"
+    assert payload["control_registry_card"]["filters"]["card"] == "role_card"
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == ["scope", "card", "control_id"]
+    assert payload["control_registry_card"]["filters"]["item_count_before_filter"] == 3
+    assert payload["control_registry_card"]["item_count"] == 1
+    assert selected_control == {
+        "scope": "role",
+        "card": "role_card",
+        "kind": "assign_role",
+        "label": "Assign role",
+        "command": "agentdeck agent assign-role --agent planner --role <role> --role-prompt <role_prompt>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires role and role_prompt",
+        "agent_id": "planner",
+        "control_id": selected_control["control_id"],
+    }
+    assert payload["control_registry_card"]["selection"]["next_command"] is None
     assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
     assert (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8") == config_before
 
@@ -3068,6 +3106,29 @@ def test_leader_chat_role_assignment_intent_suggests_explicit_command_without_mu
     assert state_after["approvals"] == []
     assert state_after["messages"] == []
     assert state_after["jobs"] == []
+
+
+def test_validate_leader_chat_contract_requires_role_registry_card(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看角色"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for role responses",
+            "control_registry_card is required for role responses",
+        ],
+    }
 
 
 def test_leader_chat_task_assignment_intent_creates_pending_approval_without_dispatching(

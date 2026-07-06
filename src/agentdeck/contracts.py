@@ -3880,6 +3880,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append(
                     f"intent_card.secondary_embedded_cards must include control_registry_card for {explanation_action_kind} responses"
                 )
+            if (
+                explanation_action_kind in {"role", "role_assign"}
+                and payload.get("role_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    f"intent_card.secondary_embedded_cards must include control_registry_card for {explanation_action_kind} responses"
+                )
         elif "secondary_embedded_cards" in intent_card:
             errors.append("intent_card.secondary_embedded_cards must be a list")
         recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
@@ -4260,6 +4268,24 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             and selection.get("next_command") != payload.get("next_command")
         ):
             errors.append("control_registry_card.selection.next_command must match inbox next_command")
+        if (
+            explanation_action_kind == "role_assign"
+            and isinstance(role_card, dict)
+            and isinstance(selection, dict)
+        ):
+            leader_explanation = payload.get("leader_explanation")
+            recommended_action_id = (
+                leader_explanation.get("recommended_action_id")
+                if isinstance(leader_explanation, dict)
+                else None
+            )
+            selected_control = selection.get("selected_control")
+            selected_kind = selected_control.get("kind") if isinstance(selected_control, dict) else None
+            selected_agent_id = selected_control.get("agent_id") if isinstance(selected_control, dict) else None
+            if selected_kind != "assign_role":
+                errors.append("control_registry_card.selection.selected_control.kind must be assign_role for role_assign responses")
+            if selected_agent_id != recommended_action_id:
+                errors.append("control_registry_card.selection.selected_control.agent_id must match role_assign target")
     elif explanation_action_kind == "provider_setup":
         errors.append("control_registry_card is required for provider_setup setup responses")
     elif explanation_action_kind == "leader_status":
@@ -4275,6 +4301,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
     elif explanation_action_kind == "audit":
         errors.append("control_registry_card is required for audit responses")
     elif explanation_action_kind in {"inbox", "inbox_ack", "inbox_trace"}:
+        errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
+    elif explanation_action_kind in {"role", "role_assign"}:
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif explanation_action_kind in {"approval_dispatch", "approval_dispatch_batch"}:
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
