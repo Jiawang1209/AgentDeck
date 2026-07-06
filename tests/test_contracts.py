@@ -2265,6 +2265,18 @@ def test_validate_approval_contract_requires_gui_action_fields() -> None:
     }
 
 
+def test_validate_approval_contract_checks_every_approval_item() -> None:
+    payload = approval_example()
+    del payload["approvals"][1]["controls"]
+
+    result = validate_approval_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing approval item field at index 1: controls"],
+    }
+
+
 def test_validate_approval_dispatch_ready_contract_accepts_example() -> None:
     result = validate_approval_dispatch_ready_contract(approval_dispatch_ready_example())
 

@@ -2628,16 +2628,27 @@ def validate_approval_contract(payload: dict[str, object]) -> dict[str, object]:
             errors.append(f"missing approval queue field: {field}")
     approvals = payload.get("approvals")
     if isinstance(approvals, list):
-        if approvals:
-            first_approval = approvals[0]
-            if isinstance(first_approval, dict):
-                for field in APPROVAL_ITEM_FIELDS:
-                    if field not in first_approval:
-                        errors.append(f"missing approval item field: {field}")
-                if not isinstance(first_approval.get("can_dispatch"), bool):
-                    errors.append("can_dispatch must be a boolean")
-            else:
-                errors.append("approval items must be objects")
+        for index, approval in enumerate(approvals):
+            if not isinstance(approval, dict):
+                errors.append(
+                    "approval items must be objects"
+                    if index == 0
+                    else f"approvals[{index}] must be an object"
+                )
+                continue
+            for field in APPROVAL_ITEM_FIELDS:
+                if field not in approval:
+                    errors.append(
+                        f"missing approval item field: {field}"
+                        if index == 0
+                        else f"missing approval item field at index {index}: {field}"
+                    )
+            if not isinstance(approval.get("can_dispatch"), bool):
+                errors.append(
+                    "can_dispatch must be a boolean"
+                    if index == 0
+                    else f"approvals[{index}].can_dispatch must be a boolean"
+                )
     elif "approvals" in payload:
         errors.append("approvals must be a list")
     return {"ok": not errors, "errors": errors}

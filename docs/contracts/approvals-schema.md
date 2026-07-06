@@ -2,7 +2,7 @@
 
 `agentdeck approval list` is the read-only queue view for human approval items.
 
-It does not approve, reject, or dispatch work. It lists stored approvals, derives GUI action metadata for each item, and validates the queue payload before printing JSON.
+It does not approve, reject, or dispatch work. It lists stored approvals, derives GUI action metadata for each item, and validates every queue item before printing JSON.
 
 Use `agentdeck contract approvals` to discover this contract:
 
