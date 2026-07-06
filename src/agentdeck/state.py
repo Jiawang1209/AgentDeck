@@ -21,6 +21,16 @@ def leader_provider_backend(provider: str | None) -> str:
     return "unknown"
 
 
+def leader_provider_transport(provider: str | None) -> str:
+    if provider in {"deepseek", "openai-compatible"}:
+        return "http"
+    if provider in {"codex-cli", "claude-cli"}:
+        return "subprocess"
+    if provider == "fake":
+        return "local"
+    return "unknown"
+
+
 class StateStore:
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or project_root()
@@ -140,6 +150,7 @@ class StateStore:
             "task": task,
             "provider": provider,
             "provider_backend": leader_provider_backend(provider),
+            "provider_transport": leader_provider_transport(provider),
             "model": model,
             "status": "planned",
             "dispatch_ready": bool(plan.get("dispatch_ready", False)),
@@ -206,6 +217,8 @@ class StateStore:
             "provider": plan_record.get("provider"),
             "provider_backend": plan_record.get("provider_backend")
             or leader_provider_backend(str(plan_record.get("provider") or "")),
+            "provider_transport": plan_record.get("provider_transport")
+            or leader_provider_transport(str(plan_record.get("provider") or "")),
             "model": plan_record.get("model"),
             "created_at": plan_record.get("created_at"),
             "counts": status_counts,
@@ -892,6 +905,8 @@ class StateStore:
                     "provider": plan.get("provider"),
                     "provider_backend": plan.get("provider_backend")
                     or leader_provider_backend(str(plan.get("provider") or "")),
+                    "provider_transport": plan.get("provider_transport")
+                    or leader_provider_transport(str(plan.get("provider") or "")),
                     "model": plan.get("model"),
                     "dispatch_ready": plan.get("dispatch_ready"),
                     "step_count": len(steps) if isinstance(steps, list) else 0,

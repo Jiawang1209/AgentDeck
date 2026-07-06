@@ -49,7 +49,7 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
 
 All ProjectView fields are read-only summaries. Commands that mutate state, send tmux input, dispatch work, or apply approvals must remain explicit commands with approval semantics.
 
-`plans.items[]` includes both the configured provider name and a normalized `provider_backend` provenance label. The label is `local` for the fake dry-run provider, `api` for API-backed Leader providers such as DeepSeek or OpenAI-compatible backends, `cli` for local CLI-backed Leader providers such as Codex CLI or Claude Code CLI, and `unknown` for unrecognized legacy records. GUI clients may render this as plan origin metadata, but it is not a separate state source or execution permission.
+`plans.items[]` includes the configured provider name plus normalized provenance labels: `provider_backend` is `local` for the fake dry-run provider, `api` for API-backed Leader providers such as DeepSeek or OpenAI-compatible backends, `cli` for local CLI-backed Leader providers such as Codex CLI or Claude Code CLI, and `unknown` for unrecognized legacy records; `provider_transport` is `local`, `http`, `subprocess`, or `unknown`. GUI clients may render these as plan origin metadata, but they are not separate state sources or execution permissions.
 
 ## Recovery
 

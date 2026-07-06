@@ -92,6 +92,7 @@ def test_leader_plan_creates_structured_plan_without_dispatching(tmp_path, monke
     assert payload["status"] == "planned"
     assert payload["provider"] == "fake"
     assert payload["provider_backend"] == "local"
+    assert payload["provider_transport"] == "local"
     assert payload["dispatch_ready"] is False
     assert payload["plan"]["goal"] == "实现自动 reply extraction"
     assert [step["agent_id"] for step in payload["plan"]["steps"]] == ["planner", "coder", "reviewer"]
@@ -102,6 +103,7 @@ def test_leader_plan_creates_structured_plan_without_dispatching(tmp_path, monke
     assert state["plans"][0]["task"] == "实现自动 reply extraction"
     assert state["plans"][0]["provider"] == "fake"
     assert state["plans"][0]["provider_backend"] == "local"
+    assert state["plans"][0]["provider_transport"] == "local"
     assert state["plans"][0]["status"] == "planned"
     assert state["messages"] == []
     assert state["jobs"] == []
@@ -485,12 +487,14 @@ def test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching(
     ]
     assert payload["provider"] == "codex-cli"
     assert payload["provider_backend"] == "cli"
+    assert payload["provider_transport"] == "subprocess"
     assert payload["model"] == "gpt-5-codex"
     assert payload["plan"]["goal"] == "Codex CLI Leader"
 
     state = StateStore(root).load()
     assert state["plans"][0]["provider"] == "codex-cli"
     assert state["plans"][0]["provider_backend"] == "cli"
+    assert state["plans"][0]["provider_transport"] == "subprocess"
     assert state["plans"][0]["model"] == "gpt-5-codex"
     assert state["approvals"] == []
     assert state["messages"] == []
@@ -4662,6 +4666,7 @@ def test_plan_list_outputs_plan_summaries(tmp_path, monkeypatch, capsys) -> None
     assert payload["plans"][0]["status"] == "planned"
     assert payload["plans"][0]["provider"] == "fake"
     assert payload["plans"][0]["provider_backend"] == "local"
+    assert payload["plans"][0]["provider_transport"] == "local"
     assert payload["plans"][0]["step_count"] == 3
 
 

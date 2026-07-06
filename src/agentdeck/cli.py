@@ -65,7 +65,7 @@ from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec,
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .runtime import TmuxBackend
-from .state import StateStore, agentdeck_dir, leader_provider_backend
+from .state import StateStore, agentdeck_dir, leader_provider_backend, leader_provider_transport
 
 
 def _print_json(payload: object) -> None:
@@ -2870,6 +2870,7 @@ def leader_plan_command(args: argparse.Namespace) -> int:
             "status": record["status"],
             "provider": record["provider"],
             "provider_backend": record["provider_backend"],
+            "provider_transport": record["provider_transport"],
             "model": record["model"],
             "dispatch_ready": record["dispatch_ready"],
             "plan": record["plan"],
@@ -3028,6 +3029,7 @@ def _run_progress_payload(store: StateStore, plan_id: str) -> dict[str, object]:
         "status": status.get("status"),
         "provider": status.get("provider"),
         "provider_backend": status.get("provider_backend"),
+        "provider_transport": status.get("provider_transport"),
         "model": status.get("model"),
         "counts": status.get("counts"),
         "steps": status.get("steps"),
@@ -3085,6 +3087,8 @@ def _run_start_payload(
         "provider": plan_record["provider"],
         "provider_backend": plan_record.get("provider_backend")
         or leader_provider_backend(str(plan_record.get("provider") or "")),
+        "provider_transport": plan_record.get("provider_transport")
+        or leader_provider_transport(str(plan_record.get("provider") or "")),
         "model": plan_record["model"],
         "approval_count": len(approvals),
         "pending_approval_count": len(pending_approvals),
@@ -6757,6 +6761,8 @@ def _plan_summary(plan: dict[str, object]) -> dict[str, object]:
         "task": plan.get("task"),
         "provider": plan.get("provider"),
         "provider_backend": plan.get("provider_backend") or leader_provider_backend(str(plan.get("provider") or "")),
+        "provider_transport": plan.get("provider_transport")
+        or leader_provider_transport(str(plan.get("provider") or "")),
         "model": plan.get("model"),
         "status": plan.get("status"),
         "dispatch_ready": plan.get("dispatch_ready"),

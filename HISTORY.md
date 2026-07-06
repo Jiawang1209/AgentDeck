@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add plan provider transport provenance
+
+- 扩展 plan provenance：保存后的 plan record、`agentdeck leader plan` 输出、ProjectView `plans.items[]`、`agentdeck plan list`、`run_start` 和 `run_progress` card 现在都会暴露 `provider_transport`，取值为 `local`、`http`、`subprocess` 或 `unknown`。
+- 新增 `leader_provider_transport()` 统一派生 fake/API-backed/CLI-backed/legacy 调用通道标签；旧 state 记录缺少该字段时，ProjectView、plan status 和 plan list 会按 provider 名动态兜底，避免 GUI/审计面遇到空字段。
+- 保持控制边界：`provider_transport` 只是 plan 来源/调用通道元数据，方便区分本地 dry-run、HTTP API 和本地 CLI subprocess；它不是授权、dispatch 或 runtime 执行语义。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/project-view-schema.md` 和 `docs/contracts/run-schema.md`，明确该字段是 GUI/审计 provenance。
+- 验证记录：已先确认红测失败，`leader plan` payload、state plan record、ProjectView plan summary 和 `agentdeck plan list` 最初缺少 `provider_transport`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_plan_creates_structured_plan_without_dispatching tests/test_leader_cli.py::test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching tests/test_leader_cli.py::test_plan_list_outputs_plan_summaries tests/test_agent_cli.py::test_status_includes_project_state_summaries -q` 4 项通过；聚焦契约/状态回归 7 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 366 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 392 项通过。
+
 ### Current - Add plan provider backend provenance
 
 - 扩展 plan provenance：保存后的 plan record、`agentdeck leader plan` 输出、ProjectView `plans.items[]`、`agentdeck plan list`、`run_start` 和 `run_progress` card 现在都会暴露 `provider_backend`，取值为 `local`、`api`、`cli` 或 `unknown`。

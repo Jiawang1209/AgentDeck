@@ -3936,6 +3936,7 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
         "status": "planned",
         "provider": "fake",
         "provider_backend": "local",
+        "provider_transport": "local",
         "model": "local-plan",
         "dispatch_ready": False,
         "step_count": 2,
