@@ -2086,10 +2086,39 @@ def _runtime_action_card_payload(
     runtime_card: dict[str, object],
     *,
     action: str,
-    agent_id: str,
+    agent_id: str | None,
     command: str,
     preview_text: str | None = None,
 ) -> dict[str, object] | None:
+    if action == "refresh_runtime":
+        return {
+            "mode": "runtime_action",
+            "title": "Refresh runtime",
+            "action": action,
+            "agent_id": None,
+            "role": None,
+            "runtime_status": "suggested",
+            "pane_id": None,
+            "command": command,
+            "preview_text": preview_text,
+            "requires_explicit_user": True,
+            "safety": "explicit_runtime",
+            "blocker": None,
+            "controls": [
+                _control(
+                    kind="inspect",
+                    label="Inspect runtime",
+                    command="agentdeck agent list",
+                    safety="inspect",
+                ),
+                _control(
+                    kind="refresh_runtime",
+                    label="Refresh runtime",
+                    command=command,
+                    safety="explicit_runtime",
+                ),
+            ],
+        }
     agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
     target = next(
         (agent for agent in agents if isinstance(agent, dict) and agent.get("agent_id") == agent_id),
@@ -6731,6 +6760,13 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 command=str(next_command),
             )
             if runtime_stop_agent_id
+            else _runtime_action_card_payload(
+                runtime_card,
+                action="refresh_runtime",
+                agent_id=None,
+                command=str(next_command),
+            )
+            if runtime_refresh
             else None
         )
         control_registry_card = None
@@ -6747,20 +6783,22 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 "terminal_session_card": terminal_session_card,
             }
             registry_items = _workbench_control_registry(registry_source)
-            next_control_id = next(
-                (
-                    item.get("control_id")
-                    for item in registry_items
-                    if isinstance(item, dict) and item.get("command") == next_command
-                ),
-                None,
-            )
             registry_card_filter = (
                 "agent_ready_card"
                 if isinstance(agent_ready_card, dict)
                 else "startup_preview_card"
                 if isinstance(startup_preview_card, dict)
                 else "runtime_action_card"
+            )
+            next_control_id = next(
+                (
+                    item.get("control_id")
+                    for item in registry_items
+                    if isinstance(item, dict)
+                    and item.get("card") == registry_card_filter
+                    and item.get("command") == next_command
+                ),
+                None,
             )
             control_registry_card = leader_chat_control_registry_card(
                 {"control_registry": registry_items},

@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add runtime refresh action card
+
+- 扩展自然语言 runtime refresh 意图：`agentdeck leader chat --message "刷新 runtime"` 现在返回 project-level `runtime_action_card`，结构化展示 `action=refresh_runtime`、`agent_id=null`、`runtime_status=suggested`、显式 `agentdeck agent refresh` 命令和 inspect/refresh controls。
+- 扩展 runtime intent companion：刷新响应和发送/停止响应一样，以 `runtime_action_card` 为 primary embedded card，并在 `intent_card.secondary_embedded_cards` 中列出 `runtime_card`、`terminal_session_card` 和 `control_registry_card`，让 GUI/TUI 可以在刷新前同时渲染动作确认、可见 runtime、项目级终端条和已选中的 refresh control。
+- 扩展 leader-chat contract：`runtime_action_card` validator 现在覆盖 `action=refresh_runtime`，要求 command 为 `agentdeck agent refresh`，refresh control command 匹配卡片 command，`safety=explicit_runtime`，`requires_explicit_user=true`，disabled control 必须带 blocker。
+- 保持控制边界：该响应只建议显式刷新命令，不自动 refresh runtime、不发送 tmux 输入、不 kill pane、不创建 plan/action/approval/message/job/inbox、不 attach/select-pane、不读取 pane、不修改 runtime state。
+- 验证记录：已先确认红测失败，`刷新 runtime` 最初 `runtime_action_card=None`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_runtime_refresh_without_reconciling_state tests/test_leader_cli.py::test_leader_chat_suggests_agent_send_without_sending_input tests/test_leader_cli.py::test_leader_chat_suggests_agent_stop_without_killing_pane tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_action_control_drift tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_stop_action_control_drift tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_refresh_action_control_drift -q` 8 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 407 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 433 项通过。
+
 ### Current - Add runtime stop action card
 
 - 扩展自然语言 runtime stop 意图：`agentdeck leader chat --message "停止 planner"` 现在返回 `runtime_action_card`，结构化展示目标 agent、role、runtime_status、pane_id、显式 `agentdeck agent stop --agent <id>` 命令和 inspect/stop controls。

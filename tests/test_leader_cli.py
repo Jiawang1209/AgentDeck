@@ -1857,6 +1857,38 @@ def test_leader_chat_suggests_runtime_refresh_without_reconciling_state(tmp_path
     assert payload["mode"] == "runtime"
     assert payload["message"] == "刷新 runtime"
     assert payload["next_command"] == "agentdeck agent refresh"
+    assert payload["runtime_action_card"] == {
+        "mode": "runtime_action",
+        "title": "Refresh runtime",
+        "action": "refresh_runtime",
+        "agent_id": None,
+        "role": None,
+        "runtime_status": "suggested",
+        "pane_id": None,
+        "command": "agentdeck agent refresh",
+        "preview_text": None,
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": None,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect runtime",
+                "command": "agentdeck agent list",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "refresh_runtime",
+                "label": "Refresh runtime",
+                "command": "agentdeck agent refresh",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     assert payload["runtime_card"]["agents"][0]["agent_id"] == "planner"
     assert payload["runtime_card"]["agents"][0]["status"] == "running"
     assert payload["leader_explanation"]["mode"] == "runtime"
@@ -1869,7 +1901,30 @@ def test_leader_chat_suggests_runtime_refresh_without_reconciling_state(tmp_path
     assert payload["leader_explanation"]["action_status"] == "suggested"
     assert payload["leader_explanation"]["safety"] == "explicit_runtime"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
-    assert payload["intent_card"]["embedded_card"] == "runtime_card"
+    assert payload["intent_card"]["embedded_card"] == "runtime_action_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "runtime_card",
+        "terminal_session_card",
+        "control_registry_card",
+    ]
+    assert payload["control_registry_card"]["filters"]["card"] == "runtime_action_card"
+    assert payload["control_registry_card"]["filters"]["control_id"].startswith(
+        "runtime_action:runtime_action_card:refresh_runtime:global:"
+    )
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "control_id": selected_control["control_id"],
+        "scope": "runtime_action",
+        "card": "runtime_action_card",
+        "agent_id": None,
+        "kind": "refresh_runtime",
+        "label": "Refresh runtime",
+        "command": "agentdeck agent refresh",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert selected_control["control_id"].startswith("runtime_action:runtime_action_card:refresh_runtime:global:")
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
         "label": "Refresh runtime",

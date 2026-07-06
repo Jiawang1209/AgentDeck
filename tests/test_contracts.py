@@ -3237,6 +3237,41 @@ def test_validate_leader_chat_contract_rejects_runtime_stop_action_control_drift
     }
 
 
+def test_validate_leader_chat_contract_rejects_runtime_refresh_action_control_drift() -> None:
+    payload = leader_chat_example()
+    payload["runtime_action_card"]["title"] = "Refresh runtime"
+    payload["runtime_action_card"]["action"] = "refresh_runtime"
+    payload["runtime_action_card"]["agent_id"] = None
+    payload["runtime_action_card"]["role"] = None
+    payload["runtime_action_card"]["runtime_status"] = "suggested"
+    payload["runtime_action_card"]["pane_id"] = None
+    payload["runtime_action_card"]["command"] = "agentdeck agent refresh"
+    payload["runtime_action_card"]["preview_text"] = None
+    payload["runtime_action_card"]["controls"][0] = {
+        "kind": "inspect",
+        "label": "Inspect runtime",
+        "command": "agentdeck agent list",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    payload["runtime_action_card"]["controls"][1] = {
+        "kind": "refresh_runtime",
+        "label": "Refresh runtime",
+        "command": "agentdeck agent list",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["runtime_action_card.controls: refresh_runtime command must match card command"],
+    }
+
+
 def test_validate_leader_chat_contract_rejects_missing_secondary_provider_switch_card() -> None:
     payload = leader_chat_example()
     payload["provider_switch_card"] = None
