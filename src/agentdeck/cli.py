@@ -4188,16 +4188,23 @@ def _chat_wants_leader_status(message: str) -> bool:
     normalized = message.strip().lower().replace(" ", "")
     explicit_phrases = {
         "leaderstatus",
+        "leaderoverview",
         "/leaderstatus",
+        "/leaderoverview",
         "leader状态",
+        "leader概览",
         "查看leader状态",
+        "查看leader概览",
         "leader状态卡",
+        "leader概览卡",
         "调度者状态",
+        "调度者概览",
         "查看调度者状态",
+        "查看调度者概览",
     }
     if normalized in explicit_phrases:
         return True
-    return "leader" in normalized and any(token in normalized for token in ("状态", "status", "健康"))
+    return "leader" in normalized and any(token in normalized for token in ("状态", "status", "健康", "概览", "overview"))
 
 
 def _chat_control_registry_filters(message: str) -> dict[str, object]:

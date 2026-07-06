@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Route Leader overview alias to status card
+
+- 新增自然语言只读别名：`agentdeck leader chat --message "Leader 概览"` / `"leader overview"` 现在进入 `mode=leader_status`，复用与 `agentdeck leader status` 同源的 `leader_status_card`。
+- 保持窄路由边界：只有包含 Leader 且带 `概览` / `overview` 等状态查看语义的消息会走状态卡；普通 Leader 调度请求仍保留 provider planning 路径。
+- 该入口继续只记录 chat turn 和审计事件，不调用 Leader provider、不读取 tmux pane、不创建 plan/action/approval/message/job/inbox、不修改 runtime state，也不执行推荐命令。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、AGENT/CLAUDE 约束，明确 `Leader 概览` / `leader overview` 与 `查看 Leader 状态` / `leader status` 是同一张只读状态卡入口。
+- 验证记录：已先确认红测失败，`Leader 概览` 最初会落入 provider planning 分支并调用 `leader_provider`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_overview_alias_routes_to_leader_status_without_planning tests/test_leader_cli.py::test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or_runtime -q` 2 项通过；Leader/contract 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 345 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 492 项通过。
+
 ### Current - Surface Leader status in command registry
 
 - 扩展 workbench `leader_card.controls[]`：新增 `kind=leader_status` inspect control，命令为 `agentdeck leader status`，与已有完整 ProjectView `kind=status` / `agentdeck status` 区分。

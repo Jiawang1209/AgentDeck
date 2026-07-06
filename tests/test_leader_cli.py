@@ -6370,6 +6370,26 @@ def test_leader_chat_status_intent_embeds_leader_status_card_without_provider_or
     assert fake.captured == []
 
 
+def test_leader_chat_overview_alias_routes_to_leader_status_without_planning(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    def fail_provider(_name: str):
+        raise AssertionError("leader overview alias must not call a planning provider")
+
+    monkeypatch.setattr(cli, "leader_provider", fail_provider)
+
+    exit_code = cli.main(["leader", "chat", "--message", "Leader 概览"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "leader_status"
+    assert payload["leader_status_card"]["mode"] == "leader_status"
+    assert payload["intent_card"]["embedded_card"] == "leader_status_card"
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+
+
 def test_leader_summary_refuses_contract_violation(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     cli.main(["leader", "plan", "--task", "坏 summary 不能输出"])
