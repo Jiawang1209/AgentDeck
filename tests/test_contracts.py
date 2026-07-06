@@ -427,6 +427,40 @@ def test_validate_control_registry_card_contract_requires_inbox_ack_command() ->
     }
 
 
+def test_validate_control_registry_card_contract_requires_terminal_session_attach_command() -> None:
+    payload = controls_example()
+    terminal_item = next(
+        item
+        for item in payload["items"]
+        if item["scope"] == "terminal_session" and item["kind"] == "attach_session"
+    )
+    terminal_item["command"] = "agentdeck controls"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: terminal_session attach_session command must use tmux"],
+    }
+
+
+def test_validate_control_registry_card_contract_requires_terminal_session_refresh_safety() -> None:
+    payload = controls_example()
+    terminal_item = next(
+        item
+        for item in payload["items"]
+        if item["scope"] == "terminal_session" and item["kind"] == "refresh_runtime"
+    )
+    terminal_item["safety"] = "inspect"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: terminal_session refresh_runtime must use safety=explicit_runtime"],
+    }
+
+
 def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     contract_path = tmp_path / "agent-runtime-schema.md"
     contract_path.write_text("# Agent Runtime Contract\n", encoding="utf-8")
@@ -1039,6 +1073,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         ("leader", "leader_card", "continue", "leader"),
         ("policy", "control_mode_card", "set_mode", None),
         ("role", "role_card", "assign_role", "planner"),
+        ("terminal_session", "terminal_session_card", "attach_session", None),
+        ("terminal_session", "terminal_session_card", "open_controls", None),
+        ("terminal_session", "terminal_session_card", "refresh_runtime", None),
         ("runtime", "runtime_card", "terminal", "planner"),
         ("runtime", "runtime_card", "capture", "planner"),
         ("operator", "operator_card", "apply", None),
@@ -1057,6 +1094,13 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     )
     assert approve_item["enabled"] is True
     assert approve_item["safety"] == "explicit_user"
+    terminal_session_item = next(
+        item
+        for item in example["control_registry"]
+        if item["scope"] == "terminal_session" and item["kind"] == "refresh_runtime"
+    )
+    assert terminal_session_item["command"] == "agentdeck agent refresh"
+    assert terminal_session_item["safety"] == "explicit_runtime"
     assert set(example["provider_health"]) == set(WORKBENCH_PROVIDER_HEALTH_FIELDS)
     assert set(example["runtime_card"]) == set(WORKBENCH_RUNTIME_CARD_FIELDS)
     assert set(example["runtime_card"]["agents"][0]) == set(WORKBENCH_RUNTIME_AGENT_FIELDS)

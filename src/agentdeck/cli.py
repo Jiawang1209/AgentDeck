@@ -927,6 +927,16 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id=None,
         controls=control_mode_card.get("active_controls"),
     )
+    terminal_session_card = (
+        payload.get("terminal_session_card") if isinstance(payload.get("terminal_session_card"), dict) else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="terminal_session",
+        card="terminal_session_card",
+        agent_id=None,
+        controls=terminal_session_card.get("controls"),
+    )
     runtime_card = payload.get("runtime_card") if isinstance(payload.get("runtime_card"), dict) else {}
     runtime_agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
     for agent in runtime_agents:

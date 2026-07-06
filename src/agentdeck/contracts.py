@@ -3154,6 +3154,30 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
             if item.get("scope") == "inbox" and item.get("kind") == "ack":
                 if not str(item.get("command") or "").startswith("agentdeck ack --agent "):
                     errors.append("control_registry_card.items: inbox ack command must use ack")
+            if item.get("scope") == "terminal_session":
+                if item.get("enabled") is False and not item.get("blocker"):
+                    errors.append("control_registry_card.items: disabled terminal_session controls must include blocker")
+                if item.get("kind") == "attach_session":
+                    if item.get("safety") != "inspect":
+                        errors.append("control_registry_card.items: terminal_session attach_session must use safety=inspect")
+                    if not str(item.get("command") or "").startswith("tmux "):
+                        errors.append("control_registry_card.items: terminal_session attach_session command must use tmux")
+                if item.get("kind") == "open_controls":
+                    if item.get("safety") != "inspect":
+                        errors.append("control_registry_card.items: terminal_session open_controls must use safety=inspect")
+                    if item.get("command") != "agentdeck controls":
+                        errors.append(
+                            "control_registry_card.items: terminal_session open_controls command must be agentdeck controls"
+                        )
+                if item.get("kind") == "refresh_runtime":
+                    if item.get("safety") != "explicit_runtime":
+                        errors.append(
+                            "control_registry_card.items: terminal_session refresh_runtime must use safety=explicit_runtime"
+                        )
+                    if item.get("command") != "agentdeck agent refresh":
+                        errors.append(
+                            "control_registry_card.items: terminal_session refresh_runtime command must be agentdeck agent refresh"
+                        )
     elif "items" in control_registry_card:
         errors.append("control_registry_card.items must be a list")
 
@@ -4166,6 +4190,16 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         card="control_mode_card",
         agent_id=None,
         controls=control_mode_card.get("active_controls"),
+    )
+    terminal_session_card = (
+        payload.get("terminal_session_card") if isinstance(payload.get("terminal_session_card"), dict) else {}
+    )
+    _append_control_registry_items(
+        registry,
+        scope="terminal_session",
+        card="terminal_session_card",
+        agent_id=None,
+        controls=terminal_session_card.get("controls"),
     )
     runtime_card = payload.get("runtime_card") if isinstance(payload.get("runtime_card"), dict) else {}
     runtime_agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []

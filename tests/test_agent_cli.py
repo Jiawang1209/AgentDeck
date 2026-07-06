@@ -2047,6 +2047,45 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             },
         ],
     }
+    assert [
+        item
+        for item in payload["control_registry"]
+        if item["scope"] == "terminal_session" and item["card"] == "terminal_session_card"
+    ] == [
+        {
+            "scope": "terminal_session",
+            "card": "terminal_session_card",
+            "kind": "attach_session",
+            "label": "Attach session",
+            "command": "tmux -L agentdeck-repo attach -t agentdeck",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+            "agent_id": None,
+        },
+        {
+            "scope": "terminal_session",
+            "card": "terminal_session_card",
+            "kind": "open_controls",
+            "label": "Open terminal controls",
+            "command": "agentdeck controls",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+            "agent_id": None,
+        },
+        {
+            "scope": "terminal_session",
+            "card": "terminal_session_card",
+            "kind": "refresh_runtime",
+            "label": "Refresh runtime",
+            "command": "agentdeck agent refresh",
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+            "agent_id": None,
+        },
+    ]
     assert payload["ledger_card"]["messages"]["count"] == 1
     assert payload["ledger_card"]["messages"]["items"][0]["trace_command"] == "agentdeck trace --id msg_workbench"
     assert payload["ledger_card"]["jobs"]["count"] == 1

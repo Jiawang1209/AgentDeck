@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Index terminal session controls in registry
+
+- 扩展 `agentdeck workbench` / `agentdeck controls`：`terminal_session_card.controls[]` 现在进入 `control_registry[]`，以 `scope=terminal_session` / `card=terminal_session_card` 暴露 `attach_session`、`open_controls` 和 `refresh_runtime` 项目级终端控制。
+- 扩展 control registry validator：校验 terminal session attach 必须使用 `tmux ...`、open-controls 必须指向 `agentdeck controls`、refresh-runtime 必须指向 `agentdeck agent refresh` 且使用 `safety=explicit_runtime`，disabled terminal session control 必须带 blocker。
+- 保持人类控制边界：`agentdeck workbench` 和 `agentdeck controls` 仍只投影命令面板，不 attach tmux、不 select pane、不 refresh runtime、不 capture、不 send、不 spawn/stop、不写 state。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/workbench-schema.md` 和 `docs/contracts/controls-schema.md`，明确 terminal session scope 是 GUI/TUI 可发现的项目级终端工具条来源。
+- 验证记录：已先确认红测失败，workbench live snapshot 和 contract example 最初缺少 `scope=terminal_session` registry items，validator 测试也因示例缺少 terminal session item 而 `StopIteration`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_control_registry_card_contract_requires_terminal_session_attach_command tests/test_contracts.py::test_validate_control_registry_card_contract_requires_terminal_session_refresh_safety -q` 4 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 344 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 368 项通过。
+
 ### Current - Add terminal session controls to workbench
 
 - 扩展 `terminal_session_card`：新增 GUI-ready `controls[]`，直接暴露 `attach_session`、`open_controls` 和 `refresh_runtime` 三个按钮语义，避免 GUI/TUI 解析命令字段才能渲染项目级终端条。
