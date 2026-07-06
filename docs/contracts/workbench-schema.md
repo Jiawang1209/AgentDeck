@@ -36,6 +36,7 @@ The contract command returns:
   "artifacts_card_fields": [],
   "artifact_summary_fields": [],
   "artifact_item_fields": [],
+  "leader_summary_card_fields": [],
   "contracts_card_fields": [],
   "change_summary_fields": [],
   "control_registry_item_fields": []
@@ -65,6 +66,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "operator_card": {},
   "audit_card": {},
   "artifacts_card": {},
+  "leader_summary_card": null,
   "contracts_card": {},
   "control_mode_card": {},
   "recovery": {},
@@ -92,6 +94,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `operator_card` is derived from `recovery.recommended_action` and the active queue card. It is a renderable human-control descriptor, not an execution result.
 `audit_card` is derived from `recovery.latest_event` and `recovery.recent_events`.
 `artifacts_card` reuses the `agentdeck artifacts` response shape, is derived from `project_view.artifacts`, and must pass `validate_artifacts_contract()`.
+`leader_summary_card` is `null` until the latest plan's local Leader review returns `next_action=summarize`; then it reuses `agentdeck leader summary --plan-id <id>` and must pass `validate_leader_summary_contract()`.
 `contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Leader chat, and Leader review contracts.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
@@ -513,6 +516,25 @@ The card intentionally uses compact ProjectView recovery event summaries. Use `e
 
 The card reuses the standalone `agentdeck artifacts` contract and `validate_artifacts_contract()`. It is a ProjectView artifact summary only: it does not read artifact file contents, inspect tmux panes, call providers, write state, acknowledge inbox items, approve, dispatch, or send tmux input.
 
+## Leader Summary Card
+
+`leader_summary_card` is the GUI/TUI-ready latest-run result surface. It is `null` when there is no latest plan or the latest plan is still waiting for approval, dispatch, or replies. When `agentdeck leader review --plan-id <latest>` returns `next_action=summarize`, workbench embeds the same response shape as `agentdeck leader summary --plan-id <latest>`:
+
+```json
+{
+  "schema_version": "project-view/v1",
+  "plan_id": "pln_xxx",
+  "status": "ready",
+  "reply_count": 1,
+  "artifact_count": 1,
+  "summary": "1 dispatched step has replies; 1 artifact recorded.",
+  "steps": [],
+  "controls": []
+}
+```
+
+The card reuses `validate_leader_summary_contract()`. It only aggregates existing plan status, replies, artifacts, and trace commands; it does not call providers, read tmux panes, capture replies, create approvals, dispatch work, acknowledge inbox items, write state, or send tmux input.
+
 ## Contracts Card
 
 ```json
@@ -553,4 +575,5 @@ When `recovery.recommended_action.source` is:
 - GUI clients should treat this response as a single-screen projection of ProjectView, not a second state source.
 - `run_progress_card` is a read-only latest-run projection. It must not approve, dispatch, capture pane output, acknowledge inbox items, or send tmux input.
 - `artifacts_card` is the same read-only artifact index as `agentdeck artifacts`. It must not read output files or become a second artifact state source.
+- `leader_summary_card` is the same read-only final-result surface as `agentdeck leader summary --plan-id <id>` and appears only when the latest plan is ready to summarize.
 - Runtime actions still require explicit commands or approval flow.

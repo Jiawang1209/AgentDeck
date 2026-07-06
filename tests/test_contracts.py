@@ -967,6 +967,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["artifacts_card_fields"] == list(ARTIFACTS_RESPONSE_FIELDS)
     assert payload["artifact_summary_fields"] == list(ARTIFACTS_SUMMARY_FIELDS)
     assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
+    assert payload["leader_summary_card_fields"] == list(LEADER_SUMMARY_RESPONSE_FIELDS)
     assert payload["contracts_card_fields"] == list(WORKBENCH_CONTRACTS_CARD_FIELDS)
     assert payload["change_summary_fields"] == list(WORKBENCH_CHANGE_SUMMARY_FIELDS)
     assert payload["control_registry_item_fields"] == list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
@@ -976,6 +977,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert set(payload["example_snapshot_fields"]) == set(example)
     assert example["leader_inbox_card"]["agent_id"] == "leader"
     assert example["artifacts_card"] == artifacts_example()
+    assert example["leader_summary_card"] == leader_summary_example()
     assert example["leader_inbox_card"]["items"][0]["event_type"] == "task_reply"
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
@@ -1172,6 +1174,18 @@ def test_validate_workbench_contract_reuses_artifacts_card_validator() -> None:
     assert result == {
         "ok": False,
         "errors": ["artifacts_card: trace_command_template must be agentdeck trace --id <id>"],
+    }
+
+
+def test_validate_workbench_contract_reuses_leader_summary_card_validator() -> None:
+    payload = workbench_example()
+    del payload["leader_summary_card"]["summary"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["leader_summary_card: missing leader_summary field: summary"],
     }
 
 

@@ -580,6 +580,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "operator_card",
     "audit_card",
     "artifacts_card",
+    "leader_summary_card",
     "contracts_card",
     "control_mode_card",
     "recovery",
@@ -1696,6 +1697,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "artifacts_card_fields": list(ARTIFACTS_RESPONSE_FIELDS),
         "artifact_summary_fields": list(ARTIFACTS_SUMMARY_FIELDS),
         "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
+        "leader_summary_card_fields": list(LEADER_SUMMARY_RESPONSE_FIELDS),
         "contracts_card_fields": list(WORKBENCH_CONTRACTS_CARD_FIELDS),
         "change_summary_fields": list(WORKBENCH_CHANGE_SUMMARY_FIELDS),
         "control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
@@ -3472,6 +3474,13 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append(f"artifacts_card: {error}")
     elif "artifacts_card" in payload:
         errors.append("artifacts_card must be an object")
+    leader_summary_card = payload.get("leader_summary_card")
+    if isinstance(leader_summary_card, dict):
+        summary_validation = validate_leader_summary_contract(leader_summary_card)
+        for error in summary_validation["errors"]:
+            errors.append(f"leader_summary_card: {error}")
+    elif "leader_summary_card" in payload and leader_summary_card is not None:
+        errors.append("leader_summary_card must be an object")
     contracts_card = payload.get("contracts_card")
     if isinstance(contracts_card, dict):
         for field in WORKBENCH_CONTRACTS_CARD_FIELDS:
@@ -4469,6 +4478,7 @@ def workbench_example() -> dict[str, object]:
             "events_command": "agentdeck events --limit 20",
         },
         "artifacts_card": artifacts_example(),
+        "leader_summary_card": leader_summary_example(),
         "contracts_card": {
             "contracts_command": "agentdeck contract list",
             "contract_index_contract": "docs/contracts/contract-index-schema.md",

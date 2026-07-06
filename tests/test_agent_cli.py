@@ -38,6 +38,7 @@ from agentdeck.contracts import (
     leader_review_contract_response,
     leader_summary_contract_payload,
     leader_summary_contract_response,
+    LEADER_SUMMARY_RESPONSE_FIELDS,
     project_view_contract_payload,
     project_view_contract_response,
     PROJECT_VIEW_ARTIFACT_ITEM_FIELDS,
@@ -1388,6 +1389,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "operator_card",
         "audit_card",
         "artifacts_card",
+        "leader_summary_card",
         "contracts_card",
         "control_mode_card",
         "recovery",
@@ -1530,6 +1532,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["artifacts_card_fields"] == list(ARTIFACTS_RESPONSE_FIELDS)
     assert payload["artifact_summary_fields"] == list(ARTIFACTS_SUMMARY_FIELDS)
     assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
+    assert payload["leader_summary_card_fields"] == list(LEADER_SUMMARY_RESPONSE_FIELDS)
     assert payload["contracts_card_fields"] == [
         "contracts_command",
         "contract_index_contract",
@@ -2269,6 +2272,54 @@ def test_workbench_embeds_latest_run_progress_card_without_mutating_state(
     assert run_progress_card["counts"]["pending"] == 2
     assert run_progress_card["review"]["next_action"] == "dispatch_approved"
     assert run_progress_card["next_command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
+
+    assert StateStore(root).load() == state_before
+
+
+def test_workbench_embeds_summary_card_when_latest_plan_is_ready_to_summarize(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "总结 workbench"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    cli.main(
+        [
+            "reply",
+            "--agent",
+            "planner",
+            "--message-id",
+            message_id,
+            "--text",
+            "status: completed\nsummary: done\nfull_output_path: docs/workbench-summary.md",
+        ]
+    )
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    summary_card = payload["leader_summary_card"]
+    assert summary_card["plan_id"] == plan_id
+    assert summary_card["status"] == "ready"
+    assert summary_card["reply_count"] == 1
+    assert summary_card["artifact_count"] == 1
+    assert summary_card["summary"] == "1 dispatched step has replies; 1 artifact recorded."
+    assert summary_card["review_command"] == f"agentdeck leader review --plan-id {plan_id}"
+    assert summary_card["steps"][0]["message_id"] == message_id
+    assert summary_card["steps"][0]["reply_text"].startswith("status: completed")
+    assert summary_card["steps"][0]["artifacts"][0]["path"] == "docs/workbench-summary.md"
+    assert summary_card["controls"][-1]["command"] == f"agentdeck trace --id {message_id}"
 
     assert StateStore(root).load() == state_before
 

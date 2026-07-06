@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Embed Leader summary card in workbench snapshot
+
+- 扩展 `agentdeck workbench`：当最新 plan 的本地 `leader review` 已进入 `next_action=summarize` 时，一屏快照会嵌入同源 `leader_summary_card`，复用 `agentdeck leader summary --plan-id <id>` 的只读结果聚合面。
+- 扩展 workbench contract：`snapshot_fields` 新增 `leader_summary_card`，discovery 新增 `leader_summary_card_fields`，`validate_workbench_contract()` 会复用 `validate_leader_summary_contract()` 校验嵌入 summary card；最新 plan 尚未 ready-to-summarize 时该字段为 `null`。
+- 保持人类控制边界：workbench summary card 只聚合已有 plan status、replies、artifacts 和 trace commands，不调用 provider、不读取 pane、不 capture reply、不创建 approval/action/message/job/inbox、不 ack/dispatch、不写 state。
+- 同步 README、CLAUDE.md、AGENT.md 和 `docs/contracts/workbench-schema.md`，明确 workbench summary card 是 latest-run final-result 的只读 GUI 投影。
+- 验证记录：已先确认红测失败，workbench contract discovery、example 和 live snapshot 最初缺少 `leader_summary_card` / `leader_summary_card_fields`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_summary_card_when_latest_plan_is_ready_to_summarize tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_workbench_contract_reuses_leader_summary_card_validator -q` 5 项通过；聚焦回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 337 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 361 项通过。
+
 ### Current - Embed artifacts card in workbench snapshot
 
 - 扩展 `agentdeck workbench`：一屏快照现在嵌入同源 `artifacts_card`，复用 `agentdeck artifacts` 的 artifact index response shape，供 GUI/TUI 直接渲染 worker 产物索引。

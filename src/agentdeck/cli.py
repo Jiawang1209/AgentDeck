@@ -728,6 +728,7 @@ def _workbench_snapshot_payload(
     operator_card = _workbench_operator_card(project_view, continue_card, active_queue_source)
     audit_card = _workbench_audit_card(project_view)
     artifacts_card = _artifacts_card_payload(project_view)
+    leader_summary_card = _workbench_leader_summary_card(store)
     contracts_card = _workbench_contracts_card()
     control_mode_card = _workbench_control_mode_card(project_view)
     run_progress_card = _workbench_run_progress_card(store)
@@ -747,6 +748,7 @@ def _workbench_snapshot_payload(
         "operator_card": operator_card,
         "audit_card": audit_card,
         "artifacts_card": artifacts_card,
+        "leader_summary_card": leader_summary_card,
         "contracts_card": contracts_card,
         "control_mode_card": control_mode_card,
         "recovery": recovery,
@@ -771,6 +773,17 @@ def _workbench_run_progress_card(store: StateStore) -> dict[str, object] | None:
         return None
     latest_plan_id = str(plans[-1]["plan_id"])
     return _run_progress_payload(store, latest_plan_id)
+
+
+def _workbench_leader_summary_card(store: StateStore) -> dict[str, object] | None:
+    plans = store.list_plans()
+    if not plans:
+        return None
+    latest_plan_id = str(plans[-1]["plan_id"])
+    review = store.leader_review(latest_plan_id)
+    if review.get("next_action") != "summarize":
+        return None
+    return _leader_summary_payload(store, latest_plan_id)
 
 
 def _control_mode_from_approval_mode(approval_mode: object) -> str:
