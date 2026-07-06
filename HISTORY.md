@@ -4,6 +4,16 @@
 
 ## 2026-07-06
 
+### Current - Add normalized Leader backend identity to plans
+
+- 扩展 plan provenance：保存后的 plan record、`agentdeck leader plan` 输出、`agentdeck run` 的 `run_start` / `run_progress` card、Workbench 嵌入的 `run_progress_card`、ProjectView `plans.items[]` 和 `agentdeck plan list` 现在都会暴露同源 `leader_backend` 对象。
+- `leader_backend` 固化逻辑 Leader 身份：`agent_id=leader`、provider/model、`provider_backend`、`provider_transport`、`reasoning_backend`、`runtime_kind=logical_leader`、`pane_backed=false`、`pane_id=null`、`approval_required=true`、`dispatch_ready=false`。
+- 这让 GUI/审计面能直接区分 fake/API-backed/CLI-backed Leader reasoning backend，并明确 Leader 不是 worker tmux pane，不需要解析散落字段或命令字符串。
+- 扩展 run contract discovery：`agentdeck contract run` 新增 `leader_backend_fields`，`--example` 新增 `example_leader_backend_fields`，`validate_run_start_contract()` 会拒绝非 `agent_id=leader`、pane-backed 或非 approval-gated 的 backend identity。
+- 保持控制边界：`leader_backend` 只是 plan 来源和逻辑 Leader 身份元数据，不授权 approval、dispatch、capture、ack、send input，也不是 tmux pane binding 或第二套状态源。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/run-schema.md`、`docs/contracts/project-view-schema.md` 和 `docs/contracts/workbench-schema.md`。
+- 验证记录：已先确认红测失败，`leader plan` payload、state plan record 和 `run_progress` card 最初缺少 `leader_backend`；run contract discovery、example 和 validator 最初也缺少 `leader_backend_fields` 与 logical Leader 校验；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_plan_creates_structured_plan_without_dispatching tests/test_leader_cli.py::test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching tests/test_leader_cli.py::test_run_plan_id_returns_progress_card_without_dispatching tests/test_contracts.py::test_run_start_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_run_start_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_run_start_contract_requires_logical_leader_backend tests/test_contracts.py::test_validate_run_start_contract_accepts_run_progress_example tests/test_agent_cli.py::test_contract_run_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_run_example_exports_gui_ready_response tests/test_agent_cli.py::test_workbench_embeds_latest_run_progress_card_without_mutating_state -q` 10 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 372 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 398 项通过。
+
 ### Current - Harden CLI-backed Leader identity prompt
 
 - 收紧 `codex-cli` / `claude-cli` Leader provider prompt：明确本地 Codex CLI / Claude Code CLI 只是 `agent_id=leader` 逻辑 Leader 的 subprocess reasoning backend。

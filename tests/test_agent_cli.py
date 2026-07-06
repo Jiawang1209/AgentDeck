@@ -914,6 +914,7 @@ def test_contract_run_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["contract_path"].endswith("docs/contracts/run-schema.md")
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == expected["response_fields"]
+    assert payload["leader_backend_fields"] == expected["leader_backend_fields"]
     assert payload["control_fields"] == expected["control_fields"]
     assert payload["approval_contract"] == "agentdeck contract approvals"
     assert payload["leader_review_contract"] == "agentdeck contract leader-review"
@@ -928,9 +929,11 @@ def test_contract_run_example_exports_gui_ready_response(capsys) -> None:
     assert payload == expected
     example = payload["example_run_start"]
     assert payload["example_response_fields"] == payload["response_fields"]
+    assert payload["example_leader_backend_fields"] == payload["leader_backend_fields"]
     assert payload["example_progress_fields"] == payload["progress_response_fields"]
     assert payload["example_control_fields"] == payload["control_fields"]
     assert set(payload["example_response_fields"]) == set(example)
+    assert set(payload["example_leader_backend_fields"]) == set(example["leader_backend"])
     assert set(payload["example_progress_fields"]) == set(payload["example_run_progress"])
     assert set(payload["example_control_fields"]) == set(example["controls"][0])
     assert example["mode"] == "run_start"
@@ -2543,6 +2546,7 @@ def test_workbench_embeds_latest_run_progress_card_without_mutating_state(
     run_progress_card = payload["run_progress_card"]
     assert run_progress_card["mode"] == "run_progress"
     assert run_progress_card["plan_id"] == plan_id
+    assert run_progress_card["leader_backend"] == started["leader_backend"]
     assert run_progress_card["counts"]["approved"] == 1
     assert run_progress_card["counts"]["pending"] == 2
     assert run_progress_card["review"]["next_action"] == "dispatch_approved"
@@ -4091,6 +4095,19 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
         "provider": "fake",
         "provider_backend": "local",
         "provider_transport": "local",
+        "leader_backend": {
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "local-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
         "model": "local-plan",
         "dispatch_ready": False,
         "step_count": 2,

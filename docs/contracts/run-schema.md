@@ -33,6 +33,7 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `provider`
 - `provider_backend`
 - `provider_transport`
+- `leader_backend`
 - `model`
 - `approval_count`
 - `pending_approval_count`
@@ -47,7 +48,7 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `safety`
 - `requires_explicit_user`
 
-`mode` must be `run_start`. `safety` must be `approval_gated`, and `requires_explicit_user` must be `true`. `provider_backend` is a normalized provenance label: `local` for the fake dry-run provider, `api` for API-backed Leader providers, `cli` for local CLI-backed Leader providers, and `unknown` for unrecognized legacy records. `provider_transport` is the matching invocation channel label: `local`, `http`, `subprocess`, or `unknown`. Provider output is normalized before the run card is built: accepted plans must keep every step at `requires_approval=true`, and AgentDeck forces top-level `approval_required=true` and `dispatch_ready=false` even if the backend returned different control flags.
+`mode` must be `run_start`. `safety` must be `approval_gated`, and `requires_explicit_user` must be `true`. `provider_backend` is a normalized provenance label: `local` for the fake dry-run provider, `api` for API-backed Leader providers, `cli` for local CLI-backed Leader providers, and `unknown` for unrecognized legacy records. `provider_transport` is the matching invocation channel label: `local`, `http`, `subprocess`, or `unknown`. `leader_backend` is the normalized Leader identity card for the saved plan: it must expose `agent_id=leader`, provider/model, backend/transport, `reasoning_backend`, `runtime_kind=logical_leader`, `pane_backed=false`, `pane_id=null`, `approval_required=true`, and `dispatch_ready=false`. It is provenance for GUI/audit surfaces, not runtime permission or a tmux pane binding. Provider output is normalized before the run card is built: accepted plans must keep every step at `requires_approval=true`, and AgentDeck forces top-level `approval_required=true` and `dispatch_ready=false` even if the backend returned different control flags.
 
 `progress_response_fields` describes the live `agentdeck run --plan-id <id>` response:
 
@@ -60,6 +61,7 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `provider`
 - `provider_backend`
 - `provider_transport`
+- `leader_backend`
 - `model`
 - `counts`
 - `steps`
@@ -74,7 +76,7 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `safety`
 - `requires_explicit_user`
 
-`mode` must be `run_progress`. `review` reuses the `agentdeck leader review --plan-id <id>` response shape, and `next_command` must match `review.next_command`.
+`mode` must be `run_progress`. `leader_backend` must match the saved plan's normalized Leader identity card. `review` reuses the `agentdeck leader review --plan-id <id>` response shape, and `next_command` must match `review.next_command`.
 
 ## Controls
 

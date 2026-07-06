@@ -65,7 +65,7 @@ from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec,
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .runtime import TmuxBackend
-from .state import StateStore, agentdeck_dir, leader_provider_backend, leader_provider_transport
+from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 
 
 def _print_json(payload: object) -> None:
@@ -2919,6 +2919,7 @@ def leader_plan_command(args: argparse.Namespace) -> int:
             "provider": record["provider"],
             "provider_backend": record["provider_backend"],
             "provider_transport": record["provider_transport"],
+            "leader_backend": record["leader_backend"],
             "model": record["model"],
             "dispatch_ready": record["dispatch_ready"],
             "plan": record["plan"],
@@ -3078,6 +3079,12 @@ def _run_progress_payload(store: StateStore, plan_id: str) -> dict[str, object]:
         "provider": status.get("provider"),
         "provider_backend": status.get("provider_backend"),
         "provider_transport": status.get("provider_transport"),
+        "leader_backend": status.get("leader_backend")
+        or leader_backend_identity(
+            str(status.get("provider") or ""),
+            str(status.get("model") or ""),
+            False,
+        ),
         "model": status.get("model"),
         "counts": status.get("counts"),
         "steps": status.get("steps"),
@@ -3137,6 +3144,12 @@ def _run_start_payload(
         or leader_provider_backend(str(plan_record.get("provider") or "")),
         "provider_transport": plan_record.get("provider_transport")
         or leader_provider_transport(str(plan_record.get("provider") or "")),
+        "leader_backend": plan_record.get("leader_backend")
+        or leader_backend_identity(
+            str(plan_record.get("provider") or ""),
+            str(plan_record.get("model") or ""),
+            bool(plan_record.get("dispatch_ready", False)),
+        ),
         "model": plan_record["model"],
         "approval_count": len(approvals),
         "pending_approval_count": len(pending_approvals),
@@ -6819,6 +6832,12 @@ def _plan_summary(plan: dict[str, object]) -> dict[str, object]:
         "provider_backend": plan.get("provider_backend") or leader_provider_backend(str(plan.get("provider") or "")),
         "provider_transport": plan.get("provider_transport")
         or leader_provider_transport(str(plan.get("provider") or "")),
+        "leader_backend": plan.get("leader_backend")
+        or leader_backend_identity(
+            str(plan.get("provider") or ""),
+            str(plan.get("model") or ""),
+            bool(plan.get("dispatch_ready", False)),
+        ),
         "model": plan.get("model"),
         "status": plan.get("status"),
         "dispatch_ready": plan.get("dispatch_ready"),

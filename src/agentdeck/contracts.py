@@ -1074,6 +1074,7 @@ RUN_START_RESPONSE_FIELDS = (
     "provider",
     "provider_backend",
     "provider_transport",
+    "leader_backend",
     "model",
     "approval_count",
     "pending_approval_count",
@@ -1099,6 +1100,7 @@ RUN_PROGRESS_RESPONSE_FIELDS = (
     "provider",
     "provider_backend",
     "provider_transport",
+    "leader_backend",
     "model",
     "counts",
     "steps",
@@ -1112,6 +1114,20 @@ RUN_PROGRESS_RESPONSE_FIELDS = (
     "controls",
     "safety",
     "requires_explicit_user",
+)
+
+LEADER_BACKEND_FIELDS = (
+    "agent_id",
+    "provider",
+    "model",
+    "provider_backend",
+    "provider_transport",
+    "reasoning_backend",
+    "runtime_kind",
+    "pane_backed",
+    "pane_id",
+    "approval_required",
+    "dispatch_ready",
 )
 
 RUN_START_CONTROL_FIELDS = LEADER_REVIEW_CONTROL_FIELDS
@@ -1947,6 +1963,7 @@ def run_start_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "response_fields": list(RUN_START_RESPONSE_FIELDS),
         "progress_response_fields": list(RUN_PROGRESS_RESPONSE_FIELDS),
+        "leader_backend_fields": list(LEADER_BACKEND_FIELDS),
         "control_fields": list(RUN_START_CONTROL_FIELDS),
         "approval_contract": "agentdeck contract approvals",
         "leader_review_contract": "agentdeck contract leader-review",
@@ -1961,6 +1978,7 @@ def run_start_contract_response(contract_path: Path, include_example: bool = Fal
         payload["example"] = True
         payload["example_response_fields"] = list(example)
         payload["example_control_fields"] = list(example["controls"][0])
+        payload["example_leader_backend_fields"] = list(example["leader_backend"])
         payload["example_run_start"] = example
         progress_example = run_progress_example()
         payload["example_progress_fields"] = list(progress_example)
@@ -2511,6 +2529,11 @@ def validate_run_start_contract(payload: dict[str, object]) -> dict[str, object]
     review_command = payload.get("review_command")
     if plan_id and review_command != f"agentdeck leader review --plan-id {plan_id}":
         errors.append(f"{mode or 'run'}.review_command must match plan_id")
+    leader_backend = payload.get("leader_backend")
+    if isinstance(leader_backend, dict):
+        _validate_leader_backend(errors, str(mode or "run"), leader_backend)
+    else:
+        errors.append(f"{mode or 'run'}.leader_backend must be an object")
     if mode == "run_start" and payload.get("next_command") != "agentdeck approval list":
         errors.append("run_start.next_command must be agentdeck approval list")
     if mode == "run_progress":
@@ -2546,6 +2569,28 @@ def validate_run_start_contract(payload: dict[str, object]) -> dict[str, object]
     elif "controls" in payload:
         errors.append(f"{mode or 'run'}.controls must be a list")
     return {"ok": not errors, "errors": errors}
+
+
+def _validate_leader_backend(
+    errors: list[str],
+    prefix: str,
+    leader_backend: dict[str, object],
+) -> None:
+    for field in LEADER_BACKEND_FIELDS:
+        if field not in leader_backend:
+            errors.append(f"{prefix}.leader_backend missing field: {field}")
+    if leader_backend.get("agent_id") != "leader":
+        errors.append(f"{prefix}.leader_backend.agent_id must be leader")
+    if (
+        leader_backend.get("runtime_kind") != "logical_leader"
+        or leader_backend.get("pane_backed") is not False
+        or leader_backend.get("pane_id") is not None
+    ):
+        errors.append(f"{prefix}.leader_backend.runtime_kind must be logical_leader without a pane")
+    if leader_backend.get("approval_required") is not True:
+        errors.append(f"{prefix}.leader_backend.approval_required must be true")
+    if leader_backend.get("dispatch_ready") is not False:
+        errors.append(f"{prefix}.leader_backend.dispatch_ready must be false")
 
 
 def validate_inbox_contract(payload: dict[str, object]) -> dict[str, object]:
@@ -5622,6 +5667,19 @@ def run_start_example() -> dict[str, object]:
         "provider": "fake",
         "provider_backend": "local",
         "provider_transport": "local",
+        "leader_backend": {
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
         "model": "fake-plan",
         "approval_count": approval_card["count"],
         "pending_approval_count": 1,
@@ -5693,6 +5751,19 @@ def run_progress_example() -> dict[str, object]:
         "provider": "fake",
         "provider_backend": "local",
         "provider_transport": "local",
+        "leader_backend": {
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
         "model": "fake-plan",
         "counts": {
             "steps": 2,

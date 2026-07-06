@@ -31,6 +31,32 @@ def leader_provider_transport(provider: str | None) -> str:
     return "unknown"
 
 
+def leader_reasoning_backend(provider: str | None) -> str:
+    if provider in {"deepseek", "openai-compatible"}:
+        return "api-llm"
+    if provider in {"codex-cli", "claude-cli"}:
+        return "cli-subprocess"
+    if provider == "fake":
+        return "local-fake"
+    return "unknown"
+
+
+def leader_backend_identity(provider: str | None, model: str | None, dispatch_ready: bool = False) -> dict[str, Any]:
+    return {
+        "agent_id": "leader",
+        "provider": provider,
+        "model": model,
+        "provider_backend": leader_provider_backend(provider),
+        "provider_transport": leader_provider_transport(provider),
+        "reasoning_backend": leader_reasoning_backend(provider),
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": dispatch_ready,
+    }
+
+
 class StateStore:
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or project_root()
@@ -151,6 +177,7 @@ class StateStore:
             "provider": provider,
             "provider_backend": leader_provider_backend(provider),
             "provider_transport": leader_provider_transport(provider),
+            "leader_backend": leader_backend_identity(provider, model, bool(plan.get("dispatch_ready", False))),
             "model": model,
             "status": "planned",
             "dispatch_ready": bool(plan.get("dispatch_ready", False)),
@@ -219,6 +246,12 @@ class StateStore:
             or leader_provider_backend(str(plan_record.get("provider") or "")),
             "provider_transport": plan_record.get("provider_transport")
             or leader_provider_transport(str(plan_record.get("provider") or "")),
+            "leader_backend": plan_record.get("leader_backend")
+            or leader_backend_identity(
+                str(plan_record.get("provider") or ""),
+                str(plan_record.get("model") or ""),
+                bool(plan_record.get("dispatch_ready", False)),
+            ),
             "model": plan_record.get("model"),
             "created_at": plan_record.get("created_at"),
             "counts": status_counts,
@@ -907,6 +940,12 @@ class StateStore:
                     or leader_provider_backend(str(plan.get("provider") or "")),
                     "provider_transport": plan.get("provider_transport")
                     or leader_provider_transport(str(plan.get("provider") or "")),
+                    "leader_backend": plan.get("leader_backend")
+                    or leader_backend_identity(
+                        str(plan.get("provider") or ""),
+                        str(plan.get("model") or ""),
+                        bool(plan.get("dispatch_ready", False)),
+                    ),
                     "model": plan.get("model"),
                     "dispatch_ready": plan.get("dispatch_ready"),
                     "step_count": len(steps) if isinstance(steps, list) else 0,

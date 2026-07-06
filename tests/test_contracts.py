@@ -226,6 +226,19 @@ def test_run_start_contract_payload_is_reusable_without_cli(tmp_path: Path) -> N
     assert payload["contract_path"] == str(contract_path)
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == list(RUN_START_RESPONSE_FIELDS)
+    assert payload["leader_backend_fields"] == [
+        "agent_id",
+        "provider",
+        "model",
+        "provider_backend",
+        "provider_transport",
+        "reasoning_backend",
+        "runtime_kind",
+        "pane_backed",
+        "pane_id",
+        "approval_required",
+        "dispatch_ready",
+    ]
     assert payload["control_fields"] == list(RUN_START_CONTROL_FIELDS)
     assert payload["approval_contract"] == "agentdeck contract approvals"
     assert payload["leader_review_contract"] == "agentdeck contract leader-review"
@@ -240,6 +253,7 @@ def test_run_start_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["example"] is True
     assert payload["example_response_fields"] == list(payload["example_run_start"])
     assert payload["example_control_fields"] == list(payload["example_run_start"]["controls"][0])
+    assert payload["example_leader_backend_fields"] == list(payload["example_run_start"]["leader_backend"])
     assert set(payload["example_response_fields"]) == set(payload["response_fields"])
     assert set(payload["example_control_fields"]) == set(payload["control_fields"])
     assert validate_run_start_contract(payload["example_run_start"]) == {"ok": True, "errors": []}
@@ -247,6 +261,23 @@ def test_run_start_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["example_progress_fields"] == list(payload["example_run_progress"])
     assert set(payload["example_progress_fields"]) == set(payload["progress_response_fields"])
     assert validate_run_start_contract(payload["example_run_progress"]) == {"ok": True, "errors": []}
+
+
+def test_validate_run_start_contract_requires_logical_leader_backend() -> None:
+    payload = run_start_example()
+    payload["leader_backend"]["agent_id"] = "planner"
+    payload["leader_backend"]["pane_backed"] = True
+    payload["leader_backend"]["pane_id"] = "%42"
+
+    result = validate_run_start_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "run_start.leader_backend.agent_id must be leader",
+            "run_start.leader_backend.runtime_kind must be logical_leader without a pane",
+        ],
+    }
 
 
 def test_validate_run_start_contract_requires_approval_gated_controls() -> None:

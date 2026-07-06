@@ -93,6 +93,19 @@ def test_leader_plan_creates_structured_plan_without_dispatching(tmp_path, monke
     assert payload["provider"] == "fake"
     assert payload["provider_backend"] == "local"
     assert payload["provider_transport"] == "local"
+    assert payload["leader_backend"] == {
+        "agent_id": "leader",
+        "provider": "fake",
+        "model": "fake-plan",
+        "provider_backend": "local",
+        "provider_transport": "local",
+        "reasoning_backend": "local-fake",
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
     assert payload["dispatch_ready"] is False
     assert payload["plan"]["goal"] == "实现自动 reply extraction"
     assert [step["agent_id"] for step in payload["plan"]["steps"]] == ["planner", "coder", "reviewer"]
@@ -104,6 +117,7 @@ def test_leader_plan_creates_structured_plan_without_dispatching(tmp_path, monke
     assert state["plans"][0]["provider"] == "fake"
     assert state["plans"][0]["provider_backend"] == "local"
     assert state["plans"][0]["provider_transport"] == "local"
+    assert state["plans"][0]["leader_backend"] == payload["leader_backend"]
     assert state["plans"][0]["status"] == "planned"
     assert state["messages"] == []
     assert state["jobs"] == []
@@ -197,6 +211,7 @@ def test_run_plan_id_returns_progress_card_without_dispatching(
     assert payload["plan_id"] == plan_id
     assert payload["task"] == "实现 run progress"
     assert payload["status"] == "planned"
+    assert payload["leader_backend"] == started["leader_backend"]
     assert payload["counts"]["approved"] == 1
     assert payload["counts"]["pending"] == 2
     assert payload["review"]["next_action"] == "dispatch_approved"
@@ -488,6 +503,19 @@ def test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching(
     assert payload["provider"] == "codex-cli"
     assert payload["provider_backend"] == "cli"
     assert payload["provider_transport"] == "subprocess"
+    assert payload["leader_backend"] == {
+        "agent_id": "leader",
+        "provider": "codex-cli",
+        "model": "gpt-5-codex",
+        "provider_backend": "cli",
+        "provider_transport": "subprocess",
+        "reasoning_backend": "cli-subprocess",
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
     assert payload["model"] == "gpt-5-codex"
     assert payload["plan"]["goal"] == "Codex CLI Leader"
 
@@ -495,6 +523,7 @@ def test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching(
     assert state["plans"][0]["provider"] == "codex-cli"
     assert state["plans"][0]["provider_backend"] == "cli"
     assert state["plans"][0]["provider_transport"] == "subprocess"
+    assert state["plans"][0]["leader_backend"] == payload["leader_backend"]
     assert state["plans"][0]["model"] == "gpt-5-codex"
     assert state["approvals"] == []
     assert state["messages"] == []

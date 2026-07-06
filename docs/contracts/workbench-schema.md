@@ -106,7 +106,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Leader chat, and Leader review contracts.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
-`run_progress_card` is `null` when there is no plan; otherwise it reuses the latest plan's `agentdeck run --plan-id <id>` response shape and must pass `validate_run_start_contract()`.
+`run_progress_card` is `null` when there is no plan; otherwise it reuses the latest plan's `agentdeck run --plan-id <id>` response shape and must pass `validate_run_start_contract()`. Its `leader_backend` field is the same normalized logical Leader identity card stored with the plan; it is not a tmux pane binding or execution permission.
 `next_command` must equal `continue_card.next_command`.
 `change_summary` is computed from the audit event ledger and is never persisted as a cursor.
 
