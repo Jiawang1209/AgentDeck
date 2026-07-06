@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Add plan provider backend provenance
+
+- 扩展 plan provenance：保存后的 plan record、`agentdeck leader plan` 输出、ProjectView `plans.items[]`、`agentdeck plan list`、`run_start` 和 `run_progress` card 现在都会暴露 `provider_backend`，取值为 `local`、`api`、`cli` 或 `unknown`。
+- 新增 `leader_provider_backend()` 统一派生 fake/API-backed/CLI-backed/legacy backend 标签；旧 state 记录缺少该字段时，ProjectView、plan status 和 plan list 会按 provider 名动态兜底，避免 GUI/审计面遇到空字段。
+- 保持控制边界：`provider_backend` 只是 plan 来源元数据，方便区分 fake dry-run、DeepSeek/OpenAI-compatible API-backed Leader、Codex/Claude CLI-backed Leader；它不是授权、dispatch 或 runtime 执行语义。
+- 同步 README、CLAUDE.md、AGENT.md、`docs/contracts/project-view-schema.md` 和 `docs/contracts/run-schema.md`，明确该字段是 GUI/审计 provenance。
+- 验证记录：已先确认红测失败，`leader plan` payload 和 state plan record 最初缺少 `provider_backend`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_plan_creates_structured_plan_without_dispatching tests/test_leader_cli.py::test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching -q` 2 项通过；聚焦契约/状态回归 7 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 366 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 392 项通过。
+
 ### Current - Force provider plans through approval gates
 
 - 收紧真实 Leader provider 输出归一化：`OpenAICompatibleProvider` / `DeepSeekProvider` 和 `CodexCliProvider` / `ClaudeCliProvider` 现在在 plan 通过 step 校验后强制写回 `approval_required=true`、`dispatch_ready=false`，即使后端返回了 `approval_required=false` 或 `dispatch_ready=true`。

@@ -49,6 +49,8 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
 
 All ProjectView fields are read-only summaries. Commands that mutate state, send tmux input, dispatch work, or apply approvals must remain explicit commands with approval semantics.
 
+`plans.items[]` includes both the configured provider name and a normalized `provider_backend` provenance label. The label is `local` for the fake dry-run provider, `api` for API-backed Leader providers such as DeepSeek or OpenAI-compatible backends, `cli` for local CLI-backed Leader providers such as Codex CLI or Claude Code CLI, and `unknown` for unrecognized legacy records. GUI clients may render this as plan origin metadata, but it is not a separate state source or execution permission.
+
 ## Recovery
 
 `recovery` is the canonical next-step surface for humans, natural-language shells, and GUI clients. It prioritizes pending Leader actions, approved approvals, pending approvals, stale runtime bindings, pending inbox items, waiting dispatched replies, and Leader errors before returning idle.

@@ -31,6 +31,7 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `task`
 - `plan_id`
 - `provider`
+- `provider_backend`
 - `model`
 - `approval_count`
 - `pending_approval_count`
@@ -45,7 +46,7 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `safety`
 - `requires_explicit_user`
 
-`mode` must be `run_start`. `safety` must be `approval_gated`, and `requires_explicit_user` must be `true`. Provider output is normalized before the run card is built: accepted plans must keep every step at `requires_approval=true`, and AgentDeck forces top-level `approval_required=true` and `dispatch_ready=false` even if the backend returned different control flags.
+`mode` must be `run_start`. `safety` must be `approval_gated`, and `requires_explicit_user` must be `true`. `provider_backend` is a normalized provenance label: `local` for the fake dry-run provider, `api` for API-backed Leader providers, `cli` for local CLI-backed Leader providers, and `unknown` for unrecognized legacy records. Provider output is normalized before the run card is built: accepted plans must keep every step at `requires_approval=true`, and AgentDeck forces top-level `approval_required=true` and `dispatch_ready=false` even if the backend returned different control flags.
 
 `progress_response_fields` describes the live `agentdeck run --plan-id <id>` response:
 
@@ -56,6 +57,7 @@ Reusable helpers live in `src/agentdeck/contracts.py`:
 - `task`
 - `status`
 - `provider`
+- `provider_backend`
 - `model`
 - `counts`
 - `steps`
