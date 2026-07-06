@@ -2945,6 +2945,38 @@ def test_validate_leader_chat_contract_requires_provider_switch_backend_identity
     }
 
 
+def test_validate_leader_chat_contract_requires_provider_switch_inspect_control_to_match_diagnostics() -> None:
+    payload = leader_chat_example()
+    payload["provider_switch_card"]["controls"][0]["command"] = "agentdeck workbench"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "provider_switch_card.controls: inspect control command must match diagnostics_command"
+        ],
+    }
+
+
+def test_validate_leader_chat_contract_requires_provider_switch_control_kind_to_match_require_ready() -> None:
+    payload = leader_chat_example()
+    payload["provider_switch_card"]["require_ready"] = True
+    payload["provider_switch_card"]["command"] = (
+        "agentdeck leader set-provider --provider codex-cli --model codex-default --require-ready"
+    )
+    payload["provider_switch_card"]["controls"][1]["command"] = payload["provider_switch_card"]["command"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "provider_switch_card.controls: provider control kind must be guarded_set_provider when require_ready is true"
+        ],
+    }
+
+
 def test_validate_leader_chat_contract_rejects_missing_secondary_runtime_card() -> None:
     payload = leader_chat_example()
     payload["runtime_card"] = None

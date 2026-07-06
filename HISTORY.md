@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate provider switch controls alignment
+
+- 收紧 `provider_switch_card.controls[]` 契约：inspect control 的 command 现在必须匹配 `diagnostics_command`，避免 GUI 的诊断按钮和 card 顶层诊断入口分叉。
+- 收紧 provider switch control kind：`require_ready=false` 时 provider control 必须使用 `kind=set_provider`，`require_ready=true` 时必须使用 `kind=guarded_set_provider`，确保按钮语义与 `--require-ready` 预检语义一致。
+- 保持控制边界：这些校验只拒绝漂移 payload，不执行 provider switch、不修改 `.agentdeck/config.toml`、不调用 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 同步 `docs/contracts/leader-chat-schema.md`、README、AGENT.md 和 CLAUDE.md。
+- 验证记录：已先确认红测失败，validator 最初允许 provider switch inspect control 指向不同 diagnostics command，也允许 `require_ready=true` 时 provider control 仍使用普通 `set_provider` kind；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_provider_switch_inspect_control_to_match_diagnostics tests/test_contracts.py::test_validate_leader_chat_contract_requires_provider_switch_control_kind_to_match_require_ready -q` 2 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 382 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 408 项通过。
+
 ### Current - Validate provider switch target identity consistency
 
 - 收紧 `provider_switch_card` 契约：`target_readiness.provider` / `target_readiness.model` 现在必须匹配 `target_provider` / `target_model`，避免 GUI 把一个目标 provider 的切换按钮和另一个 provider 的 readiness 混在一起渲染。

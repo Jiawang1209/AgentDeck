@@ -3610,11 +3610,21 @@ def _validate_leader_chat_provider_switch_card_contract(
                     errors.append(f"provider_switch_card.controls: missing control field: {field}")
             if control.get("kind") == "inspect" and control.get("safety") != "inspect":
                 errors.append("provider_switch_card.controls: inspect controls must use safety=inspect")
+            if control.get("kind") == "inspect" and control.get("command") != provider_switch_card.get("diagnostics_command"):
+                errors.append("provider_switch_card.controls: inspect control command must match diagnostics_command")
             if control.get("kind") in {"set_provider", "guarded_set_provider"}:
                 if control.get("safety") != "explicit_user":
                     errors.append("provider_switch_card.controls: provider controls must use safety=explicit_user")
                 if has_command and control.get("command") != provider_switch_card.get("command"):
                     errors.append("provider_switch_card.controls: provider control command must match card command")
+                if provider_switch_card.get("require_ready") is True and control.get("kind") != "guarded_set_provider":
+                    errors.append(
+                        "provider_switch_card.controls: provider control kind must be guarded_set_provider when require_ready is true"
+                    )
+                if provider_switch_card.get("require_ready") is False and control.get("kind") != "set_provider":
+                    errors.append(
+                        "provider_switch_card.controls: provider control kind must be set_provider when require_ready is false"
+                    )
             if control.get("enabled") is False and not control.get("blocker"):
                 errors.append("provider_switch_card.controls: disabled controls must include blocker")
     elif "controls" in provider_switch_card:
