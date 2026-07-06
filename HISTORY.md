@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Guard explicit next control safety
+
+- 收紧 leader-chat `intent_card.controls[]` 契约：当 `intent_card.requires_explicit_user=true` 时，`kind=next` 主操作 control 不得使用 `safety=inspect`。
+- 这保证 GUI/自然语言壳不会把需要人类显式执行的命令渲染成只读检查按钮，继续保护 Leader 建议和人类审批边界。
+- 保持控制边界：该校验只拒绝漂移 payload，不执行命令、不修改 `.agentdeck/config.toml`、不调用 provider、不创建额外 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，validator 最初允许 `intent_card.requires_explicit_user=true` 但 `kind=next` control 使用 `safety=inspect` 的 payload 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_explicit_next_control_safety tests/test_contracts.py::test_validate_leader_chat_contract_requires_next_control_command_match tests/test_contracts.py::test_validate_leader_chat_contract_requires_next_control_when_next_command_exists tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 401 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 427 项通过。
+
 ### Current - Align explicit-user flags
 
 - 收紧 leader-chat 全局契约：`leader_explanation.requires_explicit_user` 必须匹配 `intent_card.requires_explicit_user`。

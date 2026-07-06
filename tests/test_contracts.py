@@ -3231,6 +3231,21 @@ def test_validate_leader_chat_contract_requires_next_control_command_match() -> 
     }
 
 
+def test_validate_leader_chat_contract_requires_explicit_next_control_safety() -> None:
+    payload = leader_chat_example()
+    payload["leader_explanation"]["requires_explicit_user"] = True
+    payload["leader_explanation"]["safety"] = "explicit_runtime"
+    payload["intent_card"]["requires_explicit_user"] = True
+    payload["intent_card"]["controls"][-1]["safety"] = "inspect"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card.controls: explicit next control must not use safety=inspect"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_next_control_when_next_command_exists() -> None:
     payload = leader_chat_example()
     payload["intent_card"]["controls"] = [

@@ -3264,6 +3264,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                         has_next_control = True
                         if control.get("command") != intent_card.get("next_command"):
                             errors.append("intent_card.controls: next control command must match intent next_command")
+                        if intent_card.get("requires_explicit_user") is True and control.get("safety") == "inspect":
+                            errors.append("intent_card.controls: explicit next control must not use safety=inspect")
                     if (
                         expected_reply_waiting_trace_command is not None
                         and control.get("kind") == "inspect"
