@@ -135,6 +135,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("terminal_session_card")
     if embedded_card == "agent_ready_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "runtime_card" and payload.get("startup_preview_card") is not None:
+        secondary_embedded_cards.append("startup_preview_card")
     if embedded_card == "runtime_card" and payload.get("terminal_session_card") is not None:
         secondary_embedded_cards.append("terminal_session_card")
     if embedded_card == "provider_health" and payload.get("provider_setup_card") is not None:
@@ -2034,18 +2036,25 @@ def _agent_ready_card_payload(project_view: dict[str, object]) -> dict[str, obje
     }
 
 
-def _startup_preview_card_payload(agent_ready_card: dict[str, object]) -> dict[str, object]:
+def _startup_preview_card_payload(
+    agent_ready_card: dict[str, object],
+    *,
+    target_agent_id: str | None = None,
+    next_command: str | None = None,
+) -> dict[str, object]:
     runtime_card = agent_ready_card.get("runtime_card") if isinstance(agent_ready_card.get("runtime_card"), dict) else {}
     agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
     items: list[dict[str, object]] = []
     for agent in agents:
         if not isinstance(agent, dict):
             continue
+        agent_id = str(agent.get("agent_id"))
+        if target_agent_id is not None and agent_id != target_agent_id:
+            continue
         status = str(agent.get("status") or "unknown")
         pane_id = agent.get("pane_id")
         if status == "running" and pane_id:
             continue
-        agent_id = str(agent.get("agent_id"))
         spawn_command = str(agent.get("spawn_command") or f"agentdeck agent spawn --agent {agent_id}")
         blocker = None if spawn_command else f"missing spawn command: {agent_id}"
         items.append(
@@ -2078,8 +2087,27 @@ def _startup_preview_card_payload(agent_ready_card: dict[str, object]) -> dict[s
     ready_count = sum(1 for item in items if item.get("blocker") is None)
     blocked_count = len(items) - ready_count
     spawn_ready_command = str(agent_ready_card.get("spawn_ready_command") or "agentdeck agent spawn-ready --confirm")
-    next_command = str(agent_ready_card.get("next_command") or spawn_ready_command)
+    resolved_next_command = str(next_command or agent_ready_card.get("next_command") or spawn_ready_command)
     blocker = None if ready_count else "no agents need startup"
+    primary_control = (
+        _control(
+            kind="spawn",
+            label=f"Spawn {resolved_next_command.removeprefix('agentdeck agent spawn --agent ')}",
+            command=resolved_next_command,
+            safety="explicit_runtime",
+            enabled=ready_count > 0,
+            blocker=blocker,
+        )
+        if resolved_next_command.startswith("agentdeck agent spawn --agent ")
+        else _control(
+            kind="spawn_ready",
+            label="Spawn ready agents",
+            command=spawn_ready_command,
+            safety="explicit_runtime",
+            enabled=ready_count > 0,
+            blocker=blocker,
+        )
+    )
     controls = [
         _control(
             kind="inspect",
@@ -2087,19 +2115,12 @@ def _startup_preview_card_payload(agent_ready_card: dict[str, object]) -> dict[s
             command="agentdeck agent ready",
             safety="inspect",
         ),
-        _control(
-            kind="spawn_ready",
-            label="Spawn ready agents",
-            command=spawn_ready_command,
-            safety="explicit_runtime",
-            enabled=ready_count > 0,
-            blocker=blocker,
-        ),
+        primary_control,
     ]
     return {
         "mode": "startup_preview",
         "title": "Agent startup preview",
-        "next_command": next_command,
+        "next_command": resolved_next_command,
         "spawn_ready_command": spawn_ready_command,
         "count": len(items),
         "ready_count": ready_count,
@@ -6581,8 +6602,15 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         runtime_card = _workbench_runtime_card(refreshed_project_view)
         terminal_session_card = _workbench_terminal_session_card(config, runtime_card)
         agent_ready_card = _agent_ready_card_payload(refreshed_project_view) if runtime_ready else None
+        startup_preview_source_card = _agent_ready_card_payload(refreshed_project_view) if runtime_spawn_agent_id else agent_ready_card
         startup_preview_card = (
-            _startup_preview_card_payload(agent_ready_card) if isinstance(agent_ready_card, dict) else None
+            _startup_preview_card_payload(
+                startup_preview_source_card,
+                target_agent_id=str(runtime_spawn_agent_id) if runtime_spawn_agent_id else None,
+                next_command=str(next_command) if runtime_spawn_agent_id else None,
+            )
+            if isinstance(startup_preview_source_card, dict) and (runtime_ready or runtime_spawn_agent_id)
+            else None
         )
         if isinstance(agent_ready_card, dict):
             next_command = agent_ready_card.get("next_command")

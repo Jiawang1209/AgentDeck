@@ -3818,6 +3818,18 @@ def _validate_leader_chat_startup_preview_card_contract(
                     errors.append("startup_preview_card.controls: spawn_ready enabled must match ready_count")
                 if startup_preview_card.get("blocker") and control.get("blocker") != startup_preview_card.get("blocker"):
                     errors.append("startup_preview_card.controls: spawn_ready blocker must match card blocker")
+            if control.get("kind") == "spawn":
+                if control.get("command") != startup_preview_card.get("next_command"):
+                    errors.append("startup_preview_card.controls: spawn command must match next_command")
+                if not str(control.get("command") or "").startswith("agentdeck agent spawn --agent "):
+                    errors.append("startup_preview_card.controls: spawn command must use agent spawn")
+                if control.get("safety") != "explicit_runtime":
+                    errors.append("startup_preview_card.controls: spawn controls must use safety=explicit_runtime")
+                expected_enabled = bool(startup_preview_card.get("ready_count"))
+                if control.get("enabled") is not expected_enabled:
+                    errors.append("startup_preview_card.controls: spawn enabled must match ready_count")
+                if startup_preview_card.get("blocker") and control.get("blocker") != startup_preview_card.get("blocker"):
+                    errors.append("startup_preview_card.controls: spawn blocker must match card blocker")
             if control.get("enabled") is False and not control.get("blocker"):
                 errors.append("startup_preview_card.controls: disabled controls must include blocker")
     elif "controls" in startup_preview_card:

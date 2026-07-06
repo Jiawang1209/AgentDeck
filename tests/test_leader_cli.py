@@ -1916,6 +1916,65 @@ def test_leader_chat_suggests_agent_spawn_without_mutating_runtime(tmp_path, mon
         "enabled": True,
         "blocker": None,
     }
+    assert payload["startup_preview_card"] == {
+        "mode": "startup_preview",
+        "title": "Agent startup preview",
+        "next_command": "agentdeck agent spawn --agent planner",
+        "spawn_ready_command": "agentdeck agent spawn-ready --confirm",
+        "count": 1,
+        "ready_count": 1,
+        "blocked_count": 0,
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": None,
+        "items": [
+            {
+                "agent_id": "planner",
+                "role": "planning",
+                "runtime_status": "configured",
+                "pane_id": None,
+                "spawn_command": "agentdeck agent spawn --agent planner",
+                "terminal_command": "agentdeck agent terminal --agent planner",
+                "blocker": None,
+                "controls": [
+                    {
+                        "kind": "inspect",
+                        "label": "Inspect runtime",
+                        "command": "agentdeck agent ready",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                    {
+                        "kind": "spawn",
+                        "label": "Spawn planner",
+                        "command": "agentdeck agent spawn --agent planner",
+                        "safety": "explicit_runtime",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                ],
+            }
+        ],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect readiness",
+                "command": "agentdeck agent ready",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "spawn",
+                "label": "Spawn planner",
+                "command": "agentdeck agent spawn --agent planner",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     assert payload["leader_explanation"]["mode"] == "runtime"
     assert payload["leader_explanation"]["summary"] == (
         "Leader recommends explicitly spawning planner without mutating runtime state."
@@ -1927,6 +1986,10 @@ def test_leader_chat_suggests_agent_spawn_without_mutating_runtime(tmp_path, mon
     assert payload["leader_explanation"]["safety"] == "explicit_runtime"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
     assert payload["intent_card"]["embedded_card"] == "runtime_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "startup_preview_card",
+        "terminal_session_card",
+    ]
     assert payload["intent_card"]["requires_explicit_user"] is True
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
