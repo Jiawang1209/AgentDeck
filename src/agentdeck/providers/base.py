@@ -58,6 +58,9 @@ def validate_provider_plan_schema(plan: object, config: ProjectConfig | None = N
             raise RuntimeError(f"provider plan step {index} agent_id is not configured: {step['agent_id']}")
         if step.get("requires_approval") is not True:
             raise RuntimeError(f"provider plan step {index} must require approval")
+    expected_step_numbers = set(range(1, len(steps) + 1))
+    if seen_step_numbers != expected_step_numbers:
+        raise RuntimeError(f"provider plan steps must be numbered 1..{len(steps)} without gaps")
     plan["approval_required"] = True
     plan["dispatch_ready"] = False
     return plan

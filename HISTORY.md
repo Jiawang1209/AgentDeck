@@ -2,6 +2,16 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-07
+
+### Current - Validate provider plan contiguous step numbers
+
+- 继续收紧真实 Leader provider plan schema：共享 `validate_provider_plan_schema()` 现在要求 step 序号必须覆盖 `1..n`，不能跳号，避免 provider 返回 `1,3` 这类 plan 后让审批队列、恢复视图和 GUI plan row 出现空洞。
+- CLI-backed Codex/Claude 和 API-backed OpenAI-compatible/DeepSeek 路径都会复用同一校验；跳号 step 会明确报错，例如 `provider plan steps must be numbered 1..2 without gaps`。
+- 保持上一轮唯一 step number、agent target 与审批门约束：顶层仍必须包含非空字符串 `goal`、非空字符串 `summary` 和非空 `steps`，每个 step 仍必须包含从 1 开始连续且唯一的正整数 `step`、非空字符串 `agent_id`、`role`、`task`、`risk`、`requires_approval`，`agent_id` 必须指向已配置 worker agent，通过 schema 后仍强制 `approval_required=true`、`dispatch_ready=false`，并要求每个 step 都 `requires_approval=true`。
+- 同步 README、Leader chat schema、AGENT/CLAUDE 约束，明确真实 Leader provider 输出的 step 序号必须是完整 `1..n` 可排序序列；该收紧不创建 approval、dispatch、message/job/inbox，不复用 worker tmux pane，也不发送 tmux 输入。
+- 验证记录：已先确认红测失败，CLI-backed 和 API-backed provider 最初都会接受 `step=1,3` 的跳号 plan；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py::test_cli_provider_rejects_non_contiguous_step_numbers tests/test_provider_openai_compatible.py::test_openai_compatible_provider_rejects_non_contiguous_step_numbers tests/test_provider_openai_compatible.py::test_cli_provider_rejects_duplicate_step_numbers tests/test_provider_openai_compatible.py::test_openai_compatible_provider_rejects_duplicate_step_numbers tests/test_provider_openai_compatible.py::test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan tests/test_provider_openai_compatible.py::test_openai_compatible_provider_posts_chat_completion_and_parses_json_plan -q` 6 项通过；provider 回归 `conda run -n agentdeck pytest tests/test_provider_openai_compatible.py -q` 29 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 442 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 482 项通过。
+
 ## 2026-07-06
 
 ### Current - Validate provider plan unique step numbers
