@@ -2030,6 +2030,38 @@ def test_leader_chat_suggests_agent_spawn_without_mutating_runtime(tmp_path, mon
             },
         ],
     }
+    assert payload["runtime_action_card"] == {
+        "mode": "runtime_action",
+        "title": "Spawn planner",
+        "action": "spawn",
+        "agent_id": "planner",
+        "role": "planning",
+        "runtime_status": "configured",
+        "pane_id": None,
+        "command": "agentdeck agent spawn --agent planner",
+        "preview_text": None,
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": None,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect planner runtime",
+                "command": "agentdeck agent terminal --agent planner",
+                "safety": "inspect",
+                "enabled": False,
+                "blocker": "agent is not running: planner",
+            },
+            {
+                "kind": "spawn",
+                "label": "Spawn planner",
+                "command": "agentdeck agent spawn --agent planner",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     assert payload["leader_explanation"]["mode"] == "runtime"
     assert payload["leader_explanation"]["summary"] == (
         "Leader recommends explicitly spawning planner without mutating runtime state."
@@ -2040,24 +2072,28 @@ def test_leader_chat_suggests_agent_spawn_without_mutating_runtime(tmp_path, mon
     assert payload["leader_explanation"]["action_status"] == "configured"
     assert payload["leader_explanation"]["safety"] == "explicit_runtime"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
-    assert payload["intent_card"]["embedded_card"] == "runtime_card"
+    assert payload["intent_card"]["embedded_card"] == "runtime_action_card"
     assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "runtime_card",
         "startup_preview_card",
         "terminal_session_card",
         "control_registry_card",
     ]
-    assert payload["control_registry_card"]["filters"]["card"] == "startup_preview_card"
+    assert payload["control_registry_card"]["filters"]["card"] == "runtime_action_card"
+    assert payload["control_registry_card"]["filters"]["control_id"].startswith(
+        "runtime_action:runtime_action_card:spawn:planner:"
+    )
     assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
     assert payload["control_registry_card"]["selection"]["selected_control"] == {
-        "scope": "startup_preview",
-        "card": "startup_preview_card",
+        "scope": "runtime_action",
+        "card": "runtime_action_card",
         "kind": "spawn",
         "label": "Spawn planner",
         "command": "agentdeck agent spawn --agent planner",
         "safety": "explicit_runtime",
         "enabled": True,
         "blocker": None,
-        "agent_id": None,
+        "agent_id": "planner",
         "control_id": payload["control_registry_card"]["selection"]["requested_control_id"],
     }
     assert payload["intent_card"]["requires_explicit_user"] is True

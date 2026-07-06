@@ -3493,9 +3493,9 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
     runtime_action_card = payload.get("runtime_action_card")
     if isinstance(runtime_action_card, dict):
         _validate_leader_chat_runtime_action_card_contract(errors, runtime_action_card)
-        if explanation_action_kind in {"runtime_send", "runtime_stop", "runtime_refresh"} and runtime_action_card.get("command") != payload.get("next_command"):
+        if explanation_action_kind in {"runtime_send", "runtime_stop", "runtime_refresh", "runtime_spawn"} and runtime_action_card.get("command") != payload.get("next_command"):
             errors.append("runtime_action_card.command must match response next_command")
-    elif explanation_action_kind in {"runtime_send", "runtime_stop", "runtime_refresh"}:
+    elif explanation_action_kind in {"runtime_send", "runtime_stop", "runtime_refresh", "runtime_spawn"}:
         errors.append(f"runtime_action_card is required for {explanation_action_kind} responses")
     elif "runtime_action_card" in payload and runtime_action_card is not None:
         errors.append("runtime_action_card must be an object")
@@ -3886,6 +3886,10 @@ def _validate_leader_chat_runtime_action_card_contract(
         agent_id = runtime_action_card.get("agent_id")
         if not command.startswith(f"agentdeck agent send --agent {agent_id} --text "):
             errors.append("runtime_action_card.command must use agent send for target agent")
+    if runtime_action_card.get("action") == "spawn":
+        expected_command = f"agentdeck agent spawn --agent {runtime_action_card.get('agent_id')}"
+        if runtime_action_card.get("command") != expected_command:
+            errors.append("runtime_action_card.command must use agent spawn for target agent")
     if runtime_action_card.get("action") == "stop":
         expected_command = f"agentdeck agent stop --agent {runtime_action_card.get('agent_id')}"
         if runtime_action_card.get("command") != expected_command:
@@ -3914,6 +3918,16 @@ def _validate_leader_chat_runtime_action_card_contract(
                     errors.append("runtime_action_card.controls: send enabled must match blocker")
                 if runtime_action_card.get("blocker") and control.get("blocker") != runtime_action_card.get("blocker"):
                     errors.append("runtime_action_card.controls: send blocker must match card blocker")
+            if control.get("kind") == "spawn":
+                if control.get("command") != runtime_action_card.get("command"):
+                    errors.append("runtime_action_card.controls: spawn command must match card command")
+                if control.get("safety") != "explicit_runtime":
+                    errors.append("runtime_action_card.controls: spawn controls must use safety=explicit_runtime")
+                expected_enabled = runtime_action_card.get("blocker") is None
+                if control.get("enabled") is not expected_enabled:
+                    errors.append("runtime_action_card.controls: spawn enabled must match blocker")
+                if runtime_action_card.get("blocker") and control.get("blocker") != runtime_action_card.get("blocker"):
+                    errors.append("runtime_action_card.controls: spawn blocker must match card blocker")
             if control.get("kind") == "stop":
                 if control.get("command") != runtime_action_card.get("command"):
                     errors.append("runtime_action_card.controls: stop command must match card command")

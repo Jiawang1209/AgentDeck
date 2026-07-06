@@ -138,6 +138,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "runtime_action_card" and payload.get("runtime_card") is not None:
         secondary_embedded_cards.append("runtime_card")
+    if embedded_card == "runtime_action_card" and payload.get("startup_preview_card") is not None:
+        secondary_embedded_cards.append("startup_preview_card")
     if embedded_card == "runtime_action_card" and payload.get("terminal_session_card") is not None:
         secondary_embedded_cards.append("terminal_session_card")
     if embedded_card == "runtime_action_card" and payload.get("control_registry_card") is not None:
@@ -2129,9 +2131,20 @@ def _runtime_action_card_payload(
     title = (
         "Send input to {agent_id}".format(agent_id=agent_id)
         if action == "send"
+        else f"Spawn {agent_id}"
+        if action == "spawn"
         else f"Stop {agent_id}"
         if action == "stop"
         else "Runtime action"
+    )
+    target_running = target.get("status") == "running"
+    action_enabled = target.get("status") != "running" if action == "spawn" else target_running
+    action_blocker = (
+        None
+        if action_enabled
+        else f"agent is already running: {agent_id}"
+        if action == "spawn"
+        else f"agent is not running: {agent_id}"
     )
     controls = [
         _control(
@@ -2139,14 +2152,16 @@ def _runtime_action_card_payload(
             label=f"Inspect {agent_id} runtime",
             command=str(target.get("terminal_command") or f"agentdeck agent terminal --agent {agent_id}"),
             safety="inspect",
+            enabled=target_running,
+            blocker=None if target_running else f"agent is not running: {agent_id}",
         ),
         _control(
             kind=action,
             label=title,
             command=command,
             safety="explicit_runtime",
-            enabled=target.get("status") == "running",
-            blocker=None if target.get("status") == "running" else f"agent is not running: {agent_id}",
+            enabled=action_enabled,
+            blocker=action_blocker,
         ),
     ]
     return {
@@ -2161,7 +2176,7 @@ def _runtime_action_card_payload(
         "preview_text": preview_text,
         "requires_explicit_user": True,
         "safety": "explicit_runtime",
-        "blocker": None if target.get("status") == "running" else f"agent is not running: {agent_id}",
+        "blocker": action_blocker,
         "controls": controls,
     }
 
@@ -6762,6 +6777,13 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             if runtime_stop_agent_id
             else _runtime_action_card_payload(
                 runtime_card,
+                action="spawn",
+                agent_id=str(runtime_spawn_agent_id),
+                command=str(next_command),
+            )
+            if runtime_spawn_agent_id
+            else _runtime_action_card_payload(
+                runtime_card,
                 action="refresh_runtime",
                 agent_id=None,
                 command=str(next_command),
@@ -6786,9 +6808,9 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             registry_card_filter = (
                 "agent_ready_card"
                 if isinstance(agent_ready_card, dict)
-                else "startup_preview_card"
-                if isinstance(startup_preview_card, dict)
                 else "runtime_action_card"
+                if isinstance(runtime_action_card, dict)
+                else "startup_preview_card"
             )
             next_control_id = next(
                 (

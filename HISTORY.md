@@ -4,6 +4,15 @@
 
 ## 2026-07-06
 
+### Current - Add runtime spawn action card
+
+- 扩展自然语言单 Agent 启动入口：`agentdeck leader chat --message "启动 planner"` 现在以 `runtime_action_card(action=spawn)` 作为 primary embedded card，结构化展示目标 agent、role、runtime_status、pane_id、显式 `agentdeck agent spawn --agent <id>` 命令和 inspect/spawn controls。
+- 保留启动前 checklist：单 Agent spawn 响应继续附带过滤到目标 agent 的 `startup_preview_card`，但它作为执行前清单 companion；`intent_card.secondary_embedded_cards` 现在列出 `runtime_card`、`startup_preview_card`、`terminal_session_card` 和 `control_registry_card`。
+- 收紧 control registry 指向：单 Agent spawn 响应的 `control_registry_card` 现在过滤到 `runtime_action_card`，`selection.selected_control` 指向 `kind=spawn` 的 runtime action control，避免 GUI/TUI 在 startup preview 和 runtime action 之间出现两套主操作。
+- 扩展 leader-chat contract：`runtime_action_card` validator 现在覆盖 `action=spawn`，要求 command 为 `agentdeck agent spawn --agent <id>`，spawn control command 匹配卡片 command，`safety=explicit_runtime`，enabled/blocker 与目标 runtime status 对齐。
+- 保持控制边界：该响应只建议显式启动命令，不自动 spawn pane、不 refresh runtime、不 dispatch approval、不 attach/select-pane、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入、不修改 runtime state。
+- 验证记录：已先确认红测失败，`启动 planner` 最初仍以 `runtime_card` 为 primary card；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_agent_spawn_without_mutating_runtime tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_spawn_action_control_drift -q` 2 项通过；runtime action 聚焦回归 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_suggests_agent_spawn_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_suggests_runtime_refresh_without_reconciling_state tests/test_leader_cli.py::test_leader_chat_suggests_agent_send_without_sending_input tests/test_leader_cli.py::test_leader_chat_suggests_agent_stop_without_killing_pane tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_spawn_action_control_drift tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_action_control_drift tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_stop_action_control_drift tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_refresh_action_control_drift -q` 10 项通过；continue/spawn 边界回归 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 408 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 434 项通过。
+
 ### Current - Add runtime refresh action card
 
 - 扩展自然语言 runtime refresh 意图：`agentdeck leader chat --message "刷新 runtime"` 现在返回 project-level `runtime_action_card`，结构化展示 `action=refresh_runtime`、`agent_id=null`、`runtime_status=suggested`、显式 `agentdeck agent refresh` 命令和 inspect/refresh controls。
