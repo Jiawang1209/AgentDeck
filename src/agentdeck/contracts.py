@@ -4089,6 +4089,10 @@ def _validate_leader_status_card_contract(errors: list[str], status_card: dict[s
             errors.append(f"missing leader_status_card field: {field}")
     if status_card.get("mode") != "leader_status":
         errors.append("leader_status_card.mode must be leader_status")
+    if status_card.get("source_command") != "agentdeck leader status":
+        errors.append("leader_status_card.source_command must be agentdeck leader status")
+    if status_card.get("refresh_command") != "agentdeck leader status":
+        errors.append("leader_status_card.refresh_command must be agentdeck leader status")
     provider_health = status_card.get("provider_health")
     if isinstance(provider_health, dict):
         for field in WORKBENCH_PROVIDER_HEALTH_FIELDS:

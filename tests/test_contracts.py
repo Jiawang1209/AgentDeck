@@ -3393,6 +3393,40 @@ def test_validate_leader_chat_contract_reuses_leader_status_card_validator() -> 
     }
 
 
+def test_validate_leader_chat_contract_rejects_leader_status_command_drift() -> None:
+    payload = leader_chat_example()
+    status_card = leader_status_example()
+    payload["mode"] = "leader_status"
+    payload["leader_status_card"] = status_card
+    payload["provider_health"] = status_card["provider_health"]
+    payload["next_command"] = status_card["next_command"]
+    payload["leader_explanation"]["mode"] = "leader_status"
+    payload["leader_explanation"]["next_command"] = status_card["next_command"]
+    payload["leader_explanation"]["action_kind"] = "leader_status"
+    payload["leader_explanation"]["action_status"] = "action_required"
+    payload["leader_explanation"]["safety"] = "inspect"
+    payload["leader_explanation"]["requires_explicit_user"] = False
+    payload["intent_card"]["mode"] = "leader_status"
+    payload["intent_card"]["matched_intent"] = "leader_status"
+    payload["intent_card"]["embedded_card"] = "leader_status_card"
+    payload["intent_card"]["read_only"] = True
+    payload["intent_card"]["next_command"] = status_card["next_command"]
+    payload["intent_card"]["requires_explicit_user"] = False
+    payload["intent_card"]["controls"][-1]["command"] = status_card["next_command"]
+    status_card["source_command"] = "agentdeck status"
+    status_card["refresh_command"] = "agentdeck workbench"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "leader_status_card.source_command must be agentdeck leader status",
+            "leader_status_card.refresh_command must be agentdeck leader status",
+        ],
+    }
+
+
 def test_validate_leader_chat_contract_reuses_artifacts_card_validator() -> None:
     payload = leader_chat_example()
     payload["artifacts_card"]["artifacts_command"] = "agentdeck status"
