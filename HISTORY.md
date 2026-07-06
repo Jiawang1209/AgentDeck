@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate runtime action registry selection alignment
+
+- 收紧 Leader chat runtime-action 契约：`validate_leader_chat_contract()` 现在要求 `runtime_send` / `runtime_stop` / `runtime_refresh` / `runtime_spawn` 响应中的 `control_registry_card.selection.next_command` 必须等于 `runtime_action_card.command`。
+- 该校验会拒绝命令面板选中了另一个 enabled runtime action control 的漂移 payload，例如主操作卡建议 `agentdeck agent send --agent planner --text ...`，但 registry selection 选中了 inspect terminal control。
+- 保持自然语言 runtime action 控制边界：`runtime_action_card` 仍只是 GUI-ready 执行前确认面，`control_registry_card` 只是同源命令投影；chat 不 spawn pane、不 refresh runtime、不发送 tmux 输入、不停止 pane、不创建 plan/action/approval/message/job/inbox、不写 runtime state。
+- 同步 Leader chat schema、README、AGENT/CLAUDE 约束，明确 `selection.selected_control` 和 `selection.next_command` 都必须指向同一个 spawn/refresh/send/stop 主操作。
+- 验证记录：已先确认红测失败，validator 最初允许 runtime action 顶层 `next_command` 指向 send command 但 `control_registry_card.selection` 选中 inspect terminal control；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_leader_chat_contract_requires_runtime_action_registry_selection_to_match_command tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_action_control_drift tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_spawn_action_control_drift tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_stop_action_control_drift tests/test_contracts.py::test_validate_leader_chat_contract_rejects_runtime_refresh_action_control_drift tests/test_leader_cli.py::test_leader_chat_suggests_runtime_refresh_without_reconciling_state tests/test_leader_cli.py::test_leader_chat_suggests_agent_spawn_without_mutating_runtime tests/test_leader_cli.py::test_leader_chat_suggests_agent_send_without_sending_input tests/test_leader_cli.py::test_leader_chat_suggests_agent_stop_without_killing_pane -q` 10 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 442 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 468 项通过。
+
 ### Current - Validate queue registry selection alignment
 
 - 收紧 Leader chat queue-mode 契约：`validate_leader_chat_contract()` 现在要求 `mode=queue` 的 `control_registry_card.selection.next_command` 与顶层 `next_command` 一致。

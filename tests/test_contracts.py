@@ -3190,6 +3190,71 @@ def test_validate_leader_chat_contract_requires_queue_registry_selection_to_matc
     }
 
 
+def test_validate_leader_chat_contract_requires_runtime_action_registry_selection_to_match_command() -> None:
+    payload = leader_chat_example()
+    runtime_command = payload["runtime_action_card"]["command"]
+    payload["mode"] = "runtime"
+    payload["next_command"] = runtime_command
+    payload["queue_card"]["next_command"] = runtime_command
+    payload["operator_card"]["next_command"] = runtime_command
+    payload["leader_explanation"]["mode"] = "runtime"
+    payload["leader_explanation"]["action_kind"] = "runtime_send"
+    payload["leader_explanation"]["next_command"] = runtime_command
+    payload["leader_explanation"]["safety"] = "explicit_runtime"
+    payload["leader_explanation"]["requires_explicit_user"] = True
+    payload["intent_card"]["mode"] = "runtime"
+    payload["intent_card"]["matched_intent"] = "runtime"
+    payload["intent_card"]["embedded_card"] = "runtime_action_card"
+    payload["intent_card"]["secondary_embedded_cards"] = [
+        "runtime_card",
+        "terminal_session_card",
+        "control_registry_card",
+    ]
+    payload["intent_card"]["read_only"] = False
+    payload["intent_card"]["next_command"] = runtime_command
+    payload["intent_card"]["requires_explicit_user"] = True
+    payload["intent_card"]["controls"][-1]["command"] = runtime_command
+    payload["intent_card"]["controls"][-1]["safety"] = "explicit_runtime"
+
+    inspect_control = {
+        "scope": "runtime_action",
+        "card": "runtime_action_card",
+        "kind": "inspect",
+        "label": "Inspect planner runtime",
+        "command": "agentdeck agent terminal --agent planner",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": "planner",
+        "control_id": "runtime_action:runtime_action_card:inspect:planner:test",
+    }
+    send_control = {
+        "scope": "runtime_action",
+        "card": "runtime_action_card",
+        "kind": "send",
+        "label": "Send input to planner",
+        "command": runtime_command,
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": "planner",
+        "control_id": "runtime_action:runtime_action_card:send:planner:test",
+    }
+    payload["control_registry_card"] = leader_chat_control_registry_card(
+        {"control_registry": [inspect_control, send_control]},
+        scope="runtime_action",
+        card="runtime_action_card",
+        control_id=inspect_control["control_id"],
+    )
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.selection.next_command must match runtime_action_card.command"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_action_card_when_action_is_present() -> None:
     payload = leader_chat_example()
     payload["leader_action_card"] = None
