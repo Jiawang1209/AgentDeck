@@ -4,6 +4,13 @@
 
 ## 2026-07-06
 
+### Current - Expose provider health in leader chat contract
+
+- 扩展 Leader chat response contract：`provider_health` 现在是正式顶层 response field，非 setup mode 可为 `null`；setup diagnostics/provider switch mode 继续嵌入 workbench 同源 provider health card。
+- `agentdeck contract leader-chat` 新增 `provider_health_fields`，复用 `WORKBENCH_PROVIDER_HEALTH_FIELDS`，`--example` 同步返回 `example_provider_health_fields` 和稳定 provider health 示例字段，供 GUI/自然语言壳发现 `provider_backend` / `provider_transport` 等 setup 字段。
+- 同步 `docs/contracts/leader-chat-schema.md`、README、CLAUDE.md 和 AGENT.md，明确 setup-mode provider health 是只读诊断/显式 provider switch 上下文，不调用 provider、不修改配置、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，`agentdeck contract leader-chat` 最初缺少 `provider_health_fields` 和 example provider health 字段；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 2 项通过；leader-chat setup/contract 聚焦回归 5 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 367 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 393 项通过。
+
 ### Current - Add provider health backend and transport provenance
 
 - 扩展 Leader provider setup/diagnostics provenance：`agentdeck doctor` 的 `configured_leader`、顶层 `deepseek` / `openai_compatible` / `codex_cli` / `claude_cli` checks，以及 workbench `provider_health` 现在都会暴露 `provider_backend` 和 `provider_transport`。

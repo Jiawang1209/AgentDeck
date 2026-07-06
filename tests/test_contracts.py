@@ -1006,6 +1006,9 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["dispatch_preview_card_fields"] == list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
     assert payload["agent_ready_card_fields"] == list(AGENT_RUNTIME_READY_RESPONSE_FIELDS)
     assert payload["runtime_card_fields"] == list(WORKBENCH_RUNTIME_CARD_FIELDS)
+    assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
+    assert "provider_backend" in payload["provider_health_fields"]
+    assert "provider_transport" in payload["provider_health_fields"]
     assert payload["queue_card_fields"] == list(WORKBENCH_QUEUE_CARD_FIELDS)
     assert payload["operator_card_fields"] == list(WORKBENCH_OPERATOR_CARD_FIELDS)
     assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
@@ -2305,6 +2308,10 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_agent_ready_card_fields"] == list(example["agent_ready_card"])
     assert payload["example_runtime_card_fields"] == payload["runtime_card_fields"]
     assert payload["example_runtime_card_fields"] == list(example["runtime_card"])
+    assert payload["example_provider_health_fields"] == payload["provider_health_fields"]
+    assert payload["example_provider_health_fields"] == list(example["provider_health"])
+    assert example["provider_health"]["provider_backend"] == "local"
+    assert example["provider_health"]["provider_transport"] == "local"
     assert payload["example_queue_card_fields"] == payload["queue_card_fields"]
     assert payload["example_queue_card_fields"] == list(example["queue_card"])
     assert payload["example_operator_card_fields"] == payload["operator_card_fields"]

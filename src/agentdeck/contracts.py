@@ -467,6 +467,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "artifacts_card",
     "workbench_card",
     "control_mode_card",
+    "provider_health",
     "capability_card",
     "control_registry_card",
 )
@@ -1324,6 +1325,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "dispatch_batch_preview_item_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
         "agent_ready_card_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
         "runtime_card_fields": list(WORKBENCH_RUNTIME_CARD_FIELDS),
+        "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
@@ -1385,6 +1387,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         )
         payload["example_agent_ready_card_fields"] = list(example["agent_ready_card"])
         payload["example_runtime_card_fields"] = list(example["runtime_card"])
+        payload["example_provider_health_fields"] = list(example["provider_health"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
         payload["example_operator_card_fields"] = list(example["operator_card"])
         payload["example_role_card_fields"] = list(example["role_card"])
@@ -4310,6 +4313,7 @@ def leader_chat_example() -> dict[str, object]:
     agent_ready_card = agent_runtime_example()["ready"]
     terminal_card = agent_runtime_example()["terminal"]
     runtime_card = workbench_example()["runtime_card"]
+    provider_health = workbench_example()["provider_health"]
     queue_card = workbench_example()["queue_card"]
     operator_card = workbench_example()["operator_card"]
     role_card = workbench_example()["role_card"]
@@ -4390,6 +4394,7 @@ def leader_chat_example() -> dict[str, object]:
         "artifacts_card": artifacts_card,
         "workbench_card": workbench_card,
         "control_mode_card": control_mode_card,
+        "provider_health": provider_health,
         "capability_card": capability_card,
         "control_registry_card": control_registry_card,
     }

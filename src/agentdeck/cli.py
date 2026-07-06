@@ -341,6 +341,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("capability_card", None)
     payload.setdefault("control_registry_card", None)
     payload.setdefault("control_mode_card", None)
+    payload.setdefault("provider_health", None)
     payload.setdefault("lineage_card", None)
     payload.setdefault("audit_card", None)
     payload.setdefault("artifacts_card", None)
