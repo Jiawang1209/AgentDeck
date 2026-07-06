@@ -3727,6 +3727,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "review",
         "apply_action",
         "continue",
+        "leader_status",
         "workbench",
         "runtime",
         "role",
@@ -3800,6 +3801,18 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "kind": "inspect",
         "label": "Open workbench",
         "command": "agentdeck workbench",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert capabilities["leader_status"]["command"] == "agentdeck leader status"
+    assert capabilities["leader_status"]["safety"] == "inspect"
+    assert capabilities["leader_status"]["requires_explicit_user"] is False
+    assert capabilities["leader_status"]["card"] == "leader_status_card"
+    assert capabilities["leader_status"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect Leader status",
+        "command": "agentdeck leader status",
         "safety": "inspect",
         "enabled": True,
         "blocker": None,

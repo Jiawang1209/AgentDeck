@@ -1664,6 +1664,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "card": "continue_card",
         },
         {
+            "mode": "leader_status",
+            "label": "Inspect Leader status",
+            "description": "Inspect the logical Leader, provider readiness, queue counts, and recovery next command.",
+            "example_messages": ["查看 Leader 状态", "leader status"],
+            "command": "agentdeck leader status",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "leader_status_card",
+        },
+        {
             "mode": "runtime",
             "label": "Inspect runtime",
             "description": "Inspect visible tmux agent panes or suggest explicit agent refresh/spawn/send/stop commands.",

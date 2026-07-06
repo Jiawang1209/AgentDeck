@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Advertise Leader status in chat capabilities
+
+- 扩展 `agentdeck leader chat --message "帮助"` 的 `capability_card`：新增 `mode=leader_status` 能力项，示例说法为 `查看 Leader 状态` / `leader status`。
+- 该能力项指向只读 `agentdeck leader status`，声明 `card=leader_status_card`、`safety=inspect`、`requires_explicit_user=false`，让自然语言壳和未来 GUI 的能力发现面能找到上一轮新增的 Leader 状态入口。
+- 保持只读发现边界：help mode 仍只记录 chat turn，不调用 provider、不读取 tmux pane、不创建 plan/action/approval/message/job/inbox，也不执行任何 capability control。
+- 同步 README 与 `docs/contracts/leader-chat-schema.md`，明确 `leader_status` 是 capability_card 中的一等只读能力。
+- 验证记录：已先确认红测失败，help-mode `capability_card` 最初缺少 `leader_status` 能力项；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 3 项通过；相关回归 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 344 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 491 项通过。
+
 ### Current - Route Leader chat status intent to status card
 
 - 新增自然语言只读入口：`agentdeck leader chat --message "查看 Leader 状态"` / `"leader status"` 现在进入 `mode=leader_status`，嵌入与 `agentdeck leader status` 同源的 `leader_status_card`。
