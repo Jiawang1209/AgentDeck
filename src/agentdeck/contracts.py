@@ -3782,6 +3782,13 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     )
                 if item.get("enabled") is False and not item.get("blocker"):
                     errors.append("control_registry_card.items: disabled provider set_provider controls must include blocker")
+            if item.get("scope") == "provider" and item.get("kind") == "setup_provider":
+                if item.get("safety") != "explicit_user":
+                    errors.append("control_registry_card.items: provider setup_provider must use safety=explicit_user")
+                if item.get("command") not in leader_provider_setup_command_allowlist():
+                    errors.append(
+                        "control_registry_card.items: provider setup_provider command must come from provider setup commands"
+                    )
             if item.get("scope") == "policy" and item.get("kind") == "set_mode":
                 if not str(item.get("command") or "").startswith("agentdeck policy set-mode --mode "):
                     errors.append("control_registry_card.items: policy set_mode command must use policy set-mode")
@@ -4137,6 +4144,13 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
                         ).endswith(" --require-ready"):
                             errors.append(
                                 "provider_health.controls: guarded_set_provider command must use --require-ready"
+                            )
+                    if control.get("kind") == "setup_provider":
+                        if control.get("safety") != "explicit_user":
+                            errors.append("provider_health.controls: setup_provider controls must use safety=explicit_user")
+                        if control.get("command") not in leader_provider_setup_command_allowlist():
+                            errors.append(
+                                "provider_health.controls: setup_provider command must come from provider setup commands"
                             )
                     if control.get("enabled") is False and not control.get("blocker"):
                         errors.append("provider_health.controls: disabled controls must include blocker")
@@ -5208,7 +5222,46 @@ def leader_provider_controls(current_provider: str) -> list[dict[str, object]]:
                 "blocker": blocker,
             }
         )
+        setup_label = label.replace("Use ", "Setup ", 1)
+        for setup_command in leader_provider_setup_commands(provider):
+            controls.append(
+                {
+                    "kind": "setup_provider",
+                    "label": setup_label,
+                    "command": setup_command,
+                    "safety": "explicit_user",
+                    "enabled": True,
+                    "blocker": None,
+                }
+            )
     return controls
+
+
+def leader_provider_setup_commands(provider: str) -> list[str]:
+    if provider == "deepseek":
+        return [
+            'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
+            'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
+            'export DEEPSEEK_MODEL="deepseek-chat"',
+        ]
+    if provider == "openai-compatible":
+        return [
+            'export AGENTDECK_LEADER_API_KEY="<your-provider-api-key>"',
+            'export AGENTDECK_LEADER_BASE_URL="https://api.example.com/v1"',
+            'export AGENTDECK_LEADER_MODEL="<model-name>"',
+        ]
+    if provider == "codex-cli":
+        return ["codex login", "codex doctor"]
+    if provider == "claude-cli":
+        return ["claude auth", "claude doctor"]
+    return []
+
+
+def leader_provider_setup_command_allowlist() -> set[str]:
+    commands: set[str] = set()
+    for provider, _model, _label in LEADER_PROVIDER_SWITCHES:
+        commands.update(leader_provider_setup_commands(provider))
+    return commands
 
 
 def _agent_ready_card_from_runtime_card(runtime_card: dict[str, object]) -> dict[str, object]:

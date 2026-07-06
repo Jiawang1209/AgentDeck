@@ -1940,12 +1940,34 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             {
                 "kind": "guarded_set_provider",
                 "label": "Use DeepSeek if ready",
-                "command": (
-                    "agentdeck leader set-provider --provider deepseek --model deepseek-chat --require-ready"
-                ),
+                "command": "agentdeck leader set-provider --provider deepseek --model deepseek-chat --require-ready",
                 "safety": "explicit_user",
                 "enabled": False,
                 "blocker": "already current provider",
+            },
+            {
+                "kind": "setup_provider",
+                "label": "Setup DeepSeek",
+                "command": 'export DEEPSEEK_API_KEY="<your-deepseek-api-key>"',
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "setup_provider",
+                "label": "Setup DeepSeek",
+                "command": 'export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"',
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "setup_provider",
+                "label": "Setup DeepSeek",
+                "command": 'export DEEPSEEK_MODEL="deepseek-chat"',
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
             },
             {
                 "kind": "set_provider",
@@ -1967,6 +1989,30 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "blocker": None,
             },
             {
+                "kind": "setup_provider",
+                "label": "Setup OpenAI-compatible",
+                "command": 'export AGENTDECK_LEADER_API_KEY="<your-provider-api-key>"',
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "setup_provider",
+                "label": "Setup OpenAI-compatible",
+                "command": 'export AGENTDECK_LEADER_BASE_URL="https://api.example.com/v1"',
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "setup_provider",
+                "label": "Setup OpenAI-compatible",
+                "command": 'export AGENTDECK_LEADER_MODEL="<model-name>"',
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
                 "kind": "set_provider",
                 "label": "Use Codex CLI",
                 "command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
@@ -1977,9 +2023,23 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             {
                 "kind": "guarded_set_provider",
                 "label": "Use Codex CLI if ready",
-                "command": (
-                    "agentdeck leader set-provider --provider codex-cli --model codex-default --require-ready"
-                ),
+                "command": "agentdeck leader set-provider --provider codex-cli --model codex-default --require-ready",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "setup_provider",
+                "label": "Setup Codex CLI",
+                "command": "codex login",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "setup_provider",
+                "label": "Setup Codex CLI",
+                "command": "codex doctor",
                 "safety": "explicit_user",
                 "enabled": True,
                 "blocker": None,
@@ -1995,15 +2055,29 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             {
                 "kind": "guarded_set_provider",
                 "label": "Use Claude CLI if ready",
-                "command": (
-                    "agentdeck leader set-provider --provider claude-cli --model claude-default --require-ready"
-                ),
+                "command": "agentdeck leader set-provider --provider claude-cli --model claude-default --require-ready",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "setup_provider",
+                "label": "Setup Claude CLI",
+                "command": "claude auth",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "setup_provider",
+                "label": "Setup Claude CLI",
+                "command": "claude doctor",
                 "safety": "explicit_user",
                 "enabled": True,
                 "blocker": None,
             },
         ],
-    }
+        }
     assert payload["runtime_card"]["backend"] == "tmux"
     assert payload["runtime_card"]["count"] == 3
     assert payload["runtime_card"]["by_status"] == {"configured": 2, "running": 1}
@@ -3155,7 +3229,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 48,
+        "item_count_before_filter": 58,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -3165,6 +3239,35 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
     assert payload["groups"][0]["items"] == payload["items"]
     assert payload["groups"][0]["enabled_count"] == len(payload["items"])
     assert payload["groups"][0]["disabled_count"] == 0
+    assert StateStore(root).load() == before
+
+
+def test_controls_surfaces_provider_setup_commands_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.load()
+
+    exit_code = cli.main(["controls", "--scope", "provider", "--query", "codex login"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["filters"]["scope"] == "provider"
+    assert payload["filters"]["query"] == "codex login"
+    assert payload["items"] == [
+        {
+            "scope": "provider",
+            "card": "provider_health",
+            "kind": "setup_provider",
+            "label": "Setup Codex CLI",
+            "command": "codex login",
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+            "agent_id": "leader",
+            "control_id": payload["items"][0]["control_id"],
+        }
+    ]
+    assert payload["selection"]["next_command"] is None
     assert StateStore(root).load() == before
 
 
@@ -3197,7 +3300,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 47,
+        "item_count_before_filter": 57,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -3240,7 +3343,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 48,
+        "item_count_before_filter": 58,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -3279,7 +3382,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 48,
+        "item_count_before_filter": 58,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -3312,7 +3415,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 48,
+        "item_count_before_filter": 58,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -3351,7 +3454,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 48,
+        "item_count_before_filter": 58,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

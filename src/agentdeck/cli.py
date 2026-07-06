@@ -1005,6 +1005,18 @@ def _leader_provider_controls(current_provider: str) -> list[dict[str, object]]:
                 blocker=blocker,
             )
         )
+        setup_label = label.replace("Use ", "Setup ", 1)
+        for setup_command in _provider_setup_commands(provider):
+            controls.append(
+                _control(
+                    kind="setup_provider",
+                    label=setup_label,
+                    command=setup_command,
+                    safety="explicit_user",
+                    enabled=True,
+                    blocker=None,
+                )
+            )
     return controls
 
 

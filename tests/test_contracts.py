@@ -649,6 +649,25 @@ def test_validate_control_registry_card_contract_requires_disabled_provider_bloc
     }
 
 
+def test_validate_control_registry_card_contract_requires_provider_setup_command_allowlist() -> None:
+    payload = controls_example()
+    provider_item = next(
+        item for item in payload["items"] if item["scope"] == "provider" and item["enabled"] is True
+    )
+    provider_item["kind"] = "setup_provider"
+    provider_item["label"] = "Setup Codex CLI"
+    provider_item["command"] = "rm -rf /"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "control_registry_card.items: provider setup_provider command must come from provider setup commands"
+        ],
+    }
+
+
 def test_validate_control_registry_card_contract_requires_policy_set_mode_command() -> None:
     payload = controls_example()
     policy_item = next(item for item in payload["items"] if item["scope"] == "policy" and item["kind"] == "set_mode")
