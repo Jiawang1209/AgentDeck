@@ -1301,6 +1301,8 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
         "ok",
         "mode",
         "schema_version",
+        "source_command",
+        "refresh_command",
         "project_view_command",
         "workbench_command",
         "leader",
@@ -2893,6 +2895,8 @@ def test_leader_status_contract_payload_is_reusable_without_cli(tmp_path: Path) 
         "ok",
         "mode",
         "schema_version",
+        "source_command",
+        "refresh_command",
         "project_view_command",
         "workbench_command",
         "leader",
@@ -2930,6 +2934,8 @@ def test_leader_status_contract_response_includes_example_without_drift(tmp_path
     assert payload["example_control_fields"] == payload["control_fields"]
     assert set(payload["example_control_fields"]) == set(example["controls"][0])
     assert example["mode"] == "leader_status"
+    assert example["source_command"] == "agentdeck leader status"
+    assert example["refresh_command"] == "agentdeck leader status"
     assert example["project_view_command"] == "agentdeck status"
     assert example["workbench_command"] == "agentdeck workbench"
 

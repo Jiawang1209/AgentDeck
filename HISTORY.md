@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Add refresh metadata to Leader status card
+
+- 扩展 `agentdeck leader status` 只读状态卡：新增 `source_command=agentdeck leader status` 和 `refresh_command=agentdeck leader status`，让 GUI/TUI 顶栏或自然语言壳无需解析 controls 就能知道卡片来源和刷新入口。
+- 同步 `LEADER_STATUS_RESPONSE_FIELDS`、`leader_status_example()` 和 `agentdeck contract leader-status --example`，确保 live payload、contract discovery 和稳定示例字段一致。
+- 保持只读边界：新增字段只是命令元数据，不调用 provider、不读取 tmux pane、不写 state、不创建 plan/action/approval/message/job/inbox，也不执行刷新命令。
+- 同步 `docs/contracts/leader-status-schema.md`，明确 source/refresh 字段的用途。
+- 验证记录：已先确认红测失败，live `agentdeck leader status` payload 和 contract example 最初缺少 `source_command` / `refresh_command`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_status_surfaces_provider_and_queue_snapshot_without_mutating_state tests/test_agent_cli.py::test_contract_leader_status_discovers_schema_for_gui_clients tests/test_contracts.py::test_leader_status_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_status_contract_response_includes_example_without_drift -q` 4 项通过；Agent CLI/contract 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 324 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 492 项通过。
+
 ### Current - Advertise Leader overview alias in help
 
 - 扩展 `agentdeck leader chat --message "帮助"` 的 `leader_status` capability：`example_messages` 现在同时展示 `查看 Leader 状态`、`Leader 概览`、`leader status` 和 `leader overview`。

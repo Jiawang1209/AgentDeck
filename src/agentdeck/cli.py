@@ -748,6 +748,8 @@ def _leader_status_payload(project_view: dict[str, object]) -> dict[str, object]
         "ok": True,
         "mode": "leader_status",
         "schema_version": project_view.get("schema_version"),
+        "source_command": "agentdeck leader status",
+        "refresh_command": "agentdeck leader status",
         "project_view_command": "agentdeck status",
         "workbench_command": "agentdeck workbench",
         "leader": project_view.get("leader"),

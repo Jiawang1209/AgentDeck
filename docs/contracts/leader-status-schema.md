@@ -16,6 +16,8 @@ The command does not call the configured Leader provider, read tmux pane output,
 - `ok`: always `true` when the response is emitted.
 - `mode`: always `leader_status`.
 - `schema_version`: ProjectView schema version.
+- `source_command`: command that produced this card, `agentdeck leader status`.
+- `refresh_command`: command GUI/TUI clients can run to refresh this card, `agentdeck leader status`.
 - `project_view_command`: read-only source command, `agentdeck status`.
 - `workbench_command`: read-only full workbench command, `agentdeck workbench`.
 - `leader`: the logical Leader identity from ProjectView, including normalized `leader_backend`.

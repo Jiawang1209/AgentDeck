@@ -706,6 +706,8 @@ def test_leader_status_surfaces_provider_and_queue_snapshot_without_mutating_sta
     assert payload["ok"] is True
     assert payload["mode"] == "leader_status"
     assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["source_command"] == "agentdeck leader status"
+    assert payload["refresh_command"] == "agentdeck leader status"
     assert payload["project_view_command"] == "agentdeck status"
     assert payload["workbench_command"] == "agentdeck workbench"
     assert payload["provider_health"]["provider"] == "deepseek"
