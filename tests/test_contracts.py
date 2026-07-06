@@ -38,6 +38,7 @@ from agentdeck.contracts import (
     LEADER_CHAT_INTENT_CARD_FIELDS,
     LEADER_CHAT_INTENT_CONTROL_FIELDS,
     LEADER_CHAT_RESPONSE_FIELDS,
+    LEADER_CHAT_RUNTIME_ACTION_CARD_FIELDS,
     LEADER_CHAT_STARTUP_PREVIEW_CARD_FIELDS,
     LEADER_CHAT_TERMINAL_CARD_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
@@ -1144,6 +1145,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["capture_card_fields"] == list(LEADER_CHAT_CAPTURE_CARD_FIELDS)
     assert payload["terminal_card_fields"] == list(LEADER_CHAT_TERMINAL_CARD_FIELDS)
     assert payload["dispatch_preview_card_fields"] == list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS)
+    assert payload["runtime_action_card_fields"] == list(LEADER_CHAT_RUNTIME_ACTION_CARD_FIELDS)
     assert payload["startup_preview_card_fields"] == list(LEADER_CHAT_STARTUP_PREVIEW_CARD_FIELDS)
     assert payload["provider_setup_card_fields"] == [
         "mode",
@@ -2597,6 +2599,12 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_provider_switch_card_fields"] == list(example["provider_switch_card"])
     assert example["provider_switch_card"]["mutates_config"] is False
     assert payload["example_startup_preview_card_fields"] == payload["startup_preview_card_fields"]
+    assert payload["example_runtime_action_card_fields"] == payload["runtime_action_card_fields"]
+    assert payload["example_runtime_action_card_fields"] == list(example["runtime_action_card"])
+    assert example["runtime_action_card"]["controls"][1]["command"] == example["runtime_action_card"]["command"]
+    assert example["runtime_action_card"]["controls"][1]["safety"] == "explicit_runtime"
+    assert example["runtime_action_card"]["requires_explicit_user"] is True
+    assert example["runtime_action_card"]["safety"] == "explicit_runtime"
     assert payload["example_startup_preview_card_fields"] == list(example["startup_preview_card"])
     assert payload["example_agent_ready_card_fields"] == payload["agent_ready_card_fields"]
     assert payload["example_agent_ready_card_fields"] == list(example["agent_ready_card"])
@@ -3191,6 +3199,18 @@ def test_validate_leader_chat_contract_rejects_missing_secondary_runtime_card() 
     assert result == {
         "ok": False,
         "errors": ["intent_card.secondary_embedded_cards references missing runtime_card"],
+    }
+
+
+def test_validate_leader_chat_contract_rejects_runtime_action_control_drift() -> None:
+    payload = leader_chat_example()
+    payload["runtime_action_card"]["controls"][1]["command"] = "agentdeck agent refresh"
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["runtime_action_card.controls: send command must match card command"],
     }
 
 

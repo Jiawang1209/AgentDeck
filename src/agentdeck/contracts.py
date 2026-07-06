@@ -462,6 +462,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "terminal_card",
     "dispatch_preview_card",
     "dispatch_batch_preview_card",
+    "runtime_action_card",
     "startup_preview_card",
     "provider_setup_card",
     "provider_switch_card",
@@ -516,6 +517,22 @@ LEADER_CHAT_PROVIDER_SETUP_CARD_FIELDS = (
     "safety",
     "requires_explicit_user",
     "mutates_config",
+    "controls",
+)
+
+LEADER_CHAT_RUNTIME_ACTION_CARD_FIELDS = (
+    "mode",
+    "title",
+    "action",
+    "agent_id",
+    "role",
+    "runtime_status",
+    "pane_id",
+    "command",
+    "preview_text",
+    "requires_explicit_user",
+    "safety",
+    "blocker",
     "controls",
 )
 
@@ -1421,6 +1438,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_card_fields": list(LEADER_CHAT_DISPATCH_BATCH_PREVIEW_CARD_FIELDS),
         "dispatch_batch_preview_item_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
+        "runtime_action_card_fields": list(LEADER_CHAT_RUNTIME_ACTION_CARD_FIELDS),
         "startup_preview_card_fields": list(LEADER_CHAT_STARTUP_PREVIEW_CARD_FIELDS),
         "startup_preview_item_fields": list(LEADER_CHAT_STARTUP_PREVIEW_ITEM_FIELDS),
         "provider_setup_card_fields": list(LEADER_CHAT_PROVIDER_SETUP_CARD_FIELDS),
@@ -1490,6 +1508,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_dispatch_batch_preview_item_fields"] = list(
             LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS
         )
+        payload["example_runtime_action_card_fields"] = list(example["runtime_action_card"])
         payload["example_startup_preview_card_fields"] = list(example["startup_preview_card"])
         payload["example_startup_preview_item_fields"] = list(example["startup_preview_card"]["items"][0])
         payload["example_provider_setup_card_fields"] = list(example["provider_setup_card"])
@@ -3258,6 +3277,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             ):
                 errors.append("intent_card.secondary_embedded_cards references missing runtime_card")
             if (
+                "runtime_action_card" in secondary_embedded_cards
+                and payload.get("runtime_action_card") is None
+            ):
+                errors.append("intent_card.secondary_embedded_cards references missing runtime_action_card")
+            if (
                 "terminal_session_card" in secondary_embedded_cards
                 and payload.get("terminal_session_card") is None
             ):
@@ -3466,6 +3490,15 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append(f"approval_card: {error}")
     elif "approval_card" in payload and approval_card is not None:
         errors.append("approval_card must be an object")
+    runtime_action_card = payload.get("runtime_action_card")
+    if isinstance(runtime_action_card, dict):
+        _validate_leader_chat_runtime_action_card_contract(errors, runtime_action_card)
+        if explanation_action_kind == "runtime_send" and runtime_action_card.get("command") != payload.get("next_command"):
+            errors.append("runtime_action_card.command must match response next_command")
+    elif explanation_action_kind == "runtime_send":
+        errors.append("runtime_action_card is required for runtime_send responses")
+    elif "runtime_action_card" in payload and runtime_action_card is not None:
+        errors.append("runtime_action_card must be an object")
     runtime_card = payload.get("runtime_card")
     if isinstance(runtime_card, dict):
         _validate_runtime_card_contract(errors, runtime_card, prefix="runtime_card")
@@ -3834,6 +3867,50 @@ def _validate_leader_chat_startup_preview_card_contract(
                 errors.append("startup_preview_card.controls: disabled controls must include blocker")
     elif "controls" in startup_preview_card:
         errors.append("startup_preview_card.controls must be a list")
+
+
+def _validate_leader_chat_runtime_action_card_contract(
+    errors: list[str], runtime_action_card: dict[str, object]
+) -> None:
+    for field in LEADER_CHAT_RUNTIME_ACTION_CARD_FIELDS:
+        if field not in runtime_action_card:
+            errors.append(f"missing runtime_action_card field: {field}")
+    if runtime_action_card.get("mode") != "runtime_action":
+        errors.append("runtime_action_card.mode must be runtime_action")
+    if runtime_action_card.get("requires_explicit_user") is not True:
+        errors.append("runtime_action_card.requires_explicit_user must be true")
+    if runtime_action_card.get("safety") != "explicit_runtime":
+        errors.append("runtime_action_card.safety must be explicit_runtime")
+    if runtime_action_card.get("action") == "send":
+        command = str(runtime_action_card.get("command") or "")
+        agent_id = runtime_action_card.get("agent_id")
+        if not command.startswith(f"agentdeck agent send --agent {agent_id} --text "):
+            errors.append("runtime_action_card.command must use agent send for target agent")
+    controls = runtime_action_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("runtime_action_card.controls items must be objects")
+                continue
+            for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"runtime_action_card.controls: missing control field: {field}")
+            if control.get("kind") == "inspect" and control.get("safety") != "inspect":
+                errors.append("runtime_action_card.controls: inspect controls must use safety=inspect")
+            if control.get("kind") == "send":
+                if control.get("command") != runtime_action_card.get("command"):
+                    errors.append("runtime_action_card.controls: send command must match card command")
+                if control.get("safety") != "explicit_runtime":
+                    errors.append("runtime_action_card.controls: send controls must use safety=explicit_runtime")
+                expected_enabled = runtime_action_card.get("blocker") is None
+                if control.get("enabled") is not expected_enabled:
+                    errors.append("runtime_action_card.controls: send enabled must match blocker")
+                if runtime_action_card.get("blocker") and control.get("blocker") != runtime_action_card.get("blocker"):
+                    errors.append("runtime_action_card.controls: send blocker must match card blocker")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append("runtime_action_card.controls: disabled controls must include blocker")
+    elif "controls" in runtime_action_card:
+        errors.append("runtime_action_card.controls must be a list")
 
 
 def _validate_leader_chat_provider_setup_card_contract(
@@ -5109,6 +5186,38 @@ def leader_chat_example() -> dict[str, object]:
     capability_card = leader_chat_capability_card()
     control_registry_card = leader_chat_control_registry_card(workbench_card)
     startup_preview_card = _startup_preview_card_from_agent_ready(agent_ready_card)
+    runtime_action_card = {
+        "mode": "runtime_action",
+        "title": "Send input to planner",
+        "action": "send",
+        "agent_id": "planner",
+        "role": "planner",
+        "runtime_status": "running",
+        "pane_id": "%1",
+        "command": "agentdeck agent send --agent planner --text '继续'",
+        "preview_text": "继续",
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": None,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect planner runtime",
+                "command": "agentdeck agent terminal --agent planner",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "send",
+                "label": "Send input to planner",
+                "command": "agentdeck agent send --agent planner --text '继续'",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     leader_action_card = leader_chat_action_card(leader_action)
     leader_summary_card = leader_summary_example()
     run_start_card = run_start_example()
@@ -5279,6 +5388,7 @@ def leader_chat_example() -> dict[str, object]:
         "terminal_card": terminal_card,
         "dispatch_preview_card": None,
         "dispatch_batch_preview_card": None,
+        "runtime_action_card": runtime_action_card,
         "startup_preview_card": startup_preview_card,
         "provider_setup_card": provider_setup_card,
         "provider_switch_card": provider_switch_card,

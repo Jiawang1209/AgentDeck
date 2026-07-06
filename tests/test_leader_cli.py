@@ -2278,6 +2278,38 @@ def test_leader_chat_suggests_agent_send_without_sending_input(tmp_path, monkeyp
     assert payload["mode"] == "runtime"
     assert payload["message"] == "发送给 planner：继续 实现测试"
     assert payload["next_command"] == "agentdeck agent send --agent planner --text '继续 实现测试'"
+    assert payload["runtime_action_card"] == {
+        "mode": "runtime_action",
+        "title": "Send input to planner",
+        "action": "send",
+        "agent_id": "planner",
+        "role": "planning",
+        "runtime_status": "running",
+        "pane_id": "%42",
+        "command": "agentdeck agent send --agent planner --text '继续 实现测试'",
+        "preview_text": "继续 实现测试",
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": None,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect planner runtime",
+                "command": "agentdeck agent terminal --agent planner",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "send",
+                "label": "Send input to planner",
+                "command": "agentdeck agent send --agent planner --text '继续 实现测试'",
+                "safety": "explicit_runtime",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     assert payload["runtime_card"]["agents"][0]["agent_id"] == "planner"
     assert payload["runtime_card"]["agents"][0]["status"] == "running"
     assert payload["leader_explanation"]["mode"] == "runtime"
@@ -2290,7 +2322,32 @@ def test_leader_chat_suggests_agent_send_without_sending_input(tmp_path, monkeyp
     assert payload["leader_explanation"]["action_status"] == "running"
     assert payload["leader_explanation"]["safety"] == "explicit_runtime"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
-    assert payload["intent_card"]["embedded_card"] == "runtime_card"
+    assert payload["intent_card"]["embedded_card"] == "runtime_action_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "runtime_card",
+        "terminal_session_card",
+        "control_registry_card",
+    ]
+    assert payload["control_registry_card"]["filters"]["card"] == "runtime_action_card"
+    assert payload["control_registry_card"]["filters"]["scope"] is None
+    assert payload["control_registry_card"]["filters"].get("agent_id") is None
+    assert payload["control_registry_card"]["filters"]["control_id"].startswith(
+        "runtime_action:runtime_action_card:send:planner:"
+    )
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "control_id": selected_control["control_id"],
+        "scope": "runtime_action",
+        "card": "runtime_action_card",
+        "agent_id": "planner",
+        "kind": "send",
+        "label": "Send input to planner",
+        "command": "agentdeck agent send --agent planner --text '继续 实现测试'",
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert selected_control["control_id"].startswith("runtime_action:runtime_action_card:send:planner:")
     assert payload["intent_card"]["controls"][-1] == {
         "kind": "next",
         "label": "Send input to planner",

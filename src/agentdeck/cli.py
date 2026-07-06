@@ -103,6 +103,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "dispatch_preview_card",
         "dispatch_batch_preview_card",
         "agent_ready_card",
+        "runtime_action_card",
         "trace_card",
         "inbox_card",
         "approval_card",
@@ -134,6 +135,12 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     if embedded_card == "agent_ready_card" and payload.get("terminal_session_card") is not None:
         secondary_embedded_cards.append("terminal_session_card")
     if embedded_card == "agent_ready_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "runtime_action_card" and payload.get("runtime_card") is not None:
+        secondary_embedded_cards.append("runtime_card")
+    if embedded_card == "runtime_action_card" and payload.get("terminal_session_card") is not None:
+        secondary_embedded_cards.append("terminal_session_card")
+    if embedded_card == "runtime_action_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "runtime_card" and payload.get("startup_preview_card") is not None:
         secondary_embedded_cards.append("startup_preview_card")
@@ -324,6 +331,10 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck doctor"
     if embedded_card == "approval_card":
         return "agentdeck approval list"
+    if embedded_card == "runtime_action_card":
+        runtime_action_card = payload.get("runtime_action_card")
+        agent_id = runtime_action_card.get("agent_id") if isinstance(runtime_action_card, dict) else None
+        return f"agentdeck agent terminal --agent {agent_id}" if agent_id else None
     if embedded_card == "inbox_card":
         inbox_card = payload.get("inbox_card")
         agent_id = inbox_card.get("agent_id") if isinstance(inbox_card, dict) else None
@@ -383,6 +394,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("terminal_session_card", None)
     payload.setdefault("dispatch_preview_card", None)
     payload.setdefault("dispatch_batch_preview_card", None)
+    payload.setdefault("runtime_action_card", None)
     payload.setdefault("startup_preview_card", None)
     payload.setdefault("provider_setup_card", None)
     payload.setdefault("provider_switch_card", None)
@@ -1109,6 +1121,16 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         card="startup_preview_card",
         agent_id=None,
         controls=startup_preview_card.get("controls"),
+    )
+    runtime_action_card = (
+        payload.get("runtime_action_card") if isinstance(payload.get("runtime_action_card"), dict) else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="runtime_action",
+        card="runtime_action_card",
+        agent_id=runtime_action_card.get("agent_id"),
+        controls=runtime_action_card.get("controls"),
     )
     startup_preview_items = (
         startup_preview_card.get("items") if isinstance(startup_preview_card.get("items"), list) else []
@@ -2057,6 +2079,55 @@ def _agent_ready_card_payload(project_view: dict[str, object]) -> dict[str, obje
         "dispatch_ready_command": dispatch_ready_command,
         "controls": controls,
         "runtime_card": runtime_card,
+    }
+
+
+def _runtime_action_card_payload(
+    runtime_card: dict[str, object],
+    *,
+    action: str,
+    agent_id: str,
+    command: str,
+    preview_text: str | None = None,
+) -> dict[str, object] | None:
+    agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
+    target = next(
+        (agent for agent in agents if isinstance(agent, dict) and agent.get("agent_id") == agent_id),
+        None,
+    )
+    if target is None:
+        return None
+    title = "Send input to {agent_id}".format(agent_id=agent_id) if action == "send" else "Runtime action"
+    controls = [
+        _control(
+            kind="inspect",
+            label=f"Inspect {agent_id} runtime",
+            command=str(target.get("terminal_command") or f"agentdeck agent terminal --agent {agent_id}"),
+            safety="inspect",
+        ),
+        _control(
+            kind=action,
+            label=title,
+            command=command,
+            safety="explicit_runtime",
+            enabled=target.get("status") == "running",
+            blocker=None if target.get("status") == "running" else f"agent is not running: {agent_id}",
+        ),
+    ]
+    return {
+        "mode": "runtime_action",
+        "title": title,
+        "action": action,
+        "agent_id": agent_id,
+        "role": target.get("role"),
+        "runtime_status": target.get("status"),
+        "pane_id": target.get("pane_id"),
+        "command": command,
+        "preview_text": preview_text,
+        "requires_explicit_user": True,
+        "safety": "explicit_runtime",
+        "blocker": None if target.get("status") == "running" else f"agent is not running: {agent_id}",
+        "controls": controls,
     }
 
 
@@ -6638,11 +6709,27 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         )
         if isinstance(agent_ready_card, dict):
             next_command = agent_ready_card.get("next_command")
+        runtime_action_card = (
+            _runtime_action_card_payload(
+                runtime_card,
+                action="send",
+                agent_id=str(send_agent_id),
+                command=str(next_command),
+                preview_text=str(send_text),
+            )
+            if runtime_send_intent is not None
+            else None
+        )
         control_registry_card = None
-        if isinstance(agent_ready_card, dict) or isinstance(startup_preview_card, dict):
+        if (
+            isinstance(agent_ready_card, dict)
+            or isinstance(startup_preview_card, dict)
+            or isinstance(runtime_action_card, dict)
+        ):
             registry_source = {
                 "agent_ready_card": agent_ready_card,
                 "startup_preview_card": startup_preview_card,
+                "runtime_action_card": runtime_action_card,
                 "runtime_card": runtime_card,
                 "terminal_session_card": terminal_session_card,
             }
@@ -6655,7 +6742,13 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 ),
                 None,
             )
-            registry_card_filter = "agent_ready_card" if isinstance(agent_ready_card, dict) else "startup_preview_card"
+            registry_card_filter = (
+                "agent_ready_card"
+                if isinstance(agent_ready_card, dict)
+                else "startup_preview_card"
+                if isinstance(startup_preview_card, dict)
+                else "runtime_action_card"
+            )
             control_registry_card = leader_chat_control_registry_card(
                 {"control_registry": registry_items},
                 card=registry_card_filter,
@@ -6684,6 +6777,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "approval_card": None,
             "startup_preview_card": startup_preview_card,
             "agent_ready_card": agent_ready_card,
+            "runtime_action_card": runtime_action_card,
             "runtime_card": runtime_card,
             "terminal_session_card": terminal_session_card,
             "control_registry_card": control_registry_card,
