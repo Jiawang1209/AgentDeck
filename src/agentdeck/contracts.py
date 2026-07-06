@@ -160,6 +160,20 @@ PROJECT_VIEW_LEADER_FIELDS = (
     "leader_backend",
 )
 
+PROJECT_VIEW_PLAN_ITEM_FIELDS = (
+    "plan_id",
+    "task",
+    "provider",
+    "provider_backend",
+    "provider_transport",
+    "leader_backend",
+    "model",
+    "status",
+    "dispatch_ready",
+    "step_count",
+    "created_at",
+)
+
 PROJECT_VIEW_RECOVERY_FIELDS = (
     "status",
     "reason",
@@ -1386,6 +1400,7 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "top_level_fields": list(PROJECT_VIEW_TOP_LEVEL_FIELDS),
         "leader_fields": list(PROJECT_VIEW_LEADER_FIELDS),
+        "plan_item_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
         "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
         "recovery_pending_fields": list(PROJECT_VIEW_RECOVERY_PENDING_FIELDS),
         "recommended_action_fields": list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS),
@@ -1405,6 +1420,7 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example"] = True
         payload["example_top_level_fields"] = list(example)
         payload["example_leader_fields"] = list(example["leader"])
+        payload["example_plan_item_fields"] = list(example["plans"]["items"][0])
         payload["example_recovery_fields"] = list(example["recovery"])
         payload["example_recovery_pending_fields"] = list(example["recovery"]["pending"])
         payload["example_recommended_action_fields"] = list(example["recovery"]["recommended_action"])
@@ -2497,11 +2513,39 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
                         errors.append(f"missing leader_actions item field: {field}")
     elif "leader_actions" in payload:
         errors.append("leader_actions must be an object")
+    _validate_project_view_plan_items(errors, payload)
     _validate_project_view_summary_items(errors, payload, "messages", PROJECT_VIEW_MESSAGE_ITEM_FIELDS, "message")
     _validate_project_view_summary_items(errors, payload, "jobs", PROJECT_VIEW_JOB_ITEM_FIELDS, "job")
     _validate_project_view_summary_items(errors, payload, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
     _validate_project_view_summary_items(errors, payload, "artifacts", PROJECT_VIEW_ARTIFACT_ITEM_FIELDS, "artifact")
     return {"ok": not errors, "errors": errors}
+
+
+def _validate_project_view_plan_items(errors: list[str], payload: dict[str, object]) -> None:
+    plans = payload.get("plans")
+    if not isinstance(plans, dict):
+        if "plans" in payload:
+            errors.append("plans must be an object")
+        return
+    items = plans.get("items")
+    if not isinstance(items, list):
+        if "items" in plans:
+            errors.append("plans.items must be a list")
+        return
+    if not items:
+        return
+    first_item = items[0]
+    if not isinstance(first_item, dict):
+        errors.append("plans.items must contain objects")
+        return
+    for field in PROJECT_VIEW_PLAN_ITEM_FIELDS:
+        if field not in first_item:
+            errors.append(f"missing plan item field: {field}")
+    leader_backend = first_item.get("leader_backend")
+    if isinstance(leader_backend, dict):
+        _validate_leader_backend(errors, "project_view.plans.items[0]", leader_backend)
+    else:
+        errors.append("project_view.plans.items[0].leader_backend must be an object")
 
 
 def _validate_project_view_summary_items(
@@ -5113,9 +5157,24 @@ def project_view_example() -> dict[str, object]:
                 {
                     "plan_id": "pln_example",
                     "task": "Build a GUI-ready recovery panel",
-                    "status": "planned",
                     "provider": "fake",
+                    "provider_backend": "local",
+                    "provider_transport": "local",
+                    "leader_backend": {
+                        "agent_id": "leader",
+                        "provider": "fake",
+                        "model": "fake-plan",
+                        "provider_backend": "local",
+                        "provider_transport": "local",
+                        "reasoning_backend": "local-fake",
+                        "runtime_kind": "logical_leader",
+                        "pane_backed": False,
+                        "pane_id": None,
+                        "approval_required": True,
+                        "dispatch_ready": False,
+                    },
                     "model": "fake-plan",
+                    "status": "planned",
                     "dispatch_ready": False,
                     "step_count": 1,
                     "created_at": "2026-07-04T00:00:00+00:00",

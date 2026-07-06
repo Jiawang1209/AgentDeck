@@ -43,6 +43,7 @@ from agentdeck.contracts import (
     LEADER_CHAT_TERMINAL_CARD_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
     PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS,
+    PROJECT_VIEW_PLAN_ITEM_FIELDS,
     PROJECT_VIEW_JOB_ITEM_FIELDS,
     PROJECT_VIEW_MESSAGE_ITEM_FIELDS,
     PROJECT_VIEW_ARTIFACT_ITEM_FIELDS,
@@ -1002,6 +1003,9 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
         "approval_required": True,
         "dispatch_ready": False,
     }
+    assert payload["example_plan_item_fields"] == payload["plan_item_fields"]
+    assert set(payload["example_plan_item_fields"]) == set(example["plans"]["items"][0])
+    assert payload["plan_item_fields"] == list(PROJECT_VIEW_PLAN_ITEM_FIELDS)
     assert payload["example_recovery_fields"] == payload["recovery_fields"]
     assert set(payload["example_recovery_fields"]) == set(example["recovery"])
     assert payload["example_recovery_pending_fields"] == payload["recovery_pending_fields"]
@@ -1026,6 +1030,52 @@ def test_validate_project_view_contract_accepts_example() -> None:
     result = validate_project_view_contract(project_view_example())
 
     assert result == {"ok": True, "errors": []}
+
+
+def test_project_view_example_plan_items_include_logical_leader_backend() -> None:
+    payload = project_view_example()
+    plan_item = payload["plans"]["items"][0]
+
+    assert plan_item["leader_backend"] == {
+        "agent_id": "leader",
+        "provider": "fake",
+        "model": "fake-plan",
+        "provider_backend": "local",
+        "provider_transport": "local",
+        "reasoning_backend": "local-fake",
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
+
+
+def test_validate_project_view_contract_requires_plan_item_logical_leader_backend() -> None:
+    payload = project_view_example()
+    payload["plans"]["items"][0]["leader_backend"] = {
+        "agent_id": "planner",
+        "provider": "claude-cli",
+        "model": "claude-default",
+        "provider_backend": "cli",
+        "provider_transport": "subprocess",
+        "reasoning_backend": "cli-subprocess",
+        "runtime_kind": "worker_pane",
+        "pane_backed": True,
+        "pane_id": "%42",
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
+
+    result = validate_project_view_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "project_view.plans.items[0].leader_backend.agent_id must be leader",
+            "project_view.plans.items[0].leader_backend.runtime_kind must be logical_leader without a pane",
+        ],
+    }
 
 
 def test_validate_project_view_contract_reports_missing_top_level_field() -> None:

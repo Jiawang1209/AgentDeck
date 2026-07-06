@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate ProjectView plan leader backend
+
+- 收紧 ProjectView 历史 plan 契约：`plans.items[]` 现在正式暴露 `provider_backend`、`provider_transport` 和同源 `leader_backend`，用于区分 fake/API-backed/CLI-backed Leader 的 plan provenance。
+- 扩展 `validate_project_view_contract()`：会校验 `plans.items[0].leader_backend` 必须保持 `agent_id=leader`、`runtime_kind=logical_leader`、`pane_backed=false`、`pane_id=null`、`approval_required=true`、`dispatch_ready=false`，避免 Codex CLI / Claude CLI Leader 的历史 plan 被误表示成 worker pane 或已可派发执行。
+- 同步 ProjectView contract discovery、稳定 example、schema 文档、AGENT/CLAUDE 约束，明确 `leader.leader_backend` 与 `plans.items[].leader_backend` 都只是 provenance，不是 readiness、tmux pane 或执行授权。
+- 保持控制边界：该校验只拒绝漂移 ProjectView payload，不调用 provider、不创建 plan/action/approval/message/job/inbox、不发送 tmux 输入、不读取 pane、不修改 runtime state。
+- 验证记录：已先确认红测失败，ProjectView example 的 `plans.items[0]` 最初缺少 `leader_backend`，validator 也允许把历史 plan 的 `leader_backend` 改成 `agent_id=planner` / `pane_backed=true`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_project_view_contract_response_includes_example_without_drift tests/test_contracts.py::test_project_view_example_plan_items_include_logical_leader_backend tests/test_contracts.py::test_validate_project_view_contract_requires_plan_item_logical_leader_backend -q` 3 项通过；ProjectView 聚焦回归 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 414 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 440 项通过。
+
 ### Current - Validate dispatch registry item semantics
 
 - 收紧局部 dispatch command palette 契约：`control_registry_card.items[]` 现在会校验 `scope=dispatch_preview` 的 `kind=dispatch` item 必须使用 `agentdeck approval dispatch --approval-id ...` 和 `safety=explicit_runtime`，disabled item 必须带 blocker。
