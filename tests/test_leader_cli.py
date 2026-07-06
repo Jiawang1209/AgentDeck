@@ -3809,6 +3809,12 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
     assert capabilities["leader_status"]["safety"] == "inspect"
     assert capabilities["leader_status"]["requires_explicit_user"] is False
     assert capabilities["leader_status"]["card"] == "leader_status_card"
+    assert capabilities["leader_status"]["example_messages"] == [
+        "查看 Leader 状态",
+        "Leader 概览",
+        "leader status",
+        "leader overview",
+    ]
     assert capabilities["leader_status"]["controls"][0] == {
         "kind": "inspect",
         "label": "Inspect Leader status",

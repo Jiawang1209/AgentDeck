@@ -1667,7 +1667,7 @@ def leader_chat_capability_card() -> dict[str, object]:
             "mode": "leader_status",
             "label": "Inspect Leader status",
             "description": "Inspect the logical Leader, provider readiness, queue counts, and recovery next command.",
-            "example_messages": ["查看 Leader 状态", "leader status"],
+            "example_messages": ["查看 Leader 状态", "Leader 概览", "leader status", "leader overview"],
             "command": "agentdeck leader status",
             "safety": "inspect",
             "requires_explicit_user": False,

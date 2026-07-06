@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Advertise Leader overview alias in help
+
+- 扩展 `agentdeck leader chat --message "帮助"` 的 `leader_status` capability：`example_messages` 现在同时展示 `查看 Leader 状态`、`Leader 概览`、`leader status` 和 `leader overview`。
+- 该改动让自然语言壳和未来 GUI 的能力发现面能主动提示上一轮新增的概览别名，而不是只在隐藏路由里支持它。
+- 保持只读发现边界：help mode 仍只记录 chat turn，不调用 provider、不读取 tmux pane、不创建 plan/action/approval/message/job/inbox，也不执行 capability control。
+- 同步 README 和 `docs/contracts/leader-chat-schema.md`，明确 `leader_status.example_messages` 是中英文状态卡入口的发现来源。
+- 验证记录：已先确认红测失败，`leader_status.example_messages` 最初只包含 `查看 Leader 状态` 和 `leader status`；实现后聚焦/契约测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 3 项通过；Leader/contract 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 345 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 492 项通过。
+
 ### Current - Route Leader overview alias to status card
 
 - 新增自然语言只读别名：`agentdeck leader chat --message "Leader 概览"` / `"leader overview"` 现在进入 `mode=leader_status`，复用与 `agentdeck leader status` 同源的 `leader_status_card`。
