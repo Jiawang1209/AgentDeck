@@ -466,6 +466,7 @@ def _leader_provider_readiness(
     model: str,
     approval_mode: str,
 ) -> dict[str, object]:
+    leader_backend = leader_backend_identity(provider, model)
     if provider == "fake":
         return {
             "agent_id": agent_id,
@@ -474,6 +475,7 @@ def _leader_provider_readiness(
             "approval_mode": approval_mode,
             "provider_backend": leader_provider_backend(provider),
             "provider_transport": leader_provider_transport(provider),
+            "leader_backend": leader_backend,
             "ready": True,
             "supported": True,
             "missing_env": [],
@@ -499,6 +501,7 @@ def _leader_provider_readiness(
             "approval_mode": approval_mode,
             "provider_backend": leader_provider_backend(provider),
             "provider_transport": leader_provider_transport(provider),
+            "leader_backend": leader_backend,
             "ready": ready,
             "supported": True,
             "missing_env": [],
@@ -514,6 +517,7 @@ def _leader_provider_readiness(
             "approval_mode": approval_mode,
             "provider_backend": leader_provider_backend(provider),
             "provider_transport": leader_provider_transport(provider),
+            "leader_backend": leader_backend,
             "ready": False,
             "supported": False,
             "missing_env": [],
@@ -530,6 +534,7 @@ def _leader_provider_readiness(
         "approval_mode": approval_mode,
         "provider_backend": leader_provider_backend(provider),
         "provider_transport": leader_provider_transport(provider),
+        "leader_backend": leader_backend,
         "ready": ready,
         "supported": True,
         "missing_env": [] if ready else [required_env],

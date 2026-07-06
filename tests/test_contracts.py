@@ -1204,12 +1204,26 @@ def test_doctor_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None
         "approval_mode",
         "provider_backend",
         "provider_transport",
+        "leader_backend",
         "ready",
         "supported",
         "missing_env",
         "detail",
         "command_path",
         "setup_commands",
+    ]
+    assert payload["leader_backend_fields"] == [
+        "agent_id",
+        "provider",
+        "model",
+        "provider_backend",
+        "provider_transport",
+        "reasoning_backend",
+        "runtime_kind",
+        "pane_backed",
+        "pane_id",
+        "approval_required",
+        "dispatch_ready",
     ]
     assert payload["provider_check_fields"] == [
         "ok",
@@ -1237,6 +1251,8 @@ def test_doctor_contract_response_includes_example_without_drift(tmp_path: Path)
     assert set(payload["example_response_fields"]) == set(example)
     assert payload["example_configured_leader_fields"] == payload["configured_leader_fields"]
     assert set(payload["example_configured_leader_fields"]) == set(example["configured_leader"])
+    assert payload["example_leader_backend_fields"] == payload["leader_backend_fields"]
+    assert set(payload["example_leader_backend_fields"]) == set(example["configured_leader"]["leader_backend"])
     assert payload["example_provider_check_fields"] == payload["provider_check_fields"]
     assert set(payload["example_provider_check_fields"]) == set(example["deepseek"])
     assert example["configured_leader"]["setup_commands"][0] == (

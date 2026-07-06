@@ -421,6 +421,7 @@ DOCTOR_CONFIGURED_LEADER_FIELDS = (
     "approval_mode",
     "provider_backend",
     "provider_transport",
+    "leader_backend",
     "ready",
     "supported",
     "missing_env",
@@ -1923,6 +1924,7 @@ def doctor_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "response_fields": list(DOCTOR_RESPONSE_FIELDS),
         "configured_leader_fields": list(DOCTOR_CONFIGURED_LEADER_FIELDS),
+        "leader_backend_fields": list(LEADER_BACKEND_FIELDS),
         "provider_check_fields": list(DOCTOR_PROVIDER_CHECK_FIELDS),
         "workbench_contract": "agentdeck contract workbench",
         "leader_chat_contract": "agentdeck contract leader-chat",
@@ -1937,6 +1939,7 @@ def doctor_contract_response(contract_path: Path, include_example: bool = False)
         payload["example"] = True
         payload["example_response_fields"] = list(example)
         payload["example_configured_leader_fields"] = list(example["configured_leader"])
+        payload["example_leader_backend_fields"] = list(example["configured_leader"]["leader_backend"])
         payload["example_provider_check_fields"] = list(example["deepseek"])
         payload["example_doctor"] = example
     return payload
@@ -4593,6 +4596,19 @@ def doctor_example() -> dict[str, object]:
             "approval_mode": "confirm",
             "provider_backend": "api",
             "provider_transport": "http",
+            "leader_backend": {
+                "agent_id": "leader",
+                "provider": "deepseek",
+                "model": "deepseek-chat",
+                "provider_backend": "api",
+                "provider_transport": "http",
+                "reasoning_backend": "api-llm",
+                "runtime_kind": "logical_leader",
+                "pane_backed": False,
+                "pane_id": None,
+                "approval_required": True,
+                "dispatch_ready": False,
+            },
             "ready": False,
             "supported": True,
             "missing_env": ["DEEPSEEK_API_KEY"],

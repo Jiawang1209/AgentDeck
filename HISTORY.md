@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Surface Leader backend identity in doctor diagnostics
+
+- 扩展 `agentdeck doctor` 的 `configured_leader`：现在包含当前配置 provider/model 的 normalized `leader_backend`，让 GUI setup/diagnostics 页面也能复用 ProjectView/workbench/run/review/summary 的 Leader 身份语言。
+- 扩展 doctor contract discovery 与 example：`configured_leader_fields` 新增 `leader_backend`，并公开 `leader_backend_fields` / `example_leader_backend_fields`，方便 GUI 在渲染 provider readiness 时不硬编码 identity 字段。
+- 保持控制边界：`configured_leader.leader_backend` 只是 setup provenance，不表示 provider readiness、tmux pane 绑定、dispatch permission 或执行授权；doctor 仍不调用 provider、不写 state、不读取 pane、不发送 tmux 输入。
+- 同步 `docs/contracts/doctor-schema.md`、README、AGENT.md 和 CLAUDE.md。
+- 验证记录：已先确认红测失败，`agentdeck doctor` 的 `configured_leader`、doctor contract discovery 和 example 最初都缺少 `leader_backend` / `leader_backend_fields`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_doctor_reports_openai_compatible_provider_state tests/test_agent_cli.py::test_doctor_reports_configured_leader_ready_when_env_is_set tests/test_agent_cli.py::test_doctor_reports_codex_cli_leader_ready_from_local_command tests/test_agent_cli.py::test_contract_doctor_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_doctor_example_exports_gui_ready_diagnostics tests/test_contracts.py::test_doctor_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_doctor_contract_response_includes_example_without_drift -q` 7 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 375 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 401 项通过。
+
 ### Current - Surface Leader backend identity in ProjectView
 
 - 扩展 `agentdeck status` / ProjectView 顶层 `leader`：现在包含当前配置 provider/model 的 normalized `leader_backend`，让 GUI、自然语言入口和恢复工具在没有 plan/run 的情况下也能识别 fake、API-backed 或 CLI-backed Leader 来源。

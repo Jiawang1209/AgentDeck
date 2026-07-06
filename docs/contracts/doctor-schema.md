@@ -56,6 +56,19 @@ Use `agentdeck contract doctor --example` to include a stable GUI-ready diagnost
   "approval_mode": "confirm",
   "provider_backend": "api",
   "provider_transport": "http",
+  "leader_backend": {
+    "agent_id": "leader",
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "provider_backend": "api",
+    "provider_transport": "http",
+    "reasoning_backend": "api-llm",
+    "runtime_kind": "logical_leader",
+    "pane_backed": false,
+    "pane_id": null,
+    "approval_required": true,
+    "dispatch_ready": false
+  },
   "ready": false,
   "supported": true,
   "missing_env": ["DEEPSEEK_API_KEY"],
@@ -66,6 +79,8 @@ Use `agentdeck contract doctor --example` to include a stable GUI-ready diagnost
   ]
 }
 ```
+
+`leader_backend` mirrors the normalized logical Leader identity used by ProjectView, workbench, run/review, and summary surfaces. It is setup provenance only; it does not prove provider readiness, bind the Leader to a tmux pane, authorize dispatch, or execute anything.
 
 Provider checks such as `deepseek` and `openai_compatible` contain:
 

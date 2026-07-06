@@ -198,6 +198,19 @@ def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, 
         "approval_mode": "confirm",
         "provider_backend": "api",
         "provider_transport": "http",
+        "leader_backend": {
+            "agent_id": "leader",
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "provider_backend": "api",
+            "provider_transport": "http",
+            "reasoning_backend": "api-llm",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
         "ready": False,
         "supported": True,
         "missing_env": ["DEEPSEEK_API_KEY"],
@@ -265,6 +278,19 @@ def test_doctor_reports_configured_leader_ready_when_env_is_set(tmp_path, monkey
         "approval_mode": "confirm",
         "provider_backend": "api",
         "provider_transport": "http",
+        "leader_backend": {
+            "agent_id": "leader",
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "provider_backend": "api",
+            "provider_transport": "http",
+            "reasoning_backend": "api-llm",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
         "ready": True,
         "supported": True,
         "missing_env": [],
@@ -321,6 +347,19 @@ def test_doctor_reports_codex_cli_leader_ready_from_local_command(
         "approval_mode": "confirm",
         "provider_backend": "cli",
         "provider_transport": "subprocess",
+        "leader_backend": {
+            "agent_id": "leader",
+            "provider": "codex-cli",
+            "model": "codex-default",
+            "provider_backend": "cli",
+            "provider_transport": "subprocess",
+            "reasoning_backend": "cli-subprocess",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
         "ready": True,
         "supported": True,
         "missing_env": [],
@@ -1377,6 +1416,7 @@ def test_contract_doctor_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == expected["response_fields"]
     assert payload["configured_leader_fields"] == expected["configured_leader_fields"]
+    assert payload["leader_backend_fields"] == expected["leader_backend_fields"]
     assert payload["provider_check_fields"] == expected["provider_check_fields"]
     assert payload["workbench_contract"] == "agentdeck contract workbench"
     assert payload["leader_chat_contract"] == "agentdeck contract leader-chat"
@@ -1395,6 +1435,8 @@ def test_contract_doctor_example_exports_gui_ready_diagnostics(capsys) -> None:
     assert set(payload["example_response_fields"]) == set(example)
     assert payload["example_configured_leader_fields"] == payload["configured_leader_fields"]
     assert set(payload["example_configured_leader_fields"]) == set(example["configured_leader"])
+    assert payload["example_leader_backend_fields"] == payload["leader_backend_fields"]
+    assert set(payload["example_leader_backend_fields"]) == set(example["configured_leader"]["leader_backend"])
     assert payload["example_provider_check_fields"] == payload["provider_check_fields"]
     assert set(payload["example_provider_check_fields"]) == set(example["deepseek"])
     assert example["doctor_command"] == "agentdeck doctor"

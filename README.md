@@ -137,7 +137,7 @@ agentdeck events --limit 20
 agentdeck artifacts
 ```
 
-`agentdeck doctor` 会检查 tmux、项目配置和当前配置的 Leader provider readiness。输出里的 `configured_leader` 包含 agent_id、provider、model、approval_mode、provider_backend、provider_transport、supported、ready、missing_env、detail、command_path 和 setup_commands；顶层还会给出 `deepseek`、`openai_compatible`、`codex_cli` 和 `claude_cli` 四个 provider check，方便 GUI 一次性渲染所有 Leader backend 的可用性。API-backed provider 的 `provider_backend=api`、`provider_transport=http`、`command_path=null`；CLI-backed provider 的 `provider_backend=cli`、`provider_transport=subprocess`，可用时显示实际命令路径，例如 `/opt/bin/codex`；fake provider 使用 `local/local`。它只暴露缺失的环境变量名、CLI command path 和 placeholder setup 命令，不暴露密钥值。顶层 `ok=false` 表示当前项目还缺少运行前置条件，例如默认 DeepSeek Leader 缺少 `DEEPSEEK_API_KEY`。
+`agentdeck doctor` 会检查 tmux、项目配置和当前配置的 Leader provider readiness。输出里的 `configured_leader` 包含 agent_id、provider、model、approval_mode、provider_backend、provider_transport、`leader_backend`、supported、ready、missing_env、detail、command_path 和 setup_commands；顶层还会给出 `deepseek`、`openai_compatible`、`codex_cli` 和 `claude_cli` 四个 provider check，方便 GUI 一次性渲染所有 Leader backend 的可用性。API-backed provider 的 `provider_backend=api`、`provider_transport=http`、`command_path=null`；CLI-backed provider 的 `provider_backend=cli`、`provider_transport=subprocess`，可用时显示实际命令路径，例如 `/opt/bin/codex`；fake provider 使用 `local/local`。`configured_leader.leader_backend` 只是 setup provenance，不代表 provider ready、tmux pane 或执行授权。它只暴露缺失的环境变量名、CLI command path 和 placeholder setup 命令，不暴露密钥值。顶层 `ok=false` 表示当前项目还缺少运行前置条件，例如默认 DeepSeek Leader 缺少 `DEEPSEEK_API_KEY`。
 
 `project init` 会创建：
 
