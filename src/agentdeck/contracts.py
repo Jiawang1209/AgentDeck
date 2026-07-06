@@ -3772,6 +3772,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             ):
                 errors.append("intent_card.secondary_embedded_cards references missing control_registry_card")
             if (
+                "inbox_card" in secondary_embedded_cards
+                and payload.get("inbox_card") is None
+            ):
+                errors.append("intent_card.secondary_embedded_cards references missing inbox_card")
+            if (
                 "approval_card" in secondary_embedded_cards
                 and payload.get("approval_card") is None
             ):
@@ -3850,6 +3855,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             ):
                 errors.append(
                     "intent_card.secondary_embedded_cards must include control_registry_card for audit responses"
+                )
+            if (
+                explanation_action_kind in {"inbox", "inbox_ack", "inbox_trace"}
+                and payload.get("inbox_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    f"intent_card.secondary_embedded_cards must include control_registry_card for {explanation_action_kind} responses"
                 )
         elif "secondary_embedded_cards" in intent_card:
             errors.append("intent_card.secondary_embedded_cards must be a list")
@@ -4205,6 +4218,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             and selection.get("next_command") != audit_card.get("events_command")
         ):
             errors.append("control_registry_card.selection.next_command must match audit_card.events_command")
+        if (
+            explanation_action_kind in {"inbox_ack", "inbox_trace"}
+            and isinstance(inbox_card, dict)
+            and isinstance(selection, dict)
+            and selection.get("next_command") != payload.get("next_command")
+        ):
+            errors.append("control_registry_card.selection.next_command must match inbox next_command")
     elif explanation_action_kind == "provider_setup":
         errors.append("control_registry_card is required for provider_setup setup responses")
     elif explanation_action_kind == "leader_status":
@@ -4215,6 +4235,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("control_registry_card is required for ledger responses")
     elif explanation_action_kind == "audit":
         errors.append("control_registry_card is required for audit responses")
+    elif explanation_action_kind in {"inbox", "inbox_ack", "inbox_trace"}:
+        errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif explanation_action_kind in {"approval_dispatch", "approval_dispatch_batch"}:
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif "control_registry_card" in payload and control_registry_card is not None:

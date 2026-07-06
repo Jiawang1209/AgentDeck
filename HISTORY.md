@@ -4,6 +4,17 @@
 
 ## 2026-07-07
 
+### Current - Link inbox chat to command registry controls
+
+- 扩展自然语言 `mode=inbox` 响应：`agentdeck leader chat --message "查看 planner inbox"` / `"查看 leader inbox"` / `"确认 planner 当前 inbox"` 现在会附带过滤到 `scope=inbox` / `card=inbox_card` 的 `control_registry_card`。
+- 扩展 `mode=continue` 的 pending inbox recovery：`agentdeck leader chat --message "继续"` 在嵌入 `inbox_card` 时，也会附带同源过滤后的 `control_registry_card`，并通过 `intent_card.secondary_embedded_cards[]` 暴露给 GUI/TUI。
+- 普通 inbox 查看会展示同源 inbox item 的 preview/ack controls，但不强行选中某个执行项；`inbox_trace` 和 `inbox_ack` 意图会让 registry selection 指向与顶层 `next_command` 相同的 preview 或 ack control。
+- 扩展 `intent_card.secondary_embedded_cards[]`：inbox 响应会列出 `control_registry_card`；当 `trace_card` 是 primary embedded card 时，也保留 `inbox_card` 作为 secondary companion，方便 GUI 同屏渲染通信证据和 mailbox 操作。
+- 收紧契约守门：`validate_leader_chat_contract()` 会拒绝缺少 inbox registry companion 的响应，并要求 `inbox_trace` / `inbox_ack` 的 registry selection 与顶层 `next_command` 对齐。
+- 保持安全边界：inbox registry companion 只是同源命令投影，不自动 ack、不 dispatch、不 capture reply、不读取 pane、不发送 tmux 输入；ack control 仍标记为 `explicit_runtime` 且必须由人类显式执行。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、AGENT/CLAUDE 约束和测试。
+- 验证记录：已先确认红测失败，自然语言 inbox 响应最初没有 `control_registry_card`；实现后 inbox 目标测试 5 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 328 项通过，`conda run -n agentdeck pytest tests/test_leader_cli.py tests/test_contracts.py -q` 354 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 502 项通过。
+
 ### Current - Surface ledger controls in command registry
 
 - 扩展 `agentdeck workbench` 的 `ledger_card`：新增 GUI-ready `controls[]`，其中 `kind=inspect` control 指向只读 `agentdeck workbench`，让 GUI/TUI 可以直接渲染通信账本卡入口。

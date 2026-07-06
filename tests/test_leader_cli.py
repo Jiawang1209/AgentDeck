@@ -4267,6 +4267,13 @@ def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, mon
     assert payload["inbox_card"]["items"][0]["trace_command"] == "agentdeck trace --id inb_planner_head"
     assert payload["inbox_card"]["items"][0]["ack_command"] == "agentdeck ack --agent planner --inbox-id inb_planner_head"
     assert payload["inbox_card"]["items"][0]["can_ack"] is True
+    assert payload["control_registry_card"]["filters"]["scope"] == "inbox"
+    assert payload["control_registry_card"]["filters"]["card"] == "inbox_card"
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == ["scope", "card"]
+    assert payload["control_registry_card"]["item_count"] == 2
+    assert [item["kind"] for item in payload["control_registry_card"]["items"]] == ["preview", "ack"]
+    assert payload["control_registry_card"]["selection"]["selected_control"] is None
+    assert payload["control_registry_card"]["selection"]["next_command"] is None
     assert payload["leader_explanation"]["mode"] == "inbox"
     assert payload["leader_explanation"]["next_command"] == payload["next_command"]
     assert payload["leader_explanation"]["recommended_action_id"] == "inb_planner_head"
@@ -4282,6 +4289,7 @@ def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, mon
         "enabled": True,
         "blocker": None,
     }
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
     assert payload["project_view"]["chat_turns"]["items"][0]["mode"] == "inbox"
 
@@ -4293,6 +4301,47 @@ def test_leader_chat_inspects_agent_inbox_without_mutating_runtime(tmp_path, mon
     assert state_after["leader_actions"] == []
     assert state_after["messages"] == []
     assert state_after["jobs"] == []
+
+
+def test_validate_leader_chat_contract_requires_inbox_registry_card(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["inbox"] = {
+        "planner": [
+            {
+                "inbox_id": "inb_contract_head",
+                "event_type": "task_request",
+                "message_id": "msg_contract",
+                "attempt_id": "att_contract",
+                "job_id": "job_contract",
+                "reply_id": None,
+                "from_actor": "leader",
+                "to_agent": "planner",
+                "task": "验证 inbox registry companion",
+                "status": "pending",
+                "created_at": "2026-07-04T00:00:00+00:00",
+            }
+        ]
+    }
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看 planner inbox"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for inbox responses",
+            "control_registry_card is required for inbox responses",
+        ],
+    }
 
 
 def test_leader_chat_resolves_current_inbox_from_recovery_without_agent_mention(
@@ -4736,6 +4785,21 @@ def test_leader_chat_suggests_ack_for_current_inbox_head_without_acknowledging(
     assert payload["inbox_card"]["items"][0]["controls"][0]["command"] == "agentdeck trace --id inb_ack_me"
     assert payload["inbox_card"]["items"][0]["controls"][1]["command"] == payload["next_command"]
     assert payload["inbox_card"]["items"][0]["can_ack"] is True
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "inbox",
+        "card": "inbox_card",
+        "kind": "ack",
+        "label": "Acknowledge inbox head",
+        "command": payload["next_command"],
+        "safety": "explicit_runtime",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": "planner",
+        "control_id": selected_control["control_id"],
+    }
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
     assert payload["leader_explanation"]["action_kind"] == "inbox_ack"
     assert payload["leader_explanation"]["recommended_action_id"] == "inb_ack_me"
     assert payload["leader_explanation"]["action_status"] == "pending"

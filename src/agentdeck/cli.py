@@ -131,6 +131,10 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     secondary_embedded_cards: list[str] = []
     if embedded_card == "continue_card" and payload.get("runtime_card") is not None:
         secondary_embedded_cards.append("runtime_card")
+    if embedded_card == "continue_card" and payload.get("inbox_card") is not None:
+        secondary_embedded_cards.append("inbox_card")
+    if embedded_card == "continue_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "agent_ready_card" and payload.get("startup_preview_card") is not None:
         secondary_embedded_cards.append("startup_preview_card")
     if embedded_card == "agent_ready_card" and payload.get("runtime_card") is not None:
@@ -160,6 +164,12 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     if embedded_card == "runtime_card" and payload.get("terminal_session_card") is not None:
         secondary_embedded_cards.append("terminal_session_card")
     if embedded_card == "runtime_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "trace_card" and payload.get("inbox_card") is not None:
+        secondary_embedded_cards.append("inbox_card")
+    if embedded_card == "trace_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "inbox_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "leader_status_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
@@ -6124,6 +6134,26 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             if isinstance(recommended_action, dict) and recommended_action.get("source") == "reply"
             else None
         )
+        control_registry_card = None
+        if isinstance(inbox_card, dict):
+            registry_items = _workbench_control_registry({"inbox_card": inbox_card})
+            inbox_control_id = next(
+                (
+                    item.get("control_id")
+                    for item in registry_items
+                    if isinstance(item, dict)
+                    and item.get("scope") == "inbox"
+                    and item.get("card") == "inbox_card"
+                    and item.get("command") == next_command
+                ),
+                None,
+            )
+            control_registry_card = leader_chat_control_registry_card(
+                {"control_registry": registry_items},
+                scope="inbox",
+                card="inbox_card",
+                control_id=str(inbox_control_id) if inbox_control_id else None,
+            )
         leader_action = continue_card.get("leader_action")
         payload = {
             "ok": True,
@@ -6154,6 +6184,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "role_card": None,
             "trace_card": trace_card,
             "ledger_card": None,
+            "control_registry_card": control_registry_card,
             "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
@@ -7798,6 +7829,24 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         refreshed_project_view = _project_view_payload_or_error(config, store)
         if refreshed_project_view is None:
             return 1
+        registry_items = _workbench_control_registry({"inbox_card": inbox_card})
+        inbox_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("scope") == "inbox"
+                and item.get("card") == "inbox_card"
+                and item.get("command") == next_command
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="inbox",
+            card="inbox_card",
+            control_id=str(inbox_control_id) if inbox_control_id else None,
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -7826,6 +7875,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": None,
+            "control_registry_card": control_registry_card,
             "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
