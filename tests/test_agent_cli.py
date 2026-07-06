@@ -989,6 +989,16 @@ def test_contract_controls_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["controls_command"] == "agentdeck controls"
     assert payload["contract_path"].endswith("docs/contracts/controls-schema.md")
     assert payload["contract_exists"] is True
+    assert payload["control_registry_group_fields"] == [
+        "group_id",
+        "scope",
+        "card",
+        "label",
+        "item_count",
+        "enabled_count",
+        "disabled_count",
+        "items",
+    ]
     assert payload["workbench_contract"] == "agentdeck contract workbench"
     assert payload["leader_chat_contract"] == "agentdeck contract leader-chat"
 
@@ -1003,6 +1013,10 @@ def test_contract_controls_example_exports_gui_ready_response(capsys) -> None:
     example = payload["example_control_registry_card"]
     assert example["mode"] == "control_registry"
     assert example["item_count"] == len(example["items"])
+    assert example["group_count"] == len(example["groups"])
+    assert example["groups"][0]["group_id"] == "leader:leader_card"
+    assert example["groups"][0]["label"] == "Leader"
+    assert example["groups"][0]["items"][0] == example["items"][0]
     assert payload["example_control_registry_card_fields"] == payload["control_registry_card_fields"]
     assert set(payload["example_control_registry_item_fields"]) == set(payload["control_registry_item_fields"])
     assert {
@@ -2791,6 +2805,20 @@ def test_controls_outputs_command_palette_without_mutating_state(tmp_path, monke
     assert payload["source_command"] == "agentdeck workbench"
     assert payload["default_command"] == "agentdeck controls"
     assert payload["item_count"] == len(payload["items"])
+    assert payload["group_count"] == len(payload["groups"])
+    assert payload["groups"][0] == {
+        "group_id": "leader:leader_card",
+        "scope": "leader",
+        "card": "leader_card",
+        "label": "Leader",
+        "item_count": 5,
+        "enabled_count": 3,
+        "disabled_count": 2,
+        "items": payload["items"][:5],
+    }
+    runtime_group = next(group for group in payload["groups"] if group["group_id"] == "runtime:runtime_card")
+    assert runtime_group["label"] == "Runtime"
+    assert len(runtime_group["items"]) == len([item for item in payload["items"] if item["scope"] == "runtime"])
     assert payload["items"][0] == {
         "scope": "leader",
         "card": "leader_card",
@@ -3329,6 +3357,8 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     )
     assert payload["example_control_registry_card_fields"] == payload["control_registry_card_fields"]
     assert set(payload["example_control_registry_card_fields"]) == set(example["control_registry_card"])
+    assert example["control_registry_card"]["group_count"] == len(example["control_registry_card"]["groups"])
+    assert example["control_registry_card"]["groups"][0]["items"][0] == example["control_registry_card"]["items"][0]
     assert example["trace_card"] is None
     assert example["leader_explanation"]["safety"] == "safe_apply"
     assert example["leader_explanation"]["recommended_action_id"] == example["leader_action"]["action_id"]

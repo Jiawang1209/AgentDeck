@@ -222,11 +222,36 @@ Help-mode also includes `control_registry_card`, a read-only command palette sna
       "blocker": null,
       "agent_id": "leader"
     }
+  ],
+  "group_count": 1,
+  "groups": [
+    {
+      "group_id": "leader:leader_card",
+      "scope": "leader",
+      "card": "leader_card",
+      "label": "Leader",
+      "item_count": 1,
+      "enabled_count": 1,
+      "disabled_count": 0,
+      "items": [
+        {
+          "scope": "leader",
+          "card": "leader_card",
+          "kind": "continue",
+          "label": "Continue",
+          "command": "agentdeck continue",
+          "safety": "inspect",
+          "enabled": true,
+          "blocker": null,
+          "agent_id": "leader"
+        }
+      ]
+    }
   ]
 }
 ```
 
-Help-mode is returned when the human asks `帮助`, `help`, `/help`, `你能做什么`, `有哪些能力`, `命令面板`, `commands`, or `capabilities`. It records a chat turn, recommends `agentdeck workbench`, embeds `capability_card` and `control_registry_card`, and must not create a plan, leader action, approval, message, job, inbox item, inspect tmux panes, call the provider, or send tmux input. The capability entries, controls, and registry items describe available commands; they are not permission to auto-run those commands.
+Help-mode is returned when the human asks `帮助`, `help`, `/help`, `你能做什么`, `有哪些能力`, `命令面板`, `commands`, or `capabilities`. It records a chat turn, recommends `agentdeck workbench`, embeds `capability_card` and `control_registry_card`, and must not create a plan, leader action, approval, message, job, inbox item, inspect tmux panes, call the provider, or send tmux input. The capability entries, controls, registry items, and registry groups describe available commands; they are not permission to auto-run those commands. `control_registry_card.groups[]` follows the same derived grouping contract as `agentdeck controls`.
 
 Continue-mode responses include `continue_card`, which reuses the same recovery card shape as `agentdeck continue`:
 

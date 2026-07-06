@@ -284,6 +284,16 @@ def test_controls_contract_payload_is_reusable_without_cli(tmp_path: Path) -> No
     assert payload["contract_exists"] is True
     assert payload["control_registry_card_fields"] == list(CONTROL_REGISTRY_CARD_FIELDS)
     assert payload["control_registry_item_fields"] == list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
+    assert payload["control_registry_group_fields"] == [
+        "group_id",
+        "scope",
+        "card",
+        "label",
+        "item_count",
+        "enabled_count",
+        "disabled_count",
+        "items",
+    ]
     assert payload["workbench_contract"] == "agentdeck contract workbench"
     assert payload["leader_chat_contract"] == "agentdeck contract leader-chat"
 
@@ -305,12 +315,54 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
     assert example["source_command"] == "agentdeck workbench"
     assert example["default_command"] == "agentdeck controls"
     assert example["item_count"] == len(example["items"])
+    assert example["group_count"] == len(example["groups"])
+    assert example["groups"][0] == {
+        "group_id": "leader:leader_card",
+        "scope": "leader",
+        "card": "leader_card",
+        "label": "Leader",
+        "item_count": 5,
+        "enabled_count": 3,
+        "disabled_count": 2,
+        "items": example["items"][:5],
+    }
+    terminal_group = next(group for group in example["groups"] if group["group_id"] == "terminal_session:terminal_session_card")
+    assert terminal_group["label"] == "Terminal session"
+    assert [item["kind"] for item in terminal_group["items"]] == [
+        "attach_session",
+        "open_controls",
+        "refresh_runtime",
+    ]
 
 
 def test_validate_control_registry_card_contract_accepts_example() -> None:
     result = validate_control_registry_card_contract(controls_example())
 
     assert result == {"ok": True, "errors": []}
+
+
+def test_validate_control_registry_card_contract_requires_group_count_match() -> None:
+    payload = controls_example()
+    payload["groups"][0]["item_count"] = 999
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.groups: group item_count must match items length"],
+    }
+
+
+def test_validate_control_registry_card_contract_requires_groups_match_items() -> None:
+    payload = controls_example()
+    payload["groups"][0]["label"] = "Wrong label"
+
+    result = validate_control_registry_card_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.groups must match items grouped by scope/card"],
+    }
 
 
 def test_validate_control_registry_card_contract_requires_provider_switch_command() -> None:
@@ -806,6 +858,8 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
         "default_command",
         "item_count",
         "items",
+        "group_count",
+        "groups",
     ]
 
 
@@ -2083,6 +2137,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["example_control_registry_card_fields"] == list(example["control_registry_card"])
     assert example["control_registry_card"]["items"][0] == example["workbench_card"]["control_registry"][0]
     assert example["control_registry_card"]["item_count"] == len(example["control_registry_card"]["items"])
+    assert example["control_registry_card"]["group_count"] == len(example["control_registry_card"]["groups"])
+    assert example["control_registry_card"]["groups"][0]["items"][0] == example["workbench_card"]["control_registry"][0]
     assert payload["example_capability_card_fields"] == payload["capability_card_fields"]
     assert payload["example_capability_card_fields"] == list(example["capability_card"])
     assert "controls" in payload["capability_item_fields"]

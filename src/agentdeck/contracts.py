@@ -547,9 +547,22 @@ CONTROL_REGISTRY_CARD_FIELDS = (
     "default_command",
     "item_count",
     "items",
+    "group_count",
+    "groups",
 )
 
 LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS = CONTROL_REGISTRY_CARD_FIELDS
+
+CONTROL_REGISTRY_GROUP_FIELDS = (
+    "group_id",
+    "scope",
+    "card",
+    "label",
+    "item_count",
+    "enabled_count",
+    "disabled_count",
+    "items",
+)
 
 CONTINUE_CARD_FIELDS = (
     "ok",
@@ -1302,6 +1315,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "control_mode_control_fields": list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS),
         "workbench_control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
         "control_registry_card_fields": list(LEADER_CHAT_CONTROL_REGISTRY_CARD_FIELDS),
+        "control_registry_group_fields": list(CONTROL_REGISTRY_GROUP_FIELDS),
         "capability_card_fields": list(LEADER_CHAT_CAPABILITY_CARD_FIELDS),
         "capability_item_fields": list(LEADER_CHAT_CAPABILITY_ITEM_FIELDS),
         "capability_control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
@@ -1545,6 +1559,7 @@ def leader_chat_capability_card() -> dict[str, object]:
 
 def leader_chat_control_registry_card(workbench_card: dict[str, object]) -> dict[str, object]:
     items = workbench_card.get("control_registry") if isinstance(workbench_card.get("control_registry"), list) else []
+    groups = _control_registry_groups(items)
     return {
         "mode": "control_registry",
         "title": "Command palette",
@@ -1552,7 +1567,57 @@ def leader_chat_control_registry_card(workbench_card: dict[str, object]) -> dict
         "default_command": "agentdeck controls",
         "item_count": len(items),
         "items": items,
+        "group_count": len(groups),
+        "groups": groups,
     }
+
+
+def _control_registry_groups(items: list[object]) -> list[dict[str, object]]:
+    groups: list[dict[str, object]] = []
+    group_index: dict[tuple[str, str], dict[str, object]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        scope = str(item.get("scope") or "")
+        card = str(item.get("card") or "")
+        key = (scope, card)
+        group = group_index.get(key)
+        if group is None:
+            group = {
+                "group_id": f"{scope}:{card}",
+                "scope": scope,
+                "card": card,
+                "label": _control_registry_group_label(scope, card),
+                "item_count": 0,
+                "enabled_count": 0,
+                "disabled_count": 0,
+                "items": [],
+            }
+            group_index[key] = group
+            groups.append(group)
+        group_items = group["items"] if isinstance(group["items"], list) else []
+        group_items.append(item)
+        group["item_count"] = int(group["item_count"]) + 1
+        if item.get("enabled") is True:
+            group["enabled_count"] = int(group["enabled_count"]) + 1
+        else:
+            group["disabled_count"] = int(group["disabled_count"]) + 1
+    return groups
+
+
+def _control_registry_group_label(scope: str, card: str) -> str:
+    labels = {
+        ("leader", "leader_card"): "Leader",
+        ("provider", "provider_health"): "Provider",
+        ("policy", "control_mode_card"): "Control mode",
+        ("terminal_session", "terminal_session_card"): "Terminal session",
+        ("runtime", "runtime_card"): "Runtime",
+        ("role", "role_card"): "Roles",
+        ("inbox", "inbox_card"): "Inbox",
+        ("inbox", "leader_inbox_card"): "Leader inbox",
+        ("operator", "operator_card"): "Operator",
+    }
+    return labels.get((scope, card), card.replace("_", " ").strip().title() or scope.replace("_", " ").title())
 
 
 def leader_chat_action_card(action: dict[str, object]) -> dict[str, object]:
@@ -1768,6 +1833,7 @@ def controls_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "control_registry_card_fields": list(CONTROL_REGISTRY_CARD_FIELDS),
         "control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
+        "control_registry_group_fields": list(CONTROL_REGISTRY_GROUP_FIELDS),
         "workbench_contract": "agentdeck contract workbench",
         "leader_chat_contract": "agentdeck contract leader-chat",
     }
@@ -1780,6 +1846,7 @@ def controls_contract_response(contract_path: Path, include_example: bool = Fals
         payload["example"] = True
         payload["example_control_registry_card_fields"] = list(example)
         payload["example_control_registry_item_fields"] = list(example["items"][0])
+        payload["example_control_registry_group_fields"] = list(example["groups"][0])
         payload["example_control_registry_card"] = example
     return payload
 
@@ -3180,6 +3247,39 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                         )
     elif "items" in control_registry_card:
         errors.append("control_registry_card.items must be a list")
+    groups = control_registry_card.get("groups")
+    if isinstance(groups, list):
+        if control_registry_card.get("group_count") != len(groups):
+            errors.append("control_registry_card.group_count must match groups length")
+        group_counts_valid = True
+        for group in groups:
+            if not isinstance(group, dict):
+                errors.append("control_registry_card.groups must be objects")
+                group_counts_valid = False
+                continue
+            for field in CONTROL_REGISTRY_GROUP_FIELDS:
+                if field not in group:
+                    errors.append(f"control_registry_card.groups: missing group field: {field}")
+            group_items = group.get("items")
+            if isinstance(group_items, list):
+                if group.get("item_count") != len(group_items):
+                    errors.append("control_registry_card.groups: group item_count must match items length")
+                    group_counts_valid = False
+                enabled_count = sum(1 for item in group_items if isinstance(item, dict) and item.get("enabled") is True)
+                disabled_count = sum(1 for item in group_items if not (isinstance(item, dict) and item.get("enabled") is True))
+                if group.get("enabled_count") != enabled_count:
+                    errors.append("control_registry_card.groups: enabled_count must match enabled items")
+                    group_counts_valid = False
+                if group.get("disabled_count") != disabled_count:
+                    errors.append("control_registry_card.groups: disabled_count must match disabled items")
+                    group_counts_valid = False
+            elif "items" in group:
+                errors.append("control_registry_card.groups.items must be a list")
+                group_counts_valid = False
+        if isinstance(items, list) and group_counts_valid and groups != _control_registry_groups(items):
+            errors.append("control_registry_card.groups must match items grouped by scope/card")
+    elif "groups" in control_registry_card:
+        errors.append("control_registry_card.groups must be a list")
 
 
 def _validate_capability_card_contract(errors: list[str], capability_card: dict[str, object]) -> None:
