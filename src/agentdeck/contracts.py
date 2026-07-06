@@ -6708,6 +6708,14 @@ def workbench_example() -> dict[str, object]:
                     "blocker": None,
                 },
                 {
+                    "kind": "leader_status",
+                    "label": "Leader status",
+                    "command": "agentdeck leader status",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
                     "kind": "status",
                     "label": "Project status",
                     "command": "agentdeck status",

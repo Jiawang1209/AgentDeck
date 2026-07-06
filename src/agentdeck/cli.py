@@ -1412,6 +1412,12 @@ def _workbench_leader_card(project_view: dict[str, object]) -> dict[str, object]
                 blocker="requires plan_id",
             ),
             _control(kind="actions", label="Leader actions", command="agentdeck leader actions", safety="inspect"),
+            _control(
+                kind="leader_status",
+                label="Leader status",
+                command="agentdeck leader status",
+                safety="inspect",
+            ),
             _control(kind="status", label="Project status", command="agentdeck status", safety="inspect"),
         ],
     }

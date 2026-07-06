@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Surface Leader status in command registry
+
+- 扩展 workbench `leader_card.controls[]`：新增 `kind=leader_status` inspect control，命令为 `agentdeck leader status`，与已有完整 ProjectView `kind=status` / `agentdeck status` 区分。
+- 因 `agentdeck controls` 从同一份 workbench `control_registry[]` 派生，统一命令面板现在也会在 `scope=leader` 中暴露窄版 Leader 状态入口，供未来 GUI 顶栏、命令面板或自然语言壳直接渲染。
+- 保持只读控制边界：该 control 只是 `safety=inspect` 的命令投影，不调用 provider、不读取 tmux pane、不写 state、不创建 plan/action/approval/message/job/inbox，也不执行任何推荐命令。
+- 同步 README、`docs/contracts/workbench-schema.md` 和 `docs/contracts/controls-schema.md`，明确 `leader_status` 与完整 ProjectView `status` 的区别。
+- 验证记录：已先确认红测失败，workbench `leader_card.controls[]` 和 `agentdeck controls` 统一 registry 最初缺少 `kind=leader_status`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_controls_outputs_command_palette_without_mutating_state tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 3 项通过；相关回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py -q` 324 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 491 项通过。
+
 ### Current - Advertise Leader status in chat capabilities
 
 - 扩展 `agentdeck leader chat --message "帮助"` 的 `capability_card`：新增 `mode=leader_status` 能力项，示例说法为 `查看 Leader 状态` / `leader status`。

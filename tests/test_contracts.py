@@ -431,10 +431,10 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
         "scope": "leader",
         "card": "leader_card",
         "label": "Leader",
-        "item_count": 5,
-        "enabled_count": 3,
+        "item_count": 6,
+        "enabled_count": 4,
         "disabled_count": 2,
-        "items": example["items"][:5],
+        "items": example["items"][:6],
     }
     terminal_group = next(group for group in example["groups"] if group["group_id"] == "terminal_session:terminal_session_card")
     assert terminal_group["label"] == "Terminal session"
@@ -1631,6 +1631,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         "continue",
         "review",
         "actions",
+        "leader_status",
         "status",
     ]
     assert set(example["leader_card"]["controls"][0]) == set(WORKBENCH_LEADER_CONTROL_FIELDS)
@@ -1662,6 +1663,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         for item in example["control_registry"]
     } >= {
         ("leader", "leader_card", "continue", "leader"),
+        ("leader", "leader_card", "leader_status", "leader"),
         ("policy", "control_mode_card", "set_mode", None),
         ("agent_ready", "agent_ready_card", "inspect", None),
         ("agent_ready", "agent_ready_card", "spawn_ready", None),
