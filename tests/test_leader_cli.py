@@ -1987,6 +1987,10 @@ def test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup(
     assert payload["leader_explanation"]["safety"] == "explicit_runtime"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
     assert payload["intent_card"]["embedded_card"] == "agent_ready_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == [
+        "runtime_card",
+        "terminal_session_card",
+    ]
     assert payload["intent_card"]["controls"][0] == {
         "kind": "inspect",
         "label": "Inspect agent_ready_card",
@@ -2019,6 +2023,30 @@ def test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup(
     assert fake.captured == []
     assert fake.killed == []
     assert fake.checked_panes == []
+
+
+def test_validate_leader_chat_contract_requires_agent_ready_secondary_cards(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: FakeTmuxBackend())
+
+    exit_code = cli.main(["leader", "chat", "--message", "启动所有 agent"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    result = cli.validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include runtime_card for runtime_ready responses",
+            "intent_card.secondary_embedded_cards must include terminal_session_card for runtime_ready responses",
+        ],
+    }
 
 
 def test_leader_chat_open_agent_inbox_does_not_trigger_spawn_intent(tmp_path, monkeypatch, capsys) -> None:

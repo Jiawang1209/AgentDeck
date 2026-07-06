@@ -3225,6 +3225,15 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append(
                     "intent_card.secondary_embedded_cards must include provider_switch_card for provider_switch setup responses"
                 )
+            if (
+                explanation_action_kind == "runtime_ready"
+                and payload.get("agent_ready_card") is not None
+            ):
+                for card_name in ["runtime_card", "terminal_session_card"]:
+                    if payload.get(card_name) is not None and card_name not in secondary_embedded_cards:
+                        errors.append(
+                            f"intent_card.secondary_embedded_cards must include {card_name} for runtime_ready responses"
+                        )
         elif "secondary_embedded_cards" in intent_card:
             errors.append("intent_card.secondary_embedded_cards must be a list")
         recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}

@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Surface startup terminal companions
+
+- 扩展自然语言多 Agent 启动准备入口：`agentdeck leader chat --message "启动所有 agent"` 现在在 `intent_card.secondary_embedded_cards` 中显式列出 `runtime_card` 和 `terminal_session_card`。
+- 这让 GUI/TUI 可以从同一个 intent surface 渲染启动清单、runtime 状态和项目级 tmux terminal strip，贴近本地多智能体终端工作台的北极星目标。
+- 收紧 leader-chat validator：当 `leader_explanation.action_kind=runtime_ready` 且响应包含 `agent_ready_card` 时，`intent_card.secondary_embedded_cards` 必须包含 `runtime_card` 和 `terminal_session_card`。
+- 保持控制边界：该响应仍只建议显式 `agentdeck agent spawn-ready --confirm` 或对应下一步，不自动 spawn pane、不 attach/select-pane、不 refresh runtime、不 dispatch approval、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 验证记录：已先确认红测失败，live `启动所有 agent` 响应最初 `intent_card.secondary_embedded_cards=[]`；也确认 validator 最初允许清空 runtime_ready secondary cards 的坏 payload 通过；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_surfaces_agent_ready_card_for_multi_agent_startup tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_agent_ready_secondary_cards tests/test_leader_cli.py::test_leader_chat_suggests_runtime_refresh_without_reconciling_state tests/test_leader_cli.py::test_leader_chat_inspects_runtime_without_mutating_state -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 402 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 428 项通过。
+
 ### Current - Guard explicit next control safety
 
 - 收紧 leader-chat `intent_card.controls[]` 契约：当 `intent_card.requires_explicit_user=true` 时，`kind=next` 主操作 control 不得使用 `safety=inspect`。
