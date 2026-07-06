@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Validate dispatch registry item semantics
+
+- 收紧局部 dispatch command palette 契约：`control_registry_card.items[]` 现在会校验 `scope=dispatch_preview` 的 `kind=dispatch` item 必须使用 `agentdeck approval dispatch --approval-id ...` 和 `safety=explicit_runtime`，disabled item 必须带 blocker。
+- 收紧批量 dispatch command palette 契约：`scope=dispatch_batch_preview` 的 `kind=dispatch_ready` item 必须使用 `agentdeck approval dispatch-ready --confirm` 和 `safety=explicit_runtime`；inspect item 仍必须指向 `agentdeck approval list` 且使用 `safety=inspect`。
+- 同步 controls/README/AGENT/CLAUDE 文档，明确自然语言审批派发响应里的局部 registry 和独立 `agentdeck controls` 一样是只读命令投影，不是第二套授权或执行入口。
+- 保持控制边界：该校验只拒绝漂移 payload，不自动 approve/reject/dispatch/dispatch-ready，不创建 message/job/inbox，不发送 tmux 输入，不读取 pane，不修改 runtime state。
+- 验证记录：已先确认红测失败，validator 最初允许 `scope=dispatch_preview` 的 dispatch item 改成 `agentdeck approval list`，也允许 `scope=dispatch_batch_preview` 的 dispatch_ready item 改成 `safety=inspect`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_validate_leader_chat_contract_rejects_dispatch_preview_registry_item_drift tests/test_leader_cli.py::test_validate_leader_chat_contract_rejects_dispatch_batch_registry_item_drift tests/test_leader_cli.py::test_leader_chat_suggests_dispatch_for_approved_approval_without_dispatching tests/test_leader_cli.py::test_leader_chat_blocks_dispatch_preview_when_agent_is_not_spawned tests/test_leader_cli.py::test_leader_chat_previews_all_approved_dispatches_without_dispatching tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_dispatch_preview_registry_cards tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_dispatch_batch_registry_cards tests/test_contracts.py::test_validate_control_registry_card_contract_accepts_example tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_leader_chat_contract_accepts_example -q` 10 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 412 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 438 项通过。
+
 ### Current - Add dispatch preview control registry
 
 - 扩展自然语言审批派发确认面：`agentdeck leader chat --message "派发当前审批"` 现在在 `dispatch_preview_card` 之外返回过滤到 `dispatch_preview_card` 的 `control_registry_card`，并让 selection 指向顶层 `agentdeck approval dispatch --approval-id <id>` 对应的 dispatch control。

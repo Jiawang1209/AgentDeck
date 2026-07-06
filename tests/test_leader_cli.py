@@ -4959,6 +4959,42 @@ def test_validate_leader_chat_contract_requires_dispatch_preview_registry_cards(
     }
 
 
+def test_validate_leader_chat_contract_rejects_dispatch_preview_registry_item_drift(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "校验派发 registry item"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    bind_agent(root, "planner", "%42")
+
+    exit_code = cli.main(["leader", "chat", "--message", "派发当前审批"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    bad_command = "agentdeck approval list"
+    registry = payload["control_registry_card"]
+    for item in registry["items"]:
+        if item["scope"] == "dispatch_preview" and item["kind"] == "dispatch":
+            item["command"] = bad_command
+    registry["selection"]["selected_control"]["command"] = bad_command
+    registry["selection"]["next_command"] = bad_command
+    for group in registry["groups"]:
+        for item in group["items"]:
+            if item["scope"] == "dispatch_preview" and item["kind"] == "dispatch":
+                item["command"] = bad_command
+
+    result = cli.validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["control_registry_card.items: dispatch_preview dispatch command must use approval dispatch"],
+    }
+
+
 def test_leader_chat_previews_all_approved_dispatches_without_dispatching(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -5130,6 +5166,44 @@ def test_validate_leader_chat_contract_requires_dispatch_batch_registry_cards(
             "intent_card.secondary_embedded_cards must include approval_card for approval_dispatch_batch responses",
             "intent_card.secondary_embedded_cards must include control_registry_card for approval_dispatch_batch responses",
             "control_registry_card.filters.card must be dispatch_batch_preview_card for approval_dispatch_batch responses",
+        ],
+    }
+
+
+def test_validate_leader_chat_contract_rejects_dispatch_batch_registry_item_drift(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["leader", "plan", "--task", "校验批量派发 registry item"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    cli.main(["approval", "approve", "--approval-id", approvals[0]["approval_id"]])
+    capsys.readouterr()
+    cli.main(["approval", "approve", "--approval-id", approvals[1]["approval_id"]])
+    capsys.readouterr()
+    bind_agent(root, "planner", "%42")
+
+    exit_code = cli.main(["leader", "chat", "--message", "派发所有已审批"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    registry = payload["control_registry_card"]
+    for item in registry["items"]:
+        if item["scope"] == "dispatch_batch_preview" and item["kind"] == "dispatch_ready":
+            item["safety"] = "inspect"
+    registry["selection"]["selected_control"]["safety"] = "inspect"
+    for group in registry["groups"]:
+        for item in group["items"]:
+            if item["scope"] == "dispatch_batch_preview" and item["kind"] == "dispatch_ready":
+                item["safety"] = "inspect"
+
+    result = cli.validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "control_registry_card.items: dispatch_batch_preview dispatch_ready must use safety=explicit_runtime"
         ],
     }
 
