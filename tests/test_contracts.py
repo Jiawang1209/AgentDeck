@@ -2928,6 +2928,19 @@ def test_validate_leader_chat_contract_rejects_missing_secondary_runtime_card() 
     }
 
 
+def test_validate_leader_chat_contract_rejects_missing_secondary_provider_switch_card() -> None:
+    payload = leader_chat_example()
+    payload["provider_switch_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = ["provider_switch_card"]
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["intent_card.secondary_embedded_cards references missing provider_switch_card"],
+    }
+
+
 def test_validate_leader_chat_contract_requires_intent_next_command_match() -> None:
     payload = leader_chat_example()
     payload["intent_card"]["next_command"] = "agentdeck workbench"

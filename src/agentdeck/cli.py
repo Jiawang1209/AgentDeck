@@ -129,6 +129,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("runtime_card")
     if embedded_card == "runtime_card" and payload.get("terminal_session_card") is not None:
         secondary_embedded_cards.append("terminal_session_card")
+    if embedded_card == "provider_health" and payload.get("provider_switch_card") is not None:
+        secondary_embedded_cards.append("provider_switch_card")
     if "runtime_card" in secondary_embedded_cards and payload.get("terminal_session_card") is not None:
         secondary_embedded_cards.append("terminal_session_card")
     route_source = "provider_plan" if mode in {"plan", "run_start"} else "state_review" if mode in {"review", "summary"} else "local_rule"

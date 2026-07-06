@@ -1029,7 +1029,7 @@ def test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mu
         "matched_intent": "setup",
         "route_source": "local_rule",
         "embedded_card": "provider_health",
-        "secondary_embedded_cards": [],
+        "secondary_embedded_cards": ["provider_switch_card"],
         "read_only": True,
         "next_command": "agentdeck leader set-provider --provider codex-cli --model codex-default",
         "requires_explicit_user": True,
@@ -1092,6 +1092,7 @@ def test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_comma
     assert payload["leader_explanation"]["safety"] == "explicit_user"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
     assert payload["intent_card"]["embedded_card"] == "provider_health"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["provider_switch_card"]
     assert payload["intent_card"]["next_command"] == expected_command
     assert payload["intent_card"]["controls"][1] == {
         "kind": "next",

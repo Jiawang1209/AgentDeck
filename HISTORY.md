@@ -4,6 +4,14 @@
 
 ## 2026-07-06
 
+### Current - Link provider switch card from intent routing
+
+- 扩展 provider-switch setup 的 `intent_card`：现在保持 `embedded_card=provider_health` 作为当前 provider 诊断主卡片，同时在 `secondary_embedded_cards` 中显式列出 `provider_switch_card`，让 GUI 能从同一个自然语言响应渲染当前状态和目标切换确认面板。
+- 扩展 `validate_leader_chat_contract()`：当 `intent_card.secondary_embedded_cards` 引用 `provider_switch_card` 但响应缺少该 card 时会拒绝输出，避免 GUI 收到悬空 card 引用。
+- 保持控制边界：该链接仍只是渲染提示和只读契约校验，不执行 provider switch、不修改 `.agentdeck/config.toml`、不调用 provider、不创建 plan/action/approval/message/job/inbox、不读取 pane、不发送 tmux 输入。
+- 同步 `docs/contracts/leader-chat-schema.md`、README、AGENT.md 和 CLAUDE.md。
+- 验证记录：已先确认红测失败，provider switch setup 的 `intent_card.secondary_embedded_cards` 最初为空，validator 最初没有拒绝缺失的 secondary `provider_switch_card` 引用；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_provider_switch_intent_suggests_explicit_command_without_mutating_config tests/test_leader_cli.py::test_leader_chat_provider_switch_require_ready_intent_suggests_guarded_command_without_mutating_config tests/test_contracts.py::test_validate_leader_chat_contract_rejects_missing_secondary_provider_switch_card -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 378 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 404 项通过。
+
 ### Current - Add provider switch confirmation card
 
 - 扩展自然语言 `agentdeck leader chat` 的 provider switch setup 响应：当用户说“切换 Leader 到 Codex CLI / Claude Code / DeepSeek”时，除了 `provider_health` 和 `next_command`，现在还返回结构化 `provider_switch_card`。
