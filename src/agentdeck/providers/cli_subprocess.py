@@ -58,6 +58,9 @@ class CliLeaderProvider:
         return "\n".join(
             [
                 "You are the AgentDeck Leader Agent.",
+                "You are the logical Leader Agent with agent_id=leader.",
+                "You are backed by this local CLI subprocess only for reasoning.",
+                "Do not reuse worker tmux panes or claim a dedicated Leader pane.",
                 "Return only a JSON object plan. Do not dispatch work.",
                 "Every step must require human approval before dispatch.",
                 "Required schema: goal, summary, steps, approval_required, dispatch_ready.",

@@ -229,6 +229,8 @@ def test_codex_cli_provider_runs_non_interactive_command_and_parses_json_plan(
     assert provider.doctor() == (True, "codex is available")
     assert seen["command"] == ["codex", "exec", "--sandbox", "read-only", "-"]
     assert "Return only a JSON object plan" in str(seen["input"])
+    assert "You are the logical Leader Agent with agent_id=leader" in str(seen["input"])
+    assert "Do not reuse worker tmux panes or claim a dedicated Leader pane" in str(seen["input"])
     assert '"role_prompt":' in str(seen["input"])
     assert "负责需求澄清、任务拆解、架构方案和风险识别" in str(seen["input"])
     assert "让 Codex 做 Leader" in str(seen["input"])
@@ -287,6 +289,8 @@ def test_claude_cli_provider_runs_print_command_and_parses_json_plan(tmp_path, m
     assert provider.doctor() == (True, "claude is available")
     assert seen["command"] == ["claude", "--print", "--output-format", "text", "--permission-mode", "plan"]
     assert "Return only a JSON object plan" in str(seen["input"])
+    assert "You are the logical Leader Agent with agent_id=leader" in str(seen["input"])
+    assert "Do not reuse worker tmux panes or claim a dedicated Leader pane" in str(seen["input"])
     assert "让 Claude 做 Leader" in str(seen["input"])
     assert seen["cwd"] == str(root)
     assert plan["goal"] == "CLI Leader"
