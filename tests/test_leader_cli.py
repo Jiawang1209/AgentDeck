@@ -4379,6 +4379,22 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "enabled": True,
         "blocker": None,
     }
+    assert capabilities["memory_context"]["command"] == 'agentdeck leader chat --message "查看长期记忆"'
+    assert capabilities["memory_context"]["safety"] == "inspect"
+    assert capabilities["memory_context"]["requires_explicit_user"] is False
+    assert capabilities["memory_context"]["card"] == "memory_context_card"
+    assert capabilities["memory_context"]["example_messages"] == [
+        "查看长期记忆",
+        "memory context",
+    ]
+    assert capabilities["memory_context"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect memory context",
+        "command": 'agentdeck leader chat --message "查看长期记忆"',
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
     assert capabilities["memory_apply_preview"]["command"] == (
         'agentdeck leader chat --message "预览 memory 建议 <suggestion_id>"'
     )

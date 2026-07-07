@@ -2961,6 +2961,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "card": "memory_suggestions_card",
         },
         {
+            "mode": "memory_context",
+            "label": "Inspect memory context",
+            "description": "Inspect applied long-term memory summaries without reading full content or injecting prompts.",
+            "example_messages": ["查看长期记忆", "memory context"],
+            "command": 'agentdeck leader chat --message "查看长期记忆"',
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "memory_context_card",
+        },
+        {
             "mode": "memory_apply_preview",
             "label": "Preview memory apply",
             "description": "Preview applying a pending memory suggestion before writing long-term memory.",
