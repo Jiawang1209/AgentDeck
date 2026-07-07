@@ -120,6 +120,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "ledger_card",
         "audit_card",
         "artifacts_card",
+        "skill_import_preview_card",
         "skill_context_card",
         "control_mode_card",
         "provider_health",
@@ -330,6 +331,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Summarize plan"
     if command == "agentdeck skills list":
         return "List skills"
+    if command.startswith("agentdeck skills import --path "):
+        return "Import skill"
     return "Next command"
 
 
@@ -392,6 +395,14 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck artifacts"
     if embedded_card == "skill_context_card":
         return "agentdeck skills list"
+    if embedded_card == "skill_import_preview_card":
+        skill_import_preview_card = payload.get("skill_import_preview_card")
+        source_path = (
+            skill_import_preview_card.get("source_path")
+            if isinstance(skill_import_preview_card, dict)
+            else None
+        )
+        return f"agentdeck skills import-preview --path {source_path}" if source_path else None
     if embedded_card == "trace_card":
         trace_card = payload.get("trace_card")
         query_id = trace_card.get("query_id") if isinstance(trace_card, dict) else None
@@ -462,6 +473,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("provider_health", None)
     payload.setdefault("leader_status_card", None)
     payload.setdefault("skill_context_card", None)
+    payload.setdefault("skill_import_preview_card", None)
     payload.setdefault("lineage_card", None)
     payload.setdefault("audit_card", None)
     payload.setdefault("artifacts_card", None)
@@ -1566,6 +1578,56 @@ def _event_summary(event: dict[str, object]) -> dict[str, object]:
         "event_id": event.get("event_id"),
         "event_type": event.get("event_type"),
         "created_at": event.get("created_at"),
+    }
+
+
+def _skill_import_preview_card(root: Path, source_path: Path) -> dict[str, object]:
+    skill, would_overwrite, target_path = preview_project_skill_import(root, source_path)
+    import_command = f"agentdeck skills import --path {source_path}"
+    force_import_command = f"{import_command} --force"
+    show_command = f"agentdeck skills show --name {skill.name}"
+    next_summary = (
+        f"{skill.name} would overwrite an existing project skill."
+        if would_overwrite
+        else f"{skill.name} can be imported without overwriting an existing project skill."
+    )
+    return {
+        "ok": True,
+        "mode": "skill_import_preview",
+        "title": "External skill import preview",
+        "summary": next_summary,
+        "skill": skill.summary(),
+        "source_path": str(source_path),
+        "project_path": str(target_path),
+        "would_overwrite": would_overwrite,
+        "import_command": import_command,
+        "force_import_command": force_import_command,
+        "controls": [
+            _control(
+                kind="import",
+                label="Import skill",
+                command=import_command,
+                safety="explicit_user",
+                enabled=not would_overwrite,
+                blocker="skill already exists" if would_overwrite else None,
+            ),
+            _control(
+                kind="force_import",
+                label="Force import skill",
+                command=force_import_command,
+                safety="explicit_user",
+                enabled=would_overwrite,
+                blocker=None if would_overwrite else "skill does not exist",
+            ),
+            _control(
+                kind="show_after_import",
+                label="Show existing skill" if would_overwrite else "Show skill after import",
+                command=show_command,
+                safety="inspect",
+                enabled=would_overwrite,
+                blocker=None if would_overwrite else "skill is not imported yet",
+            ),
+        ],
     }
 
 
@@ -3061,52 +3123,24 @@ def skills_import_preview_command(args: argparse.Namespace) -> int:
     if config is None or store is None:
         return exit_code
     try:
-        skill, would_overwrite, target_path = preview_project_skill_import(Path(config.root), Path(args.path))
+        card = _skill_import_preview_card(Path(config.root), Path(args.path))
     except FileNotFoundError:
         print(f"skill file not found: {args.path}", file=sys.stderr)
         return 1
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    import_command = f"agentdeck skills import --path {Path(args.path)}"
-    force_import_command = f"{import_command} --force"
-    show_command = f"agentdeck skills show --name {skill.name}"
     _print_json(
         {
             "ok": True,
             "mode": "skill_import_preview",
-            "skill": skill.summary(),
-            "source_path": str(Path(args.path)),
-            "project_path": str(target_path),
-            "would_overwrite": would_overwrite,
-            "import_command": import_command,
-            "force_import_command": force_import_command,
-            "controls": [
-                _control(
-                    kind="import",
-                    label="Import skill",
-                    command=import_command,
-                    safety="explicit_user",
-                    enabled=not would_overwrite,
-                    blocker="skill already exists" if would_overwrite else None,
-                ),
-                _control(
-                    kind="force_import",
-                    label="Force import skill",
-                    command=force_import_command,
-                    safety="explicit_user",
-                    enabled=would_overwrite,
-                    blocker=None if would_overwrite else "skill does not exist",
-                ),
-                _control(
-                    kind="show_after_import",
-                    label="Show existing skill" if would_overwrite else "Show skill after import",
-                    command=show_command,
-                    safety="inspect",
-                    enabled=would_overwrite,
-                    blocker=None if would_overwrite else "skill is not imported yet",
-                ),
-            ],
+            "skill": card["skill"],
+            "source_path": card["source_path"],
+            "project_path": card["project_path"],
+            "would_overwrite": card["would_overwrite"],
+            "import_command": card["import_command"],
+            "force_import_command": card["force_import_command"],
+            "controls": card["controls"],
         }
     )
     return 0
@@ -4678,6 +4712,25 @@ def _chat_wants_skill_context(message: str) -> bool:
     } or any(token in normalized for token in ["loaded skill", "skill context", "已加载 skill", "已加载技能"])
 
 
+def _chat_skill_import_preview_path(message: str) -> Path | None:
+    text = message.strip()
+    lowered = text.lower()
+    wants_preview = (
+        "import-preview" in lowered
+        or ("preview" in lowered and "skill" in lowered and "import" in lowered)
+        or ("预览" in text and ("导入" in text or "import" in lowered) and ("skill" in lowered or "技能" in text))
+    )
+    if not wants_preview:
+        return None
+    path_match = re.search(r"--path\s+(.+)$", text)
+    if path_match:
+        return Path(shlex.split(path_match.group(1))[0]).expanduser()
+    skill_md_match = re.search(r"((?:/|~/?|\.\.?/)[^\s，,；;]+SKILL\.md)", text, re.IGNORECASE)
+    if skill_md_match:
+        return Path(skill_md_match.group(1)).expanduser()
+    return None
+
+
 def _chat_wants_leader_status(message: str) -> bool:
     normalized = message.strip().lower().replace(" ", "")
     explicit_phrases = {
@@ -5718,6 +5771,19 @@ def _leader_chat_explanation(
             "safety": "inspect",
             "requires_explicit_user": False,
         }
+    if mode == "skill_import_preview":
+        preview_card = result if isinstance(result, dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader previews an external skill import without installing, loading, or calling a provider.",
+            "reason": "human asked to preview an external skill import",
+            "next_command": next_command,
+            "recommended_action_id": preview_card.get("source_path"),
+            "action_kind": "skill_import_preview",
+            "action_status": "overwrite" if preview_card.get("would_overwrite") else "ready",
+            "safety": "explicit_user",
+            "requires_explicit_user": True,
+        }
     if mode == "help":
         return {
             "mode": mode,
@@ -6438,6 +6504,75 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 else None,
                 enabled_only=control_registry_filters["enabled_only"] is True,
             ),
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    skill_import_preview_path = _chat_skill_import_preview_path(args.message)
+    if skill_import_preview_path is not None:
+        try:
+            skill_import_preview_card = _skill_import_preview_card(Path(config.root), skill_import_preview_path)
+        except FileNotFoundError:
+            print(f"skill file not found: {skill_import_preview_path}", file=sys.stderr)
+            return 1
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        next_command = (
+            skill_import_preview_card["force_import_command"]
+            if skill_import_preview_card["would_overwrite"]
+            else skill_import_preview_card["import_command"]
+        )
+        turn = store.record_chat_turn(
+            mode="skill_import_preview",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="skill_import_preview",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "skill_import_preview",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "skill_import_preview",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "skill_import_preview",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                result=skill_import_preview_card,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "skill_import_preview_card": skill_import_preview_card,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

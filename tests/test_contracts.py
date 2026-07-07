@@ -3262,6 +3262,7 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
         {"placeholder": "<mode>", "blocker": "requires control mode"},
         {"placeholder": "<provider>", "blocker": "requires leader provider"},
         {"placeholder": "<model>", "blocker": "requires leader model"},
+        {"placeholder": "<SKILL.md>", "blocker": "requires SKILL.md path"},
     ]
     assert example["capability_card"]["capabilities"][0]["controls"][0] == {
         "kind": "inspect",

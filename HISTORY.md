@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Preview external skills through Leader chat
+
+- 新增自然语言入口：`agentdeck leader chat --message "预览导入 skill <SKILL.md>"` 会进入 `mode=skill_import_preview`，嵌入 `skill_import_preview_card`，复用 CLI `skills import-preview` 的 source path、目标项目路径、hash、覆盖状态和 import/force/show controls。
+- 保持外源 skill 人类确认边界：Leader chat 只记录 chat turn 和审计事件，不复制文件、不追加 `skill_imported`、不 load skill、不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox、不修改 runtime/approval state；下一步停在显式 import 或 force import 命令。
+- 扩展 Leader chat contract：新增 `skill_import_preview_card` 顶层字段、`skill_import_preview_card_fields` discovery、稳定 example fixture，并让 intent card 嵌入该 card，`leader_explanation.action_kind=skill_import_preview` 且 `safety=explicit_user`。
+- 同步 README、AGENT/CLAUDE 和 `docs/contracts/leader-chat-schema.md`，明确 Skill 诉求现在同时支持 CLI 预览和自然语言 Leader 交互预览。
+- 验证记录：已先确认红测失败，自然语言 `预览导入 skill <SKILL.md>` 最初误落入 DeepSeek provider 路径并因 `DEEPSEEK_API_KEY` 缺失失败；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_previews_external_skill_import_without_mutating_registry tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response tests/test_agent_cli.py::test_contract_leader_chat_cli_matches_contract_module tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning -q` 5 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 123 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 529 项通过。
+
 ### Current - Preview external skill imports
 
 - 新增 `agentdeck skills import-preview --path <SKILL.md>`：只读解析外源 skill，返回 source path、目标 `.agentdeck/skills/<name>/SKILL.md`、hash、是否会覆盖、import/force/show controls 和后续显式导入命令。

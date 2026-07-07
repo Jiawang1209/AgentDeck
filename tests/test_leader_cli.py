@@ -4273,6 +4273,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "apply_action",
         "continue",
         "leader_status",
+        "skill_import_preview",
         "workbench",
         "runtime",
         "role",
@@ -4305,6 +4306,19 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "safety": "safe_apply",
         "enabled": False,
         "blocker": "requires plan_id",
+    }
+    assert capabilities["skill_import_preview"]["command"] == (
+        'agentdeck leader chat --message "预览导入 skill <SKILL.md>"'
+    )
+    assert capabilities["skill_import_preview"]["safety"] == "explicit_user"
+    assert capabilities["skill_import_preview"]["requires_explicit_user"] is True
+    assert capabilities["skill_import_preview"]["controls"][0] == {
+        "kind": "skill_import_preview",
+        "label": "Preview external skill import",
+        "command": 'agentdeck leader chat --message "预览导入 skill <SKILL.md>"',
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires SKILL.md path",
     }
     assert capabilities["apply_action"]["command"] == "agentdeck leader apply-action --action-id <action_id>"
     assert capabilities["apply_action"]["safety"] == "safe_apply"

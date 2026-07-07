@@ -669,6 +669,96 @@ def test_leader_chat_skill_context_is_read_only_and_avoids_provider_calls(tmp_pa
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
 
 
+def test_leader_chat_previews_external_skill_import_without_mutating_registry(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    external = tmp_path / "external" / "SKILL.md"
+    external.parent.mkdir()
+    external.write_text(
+        "---\n"
+        "name: architecture-review\n"
+        "description: Review architecture tradeoffs.\n"
+        "required_tools: rg, pytest\n"
+        "risk: inspect\n"
+        "---\n"
+        "# Architecture Review\n\n"
+        "Check boundaries, tradeoffs, and verification evidence.\n",
+        encoding="utf-8",
+    )
+    target = root / ".agentdeck" / "skills" / "architecture-review" / "SKILL.md"
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", f"预览导入 skill {external}"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skill_import_preview"
+    assert payload["plan_id"] is None
+    assert payload["next_command"] == f"agentdeck skills import --path {external}"
+    assert payload["skill_import_preview_card"] == {
+        "ok": True,
+        "mode": "skill_import_preview",
+        "title": "External skill import preview",
+        "summary": "architecture-review can be imported without overwriting an existing project skill.",
+        "skill": payload["skill_import_preview_card"]["skill"],
+        "source_path": str(external),
+        "project_path": str(target),
+        "would_overwrite": False,
+        "import_command": f"agentdeck skills import --path {external}",
+        "force_import_command": f"agentdeck skills import --path {external} --force",
+        "controls": [
+            {
+                "kind": "import",
+                "label": "Import skill",
+                "command": f"agentdeck skills import --path {external}",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "force_import",
+                "label": "Force import skill",
+                "command": f"agentdeck skills import --path {external} --force",
+                "safety": "explicit_user",
+                "enabled": False,
+                "blocker": "skill does not exist",
+            },
+            {
+                "kind": "show_after_import",
+                "label": "Show skill after import",
+                "command": "agentdeck skills show --name architecture-review",
+                "safety": "inspect",
+                "enabled": False,
+                "blocker": "skill is not imported yet",
+            },
+        ],
+    }
+    assert payload["skill_import_preview_card"]["skill"]["name"] == "architecture-review"
+    assert payload["skill_import_preview_card"]["skill"]["required_tools"] == ["rg", "pytest"]
+    assert payload["intent_card"]["embedded_card"] == "skill_import_preview_card"
+    assert payload["intent_card"]["requires_explicit_user"] is True
+    assert payload["intent_card"]["read_only"] is True
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Import skill",
+        "command": f"agentdeck skills import --path {external}",
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["leader_explanation"]["action_kind"] == "skill_import_preview"
+    assert payload["leader_explanation"]["safety"] == "explicit_user"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
+    assert not target.exists()
+    state_after = StateStore(root).load()
+    assert state_after["skill_loads"] == state_before["skill_loads"]
+    assert state_after["plans"] == []
+    assert state_after["leader_errors"] == []
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
+
+
 def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -1988,6 +2078,7 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["terminal_card_fields"] == expected["terminal_card_fields"]
     assert payload["dispatch_preview_card_fields"] == expected["dispatch_preview_card_fields"]
     assert payload["agent_ready_card_fields"] == expected["agent_ready_card_fields"]
+    assert payload["skill_import_preview_card_fields"] == expected["skill_import_preview_card_fields"]
     assert payload["artifacts_card_fields"] == expected["artifacts_card_fields"]
     assert payload["artifact_summary_fields"] == expected["artifact_summary_fields"]
     assert payload["artifact_item_fields"] == expected["artifact_item_fields"]
@@ -4845,6 +4936,8 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     assert set(payload["example_agent_ready_card_fields"]) == set(example["agent_ready_card"])
     assert payload["example_terminal_card_fields"] == payload["terminal_card_fields"]
     assert set(payload["example_terminal_card_fields"]) == set(example["terminal_card"])
+    assert payload["example_skill_import_preview_card_fields"] == payload["skill_import_preview_card_fields"]
+    assert set(payload["example_skill_import_preview_card_fields"]) == set(example["skill_import_preview_card"])
     assert payload["example_workbench_control_registry_item_fields"] == (
         payload["workbench_control_registry_item_fields"]
     )
