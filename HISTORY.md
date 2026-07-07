@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Expose skill creation preview in Leader help
+
+- 扩展 `agentdeck leader chat --message "帮助"` 的 `capability_card`：新增 `mode=skill_create_preview` 能力，命令模板为 `agentdeck leader chat --message "创建 skill 建议 <suggestion_id>"`，`safety=explicit_user`，`card=skill_create_preview_card`。
+- 扩展 Leader chat capability placeholder discovery：新增 `<suggestion_id>` / `requires suggestion_id`，让 GUI/TUI 可以机器发现 pending skill suggestion id 输入槽，而不是解析 Markdown。
+- 保持 help 只读边界：capability control 带 placeholder 时保持 disabled；help mode 仍只记录 chat turn，不创建 `SKILL.md`、不修改 `skill_suggestions[]`、不调用 provider、不读取 tmux、不创建调度对象。
+- 同步 README、AGENT.md、CLAUDE.md 和 `docs/contracts/leader-chat-schema.md`，把 skill import/load/create preview 都作为 skill lifecycle command discovery 明确给未来 GUI 和自然语言壳。
+- 验证记录：已先确认红测失败，help `capability_card` 最初缺少 `skill_create_preview`；实现后目标与 contract 聚焦测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 5 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 143 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 226 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 153 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 564 项通过。
+
 ### Current - Preview skill creation from Leader chat
 
 - 新增自然语言入口 `agentdeck leader chat --message "创建 skill 建议 sgs_xxx"`：进入只读 `mode=skill_create_preview`，嵌入 `skill_create_preview_card`，复用 pending suggestion 的 `SKILL.md` 草稿、hash、目标路径和显式 `agentdeck skills create --suggestion-id <id> --confirm`。

@@ -1742,6 +1742,7 @@ LEADER_CHAT_CAPABILITY_PLACEHOLDERS = (
     {"placeholder": "<SKILL.md>", "blocker": "requires SKILL.md path"},
     {"placeholder": "<name>", "blocker": "requires skill name"},
     {"placeholder": "<purpose>", "blocker": "requires purpose"},
+    {"placeholder": "<suggestion_id>", "blocker": "requires suggestion_id"},
 )
 
 LEADER_CHAT_INTENT_PLACEHOLDERS = (
@@ -2876,6 +2877,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "card": "skill_load_preview_card",
         },
         {
+            "mode": "skill_create_preview",
+            "label": "Preview skill creation",
+            "description": "Preview creating a project skill from a pending suggestion before writing SKILL.md.",
+            "example_messages": ["创建 skill 建议 sgs_xxx", "create skill suggestion sgs_xxx"],
+            "command": "agentdeck leader chat --message \"创建 skill 建议 <suggestion_id>\"",
+            "safety": "explicit_user",
+            "requires_explicit_user": True,
+            "card": "skill_create_preview_card",
+        },
+        {
             "mode": "skill_suggestions",
             "label": "Inspect skill suggestions",
             "description": "Inspect pending skill suggestions without creating, importing, or loading skills.",
@@ -3256,6 +3267,7 @@ def _capability_item_control(item: dict[str, object]) -> dict[str, object]:
         "provider_switch": "set_provider",
         "skill_import_preview": "skill_import_preview",
         "skill_load_preview": "skill_load_preview",
+        "skill_create_preview": "skill_create_preview",
     }.get(mode, "inspect")
     blocker = _placeholder_blocker(command)
     return {

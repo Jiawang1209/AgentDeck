@@ -4276,6 +4276,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "learning_review",
         "skill_import_preview",
         "skill_load_preview",
+        "skill_create_preview",
         "skill_suggestions",
         "workbench",
         "runtime",
@@ -4335,6 +4336,24 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "safety": "explicit_user",
         "enabled": False,
         "blocker": "requires agent_id",
+    }
+    assert capabilities["skill_create_preview"]["command"] == (
+        'agentdeck leader chat --message "创建 skill 建议 <suggestion_id>"'
+    )
+    assert capabilities["skill_create_preview"]["safety"] == "explicit_user"
+    assert capabilities["skill_create_preview"]["requires_explicit_user"] is True
+    assert capabilities["skill_create_preview"]["card"] == "skill_create_preview_card"
+    assert capabilities["skill_create_preview"]["example_messages"] == [
+        "创建 skill 建议 sgs_xxx",
+        "create skill suggestion sgs_xxx",
+    ]
+    assert capabilities["skill_create_preview"]["controls"][0] == {
+        "kind": "skill_create_preview",
+        "label": "Preview skill creation",
+        "command": 'agentdeck leader chat --message "创建 skill 建议 <suggestion_id>"',
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires suggestion_id",
     }
     assert capabilities["skill_suggestions"]["command"] == "agentdeck skills suggestions"
     assert capabilities["skill_suggestions"]["safety"] == "inspect"
