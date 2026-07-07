@@ -27,7 +27,7 @@
 
 Skill Registry MVP：`agentdeck skills list` 必须只读发现内置 skill 和 `.agentdeck/skills/<name>/SKILL.md` 项目本地 skill；`agentdeck skills show --name <name>` 必须只读返回 skill metadata、hash 和 content；`agentdeck skills load --name <name> --agent <id> --purpose <text>` 才能写入 `skill_loads[]` 和 `skill_loaded` 审计事件，并保存 content snapshot。skills 命令不得调用 provider、读取 tmux、发送输入、修改 approval/runtime state，外源 skill 不得静默安装或启用。
 
-Loaded skill context 必须进入 ProjectView `skills` 摘要、workbench `skill_context_card` 和自然语言 `mode=skill_context`；`agentdeck leader chat --message "查看已加载技能"` 只能展示已加载 skill、记录 chat turn 和审计事件，不得调用 provider、读取 tmux、安装或改写 skill、创建 plan/action/approval/message/job/inbox 或改变 runtime/approval state。
+Loaded skill context 必须进入 ProjectView `skills` 摘要、workbench `skill_context_card`、自然语言 `mode=skill_context` 和真实 Leader provider planning prompt；传给 API-backed / CLI-backed Leader prompt 的只能是 compact 摘要（load_id、agent_id、purpose、name、source、path、content_hash、description、required_tools、risk），不得包含完整 `content_snapshot`。`agentdeck leader chat --message "查看已加载技能"` 只能展示已加载 skill、记录 chat turn 和审计事件，不得调用 provider、读取 tmux、安装或改写 skill、创建 plan/action/approval/message/job/inbox 或改变 runtime/approval state；provider planning prompt 也不得把 skill 当成 dispatch 或执行授权。
 
 Leader 不应该：
 
@@ -225,7 +225,7 @@ Worker 不应该：
 - `deepseek` provider 通过 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 调用 OpenAI-compatible `/chat/completions`，但仍然只生成 plan；`agentdeck leader plan/chat --model <model>` 或配置中的 `[leader].model` 必须作为请求体 `model` 优先于环境默认值。
 - `openai-compatible` provider 通过 `AGENTDECK_LEADER_API_KEY`、`AGENTDECK_LEADER_BASE_URL` 和 `AGENTDECK_LEADER_MODEL` 调用 `/chat/completions`，但仍然只生成 plan；`agentdeck leader plan/chat --model <model>` 或配置中的 `[leader].model` 必须作为请求体 `model` 优先于环境默认值。
 - `codex-cli` / `claude-cli` provider 是 CLI-backed Leader provider：它们通过本地 `codex exec` / `claude --print` 非交互调用为 `agent_id=leader` 生成同一 JSON plan schema；`agentdeck leader plan/chat --model <model>` 或配置中的 `[leader].model` 必须透传给本地 CLI 的 `--model` 参数，不能只作为 state 里的记录标签；stdout 可以是纯 JSON plan，也可以把唯一 JSON plan 包在 Markdown fenced `json` block 中；解析后必须复用 provider plan schema validator，要求顶层包含非空字符串 `goal`、非空字符串 `summary`、非空 `steps`，要求每个 step 包含从 1 开始连续且唯一的正整数 `step`、非空字符串 `agent_id`、`role`、`task`、`risk`、`requires_approval`，且 `agent_id` 必须指向当前配置中的 worker agent，`role` 必须匹配该 worker agent 的配置角色，强制 `approval_required=true`、`dispatch_ready=false`，并继续要求每个 step 都 `requires_approval=true`；不得复用 worker tmux pane 作为 Leader，也不得自动创建 approval、dispatch 或发送 tmux 输入。
-- 所有真实 Leader provider 的 planning prompt 必须包含每个 worker 的 `agent_id`、`role`、`role_prompt`、provider 和 workspace mode，并明确要求 step 编号为 `1..n`、只能使用列出的 worker `agent_id`、每个 `role` 必须完全复制对应 worker role，让 Leader 按角色职责拆分任务；这不授权自动派发，仍只生成审批 plan。
+- 所有真实 Leader provider 的 planning prompt 必须包含每个 worker 的 `agent_id`、`role`、`role_prompt`、provider 和 workspace mode，并包含当前 ProjectView `skills` 派生的 compact loaded skill context；prompt 必须明确要求 step 编号为 `1..n`、只能使用列出的 worker `agent_id`、每个 `role` 必须完全复制对应 worker role，让 Leader 按角色职责和已加载 workflow context 拆分任务；这不授权自动派发，仍只生成审批 plan。
 - CLI-backed Leader readiness 只检查本地命令是否存在并提供 `codex login` / `codex doctor` 或 `claude auth` / `claude doctor` setup commands；不得要求或暴露 API key。
 - chat/plan-only 阶段不会写入 `messages`、`jobs` 或 `inbox`，也不会发送 tmux 输入。
 - 后续其他 API-backed provider 必须复用 DeepSeek/OpenAI-compatible 的同一 plan schema。

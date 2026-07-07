@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from json import JSONDecodeError
 
-from .base import LeaderPlanRequest, validate_provider_plan_schema
+from .base import LeaderPlanRequest, leader_skill_context_prompt_lines, validate_provider_plan_schema
 
 
 class CliLeaderProvider:
@@ -55,22 +55,22 @@ class CliLeaderProvider:
             }
             for agent in request.config.agents
         ]
-        return "\n".join(
-            [
-                "You are the AgentDeck Leader Agent.",
-                "You are the logical Leader Agent with agent_id=leader.",
-                "You are backed by this local CLI subprocess only for reasoning.",
-                "Do not reuse worker tmux panes or claim a dedicated Leader pane.",
-                "Return only a JSON object plan. Do not dispatch work.",
-                "Every step must require human approval before dispatch.",
-                "Required schema: goal, summary, steps, approval_required, dispatch_ready.",
-                "Each step must include: step, agent_id, role, task, risk, requires_approval.",
-                "Step numbers must be 1..n without duplicates or gaps.",
-                "Use only listed worker agent_id values and copy each worker role exactly.",
-                f"Available worker agents: {json.dumps(workers, ensure_ascii=False)}",
-                f"Goal: {request.task}",
-            ]
-        )
+        lines = [
+            "You are the AgentDeck Leader Agent.",
+            "You are the logical Leader Agent with agent_id=leader.",
+            "You are backed by this local CLI subprocess only for reasoning.",
+            "Do not reuse worker tmux panes or claim a dedicated Leader pane.",
+            "Return only a JSON object plan. Do not dispatch work.",
+            "Every step must require human approval before dispatch.",
+            "Required schema: goal, summary, steps, approval_required, dispatch_ready.",
+            "Each step must include: step, agent_id, role, task, risk, requires_approval.",
+            "Step numbers must be 1..n without duplicates or gaps.",
+            "Use only listed worker agent_id values and copy each worker role exactly.",
+            f"Available worker agents: {json.dumps(workers, ensure_ascii=False)}",
+        ]
+        lines.extend(leader_skill_context_prompt_lines(request.skill_context))
+        lines.append(f"Goal: {request.task}")
+        return "\n".join(lines)
 
     def _parse_plan(self, stdout: str, request: LeaderPlanRequest) -> dict[str, object]:
         text = stdout.strip()

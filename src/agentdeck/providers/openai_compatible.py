@@ -5,7 +5,7 @@ import os
 from json import JSONDecodeError
 from urllib import request
 
-from .base import LeaderPlanRequest, validate_provider_plan_schema
+from .base import LeaderPlanRequest, leader_skill_context_prompt_lines, validate_provider_plan_schema
 
 
 class OpenAICompatibleProvider:
@@ -70,18 +70,18 @@ class OpenAICompatibleProvider:
             }
             for agent in request.config.agents
         ]
-        return "\n".join(
-            [
-                "You are the AgentDeck Leader Agent.",
-                "Return only a JSON object plan. Do not dispatch work.",
-                "Every step must require human approval before dispatch.",
-                "Required schema: goal, summary, steps, approval_required, dispatch_ready.",
-                "Each step must include: step, agent_id, role, task, risk, requires_approval.",
-                "Step numbers must be 1..n without duplicates or gaps.",
-                "Use only listed worker agent_id values and copy each worker role exactly.",
-                f"Available workers: {json.dumps(workers, ensure_ascii=False)}",
-            ]
-        )
+        lines = [
+            "You are the AgentDeck Leader Agent.",
+            "Return only a JSON object plan. Do not dispatch work.",
+            "Every step must require human approval before dispatch.",
+            "Required schema: goal, summary, steps, approval_required, dispatch_ready.",
+            "Each step must include: step, agent_id, role, task, risk, requires_approval.",
+            "Step numbers must be 1..n without duplicates or gaps.",
+            "Use only listed worker agent_id values and copy each worker role exactly.",
+            f"Available workers: {json.dumps(workers, ensure_ascii=False)}",
+        ]
+        lines.extend(leader_skill_context_prompt_lines(request.skill_context))
+        return "\n".join(lines)
 
     @staticmethod
     def _extract_plan(response: dict[str, object]) -> dict[str, object]:

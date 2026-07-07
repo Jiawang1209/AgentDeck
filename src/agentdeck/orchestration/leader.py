@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Any
 
 from agentdeck.models import ProjectConfig
 from agentdeck.providers import LeaderPlanRequest, LeaderProvider
@@ -24,7 +25,15 @@ class LeaderOrchestrator:
             "workers": [asdict(agent) for agent in self.config.agents],
         }
 
-    def plan(self, task: str, model: str | None = None) -> dict[str, object]:
+    def plan(
+        self,
+        task: str,
+        model: str | None = None,
+        *,
+        skill_context: dict[str, Any] | None = None,
+    ) -> dict[str, object]:
         if self.provider is None:
             raise RuntimeError("leader provider is not configured")
-        return self.provider.plan(LeaderPlanRequest(task=task, config=self.config, model=model))
+        return self.provider.plan(
+            LeaderPlanRequest(task=task, config=self.config, model=model, skill_context=skill_context)
+        )

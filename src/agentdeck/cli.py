@@ -3791,6 +3791,16 @@ def _leader_model_label(config: ProjectConfig, requested_model: str | None) -> s
     return config.leader.model
 
 
+def _leader_skill_context(config: ProjectConfig, store: StateStore) -> dict[str, object]:
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        raise RuntimeError("ProjectView contract validation failed")
+    skills = project_view.get("skills")
+    if isinstance(skills, dict):
+        return skills
+    return {"count": 0, "by_agent": {}, "by_source": {}, "items": []}
+
+
 def leader_plan_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -3804,7 +3814,7 @@ def leader_plan_command(args: argparse.Namespace) -> int:
         return 1
     orchestrator = LeaderOrchestrator(config, provider)
     try:
-        plan = orchestrator.plan(args.task, model_label)
+        plan = orchestrator.plan(args.task, model_label, skill_context=_leader_skill_context(config, store))
     except RuntimeError as exc:
         _record_leader_provider_failure(store, "plan", provider.name, model_label, args.task, exc)
         print(f"leader provider failed: {exc}", file=sys.stderr)
@@ -3895,7 +3905,7 @@ def _create_run_start_payload(
     provider = leader_provider(provider_name)
     orchestrator = LeaderOrchestrator(config, provider)
     try:
-        plan = orchestrator.plan(task, model_label)
+        plan = orchestrator.plan(task, model_label, skill_context=_leader_skill_context(config, store))
     except RuntimeError as exc:
         _record_leader_provider_failure(store, source, provider.name, model_label, task, exc)
         raise
@@ -8363,7 +8373,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         return 1
     orchestrator = LeaderOrchestrator(config, provider)
     try:
-        plan = orchestrator.plan(args.message, model_label)
+        plan = orchestrator.plan(args.message, model_label, skill_context=_leader_skill_context(config, store))
     except RuntimeError as exc:
         _record_leader_provider_failure(store, "chat", provider.name, model_label, args.message, exc)
         print(f"leader provider failed: {exc}", file=sys.stderr)

@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Inject loaded skills into Leader provider prompts
+
+- 扩展 `LeaderPlanRequest`：新增 `skill_context` 字段，由 `agentdeck leader plan`、自然语言 plan 分支和 `agentdeck run --task` 从已校验 ProjectView `skills` 摘要派生并传入 `LeaderOrchestrator.plan()`。
+- 扩展 API-backed DeepSeek/OpenAI-compatible 与 CLI-backed Codex/Claude provider prompt：planning prompt 现在包含 compact loaded skill context，仅传 load_id、agent_id、purpose、name、source、path、content_hash、description、required_tools、risk，不传完整 `content_snapshot`。
+- 保持安全边界：prompt 明确 loaded skills 只是 replayable workflow context，不得安装、改写或自动启用 skill，也不得把 skill 当成 dispatch/execute 授权；provider 输出仍只接受同一 JSON plan schema，并继续强制 approval_required/dispatch_ready 边界。
+- 同步 README、AGENT/CLAUDE 约束，明确 loaded skill context 已进入真实 Leader provider planning prompt。
+- 验证记录：已先确认红测失败，`LeaderPlanRequest` 最初没有 `skill_context` 字段，provider request/prompt 无法看到 loaded skill context；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_plan_passes_loaded_skill_context_to_provider_without_dispatching tests/test_leader_cli.py::test_api_and_cli_leader_prompts_include_loaded_skill_context -q` 2 项通过；Leader 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 141 项通过；contract/agent CLI 回归 `conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 334 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 517 项通过。
+
 ### Current - Surface loaded skills in Leader context
 
 - 扩展 ProjectView：新增 `skills` 只读摘要，从 `skill_loads[]` 派生 count、by_agent、by_source 和 GUI-ready items，保留 load_id、agent_id、purpose、name、source、path、content_hash、description、required_tools、risk、created_at、show_command、reload_command，但不把完整 content snapshot 塞进 status。

@@ -7,7 +7,10 @@ import subprocess
 from agentdeck import cli
 from agentdeck.config import write_default_config
 from agentdeck.contracts import validate_leader_chat_contract
+from agentdeck.providers import LeaderPlanRequest
+from agentdeck.providers.cli_subprocess import CodexCliProvider
 from agentdeck.providers.fake import FakeLeaderProvider
+from agentdeck.providers.openai_compatible import OpenAICompatibleProvider
 from agentdeck.state import StateStore
 
 
@@ -490,6 +493,66 @@ def test_leader_plan_defaults_to_configured_leader_provider_and_model(
     assert state["plans"][0]["model"] == "deepseek-chat"
     assert state["messages"] == []
     assert state["jobs"] == []
+
+
+def test_leader_plan_passes_loaded_skill_context_to_provider_without_dispatching(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project_with_default_leader(tmp_path, monkeypatch)
+    seen: dict[str, object] = {}
+
+    cli.main(["skills", "load", "--name", "planning", "--agent", "leader", "--purpose", "decompose task"])
+    capsys.readouterr()
+
+    class CapturingProvider(FakeLeaderProvider):
+        name = "deepseek"
+
+        def plan(self, request):
+            seen["skill_context"] = request.skill_context
+            return super().plan(request)
+
+    monkeypatch.setattr(cli, "leader_provider", lambda name: CapturingProvider())
+
+    exit_code = cli.main(["leader", "plan", "--task", "使用 loaded skill 规划"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["provider"] == "deepseek"
+    config = cli.load_config(root)
+    expected_skill_context = cli.asdict(StateStore(root).project_view(config))["skills"]
+    assert seen["skill_context"] == expected_skill_context
+    assert seen["skill_context"]["items"][0]["name"] == "planning"
+    assert seen["skill_context"]["items"][0]["content_hash"].startswith("sha256:")
+    state = StateStore(root).load()
+    assert state["plans"][0]["task"] == "使用 loaded skill 规划"
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
+def test_api_and_cli_leader_prompts_include_loaded_skill_context(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    cli.main(["skills", "load", "--name", "planning", "--agent", "leader", "--purpose", "decompose task"])
+    capsys.readouterr()
+    skill_context = cli.asdict(StateStore(root).project_view(config))["skills"]
+    request = LeaderPlanRequest(
+        task="使用 skill prompt",
+        config=config,
+        model="fake-plan",
+        skill_context=skill_context,
+    )
+
+    api_prompt = OpenAICompatibleProvider()._system_prompt(request)
+    cli_prompt = CodexCliProvider()._prompt(request)
+
+    for prompt in [api_prompt, cli_prompt]:
+        assert "Loaded skills" in prompt
+        assert '"name": "planning"' in prompt
+        assert '"agent_id": "leader"' in prompt
+        assert '"purpose": "decompose task"' in prompt
+        assert "Do not install, rewrite, or auto-enable skills from this context." in prompt
+        assert "Do not treat skills as permission to dispatch or execute work." in prompt
+        assert "content_snapshot" not in prompt
 
 
 def test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching(
