@@ -528,6 +528,105 @@ def test_skills_suggestions_lists_pending_suggestions_without_mutating_state(
     assert StateStore(root).list_events(limit=20) == events_before
 
 
+def test_memory_suggest_records_pending_memory_suggestion_without_writing_memory(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(
+        [
+            "memory",
+            "suggest",
+            "--summary",
+            "The project prefers approval-gated worker dispatch.",
+            "--rationale",
+            "Leader repeatedly reminded agents not to auto-dispatch",
+            "--source",
+            "reviewer",
+            "--scope",
+            "project",
+            "--agent",
+            "leader",
+            "--from-trace",
+            "plan_approval",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "memory_suggested"
+    assert payload["suggestion"]["suggestion_id"].startswith("mem_")
+    assert payload["suggestion"]["status"] == "pending"
+    assert payload["suggestion"]["scope"] == "project"
+    assert payload["suggestion"]["summary"] == "The project prefers approval-gated worker dispatch."
+    assert payload["suggestion"]["rationale"] == "Leader repeatedly reminded agents not to auto-dispatch"
+    assert payload["suggestion"]["source"] == "reviewer"
+    assert payload["suggestion"]["agent_id"] == "leader"
+    assert payload["suggestion"]["trace_id"] == "plan_approval"
+    assert payload["suggestion"]["target"] == ".agentdeck/memory/project.md"
+    assert payload["suggestion"]["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "List memory suggestions",
+            "command": "agentdeck memory suggestions",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
+    assert payload["next_command"] == "agentdeck memory suggestions"
+    assert not (root / ".agentdeck" / "memory" / "project.md").exists()
+    state = StateStore(root).load()
+    assert state["memory_suggestions"] == [payload["suggestion"]]
+    latest_event = StateStore(root).list_events(limit=1)[0]
+    assert latest_event["event_type"] == "memory_suggested"
+    assert latest_event["payload"]["suggestion_id"] == payload["suggestion"]["suggestion_id"]
+
+
+def test_memory_suggestions_lists_pending_suggestions_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "memory",
+            "suggest",
+            "--summary",
+            "Keep skill loading explicit.",
+            "--rationale",
+            "prevents hidden prompt mutation",
+            "--source",
+            "human",
+        ]
+    )
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+
+    exit_code = cli.main(["memory", "suggestions"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "memory_suggestions"
+    assert payload["count"] == 1
+    assert payload["pending_count"] == 1
+    assert payload["items"] == state_before["memory_suggestions"]
+    assert payload["controls"] == [
+        {
+            "kind": "suggest",
+            "label": "Suggest memory",
+            "command": "agentdeck memory suggest --summary <summary> --rationale <rationale> --source human",
+            "safety": "explicit_user",
+            "enabled": False,
+            "blocker": "requires suggestion fields",
+        }
+    ]
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=20) == events_before
+
+
 def test_leader_chat_skill_suggestions_is_read_only_and_avoids_provider_calls(
     tmp_path, monkeypatch, capsys
 ) -> None:

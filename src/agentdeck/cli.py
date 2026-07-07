@@ -3317,6 +3317,69 @@ def skills_suggestions_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+def memory_suggest_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    record = store.record_memory_suggestion(
+        summary=args.summary,
+        rationale=args.rationale,
+        source=args.source,
+        scope=args.scope,
+        agent_id=args.agent,
+        trace_id=args.from_trace,
+    )
+    store.append_event(
+        EventRecord.create(
+            "memory_suggested",
+            {
+                "suggestion_id": record["suggestion_id"],
+                "scope": record["scope"],
+                "source": record["source"],
+                "agent_id": record["agent_id"],
+                "trace_id": record["trace_id"],
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "memory_suggested",
+            "suggestion": record,
+            "next_command": "agentdeck memory suggestions",
+        }
+    )
+    return 0
+
+
+def memory_suggestions_command(_args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    suggestions = list(store.load().get("memory_suggestions", []))
+    pending_count = sum(1 for item in suggestions if isinstance(item, dict) and item.get("status") == "pending")
+    _print_json(
+        {
+            "ok": True,
+            "mode": "memory_suggestions",
+            "count": len(suggestions),
+            "pending_count": pending_count,
+            "items": suggestions,
+            "controls": [
+                _control(
+                    kind="suggest",
+                    label="Suggest memory",
+                    command="agentdeck memory suggest --summary <summary> --rationale <rationale> --source human",
+                    safety="explicit_user",
+                    enabled=False,
+                    blocker="requires suggestion fields",
+                )
+            ],
+        }
+    )
+    return 0
+
+
 def skills_import_preview_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -9690,6 +9753,25 @@ def build_parser() -> argparse.ArgumentParser:
     skills_import.add_argument("--path", required=True, help="Path to an external SKILL.md file")
     skills_import.add_argument("--force", action="store_true", help="Overwrite an existing project skill with the same name")
     skills_import.set_defaults(func=skills_import_command)
+
+    memory = subparsers.add_parser("memory", help="Review approval-gated long-term memory suggestions")
+    memory_subparsers = memory.add_subparsers(dest="memory_command")
+    memory_suggest = memory_subparsers.add_parser(
+        "suggest",
+        help="Record a pending memory suggestion without writing long-term memory",
+    )
+    memory_suggest.add_argument("--summary", required=True, help="Fact or preference worth remembering")
+    memory_suggest.add_argument("--rationale", required=True, help="Why this memory should be considered")
+    memory_suggest.add_argument("--source", default="human", choices=["human", "leader", "worker", "reviewer"])
+    memory_suggest.add_argument("--scope", default="project", choices=["project", "global"])
+    memory_suggest.add_argument("--agent", default=None, help="Agent associated with the suggestion")
+    memory_suggest.add_argument("--from-trace", default=None, help="Optional trace/message/job/reply/artifact id")
+    memory_suggest.set_defaults(func=memory_suggest_command)
+    memory_suggestions = memory_subparsers.add_parser(
+        "suggestions",
+        help="List pending memory suggestions",
+    )
+    memory_suggestions.set_defaults(func=memory_suggestions_command)
 
     policy = subparsers.add_parser("policy", help="Policy and control mode commands")
     policy_subparsers = policy.add_subparsers(dest="policy_command")

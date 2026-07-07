@@ -80,6 +80,7 @@ class StateStore:
                 "leader_actions": [],
                 "skill_loads": [],
                 "skill_suggestions": [],
+                "memory_suggestions": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -153,6 +154,44 @@ class StateStore:
             ],
         }
         state.setdefault("skill_suggestions", []).append(record)
+        self.save(state)
+        return record
+
+    def record_memory_suggestion(
+        self,
+        *,
+        summary: str,
+        rationale: str,
+        source: str,
+        scope: str,
+        agent_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        state = self.load()
+        target = ".agentdeck/memory/global.md" if scope == "global" else ".agentdeck/memory/project.md"
+        record = {
+            "suggestion_id": new_id("mem"),
+            "status": "pending",
+            "scope": scope,
+            "summary": summary,
+            "rationale": rationale,
+            "source": source,
+            "agent_id": agent_id,
+            "trace_id": trace_id,
+            "target": target,
+            "created_at": utc_now(),
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "List memory suggestions",
+                    "command": "agentdeck memory suggestions",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                }
+            ],
+        }
+        state.setdefault("memory_suggestions", []).append(record)
         self.save(state)
         return record
 

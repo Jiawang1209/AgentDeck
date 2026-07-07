@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Add pending memory suggestion queue
+
+- 新增 `agentdeck memory suggest --summary <summary> --rationale <rationale> --source <source>`：把 Hermes/WispTerm 式长期记忆学习先写成 pending `memory_suggestions[]`，记录 suggestion_id、status、scope、summary、rationale、source、agent_id、trace_id、target、created_at 和 controls。
+- 新增 `agentdeck memory suggestions`：只读列出 memory suggestion queue、pending_count、items 和 GUI-ready suggest control，供人类或未来 GUI 决定是否后续写入长期 memory。
+- 保持北极星安全边界：memory suggestion 只写待审建议和 `memory_suggested` 审计事件，不创建或修改 `.agentdeck/memory/*.md`，不注入 Leader/Worker prompt，不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox、不修改 runtime/approval state。
+- 同步 README、AGENT/CLAUDE、北极星路线图和架构文档，明确 skill 与 memory 都是学习层的一等能力，但 memory 当前只能先进入待审队列。
+- 验证记录：已先确认红测失败，`agentdeck memory` 最初不是合法顶层命令；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_memory_suggest_records_pending_memory_suggestion_without_writing_memory tests/test_agent_cli.py::test_memory_suggestions_lists_pending_suggestions_without_mutating_state -q` 2 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 131 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 537 项通过。
+
 ### Current - Surface skill suggestions in workbench
 
 - 扩展 `agentdeck workbench`：新增只读 `skill_suggestions_card`，从 pending `skill_suggestions[]` 派生 count、pending_count、items 和 inspect controls，让未来 GUI/TUI 一屏看到 Hermes/WispTerm 式 skill 沉淀建议。
