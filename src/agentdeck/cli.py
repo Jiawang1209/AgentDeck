@@ -68,7 +68,7 @@ from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec,
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .runtime import TmuxBackend
-from .skills import discover_skills, find_skill
+from .skills import discover_skills, find_skill, import_project_skill
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 
 
@@ -3031,6 +3031,48 @@ def skills_load_command(args: argparse.Namespace) -> int:
             "purpose": args.purpose,
             "created_at": record["created_at"],
             "skill": skill_payload,
+        }
+    )
+    return 0
+
+
+def skills_import_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        skill, overwritten = import_project_skill(Path(config.root), Path(args.path), force=args.force)
+    except FileNotFoundError:
+        print(f"skill file not found: {args.path}", file=sys.stderr)
+        return 1
+    except FileExistsError as exc:
+        print(f"skill already exists: {exc.args[0]}; rerun with --force to overwrite", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    store.append_event(
+        EventRecord.create(
+            "skill_imported",
+            {
+                "name": skill.name,
+                "source_path": str(Path(args.path)),
+                "project_path": skill.path,
+                "content_hash": skill.content_hash,
+                "overwritten": overwritten,
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "skill_imported",
+            "skill": skill.summary(),
+            "source_path": str(Path(args.path)),
+            "project_path": skill.path,
+            "overwritten": overwritten,
+            "show_command": f"agentdeck skills show --name {skill.name}",
+            "load_command": f"agentdeck skills load --name {skill.name}",
         }
     )
     return 0
@@ -8988,6 +9030,10 @@ def build_parser() -> argparse.ArgumentParser:
     skills_load.add_argument("--agent", default="leader", help="Agent id using this skill; defaults to leader")
     skills_load.add_argument("--purpose", default="", help="Why this skill is being loaded")
     skills_load.set_defaults(func=skills_load_command)
+    skills_import = skills_subparsers.add_parser("import", help="Import an external SKILL.md into project skills")
+    skills_import.add_argument("--path", required=True, help="Path to an external SKILL.md file")
+    skills_import.add_argument("--force", action="store_true", help="Overwrite an existing project skill with the same name")
+    skills_import.set_defaults(func=skills_import_command)
 
     policy = subparsers.add_parser("policy", help="Policy and control mode commands")
     policy_subparsers = policy.add_subparsers(dest="policy_command")

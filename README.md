@@ -46,6 +46,7 @@ agentdeck workbench
 agentdeck controls
 agentdeck skills list
 agentdeck skills show --name planning
+agentdeck skills import --path /path/to/SKILL.md
 agentdeck skills load --name planning --agent leader --purpose "plan decomposition"
 agentdeck contract list
 agentdeck contract agent-runtime
@@ -162,7 +163,7 @@ agentdeck artifacts
   skills/
 ```
 
-`agentdeck skills list` 会发现内置 skill 和 `.agentdeck/skills/<name>/SKILL.md` 项目本地 skill；`agentdeck skills show --name <name>` 只读返回 skill 内容、source、path、hash、required_tools 和 risk；`agentdeck skills load --name <name>` 会把该 skill 的 path/source/hash/content snapshot、调用者和用途写入 `skill_loads[]`，并追加 `skill_loaded` 审计事件。Skill load 不调用 provider、不读取 tmux、不发送输入、不改变权限；它会进入 ProjectView 的 `skills` 摘要，并在 `agentdeck workbench` 与自然语言 `agentdeck leader chat --message "查看已加载技能"` 中作为 `skill_context_card` 暴露给 Leader/GUI 使用。`agentdeck leader plan`、自然语言 plan 和 `agentdeck run --task` 会把 compact loaded skill 摘要传入 API-backed / CLI-backed Leader prompt，并把同一份 compact `skill_context` 固化到 plan record、ProjectView `plans.items[]` 和 `agentdeck plan status`；这些位置不会传完整 `content_snapshot`，也不会把 skill 当成 dispatch 或执行授权。`agentdeck dispatch` 和 `agentdeck approval dispatch` 会把目标 agent 已显式加载的 skill `content_snapshot` 注入该 worker 的任务 prompt，让 Worker 能真正按 skill 工作；同时 message 会保存 compact `prompt_skill_context`，并通过 ProjectView `messages.items[]`、workbench `ledger_card.messages.items[]` 和 `trace` 暴露给 GUI/审计使用。
+`agentdeck skills list` 会发现内置 skill 和 `.agentdeck/skills/<name>/SKILL.md` 项目本地 skill；`agentdeck skills import --path /path/to/SKILL.md` 会把外部 `SKILL.md` 显式复制到项目 `.agentdeck/skills/<name>/SKILL.md` 并追加 `skill_imported` 审计事件，默认不覆盖同名 skill，必须加 `--force` 才能覆盖；import 不会自动 load、不会调用 provider、不会读取 tmux 或修改 runtime。`agentdeck skills show --name <name>` 只读返回 skill 内容、source、path、hash、required_tools 和 risk；`agentdeck skills load --name <name>` 会把该 skill 的 path/source/hash/content snapshot、调用者和用途写入 `skill_loads[]`，并追加 `skill_loaded` 审计事件。Skill load 不调用 provider、不读取 tmux、不发送输入、不改变权限；它会进入 ProjectView 的 `skills` 摘要，并在 `agentdeck workbench` 与自然语言 `agentdeck leader chat --message "查看已加载技能"` 中作为 `skill_context_card` 暴露给 Leader/GUI 使用。`agentdeck leader plan`、自然语言 plan 和 `agentdeck run --task` 会把 compact loaded skill 摘要传入 API-backed / CLI-backed Leader prompt，并把同一份 compact `skill_context` 固化到 plan record、ProjectView `plans.items[]` 和 `agentdeck plan status`；这些位置不会传完整 `content_snapshot`，也不会把 skill 当成 dispatch 或执行授权。`agentdeck dispatch` 和 `agentdeck approval dispatch` 会把目标 agent 已显式加载的 skill `content_snapshot` 注入该 worker 的任务 prompt，让 Worker 能真正按 skill 工作；同时 message 会保存 compact `prompt_skill_context`，并通过 ProjectView `messages.items[]`、workbench `ledger_card.messages.items[]` 和 `trace` 暴露给 GUI/审计使用。
 
 ## 快速开始
 

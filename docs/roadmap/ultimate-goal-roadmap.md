@@ -33,7 +33,7 @@ Skill 是北极星的一等能力：AgentDeck 要像 WispTerm/Hermes 那样把�
 | `message -> attempt -> job -> inbox` | CCB 式多 Agent 通信账本的最小形态 |
 | `reply` / `ack` | 请求-回复-确认闭环 |
 | `trace` | 多 Agent 调试、审计和恢复所需的 lineage |
-| `skills list/show/load` 与 plan `skill_context` provenance | 可审计、可回放、可被 GUI 消费的 Skill Layer |
+| `skills list/show/import/load` 与 plan `skill_context` provenance | 可审计、可回放、可被 GUI 消费的 Skill Layer |
 | `docs/reference-analysis/*` 中的 Hermes/WispTerm skill 分析 | Skill Layer 和后续外源 skill allowlist 的设计输入 |
 | `HISTORY.md` | 项目自身开发过程可追溯 |
 
@@ -156,10 +156,10 @@ Skill 是北极星的一等能力：AgentDeck 要像 WispTerm/Hermes 那样把�
 
 - `skills/<name>/SKILL.md` 本地技能目录。
 - 内置少量基础技能，例如 planning、debugging、code-review、verification。
-- `agentdeck skills list` / `agentdeck skills show --name <name>` / `agentdeck skills load --name <name>`。
+- `agentdeck skills list` / `agentdeck skills show --name <name>` / `agentdeck skills import --path <SKILL.md>` / `agentdeck skills load --name <name>`。
 - skill metadata：name、description、source、path、version/hash、allowed_placeholders、required_tools、risk。
 - 每次 Leader/Worker 加载 skill 时，把 path、hash、content snapshot 和使用者写入 state，保证历史可回放。
-- 支持外源 skill 目录或导入包，但默认只做显式 allowlist，不自动执行远程安装脚本。
+- 支持外源 skill 目录或导入包，但默认只做显式 import/allowlist，不自动执行远程安装脚本；import 后仍需显式 load 才能进入 Leader/Worker 上下文。
 - Hermes 式后台 reviewer 只能提出 `skill_suggestion`，不能直接覆盖、删除或自动启用技能。
 
 验收标准：

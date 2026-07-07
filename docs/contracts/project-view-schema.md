@@ -185,7 +185,7 @@ The following blocks use a consistent summary pattern:
 - `artifacts`: `count`, `by_status`, `by_kind`, `items[]`
 - `skills`: `count`, `by_agent`, `by_source`, `items[]`
 
-`skills.items[]` is the ProjectView summary of explicit `agentdeck skills load` records. Each item includes `load_id`, `agent_id`, `purpose`, `name`, `source`, `path`, `content_hash`, `description`, `required_tools`, `risk`, `created_at`, `show_command`, and `reload_command`. ProjectView intentionally keeps the full `content_snapshot` out of the summary so status/workbench payloads stay compact; use `agentdeck skills show --name <name>` for current content and the persisted `skill_loads[]` record for replay. The summary is read-only and does not load, install, rewrite, or enable skills.
+`skills.items[]` is the ProjectView summary of explicit `agentdeck skills load` records. Each item includes `load_id`, `agent_id`, `purpose`, `name`, `source`, `path`, `content_hash`, `description`, `required_tools`, `risk`, `created_at`, `show_command`, and `reload_command`. ProjectView intentionally keeps the full `content_snapshot` out of the summary so status/workbench payloads stay compact; use `agentdeck skills show --name <name>` for current content and the persisted `skill_loads[]` record for replay. External skills must first be copied into the project with `agentdeck skills import --path <SKILL.md>` and still do not appear here until a human explicitly runs `agentdeck skills load`. The summary is read-only and does not load, install, rewrite, or enable skills.
 - `chat_turns`: `count`, `by_mode`, `items[]`
 - `leader_errors`: `count`, `by_mode`, `items[]`
 - `leader_actions`: `count`, `by_kind`, `by_status`, `items[]`

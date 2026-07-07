@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Import external skills into project registry
+
+- 新增 `agentdeck skills import --path <SKILL.md>`：可把外部 skill 显式复制到 `.agentdeck/skills/<name>/SKILL.md`，以 frontmatter `name` 作为项目 skill 名称，并返回 `show_command` / `load_command`。
+- 增加外源 skill 安全边界：默认拒绝覆盖同名项目 skill，只有 `--force` 才会覆盖；skill name 只允许字母数字、点、下划线和短横线，避免路径穿越；import 只写项目 skill 文件和 `skill_imported` 审计事件，不自动 load、不调用 provider、不读取 tmux、不修改 runtime/approval state。
+- 同步 README、AGENT/CLAUDE、ProjectView contract 和北极星路线图，明确外源 skill 已进入显式 allowlist/import 流程，但仍必须由人类显式 load 后才会进入 Leader/Worker 上下文。
+- 验证记录：已先确认红测失败，`agentdeck skills import` 最初不是合法子命令；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_skills_import_copies_external_skill_without_loading_it tests/test_agent_cli.py::test_skills_import_refuses_to_overwrite_without_force tests/test_agent_cli.py::test_skills_import_force_overwrites_project_skill -q` 3 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 117 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 523 项通过。
+
 ### Current - Surface worker skill provenance in ledger summaries
 
 - 扩展 ProjectView message summary：`agentdeck status` 的 `messages.items[]` 现在会返回 compact `prompt_skill_context`，展示 dispatch 时注入给 Worker 的 skill provenance，并继续剥离完整 `content_snapshot`。

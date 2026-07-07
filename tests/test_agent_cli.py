@@ -345,6 +345,93 @@ def test_skills_load_records_replayable_snapshot_and_event(tmp_path, monkeypatch
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "skill_loaded"
 
 
+def test_skills_import_copies_external_skill_without_loading_it(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    external = tmp_path / "external" / "SKILL.md"
+    external.parent.mkdir()
+    external.write_text(
+        "---\n"
+        "name: architecture-review\n"
+        "description: Review architecture tradeoffs.\n"
+        "required_tools: rg, pytest\n"
+        "risk: inspect\n"
+        "---\n"
+        "# Architecture Review\n\n"
+        "Check boundaries, tradeoffs, and verification evidence.\n",
+        encoding="utf-8",
+    )
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["skills", "import", "--path", str(external)])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "skill_imported"
+    assert payload["skill"]["name"] == "architecture-review"
+    assert payload["skill"]["source"] == "project"
+    assert payload["skill"]["path"].endswith(".agentdeck/skills/architecture-review/SKILL.md")
+    assert payload["skill"]["required_tools"] == ["rg", "pytest"]
+    assert payload["show_command"] == "agentdeck skills show --name architecture-review"
+    assert payload["load_command"] == "agentdeck skills load --name architecture-review"
+    imported = root / ".agentdeck" / "skills" / "architecture-review" / "SKILL.md"
+    assert imported.read_text(encoding="utf-8") == external.read_text(encoding="utf-8")
+    state_after = StateStore(root).load()
+    assert state_after["skill_loads"] == state_before["skill_loads"]
+    latest_event = StateStore(root).list_events(limit=1)[0]
+    assert latest_event["event_type"] == "skill_imported"
+    assert latest_event["payload"]["name"] == "architecture-review"
+
+
+def test_skills_import_refuses_to_overwrite_without_force(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    existing_dir = root / ".agentdeck" / "skills" / "architecture-review"
+    existing_dir.mkdir(parents=True)
+    existing = existing_dir / "SKILL.md"
+    existing.write_text(
+        "---\nname: architecture-review\ndescription: Existing.\nrisk: inspect\n---\n# Existing\n",
+        encoding="utf-8",
+    )
+    external = tmp_path / "external" / "SKILL.md"
+    external.parent.mkdir()
+    external.write_text(
+        "---\nname: architecture-review\ndescription: New.\nrisk: inspect\n---\n# New\n",
+        encoding="utf-8",
+    )
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["skills", "import", "--path", str(external)])
+
+    assert exit_code == 1
+    assert "skill already exists: architecture-review" in capsys.readouterr().err
+    assert existing.read_text(encoding="utf-8").endswith("# Existing\n")
+    assert StateStore(root).load() == state_before
+
+
+def test_skills_import_force_overwrites_project_skill(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    existing_dir = root / ".agentdeck" / "skills" / "architecture-review"
+    existing_dir.mkdir(parents=True)
+    existing = existing_dir / "SKILL.md"
+    existing.write_text(
+        "---\nname: architecture-review\ndescription: Existing.\nrisk: inspect\n---\n# Existing\n",
+        encoding="utf-8",
+    )
+    external = tmp_path / "external" / "SKILL.md"
+    external.parent.mkdir()
+    external.write_text(
+        "---\nname: architecture-review\ndescription: New.\nrisk: inspect\n---\n# New\n",
+        encoding="utf-8",
+    )
+
+    exit_code = cli.main(["skills", "import", "--path", str(external), "--force"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["overwritten"] is True
+    assert existing.read_text(encoding="utf-8").endswith("# New\n")
+
+
 def test_skills_show_unknown_skill_fails_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     state_before = StateStore(root).load()

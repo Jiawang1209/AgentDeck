@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
+import re
+import shutil
 
 from .config import CONFIG_DIR
 
@@ -109,6 +111,34 @@ def find_skill(root: Path, name: str) -> SkillSnapshot | None:
         if skill.name == name:
             return skill
     return None
+
+
+def import_project_skill(root: Path, source_path: Path, *, force: bool = False) -> tuple[SkillSnapshot, bool]:
+    if not source_path.exists() or not source_path.is_file():
+        raise FileNotFoundError(str(source_path))
+    content = source_path.read_text(encoding="utf-8")
+    snapshot = _snapshot_from_content(
+        content,
+        source="project",
+        path=None,
+        fallback_name=source_path.parent.name,
+    )
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", snapshot.name):
+        raise ValueError(f"invalid skill name: {snapshot.name}")
+    target_dir = root / CONFIG_DIR / "skills" / snapshot.name
+    target_path = target_dir / "SKILL.md"
+    overwritten = target_path.exists()
+    if overwritten and not force:
+        raise FileExistsError(snapshot.name)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source_path, target_path)
+    imported = _snapshot_from_content(
+        target_path.read_text(encoding="utf-8"),
+        source="project",
+        path=target_path,
+        fallback_name=snapshot.name,
+    )
+    return imported, overwritten
 
 
 def _snapshot_from_content(
