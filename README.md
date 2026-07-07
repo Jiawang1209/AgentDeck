@@ -13,6 +13,8 @@ AgentDeck 是一个正在搭建中的本地多智能体终端工作台。它的�
 
 终极目标路线图见：[docs/roadmap/ultimate-goal-roadmap.md](/Users/liuyue/Desktop/Github_repos/multi-agent-explore/docs/roadmap/ultimate-goal-roadmap.md)。
 
+分层角色端到端走查（frontdesk intake → plan → approval → dispatch → worker lifecycle → review gate → release → role topology，把 G1–G6 串起来，逐步给出只读契约面和显式人类命令）见：[docs/walkthroughs/layered-role-round.md](/Users/liuyue/Desktop/Github_repos/multi-agent-explore/docs/walkthroughs/layered-role-round.md)。
+
 ## 技术栈
 
 当前骨架选择：

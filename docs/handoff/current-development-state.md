@@ -299,12 +299,19 @@ The seventh G6 slice is already committed:
 
 Phase G6 (Role Topology GUI) is complete across workbench + natural-language surfaces.
 
+The layered-role walkthrough is already committed:
+
+- `docs/walkthroughs/layered-role-round.md` walks a full round (frontdesk intake → coordination topology → plan → approval → dispatch + worker lifecycle → review gate → release → role topology → recovery/loop) against the read-only contract surfaces and explicit human commands, cross-linking each phase's contract. Linked from the README top.
+
+Phases G1–G6 are complete and now documented end-to-end.
+
 ## Next Best Step
 
-G6 is complete. Recommended next direction:
+The layered-role plan (G1–G6) is delivered. Revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability. Candidate directions, all keeping the read-only-contract + explicit-command discipline:
 
-- Consolidate the layered-role north star into an end-to-end acceptance/demo doc under `docs/` (e.g. `docs/walkthroughs/layered-role-round.md`) that walks a full round — frontdesk intake → plan → approval → dispatch → review gate → release — entirely against the read-only contract surfaces and explicit human commands, cross-linking each phase's contract. This ties G1–G6 together for GUI/TUI builders.
-- Then revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability beyond the layered-role plan.
+- Real end-to-end run automation behind the approval gate: a guided `agentdeck run` loop that, after each human approval, advances to the next explicit step (still stopping at every human gate) — turning the walkthrough into an assisted flow without removing approvals.
+- Deeper skill/memory learning-layer surfaces (roadmap Phase F): e.g. wiring `learn review` suggestions into GUI-consumable queues end-to-end.
+- A GUI/TUI reference client that consumes the workbench + control_registry contracts (no new backend behavior; proves the contracts are sufficient).
 - Preserve human approval and keep every read-only surface read-only.
 
 ## Required Verification Before Handoff

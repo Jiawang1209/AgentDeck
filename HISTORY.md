@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Add layered-role end-to-end walkthrough
+
+- 新增 `docs/walkthroughs/layered-role-round.md`（北极星 Phase G6 收官，docs）：把分层角色主线 G1–G6 串成一份端到端走查——frontdesk intake → coordination topology → plan → approval → dispatch + worker lifecycle → review gate → release → role topology → recovery/loop，逐 phase 标注是"显式人类命令"还是"只读契约面"，并交叉链接每个 phase 的 contract（`agentdeck contract ...`）。
+- 文档明确不变量：只读卡片不 spawn/dispatch/capture/ack/release/调用 provider/写 state；所有 mutation 都是显式人类命令；所有 GUI 按钮来自 contract `controls[]` 且保留 safety/enabled/blocker。
+- 从 README 顶部加了走查文档指针，方便 GUI/TUI 构建者发现。
+- 验证记录：核对所有引用命令均已在 argparse 注册（continue/controls --scope/loop/release/capture-reply/workbench 等）；在全新 `git init` + `agentdeck project init` 的临时项目上真实冒烟验证走查关键只读面：`agentdeck workbench` 的 `role_topology_card` 输出 6 角色 / 1 blocked / by_status 一致，`agentdeck controls --scope role_topology` 返回 7 个 role_topology 控件，`agentdeck leader chat --message "查看角色拓扑"` 返回 `mode=role_topology` 且 summary 报告 "6 roles (1 blocked)"；`git diff --check` 通过；全量测试保持 605 项通过（纯文档，无源码/测试改动）。
+
 ### Current - Report role topology blocked count in chat summary
 
 - 扩展自然语言 `agentdeck leader chat --message "查看角色拓扑"`（北极星 Phase G6 第七刀）：`leader_explanation.summary` 现在从嵌入的 `role_topology_card` 派生角色总数和被阻塞数，例如"...role topology with 6 roles (1 blocked)..."，让自然语言壳无需重新遍历卡片就能说出"有几个角色被阻塞"。
