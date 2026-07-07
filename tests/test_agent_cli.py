@@ -894,6 +894,80 @@ def test_leader_chat_skill_context_is_read_only_and_avoids_provider_calls(tmp_pa
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
 
 
+def test_workbench_surfaces_pending_skill_suggestions_for_gui_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "skills",
+            "suggest",
+            "--name",
+            "incident-review",
+            "--summary",
+            "Review incident response evidence.",
+            "--rationale",
+            "repeatable review checklist",
+            "--source",
+            "leader",
+            "--agent",
+            "reviewer",
+            "--from-trace",
+            "msg_incident",
+        ]
+    )
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["skill_suggestions_card"] == {
+        "mode": "skill_suggestions",
+        "title": "Skill suggestions",
+        "summary": "1 pending skill suggestion is waiting for human review.",
+        "suggestions_command": "agentdeck skills suggestions",
+        "project_view_command": "agentdeck status",
+        "count": 1,
+        "pending_count": 1,
+        "items": state_before["skill_suggestions"],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "List skill suggestions",
+                "command": "agentdeck skills suggestions",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Open project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    assert {
+        (item["scope"], item["card"], item["kind"], item["command"], item["safety"])
+        for item in payload["control_registry"]
+    } >= {
+        (
+            "skills",
+            "skill_suggestions_card",
+            "inspect",
+            "agentdeck skills suggestions",
+            "inspect",
+        )
+    }
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=20) == events_before
+
+
 def test_leader_chat_previews_external_skill_import_without_mutating_registry(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -2628,12 +2702,13 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "ledger_card",
         "lineage_card",
         "queue_card",
-            "operator_card",
-            "audit_card",
-            "artifacts_card",
-            "skill_context_card",
-            "leader_summary_card",
-            "contracts_card",
+        "operator_card",
+        "audit_card",
+        "artifacts_card",
+        "skill_context_card",
+        "skill_suggestions_card",
+        "leader_summary_card",
+        "contracts_card",
         "control_mode_card",
         "recovery",
         "next_command",
@@ -2820,6 +2895,17 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "skills_command",
         "project_view_command",
         "count",
+        "items",
+        "controls",
+    ]
+    assert payload["skill_suggestions_card_fields"] == [
+        "mode",
+        "title",
+        "summary",
+        "suggestions_command",
+        "project_view_command",
+        "count",
+        "pending_count",
         "items",
         "controls",
     ]
@@ -4474,7 +4560,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 68,
+        "item_count_before_filter": 70,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -4610,7 +4696,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 67,
+        "item_count_before_filter": 69,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -4653,7 +4739,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 68,
+        "item_count_before_filter": 70,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -4692,7 +4778,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 68,
+        "item_count_before_filter": 70,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -4725,7 +4811,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 68,
+        "item_count_before_filter": 70,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -4764,7 +4850,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 68,
+        "item_count_before_filter": 70,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

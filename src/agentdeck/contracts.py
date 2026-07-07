@@ -944,6 +944,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "audit_card",
     "artifacts_card",
     "skill_context_card",
+    "skill_suggestions_card",
     "leader_summary_card",
     "contracts_card",
     "control_mode_card",
@@ -2714,6 +2715,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "artifact_summary_fields": list(ARTIFACTS_SUMMARY_FIELDS),
         "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
         "skill_context_card_fields": list(LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS),
+        "skill_suggestions_card_fields": list(LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS),
         "skill_context_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
         "leader_summary_card_fields": list(LEADER_SUMMARY_RESPONSE_FIELDS),
         "contracts_card_fields": list(WORKBENCH_CONTRACTS_CARD_FIELDS),
@@ -7632,6 +7634,16 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         agent_id=None,
         controls=skill_context_card.get("controls"),
     )
+    skill_suggestions_card = (
+        payload.get("skill_suggestions_card") if isinstance(payload.get("skill_suggestions_card"), dict) else {}
+    )
+    _append_control_registry_items(
+        registry,
+        scope="skills",
+        card="skill_suggestions_card",
+        agent_id=None,
+        controls=skill_suggestions_card.get("controls"),
+    )
     leader_summary_card = (
         payload.get("leader_summary_card")
         if isinstance(payload.get("leader_summary_card"), dict)
@@ -8417,6 +8429,57 @@ def workbench_example() -> dict[str, object]:
                     "kind": "inspect",
                     "label": "List skills",
                     "command": "agentdeck skills list",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "inspect",
+                    "label": "Open project status",
+                    "command": "agentdeck status",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
+        },
+        "skill_suggestions_card": {
+            "mode": "skill_suggestions",
+            "title": "Skill suggestions",
+            "summary": "1 pending skill suggestion is waiting for human review.",
+            "suggestions_command": "agentdeck skills suggestions",
+            "project_view_command": "agentdeck status",
+            "count": 1,
+            "pending_count": 1,
+            "items": [
+                {
+                    "suggestion_id": "sgs_example",
+                    "status": "pending",
+                    "name": "incident-review",
+                    "summary": "Review incident response evidence.",
+                    "rationale": "planner repeatedly asked for the same incident review checklist",
+                    "source": "leader",
+                    "agent_id": "reviewer",
+                    "trace_id": "msg_example",
+                    "draft_path": ".agentdeck/skills/incident-review/SKILL.md",
+                    "created_at": "2026-07-07T00:00:00Z",
+                    "controls": [
+                        {
+                            "kind": "inspect",
+                            "label": "List skill suggestions",
+                            "command": "agentdeck skills suggestions",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        }
+                    ],
+                }
+            ],
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "List skill suggestions",
+                    "command": "agentdeck skills suggestions",
                     "safety": "inspect",
                     "enabled": True,
                     "blocker": None,

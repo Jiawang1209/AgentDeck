@@ -1116,6 +1116,7 @@ def _workbench_snapshot_payload(
     audit_card = _workbench_audit_card(project_view)
     artifacts_card = _artifacts_card_payload(project_view)
     skill_context_card = _skill_context_card(project_view)
+    skill_suggestions_card = _skill_suggestions_card(store)
     leader_summary_card = _workbench_leader_summary_card(store)
     contracts_card = _workbench_contracts_card()
     control_mode_card = _workbench_control_mode_card(project_view)
@@ -1139,6 +1140,7 @@ def _workbench_snapshot_payload(
         "audit_card": audit_card,
         "artifacts_card": artifacts_card,
         "skill_context_card": skill_context_card,
+        "skill_suggestions_card": skill_suggestions_card,
         "leader_summary_card": leader_summary_card,
         "contracts_card": contracts_card,
         "control_mode_card": control_mode_card,
@@ -1509,6 +1511,16 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         card="skill_context_card",
         agent_id=None,
         controls=skill_context_card.get("controls"),
+    )
+    skill_suggestions_card = (
+        payload.get("skill_suggestions_card") if isinstance(payload.get("skill_suggestions_card"), dict) else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="skills",
+        card="skill_suggestions_card",
+        agent_id=None,
+        controls=skill_suggestions_card.get("controls"),
     )
     leader_summary_card = (
         payload.get("leader_summary_card")

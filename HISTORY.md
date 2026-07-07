@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Surface skill suggestions in workbench
+
+- 扩展 `agentdeck workbench`：新增只读 `skill_suggestions_card`，从 pending `skill_suggestions[]` 派生 count、pending_count、items 和 inspect controls，让未来 GUI/TUI 一屏看到 Hermes/WispTerm 式 skill 沉淀建议。
+- 扩展 workbench `control_registry[]`：新增 `scope=skills` / `card=skill_suggestions_card` 的 `agentdeck skills suggestions` 与 `agentdeck status` inspect controls，GUI 不需要解析 state 文件或硬编码命令。
+- 保持安全边界：workbench 只读展示待审 skill 建议，不创建 `SKILL.md`、不 import、不 load、不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox、不修改 runtime/approval state，也不记录 chat turn。
+- 扩展 `agentdeck contract workbench`：新增 `skill_suggestions_card_fields` 和稳定 example fixture，并让 validator 的 control registry 期望值包含 `skill_suggestions_card.controls[]`。
+- 同步 README、AGENT/CLAUDE 和 workbench contract 文档，明确 pending skill suggestions 已进入一屏 GUI 工作台，同时仍必须由人类显式审阅和后续创建/导入/load。
+- 验证记录：已先确认红测失败，`agentdeck workbench` 最初缺少 `skill_suggestions_card`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_surfaces_pending_skill_suggestions_for_gui_without_mutating_state tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_accepts_example tests/test_contracts.py::test_validate_workbench_contract_requires_control_registry_to_match_cards -q` 5 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 129 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 535 项通过。
+
 ### Current - Surface skill suggestions in Leader chat
 
 - 新增自然语言只读入口：`agentdeck leader chat --message "查看 skill 建议"` / `"查看技能建议"` / `"skill suggestions"` 会进入 `mode=skill_suggestions`，返回 `skill_suggestions_card`，展示 pending suggestion queue 的 count、pending_count、items 和 inspect controls。
