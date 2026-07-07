@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Overlay review gate status on role topology reviewer roles
+
+- 扩展 `agentdeck workbench` 的 `role_topology_card`（北极星 Phase G6 第二刀）：把 `review_gate_card` 的阶段状态叠加到对应 reviewer worker 角色上，让 GUI/TUI 一眼看出某个角色是在"审查中"还是被上游"阻塞"。
+- 叠加规则：当 worker 的 `agent_id` 匹配 `code_review` 或 `round_review` 阶段（code review 优先）时，`ready` → `status=reviewed`，`waiting_for_review` → `status=reviewing`（轮到它审查，无 blocker），其它情况（如 `waiting_for_artifacts` / `blocked`）→ `status=blocked` 并带上阶段 `blocker`；非 reviewer 角色保留基础 `lifecycle_stage` 状态且 blocker 为 `null`。
+- 实现细节：新增 `_role_topology_review_stage_by_agent()` 与 `_role_topology_review_overlay()` 纯函数，`_workbench_role_topology_card` 现在接收 `review_gate_card` 参数并在 worker 角色循环里应用叠加；item 字段不变，只富化 `status` / `blocker`。
+- 保持北极星边界：叠加是只读投影，不推进验收门、不 spawn、不 dispatch、不 capture、不 ack、不 release、不写 state。
+- 同步 README、`docs/contracts/workbench-schema.md` 和 `docs/handoff/current-development-state.md`，把下一步指向自然语言 `role topology` 发现入口和 logical 角色 blocker/release 富化。
+- 验证记录：已先确认红测失败，reviewer 角色最初仍是基础 `idle` 状态、没有 review overlay；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_role_topology_overlays_review_gate_status_on_reviewer_role tests/test_agent_cli.py::test_workbench_role_topology_marks_reviewer_blocked_when_waiting_for_artifacts tests/test_agent_cli.py::test_workbench_role_topology_card_projects_logical_and_worker_roles tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 558 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 600 项通过。
+
 ### Current - Add role topology workbench card
 
 - 新增 `agentdeck workbench` 的 `role_topology_card`（北极星 Phase G6 第一刀）：把 logical Leader 协调角色（`frontdesk` / `planner` / `orchestrator`，来自 `leader.coordination_roles[]`）和配置的 worker 角色（复用同一份 `worker_lifecycle_card` items）合成一个有序只读角色拓扑。

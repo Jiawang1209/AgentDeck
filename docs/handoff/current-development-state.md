@@ -229,7 +229,21 @@ The first G6 slice is already committed:
 agentdeck workbench
 ```
 
-New surface:
+- Adds `role_topology_card`, a read-only unified role topology (logical roles + worker roles, each with kind/provider/lifecycle/status/blocker/next_command and an inspect-only control).
+
+The second G6 slice is already committed:
+
+```bash
+agentdeck workbench
+```
+
+New behavior:
+
+- `role_topology_card` now overlays the `review_gate_card` stage status onto the matching reviewer worker role: a `ready` stage → `status=reviewed`, a `waiting_for_review` stage → `status=reviewing` (no blocker), and any other stage (`waiting_for_artifacts` / `blocked`) → `status=blocked` with the stage's blocker.
+- Non-reviewer worker roles keep their base `lifecycle_stage` status with a `null` blocker.
+- Still read-only: the overlay never advances the gate, spawns, dispatches, captures, acks, releases, or writes state.
+
+The first G6 surface details:
 
 - Adds `role_topology_card`, a read-only unified role topology.
 - Projects the three logical Leader coordination roles (`frontdesk`, `planner`, `orchestrator`) from `leader.coordination_roles[]` plus the configured worker roles from the same `worker_lifecycle_card` items.
@@ -242,8 +256,8 @@ New surface:
 
 Continue Phase G6 with the next follow-up:
 
-- Add per-role blocker derivation and richer status (e.g. surface review-gate stage status onto the matching reviewer role, and mark a role blocked when it is waiting on an upstream role or approval), so the "at a glance which role is blocked" acceptance criterion is fully met.
-- Optionally add a natural-language `role topology` chat mode that embeds the same `role_topology_card` with a filtered `control_registry_card` (mirroring the review-gate / release-preview chat discovery pattern).
+- Add a natural-language `role topology` chat mode (`agentdeck leader chat --message "查看角色拓扑"` / `role topology`) that enters read-only `mode=role_topology`, embeds the same `role_topology_card`, and attaches a `control_registry_card` filtered to `scope=role_topology` / `card=role_topology_card` selecting the `agentdeck workbench` inspect control — mirroring the review-gate / release-preview chat discovery pattern.
+- Optionally extend the blocker overlay to logical roles (e.g. mark `orchestrator` waiting when approvals are pending) and surface release state (`released`) onto the topology.
 - Preserve human approval and keep every topology surface read-only.
 
 ## Required Verification Before Handoff

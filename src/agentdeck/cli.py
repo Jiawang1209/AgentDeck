@@ -1380,7 +1380,7 @@ def _workbench_snapshot_payload(
     worker_lifecycle_card = _workbench_worker_lifecycle_card(project_view)
     review_gate_card = _workbench_review_gate_card(project_view)
     release_preview_card = _workbench_release_preview_card(review_gate_card, project_view)
-    role_topology_card = _workbench_role_topology_card(project_view)
+    role_topology_card = _workbench_role_topology_card(project_view, review_gate_card)
     ledger_card = _workbench_ledger_card(project_view)
     lineage_card = _workbench_lineage_card(project_view, inbox_card, leader_inbox_card)
     queue_card = _workbench_queue_card(project_view, continue_card, active_queue_source)
@@ -2859,7 +2859,30 @@ def _workbench_release_preview_card(
     }
 
 
-def _workbench_role_topology_card(project_view: dict[str, object]) -> dict[str, object]:
+def _role_topology_review_stage_by_agent(
+    review_gate_card: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    stage_by_agent: dict[str, dict[str, object]] = {}
+    for stage_name in ("code_review", "round_review"):
+        stage = review_gate_card.get(stage_name) if isinstance(review_gate_card.get(stage_name), dict) else {}
+        agent_id = stage.get("agent_id")
+        if agent_id and agent_id not in stage_by_agent:
+            stage_by_agent[str(agent_id)] = stage
+    return stage_by_agent
+
+
+def _role_topology_review_overlay(stage: dict[str, object]) -> tuple[str, object]:
+    stage_status = stage.get("status")
+    if stage_status == "ready":
+        return "reviewed", None
+    if stage_status == "waiting_for_review":
+        return "reviewing", None
+    return "blocked", stage.get("blocker")
+
+
+def _workbench_role_topology_card(
+    project_view: dict[str, object], review_gate_card: dict[str, object]
+) -> dict[str, object]:
     leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
     coordination_roles = (
         leader.get("coordination_roles") if isinstance(leader.get("coordination_roles"), list) else []
@@ -2920,6 +2943,7 @@ def _workbench_role_topology_card(project_view: dict[str, object]) -> dict[str, 
         )
     worker_card = _workbench_worker_lifecycle_card(project_view)
     worker_items = worker_card.get("items") if isinstance(worker_card.get("items"), list) else []
+    review_stage_by_agent = _role_topology_review_stage_by_agent(review_gate_card)
     worker_count = 0
     for item in worker_items:
         if not isinstance(item, dict):
@@ -2929,6 +2953,11 @@ def _workbench_role_topology_card(project_view: dict[str, object]) -> dict[str, 
         runtime_status = str(item.get("runtime_status") or "unknown")
         pane_id = item.get("pane_id")
         inbox_command = item.get("inbox_command")
+        status: object = item.get("lifecycle_stage")
+        blocker: object = None
+        review_stage = review_stage_by_agent.get(str(agent_id)) if agent_id else None
+        if isinstance(review_stage, dict):
+            status, blocker = _role_topology_review_overlay(review_stage)
         roles.append(
             {
                 "role_id": item.get("role") or agent_id,
@@ -2940,8 +2969,8 @@ def _workbench_role_topology_card(project_view: dict[str, object]) -> dict[str, 
                 "runtime_kind": "worker_pane",
                 "pane_backed": runtime_status == "running" and pane_id is not None,
                 "pane_id": pane_id,
-                "status": item.get("lifecycle_stage"),
-                "blocker": None,
+                "status": status,
+                "blocker": blocker,
                 "next_command": inbox_command,
                 "controls": [
                     _control(

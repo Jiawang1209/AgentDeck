@@ -11111,7 +11111,7 @@ def workbench_example() -> dict[str, object]:
                     "runtime_kind": "worker_pane",
                     "pane_backed": False,
                     "pane_id": None,
-                    "status": "idle",
+                    "status": "reviewed",
                     "blocker": None,
                     "next_command": "agentdeck inbox --agent reviewer",
                     "controls": [

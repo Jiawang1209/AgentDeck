@@ -5816,6 +5816,85 @@ def test_workbench_role_topology_card_projects_logical_and_worker_roles(
     assert state_after == state_before
 
 
+def test_workbench_role_topology_overlays_review_gate_status_on_reviewer_role(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["messages"] = [
+        {
+            "message_id": "msg_impl",
+            "from_actor": "leader",
+            "to_agent": "planner",
+            "task": "Implement feature",
+            "prompt": "implement",
+            "pane_id": "%42",
+            "status": "sent",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["jobs"] = [
+        {
+            "job_id": "job_impl",
+            "message_id": "msg_impl",
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:01+00:00",
+        }
+    ]
+    state["artifacts"] = [
+        {
+            "artifact_id": "art_impl",
+            "message_id": "msg_impl",
+            "job_id": "job_impl",
+            "reply_id": None,
+            "from_agent": "planner",
+            "path": "docs/feature.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:02+00:00",
+        }
+    ]
+    store.save(state)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    roles = {role["role_id"]: role for role in payload["role_topology_card"]["roles"]}
+    review_role = roles["review"]
+    assert review_role["kind"] == "worker"
+    assert review_role["agent_id"] == "reviewer"
+    assert review_role["status"] == "reviewing"
+    assert review_role["blocker"] is None
+    # non-reviewer worker keeps its base lifecycle status without a review overlay
+    assert roles["planning"]["status"] == "completed"
+    assert roles["planning"]["blocker"] is None
+    # review gate card and topology agree on the code reviewer identity
+    assert payload["review_gate_card"]["code_review"]["agent_id"] == "reviewer"
+    assert payload["review_gate_card"]["code_review"]["status"] == "waiting_for_review"
+    state_after = StateStore(root).load()
+    assert state_after == state_before
+
+
+def test_workbench_role_topology_marks_reviewer_blocked_when_waiting_for_artifacts(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    roles = {role["role_id"]: role for role in payload["role_topology_card"]["roles"]}
+    review_role = roles["review"]
+    assert review_role["status"] == "blocked"
+    assert review_role["blocker"] == "waiting for artifacts"
+
+
 def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state(
     tmp_path, monkeypatch, capsys
 ) -> None:
