@@ -19,7 +19,7 @@ Human Operator
 
 用户应该能用自然语言启动一个任务，由 Leader Agent 理解目标、按需加载可审计 skill、拆解计划、指派角色、调度多个 Agent、观察结果、要求验证，并在关键动作前让人类审批。
 
-Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/Hermes 那样把可复用工作流沉淀为 skill，把长期项目事实和用户偏好沉淀为 memory；但所有 skill 都必须显式加载、记录 source/path/hash/content snapshot，并在每次 Leader 规划时把 compact skill provenance 固化到 plan 记录和 ProjectView。Memory 在 MVP 阶段只能进入 pending suggestion queue，不自动写长期记忆、不自动注入 prompt，避免变成不可追溯的隐藏提示词或权限后门。
+Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/Hermes 那样把可复用工作流沉淀为 skill，把长期项目事实和用户偏好沉淀为 memory；但所有 skill 都必须显式加载、记录 source/path/hash/content snapshot，并在每次 Leader 规划时把 compact skill provenance 固化到 plan 记录和 ProjectView。Memory 在 MVP 阶段必须先进入 pending suggestion queue，经 `apply-preview` 审阅后只能由人类显式运行 `memory apply --confirm` 写入长期记忆，且不会自动注入 prompt，避免变成不可追溯的隐藏提示词或权限后门。
 
 ## 2. 为什么当前开发没有跑偏
 
@@ -157,12 +157,12 @@ Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/H
 - `skills/<name>/SKILL.md` 本地技能目录。
 - 内置少量基础技能，例如 planning、debugging、code-review、verification。
 - `agentdeck skills list` / `agentdeck skills show --name <name>` / `agentdeck skills import-preview --path <SKILL.md>` / `agentdeck skills import --path <SKILL.md>` / `agentdeck skills load-preview --name <name> --agent <id> --purpose <text>` / `agentdeck skills load --name <name>` / `agentdeck skills suggest` / `agentdeck skills suggestions`。
-- `agentdeck memory suggest --summary <summary> --rationale <rationale> --source <source>` / `agentdeck memory suggestions`。
+- `agentdeck memory suggest --summary <summary> --rationale <rationale> --source <source>` / `agentdeck memory suggestions` / `agentdeck memory apply-preview --suggestion-id <id>` / `agentdeck memory apply --suggestion-id <id> --confirm`。
 - skill metadata：name、description、source、path、version/hash、allowed_placeholders、required_tools、risk。
 - 每次 Leader/Worker 加载 skill 时，把 path、hash、content snapshot 和使用者写入 state，保证历史可回放。
 - 支持外源 skill 目录或导入包，但默认先走只读 import preview，展示 source、target、hash、覆盖状态和 GUI-ready 控制项；显式 import/allowlist 后仍需先走可对话触发的 load preview，看清 agent、purpose、hash 和显式 load command，再由人类执行 load 才能进入 Leader/Worker 上下文，不自动执行远程安装脚本，也不静默把 skill 注入提示词。
 - Hermes 式后台 reviewer 只能提出 pending `skill_suggestion`，进入 `skill_suggestions[]` 队列和审计事件，不能直接创建、覆盖、删除、导入、加载或自动启用技能。
-- Hermes 式后台 reviewer 只能提出 pending `memory_suggestion`，进入 `memory_suggestions[]` 队列和审计事件，不能直接写 `.agentdeck/memory/*.md`、不能自动注入 Leader/Worker prompt。
+- Hermes 式后台 reviewer 只能提出 pending `memory_suggestion`，进入 `memory_suggestions[]` 队列和审计事件，不能直接写 `.agentdeck/memory/*.md`、不能自动注入 Leader/Worker prompt；长期 memory 只能经人类审阅 `apply-preview` 后显式 `memory apply --confirm` 落地。
 
 验收标准：
 

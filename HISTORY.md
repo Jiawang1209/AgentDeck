@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Surface memory apply controls in workbench
+
+- 扩展 `memory_suggestions_card`：pending memory suggestion item 现在带 `apply_preview` 和 `apply_memory` controls，card 顶层新增 `apply_preview_command_template`，让未来 GUI/TUI 能从一屏工作台直接进入“预览 -> 显式确认写入”的长期记忆流程。
+- 保持 workbench 只读边界：`agentdeck workbench` 和自然语言 `查看 memory 建议` 只派生命令控件，不创建或修改 `.agentdeck/memory/*.md`，不更新 suggestion status，不追加 `memory_applied`，不注入 prompt、不读取 tmux、不调用 provider。
+- 同步 Leader chat/workbench contract fixture、README、AGENT/CLAUDE、架构文档、北极星路线图和 contract 文档，明确 memory 已从“只能排队”推进为“待审队列 + 只读预览 + 人类显式 apply”。
+- 验证记录：已先确认红测失败，`memory_suggestions_card` 最初缺少 `apply_preview_command_template`、item 级 `apply_preview` / `apply_memory` controls 和 control registry 入口；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_memory_suggestions_is_read_only_and_avoids_provider_calls tests/test_agent_cli.py::test_workbench_surfaces_pending_memory_suggestions_for_gui_without_mutating_state tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_control_registry_to_match_cards -q` 8 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 138 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 544 项通过。
+
 ### Current - Apply memory suggestions with confirmation
 
 - 新增 `agentdeck memory apply --suggestion-id <id> --confirm`：把 pending memory suggestion 显式写入 `.agentdeck/memory/project.md` 或 `.agentdeck/memory/global.md`，完成 Hermes/WispTerm 式“建议 -> 人类确认 -> 长期记忆”的第一条闭环。

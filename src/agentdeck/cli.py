@@ -978,8 +978,41 @@ def _skill_suggestions_card(store: StateStore) -> dict[str, object]:
     }
 
 
+def _memory_suggestion_item_for_card(suggestion: dict[str, object]) -> dict[str, object]:
+    suggestion_id = str(suggestion.get("suggestion_id") or "<id>")
+    pending = suggestion.get("status") == "pending"
+    return {
+        **suggestion,
+        "controls": [
+            _control(
+                kind="inspect",
+                label="List memory suggestions",
+                command="agentdeck memory suggestions",
+                safety="inspect",
+            ),
+            _control(
+                kind="apply_preview",
+                label="Preview memory apply",
+                command=f"agentdeck memory apply-preview --suggestion-id {suggestion_id}",
+                safety="inspect",
+                enabled=pending,
+                blocker=None if pending else "memory suggestion is not pending",
+            ),
+            _control(
+                kind="apply_memory",
+                label="Apply memory suggestion",
+                command=f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm",
+                safety="explicit_user",
+                enabled=pending,
+                blocker=None if pending else "memory suggestion is not pending",
+            ),
+        ],
+    }
+
+
 def _memory_suggestions_card(store: StateStore) -> dict[str, object]:
     suggestions = list(store.load().get("memory_suggestions", []))
+    items = [_memory_suggestion_item_for_card(item) if isinstance(item, dict) else item for item in suggestions]
     pending_count = sum(1 for item in suggestions if isinstance(item, dict) and item.get("status") == "pending")
     noun = "suggestion" if pending_count == 1 else "suggestions"
     verb = "is" if pending_count == 1 else "are"
@@ -988,16 +1021,25 @@ def _memory_suggestions_card(store: StateStore) -> dict[str, object]:
         "title": "Memory suggestions",
         "summary": f"{pending_count} pending memory {noun} {verb} waiting for human review.",
         "suggestions_command": "agentdeck memory suggestions",
+        "apply_preview_command_template": "agentdeck memory apply-preview --suggestion-id <id>",
         "project_view_command": "agentdeck status",
         "count": len(suggestions),
         "pending_count": pending_count,
-        "items": suggestions,
+        "items": items,
         "controls": [
             _control(
                 kind="inspect",
                 label="List memory suggestions",
                 command="agentdeck memory suggestions",
                 safety="inspect",
+            ),
+            _control(
+                kind="apply_preview",
+                label="Preview memory apply",
+                command="agentdeck memory apply-preview --suggestion-id <id>",
+                safety="inspect",
+                enabled=False,
+                blocker="requires suggestion id",
             ),
             _control(kind="inspect", label="Open project status", command="agentdeck status", safety="inspect"),
         ],

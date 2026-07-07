@@ -391,7 +391,18 @@ LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS = (
     "controls",
 )
 
-LEADER_CHAT_MEMORY_SUGGESTIONS_CARD_FIELDS = LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS
+LEADER_CHAT_MEMORY_SUGGESTIONS_CARD_FIELDS = (
+    "mode",
+    "title",
+    "summary",
+    "suggestions_command",
+    "apply_preview_command_template",
+    "project_view_command",
+    "count",
+    "pending_count",
+    "items",
+    "controls",
+)
 
 LEADER_CHAT_SKILL_IMPORT_PREVIEW_CARD_FIELDS = (
     "ok",
@@ -6975,6 +6986,7 @@ def leader_chat_example() -> dict[str, object]:
         "title": "Memory suggestions",
         "summary": "1 pending memory suggestion is waiting for human review.",
         "suggestions_command": "agentdeck memory suggestions",
+        "apply_preview_command_template": "agentdeck memory apply-preview --suggestion-id <id>",
         "project_view_command": "agentdeck status",
         "count": 1,
         "pending_count": 1,
@@ -6998,6 +7010,22 @@ def leader_chat_example() -> dict[str, object]:
                         "safety": "inspect",
                         "enabled": True,
                         "blocker": None,
+                    },
+                    {
+                        "kind": "apply_preview",
+                        "label": "Preview memory apply",
+                        "command": "agentdeck memory apply-preview --suggestion-id mem_example",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                    {
+                        "kind": "apply_memory",
+                        "label": "Apply memory suggestion",
+                        "command": "agentdeck memory apply --suggestion-id mem_example --confirm",
+                        "safety": "explicit_user",
+                        "enabled": True,
+                        "blocker": None,
                     }
                 ],
             }
@@ -7010,6 +7038,14 @@ def leader_chat_example() -> dict[str, object]:
                 "safety": "inspect",
                 "enabled": True,
                 "blocker": None,
+            },
+            {
+                "kind": "apply_preview",
+                "label": "Preview memory apply",
+                "command": "agentdeck memory apply-preview --suggestion-id <id>",
+                "safety": "inspect",
+                "enabled": False,
+                "blocker": "requires suggestion id",
             },
             {
                 "kind": "inspect",
@@ -8568,6 +8604,7 @@ def workbench_example() -> dict[str, object]:
             "title": "Memory suggestions",
             "summary": "1 pending memory suggestion is waiting for human review.",
             "suggestions_command": "agentdeck memory suggestions",
+            "apply_preview_command_template": "agentdeck memory apply-preview --suggestion-id <id>",
             "project_view_command": "agentdeck status",
             "count": 1,
             "pending_count": 1,
@@ -8591,6 +8628,22 @@ def workbench_example() -> dict[str, object]:
                             "safety": "inspect",
                             "enabled": True,
                             "blocker": None,
+                        },
+                        {
+                            "kind": "apply_preview",
+                            "label": "Preview memory apply",
+                            "command": "agentdeck memory apply-preview --suggestion-id mem_example",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        },
+                        {
+                            "kind": "apply_memory",
+                            "label": "Apply memory suggestion",
+                            "command": "agentdeck memory apply --suggestion-id mem_example --confirm",
+                            "safety": "explicit_user",
+                            "enabled": True,
+                            "blocker": None,
                         }
                     ],
                 }
@@ -8603,6 +8656,14 @@ def workbench_example() -> dict[str, object]:
                     "safety": "inspect",
                     "enabled": True,
                     "blocker": None,
+                },
+                {
+                    "kind": "apply_preview",
+                    "label": "Preview memory apply",
+                    "command": "agentdeck memory apply-preview --suggestion-id <id>",
+                    "safety": "inspect",
+                    "enabled": False,
+                    "blocker": "requires suggestion id",
                 },
                 {
                     "kind": "inspect",

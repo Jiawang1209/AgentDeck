@@ -929,6 +929,38 @@ def test_leader_chat_memory_suggestions_is_read_only_and_avoids_provider_calls(
     )
     capsys.readouterr()
     state_before = StateStore(root).load()
+    suggestion_id = state_before["memory_suggestions"][0]["suggestion_id"]
+    expected_items = [
+        {
+            **state_before["memory_suggestions"][0],
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "List memory suggestions",
+                    "command": "agentdeck memory suggestions",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "apply_preview",
+                    "label": "Preview memory apply",
+                    "command": f"agentdeck memory apply-preview --suggestion-id {suggestion_id}",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "apply_memory",
+                    "label": "Apply memory suggestion",
+                    "command": f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm",
+                    "safety": "explicit_user",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
+        }
+    ]
 
     exit_code = cli.main(["leader", "chat", "--message", "查看 memory 建议"])
 
@@ -942,10 +974,11 @@ def test_leader_chat_memory_suggestions_is_read_only_and_avoids_provider_calls(
         "title": "Memory suggestions",
         "summary": "1 pending memory suggestion is waiting for human review.",
         "suggestions_command": "agentdeck memory suggestions",
+        "apply_preview_command_template": "agentdeck memory apply-preview --suggestion-id <id>",
         "project_view_command": "agentdeck status",
         "count": 1,
         "pending_count": 1,
-        "items": state_before["memory_suggestions"],
+        "items": expected_items,
         "controls": [
             {
                 "kind": "inspect",
@@ -954,6 +987,14 @@ def test_leader_chat_memory_suggestions_is_read_only_and_avoids_provider_calls(
                 "safety": "inspect",
                 "enabled": True,
                 "blocker": None,
+            },
+            {
+                "kind": "apply_preview",
+                "label": "Preview memory apply",
+                "command": "agentdeck memory apply-preview --suggestion-id <id>",
+                "safety": "inspect",
+                "enabled": False,
+                "blocker": "requires suggestion id",
             },
             {
                 "kind": "inspect",
@@ -1370,6 +1411,38 @@ def test_workbench_surfaces_pending_memory_suggestions_for_gui_without_mutating_
     capsys.readouterr()
     state_before = StateStore(root).load()
     events_before = StateStore(root).list_events(limit=20)
+    suggestion_id = state_before["memory_suggestions"][0]["suggestion_id"]
+    expected_items = [
+        {
+            **state_before["memory_suggestions"][0],
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "List memory suggestions",
+                    "command": "agentdeck memory suggestions",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "apply_preview",
+                    "label": "Preview memory apply",
+                    "command": f"agentdeck memory apply-preview --suggestion-id {suggestion_id}",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "apply_memory",
+                    "label": "Apply memory suggestion",
+                    "command": f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm",
+                    "safety": "explicit_user",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
+        }
+    ]
 
     exit_code = cli.main(["workbench"])
 
@@ -1380,10 +1453,11 @@ def test_workbench_surfaces_pending_memory_suggestions_for_gui_without_mutating_
         "title": "Memory suggestions",
         "summary": "1 pending memory suggestion is waiting for human review.",
         "suggestions_command": "agentdeck memory suggestions",
+        "apply_preview_command_template": "agentdeck memory apply-preview --suggestion-id <id>",
         "project_view_command": "agentdeck status",
         "count": 1,
         "pending_count": 1,
-        "items": state_before["memory_suggestions"],
+        "items": expected_items,
         "controls": [
             {
                 "kind": "inspect",
@@ -1392,6 +1466,14 @@ def test_workbench_surfaces_pending_memory_suggestions_for_gui_without_mutating_
                 "safety": "inspect",
                 "enabled": True,
                 "blocker": None,
+            },
+            {
+                "kind": "apply_preview",
+                "label": "Preview memory apply",
+                "command": "agentdeck memory apply-preview --suggestion-id <id>",
+                "safety": "inspect",
+                "enabled": False,
+                "blocker": "requires suggestion id",
             },
             {
                 "kind": "inspect",
@@ -1413,7 +1495,14 @@ def test_workbench_surfaces_pending_memory_suggestions_for_gui_without_mutating_
             "inspect",
             "agentdeck memory suggestions",
             "inspect",
-        )
+        ),
+        (
+            "memory",
+            "memory_suggestions_card",
+            "apply_preview",
+            "agentdeck memory apply-preview --suggestion-id <id>",
+            "inspect",
+        ),
     }
     assert StateStore(root).load() == state_before
     assert StateStore(root).list_events(limit=20) == events_before
@@ -3368,6 +3457,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "title",
         "summary",
         "suggestions_command",
+        "apply_preview_command_template",
         "project_view_command",
         "count",
         "pending_count",
@@ -5025,7 +5115,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 72,
+        "item_count_before_filter": 73,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -5161,7 +5251,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 71,
+        "item_count_before_filter": 72,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -5204,7 +5294,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 72,
+        "item_count_before_filter": 73,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -5243,7 +5333,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 72,
+        "item_count_before_filter": 73,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -5276,7 +5366,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 72,
+        "item_count_before_filter": 73,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -5315,7 +5405,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 72,
+        "item_count_before_filter": 73,
     }
     assert payload["items"] == []
     assert payload["groups"] == []
