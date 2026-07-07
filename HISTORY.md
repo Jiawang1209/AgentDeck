@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Surface loaded skills in Leader context
+
+- 扩展 ProjectView：新增 `skills` 只读摘要，从 `skill_loads[]` 派生 count、by_agent、by_source 和 GUI-ready items，保留 load_id、agent_id、purpose、name、source、path、content_hash、description、required_tools、risk、created_at、show_command、reload_command，但不把完整 content snapshot 塞进 status。
+- 扩展 workbench：新增 `skill_context_card`，从 ProjectView `skills` 派生 loaded skill context，并把 `agentdeck skills list` / `agentdeck status` inspect controls 纳入 `control_registry` 的 `scope=skills`。
+- 扩展自然语言 Leader chat：`agentdeck leader chat --message "查看已加载技能"` 进入只读 `mode=skill_context`，返回 `skill_context_card`、`intent_card.embedded_card=skill_context_card` 和 `next_command=agentdeck skills list`；该路线只记录 chat turn / audit event，不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox、不安装或改写 skill。
+- 同步 README、AGENT/CLAUDE 和 ProjectView / workbench / leader-chat contract 文档，明确 loaded skill context 是给 Leader/GUI 消费的可回放上下文，不是权限绕过。
+- 验证记录：已先确认红测失败，ProjectView 最初缺少 `skills` 字段，自然语言“查看已加载技能”会掉到 DeepSeek provider 路径并因 `DEEPSEEK_API_KEY` 缺失失败；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_surfaces_loaded_skill_context_for_project_view tests/test_agent_cli.py::test_leader_chat_skill_context_is_read_only_and_avoids_provider_calls -q` 2 项通过；contract/agent CLI 回归 `conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 334 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 515 项通过。
+
 ### Current - Add replayable skills MVP
 
 - 新增 `src/agentdeck/skills.py` Skill Registry MVP：内置 `planning`、`debugging`、`code-review`、`verification` 四个基础 skill，并扫描 `.agentdeck/skills/<name>/SKILL.md` 项目本地 skill。

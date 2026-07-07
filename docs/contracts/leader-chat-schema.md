@@ -20,6 +20,8 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "leader_summary_card_fields": [],
   "leader_status_card_fields": [],
   "leader_status_queue_fields": [],
+  "skill_context_card_fields": [],
+  "skill_context_item_fields": [],
   "continue_card_fields": [],
   "run_start_card_fields": [],
   "run_progress_card_fields": [],
@@ -94,6 +96,7 @@ The review-mode response shape is:
   "leader_action_card": {},
   "leader_summary_card": null,
   "leader_status_card": null,
+  "skill_context_card": null,
   "continue_card": null,
   "run_start_card": null,
   "run_progress_card": null,
@@ -144,6 +147,8 @@ The review-mode response shape is:
 The card is derived from the same action detail and does not introduce a second action state source. GUI and natural-language shells should render its `controls[]`, `preview_command`, `apply_command`, `explicit_command`, and `apply_blocker`, while still treating the underlying `leader_action` and ProjectView recovery as the authority.
 
 `leader_status_card` is the same read-only status projection returned by `agentdeck leader status`. Natural-language messages such as `查看 Leader 状态`, `刷新 Leader 状态`, `Leader 概览`, `leader status`, `leader refresh`, or `leader overview` enter `mode=leader_status`, embed this card, mirror its `provider_health` and `next_command` at the top level, and expose `intent_card.embedded_card=leader_status_card` with a refresh control matching `leader_status_card.refresh_command` plus an inspect control for `agentdeck leader status`. The same response includes `control_registry_card` filtered to `scope=leader` / `card=leader_card`; its selection points at the workbench `kind=refresh` control whose command matches `leader_status_card.refresh_command`, and `intent_card.secondary_embedded_cards[]` lists `control_registry_card` so GUI shells can highlight the same refresh action in the command palette. The card is derived from the validated ProjectView and workbench provider health projection; it may record the chat turn for history, but it must not call a Leader provider, inspect tmux panes, create plans, actions, approvals, messages, jobs, or inbox items, or execute any recommended command.
+
+`skill_context_card` is the read-only loaded-skill projection for messages such as `查看已加载技能`, `/skills`, `skills`, or `skill context`. These messages enter `mode=skill_context`, embed `project_view.skills.items[]`, set `next_command=agentdeck skills list`, and expose inspect controls for `agentdeck skills list` and `agentdeck status`. The route records only a chat turn and audit event. It must not call a Leader provider, inspect tmux panes, install or rewrite skills, create plans/actions/approvals/messages/jobs/inbox items, or change approval/runtime state.
 
 `intent_card` is the stable routing card for GUI and natural-language shells:
 

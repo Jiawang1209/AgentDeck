@@ -4,6 +4,7 @@ from dataclasses import asdict
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 from typing import Any
 
@@ -1190,6 +1191,50 @@ class StateStore:
             "items": items,
         }
 
+    @staticmethod
+    def _skill_load_summaries(skill_loads: list[dict[str, Any]]) -> dict[str, Any]:
+        by_agent: dict[str, int] = {}
+        by_source: dict[str, int] = {}
+        items = []
+        for load in skill_loads:
+            agent_id = str(load.get("agent_id") or "unknown")
+            source = str(load.get("source") or "unknown")
+            name = str(load.get("name") or "")
+            purpose = str(load.get("purpose") or "")
+            by_agent[agent_id] = by_agent.get(agent_id, 0) + 1
+            by_source[source] = by_source.get(source, 0) + 1
+            item = {
+                "load_id": load.get("load_id"),
+                "agent_id": load.get("agent_id"),
+                "purpose": load.get("purpose"),
+                "name": load.get("name"),
+                "source": load.get("source"),
+                "path": load.get("path"),
+                "content_hash": load.get("content_hash"),
+                "description": load.get("description"),
+                "required_tools": load.get("required_tools") if isinstance(load.get("required_tools"), list) else [],
+                "risk": load.get("risk"),
+                "created_at": load.get("created_at"),
+                "show_command": f"agentdeck skills show --name {shlex.quote(name)}" if name else None,
+                "reload_command": StateStore._skill_reload_command(name, agent_id, purpose),
+            }
+            items.append(item)
+        return {
+            "count": len(items),
+            "by_agent": by_agent,
+            "by_source": by_source,
+            "items": items,
+        }
+
+    @staticmethod
+    def _skill_reload_command(name: str, agent_id: str, purpose: str) -> str | None:
+        if not name:
+            return None
+        command = f"agentdeck skills load --name {shlex.quote(name)} --agent {shlex.quote(agent_id)}"
+        if purpose:
+            command = f"{command} --purpose {shlex.quote(purpose)}"
+        return command
+
     def _inbox_summary(self, inbox: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         by_agent = {agent_id: len(items) for agent_id, items in inbox.items()}
         all_items = [item for items in inbox.values() for item in items]
@@ -1523,6 +1568,7 @@ class StateStore:
             chat_turns=self._chat_turn_summaries(state.get("chat_turns", [])),
             leader_errors=self._leader_error_summaries(state.get("leader_errors", [])),
             leader_actions=self._leader_action_summaries(state.get("leader_actions", [])),
+            skills=self._skill_load_summaries(state.get("skill_loads", [])),
             inbox=self._inbox_summary(state.get("inbox", {})),
             recovery=self._recovery_summary(state, config),
         )

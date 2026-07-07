@@ -27,6 +27,8 @@
 
 Skill Registry MVP：`agentdeck skills list` 必须只读发现内置 skill 和 `.agentdeck/skills/<name>/SKILL.md` 项目本地 skill；`agentdeck skills show --name <name>` 必须只读返回 skill metadata、hash 和 content；`agentdeck skills load --name <name> --agent <id> --purpose <text>` 才能写入 `skill_loads[]` 和 `skill_loaded` 审计事件，并保存 content snapshot。skills 命令不得调用 provider、读取 tmux、发送输入、修改 approval/runtime state，外源 skill 不得静默安装或启用。
 
+Loaded skill context 必须进入 ProjectView `skills` 摘要、workbench `skill_context_card` 和自然语言 `mode=skill_context`；`agentdeck leader chat --message "查看已加载技能"` 只能展示已加载 skill、记录 chat turn 和审计事件，不得调用 provider、读取 tmux、安装或改写 skill、创建 plan/action/approval/message/job/inbox 或改变 runtime/approval state。
+
 Leader 不应该：
 
 - 把 Worker 的完整长输出全部塞进上下文。

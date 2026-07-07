@@ -119,6 +119,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "ledger_card",
         "audit_card",
         "artifacts_card",
+        "skill_context_card",
         "control_mode_card",
         "provider_health",
         "capability_card",
@@ -326,6 +327,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Inspect trace"
     if re.fullmatch(r"agentdeck leader summary --plan-id [^\s]+", command):
         return "Summarize plan"
+    if command == "agentdeck skills list":
+        return "List skills"
     return "Next command"
 
 
@@ -386,6 +389,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return str(command) if command else "agentdeck events --limit 20"
     if embedded_card == "artifacts_card":
         return "agentdeck artifacts"
+    if embedded_card == "skill_context_card":
+        return "agentdeck skills list"
     if embedded_card == "trace_card":
         trace_card = payload.get("trace_card")
         query_id = trace_card.get("query_id") if isinstance(trace_card, dict) else None
@@ -455,6 +460,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("control_mode_card", None)
     payload.setdefault("provider_health", None)
     payload.setdefault("leader_status_card", None)
+    payload.setdefault("skill_context_card", None)
     payload.setdefault("lineage_card", None)
     payload.setdefault("audit_card", None)
     payload.setdefault("artifacts_card", None)
@@ -876,6 +882,26 @@ def _artifacts_card_payload(project_view: dict[str, object]) -> dict[str, object
     }
 
 
+def _skill_context_card(project_view: dict[str, object]) -> dict[str, object]:
+    skills = project_view.get("skills") if isinstance(project_view.get("skills"), dict) else {}
+    items = skills.get("items") if isinstance(skills.get("items"), list) else []
+    count = len(items)
+    noun = "skill" if count == 1 else "skills"
+    return {
+        "mode": "skill_context",
+        "title": "Loaded skill context",
+        "summary": f"{count} loaded {noun} is available as replayable context.",
+        "skills_command": "agentdeck skills list",
+        "project_view_command": "agentdeck status",
+        "count": count,
+        "items": items,
+        "controls": [
+            _control(kind="inspect", label="List skills", command="agentdeck skills list", safety="inspect"),
+            _control(kind="inspect", label="Open project status", command="agentdeck status", safety="inspect"),
+        ],
+    }
+
+
 def events_command(args: argparse.Namespace) -> int:
     _config, store, exit_code = _load_project_or_error()
     if store is None:
@@ -1019,6 +1045,7 @@ def _workbench_snapshot_payload(
     operator_card = _workbench_operator_card(project_view, continue_card, active_queue_source)
     audit_card = _workbench_audit_card(project_view)
     artifacts_card = _artifacts_card_payload(project_view)
+    skill_context_card = _skill_context_card(project_view)
     leader_summary_card = _workbench_leader_summary_card(store)
     contracts_card = _workbench_contracts_card()
     control_mode_card = _workbench_control_mode_card(project_view)
@@ -1041,6 +1068,7 @@ def _workbench_snapshot_payload(
         "operator_card": operator_card,
         "audit_card": audit_card,
         "artifacts_card": artifacts_card,
+        "skill_context_card": skill_context_card,
         "leader_summary_card": leader_summary_card,
         "contracts_card": contracts_card,
         "control_mode_card": control_mode_card,
@@ -1403,6 +1431,14 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         card="artifacts_card",
         agent_id=None,
         controls=artifacts_card.get("controls"),
+    )
+    skill_context_card = payload.get("skill_context_card") if isinstance(payload.get("skill_context_card"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry,
+        scope="skills",
+        card="skill_context_card",
+        agent_id=None,
+        controls=skill_context_card.get("controls"),
     )
     leader_summary_card = (
         payload.get("leader_summary_card")
@@ -4445,6 +4481,20 @@ def _chat_wants_help(message: str) -> bool:
     )
 
 
+def _chat_wants_skill_context(message: str) -> bool:
+    normalized = message.strip().lower()
+    return normalized in {
+        "skills",
+        "skill",
+        "/skills",
+        "查看技能",
+        "查看已加载技能",
+        "已加载技能",
+        "技能列表",
+        "skill context",
+    } or any(token in normalized for token in ["loaded skill", "skill context", "已加载 skill", "已加载技能"])
+
+
 def _chat_wants_leader_status(message: str) -> bool:
     normalized = message.strip().lower().replace(" ", "")
     explicit_phrases = {
@@ -5472,6 +5522,19 @@ def _leader_chat_explanation(
             "safety": "inspect",
             "requires_explicit_user": False,
         }
+    if mode == "skill_context":
+        skill_context_card = result if isinstance(result, dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader is showing loaded skills as replayable context without calling a provider or mutating runtime state.",
+            "reason": "human asked to inspect loaded skills",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": "skill_context",
+            "action_status": "loaded" if int(skill_context_card.get("count", 0)) else "empty",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
     if mode == "help":
         return {
             "mode": mode,
@@ -6192,6 +6255,63 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 else None,
                 enabled_only=control_registry_filters["enabled_only"] is True,
             ),
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_skill_context(args.message):
+        next_command = "agentdeck skills list"
+        turn = store.record_chat_turn(
+            mode="skill_context",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="skill_context",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "skill_context",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        skill_context_card = _skill_context_card(refreshed_project_view)
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "skill_context",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "skill_context",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                result=skill_context_card,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "skill_context_card": skill_context_card,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 

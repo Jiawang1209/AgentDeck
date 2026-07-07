@@ -325,6 +325,77 @@ def test_skills_show_unknown_skill_fails_without_mutating_state(tmp_path, monkey
     assert StateStore(root).load() == state_before
 
 
+def test_status_surfaces_loaded_skill_context_for_project_view(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["skills", "load", "--name", "planning", "--agent", "leader", "--purpose", "decompose task"])
+    capsys.readouterr()
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["skills"]["count"] == 1
+    assert payload["skills"]["by_agent"] == {"leader": 1}
+    assert payload["skills"]["by_source"] == {"builtin": 1}
+    assert payload["skills"]["items"][0]["agent_id"] == "leader"
+    assert payload["skills"]["items"][0]["purpose"] == "decompose task"
+    assert payload["skills"]["items"][0]["name"] == "planning"
+    assert payload["skills"]["items"][0]["source"] == "builtin"
+    assert payload["skills"]["items"][0]["content_hash"].startswith("sha256:")
+    assert payload["skills"]["items"][0]["show_command"] == "agentdeck skills show --name planning"
+    assert payload["skills"]["items"][0]["reload_command"] == (
+        "agentdeck skills load --name planning --agent leader --purpose 'decompose task'"
+    )
+
+
+def test_leader_chat_skill_context_is_read_only_and_avoids_provider_calls(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    cli.main(["skills", "load", "--name", "planning", "--agent", "leader", "--purpose", "decompose task"])
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看已加载技能"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skill_context"
+    assert payload["plan_id"] is None
+    assert payload["next_command"] == "agentdeck skills list"
+    assert payload["skill_context_card"] == {
+        "mode": "skill_context",
+        "title": "Loaded skill context",
+        "summary": "1 loaded skill is available as replayable context.",
+        "skills_command": "agentdeck skills list",
+        "project_view_command": "agentdeck status",
+        "count": 1,
+        "items": payload["project_view"]["skills"]["items"],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "List skills",
+                "command": "agentdeck skills list",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Open project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    state_after = StateStore(root).load()
+    assert state_after["skill_loads"] == state_before["skill_loads"]
+    assert state_after["plans"] == []
+    assert state_after["leader_errors"] == []
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
+
+
 def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -1820,11 +1891,12 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "ledger_card",
         "lineage_card",
         "queue_card",
-        "operator_card",
-        "audit_card",
-        "artifacts_card",
-        "leader_summary_card",
-        "contracts_card",
+            "operator_card",
+            "audit_card",
+            "artifacts_card",
+            "skill_context_card",
+            "leader_summary_card",
+            "contracts_card",
         "control_mode_card",
         "recovery",
         "next_command",
@@ -2004,6 +2076,16 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["artifacts_card_fields"] == list(ARTIFACTS_RESPONSE_FIELDS)
     assert payload["artifact_summary_fields"] == list(ARTIFACTS_SUMMARY_FIELDS)
     assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
+    assert payload["skill_context_card_fields"] == [
+        "mode",
+        "title",
+        "summary",
+        "skills_command",
+        "project_view_command",
+        "count",
+        "items",
+        "controls",
+    ]
     assert payload["leader_summary_card_fields"] == list(LEADER_SUMMARY_RESPONSE_FIELDS)
     assert payload["contracts_card_fields"] == [
         "contracts_command",
@@ -3626,7 +3708,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 66,
+        "item_count_before_filter": 68,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -3762,7 +3844,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 65,
+        "item_count_before_filter": 67,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -3805,7 +3887,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 66,
+        "item_count_before_filter": 68,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -3844,7 +3926,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 66,
+        "item_count_before_filter": 68,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -3877,7 +3959,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 66,
+        "item_count_before_filter": 68,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -3916,7 +3998,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 66,
+        "item_count_before_filter": 68,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

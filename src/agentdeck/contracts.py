@@ -154,6 +154,7 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "chat_turns",
     "leader_errors",
     "leader_actions",
+    "skills",
     "inbox",
     "recovery",
 )
@@ -337,6 +338,40 @@ PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS = (
     "created_at",
 )
 
+PROJECT_VIEW_SKILLS_FIELDS = (
+    "count",
+    "by_agent",
+    "by_source",
+    "items",
+)
+
+PROJECT_VIEW_SKILL_ITEM_FIELDS = (
+    "load_id",
+    "agent_id",
+    "purpose",
+    "name",
+    "source",
+    "path",
+    "content_hash",
+    "description",
+    "required_tools",
+    "risk",
+    "created_at",
+    "show_command",
+    "reload_command",
+)
+
+LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS = (
+    "mode",
+    "title",
+    "summary",
+    "skills_command",
+    "project_view_command",
+    "count",
+    "items",
+    "controls",
+)
+
 PROJECT_VIEW_MESSAGE_ITEM_FIELDS = (
     "message_id",
     "from_actor",
@@ -486,6 +521,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "leader_action_card",
     "leader_summary_card",
     "leader_status_card",
+    "skill_context_card",
     "continue_card",
     "run_start_card",
     "run_progress_card",
@@ -745,6 +781,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "operator_card",
     "audit_card",
     "artifacts_card",
+    "skill_context_card",
     "leader_summary_card",
     "contracts_card",
     "control_mode_card",
@@ -1458,6 +1495,8 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "recommended_action_fields": list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS),
         "leader_actions_fields": list(PROJECT_VIEW_LEADER_ACTIONS_FIELDS),
         "leader_action_item_fields": list(PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS),
+        "skill_summary_fields": list(PROJECT_VIEW_SKILLS_FIELDS),
+        "skill_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
         "message_item_fields": list(PROJECT_VIEW_MESSAGE_ITEM_FIELDS),
         "job_item_fields": list(PROJECT_VIEW_JOB_ITEM_FIELDS),
         "reply_item_fields": list(PROJECT_VIEW_REPLY_ITEM_FIELDS),
@@ -1478,6 +1517,8 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_recommended_action_fields"] = list(example["recovery"]["recommended_action"])
         payload["example_leader_actions_fields"] = list(example["leader_actions"])
         payload["example_leader_action_item_fields"] = list(example["leader_actions"]["items"][0])
+        payload["example_skill_summary_fields"] = list(example["skills"])
+        payload["example_skill_item_fields"] = list(example["skills"]["items"][0])
         payload["example_message_item_fields"] = list(example["messages"]["items"][0])
         payload["example_job_item_fields"] = list(example["jobs"]["items"][0])
         payload["example_reply_item_fields"] = list(example["replies"]["items"][0])
@@ -1518,6 +1559,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "terminal_session_item_fields": list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS),
         "leader_status_card_fields": list(LEADER_STATUS_RESPONSE_FIELDS),
         "leader_status_queue_fields": list(LEADER_STATUS_QUEUE_FIELDS),
+        "skill_context_card_fields": list(LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS),
+        "skill_context_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
@@ -2218,6 +2261,8 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "artifacts_card_fields": list(ARTIFACTS_RESPONSE_FIELDS),
         "artifact_summary_fields": list(ARTIFACTS_SUMMARY_FIELDS),
         "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
+        "skill_context_card_fields": list(LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS),
+        "skill_context_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
         "leader_summary_card_fields": list(LEADER_SUMMARY_RESPONSE_FIELDS),
         "contracts_card_fields": list(WORKBENCH_CONTRACTS_CARD_FIELDS),
         "change_summary_fields": list(WORKBENCH_CHANGE_SUMMARY_FIELDS),
@@ -2635,11 +2680,41 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     elif "leader_actions" in payload:
         errors.append("leader_actions must be an object")
     _validate_project_view_plan_items(errors, payload)
+    _validate_project_view_skill_items(errors, payload)
     _validate_project_view_summary_items(errors, payload, "messages", PROJECT_VIEW_MESSAGE_ITEM_FIELDS, "message")
     _validate_project_view_summary_items(errors, payload, "jobs", PROJECT_VIEW_JOB_ITEM_FIELDS, "job")
     _validate_project_view_summary_items(errors, payload, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
     _validate_project_view_summary_items(errors, payload, "artifacts", PROJECT_VIEW_ARTIFACT_ITEM_FIELDS, "artifact")
     return {"ok": not errors, "errors": errors}
+
+
+def _validate_project_view_skill_items(errors: list[str], payload: dict[str, object]) -> None:
+    skills = payload.get("skills")
+    if not isinstance(skills, dict):
+        if "skills" in payload:
+            errors.append("skills must be an object")
+        return
+    for field in PROJECT_VIEW_SKILLS_FIELDS:
+        if field not in skills:
+            errors.append(f"missing skills field: {field}")
+    items = skills.get("items")
+    if not isinstance(items, list):
+        if "items" in skills:
+            errors.append("skills.items must be a list")
+        return
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            if index == 0:
+                errors.append("skills.items must contain objects")
+            else:
+                errors.append(f"skills.items[{index}] must be an object")
+            continue
+        for field in PROJECT_VIEW_SKILL_ITEM_FIELDS:
+            if field not in item:
+                if index == 0:
+                    errors.append(f"missing skill item field: {field}")
+                else:
+                    errors.append(f"missing skill item field at index {index}: {field}")
 
 
 def _validate_project_view_plan_items(errors: list[str], payload: dict[str, object]) -> None:
@@ -6082,6 +6157,28 @@ def project_view_example() -> dict[str, object]:
                 }
             ],
         },
+        "skills": {
+            "count": 1,
+            "by_agent": {"leader": 1},
+            "by_source": {"builtin": 1},
+            "items": [
+                {
+                    "load_id": "skl_example",
+                    "agent_id": "leader",
+                    "purpose": "decompose task",
+                    "name": "planning",
+                    "source": "builtin",
+                    "path": "builtin://planning/SKILL.md",
+                    "content_hash": "sha256:example",
+                    "description": "Break broad goals into reviewable steps.",
+                    "required_tools": [],
+                    "risk": "inspect",
+                    "created_at": "2026-07-04T00:00:00+00:00",
+                    "show_command": "agentdeck skills show --name planning",
+                    "reload_command": "agentdeck skills load --name planning --agent leader --purpose 'decompose task'",
+                }
+            ],
+        },
         "inbox": {"total": 0, "by_agent": {}, "by_status": {}, "heads": {}},
         "recovery": {
             "status": "action_required",
@@ -6148,6 +6245,33 @@ def leader_chat_example() -> dict[str, object]:
     audit_card = workbench_card["audit_card"]
     control_mode_card = workbench_card["control_mode_card"]
     capability_card = leader_chat_capability_card()
+    skill_context_card = {
+        "mode": "skill_context",
+        "title": "Loaded skill context",
+        "summary": "1 loaded skill is available as replayable context.",
+        "skills_command": "agentdeck skills list",
+        "project_view_command": "agentdeck status",
+        "count": 1,
+        "items": project_view["skills"]["items"],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "List skills",
+                "command": "agentdeck skills list",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Open project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     control_registry_card = leader_chat_control_registry_card(workbench_card)
     startup_preview_card = _startup_preview_card_from_agent_ready(agent_ready_card)
     runtime_action_card = {
@@ -6347,6 +6471,7 @@ def leader_chat_example() -> dict[str, object]:
         "leader_action_card": leader_action_card,
         "leader_summary_card": leader_summary_card,
         "leader_status_card": leader_status_card,
+        "skill_context_card": skill_context_card,
         "continue_card": continue_card,
         "run_start_card": run_start_card,
         "run_progress_card": run_progress_card,
@@ -6806,6 +6931,14 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         card="artifacts_card",
         agent_id=None,
         controls=artifacts_card.get("controls"),
+    )
+    skill_context_card = payload.get("skill_context_card") if isinstance(payload.get("skill_context_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="skills",
+        card="skill_context_card",
+        agent_id=None,
+        controls=skill_context_card.get("controls"),
     )
     leader_summary_card = (
         payload.get("leader_summary_card")
@@ -7579,6 +7712,33 @@ def workbench_example() -> dict[str, object]:
             ],
         },
         "artifacts_card": artifacts_example(),
+        "skill_context_card": {
+            "mode": "skill_context",
+            "title": "Loaded skill context",
+            "summary": "1 loaded skill is available as replayable context.",
+            "skills_command": "agentdeck skills list",
+            "project_view_command": "agentdeck status",
+            "count": 1,
+            "items": project_view["skills"]["items"],
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "List skills",
+                    "command": "agentdeck skills list",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "inspect",
+                    "label": "Open project status",
+                    "command": "agentdeck status",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
+        },
         "leader_summary_card": leader_summary_example(),
         "contracts_card": {
             "contracts_command": "agentdeck contract list",

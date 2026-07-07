@@ -8,7 +8,7 @@ The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in 
 
 Reusable contract response, payload, and example fixture helpers live in `src/agentdeck/contracts.py`. The CLI discovery command uses `project_view_contract_response()` directly so command output and reusable module output stay identical.
 
-Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_LEADER_FIELDS`, `PROJECT_VIEW_PLAN_ITEM_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
+Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_LEADER_FIELDS`, `PROJECT_VIEW_PLAN_ITEM_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_SKILLS_FIELDS`, `PROJECT_VIEW_SKILL_ITEM_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
 
 Use `validate_project_view_contract(payload)` from `src/agentdeck/contracts.py` to check any ProjectView-like payload against the v1 baseline contract.
 
@@ -60,6 +60,7 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
   "chat_turns": {},
   "leader_errors": {},
   "leader_actions": {},
+  "skills": {},
   "inbox": {},
   "recovery": {}
 }
@@ -95,6 +96,8 @@ Use `agentdeck contract project-view` to discover this contract from tools or GU
   "recommended_action_fields": [],
   "leader_actions_fields": [],
   "leader_action_item_fields": [],
+  "skill_summary_fields": [],
+  "skill_item_fields": [],
   "message_item_fields": [],
   "job_item_fields": [],
   "reply_item_fields": [],
@@ -178,6 +181,9 @@ The following blocks use a consistent summary pattern:
 - `jobs`: `count`, `by_status`, `items[]`
 - `replies`: `count`, `items[]`
 - `artifacts`: `count`, `by_status`, `by_kind`, `items[]`
+- `skills`: `count`, `by_agent`, `by_source`, `items[]`
+
+`skills.items[]` is the ProjectView summary of explicit `agentdeck skills load` records. Each item includes `load_id`, `agent_id`, `purpose`, `name`, `source`, `path`, `content_hash`, `description`, `required_tools`, `risk`, `created_at`, `show_command`, and `reload_command`. ProjectView intentionally keeps the full `content_snapshot` out of the summary so status/workbench payloads stay compact; use `agentdeck skills show --name <name>` for current content and the persisted `skill_loads[]` record for replay. The summary is read-only and does not load, install, rewrite, or enable skills.
 - `chat_turns`: `count`, `by_mode`, `items[]`
 - `leader_errors`: `count`, `by_mode`, `items[]`
 - `leader_actions`: `count`, `by_kind`, `by_status`, `items[]`
