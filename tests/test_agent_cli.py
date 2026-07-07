@@ -874,6 +874,105 @@ def test_memory_apply_rejects_already_applied_suggestion_without_duplicate_write
     assert StateStore(root).list_events(limit=20) == events_before
 
 
+def test_learn_review_surfaces_read_only_skill_and_memory_suggestion_commands(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    plan = {
+        "goal": "Review a failed deployment.",
+        "dispatch_ready": False,
+        "steps": [
+            {
+                "step": 1,
+                "agent_id": "planner",
+                "role": "planner",
+                "task": "Inspect deployment evidence and report repeatable lessons.",
+                "risk": "read-only evidence review",
+                "requires_approval": True,
+            }
+        ],
+    }
+    plan_record = store.record_plan("Review a failed deployment.", "fake", "fake-plan", plan)
+    approvals = store.create_approvals_from_plan(str(plan_record["plan_id"]))
+    approval = approvals[0]
+    dispatch = store.create_dispatch_records(
+        "leader",
+        "planner",
+        "Inspect deployment evidence and report repeatable lessons.",
+        "prompt",
+        "%42",
+    )
+    store.mark_approval_dispatched(
+        str(approval["approval_id"]),
+        str(dispatch["message"]["message_id"]),
+        str(dispatch["attempt"]["attempt_id"]),
+        str(dispatch["job"]["job_id"]),
+    )
+    store.record_reply(
+        "planner",
+        str(dispatch["message"]["message_id"]),
+        "summary: add a deployment incident review checklist\nfull_output_path: docs/reports/deploy-review.md",
+    )
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["learn", "review", "--plan-id", str(plan_record["plan_id"])])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "learning_review"
+    assert payload["plan_id"] == plan_record["plan_id"]
+    assert payload["task"] == "Review a failed deployment."
+    assert payload["status"] == "ready"
+    assert payload["reply_count"] == 1
+    assert payload["artifact_count"] == 1
+    assert payload["summary_command"] == f"agentdeck leader summary --plan-id {plan_record['plan_id']}"
+    assert payload["plan_status_command"] == f"agentdeck plan status --plan-id {plan_record['plan_id']}"
+    assert payload["skill_suggestion"]["command"].startswith(
+        "agentdeck skills suggest --name deployment-review"
+    )
+    assert "--source learn-review" in payload["skill_suggestion"]["command"]
+    assert payload["memory_suggestion"]["command"].startswith("agentdeck memory suggest --summary")
+    assert "--source learn-review" in payload["memory_suggestion"]["command"]
+    assert payload["memory_suggestion"]["command"].endswith("--scope project")
+    assert payload["controls"] == [
+        {
+            "kind": "summary",
+            "label": "View Leader summary",
+            "command": f"agentdeck leader summary --plan-id {plan_record['plan_id']}",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "suggest_skill",
+            "label": "Queue skill suggestion",
+            "command": payload["skill_suggestion"]["command"],
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "suggest_memory",
+            "label": "Queue memory suggestion",
+            "command": payload["memory_suggestion"]["command"],
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+
+    state_after = StateStore(root).load()
+    assert state_after["skill_suggestions"] == state_before["skill_suggestions"]
+    assert state_after["memory_suggestions"] == state_before["memory_suggestions"]
+    assert state_after["plans"] == state_before["plans"]
+    assert state_after["approvals"] == state_before["approvals"]
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["replies"] == state_before["replies"]
+    assert state_after["artifacts"] == state_before["artifacts"]
+
+
 def test_leader_chat_skill_suggestions_is_read_only_and_avoids_provider_calls(
     tmp_path, monkeypatch, capsys
 ) -> None:

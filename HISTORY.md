@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Add read-only learning review
+
+- 新增 `agentdeck learn review --plan-id <id>`：只读复用 plan status、Leader summary、worker reply 和 artifact 事实，输出 `mode=learning_review`，并生成显式 `agentdeck skills suggest ... --source learn-review` 与 `agentdeck memory suggest ... --source learn-review` 后续命令。
+- 保持 Hermes 式学习闭环的人类确认边界：learning review 不写 `skill_suggestions[]`、不写 `memory_suggestions[]`，不创建/导入/load skill，不写 `.agentdeck/memory/*.md`，不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox；真正进入 pending queue 仍必须由人类显式运行 suggestion 命令。
+- 同步 README、AGENT.md、CLAUDE.md 和北极星路线图，明确当前学习 reviewer 先是只读复盘卡片，后续才可在 GUI/自然语言入口中扩展。
+- 验证记录：已先确认红测失败，`learn` 最初不是合法顶层命令；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_learn_review_surfaces_read_only_skill_and_memory_suggestion_commands tests/test_agent_cli.py::test_skills_suggest_records_pending_skill_suggestion_without_creating_skill tests/test_agent_cli.py::test_memory_suggest_records_pending_memory_suggestion_without_writing_memory tests/test_agent_cli.py::test_memory_suggestions_lists_pending_suggestions_without_mutating_state -q` 4 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 548 项通过。
+
 ### Current - Add memory contract discovery
 
 - 新增 `agentdeck contract memory` / `--example`：公开 `memory suggest/suggestions/apply-preview/apply` 的响应字段、memory suggestion item 字段、GUI control 字段和稳定 example fixture。

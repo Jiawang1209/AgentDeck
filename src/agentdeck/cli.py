@@ -4832,6 +4832,21 @@ def leader_summary_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def learn_review_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if _project_view_payload_or_error(config, store) is None:
+        return 1
+    try:
+        payload = _learning_review_payload(store, args.plan_id)
+    except KeyError:
+        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
 def _leader_summary_payload(store: StateStore, plan_id: str) -> dict[str, object]:
     plan = store.plan_by_id(plan_id)
     plan_status = store.plan_status(plan_id)
@@ -4923,6 +4938,121 @@ def _leader_summary_payload(store: StateStore, plan_id: str) -> dict[str, object
         "steps": steps,
         "controls": controls,
     }
+
+
+def _learning_review_payload(store: StateStore, plan_id: str) -> dict[str, object]:
+    summary = _leader_summary_payload(store, plan_id)
+    task = str(summary.get("task") or "")
+    reply_count = int(summary.get("reply_count") or 0)
+    artifact_count = int(summary.get("artifact_count") or 0)
+    status = "ready" if reply_count else "waiting"
+    skill_name = _learning_review_skill_name(summary)
+    skill_summary = f"Review {task or 'a completed AgentDeck run'} as a repeatable workflow."
+    skill_rationale = (
+        f"Plan {plan_id} produced {reply_count} replies and {artifact_count} artifacts; "
+        "capture the reusable review procedure as an explicit skill suggestion."
+    )
+    memory_summary = (
+        f"Plan {plan_id} completed with {reply_count} replies and {artifact_count} artifacts; "
+        f"review whether its lessons should become durable project memory."
+    )
+    memory_rationale = (
+        "Learning review is read-only, so durable memory must still go through "
+        "memory suggestions, apply-preview, and explicit apply confirmation."
+    )
+    skill_command = (
+        "agentdeck skills suggest "
+        f"--name {shlex.quote(skill_name)} "
+        f"--summary {shlex.quote(skill_summary)} "
+        f"--rationale {shlex.quote(skill_rationale)} "
+        f"--source learn-review --agent leader --from-trace {shlex.quote(plan_id)}"
+    )
+    memory_command = (
+        "agentdeck memory suggest "
+        f"--summary {shlex.quote(memory_summary)} "
+        f"--rationale {shlex.quote(memory_rationale)} "
+        f"--source learn-review --agent leader --from-trace {shlex.quote(plan_id)} --scope project"
+    )
+    controls = [
+        _control(
+            kind="summary",
+            label="View Leader summary",
+            command=f"agentdeck leader summary --plan-id {plan_id}",
+            safety="inspect",
+        ),
+        _control(
+            kind="suggest_skill",
+            label="Queue skill suggestion",
+            command=skill_command,
+            safety="explicit_user",
+            enabled=status == "ready",
+            blocker=None if status == "ready" else "no replies available for learning review",
+        ),
+        _control(
+            kind="suggest_memory",
+            label="Queue memory suggestion",
+            command=memory_command,
+            safety="explicit_user",
+            enabled=status == "ready",
+            blocker=None if status == "ready" else "no replies available for learning review",
+        ),
+    ]
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "ok": True,
+        "mode": "learning_review",
+        "plan_id": plan_id,
+        "task": task,
+        "status": status,
+        "reply_count": reply_count,
+        "artifact_count": artifact_count,
+        "summary": (
+            "Learning review can queue explicit skill and memory suggestions."
+            if status == "ready"
+            else "Learning review is waiting for at least one worker reply."
+        ),
+        "plan_status_command": f"agentdeck plan status --plan-id {plan_id}",
+        "summary_command": f"agentdeck leader summary --plan-id {plan_id}",
+        "skill_suggestion": {
+            "kind": "skill_suggestion",
+            "name": skill_name,
+            "summary": skill_summary,
+            "rationale": skill_rationale,
+            "source": "learn-review",
+            "agent_id": "leader",
+            "trace_id": plan_id,
+            "command": skill_command,
+        },
+        "memory_suggestion": {
+            "kind": "memory_suggestion",
+            "scope": "project",
+            "summary": memory_summary,
+            "rationale": memory_rationale,
+            "source": "learn-review",
+            "agent_id": "leader",
+            "trace_id": plan_id,
+            "command": memory_command,
+        },
+        "controls": controls,
+    }
+
+
+def _learning_review_skill_name(summary: dict[str, object]) -> str:
+    text_parts = [str(summary.get("task") or "")]
+    for step in summary.get("steps", []):
+        if isinstance(step, dict):
+            text_parts.append(str(step.get("task") or ""))
+            for artifact in step.get("artifacts", []):
+                if isinstance(artifact, dict):
+                    text_parts.append(str(artifact.get("path") or ""))
+    combined = " ".join(text_parts).lower()
+    if "deploy" in combined:
+        return "deployment-review"
+    if "incident" in combined:
+        return "incident-review"
+    tokens = [token for token in re.findall(r"[a-z0-9]+", combined) if token not in {"a", "the", "and", "to"}]
+    stem = tokens[0] if tokens else "run"
+    return f"{stem}-review"
 
 
 def _leader_summary_artifact(artifact: dict[str, object]) -> dict[str, object]:
@@ -10061,7 +10191,11 @@ def build_parser() -> argparse.ArgumentParser:
     skills_suggest.add_argument("--name", required=True, help="Suggested skill name")
     skills_suggest.add_argument("--summary", required=True, help="Short summary of the suggested skill")
     skills_suggest.add_argument("--rationale", required=True, help="Why this skill should exist")
-    skills_suggest.add_argument("--source", default="human", choices=["human", "leader", "worker", "reviewer"])
+    skills_suggest.add_argument(
+        "--source",
+        default="human",
+        choices=["human", "leader", "worker", "reviewer", "learn-review"],
+    )
     skills_suggest.add_argument("--agent", default=None, help="Agent associated with the suggestion")
     skills_suggest.add_argument("--from-trace", default=None, help="Optional trace/message/job/reply/artifact id")
     skills_suggest.set_defaults(func=skills_suggest_command)
@@ -10089,7 +10223,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_suggest.add_argument("--summary", required=True, help="Fact or preference worth remembering")
     memory_suggest.add_argument("--rationale", required=True, help="Why this memory should be considered")
-    memory_suggest.add_argument("--source", default="human", choices=["human", "leader", "worker", "reviewer"])
+    memory_suggest.add_argument(
+        "--source",
+        default="human",
+        choices=["human", "leader", "worker", "reviewer", "learn-review"],
+    )
     memory_suggest.add_argument("--scope", default="project", choices=["project", "global"])
     memory_suggest.add_argument("--agent", default=None, help="Agent associated with the suggestion")
     memory_suggest.add_argument("--from-trace", default=None, help="Optional trace/message/job/reply/artifact id")
@@ -10112,6 +10250,15 @@ def build_parser() -> argparse.ArgumentParser:
     memory_apply.add_argument("--suggestion-id", required=True, help="Pending memory suggestion id")
     memory_apply.add_argument("--confirm", action="store_true", help="Required to write long-term memory")
     memory_apply.set_defaults(func=memory_apply_command)
+
+    learn = subparsers.add_parser("learn", help="Review completed runs for approval-gated learning suggestions")
+    learn_subparsers = learn.add_subparsers(dest="learn_command")
+    learn_review = learn_subparsers.add_parser(
+        "review",
+        help="Create a read-only learning review card for a saved Leader plan",
+    )
+    learn_review.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
+    learn_review.set_defaults(func=learn_review_command)
 
     policy = subparsers.add_parser("policy", help="Policy and control mode commands")
     policy_subparsers = policy.add_subparsers(dest="policy_command")
