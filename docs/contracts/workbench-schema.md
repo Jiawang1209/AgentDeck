@@ -707,6 +707,7 @@ The card reuses `validate_leader_summary_contract()`. It only aggregates existin
   "controls_contract": "agentdeck contract controls",
   "skills_contract": "agentdeck contract skills",
   "memory_contract": "agentdeck contract memory",
+  "learning_review_contract": "agentdeck contract learning-review",
   "agent_runtime_contract": "agentdeck contract agent-runtime",
   "leader_chat_contract": "agentdeck contract leader-chat",
   "leader_review_contract": "agentdeck contract leader-review",
@@ -719,7 +720,7 @@ The card reuses `validate_leader_summary_contract()`. It only aggregates existin
 }
 ```
 
-This card lets GUI/TUI clients bootstrap from a single workbench snapshot and then discover the full machine-readable contract index on demand, including the dedicated `run` start card contract, the `controls` command palette contract, the `skills` registry contract, the `memory` suggestion/apply contract, the `agent-runtime` command contract for visible tmux pane controls, the `leader-chat` response contract for natural-language Leader interactions, the `leader-summary` response contract for deterministic reply/artifact aggregation, and the `artifacts` contract for the read-only worker output index. It is static metadata and does not read state, inspect tmux panes, call providers, or execute any contract command.
+This card lets GUI/TUI clients bootstrap from a single workbench snapshot and then discover the full machine-readable contract index on demand, including the dedicated `run` start card contract, the `controls` command palette contract, the `skills` registry contract, the `memory` suggestion/apply contract, the `learning-review` contract for read-only skill/memory learning suggestions, the `agent-runtime` command contract for visible tmux pane controls, the `leader-chat` response contract for natural-language Leader interactions, the `leader-summary` response contract for deterministic reply/artifact aggregation, and the `artifacts` contract for the read-only worker output index. It is static metadata and does not read state, inspect tmux panes, call providers, or execute any contract command.
 
 When `recovery.recommended_action.source` is:
 

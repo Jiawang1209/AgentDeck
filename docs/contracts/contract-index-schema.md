@@ -41,6 +41,7 @@ The index currently lists these contract names in order:
 - `controls`
 - `skills`
 - `memory`
+- `learning-review`
 - `agent-runtime`
 - `leader-chat`
 - `leader-status`

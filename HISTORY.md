@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Add learning review contract discovery
+
+- 新增 `agentdeck contract learning-review` / `--example`：公开 `agentdeck learn review --plan-id <id>` 的 response 字段、skill suggestion 字段、memory suggestion 字段、GUI control 字段和稳定 example fixture。
+- 扩展 contract index 与 workbench `contracts_card`：`learning-review` 进入 `agentdeck contract list`，`agentdeck workbench` 也会暴露 `learning_review_contract=agentdeck contract learning-review`，让 GUI/TUI 能从统一 discovery 路径发现只读学习回顾与 skill/memory 建议命令。
+- 新增 `docs/contracts/learning-review-schema.md`，同步 README、AGENT.md、CLAUDE.md、workbench schema、contract index 和北极星路线图，把用户提出的 skill 诉求落到“可内置、可外源、可 reviewer 建议、但必须显式确认”的学习层契约。
+- 验证记录：已先确认红测失败，`learning_review_contract_payload` 最初不存在且 `agentdeck contract learning-review` 不是合法子命令；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_list_discovers_all_gui_contracts tests/test_agent_cli.py::test_contract_learning_review_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_learning_review_example_exports_gui_ready_review tests/test_agent_cli.py::test_contract_learning_review_cli_matches_contract_module tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli tests/test_contracts.py::test_learning_review_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_learning_review_contract_response_includes_example_without_drift tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 8 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 145 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 224 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 553 项通过。
+
 ### Current - Add read-only learning review
 
 - 新增 `agentdeck learn review --plan-id <id>`：只读复用 plan status、Leader summary、worker reply 和 artifact 事实，输出 `mode=learning_review`，并生成显式 `agentdeck skills suggest ... --source learn-review` 与 `agentdeck memory suggest ... --source learn-review` 后续命令。

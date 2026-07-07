@@ -36,6 +36,8 @@ from agentdeck.contracts import (
     leader_chat_contract_payload,
     leader_chat_contract_response,
     leader_status_contract_payload,
+    learning_review_contract_payload,
+    learning_review_contract_response,
     leader_review_contract_payload,
     leader_review_contract_response,
     leader_summary_contract_payload,
@@ -2705,6 +2707,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "controls",
         "skills",
         "memory",
+        "learning-review",
         "agent-runtime",
         "leader-chat",
         "leader-status",
@@ -2860,6 +2863,56 @@ def test_contract_memory_cli_matches_contract_module(capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     expected = memory_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+
+
+def test_contract_learning_review_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "learning-review"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = learning_review_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["learn_review_command_template"] == "agentdeck learn review --plan-id <id>"
+    assert payload["contract_path"].endswith("docs/contracts/learning-review-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == expected["response_fields"]
+    assert payload["skill_suggestion_fields"] == expected["skill_suggestion_fields"]
+    assert payload["memory_suggestion_fields"] == expected["memory_suggestion_fields"]
+    assert payload["control_fields"] == expected["control_fields"]
+    assert payload["leader_summary_contract"] == "agentdeck contract leader-summary"
+    assert payload["skills_contract"] == "agentdeck contract skills"
+    assert payload["memory_contract"] == "agentdeck contract memory"
+
+
+def test_contract_learning_review_example_exports_gui_ready_review(capsys) -> None:
+    exit_code = cli.main(["contract", "learning-review", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["example"] is True
+    example = payload["example_learning_review"]
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_skill_suggestion_fields"] == payload["skill_suggestion_fields"]
+    assert set(payload["example_skill_suggestion_fields"]) == set(example["skill_suggestion"])
+    assert payload["example_memory_suggestion_fields"] == payload["memory_suggestion_fields"]
+    assert set(payload["example_memory_suggestion_fields"]) == set(example["memory_suggestion"])
+    assert payload["example_control_fields"] == payload["control_fields"]
+    assert set(payload["example_control_fields"]) == set(example["controls"][0])
+    assert example["mode"] == "learning_review"
+    assert example["skill_suggestion"]["command"].startswith("agentdeck skills suggest")
+    assert example["memory_suggestion"]["command"].startswith("agentdeck memory suggest")
+    assert example["controls"][1]["safety"] == "explicit_user"
+    assert example["controls"][2]["safety"] == "explicit_user"
+
+
+def test_contract_learning_review_cli_matches_contract_module(capsys) -> None:
+    cli.main(["contract", "learning-review", "--example"])
+
+    payload = json.loads(capsys.readouterr().out)
+    expected = learning_review_contract_response(Path(payload["contract_path"]), include_example=True)
     assert payload == expected
 
 
@@ -3673,6 +3726,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "controls_contract",
         "skills_contract",
         "memory_contract",
+        "learning_review_contract",
         "agent_runtime_contract",
         "leader_chat_contract",
         "leader_review_contract",
@@ -4656,6 +4710,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "controls_contract": "agentdeck contract controls",
         "skills_contract": "agentdeck contract skills",
         "memory_contract": "agentdeck contract memory",
+        "learning_review_contract": "agentdeck contract learning-review",
         "leader_chat_contract": "agentdeck contract leader-chat",
         "leader_review_contract": "agentdeck contract leader-review",
         "leader_summary_contract": "agentdeck contract leader-summary",

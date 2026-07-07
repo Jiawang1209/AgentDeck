@@ -159,6 +159,7 @@ Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/H
 - `agentdeck skills list` / `agentdeck skills show --name <name>` / `agentdeck skills import-preview --path <SKILL.md>` / `agentdeck skills import --path <SKILL.md>` / `agentdeck skills load-preview --name <name> --agent <id> --purpose <text>` / `agentdeck skills load --name <name>` / `agentdeck skills suggest` / `agentdeck skills suggestions`。
 - `agentdeck memory suggest --summary <summary> --rationale <rationale> --source <source>` / `agentdeck memory suggestions` / `agentdeck memory apply-preview --suggestion-id <id>` / `agentdeck memory apply --suggestion-id <id> --confirm`。
 - `agentdeck learn review --plan-id <id>` 只读复盘已有 plan/reply/artifact，生成显式 `skills suggest` / `memory suggest` 后续命令，不直接写 suggestion queue。
+- `agentdeck contract learning-review` / `--example` 把学习回顾响应、skill suggestion、memory suggestion 和 control 字段暴露给 GUI/TUI discovery。
 - skill metadata：name、description、source、path、version/hash、allowed_placeholders、required_tools、risk。
 - 每次 Leader/Worker 加载 skill 时，把 path、hash、content snapshot 和使用者写入 state，保证历史可回放。
 - 支持外源 skill 目录或导入包，但默认先走只读 import preview，展示 source、target、hash、覆盖状态和 GUI-ready 控制项；显式 import/allowlist 后仍需先走可对话触发的 load preview，看清 agent、purpose、hash 和显式 load command，再由人类执行 load 才能进入 Leader/Worker 上下文，不自动执行远程安装脚本，也不静默把 skill 注入提示词。

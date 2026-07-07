@@ -81,6 +81,12 @@ CONTRACT_INDEX_SPECS = (
         "memory-schema.md",
     ),
     (
+        "learning-review",
+        "agentdeck contract learning-review",
+        "agentdeck contract learning-review --example",
+        "learning-review-schema.md",
+    ),
+    (
         "agent-runtime",
         "agentdeck contract agent-runtime",
         "agentdeck contract agent-runtime --example",
@@ -605,6 +611,47 @@ MEMORY_SUGGESTION_ITEM_FIELDS = (
 )
 
 MEMORY_CONTROL_FIELDS = SKILLS_CONTROL_FIELDS
+
+LEARNING_REVIEW_RESPONSE_FIELDS = (
+    "schema_version",
+    "ok",
+    "mode",
+    "plan_id",
+    "task",
+    "status",
+    "reply_count",
+    "artifact_count",
+    "summary",
+    "plan_status_command",
+    "summary_command",
+    "skill_suggestion",
+    "memory_suggestion",
+    "controls",
+)
+
+LEARNING_REVIEW_SKILL_SUGGESTION_FIELDS = (
+    "kind",
+    "name",
+    "summary",
+    "rationale",
+    "source",
+    "agent_id",
+    "trace_id",
+    "command",
+)
+
+LEARNING_REVIEW_MEMORY_SUGGESTION_FIELDS = (
+    "kind",
+    "scope",
+    "summary",
+    "rationale",
+    "source",
+    "agent_id",
+    "trace_id",
+    "command",
+)
+
+LEARNING_REVIEW_CONTROL_FIELDS = SKILLS_CONTROL_FIELDS
 
 PROJECT_VIEW_MESSAGE_ITEM_FIELDS = (
     "message_id",
@@ -1366,6 +1413,7 @@ WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "controls_contract",
     "skills_contract",
     "memory_contract",
+    "learning_review_contract",
     "agent_runtime_contract",
     "leader_chat_contract",
     "leader_review_contract",
@@ -2173,6 +2221,123 @@ def memory_example() -> dict[str, object]:
             "applied_path": target,
             "appended": proposed_append,
         },
+    }
+
+
+def learning_review_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "learn_review_command_template": "agentdeck learn review --plan-id <id>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(LEARNING_REVIEW_RESPONSE_FIELDS),
+        "skill_suggestion_fields": list(LEARNING_REVIEW_SKILL_SUGGESTION_FIELDS),
+        "memory_suggestion_fields": list(LEARNING_REVIEW_MEMORY_SUGGESTION_FIELDS),
+        "control_fields": list(LEARNING_REVIEW_CONTROL_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "leader_summary_contract": "agentdeck contract leader-summary",
+        "skills_contract": "agentdeck contract skills",
+        "memory_contract": "agentdeck contract memory",
+    }
+
+
+def learning_review_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = learning_review_contract_payload(contract_path)
+    if include_example:
+        example = learning_review_example()
+        payload["example"] = True
+        payload["example_response_fields"] = list(example)
+        payload["example_skill_suggestion_fields"] = list(example["skill_suggestion"])
+        payload["example_memory_suggestion_fields"] = list(example["memory_suggestion"])
+        payload["example_control_fields"] = list(example["controls"][0])
+        payload["example_learning_review"] = example
+    return payload
+
+
+def learning_review_example() -> dict[str, object]:
+    plan_id = "pln_example"
+    skill_command = (
+        "agentdeck skills suggest --name deployment-review "
+        "--summary 'Review Build a GUI-ready recovery panel as a repeatable workflow.' "
+        "--rationale 'Plan pln_example produced 1 replies and 1 artifacts; "
+        "capture the reusable review procedure as an explicit skill suggestion.' "
+        "--source learn-review --agent leader --from-trace pln_example"
+    )
+    memory_command = (
+        "agentdeck memory suggest "
+        "--summary 'Plan pln_example completed with 1 replies and 1 artifacts; "
+        "review whether its lessons should become durable project memory.' "
+        "--rationale 'Learning review is read-only, so durable memory must still go through "
+        "memory suggestions, apply-preview, and explicit apply confirmation.' "
+        "--source learn-review --agent leader --from-trace pln_example --scope project"
+    )
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "ok": True,
+        "mode": "learning_review",
+        "plan_id": plan_id,
+        "task": "Build a GUI-ready recovery panel",
+        "status": "ready",
+        "reply_count": 1,
+        "artifact_count": 1,
+        "summary": "Learning review can queue explicit skill and memory suggestions.",
+        "plan_status_command": f"agentdeck plan status --plan-id {plan_id}",
+        "summary_command": f"agentdeck leader summary --plan-id {plan_id}",
+        "skill_suggestion": {
+            "kind": "skill_suggestion",
+            "name": "deployment-review",
+            "summary": "Review Build a GUI-ready recovery panel as a repeatable workflow.",
+            "rationale": (
+                "Plan pln_example produced 1 replies and 1 artifacts; "
+                "capture the reusable review procedure as an explicit skill suggestion."
+            ),
+            "source": "learn-review",
+            "agent_id": "leader",
+            "trace_id": plan_id,
+            "command": skill_command,
+        },
+        "memory_suggestion": {
+            "kind": "memory_suggestion",
+            "scope": "project",
+            "summary": (
+                "Plan pln_example completed with 1 replies and 1 artifacts; "
+                "review whether its lessons should become durable project memory."
+            ),
+            "rationale": (
+                "Learning review is read-only, so durable memory must still go through "
+                "memory suggestions, apply-preview, and explicit apply confirmation."
+            ),
+            "source": "learn-review",
+            "agent_id": "leader",
+            "trace_id": plan_id,
+            "command": memory_command,
+        },
+        "controls": [
+            {
+                "kind": "summary",
+                "label": "View Leader summary",
+                "command": f"agentdeck leader summary --plan-id {plan_id}",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "suggest_skill",
+                "label": "Queue skill suggestion",
+                "command": skill_command,
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "suggest_memory",
+                "label": "Queue memory suggestion",
+                "command": memory_command,
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
     }
 
 
@@ -8905,6 +9070,7 @@ def workbench_example() -> dict[str, object]:
             "controls_contract": "agentdeck contract controls",
             "skills_contract": "agentdeck contract skills",
             "memory_contract": "agentdeck contract memory",
+            "learning_review_contract": "agentdeck contract learning-review",
             "agent_runtime_contract": "agentdeck contract agent-runtime",
             "leader_chat_contract": "agentdeck contract leader-chat",
             "leader_review_contract": "agentdeck contract leader-review",

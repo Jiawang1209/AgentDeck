@@ -42,6 +42,7 @@ from .contracts import (
     leader_review_contract_response,
     leader_status_contract_response,
     leader_summary_contract_response,
+    learning_review_contract_response,
     memory_contract_response,
     project_view_contract_response,
     runtime_agent_controls,
@@ -2175,6 +2176,7 @@ def _workbench_contracts_card() -> dict[str, object]:
         "controls_contract": "agentdeck contract controls",
         "skills_contract": "agentdeck contract skills",
         "memory_contract": "agentdeck contract memory",
+        "learning_review_contract": "agentdeck contract learning-review",
         "agent_runtime_contract": "agentdeck contract agent-runtime",
         "leader_chat_contract": "agentdeck contract leader-chat",
         "leader_review_contract": "agentdeck contract leader-review",
@@ -3161,6 +3163,13 @@ def contract_skills_command(args: argparse.Namespace) -> int:
 def contract_memory_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "memory-schema.md"
     payload = memory_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_learning_review_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "learning-review-schema.md"
+    payload = learning_review_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -10343,6 +10352,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_memory.add_argument("--example", action="store_true", help="Include a GUI-ready memory example")
     contract_memory.set_defaults(func=contract_memory_command)
+    contract_learning_review = contract_subparsers.add_parser(
+        "learning-review",
+        help="Show learning review contract discovery metadata",
+    )
+    contract_learning_review.add_argument(
+        "--example",
+        action="store_true",
+        help="Include a GUI-ready learning review example",
+    )
+    contract_learning_review.set_defaults(func=contract_learning_review_command)
     contract_agent_runtime = contract_subparsers.add_parser(
         "agent-runtime",
         help="Show agent runtime command contract discovery metadata",

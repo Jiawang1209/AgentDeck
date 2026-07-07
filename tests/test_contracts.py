@@ -113,6 +113,9 @@ from agentdeck.contracts import (
     leader_status_contract_payload,
     leader_status_contract_response,
     leader_status_example,
+    learning_review_contract_payload,
+    learning_review_contract_response,
+    learning_review_example,
     leader_actions_contract_payload,
     leader_actions_contract_response,
     leader_actions_example,
@@ -216,6 +219,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "controls-schema.md",
         "skills-schema.md",
         "memory-schema.md",
+        "learning-review-schema.md",
         "agent-runtime-schema.md",
         "leader-chat-schema.md",
         "leader-status-schema.md",
@@ -238,7 +242,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 20
+    assert payload["count"] == 21
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -250,6 +254,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
             "controls",
             "skills",
             "memory",
+            "learning-review",
             "agent-runtime",
         "leader-chat",
         "leader-status",
@@ -1838,6 +1843,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["contracts_card"]["contracts_command"] == "agentdeck contract list"
     assert example["contracts_card"]["contract_index_contract"] == "docs/contracts/contract-index-schema.md"
     assert example["contracts_card"]["controls_contract"] == "agentdeck contract controls"
+    assert example["contracts_card"]["learning_review_contract"] == "agentdeck contract learning-review"
     assert example["contracts_card"]["leader_chat_contract"] == "agentdeck contract leader-chat"
     assert example["contracts_card"]["leader_review_contract"] == "agentdeck contract leader-review"
     assert example["contracts_card"]["run_contract"] == "agentdeck contract run"
@@ -2933,6 +2939,42 @@ def test_leader_summary_contract_response_includes_example_without_drift(tmp_pat
     assert set(payload["example_control_fields"]) == set(example["controls"][0])
     assert example["plan_status_command"] == "agentdeck plan status --plan-id pln_example"
     assert example["review_command"] == "agentdeck leader review --plan-id pln_example"
+
+
+def test_learning_review_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "learning-review-schema.md"
+    contract_path.write_text("# Learning Review Contract\n", encoding="utf-8")
+
+    payload = learning_review_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["learn_review_command_template"] == "agentdeck learn review --plan-id <id>"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["leader_summary_contract"] == "agentdeck contract leader-summary"
+    assert payload["skills_contract"] == "agentdeck contract skills"
+    assert payload["memory_contract"] == "agentdeck contract memory"
+
+
+def test_learning_review_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "learning-review-schema.md"
+    contract_path.write_text("# Learning Review Contract\n", encoding="utf-8")
+
+    payload = learning_review_contract_response(contract_path, include_example=True)
+    example = learning_review_example()
+
+    assert payload["example"] is True
+    assert payload["example_learning_review"] == example
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_skill_suggestion_fields"] == payload["skill_suggestion_fields"]
+    assert set(payload["example_skill_suggestion_fields"]) == set(example["skill_suggestion"])
+    assert payload["example_memory_suggestion_fields"] == payload["memory_suggestion_fields"]
+    assert set(payload["example_memory_suggestion_fields"]) == set(example["memory_suggestion"])
+    assert payload["example_control_fields"] == payload["control_fields"]
+    assert set(payload["example_control_fields"]) == set(example["controls"][0])
+    assert example["skill_suggestion"]["source"] == "learn-review"
+    assert example["memory_suggestion"]["source"] == "learn-review"
 
 
 def test_leader_status_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
