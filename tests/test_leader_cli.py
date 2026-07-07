@@ -4275,6 +4275,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "leader_status",
         "skill_import_preview",
         "skill_load_preview",
+        "skill_suggestions",
         "workbench",
         "runtime",
         "role",
@@ -4333,6 +4334,17 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "safety": "explicit_user",
         "enabled": False,
         "blocker": "requires agent_id",
+    }
+    assert capabilities["skill_suggestions"]["command"] == "agentdeck skills suggestions"
+    assert capabilities["skill_suggestions"]["safety"] == "inspect"
+    assert capabilities["skill_suggestions"]["requires_explicit_user"] is False
+    assert capabilities["skill_suggestions"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect skill suggestions",
+        "command": "agentdeck skills suggestions",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
     }
     assert capabilities["apply_action"]["command"] == "agentdeck leader apply-action --action-id <action_id>"
     assert capabilities["apply_action"]["safety"] == "safe_apply"

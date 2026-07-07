@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Surface skill suggestions in Leader chat
+
+- 新增自然语言只读入口：`agentdeck leader chat --message "查看 skill 建议"` / `"查看技能建议"` / `"skill suggestions"` 会进入 `mode=skill_suggestions`，返回 `skill_suggestions_card`，展示 pending suggestion queue 的 count、pending_count、items 和 inspect controls。
+- 保持 Hermes/WispTerm 式 skill 沉淀的人类确认边界：Leader chat 只记录 chat turn 和审计事件，不创建 `SKILL.md`、不 import、不 load、不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox、不修改 runtime/approval state；下一步停在 `agentdeck skills suggestions`。
+- 扩展 `agentdeck contract leader-chat`：新增顶层 `skill_suggestions_card`、`skill_suggestions_card_fields`、稳定 example fixture 和 help capability，供 GUI/TUI 发现“skill 建议 -> 人类审阅 -> 后续显式创建/导入/load”的入口。
+- 同步 README、AGENT/CLAUDE、leader-chat contract 和北极星架构文档，明确用户关于内置 skill、外源 skill、Hermes 式持续整合 skill 的诉求已经进入北极星，且必须以 pending suggestion queue 和只读审阅卡片为前置。
+- 验证记录：已先确认红测失败，自然语言 `查看 skill 建议` 最初误落入 DeepSeek provider 路径并因 `DEEPSEEK_API_KEY` 缺失失败；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_skill_suggestions_is_read_only_and_avoids_provider_calls tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response tests/test_agent_cli.py::test_contract_leader_chat_cli_matches_contract_module tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 6 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 128 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 534 项通过。
+
 ### Current - Add pending skill suggestion queue
 
 - 新增 `agentdeck skills suggest --name <name> --summary <summary> --rationale <rationale> --source <source>`：把 Hermes 式学习/沉淀结果先写成 pending `skill_suggestions[]`，记录 suggestion_id、status、name、summary、rationale、source、agent_id、trace_id、draft_path、created_at 和 controls。

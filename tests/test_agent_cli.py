@@ -528,6 +528,79 @@ def test_skills_suggestions_lists_pending_suggestions_without_mutating_state(
     assert StateStore(root).list_events(limit=20) == events_before
 
 
+def test_leader_chat_skill_suggestions_is_read_only_and_avoids_provider_calls(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    cli.main(
+        [
+            "skills",
+            "suggest",
+            "--name",
+            "incident-review",
+            "--summary",
+            "Review incident response evidence.",
+            "--rationale",
+            "repeatable review checklist",
+            "--source",
+            "leader",
+            "--agent",
+            "reviewer",
+            "--from-trace",
+            "msg_incident",
+        ]
+    )
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看 skill 建议"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skill_suggestions"
+    assert payload["plan_id"] is None
+    assert payload["next_command"] == "agentdeck skills suggestions"
+    assert payload["skill_suggestions_card"] == {
+        "mode": "skill_suggestions",
+        "title": "Skill suggestions",
+        "summary": "1 pending skill suggestion is waiting for human review.",
+        "suggestions_command": "agentdeck skills suggestions",
+        "project_view_command": "agentdeck status",
+        "count": 1,
+        "pending_count": 1,
+        "items": state_before["skill_suggestions"],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "List skill suggestions",
+                "command": "agentdeck skills suggestions",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Open project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    assert payload["intent_card"]["embedded_card"] == "skill_suggestions_card"
+    assert payload["intent_card"]["read_only"] is True
+    assert payload["intent_card"]["controls"][0]["label"] == "List skill suggestions"
+    assert payload["leader_explanation"]["action_kind"] == "skill_suggestions"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    state_after = StateStore(root).load()
+    assert state_after["skill_suggestions"] == state_before["skill_suggestions"]
+    assert state_after["plans"] == []
+    assert state_after["leader_errors"] == []
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
+
+
 def test_skills_import_copies_external_skill_without_loading_it(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     external = tmp_path / "external" / "SKILL.md"
@@ -2318,6 +2391,7 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["agent_ready_card_fields"] == expected["agent_ready_card_fields"]
     assert payload["skill_import_preview_card_fields"] == expected["skill_import_preview_card_fields"]
     assert payload["skill_load_preview_card_fields"] == expected["skill_load_preview_card_fields"]
+    assert payload["skill_suggestions_card_fields"] == expected["skill_suggestions_card_fields"]
     assert payload["artifacts_card_fields"] == expected["artifacts_card_fields"]
     assert payload["artifact_summary_fields"] == expected["artifact_summary_fields"]
     assert payload["artifact_item_fields"] == expected["artifact_item_fields"]
@@ -5179,6 +5253,8 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     assert set(payload["example_skill_import_preview_card_fields"]) == set(example["skill_import_preview_card"])
     assert payload["example_skill_load_preview_card_fields"] == payload["skill_load_preview_card_fields"]
     assert set(payload["example_skill_load_preview_card_fields"]) == set(example["skill_load_preview_card"])
+    assert payload["example_skill_suggestions_card_fields"] == payload["skill_suggestions_card_fields"]
+    assert set(payload["example_skill_suggestions_card_fields"]) == set(example["skill_suggestions_card"])
     assert payload["example_workbench_control_registry_item_fields"] == (
         payload["workbench_control_registry_item_fields"]
     )

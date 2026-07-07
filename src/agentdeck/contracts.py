@@ -379,6 +379,18 @@ LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS = (
     "controls",
 )
 
+LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS = (
+    "mode",
+    "title",
+    "summary",
+    "suggestions_command",
+    "project_view_command",
+    "count",
+    "pending_count",
+    "items",
+    "controls",
+)
+
 LEADER_CHAT_SKILL_IMPORT_PREVIEW_CARD_FIELDS = (
     "ok",
     "mode",
@@ -671,6 +683,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "skill_context_card",
     "skill_import_preview_card",
     "skill_load_preview_card",
+    "skill_suggestions_card",
     "continue_card",
     "run_start_card",
     "run_progress_card",
@@ -1960,6 +1973,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "skill_context_card_fields": list(LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS),
         "skill_import_preview_card_fields": list(LEADER_CHAT_SKILL_IMPORT_PREVIEW_CARD_FIELDS),
         "skill_load_preview_card_fields": list(LEADER_CHAT_SKILL_LOAD_PREVIEW_CARD_FIELDS),
+        "skill_suggestions_card_fields": list(LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS),
         "skill_context_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
@@ -2037,6 +2051,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_leader_status_queue_fields"] = list(example["leader_status_card"]["queues"])
         payload["example_skill_import_preview_card_fields"] = list(example["skill_import_preview_card"])
         payload["example_skill_load_preview_card_fields"] = list(example["skill_load_preview_card"])
+        payload["example_skill_suggestions_card_fields"] = list(example["skill_suggestions_card"])
         payload["example_provider_health_fields"] = list(example["provider_health"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
         payload["example_operator_card_fields"] = list(example["operator_card"])
@@ -2163,6 +2178,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "safety": "explicit_user",
             "requires_explicit_user": True,
             "card": "skill_load_preview_card",
+        },
+        {
+            "mode": "skill_suggestions",
+            "label": "Inspect skill suggestions",
+            "description": "Inspect pending skill suggestions without creating, importing, or loading skills.",
+            "example_messages": ["查看 skill 建议", "skill suggestions"],
+            "command": "agentdeck skills suggestions",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "skill_suggestions_card",
         },
         {
             "mode": "runtime",
@@ -6885,6 +6910,57 @@ def leader_chat_example() -> dict[str, object]:
             },
         ],
     }
+    skill_suggestions_card = {
+        "mode": "skill_suggestions",
+        "title": "Skill suggestions",
+        "summary": "1 pending skill suggestion is waiting for human review.",
+        "suggestions_command": "agentdeck skills suggestions",
+        "project_view_command": "agentdeck status",
+        "count": 1,
+        "pending_count": 1,
+        "items": [
+            {
+                "suggestion_id": "sgs_example",
+                "status": "pending",
+                "name": "incident-review",
+                "summary": "Review incident response evidence.",
+                "rationale": "planner repeatedly asked for the same incident review checklist",
+                "source": "leader",
+                "agent_id": "reviewer",
+                "trace_id": "msg_example",
+                "draft_path": ".agentdeck/skills/incident-review/SKILL.md",
+                "created_at": "2026-07-07T00:00:00Z",
+                "controls": [
+                    {
+                        "kind": "inspect",
+                        "label": "List skill suggestions",
+                        "command": "agentdeck skills suggestions",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    }
+                ],
+            }
+        ],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "List skill suggestions",
+                "command": "agentdeck skills suggestions",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Open project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     control_registry_card = leader_chat_control_registry_card(workbench_card)
     startup_preview_card = _startup_preview_card_from_agent_ready(agent_ready_card)
     runtime_action_card = {
@@ -7087,6 +7163,7 @@ def leader_chat_example() -> dict[str, object]:
         "skill_context_card": skill_context_card,
         "skill_import_preview_card": skill_import_preview_card,
         "skill_load_preview_card": skill_load_preview_card,
+        "skill_suggestions_card": skill_suggestions_card,
         "continue_card": continue_card,
         "run_start_card": run_start_card,
         "run_progress_card": run_progress_card,
