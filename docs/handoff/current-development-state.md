@@ -319,13 +319,16 @@ agentdeck dashboard
 - Renders header / recovery / role topology / review gate / queue as human-readable text, deriving every value and echoed command from the workbench contract payload alone.
 - Reuses the same `_workbench_snapshot_payload` + `validate_workbench_contract()` as `agentdeck workbench`; read-only, no state writes.
 
+The second slice is already committed:
+
+- `agentdeck dashboard` now renders a "Command palette" section from `control_registry[]` grouped by scope with per-scope total / enabled / blocked counts and a `agentdeck controls --scope <scope>` drill-down pointer.
+
 ## Next Best Step
 
 Continue the TUI reference client:
 
-- Add a control-palette section to the dashboard that renders `control_registry[]` grouped by scope, preserving each control's `safety` / `enabled` / `blocker` (so the reference client shows exactly which buttons a GUI would render and which are disabled and why). Reuse `agentdeck controls` filters conceptually.
-- Add worker-lifecycle and ledger/lineage sections, and a `release_preview` line when a round is ready/released.
-- Then document the reference client under `docs/` (or extend the walkthrough) and note it is a pure contract consumer.
+- Add a `release_preview` line to the dashboard (ready → show `agentdeck release --confirm`; blocked/released → show status/reason), plus a worker-lifecycle or ledger summary line, all derived from the contract payload.
+- Then document the reference client under `docs/` (e.g. a short `docs/walkthroughs/` note or a section in the layered-role walkthrough) emphasizing it is a pure contract consumer that proves the read-only workbench contract is sufficient to drive a GUI/TUI.
 - Preserve human approval and keep every read-only surface read-only.
 
 ## Required Verification Before Handoff

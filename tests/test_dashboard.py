@@ -34,6 +34,23 @@ def test_render_workbench_dashboard_consumes_only_the_contract_payload() -> None
     assert payload == snapshot
 
 
+def test_render_workbench_dashboard_summarizes_control_palette_by_scope() -> None:
+    payload = workbench_example()
+    total = len(payload["control_registry"])
+
+    text = render_workbench_dashboard(payload)
+
+    assert "Command palette" in text
+    assert f"{total} controls" in text
+    # per-scope summary preserves enabled/blocked accounting (leader: 5 enabled, 2 blocked)
+    assert "leader" in text
+    assert "5 enabled" in text
+    assert "2 blocked" in text
+    assert "role_topology" in text
+    # drill-down pointer to the full read-only palette
+    assert "agentdeck controls" in text
+
+
 def test_render_workbench_dashboard_flags_blocked_roles() -> None:
     payload = workbench_example()
     role = next(

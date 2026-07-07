@@ -111,6 +111,40 @@ def _render_queue(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_control_palette(payload: dict[str, Any]) -> list[str]:
+    registry = _as_list(payload.get("control_registry"))
+    if not registry:
+        return []
+    # preserve first-seen scope order for a stable, grouped view
+    scope_order: list[str] = []
+    totals: dict[str, int] = {}
+    enabled: dict[str, int] = {}
+    blocked: dict[str, int] = {}
+    for item in registry:
+        item = _as_dict(item)
+        scope = str(item.get("scope") or "")
+        if scope not in totals:
+            scope_order.append(scope)
+            totals[scope] = 0
+            enabled[scope] = 0
+            blocked[scope] = 0
+        totals[scope] += 1
+        if item.get("enabled") is True:
+            enabled[scope] += 1
+        else:
+            blocked[scope] += 1
+    lines = [
+        _rule("Command palette"),
+        f"{len(registry)} controls  (drill down: agentdeck controls --scope <scope>)",
+    ]
+    for scope in scope_order:
+        lines.append(
+            f"  {scope:<18} {totals[scope]:>3} controls   "
+            f"{enabled[scope]} enabled   {blocked[scope]} blocked"
+        )
+    return lines
+
+
 def render_workbench_dashboard(payload: dict[str, Any]) -> str:
     """Render a read-only text dashboard from a workbench snapshot payload."""
     payload = _as_dict(payload)
@@ -120,6 +154,7 @@ def render_workbench_dashboard(payload: dict[str, Any]) -> str:
         _render_role_topology(payload),
         _render_review_gate(payload),
         _render_queue(payload),
+        _render_control_palette(payload),
     ]
     blocks = ["\n".join(section) for section in sections if section]
     return "\n\n".join(blocks) + "\n"

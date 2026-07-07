@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Add control palette to TUI dashboard
+
+- 扩展 `agentdeck dashboard` / `render_workbench_dashboard`：新增"Command palette"段，从 workbench 契约的 `control_registry[]` 按 scope 分组，逐 scope 输出 total / enabled / blocked 计数，并指向 `agentdeck controls --scope <scope>` 下钻。
+- 该段直接证明"所有按钮来自 control_registry 且保留 enabled/blocked 语义"：dashboard 不发明按钮，只统计契约里已有的控件；保持紧凑（每 scope 一行），可读性不被 114 个控件淹没，完整/单控件视图仍由只读 `agentdeck controls` 提供。
+- 保持只读：纯函数消费 payload，不写 state、不执行任何 control。
+- 验证记录：已先确认红测失败，dashboard 最初无 "Command palette" 段；实现后目标测试 `conda run -n agentdeck pytest tests/test_dashboard.py -q` 4 项通过（新增按 scope 汇总断言：leader 5 enabled / 2 blocked、总控件数、role_topology scope、drill-down 指针）；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 609 项通过。
+
 ### Current - Add read-only TUI reference client (dashboard)
 
 - 新增 `src/agentdeck/dashboard.py` 和 `agentdeck dashboard` 命令：作为只读参考客户端，验证 workbench 契约足以驱动 GUI/TUI。`render_workbench_dashboard(payload)` 是纯函数，只消费 `agentdeck workbench` 契约 payload（像外部 GUI 那样），渲染出 header / recovery / role topology / review gate / queue 的人类可读文本面板，并原样回显每个角色和 recovery/queue 的显式下一步命令。
