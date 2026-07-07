@@ -45,6 +45,7 @@ from .contracts import (
     leader_summary_contract_response,
     learning_review_contract_response,
     loop_contract_response,
+    release_contract_response,
     memory_contract_response,
     project_view_contract_response,
     runtime_agent_controls,
@@ -66,6 +67,7 @@ from .contracts import (
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_loop_once_contract,
+    validate_release_contract,
     validate_project_view_contract,
     validate_run_start_contract,
     validate_trace_contract,
@@ -3844,6 +3846,13 @@ def contract_loop_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def contract_release_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "release-schema.md"
+    payload = release_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
 def contract_doctor_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "doctor-schema.md"
     payload = doctor_contract_response(contract_path, include_example=args.example)
@@ -4814,18 +4823,17 @@ def release_command(args: argparse.Namespace) -> int:
         for reply_id in (code_review_reply_id, round_review_reply_id)
         if reply_id
     ]
-    _print_json(
-        {
-            "ok": True,
-            "mode": "release",
-            "requires_explicit_user": True,
-            "safety": "explicit_user",
-            "release": release,
-            "release_count": release["round"],
-            "next_command": "agentdeck workbench",
-            "next_round_command": next_round_command,
-            "trace_commands": trace_commands,
-            "controls": [
+    payload = {
+        "ok": True,
+        "mode": "release",
+        "requires_explicit_user": True,
+        "safety": "explicit_user",
+        "release": release,
+        "release_count": release["round"],
+        "next_command": "agentdeck workbench",
+        "next_round_command": next_round_command,
+        "trace_commands": trace_commands,
+        "controls": [
                 _control(
                     kind="inspect",
                     label="Inspect workbench",
@@ -4854,7 +4862,13 @@ def release_command(args: argparse.Namespace) -> int:
                 ),
             ],
         }
-    )
+    validation = validate_release_contract(payload)
+    if not validation["ok"]:
+        print("release contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
 
 
@@ -12335,6 +12349,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_events.add_argument("--example", action="store_true", help="Include a GUI-ready events example")
     contract_events.set_defaults(func=contract_events_command)
+    contract_release = contract_subparsers.add_parser(
+        "release",
+        help="Show the explicit round release response contract for GUI clients",
+    )
+    contract_release.add_argument("--example", action="store_true", help="Include a GUI-ready release example")
+    contract_release.set_defaults(func=contract_release_command)
+
     contract_run = contract_subparsers.add_parser(
         "run",
         help="Show run start response contract discovery metadata",

@@ -51,6 +51,8 @@ from agentdeck.contracts import (
     project_view_contract_response,
     PROJECT_VIEW_ARTIFACT_ITEM_FIELDS,
     PROJECT_VIEW_COORDINATION_ROLE_FIELDS,
+    release_contract_payload,
+    release_contract_response,
     run_start_contract_payload,
     run_start_contract_response,
     skills_contract_payload,
@@ -4393,6 +4395,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "doctor",
         "events",
         "run",
+        "release",
         "workbench",
         "controls",
         "skills",
@@ -5220,6 +5223,38 @@ def test_contract_loop_example_exports_gui_ready_card(capsys) -> None:
     assert set(payload["example_loop_once_response_fields"]) == set(example)
     assert example["mode"] == "loop_once"
     assert example["will_execute"] is False
+
+
+def test_contract_release_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "release"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = release_contract_payload(Path(payload["contract_path"]))
+    assert payload == expected
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["release_command"] == "agentdeck release --confirm"
+    assert payload["contract_path"].endswith("docs/contracts/release-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["trace_contract"] == "agentdeck contract trace"
+
+
+def test_contract_release_example_exports_gui_ready_response(capsys) -> None:
+    exit_code = cli.main(["contract", "release", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = release_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_release"]
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert example["mode"] == "release"
+    assert example["safety"] == "explicit_user"
+    assert example["requires_explicit_user"] is True
+    assert example["release"]["status"] == "released"
 
 
 def test_contract_doctor_discovers_schema_for_gui_clients(capsys) -> None:

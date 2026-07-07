@@ -215,12 +215,24 @@ New behavior:
 - When the review gate is ready but the current code-review / round-review reply pair was already released, the card reports `status=released` with reason `round already released`, withdraws `release_command` / `next_command`, and keeps only the disabled next-round plan template.
 - Validators reject a released card that still exposes executable release commands and require a ready review gate behind any released card.
 
+The release contract discovery slice is already committed:
+
+```bash
+agentdeck contract release
+agentdeck contract release --example
+```
+
+New behavior:
+
+- Read-only discovery of the `agentdeck release --confirm` success response: `response_fields`, `release_record_fields`, ProjectView `release_item_fields`, and control fields, documented in `docs/contracts/release-schema.md` and indexed by `agentdeck contract list`.
+- `agentdeck release --confirm` now gates its success payload through `validate_release_contract()` before printing; a payload that fails the contract returns non-zero instead of printing half-broken JSON.
+
 ## Next Best Step
 
-After the release history slice is committed, continue with the next Phase G5 follow-up:
+With Phase G5 (review gate → release preview → explicit release → history → contract discovery) complete, continue with the next north-star follow-up:
 
-- Add `agentdeck contract release` discovery (payload, example, docs/contracts/release-schema.md, contract index entry) so GUI clients can discover the release response and release history fields.
-- Optionally add natural-language discovery for the release action itself; keep it read-only and keep the explicit command as the only write path.
+- Optionally add natural-language discovery for the release action (e.g. a read-only release-preview chat mode already exists; a release-history chat mode could reuse ProjectView `releases`); keep the explicit command as the only write path.
+- Or move to the next roadmap phase after G5 per `docs/roadmap/ultimate-goal-roadmap.md`.
 - Preserve human approval before any release, merge, ack, or follow-up dispatch.
 
 ## Required Verification Before Handoff

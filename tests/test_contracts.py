@@ -51,9 +51,12 @@ from agentdeck.contracts import (
     PROJECT_VIEW_ARTIFACT_ITEM_FIELDS,
     PROJECT_VIEW_RECOVERY_PENDING_FIELDS,
     PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS,
+    PROJECT_VIEW_RELEASE_ITEM_FIELDS,
     PROJECT_VIEW_REPLY_ITEM_FIELDS,
     PROJECT_VIEW_RECOVERY_FIELDS,
     PROJECT_VIEW_TOP_LEVEL_FIELDS,
+    RELEASE_RECORD_FIELDS,
+    RELEASE_RESPONSE_FIELDS,
     RUN_START_CONTROL_FIELDS,
     RUN_PROGRESS_RESPONSE_FIELDS,
     RUN_START_RESPONSE_FIELDS,
@@ -148,6 +151,9 @@ from agentdeck.contracts import (
     project_view_contract_payload,
     project_view_contract_response,
     project_view_example,
+    release_contract_payload,
+    release_contract_response,
+    release_example,
     run_start_contract_payload,
     run_start_contract_response,
     run_start_example,
@@ -172,6 +178,7 @@ from agentdeck.contracts import (
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_project_view_contract,
+    validate_release_contract,
     validate_run_start_contract,
     validate_trace_contract,
     validate_workbench_contract,
@@ -228,6 +235,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "doctor-schema.md",
         "events-schema.md",
         "run-schema.md",
+        "release-schema.md",
         "workbench-schema.md",
         "controls-schema.md",
         "skills-schema.md",
@@ -255,7 +263,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 22
+    assert payload["count"] == 23
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -264,6 +272,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "doctor",
         "events",
         "run",
+        "release",
         "workbench",
         "controls",
         "skills",
@@ -1490,6 +1499,66 @@ def test_loop_contract_response_includes_example_without_drift(tmp_path: Path) -
     assert example["source_command"] == "agentdeck loop once"
     assert example["will_execute"] is False
     assert example["stop_reason"] == "requires_human_command"
+
+
+def test_release_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "release-schema.md"
+    contract_path.write_text("# Release Contract\n", encoding="utf-8")
+
+    payload = release_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["release_command"] == "agentdeck release --confirm"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["response_fields"] == list(RELEASE_RESPONSE_FIELDS)
+    assert payload["release_record_fields"] == list(RELEASE_RECORD_FIELDS)
+    assert payload["release_item_fields"] == list(PROJECT_VIEW_RELEASE_ITEM_FIELDS)
+    assert payload["control_fields"] == list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS)
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["trace_contract"] == "agentdeck contract trace"
+
+
+def test_release_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "release-schema.md"
+    contract_path.write_text("# Release Contract\n", encoding="utf-8")
+
+    payload = release_contract_response(contract_path, include_example=True)
+    example = release_example()
+
+    assert payload["example"] is True
+    assert payload["example_release"] == example
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_release_record_fields"] == payload["release_record_fields"]
+    assert set(payload["example_release_record_fields"]) == set(example["release"])
+    assert payload["example_control_fields"] == payload["control_fields"]
+    assert set(payload["example_control_fields"]) == set(example["controls"][0])
+    assert example["mode"] == "release"
+    assert example["safety"] == "explicit_user"
+    assert example["requires_explicit_user"] is True
+    assert example["release"]["release_id"] == "rel_example"
+    assert example["release"]["status"] == "released"
+    assert example["next_command"] == "agentdeck workbench"
+    assert example["next_round_command"] == "agentdeck leader plan --task <goal>"
+    assert validate_release_contract(example) == {"ok": True, "errors": []}
+
+
+def test_validate_release_contract_rejects_inspect_safety_claim() -> None:
+    payload = release_example()
+    payload["safety"] = "inspect"
+    payload["requires_explicit_user"] = False
+
+    result = validate_release_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "release response safety must be explicit_user",
+            "release response must require explicit user",
+        ],
+    }
 
 
 def test_doctor_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:

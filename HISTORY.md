@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add release contract discovery
+
+- 新增 `agentdeck contract release` / `--example` 只读契约发现入口：公开 `agentdeck release --confirm` 成功响应的 `response_fields`、`release_record_fields`、ProjectView `release_item_fields` 和 control 字段，example 返回稳定 release 响应示例，不读取或修改 live state。
+- 新增 `validate_release_contract()`：校验 mode/safety/requires_explicit_user、release 记录字段与 `status=released`、`release_count` 与 `release.round` 一致、`next_command` / `next_round_command` / `trace_commands` 形状，以及 inspect/trace/next_round controls 与响应字段的一致性；`agentdeck release --confirm` 输出前必须通过该 validator 自校验，失败时返回非 0 且不打印半坏 JSON。
+- 新增 `docs/contracts/release-schema.md`，并把 `release` 加入 `CONTRACT_INDEX_SPECS`、`agentdeck contract list` 索引和 `docs/contracts/contract-index-schema.md`（现有 23 个 contract 条目）。
+- 保持北极星边界：contract discovery 是只读面，不执行 release、不调用 provider、不碰 tmux;release 的唯一写入路径仍是人类显式运行 `agentdeck release --confirm`。
+- 同步 README 和 `docs/handoff/current-development-state.md`,标记 G5“验收门 -> 发布预览 -> 显式 release -> 轮次历史 -> 契约发现”链路完成。
+- 验证记录：已先确认红测失败，`release_contract_payload` 最初不存在（ImportError）、contract index 缺少 `release` 条目；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_release_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_release_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_release_contract_rejects_inspect_safety_claim tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli tests/test_agent_cli.py::test_contract_release_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_release_example_exports_gui_ready_response tests/test_agent_cli.py::test_release_records_round_release_when_gate_ready_and_blocks_duplicates -q` 7 项通过；同步 `agentdeck contract list` 名单测试后核心回归通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 595 项通过。
+
 ### Current - Surface release round history and already-released awareness
 
 - 新增 ProjectView 顶层 `releases` 摘要：`count` + `items[]`，每条包含 release_id、round、status、review gate 快照、code/round reviewer 与 reply id、created_at，以及指向 round review reply lineage 的 `trace_command`；`agentdeck status` / workbench 同源暴露轮次历史。

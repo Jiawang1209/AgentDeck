@@ -63,6 +63,12 @@ CONTRACT_INDEX_SPECS = (
         "run-schema.md",
     ),
     (
+        "release",
+        "agentdeck contract release",
+        "agentdeck contract release --example",
+        "release-schema.md",
+    ),
+    (
         "workbench",
         "agentdeck contract workbench",
         "agentdeck contract workbench --example",
@@ -1197,6 +1203,33 @@ CONTINUE_CARD_FIELDS = (
     "pending",
     "leader_action",
     "action_detail_command",
+)
+
+RELEASE_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "requires_explicit_user",
+    "safety",
+    "release",
+    "release_count",
+    "next_command",
+    "next_round_command",
+    "trace_commands",
+    "controls",
+)
+
+RELEASE_RECORD_FIELDS = (
+    "release_id",
+    "round",
+    "status",
+    "review_gate_status",
+    "artifact_count",
+    "review_reply_count",
+    "code_reviewer_id",
+    "round_reviewer_id",
+    "code_review_reply_id",
+    "round_review_reply_id",
+    "created_at",
 )
 
 LOOP_ONCE_RESPONSE_FIELDS = (
@@ -3622,6 +3655,97 @@ def loop_contract_response(contract_path: Path, include_example: bool = False) -
     return payload
 
 
+def release_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "release",
+        "requires_explicit_user": True,
+        "safety": "explicit_user",
+        "release": {
+            "release_id": "rel_example",
+            "round": 1,
+            "status": "released",
+            "review_gate_status": "ready",
+            "artifact_count": 1,
+            "review_reply_count": 2,
+            "code_reviewer_id": "reviewer",
+            "round_reviewer_id": "coder",
+            "code_review_reply_id": "rep_example",
+            "round_review_reply_id": "rep_round_example",
+            "created_at": "2026-07-04T00:00:03+00:00",
+        },
+        "release_count": 1,
+        "next_command": "agentdeck workbench",
+        "next_round_command": "agentdeck leader plan --task <goal>",
+        "trace_commands": [
+            "agentdeck trace --id rep_example",
+            "agentdeck trace --id rep_round_example",
+        ],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect workbench",
+                "command": "agentdeck workbench",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "trace_code_review",
+                "label": "Trace code review",
+                "command": "agentdeck trace --id rep_example",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "trace_round_review",
+                "label": "Trace round review",
+                "command": "agentdeck trace --id rep_round_example",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "next_round",
+                "label": "Plan next round",
+                "command": "agentdeck leader plan --task <goal>",
+                "safety": "plan_only",
+                "enabled": False,
+                "blocker": "requires goal text",
+            },
+        ],
+    }
+
+
+def release_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "release_command": "agentdeck release --confirm",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(RELEASE_RESPONSE_FIELDS),
+        "release_record_fields": list(RELEASE_RECORD_FIELDS),
+        "release_item_fields": list(PROJECT_VIEW_RELEASE_ITEM_FIELDS),
+        "control_fields": list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS),
+        "project_view_contract": "agentdeck contract project-view",
+        "workbench_contract": "agentdeck contract workbench",
+        "trace_contract": "agentdeck contract trace",
+    }
+
+
+def release_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = release_contract_payload(contract_path)
+    if include_example:
+        example = release_example()
+        payload["example"] = True
+        payload["example_response_fields"] = list(example)
+        payload["example_release_record_fields"] = list(example["release"])
+        payload["example_control_fields"] = list(example["controls"][0])
+        payload["example_release"] = example
+    return payload
+
+
 def doctor_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -4387,6 +4511,82 @@ def validate_loop_once_contract(payload: dict[str, object]) -> dict[str, object]
                 errors.append("loop_once.controls: execute_next cannot be enabled without next_command")
     elif "controls" in payload:
         errors.append("loop_once.controls must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_release_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in RELEASE_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing release response field: {field}")
+    if payload.get("mode") != "release":
+        errors.append("release response mode must be release")
+    if payload.get("safety") != "explicit_user":
+        errors.append("release response safety must be explicit_user")
+    if payload.get("requires_explicit_user") is not True:
+        errors.append("release response must require explicit user")
+    release = payload.get("release")
+    if isinstance(release, dict):
+        for field in RELEASE_RECORD_FIELDS:
+            if field not in release:
+                errors.append(f"missing release record field: {field}")
+        if release.get("status") != "released":
+            errors.append("release record status must be released")
+        if not isinstance(release.get("round"), int) or release.get("round") < 1:
+            errors.append("release record round must be a positive integer")
+        if payload.get("release_count") != release.get("round"):
+            errors.append("release_count must match release.round")
+    elif "release" in payload:
+        errors.append("release must be an object")
+    if payload.get("next_command") != "agentdeck workbench":
+        errors.append("release next_command must be agentdeck workbench")
+    if payload.get("next_round_command") != "agentdeck leader plan --task <goal>":
+        errors.append("release next_round_command must be the explicit plan template")
+    trace_commands = payload.get("trace_commands")
+    if isinstance(trace_commands, list):
+        for command in trace_commands:
+            if not isinstance(command, str) or not command.startswith("agentdeck trace --id "):
+                errors.append("release trace_commands must be agentdeck trace commands")
+    elif "trace_commands" in payload:
+        errors.append("release trace_commands must be a list")
+    controls = payload.get("controls")
+    if isinstance(controls, list):
+        seen_kinds: set[object] = set()
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("release controls items must be objects")
+                continue
+            for field in WORKBENCH_CONTROL_MODE_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"release control missing field: {field}")
+            kind = control.get("kind")
+            seen_kinds.add(kind)
+            if kind == "inspect":
+                if control.get("command") != "agentdeck workbench":
+                    errors.append("release inspect control command must be agentdeck workbench")
+                if control.get("safety") != "inspect":
+                    errors.append("release inspect control must use safety=inspect")
+            elif kind in {"trace_code_review", "trace_round_review"}:
+                if control.get("safety") != "inspect":
+                    errors.append("release trace controls must use safety=inspect")
+                if control.get("command") not in (trace_commands if isinstance(trace_commands, list) else []):
+                    errors.append("release trace control command must appear in trace_commands")
+            elif kind == "next_round":
+                if control.get("safety") != "plan_only":
+                    errors.append("release next_round control must use safety=plan_only")
+                if control.get("enabled") is not False:
+                    errors.append("release next_round control must stay disabled")
+                if control.get("command") != payload.get("next_round_command"):
+                    errors.append("release next_round control command must match next_round_command")
+            else:
+                errors.append(f"unknown release control kind: {kind}")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append("release disabled controls must include blocker")
+        for required_kind in ("inspect", "trace_code_review", "trace_round_review", "next_round"):
+            if required_kind not in seen_kinds:
+                errors.append(f"release response missing {required_kind} control")
+    elif "controls" in payload:
+        errors.append("release controls must be a list")
     return {"ok": not errors, "errors": errors}
 
 

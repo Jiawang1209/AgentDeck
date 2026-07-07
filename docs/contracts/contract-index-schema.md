@@ -38,6 +38,7 @@ The index currently lists these contract names in order:
 - `doctor`
 - `events`
 - `run`
+- `release`
 - `workbench`
 - `controls`
 - `skills`
