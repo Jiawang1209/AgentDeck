@@ -442,6 +442,24 @@ LEADER_CHAT_SKILL_LOAD_PREVIEW_CARD_FIELDS = (
     "controls",
 )
 
+LEADER_CHAT_SKILL_CREATE_PREVIEW_CARD_FIELDS = (
+    "mode",
+    "suggestion_id",
+    "suggestion",
+    "name",
+    "target_path",
+    "would_create",
+    "would_overwrite",
+    "source",
+    "agent_id",
+    "trace_id",
+    "proposed_content",
+    "proposed_content_hash",
+    "draft_preview_command",
+    "create_command",
+    "controls",
+)
+
 SKILLS_LIST_RESPONSE_FIELDS = (
     "ok",
     "mode",
@@ -840,6 +858,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "skill_context_card",
     "skill_import_preview_card",
     "skill_load_preview_card",
+    "skill_create_preview_card",
     "skill_suggestions_card",
     "memory_suggestions_card",
     "continue_card",
@@ -2635,6 +2654,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "skill_context_card_fields": list(LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS),
         "skill_import_preview_card_fields": list(LEADER_CHAT_SKILL_IMPORT_PREVIEW_CARD_FIELDS),
         "skill_load_preview_card_fields": list(LEADER_CHAT_SKILL_LOAD_PREVIEW_CARD_FIELDS),
+        "skill_create_preview_card_fields": list(LEADER_CHAT_SKILL_CREATE_PREVIEW_CARD_FIELDS),
         "skill_suggestions_card_fields": list(LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS),
         "memory_suggestions_card_fields": list(LEADER_CHAT_MEMORY_SUGGESTIONS_CARD_FIELDS),
         "skill_context_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
@@ -2715,6 +2735,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_leader_status_queue_fields"] = list(example["leader_status_card"]["queues"])
         payload["example_skill_import_preview_card_fields"] = list(example["skill_import_preview_card"])
         payload["example_skill_load_preview_card_fields"] = list(example["skill_load_preview_card"])
+        payload["example_skill_create_preview_card_fields"] = list(example["skill_create_preview_card"])
         payload["example_skill_suggestions_card_fields"] = list(example["skill_suggestions_card"])
         payload["example_memory_suggestions_card_fields"] = list(example["memory_suggestions_card"])
         payload["example_provider_health_fields"] = list(example["provider_health"])
@@ -7624,6 +7645,59 @@ def leader_chat_example() -> dict[str, object]:
             },
         ],
     }
+    skill_create_preview_card = {
+        "mode": "skill_create_preview",
+        "suggestion_id": "sgs_example",
+        "suggestion": {
+            "suggestion_id": "sgs_example",
+            "status": "pending",
+            "name": "incident-review",
+            "summary": "Review incident response evidence.",
+            "rationale": "planner repeatedly asked for the same incident review checklist",
+            "source": "leader",
+            "agent_id": "reviewer",
+            "trace_id": "msg_example",
+            "draft_path": ".agentdeck/skills/incident-review/SKILL.md",
+            "created_at": "2026-07-07T00:00:00Z",
+        },
+        "name": "incident-review",
+        "target_path": ".agentdeck/skills/incident-review/SKILL.md",
+        "would_create": True,
+        "would_overwrite": False,
+        "source": "leader",
+        "agent_id": "reviewer",
+        "trace_id": "msg_example",
+        "proposed_content": "---\nname: incident-review\n---\n\n# incident-review\n",
+        "proposed_content_hash": "sha256:example",
+        "draft_preview_command": "agentdeck skills draft-preview --suggestion-id sgs_example",
+        "create_command": "agentdeck skills create --suggestion-id sgs_example --confirm",
+        "controls": [
+            {
+                "kind": "create_skill",
+                "label": "Create skill",
+                "command": "agentdeck skills create --suggestion-id sgs_example --confirm",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "draft_preview",
+                "label": "Preview skill draft",
+                "command": "agentdeck skills draft-preview --suggestion-id sgs_example",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "list_suggestions",
+                "label": "List skill suggestions",
+                "command": "agentdeck skills suggestions",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     skill_suggestions_card = {
         "mode": "skill_suggestions",
         "title": "Skill suggestions",
@@ -7955,6 +8029,7 @@ def leader_chat_example() -> dict[str, object]:
         "skill_context_card": skill_context_card,
         "skill_import_preview_card": skill_import_preview_card,
         "skill_load_preview_card": skill_load_preview_card,
+        "skill_create_preview_card": skill_create_preview_card,
         "skill_suggestions_card": skill_suggestions_card,
         "memory_suggestions_card": memory_suggestions_card,
         "continue_card": continue_card,

@@ -1392,6 +1392,93 @@ def test_leader_chat_skill_suggestions_is_read_only_and_avoids_provider_calls(
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
 
 
+def test_leader_chat_skill_create_preview_is_read_only_and_surfaces_explicit_create(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    cli.main(
+        [
+            "skills",
+            "suggest",
+            "--name",
+            "incident-review",
+            "--summary",
+            "Review incident response evidence.",
+            "--rationale",
+            "repeatable review checklist",
+            "--source",
+            "learn-review",
+            "--agent",
+            "leader",
+            "--from-trace",
+            "pln_incident",
+        ]
+    )
+    suggestion = json.loads(capsys.readouterr().out)["suggestion"]
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+
+    exit_code = cli.main(
+        ["leader", "chat", "--message", f"创建 skill 建议 {suggestion['suggestion_id']}"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skill_create_preview"
+    assert payload["plan_id"] is None
+    assert payload["next_command"] == (
+        f"agentdeck skills create --suggestion-id {suggestion['suggestion_id']} --confirm"
+    )
+    card = payload["skill_create_preview_card"]
+    assert card["mode"] == "skill_create_preview"
+    assert card["suggestion_id"] == suggestion["suggestion_id"]
+    assert card["name"] == "incident-review"
+    assert card["target_path"] == ".agentdeck/skills/incident-review/SKILL.md"
+    assert card["create_command"] == payload["next_command"]
+    assert card["draft_preview_command"] == (
+        f"agentdeck skills draft-preview --suggestion-id {suggestion['suggestion_id']}"
+    )
+    assert card["controls"][0] == {
+        "kind": "create_skill",
+        "label": "Create skill",
+        "command": payload["next_command"],
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["intent_card"]["embedded_card"] == "skill_create_preview_card"
+    assert payload["intent_card"]["read_only"] is True
+    assert payload["leader_explanation"]["action_kind"] == "skill_create_preview"
+    assert payload["leader_explanation"]["safety"] == "explicit_user"
+    assert not (root / ".agentdeck" / "skills" / "incident-review" / "SKILL.md").exists()
+    state_after = StateStore(root).load()
+    assert {k: v for k, v in state_after.items() if k != "chat_turns"} == {
+        k: v for k, v in state_before.items() if k != "chat_turns"
+    }
+    assert len(state_after["chat_turns"]) == 1
+    assert state_after["chat_turns"][0]["mode"] == "skill_create_preview"
+    events_after = StateStore(root).list_events(limit=20)
+    assert len(events_after) == len(events_before) + 1
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
+
+
+def test_leader_chat_skill_create_preview_rejects_unknown_suggestion_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "创建 skill 建议 sgs_missing"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "unknown skill suggestion: sgs_missing" in captured.err
+    assert StateStore(root).load() == state_before
+
+
 def test_leader_chat_memory_suggestions_is_read_only_and_avoids_provider_calls(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -3645,6 +3732,23 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["agent_ready_card_fields"] == expected["agent_ready_card_fields"]
     assert payload["skill_import_preview_card_fields"] == expected["skill_import_preview_card_fields"]
     assert payload["skill_load_preview_card_fields"] == expected["skill_load_preview_card_fields"]
+    assert payload["skill_create_preview_card_fields"] == [
+        "mode",
+        "suggestion_id",
+        "suggestion",
+        "name",
+        "target_path",
+        "would_create",
+        "would_overwrite",
+        "source",
+        "agent_id",
+        "trace_id",
+        "proposed_content",
+        "proposed_content_hash",
+        "draft_preview_command",
+        "create_command",
+        "controls",
+    ]
     assert payload["skill_suggestions_card_fields"] == expected["skill_suggestions_card_fields"]
     assert payload["memory_suggestions_card_fields"] == expected["memory_suggestions_card_fields"]
     assert payload["artifacts_card_fields"] == expected["artifacts_card_fields"]
@@ -6537,6 +6641,8 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     assert set(payload["example_skill_import_preview_card_fields"]) == set(example["skill_import_preview_card"])
     assert payload["example_skill_load_preview_card_fields"] == payload["skill_load_preview_card_fields"]
     assert set(payload["example_skill_load_preview_card_fields"]) == set(example["skill_load_preview_card"])
+    assert payload["example_skill_create_preview_card_fields"] == payload["skill_create_preview_card_fields"]
+    assert set(payload["example_skill_create_preview_card_fields"]) == set(example["skill_create_preview_card"])
     assert payload["example_skill_suggestions_card_fields"] == payload["skill_suggestions_card_fields"]
     assert set(payload["example_skill_suggestions_card_fields"]) == set(example["skill_suggestions_card"])
     assert payload["example_memory_suggestions_card_fields"] == payload["memory_suggestions_card_fields"]

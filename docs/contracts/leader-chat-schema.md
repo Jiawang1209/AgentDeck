@@ -24,6 +24,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "skill_context_card_fields": [],
   "skill_import_preview_card_fields": [],
   "skill_load_preview_card_fields": [],
+  "skill_create_preview_card_fields": [],
   "skill_suggestions_card_fields": [],
   "memory_suggestions_card_fields": [],
   "skill_context_item_fields": [],
@@ -105,6 +106,7 @@ The review-mode response shape is:
   "skill_context_card": null,
   "skill_import_preview_card": null,
   "skill_load_preview_card": null,
+  "skill_create_preview_card": null,
   "skill_suggestions_card": null,
   "memory_suggestions_card": null,
   "continue_card": null,
@@ -163,6 +165,8 @@ The card is derived from the same action detail and does not introduce a second 
 `skill_import_preview_card` is the natural-language wrapper around `agentdeck skills import-preview --path <SKILL.md>` for messages such as `预览导入 skill /path/to/SKILL.md` or `preview skill import /path/to/SKILL.md`. These messages enter `mode=skill_import_preview`, parse a concrete local `SKILL.md` path, embed the preview card with source path, target project path, hash-bearing skill summary, overwrite state, import command, force import command, and GUI-ready controls. The top-level `next_command` points at the explicit import command when no overwrite is needed, or the explicit force import command when an overwrite would occur. The route may record only a chat turn and audit event; it must not copy files, load skills, call a Leader provider, inspect tmux panes, create plans/actions/approvals/messages/jobs/inbox items, or change approval/runtime state.
 
 `skill_load_preview_card` is the natural-language wrapper around `agentdeck skills load-preview --name <name> --agent <agent_id> --purpose <purpose>` for messages such as `预览加载 skill planning 给 planner 用于 decompose work` or `preview load skill planning for planner purpose decompose work`. These messages enter `mode=skill_load_preview`, resolve an existing builtin or project skill, verify the target agent, and embed a read-only card with target agent, purpose, hash-bearing skill summary, explicit load command, and GUI-ready show/load controls. The top-level `next_command` points at the explicit `agentdeck skills load ...` command. The route may record only a chat turn and audit event; it must not write `skill_loads[]`, append `skill_loaded`, call a Leader provider, inspect tmux panes, create plans/actions/approvals/messages/jobs/inbox items, or change approval/runtime state.
+
+`skill_create_preview_card` is the natural-language wrapper around a pending skill suggestion for messages such as `创建 skill 建议 sgs_xxx`, `创建技能建议 sgs_xxx`, or `create skill suggestion sgs_xxx`. These messages enter `mode=skill_create_preview`, resolve the pending suggestion, and embed a read-only card with the proposed `SKILL.md` content, content hash, target project path, `draft_preview_command`, explicit `create_command`, and GUI-ready controls. The top-level `next_command` points at `agentdeck skills create --suggestion-id <id> --confirm`. The route may record only a chat turn and audit event; it must not create `SKILL.md`, mutate `skill_suggestions[]`, import or load skills, call a Leader provider, inspect tmux panes, create plans/actions/approvals/messages/jobs/inbox items, or change approval/runtime state. Unknown suggestion ids fail non-zero before any state mutation.
 
 `skill_suggestions_card` is the read-only pending skill suggestion projection for messages such as `查看 skill 建议`, `查看技能建议`, or `skill suggestions`. These messages enter `mode=skill_suggestions`, embed the current `skill_suggestions[]` queue with `count`, `pending_count`, `items[]`, and inspect controls, set `next_command=agentdeck skills suggestions`, and expose `intent_card.embedded_card=skill_suggestions_card`. The route may record only a chat turn and audit event; it must not create `SKILL.md`, import skills, load skills, call a Leader provider, inspect tmux panes, create plans/actions/approvals/messages/jobs/inbox items, or change approval/runtime state.
 

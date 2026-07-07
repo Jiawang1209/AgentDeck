@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Preview skill creation from Leader chat
+
+- 新增自然语言入口 `agentdeck leader chat --message "创建 skill 建议 sgs_xxx"`：进入只读 `mode=skill_create_preview`，嵌入 `skill_create_preview_card`，复用 pending suggestion 的 `SKILL.md` 草稿、hash、目标路径和显式 `agentdeck skills create --suggestion-id <id> --confirm`。
+- 保持人类确认边界：Leader chat 只记录 chat turn 和审计事件，不创建 `.agentdeck/skills/.../SKILL.md`，不修改 `skill_suggestions[]`，不 import/load skill，不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox；未知 suggestion 返回非 0 且不修改 state。
+- 扩展 `agentdeck contract leader-chat` / `--example`、`docs/contracts/leader-chat-schema.md`、README、AGENT.md、CLAUDE.md、架构设计文档和北极星路线图，明确 skill suggestion 可以通过自然语言进入 create preview，但真正落地仍必须由人类显式运行 `skills create --confirm`。
+- 验证记录：已先确认红测失败，`创建 skill 建议 sgs_xxx` 最初被更宽泛的 `skill_suggestions` intent 吞掉，未知 suggestion 也没有拒绝；实现后目标和 contract 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_skill_create_preview_is_read_only_and_surfaces_explicit_create tests/test_agent_cli.py::test_leader_chat_skill_create_preview_rejects_unknown_suggestion_without_mutating_state tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response tests/test_agent_cli.py::test_contract_leader_chat_cli_matches_contract_module -q` 5 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 153 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 226 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 143 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 564 项通过。
+
 ### Current - Create project skills from suggestions
 
 - 新增 `agentdeck skills create --suggestion-id <id> --confirm`：把已审阅的 pending skill suggestion 草稿写入项目 `.agentdeck/skills/<name>/SKILL.md`，完成 “suggestion -> draft-preview -> explicit create” 的 skill 学习闭环。

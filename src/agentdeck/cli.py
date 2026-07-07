@@ -127,6 +127,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "artifacts_card",
         "skill_import_preview_card",
         "skill_load_preview_card",
+        "skill_create_preview_card",
         "skill_suggestions_card",
         "memory_suggestions_card",
         "skill_context_card",
@@ -423,6 +424,14 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck artifacts"
     if embedded_card == "skill_suggestions_card":
         return "agentdeck skills suggestions"
+    if embedded_card == "skill_create_preview_card":
+        skill_create_preview_card = payload.get("skill_create_preview_card")
+        command = (
+            skill_create_preview_card.get("draft_preview_command")
+            if isinstance(skill_create_preview_card, dict)
+            else None
+        )
+        return str(command) if command else None
     if embedded_card == "memory_suggestions_card":
         return "agentdeck memory suggestions"
     if embedded_card == "skill_context_card":
@@ -523,6 +532,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("skill_context_card", None)
     payload.setdefault("skill_import_preview_card", None)
     payload.setdefault("skill_load_preview_card", None)
+    payload.setdefault("skill_create_preview_card", None)
     payload.setdefault("skill_suggestions_card", None)
     payload.setdefault("memory_suggestions_card", None)
     payload.setdefault("lineage_card", None)
@@ -3567,6 +3577,56 @@ def skills_draft_preview_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _skill_create_preview_card(store: StateStore, suggestion_id: str) -> dict[str, object]:
+    suggestion = _find_skill_suggestion(store, suggestion_id)
+    if suggestion is None:
+        raise KeyError(suggestion_id)
+    target = str(suggestion.get("draft_path") or f".agentdeck/skills/{suggestion.get('name')}/SKILL.md")
+    target_path = store.root / target
+    proposed_content = _skill_draft_content(suggestion)
+    draft_preview_command = f"agentdeck skills draft-preview --suggestion-id {suggestion_id}"
+    create_command = f"agentdeck skills create --suggestion-id {suggestion_id} --confirm"
+    pending = suggestion.get("status") == "pending"
+    return {
+        "mode": "skill_create_preview",
+        "suggestion_id": suggestion_id,
+        "suggestion": suggestion,
+        "name": suggestion.get("name"),
+        "target_path": target,
+        "would_create": not target_path.exists(),
+        "would_overwrite": target_path.exists(),
+        "source": suggestion.get("source"),
+        "agent_id": suggestion.get("agent_id"),
+        "trace_id": suggestion.get("trace_id"),
+        "proposed_content": proposed_content,
+        "proposed_content_hash": "sha256:" + hashlib.sha256(proposed_content.encode("utf-8")).hexdigest(),
+        "draft_preview_command": draft_preview_command,
+        "create_command": create_command,
+        "controls": [
+            _control(
+                kind="create_skill",
+                label="Create skill",
+                command=create_command,
+                safety="explicit_user",
+                enabled=pending,
+                blocker=None if pending else "skill suggestion is not pending",
+            ),
+            _control(
+                kind="draft_preview",
+                label="Preview skill draft",
+                command=draft_preview_command,
+                safety="inspect",
+            ),
+            _control(
+                kind="list_suggestions",
+                label="List skill suggestions",
+                command="agentdeck skills suggestions",
+                safety="inspect",
+            ),
+        ],
+    }
+
+
 def _mark_skill_suggestion_created(
     store: StateStore,
     suggestion_id: str,
@@ -5619,6 +5679,27 @@ def _chat_wants_skill_suggestions(message: str) -> bool:
     )
 
 
+def _chat_skill_create_suggestion_id(message: str) -> str | None:
+    stripped = message.strip()
+    lowered = stripped.lower()
+    if not any(
+        token in lowered
+        for token in [
+            "create skill",
+            "skill create",
+            "创建 skill",
+            "创建skill",
+            "创建 技能",
+            "创建技能",
+            "生成 skill",
+            "生成skill",
+        ]
+    ):
+        return None
+    match = re.search(r"\bsgs_[A-Za-z0-9_-]+\b", stripped)
+    return match.group(0) if match else None
+
+
 def _chat_wants_memory_suggestions(message: str) -> bool:
     normalized = message.strip().lower()
     compact = normalized.replace(" ", "")
@@ -6761,6 +6842,24 @@ def _leader_chat_explanation(
             "safety": "inspect",
             "requires_explicit_user": False,
         }
+    if mode == "skill_create_preview":
+        preview_card = result if isinstance(result, dict) else {}
+        preview_suggestion = (
+            preview_card.get("suggestion")
+            if isinstance(preview_card.get("suggestion"), dict)
+            else {}
+        )
+        return {
+            "mode": mode,
+            "summary": "Leader previews creating a project skill from a pending suggestion without writing files yet.",
+            "reason": "human asked to create a reviewed skill suggestion",
+            "next_command": next_command,
+            "recommended_action_id": preview_card.get("suggestion_id"),
+            "action_kind": "skill_create_preview",
+            "action_status": "ready" if preview_suggestion.get("status") == "pending" else "blocked",
+            "safety": "explicit_user",
+            "requires_explicit_user": True,
+        }
     if mode == "memory_suggestions":
         suggestions_card = result if isinstance(result, dict) else {}
         return {
@@ -7757,6 +7856,68 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "next_command": next_command,
             "leader_action": None,
             "skill_load_preview_card": skill_load_preview_card,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    skill_create_suggestion_id = _chat_skill_create_suggestion_id(args.message)
+    if skill_create_suggestion_id is not None:
+        try:
+            skill_create_preview_card = _skill_create_preview_card(store, skill_create_suggestion_id)
+        except KeyError:
+            print(f"unknown skill suggestion: {skill_create_suggestion_id}", file=sys.stderr)
+            return 1
+        next_command = skill_create_preview_card["create_command"]
+        turn = store.record_chat_turn(
+            mode="skill_create_preview",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="skill_create_preview",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "skill_create_preview",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "skill_create_preview",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "skill_create_preview",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                result=skill_create_preview_card,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "skill_create_preview_card": skill_create_preview_card,
             "continue_card": None,
             "inbox_card": None,
             "approval_card": None,
