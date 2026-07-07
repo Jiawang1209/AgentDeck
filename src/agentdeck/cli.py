@@ -3001,6 +3001,13 @@ def _workbench_role_topology_card(
                 ],
             }
         )
+    by_status: dict[str, int] = {}
+    blocked_count = 0
+    for role in roles:
+        status_value = str(role.get("status"))
+        by_status[status_value] = by_status.get(status_value, 0) + 1
+        if role.get("blocker"):
+            blocked_count += 1
     return {
         "mode": "role_topology",
         "title": "Role topology",
@@ -3008,6 +3015,8 @@ def _workbench_role_topology_card(
         "count": logical_count + worker_count,
         "logical_role_count": logical_count,
         "worker_role_count": worker_count,
+        "by_status": by_status,
+        "blocked_count": blocked_count,
         "roles": roles,
         "controls": [
             _control(

@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Add role topology status summary
+
+- 扩展 `agentdeck workbench` 的 `role_topology_card`（北极星 Phase G6 第五刀）：新增 `by_status`（每个角色 `status` 的计数）和 `blocked_count`（带非空 `blocker` 的角色数），让 GUI/TUI 一眼看出"有几个角色被阻塞"，无需遍历 roles。
+- 收紧 validator：`blocked_count` 必须等于实际带 blocker 的角色数，`by_status` 必须是对象，`blocked_count` 必须是整数；GUI 可直接信任该汇总。
+- 同步 workbench contract discovery 字段、example fixture、`docs/contracts/workbench-schema.md` 和 README。
+- 保持北极星边界：汇总是只读派生，不写 state。
+- 验证记录：已先确认红测失败，`role_topology_card` 最初无 `by_status`/`blocked_count`，validator 也不校验计数一致性；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_role_topology_card_projects_logical_and_worker_roles tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_contracts.py::test_validate_workbench_contract_rejects_role_topology_blocked_count_mismatch tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 562 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 604 项通过。
+
 ### Current - Overlay approval/release state on role topology orchestrator
 
 - 扩展 `agentdeck workbench` 的 `role_topology_card` logical 角色叠加（北极星 Phase G6 第四刀）：orchestrator 现在按 ProjectView 事实推导更细的状态——有 pending 审批时 `waiting_for_approval`（带 blocker `waiting for human approval`），否则有 pending Leader action 时 `coordinating`，否则已 release 过时 `released`，否则 `idle`。

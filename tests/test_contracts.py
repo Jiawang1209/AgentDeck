@@ -2227,6 +2227,18 @@ def test_validate_workbench_contract_requires_role_topology_item_fields() -> Non
     }
 
 
+def test_validate_workbench_contract_rejects_role_topology_blocked_count_mismatch() -> None:
+    payload = workbench_example()
+    payload["role_topology_card"]["blocked_count"] = 3
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["role_topology_card.blocked_count must match roles carrying a blocker"],
+    }
+
+
 def test_validate_workbench_contract_rejects_pane_backed_logical_role() -> None:
     payload = workbench_example()
     logical = next(

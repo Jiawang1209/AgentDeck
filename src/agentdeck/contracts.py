@@ -1620,6 +1620,8 @@ WORKBENCH_ROLE_TOPOLOGY_CARD_FIELDS = (
     "count",
     "logical_role_count",
     "worker_role_count",
+    "by_status",
+    "blocked_count",
     "roles",
     "controls",
 )
@@ -5654,9 +5656,20 @@ def _validate_role_topology_card_contract(
         errors.append(
             _prefixed_contract_error(prefix, "role_topology_card.source_command must be agentdeck workbench")
         )
-    for count_field in ("count", "logical_role_count", "worker_role_count"):
+    for count_field in ("count", "logical_role_count", "worker_role_count", "blocked_count"):
         if count_field in role_topology_card and not isinstance(role_topology_card.get(count_field), int):
             errors.append(_prefixed_contract_error(prefix, f"role_topology_card.{count_field} must be an integer"))
+    if "by_status" in role_topology_card and not isinstance(role_topology_card.get("by_status"), dict):
+        errors.append(_prefixed_contract_error(prefix, "role_topology_card.by_status must be an object"))
+    roles_for_counts = role_topology_card.get("roles")
+    if isinstance(roles_for_counts, list) and isinstance(role_topology_card.get("blocked_count"), int):
+        actual_blocked = sum(
+            1 for role in roles_for_counts if isinstance(role, dict) and role.get("blocker")
+        )
+        if role_topology_card.get("blocked_count") != actual_blocked:
+            errors.append(
+                _prefixed_contract_error(prefix, "role_topology_card.blocked_count must match roles carrying a blocker")
+            )
     controls = role_topology_card.get("controls")
     if isinstance(controls, list):
         for control in controls:
@@ -11015,6 +11028,15 @@ def workbench_example() -> dict[str, object]:
             "count": 6,
             "logical_role_count": 3,
             "worker_role_count": 3,
+            "by_status": {
+                "ready": 1,
+                "planning": 1,
+                "coordinating": 1,
+                "inbox_pending": 1,
+                "idle": 1,
+                "reviewed": 1,
+            },
+            "blocked_count": 0,
             "roles": [
                 {
                     "role_id": "frontdesk",

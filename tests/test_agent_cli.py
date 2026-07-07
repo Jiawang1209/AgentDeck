@@ -5624,6 +5624,8 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "count",
         "logical_role_count",
         "worker_role_count",
+        "by_status",
+        "blocked_count",
         "roles",
         "controls",
     ]
@@ -5789,6 +5791,9 @@ def test_workbench_role_topology_card_projects_logical_and_worker_roles(
     assert card["logical_role_count"] == 3
     assert card["worker_role_count"] == 3
     assert card["count"] == 6
+    # default project (no artifacts) leaves the reviewer role blocked upstream
+    assert card["blocked_count"] == 1
+    assert card["by_status"] == {"ready": 1, "idle": 4, "blocked": 1}
     assert card["controls"] == [
         {
             "kind": "inspect",

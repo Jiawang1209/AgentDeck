@@ -702,6 +702,8 @@ The card has three states. While the gate is `blocked`, `can_release` mirrors th
   "count": 6,
   "logical_role_count": 3,
   "worker_role_count": 3,
+  "by_status": {"ready": 1, "planning": 1, "coordinating": 1, "inbox_pending": 1, "idle": 1, "reviewed": 1},
+  "blocked_count": 0,
   "roles": [
     {
       "role_id": "frontdesk",
@@ -746,6 +748,8 @@ The logical roles are projected from `leader.coordination_roles[]`: they keep `k
 The worker roles are projected from the same `worker_lifecycle_card` items: they use `kind=worker`, `runtime_kind=worker_pane`, carry the agent's `agent_id`/`provider`, set `pane_backed` only when the pane is running, reuse the worker `lifecycle_stage` as `status`, and expose an inspect control pointing at `agentdeck inbox --agent <id>`. Each role's single control command must equal that role's `next_command`.
 
 When a worker role's `agent_id` matches a `review_gate_card` stage (`code_review` or `round_review`, code review taking precedence), the topology overlays the review stage onto that role so the reviewer's `status`/`blocker` reflects the gate: a `ready` stage becomes `status=reviewed`, a `waiting_for_review` stage becomes `status=reviewing` (its turn, no blocker), and any other stage (e.g. `waiting_for_artifacts` or `blocked`) becomes `status=blocked` with the stage's `blocker`. Non-reviewer worker roles keep their base `lifecycle_stage` status and a `null` blocker. The overlay is read-only and never advances the gate.
+
+The card also carries an at-a-glance summary: `by_status` maps each role `status` to a count across all roles, and `blocked_count` is the number of roles carrying a non-null `blocker`. The validator requires `blocked_count` to equal the number of roles with a truthy blocker so GUI clients can trust the count without iterating the roles.
 
 The validator rejects a logical role that claims to be pane-backed, has a pane id, or carries an agent id; a worker role that is not `runtime_kind=worker_pane`; and any role control that is not `safety=inspect` or whose command drifts from `next_command`. Rendering the card never spawns, dispatches, captures, acks, releases, or writes state. All controls appear in `control_registry[]` under `scope=role_topology` (card-level plus one per role, with worker rows carrying their `agent_id`).
 

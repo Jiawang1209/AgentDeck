@@ -277,12 +277,22 @@ New behavior:
 - Only `orchestrator` carries a blocker; `frontdesk`/`planner` keep `null`.
 - Still read-only: the overlay only projects ProjectView facts and writes no state.
 
+The fifth G6 slice is already committed:
+
+```bash
+agentdeck workbench
+```
+
+New surface:
+
+- `role_topology_card` now carries `by_status` (per-status counts) and `blocked_count` (roles with a non-null blocker); the validator requires `blocked_count` to match the roles carrying a blocker.
+
 ## Next Best Step
 
 Continue Phase G6 with the next follow-up:
 
-- Add a Phase G6 acceptance-focused surface or contract that asserts the full "frontdesk → planner → orchestrator → coder → code_reviewer → round_reviewer" ordering and per-role safety once `code_reviewer` / `round_reviewer` roles are explicitly configured (currently worker role_ids come from the configured agent role, so a project with explicit reviewer roles should surface them distinctly).
-- Optionally add a natural-language filter/inspection over `role_topology_card` (e.g. "查看被阻塞的角色") reusing the `control_registry_card` filters.
+- Add explicit-reviewer coverage: verify (and add a test proving) that a project configuring agents with roles `code_reviewer` / `round_reviewer` surfaces them as distinct topology roles and that the review-gate overlay maps to them; add any fix needed so the full "frontdesk → planner → orchestrator → coder → code_reviewer → round_reviewer" ordering shows once configured.
+- Optionally surface `blocked_count` / `by_status` into the natural-language `role_topology` chat summary text so the shell can say "N roles blocked".
 - Preserve human approval and keep every topology surface read-only.
 
 ## Required Verification Before Handoff
