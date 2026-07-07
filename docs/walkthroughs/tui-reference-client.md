@@ -15,12 +15,17 @@ Each section maps to a workbench card and echoes the explicit commands a human w
 | --- | --- | --- |
 | Header | `project_view`, `next_command` | project, mode, schema, next explicit command |
 | Recovery | `recovery` | recovery status/reason + recommended command |
+| Run progress | `run_progress_card` | latest plan's steps/approval statuses + single explicit next command (omitted when no plan) |
 | Role topology | `role_topology_card` | logical + worker roles, status, blocker, per-role inspect command, `N roles, M blocked` |
+| Worker activity | `worker_lifecycle_card` | per-worker lifecycle stage + active message/job/reply ids + inbox/artifact counts |
 | Review gate | `review_gate_card` | gate status/reason + code/round review stages |
 | Release | `release_preview_card` | release status; `agentdeck release --confirm` when ready; released rounds |
 | Ledger | `ledger_card` | message/job/reply/artifact/inbox counts |
 | Queue | `queue_card` | active queue source + next command |
+| Learning layer | `skill_suggestions_card`, `memory_suggestions_card` | pending skill/memory suggestion queues + explicit memory apply command |
 | Command palette | `control_registry[]` | per-scope total / enabled / blocked counts, with `agentdeck controls --scope <scope>` drill-down |
+
+`agentdeck dashboard --watch [--interval <seconds>] [--iterations <n>]` re-renders the same text on an interval (mirrors `agentdeck workbench --watch`), still read-only.
 
 ## Sample
 
@@ -45,6 +50,11 @@ status: provider_setup_required — configured Leader provider is not ready: dee
   worker  review           blocked              claude       → agentdeck inbox --agent reviewer
       ⨯ blocked: waiting for artifacts
 
+── Worker activity ─────────────────────────────────
+  planner        idle
+  coder          idle
+  reviewer       idle
+
 ── Review gate ─────────────────────────────────────
 status: blocked — waiting for artifacts
   code_review   reviewer     waiting_for_artifacts  (waiting for artifacts)
@@ -59,6 +69,10 @@ status: blocked — waiting for artifacts
 ── Queue ───────────────────────────────────────────
 active source: provider_health
   next: agentdeck doctor
+
+── Learning layer ──────────────────────────────────
+skill suggestions: 0 pending  (agentdeck skills suggestions)
+memory suggestions: 0 pending  (agentdeck memory suggestions)
 
 ── Command palette ─────────────────────────────────
 105 controls  (drill down: agentdeck controls --scope <scope>)

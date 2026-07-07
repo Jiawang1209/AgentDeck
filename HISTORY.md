@@ -4,6 +4,12 @@
 
 ## 2026-07-07
 
+### Current - Sync TUI reference client doc with new dashboard sections
+
+- 更新 `docs/walkthroughs/tui-reference-client.md`：把在文档初稿之后新增的 dashboard 段落（Run progress、Worker activity、Learning layer）补进 section→card 映射表和样例输出，并补上 `agentdeck dashboard --watch` 说明，保证文档与实际渲染顺序/内容一致。
+- 样例取自真实全新项目的 `agentdeck dashboard` 输出（无 plan 时 Run progress 段省略，workers 全 idle，suggestions 0 pending）。
+- 验证记录：纯文档，无源码/测试改动；`git diff --check` 通过，全量测试保持 619 项通过。
+
 ### Current - Add --watch to the TUI dashboard
 
 - 给 `agentdeck dashboard` 新增 `--watch [--interval <秒>] [--iterations <n>]`（方向 3）：按间隔重新渲染文本面板，对标 `agentdeck workbench --watch` 的循环语义（`--iterations` 有界退出、`--iterations < 1` 报错返回非 0、KeyboardInterrupt 返回 130）。
