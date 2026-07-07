@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Surface plan skill provenance in trace lineage
+
+- 扩展 `agentdeck trace --id <id>`：当 traced message 来自已审批 plan dispatch 时，trace 顶层新增 `plan` provenance card，包含 plan_id、task、provider/backend/transport、leader_backend、model、status、dispatch_ready、step_count、created_at 和规划时保存的 compact `skill_context`。
+- 保持 trace 安全边界：`plan.skill_context` 只复用 compact loaded skill 摘要，不包含完整 `content_snapshot`；普通手动 dispatch 没有关联 plan 时 `plan=null`，保持兼容。
+- 扩展 trace contract：`TRACE_TOP_LEVEL_FIELDS`、`agentdeck contract trace` discovery、example fixture 和 `validate_trace_contract()` 都认识 `plan` / `plan_fields`，并复用 ProjectView plan item 校验确保 GUI 可以稳定渲染。
+- 同步 README 和 `docs/contracts/trace-schema.md`，明确通信 lineage 现在能展示审批任务对应的 plan skill provenance，补上北极星中“trace 看到 skill snapshot/provenance”的审计闭环。
+- 验证记录：已先确认红测失败，trace payload 最初缺少 `plan`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_trace_surfaces_plan_skill_provenance_for_dispatched_approval -q` 1 项通过；trace/contract 聚焦回归 7 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 113 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 519 项通过。
+
 ### Current - Persist loaded skill provenance on plans
 
 - 扩展 plan state：`StateStore.record_plan()` 现在接收并保存 compact `skill_context`，只保留 load_id、agent_id、purpose、name、source、path、content_hash、description、required_tools、risk、created_at 和 inspect/reload commands，不保存完整 `content_snapshot`。

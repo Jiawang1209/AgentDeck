@@ -845,6 +845,7 @@ class StateStore:
             "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
             "query_id": query_id,
             "message": self._trace_message(message),
+            "plan": self._trace_plan_for_message(state, message_id),
             "attempts": [self._trace_attempt(item) for item in attempts],
             "jobs": [self._trace_job(item) for item in jobs],
             "replies": [self._trace_reply(item) for item in replies],
@@ -866,6 +867,42 @@ class StateStore:
                 "blocker": None if trace_command is not None else "requires trace id",
             }
         ]
+
+    @staticmethod
+    def _trace_plan_for_message(state: dict[str, Any], message_id: str) -> dict[str, Any] | None:
+        approval = next(
+            (item for item in state.get("approvals", []) if item.get("message_id") == message_id and item.get("plan_id")),
+            None,
+        )
+        if approval is None:
+            return None
+        plan_id = approval.get("plan_id")
+        plan = next((item for item in state.get("plans", []) if item.get("plan_id") == plan_id), None)
+        if plan is None:
+            return None
+        body = plan.get("plan", {})
+        steps = body.get("steps", []) if isinstance(body, dict) else []
+        return {
+            "plan_id": plan.get("plan_id"),
+            "task": plan.get("task"),
+            "status": plan.get("status"),
+            "provider": plan.get("provider"),
+            "provider_backend": plan.get("provider_backend")
+            or leader_provider_backend(str(plan.get("provider") or "")),
+            "provider_transport": plan.get("provider_transport")
+            or leader_provider_transport(str(plan.get("provider") or "")),
+            "leader_backend": plan.get("leader_backend")
+            or leader_backend_identity(
+                str(plan.get("provider") or ""),
+                str(plan.get("model") or ""),
+                bool(plan.get("dispatch_ready", False)),
+            ),
+            "model": plan.get("model"),
+            "dispatch_ready": plan.get("dispatch_ready"),
+            "skill_context": StateStore._plan_skill_context(plan.get("skill_context")),
+            "step_count": len(steps) if isinstance(steps, list) else 0,
+            "created_at": plan.get("created_at"),
+        }
 
     @staticmethod
     def _trace_message(message: dict[str, Any]) -> dict[str, Any]:

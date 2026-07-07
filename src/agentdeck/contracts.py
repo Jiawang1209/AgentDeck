@@ -1406,6 +1406,7 @@ TRACE_TOP_LEVEL_FIELDS = (
     "schema_version",
     "query_id",
     "message",
+    "plan",
     "attempts",
     "jobs",
     "replies",
@@ -2563,6 +2564,7 @@ def trace_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "top_level_fields": list(TRACE_TOP_LEVEL_FIELDS),
         "message_fields": list(TRACE_MESSAGE_FIELDS),
+        "plan_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
         "attempt_fields": list(TRACE_ATTEMPT_FIELDS),
         "job_fields": list(TRACE_JOB_FIELDS),
         "reply_fields": list(TRACE_REPLY_FIELDS),
@@ -2579,6 +2581,7 @@ def trace_contract_response(contract_path: Path, include_example: bool = False) 
         payload["example"] = True
         payload["example_top_level_fields"] = list(example)
         payload["example_message_fields"] = list(example["message"])
+        payload["example_plan_fields"] = list(example["plan"]) if isinstance(example.get("plan"), dict) else []
         payload["example_attempt_fields"] = list(example["attempts"][0])
         payload["example_job_fields"] = list(example["jobs"][0])
         payload["example_reply_fields"] = list(example["replies"][0])
@@ -3179,6 +3182,18 @@ def validate_trace_contract(payload: dict[str, object]) -> dict[str, object]:
                 errors.append(f"missing message field: {field}")
     elif "message" in payload:
         errors.append("message must be an object")
+    plan = payload.get("plan")
+    if isinstance(plan, dict):
+        for field in PROJECT_VIEW_PLAN_ITEM_FIELDS:
+            if field not in plan:
+                errors.append(f"missing trace plan field: {field}")
+        leader_backend = plan.get("leader_backend")
+        if isinstance(leader_backend, dict):
+            _validate_leader_backend(errors, "trace.plan", leader_backend)
+        else:
+            errors.append("trace.plan.leader_backend must be an object")
+    elif "plan" in payload and plan is not None:
+        errors.append("plan must be an object or null")
     _validate_trace_items(errors, payload, "attempts", TRACE_ATTEMPT_FIELDS, "attempt")
     _validate_trace_items(errors, payload, "jobs", TRACE_JOB_FIELDS, "job")
     _validate_trace_items(errors, payload, "replies", TRACE_REPLY_FIELDS, "reply")
@@ -8759,6 +8774,55 @@ def trace_example() -> dict[str, object]:
             "task": "Review the implementation plan",
             "prompt": "# AgentDeck dispatch\n\nAgent: planner\n\n当前任务:\nReview the implementation plan",
             "status": "replied",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        },
+        "plan": {
+            "plan_id": "pln_example",
+            "task": "Build a GUI-ready recovery panel",
+            "provider": "fake",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "leader_backend": {
+                "agent_id": "leader",
+                "provider": "fake",
+                "model": "fake-plan",
+                "provider_backend": "local",
+                "provider_transport": "local",
+                "reasoning_backend": "local-fake",
+                "runtime_kind": "logical_leader",
+                "pane_backed": False,
+                "pane_id": None,
+                "approval_required": True,
+                "dispatch_ready": False,
+            },
+            "model": "fake-plan",
+            "status": "planned",
+            "dispatch_ready": False,
+            "skill_context": {
+                "count": 1,
+                "by_agent": {"leader": 1},
+                "by_source": {"builtin": 1},
+                "items": [
+                    {
+                        "load_id": "skl_example",
+                        "agent_id": "leader",
+                        "purpose": "decompose task",
+                        "name": "planning",
+                        "source": "builtin",
+                        "path": "builtin://planning/SKILL.md",
+                        "content_hash": "sha256:example",
+                        "description": "Break broad goals into reviewable steps.",
+                        "required_tools": [],
+                        "risk": "inspect",
+                        "created_at": "2026-07-04T00:00:00+00:00",
+                        "show_command": "agentdeck skills show --name planning",
+                        "reload_command": (
+                            "agentdeck skills load --name planning --agent leader --purpose 'decompose task'"
+                        ),
+                    }
+                ],
+            },
+            "step_count": 1,
             "created_at": "2026-07-04T00:00:00+00:00",
         },
         "attempts": [

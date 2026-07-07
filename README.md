@@ -321,7 +321,7 @@ agentdeck trace --id art_xxx
 agentdeck trace --id inb_xxx
 ```
 
-`trace` 会返回同一条 message lineage 下的 schema_version、message、attempts、jobs、replies、artifacts 和 inbox_items；`artifact_id` 也能作为查询入口，但 trace 只返回产物路径摘要，不读取文件内容。输出前会通过 `validate_trace_contract()` 自校验，失败时不会打印半坏 trace。自然语言入口可以直接追踪具体通信 ID：`agentdeck leader chat --message "追踪 msg_xxx"` 或 `"追踪 art_xxx"` 会进入只读 `mode=trace`，嵌入同源 `trace_card`，并保持 `next_command=agentdeck trace --id <id>`；如果 ID 不存在，chat 会返回 `unknown trace id: <id>`，不会误创建 plan。后续会继续补更严格的 reply block 标记。
+`trace` 会返回同一条 message lineage 下的 schema_version、message、plan、attempts、jobs、replies、artifacts 和 inbox_items；如果该 message 来自已审批 plan dispatch，`plan` 会暴露 plan provenance 和规划时可见的 compact `skill_context`，但仍不包含完整 `content_snapshot`。`artifact_id` 也能作为查询入口，但 trace 只返回产物路径摘要，不读取文件内容。输出前会通过 `validate_trace_contract()` 自校验，失败时不会打印半坏 trace。自然语言入口可以直接追踪具体通信 ID：`agentdeck leader chat --message "追踪 msg_xxx"` 或 `"追踪 art_xxx"` 会进入只读 `mode=trace`，嵌入同源 `trace_card`，并保持 `next_command=agentdeck trace --id <id>`；如果 ID 不存在，chat 会返回 `unknown trace id: <id>`，不会误创建 plan。后续会继续补更严格的 reply block 标记。
 
 也可以直接查看当前项目的产物索引：
 

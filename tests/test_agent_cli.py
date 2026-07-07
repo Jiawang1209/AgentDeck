@@ -4565,6 +4565,61 @@ def test_contract_trace_cli_matches_contract_module(capsys) -> None:
     assert payload == expected
 
 
+def test_trace_surfaces_plan_skill_provenance_for_dispatched_approval(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    store = StateStore(root)
+    cli.main(["skills", "load", "--name", "planning", "--agent", "leader", "--purpose", "decompose task"])
+    capsys.readouterr()
+    skill_context = cli.asdict(store.project_view(config))["skills"]
+    plan = {
+        "goal": "skill-aware dispatch trace",
+        "summary": "Dispatch one approval and preserve loaded skill provenance.",
+        "approval_required": True,
+        "dispatch_ready": False,
+        "steps": [
+            {
+                "step": 1,
+                "agent_id": "planner",
+                "role": "planner",
+                "task": "Write a traceable plan",
+                "risk": "low",
+                "requires_approval": True,
+            }
+        ],
+    }
+    record = store.record_plan("skill trace task", "fake", "fake-plan", plan, skill_context=skill_context)
+    approval = store.create_approvals_from_plan(str(record["plan_id"]))[0]
+    store.decide_approval(str(approval["approval_id"]), "approved")
+    records = store.create_dispatch_records(
+        "leader",
+        "planner",
+        str(approval["task"]),
+        "dispatch prompt",
+        "%42",
+    )
+    store.mark_approval_dispatched(
+        str(approval["approval_id"]),
+        str(records["message"]["message_id"]),
+        str(records["attempt"]["attempt_id"]),
+        str(records["job"]["job_id"]),
+    )
+
+    exit_code = cli.main(["trace", "--id", str(records["message"]["message_id"])])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["plan"]["plan_id"] == record["plan_id"]
+    assert payload["plan"]["task"] == "skill trace task"
+    assert payload["plan"]["provider"] == "fake"
+    assert payload["plan"]["skill_context"] == skill_context
+    assert payload["plan"]["skill_context"]["items"][0]["name"] == "planning"
+    assert "content_snapshot" not in payload["plan"]["skill_context"]["items"][0]
+    assert validate_trace_contract(payload) == {"ok": True, "errors": []}
+
+
 def test_trace_accepts_artifact_id_and_returns_artifacts(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

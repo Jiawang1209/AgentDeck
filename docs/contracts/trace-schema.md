@@ -2,7 +2,7 @@
 
 `agentdeck trace --id <id>` is the canonical read-only lineage view for one AgentDeck communication message.
 
-It accepts a `message_id`, `attempt_id`, `job_id`, `reply_id`, `artifact_id`, or `inbox_id`, resolves the owning message, and returns the message, attempts, jobs, replies, artifacts, and inbox items that belong to that lineage.
+It accepts a `message_id`, `attempt_id`, `job_id`, `reply_id`, `artifact_id`, or `inbox_id`, resolves the owning message, and returns the message, optional source plan, attempts, jobs, replies, artifacts, and inbox items that belong to that lineage.
 
 The trace contract uses the same schema version constant as ProjectView: `PROJECT_VIEW_SCHEMA_VERSION` in `src/agentdeck/models.py`. Current value: `project-view/v1`.
 
@@ -17,6 +17,7 @@ Reusable contract response, payload, example fixture, and validator helpers live
   "schema_version": "project-view/v1",
   "query_id": "rep_xxx",
   "message": {},
+  "plan": {},
   "attempts": [],
   "jobs": [],
   "replies": [],
@@ -37,6 +38,7 @@ Use `agentdeck contract trace` to discover this contract from tools or GUI clien
   "contract_exists": true,
   "top_level_fields": [],
   "message_fields": [],
+  "plan_fields": [],
   "attempt_fields": [],
   "job_fields": [],
   "reply_fields": [],
@@ -65,6 +67,8 @@ Use `agentdeck contract trace --example` to include a stable GUI-ready lineage f
 ```
 
 `attempts[]` records execution attempts for the message. `validate_trace_contract()` checks every item in each lineage collection, not only the first row.
+
+`plan` is either `null` or a compact source-plan provenance card when the traced message came from an approved plan dispatch. It uses the ProjectView plan item shape and includes the plan's compact `skill_context`, so GUI clients and auditors can see which loaded skills were visible when the Leader planned the work. It intentionally excludes full skill `content_snapshot`.
 
 `jobs[]` records runtime dispatch facts such as agent id, pane id, and job status.
 
