@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Surface memory suggestions in Leader chat and workbench
+
+- 新增自然语言只读入口：`agentdeck leader chat --message "查看 memory 建议"` / `"查看记忆建议"` / `"memory suggestions"` 会进入 `mode=memory_suggestions`，返回 `memory_suggestions_card`，展示 pending memory suggestion queue 的 count、pending_count、items 和 inspect controls。
+- 扩展 `agentdeck workbench`：新增只读 `memory_suggestions_card`，从 pending `memory_suggestions[]` 派生，并在 `control_registry[]` 中暴露 `scope=memory` / `card=memory_suggestions_card` 的 `agentdeck memory suggestions` 与 `agentdeck status` inspect controls。
+- 扩展 `agentdeck contract leader-chat` 和 `agentdeck contract workbench`：新增 `memory_suggestions_card_fields`、稳定 example fixture 和 validator 派生 registry，让未来 GUI/TUI 能发现 pending memory 建议入口。
+- 保持安全边界：Leader chat 和 workbench 只读展示待审 memory 建议，不创建或修改 `.agentdeck/memory/*.md`，不注入 prompt、不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox、不修改 runtime/approval state。
+- 同步 README、AGENT/CLAUDE、leader-chat schema 和 workbench schema，明确 memory 建议已经进入北极星 GUI 可见链路，但真正长期 memory 写入仍必须等待后续显式人工确认流程。
+- 验证记录：已先确认红测失败，自然语言 `查看 memory 建议` 最初误落入 DeepSeek provider 路径并因 `DEEPSEEK_API_KEY` 缺失失败，`agentdeck workbench` 最初缺少 `memory_suggestions_card`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_memory_suggestions_is_read_only_and_avoids_provider_calls tests/test_agent_cli.py::test_workbench_surfaces_pending_memory_suggestions_for_gui_without_mutating_state -q` 2 项通过；contract 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_control_registry_to_match_cards -q` 6 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 133 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 539 项通过。
+
 ### Current - Add pending memory suggestion queue
 
 - 新增 `agentdeck memory suggest --summary <summary> --rationale <rationale> --source <source>`：把 Hermes/WispTerm 式长期记忆学习先写成 pending `memory_suggestions[]`，记录 suggestion_id、status、scope、summary、rationale、source、agent_id、trace_id、target、created_at 和 controls。

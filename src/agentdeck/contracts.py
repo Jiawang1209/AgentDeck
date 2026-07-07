@@ -391,6 +391,8 @@ LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS = (
     "controls",
 )
 
+LEADER_CHAT_MEMORY_SUGGESTIONS_CARD_FIELDS = LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS
+
 LEADER_CHAT_SKILL_IMPORT_PREVIEW_CARD_FIELDS = (
     "ok",
     "mode",
@@ -684,6 +686,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "skill_import_preview_card",
     "skill_load_preview_card",
     "skill_suggestions_card",
+    "memory_suggestions_card",
     "continue_card",
     "run_start_card",
     "run_progress_card",
@@ -945,6 +948,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "artifacts_card",
     "skill_context_card",
     "skill_suggestions_card",
+    "memory_suggestions_card",
     "leader_summary_card",
     "contracts_card",
     "control_mode_card",
@@ -1975,6 +1979,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "skill_import_preview_card_fields": list(LEADER_CHAT_SKILL_IMPORT_PREVIEW_CARD_FIELDS),
         "skill_load_preview_card_fields": list(LEADER_CHAT_SKILL_LOAD_PREVIEW_CARD_FIELDS),
         "skill_suggestions_card_fields": list(LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS),
+        "memory_suggestions_card_fields": list(LEADER_CHAT_MEMORY_SUGGESTIONS_CARD_FIELDS),
         "skill_context_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
@@ -2053,6 +2058,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_skill_import_preview_card_fields"] = list(example["skill_import_preview_card"])
         payload["example_skill_load_preview_card_fields"] = list(example["skill_load_preview_card"])
         payload["example_skill_suggestions_card_fields"] = list(example["skill_suggestions_card"])
+        payload["example_memory_suggestions_card_fields"] = list(example["memory_suggestions_card"])
         payload["example_provider_health_fields"] = list(example["provider_health"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
         payload["example_operator_card_fields"] = list(example["operator_card"])
@@ -2716,6 +2722,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
         "skill_context_card_fields": list(LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS),
         "skill_suggestions_card_fields": list(LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS),
+        "memory_suggestions_card_fields": list(LEADER_CHAT_MEMORY_SUGGESTIONS_CARD_FIELDS),
         "skill_context_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
         "leader_summary_card_fields": list(LEADER_SUMMARY_RESPONSE_FIELDS),
         "contracts_card_fields": list(WORKBENCH_CONTRACTS_CARD_FIELDS),
@@ -6963,6 +6970,57 @@ def leader_chat_example() -> dict[str, object]:
             },
         ],
     }
+    memory_suggestions_card = {
+        "mode": "memory_suggestions",
+        "title": "Memory suggestions",
+        "summary": "1 pending memory suggestion is waiting for human review.",
+        "suggestions_command": "agentdeck memory suggestions",
+        "project_view_command": "agentdeck status",
+        "count": 1,
+        "pending_count": 1,
+        "items": [
+            {
+                "suggestion_id": "mem_example",
+                "status": "pending",
+                "scope": "project",
+                "summary": "Keep approval-gated worker dispatch.",
+                "rationale": "project safety preference",
+                "source": "reviewer",
+                "agent_id": "leader",
+                "trace_id": "msg_memory",
+                "target": ".agentdeck/memory/project.md",
+                "created_at": "2026-07-07T00:00:00Z",
+                "controls": [
+                    {
+                        "kind": "inspect",
+                        "label": "List memory suggestions",
+                        "command": "agentdeck memory suggestions",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    }
+                ],
+            }
+        ],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "List memory suggestions",
+                "command": "agentdeck memory suggestions",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Open project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     control_registry_card = leader_chat_control_registry_card(workbench_card)
     startup_preview_card = _startup_preview_card_from_agent_ready(agent_ready_card)
     runtime_action_card = {
@@ -7166,6 +7224,7 @@ def leader_chat_example() -> dict[str, object]:
         "skill_import_preview_card": skill_import_preview_card,
         "skill_load_preview_card": skill_load_preview_card,
         "skill_suggestions_card": skill_suggestions_card,
+        "memory_suggestions_card": memory_suggestions_card,
         "continue_card": continue_card,
         "run_start_card": run_start_card,
         "run_progress_card": run_progress_card,
@@ -7643,6 +7702,16 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         card="skill_suggestions_card",
         agent_id=None,
         controls=skill_suggestions_card.get("controls"),
+    )
+    memory_suggestions_card = (
+        payload.get("memory_suggestions_card") if isinstance(payload.get("memory_suggestions_card"), dict) else {}
+    )
+    _append_control_registry_items(
+        registry,
+        scope="memory",
+        card="memory_suggestions_card",
+        agent_id=None,
+        controls=memory_suggestions_card.get("controls"),
     )
     leader_summary_card = (
         payload.get("leader_summary_card")
@@ -8480,6 +8549,57 @@ def workbench_example() -> dict[str, object]:
                     "kind": "inspect",
                     "label": "List skill suggestions",
                     "command": "agentdeck skills suggestions",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "inspect",
+                    "label": "Open project status",
+                    "command": "agentdeck status",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
+        },
+        "memory_suggestions_card": {
+            "mode": "memory_suggestions",
+            "title": "Memory suggestions",
+            "summary": "1 pending memory suggestion is waiting for human review.",
+            "suggestions_command": "agentdeck memory suggestions",
+            "project_view_command": "agentdeck status",
+            "count": 1,
+            "pending_count": 1,
+            "items": [
+                {
+                    "suggestion_id": "mem_example",
+                    "status": "pending",
+                    "scope": "project",
+                    "summary": "Keep approval-gated worker dispatch.",
+                    "rationale": "project safety preference",
+                    "source": "reviewer",
+                    "agent_id": "leader",
+                    "trace_id": "msg_memory",
+                    "target": ".agentdeck/memory/project.md",
+                    "created_at": "2026-07-07T00:00:00Z",
+                    "controls": [
+                        {
+                            "kind": "inspect",
+                            "label": "List memory suggestions",
+                            "command": "agentdeck memory suggestions",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        }
+                    ],
+                }
+            ],
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "List memory suggestions",
+                    "command": "agentdeck memory suggestions",
                     "safety": "inspect",
                     "enabled": True,
                     "blocker": None,

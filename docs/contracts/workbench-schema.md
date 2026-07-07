@@ -42,6 +42,7 @@ The contract command returns:
   "artifact_item_fields": [],
   "skill_context_card_fields": [],
   "skill_suggestions_card_fields": [],
+  "memory_suggestions_card_fields": [],
   "skill_context_item_fields": [],
   "leader_summary_card_fields": [],
   "contracts_card_fields": [],
@@ -76,6 +77,8 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "audit_card": {},
   "artifacts_card": {},
   "skill_context_card": {},
+  "skill_suggestions_card": {},
+  "memory_suggestions_card": {},
   "leader_summary_card": null,
   "contracts_card": {},
   "control_mode_card": {},
@@ -108,6 +111,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `artifacts_card` reuses the `agentdeck artifacts` response shape, is derived from `project_view.artifacts`, and must pass `validate_artifacts_contract()`.
 `skill_context_card` is derived from `project_view.skills`; it exposes loaded skill summaries plus inspect controls for `agentdeck skills list` and `agentdeck status`, without embedding full content snapshots or loading/installing skills.
 `skill_suggestions_card` is derived from pending `skill_suggestions[]`; it exposes count, pending_count, items, and inspect controls for `agentdeck skills suggestions` and `agentdeck status`, without creating, importing, or loading skills.
+`memory_suggestions_card` is derived from pending `memory_suggestions[]`; it exposes count, pending_count, items, and inspect controls for `agentdeck memory suggestions` and `agentdeck status`, without creating or modifying `.agentdeck/memory/*.md` or injecting memory into prompts.
 `leader_summary_card` is `null` until the latest plan's local Leader review returns `next_action=summarize`; then it reuses `agentdeck leader summary --plan-id <id>` and must pass `validate_leader_summary_contract()`.
 `contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Skill Registry, Leader chat, and Leader review contracts.
 `recovery` must equal `project_view.recovery`.
