@@ -1594,6 +1594,112 @@ def test_leader_chat_memory_suggestions_is_read_only_and_avoids_provider_calls(
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
 
 
+def test_leader_chat_memory_apply_preview_is_read_only_and_surfaces_explicit_apply(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    cli.main(
+        [
+            "memory",
+            "suggest",
+            "--summary",
+            "Keep approval-gated worker dispatch.",
+            "--rationale",
+            "project safety preference",
+            "--source",
+            "reviewer",
+            "--scope",
+            "project",
+            "--agent",
+            "leader",
+            "--from-trace",
+            "msg_memory",
+        ]
+    )
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+    suggestion = state_before["memory_suggestions"][0]
+    suggestion_id = suggestion["suggestion_id"]
+
+    exit_code = cli.main(["leader", "chat", "--message", f"预览 memory 建议 {suggestion_id}"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "memory_apply_preview"
+    assert payload["plan_id"] is None
+    assert payload["next_command"] == f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm"
+    assert payload["memory_apply_preview_card"] == {
+        "ok": True,
+        "mode": "memory_apply_preview",
+        "suggestion_id": suggestion_id,
+        "suggestion": suggestion,
+        "target": ".agentdeck/memory/project.md",
+        "target_exists": False,
+        "would_create": True,
+        "would_update_status": "applied",
+        "proposed_append": (
+            "- Keep approval-gated worker dispatch.\n"
+            "  - rationale: project safety preference\n"
+            "  - source: reviewer\n"
+            "  - agent_id: leader\n"
+            "  - trace_id: msg_memory\n"
+            f"  - suggestion_id: {suggestion_id}\n"
+        ),
+        "apply_command": f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm",
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "List memory suggestions",
+                "command": "agentdeck memory suggestions",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "apply_memory",
+                "label": "Apply memory suggestion",
+                "command": f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    assert payload["intent_card"]["embedded_card"] == "memory_apply_preview_card"
+    assert payload["intent_card"]["read_only"] is True
+    assert payload["intent_card"]["controls"][0]["label"] == "Inspect memory_apply_preview_card"
+    assert payload["leader_explanation"]["action_kind"] == "memory_apply_preview"
+    assert payload["leader_explanation"]["safety"] == "explicit_user"
+    assert not (root / ".agentdeck" / "memory" / "project.md").exists()
+    state_after = StateStore(root).load()
+    assert state_after["memory_suggestions"] == state_before["memory_suggestions"]
+    assert state_after["plans"] == []
+    assert state_after["leader_errors"] == []
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert StateStore(root).list_events(limit=20) == events_before + [StateStore(root).list_events(limit=1)[0]]
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
+
+
+def test_leader_chat_memory_apply_preview_rejects_unknown_suggestion_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+
+    exit_code = cli.main(["leader", "chat", "--message", "预览 memory 建议 mem_missing"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "unknown memory suggestion: mem_missing" in captured.err
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=20) == events_before
+
+
 def test_skills_import_copies_external_skill_without_loading_it(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     external = tmp_path / "external" / "SKILL.md"
@@ -3750,6 +3856,19 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
         "controls",
     ]
     assert payload["skill_suggestions_card_fields"] == expected["skill_suggestions_card_fields"]
+    assert payload["memory_apply_preview_card_fields"] == [
+        "ok",
+        "mode",
+        "suggestion_id",
+        "suggestion",
+        "target",
+        "target_exists",
+        "would_create",
+        "would_update_status",
+        "proposed_append",
+        "apply_command",
+        "controls",
+    ]
     assert payload["memory_suggestions_card_fields"] == expected["memory_suggestions_card_fields"]
     assert payload["artifacts_card_fields"] == expected["artifacts_card_fields"]
     assert payload["artifact_summary_fields"] == expected["artifact_summary_fields"]
@@ -6645,6 +6764,8 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     assert set(payload["example_skill_create_preview_card_fields"]) == set(example["skill_create_preview_card"])
     assert payload["example_skill_suggestions_card_fields"] == payload["skill_suggestions_card_fields"]
     assert set(payload["example_skill_suggestions_card_fields"]) == set(example["skill_suggestions_card"])
+    assert payload["example_memory_apply_preview_card_fields"] == payload["memory_apply_preview_card_fields"]
+    assert set(payload["example_memory_apply_preview_card_fields"]) == set(example["memory_apply_preview_card"])
     assert payload["example_memory_suggestions_card_fields"] == payload["memory_suggestions_card_fields"]
     assert set(payload["example_memory_suggestions_card_fields"]) == set(example["memory_suggestions_card"])
     assert payload["example_workbench_control_registry_item_fields"] == (

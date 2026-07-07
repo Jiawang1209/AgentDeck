@@ -26,6 +26,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "skill_load_preview_card_fields": [],
   "skill_create_preview_card_fields": [],
   "skill_suggestions_card_fields": [],
+  "memory_apply_preview_card_fields": [],
   "memory_suggestions_card_fields": [],
   "skill_context_item_fields": [],
   "continue_card_fields": [],
@@ -108,6 +109,7 @@ The review-mode response shape is:
   "skill_load_preview_card": null,
   "skill_create_preview_card": null,
   "skill_suggestions_card": null,
+  "memory_apply_preview_card": null,
   "memory_suggestions_card": null,
   "continue_card": null,
   "run_start_card": null,
@@ -171,6 +173,8 @@ The card is derived from the same action detail and does not introduce a second 
 `skill_suggestions_card` is the read-only pending skill suggestion projection for messages such as `查看 skill 建议`, `查看技能建议`, or `skill suggestions`. These messages enter `mode=skill_suggestions`, embed the current `skill_suggestions[]` queue with `count`, `pending_count`, `items[]`, and inspect controls, set `next_command=agentdeck skills suggestions`, and expose `intent_card.embedded_card=skill_suggestions_card`. The route may record only a chat turn and audit event; it must not create `SKILL.md`, import skills, load skills, call a Leader provider, inspect tmux panes, create plans/actions/approvals/messages/jobs/inbox items, or change approval/runtime state.
 
 `memory_suggestions_card` is the read-only pending memory suggestion projection for messages such as `查看 memory 建议`, `查看记忆建议`, or `memory suggestions`. These messages enter `mode=memory_suggestions`, embed the current `memory_suggestions[]` queue with `count`, `pending_count`, `items[]`, `apply_preview_command_template`, item-level `apply_preview` / `apply_memory` controls, and inspect controls, set `next_command=agentdeck memory suggestions`, and expose `intent_card.embedded_card=memory_suggestions_card`. The route may record only a chat turn and audit event; it must not create or modify `.agentdeck/memory/*.md`, inject memory into prompts, call a Leader provider, inspect tmux panes, create plans/actions/approvals/messages/jobs/inbox items, or change approval/runtime state. Only a separate explicit `agentdeck memory apply --suggestion-id <id> --confirm` command may write long-term memory.
+
+`memory_apply_preview_card` is the natural-language wrapper around `agentdeck memory apply-preview --suggestion-id <id>` for messages such as `预览 memory 建议 mem_xxx`, `预览记忆建议 mem_xxx`, or `preview memory suggestion mem_xxx`. These messages enter `mode=memory_apply_preview`, resolve the pending suggestion, and embed a read-only card with target memory file, create/update status, proposed Markdown append, explicit `apply_command`, and GUI-ready controls. The top-level `next_command` points at `agentdeck memory apply --suggestion-id <id> --confirm`. Unknown suggestion ids fail non-zero before any state mutation. The route may record only a chat turn and audit event after successful resolution; it must not create or modify `.agentdeck/memory/*.md`, update suggestion status, append `memory_applied`, inject memory into prompts, call a Leader provider, inspect tmux panes, create plans/actions/approvals/messages/jobs/inbox items, or change approval/runtime state.
 
 `learning_review_card` is the natural-language wrapper around `agentdeck learn review --plan-id <id>` for messages such as `学习复盘 pln_xxx`, `经验复盘`, `learning review pln_xxx`, or `review learning`. These messages enter `mode=learning_review`, default to the latest saved plan when no plan id is present, embed the same read-only learning review response, set `next_command=agentdeck learn review --plan-id <id>`, and expose `intent_card.embedded_card=learning_review_card`. The same response includes `control_registry_card` filtered to `scope=learning_review` / `card=learning_review_card`, with selection pointing at the `suggest_skill` control. The embedded card must pass `validate_learning_review_contract()` before the chat response is printed. The route may record only a chat turn and audit event; it must not write `skill_suggestions[]`, write `memory_suggestions[]`, create/import/load skills, write `.agentdeck/memory/*.md`, call a Leader provider, inspect tmux panes, create plans/actions/approvals/messages/jobs/inbox items, or execute either suggestion command.
 

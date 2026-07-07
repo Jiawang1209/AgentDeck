@@ -416,6 +416,20 @@ LEADER_CHAT_MEMORY_SUGGESTIONS_CARD_FIELDS = (
     "controls",
 )
 
+LEADER_CHAT_MEMORY_APPLY_PREVIEW_CARD_FIELDS = (
+    "ok",
+    "mode",
+    "suggestion_id",
+    "suggestion",
+    "target",
+    "target_exists",
+    "would_create",
+    "would_update_status",
+    "proposed_append",
+    "apply_command",
+    "controls",
+)
+
 LEADER_CHAT_SKILL_IMPORT_PREVIEW_CARD_FIELDS = (
     "ok",
     "mode",
@@ -860,6 +874,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "skill_load_preview_card",
     "skill_create_preview_card",
     "skill_suggestions_card",
+    "memory_apply_preview_card",
     "memory_suggestions_card",
     "continue_card",
     "run_start_card",
@@ -2657,6 +2672,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "skill_load_preview_card_fields": list(LEADER_CHAT_SKILL_LOAD_PREVIEW_CARD_FIELDS),
         "skill_create_preview_card_fields": list(LEADER_CHAT_SKILL_CREATE_PREVIEW_CARD_FIELDS),
         "skill_suggestions_card_fields": list(LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS),
+        "memory_apply_preview_card_fields": list(LEADER_CHAT_MEMORY_APPLY_PREVIEW_CARD_FIELDS),
         "memory_suggestions_card_fields": list(LEADER_CHAT_MEMORY_SUGGESTIONS_CARD_FIELDS),
         "skill_context_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
@@ -2738,6 +2754,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_skill_load_preview_card_fields"] = list(example["skill_load_preview_card"])
         payload["example_skill_create_preview_card_fields"] = list(example["skill_create_preview_card"])
         payload["example_skill_suggestions_card_fields"] = list(example["skill_suggestions_card"])
+        payload["example_memory_apply_preview_card_fields"] = list(example["memory_apply_preview_card"])
         payload["example_memory_suggestions_card_fields"] = list(example["memory_suggestions_card"])
         payload["example_provider_health_fields"] = list(example["provider_health"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
@@ -2895,6 +2912,26 @@ def leader_chat_capability_card() -> dict[str, object]:
             "safety": "inspect",
             "requires_explicit_user": False,
             "card": "skill_suggestions_card",
+        },
+        {
+            "mode": "memory_suggestions",
+            "label": "Inspect memory suggestions",
+            "description": "Inspect pending memory suggestions without writing long-term memory.",
+            "example_messages": ["查看 memory 建议", "memory suggestions"],
+            "command": "agentdeck memory suggestions",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "memory_suggestions_card",
+        },
+        {
+            "mode": "memory_apply_preview",
+            "label": "Preview memory apply",
+            "description": "Preview applying a pending memory suggestion before writing long-term memory.",
+            "example_messages": ["预览 memory 建议 mem_xxx", "preview memory suggestion mem_xxx"],
+            "command": "agentdeck leader chat --message \"预览 memory 建议 <suggestion_id>\"",
+            "safety": "explicit_user",
+            "requires_explicit_user": True,
+            "card": "memory_apply_preview_card",
         },
         {
             "mode": "runtime",
@@ -3268,6 +3305,7 @@ def _capability_item_control(item: dict[str, object]) -> dict[str, object]:
         "skill_import_preview": "skill_import_preview",
         "skill_load_preview": "skill_load_preview",
         "skill_create_preview": "skill_create_preview",
+        "memory_apply_preview": "memory_apply_preview",
     }.get(mode, "inspect")
     blocker = _placeholder_blocker(command)
     return {
@@ -7837,6 +7875,43 @@ def leader_chat_example() -> dict[str, object]:
             },
         ],
     }
+    memory_apply_preview_card = {
+        "ok": True,
+        "mode": "memory_apply_preview",
+        "suggestion_id": "mem_example",
+        "suggestion": memory_suggestions_card["items"][0],
+        "target": ".agentdeck/memory/project.md",
+        "target_exists": False,
+        "would_create": True,
+        "would_update_status": "applied",
+        "proposed_append": (
+            "- Keep approval-gated worker dispatch.\n"
+            "  - rationale: project safety preference\n"
+            "  - source: reviewer\n"
+            "  - agent_id: leader\n"
+            "  - trace_id: msg_memory\n"
+            "  - suggestion_id: mem_example\n"
+        ),
+        "apply_command": "agentdeck memory apply --suggestion-id mem_example --confirm",
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "List memory suggestions",
+                "command": "agentdeck memory suggestions",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "apply_memory",
+                "label": "Apply memory suggestion",
+                "command": "agentdeck memory apply --suggestion-id mem_example --confirm",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     control_registry_card = leader_chat_control_registry_card(workbench_card)
     startup_preview_card = _startup_preview_card_from_agent_ready(agent_ready_card)
     runtime_action_card = {
@@ -8043,6 +8118,7 @@ def leader_chat_example() -> dict[str, object]:
         "skill_load_preview_card": skill_load_preview_card,
         "skill_create_preview_card": skill_create_preview_card,
         "skill_suggestions_card": skill_suggestions_card,
+        "memory_apply_preview_card": memory_apply_preview_card,
         "memory_suggestions_card": memory_suggestions_card,
         "continue_card": continue_card,
         "run_start_card": run_start_card,

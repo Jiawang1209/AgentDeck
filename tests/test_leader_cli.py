@@ -4278,6 +4278,8 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "skill_load_preview",
         "skill_create_preview",
         "skill_suggestions",
+        "memory_suggestions",
+        "memory_apply_preview",
         "workbench",
         "runtime",
         "role",
@@ -4365,6 +4367,35 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "safety": "inspect",
         "enabled": True,
         "blocker": None,
+    }
+    assert capabilities["memory_suggestions"]["command"] == "agentdeck memory suggestions"
+    assert capabilities["memory_suggestions"]["safety"] == "inspect"
+    assert capabilities["memory_suggestions"]["requires_explicit_user"] is False
+    assert capabilities["memory_suggestions"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect memory suggestions",
+        "command": "agentdeck memory suggestions",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert capabilities["memory_apply_preview"]["command"] == (
+        'agentdeck leader chat --message "预览 memory 建议 <suggestion_id>"'
+    )
+    assert capabilities["memory_apply_preview"]["safety"] == "explicit_user"
+    assert capabilities["memory_apply_preview"]["requires_explicit_user"] is True
+    assert capabilities["memory_apply_preview"]["card"] == "memory_apply_preview_card"
+    assert capabilities["memory_apply_preview"]["example_messages"] == [
+        "预览 memory 建议 mem_xxx",
+        "preview memory suggestion mem_xxx",
+    ]
+    assert capabilities["memory_apply_preview"]["controls"][0] == {
+        "kind": "memory_apply_preview",
+        "label": "Preview memory apply",
+        "command": 'agentdeck leader chat --message "预览 memory 建议 <suggestion_id>"',
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires suggestion_id",
     }
     assert capabilities["learning_review"]["command"] == "agentdeck learn review --plan-id <plan_id>"
     assert capabilities["learning_review"]["safety"] == "inspect"

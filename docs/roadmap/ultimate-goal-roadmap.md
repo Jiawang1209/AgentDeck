@@ -19,7 +19,7 @@ Human Operator
 
 用户应该能用自然语言启动一个任务，由 Leader Agent 理解目标、按需加载可审计 skill、拆解计划、指派角色、调度多个 Agent、观察结果、要求验证，并在关键动作前让人类审批。
 
-Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/Hermes 那样把可复用工作流沉淀为 skill，把长期项目事实和用户偏好沉淀为 memory；但所有 skill 都必须显式加载、记录 source/path/hash/content snapshot，并在每次 Leader 规划时把 compact skill provenance 固化到 plan 记录和 ProjectView。Skill suggestion 在 MVP 阶段必须先进入 pending queue，经 `draft-preview` 或自然语言 `skill_create_preview` 审阅后只能由人类显式运行 `skills create --confirm` 写入项目 skill；Memory 同样必须先进入 pending suggestion queue，经 `apply-preview` 审阅后只能由人类显式运行 `memory apply --confirm` 写入长期记忆，且不会自动注入 prompt，避免变成不可追溯的隐藏提示词或权限后门。
+Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/Hermes 那样把可复用工作流沉淀为 skill，把长期项目事实和用户偏好沉淀为 memory；但所有 skill 都必须显式加载、记录 source/path/hash/content snapshot，并在每次 Leader 规划时把 compact skill provenance 固化到 plan 记录和 ProjectView。Skill suggestion 在 MVP 阶段必须先进入 pending queue，经 `draft-preview` 或自然语言 `skill_create_preview` 审阅后只能由人类显式运行 `skills create --confirm` 写入项目 skill；Memory 同样必须先进入 pending suggestion queue，经 `apply-preview` 或自然语言 `memory_apply_preview` 审阅后只能由人类显式运行 `memory apply --confirm` 写入长期记忆，且不会自动注入 prompt，避免变成不可追溯的隐藏提示词或权限后门。
 
 ## 2. 为什么当前开发没有跑偏
 
@@ -162,6 +162,7 @@ Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/H
 - `agentdeck contract learning-review` / `--example` 把学习回顾响应、skill suggestion、memory suggestion 和 control 字段暴露给 GUI/TUI discovery。
 - `agentdeck leader chat --message "学习复盘 pln_xxx"` 以自然语言嵌入同源 `learning_review_card` 和过滤到 `scope=learning_review` 的 control registry，仍只建议显式 suggestion 命令，不自动入队。
 - `agentdeck leader chat --message "创建 skill 建议 sgs_xxx"` 以自然语言嵌入只读 `skill_create_preview_card`，展示拟写入的 `SKILL.md`、hash、目标路径和显式 create 命令，但不创建文件、不修改 suggestion queue、不加载 skill。
+- `agentdeck leader chat --message "预览 memory 建议 mem_xxx"` 以自然语言嵌入只读 `memory_apply_preview_card`，展示目标 memory 文件、拟追加 Markdown、是否会创建文件和显式 apply 命令，但不写 `.agentdeck/memory/*.md`、不更新 suggestion status、不注入 prompt。
 - skill metadata：name、description、source、path、version/hash、allowed_placeholders、required_tools、risk。
 - 每次 Leader/Worker 加载 skill 时，把 path、hash、content snapshot 和使用者写入 state，保证历史可回放。
 - 支持外源 skill 目录或导入包，但默认先走只读 import preview，展示 source、target、hash、覆盖状态和 GUI-ready 控制项；显式 import/allowlist 后仍需先走可对话触发的 load preview，看清 agent、purpose、hash 和显式 load command，再由人类执行 load 才能进入 Leader/Worker 上下文，不自动执行远程安装脚本，也不静默把 skill 注入提示词。

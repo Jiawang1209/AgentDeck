@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Preview memory apply from Leader chat
+
+- 新增自然语言入口 `agentdeck leader chat --message "预览 memory 建议 mem_xxx"`：进入只读 `mode=memory_apply_preview`，嵌入 `memory_apply_preview_card`，复用 `agentdeck memory apply-preview` 的目标 memory 文件、拟追加 Markdown、是否会创建文件和显式 `agentdeck memory apply --suggestion-id <id> --confirm`。
+- 保持长期记忆边界：Leader chat 只在成功解析 pending suggestion 后记录 chat turn 和审计事件；未知 suggestion 返回非 0 且不修改 state；preview 不写 `.agentdeck/memory/*.md`、不更新 `memory_suggestions[]` status、不追加 `memory_applied`、不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox。
+- 扩展 `agentdeck contract leader-chat` / `--example` 和 `capability_card`：新增 `memory_apply_preview_card_fields`、稳定 example、`memory_suggestions` / `memory_apply_preview` help capability，让 GUI/TUI 能机器发现 memory 学习层的“查看队列 -> 预览 -> 显式确认写入”流程。
+- 同步 README、AGENT.md、CLAUDE.md、`docs/contracts/leader-chat-schema.md` 和 `docs/roadmap/ultimate-goal-roadmap.md`，把 skill/memory 学习诉求继续写入北极星约束：可容纳内置、本地和外源 skill，但必须可审计、显式加载、可回放；memory 必须先预览再显式 apply。
+- 验证记录：已先确认红测失败，`预览 memory 建议 mem_xxx` 最初被更宽泛的 `memory_suggestions` intent 吞掉，未知 suggestion 也没有拒绝；实现后目标、contract 和 help 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_memory_apply_preview_is_read_only_and_surfaces_explicit_apply tests/test_agent_cli.py::test_leader_chat_memory_apply_preview_rejects_unknown_suggestion_without_mutating_state tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response tests/test_agent_cli.py::test_contract_leader_chat_cli_matches_contract_module tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning -q` 7 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 155 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 143 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 226 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 566 项通过。
+
 ### Current - Expose skill creation preview in Leader help
 
 - 扩展 `agentdeck leader chat --message "帮助"` 的 `capability_card`：新增 `mode=skill_create_preview` 能力，命令模板为 `agentdeck leader chat --message "创建 skill 建议 <suggestion_id>"`，`safety=explicit_user`，`card=skill_create_preview_card`。
