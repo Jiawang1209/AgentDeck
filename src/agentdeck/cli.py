@@ -6166,10 +6166,17 @@ def learn_review_command(args: argparse.Namespace) -> int:
         return exit_code
     if _project_view_payload_or_error(config, store) is None:
         return 1
+    plan_id = args.plan_id
+    if plan_id is None:
+        plans = store.list_plans()
+        if not plans:
+            print("no plans to review; run agentdeck leader plan --task <goal> first", file=sys.stderr)
+            return 1
+        plan_id = str(plans[-1]["plan_id"])
     try:
-        payload = _learning_review_payload(store, args.plan_id)
+        payload = _learning_review_payload(store, plan_id)
     except KeyError:
-        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        print(f"unknown plan: {plan_id}", file=sys.stderr)
         return 1
     validation = validate_learning_review_contract(payload)
     if not validation["ok"]:
@@ -12631,7 +12638,11 @@ def build_parser() -> argparse.ArgumentParser:
         "review",
         help="Create a read-only learning review card for a saved Leader plan",
     )
-    learn_review.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
+    learn_review.add_argument(
+        "--plan-id",
+        default=None,
+        help="Plan id from agentdeck leader plan; defaults to the latest saved plan",
+    )
     learn_review.set_defaults(func=learn_review_command)
 
     policy = subparsers.add_parser("policy", help="Policy and control mode commands")

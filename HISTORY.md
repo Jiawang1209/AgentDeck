@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Default learn review to the latest plan
+
+- 让 `agentdeck learn review` 的 `--plan-id` 可选（方向 2 第二刀）：省略时默认最新保存的 plan（对齐 `agentdeck workbench` 的 run_progress / leader_summary latest-plan 惯例），无 plan 时报 `no plans to review; run agentdeck leader plan --task <goal> first` 并返回非 0。
+- 保持学习复盘只读边界：仍复用现有 plan status / summary / reply / artifact 事实，生成 GUI-ready `skills suggest` / `memory suggest` 后续命令，但不写 `skill_suggestions[]` / `memory_suggestions[]`、不调用 provider、不读取 tmux、不自动创建 skill/memory。
+- 同步 README `learn review` 说明。
+- 验证记录：已先确认红测失败，`agentdeck learn review`（无 --plan-id）最初因 argparse required 报错；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_learn_review_defaults_to_latest_plan_when_plan_id_omitted tests/test_agent_cli.py::test_learn_review_without_plan_id_errors_when_no_plans tests/test_agent_cli.py::test_learn_review_surfaces_read_only_skill_and_memory_suggestion_commands -q` 3 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 617 项通过。
+
 ### Current - Add learning-layer suggestions to TUI dashboard
 
 - 扩展 `agentdeck dashboard` / `render_workbench_dashboard`：新增只读 "Learning layer" 段（方向 2 首刀），从 workbench 契约的 `skill_suggestions_card` / `memory_suggestions_card` 渲染 pending skill / memory 建议队列——逐条显示 name/scope、status、summary、source，并把 memory 建议的显式 `agentdeck memory apply --suggestion-id <id> --confirm` 命令原样展示（只读展示，人类显式运行才落地）。

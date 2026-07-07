@@ -1321,6 +1321,50 @@ def test_learn_review_surfaces_read_only_skill_and_memory_suggestion_commands(
     assert state_after["artifacts"] == state_before["artifacts"]
 
 
+def test_learn_review_defaults_to_latest_plan_when_plan_id_omitted(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    plan = {
+        "goal": "Review a failed deployment.",
+        "dispatch_ready": False,
+        "steps": [
+            {
+                "step": 1,
+                "agent_id": "planner",
+                "role": "planner",
+                "task": "Inspect deployment evidence and report repeatable lessons.",
+                "risk": "read-only evidence review",
+                "requires_approval": True,
+            }
+        ],
+    }
+    store.record_plan("An older plan.", "fake", "fake-plan", plan)
+    latest = store.record_plan("Review a failed deployment.", "fake", "fake-plan", plan)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["learn", "review"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "learning_review"
+    assert payload["plan_id"] == latest["plan_id"]
+    state_after = StateStore(root).load()
+    assert state_after["plans"] == state_before["plans"]
+    assert state_after.get("skill_suggestions", []) == state_before.get("skill_suggestions", [])
+    assert state_after.get("memory_suggestions", []) == state_before.get("memory_suggestions", [])
+
+
+def test_learn_review_without_plan_id_errors_when_no_plans(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["learn", "review"])
+
+    assert exit_code == 1
+    assert "no plans" in capsys.readouterr().err.lower()
+
+
 def test_learn_review_refuses_contract_violation(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)
