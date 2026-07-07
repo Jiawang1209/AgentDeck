@@ -1655,8 +1655,26 @@ def test_leader_chat_memory_suggestions_is_read_only_and_avoids_provider_calls(
         ],
     }
     assert payload["intent_card"]["embedded_card"] == "memory_suggestions_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
     assert payload["intent_card"]["read_only"] is True
     assert payload["intent_card"]["controls"][0]["label"] == "List memory suggestions"
+    assert payload["control_registry_card"]["filters"]["scope"] == "memory"
+    assert payload["control_registry_card"]["filters"]["card"] == "memory_suggestions_card"
+    assert payload["control_registry_card"]["selection"]["matched"] is True
+    assert payload["control_registry_card"]["selection"]["next_command"] == "agentdeck memory suggestions"
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "memory",
+        "card": "memory_suggestions_card",
+        "kind": "inspect",
+        "label": "List memory suggestions",
+        "command": "agentdeck memory suggestions",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": selected_control["control_id"],
+    }
     assert payload["leader_explanation"]["action_kind"] == "memory_suggestions"
     assert payload["leader_explanation"]["safety"] == "inspect"
     state_after = StateStore(root).load()

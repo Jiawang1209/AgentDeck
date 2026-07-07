@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Select memory suggestions in command palette
+
+- 扩展自然语言 `agentdeck leader chat --message "查看 memory 建议"`：除 `memory_suggestions_card` 外，现在返回过滤到 `scope=memory` / `card=memory_suggestions_card` 的 `control_registry_card`。
+- `control_registry_card.selection` 会选中 `agentdeck memory suggestions` inspect control，`intent_card.secondary_embedded_cards[]` 同步声明 `control_registry_card`，让未来 GUI/TUI 可以在长期 memory suggestion 队列旁边高亮同源命令面板入口。
+- 保持只读边界：该 route 仍只记录 chat turn 和审计事件，不调用 provider、不读取 tmux、不写 `.agentdeck/memory/*.md`、不 apply memory、不创建 plan/action/approval/message/job/inbox。
+- 同步 README 和 `docs/contracts/leader-chat-schema.md`，明确 memory suggestion queue 与 command palette selection 的 GUI 契约。
+- 验证记录：已先确认红测失败，`memory_suggestions` intent 最初没有把 `control_registry_card` 加入 `secondary_embedded_cards`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_memory_suggestions_is_read_only_and_avoids_provider_calls -q` 1 项通过；memory/skill/leader-chat/contract 聚焦测试 6 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 158 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 226 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 143 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 569 项通过。
+
 ### Current - Select skill suggestions in command palette
 
 - 扩展自然语言 `agentdeck leader chat --message "查看 skill 建议"`：除 `skill_suggestions_card` 外，现在返回过滤到 `scope=skills` / `card=skill_suggestions_card` 的 `control_registry_card`。
