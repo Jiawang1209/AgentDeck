@@ -338,7 +338,9 @@ The user approved doing all three directions in order, autonomously, overnight. 
 
 - Direction 1 (assisted run flow): first slice committed — a read-only "Run progress" section in `agentdeck dashboard`, derived from the existing `run_progress_card`, showing plan/step/approval status and the single explicit next command. It guides the human step-by-step but never executes (approval discipline preserved).
 - Direction 2 (learning-layer GUI, Phase F): two slices committed — (a) a read-only "Learning layer" section in `agentdeck dashboard` rendering the `skill_suggestions_card` / `memory_suggestions_card` pending queues; (b) `agentdeck learn review` now defaults `--plan-id` to the latest saved plan. A workbench `learning_review_card` was considered but deliberately deferred (duplicative with the existing `learn review` command + leader-chat `learning_review_card`, and higher contract-churn risk to do unattended); the learning layer is already GUI-consumable via the dashboard section + the existing suggestion cards.
-- Direction 3 (dashboard `--watch` polish): not started.
+- Direction 3 (dashboard `--watch` polish): committed — `agentdeck dashboard --watch [--interval N] [--iterations N]` re-renders the text dashboard, mirroring `workbench --watch`, still read-only.
+
+All three approved directions (1 → 2 → 3) have landed at least one committed slice; the whole run kept the suite green (619 passing).
 
 ## Next Best Step
 

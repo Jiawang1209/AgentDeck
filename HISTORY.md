@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Add --watch to the TUI dashboard
+
+- 给 `agentdeck dashboard` 新增 `--watch [--interval <秒>] [--iterations <n>]`（方向 3）：按间隔重新渲染文本面板，对标 `agentdeck workbench --watch` 的循环语义（`--iterations` 有界退出、`--iterations < 1` 报错返回非 0、KeyboardInterrupt 返回 130）。
+- 仍然只读：每次迭代复用同一份 `_workbench_snapshot_payload` + `validate_workbench_contract()`，只渲染文本，不写 state、不调用 provider、不 spawn/dispatch。
+- 同步 README dashboard 段落。
+- 验证记录：已先确认红测失败，`dashboard --watch/--iterations` 最初是 argparse unrecognized arguments；实现后目标测试 `conda run -n agentdeck pytest tests/test_dashboard.py -q` 12 项通过（含 watch 有界渲染两次且不 mutate state、`--iterations 0` 报错）；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 619 项通过。
+
 ### Current - Default learn review to the latest plan
 
 - 让 `agentdeck learn review` 的 `--plan-id` 可选（方向 2 第二刀）：省略时默认最新保存的 plan（对齐 `agentdeck workbench` 的 run_progress / leader_summary latest-plan 惯例），无 plan 时报 `no plans to review; run agentdeck leader plan --task <goal> first` 并返回非 0。

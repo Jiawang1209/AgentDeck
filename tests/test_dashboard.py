@@ -143,6 +143,44 @@ def test_render_workbench_dashboard_flags_blocked_roles() -> None:
     assert "waiting for human approval" in text
 
 
+def test_dashboard_command_watch_renders_bounded_iterations_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    from agentdeck.config import write_default_config
+
+    write_default_config(root)
+    monkeypatch.chdir(root)
+    from agentdeck.state import StateStore
+
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["dashboard", "--watch", "--iterations", "2", "--interval", "0"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    # each iteration re-renders the whole dashboard
+    assert out.count("Role topology") == 2
+    state_after = StateStore(root).load()
+    assert state_after == state_before
+
+
+def test_dashboard_command_rejects_non_positive_iterations(tmp_path, monkeypatch, capsys) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    from agentdeck.config import write_default_config
+
+    write_default_config(root)
+    monkeypatch.chdir(root)
+
+    exit_code = cli.main(["dashboard", "--watch", "--iterations", "0"])
+
+    assert exit_code == 1
+
+
 def test_dashboard_command_renders_read_only_text_without_mutating_state(
     tmp_path, monkeypatch, capsys
 ) -> None:

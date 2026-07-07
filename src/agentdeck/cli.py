@@ -3977,18 +3977,35 @@ def dashboard_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
-    project_view = _project_view_payload_or_error(config, store)
-    if project_view is None:
+    watch = getattr(args, "watch", False)
+    interval = getattr(args, "interval", 1.0)
+    iterations = getattr(args, "iterations", None)
+    if iterations is not None and iterations < 1:
+        print("--iterations must be greater than 0", file=sys.stderr)
         return 1
-    payload = _workbench_snapshot_payload(project_view, store, since_event_id=None)
-    validation = validate_workbench_contract(payload)
-    if not validation["ok"]:
-        print("Workbench contract validation failed", file=sys.stderr)
-        for error in validation["errors"]:
-            print(f"- {error}", file=sys.stderr)
-        return 1
-    print(render_workbench_dashboard(payload), end="")
-    return 0
+    rendered = 0
+    while True:
+        project_view = _project_view_payload_or_error(config, store)
+        if project_view is None:
+            return 1
+        payload = _workbench_snapshot_payload(project_view, store, since_event_id=None)
+        validation = validate_workbench_contract(payload)
+        if not validation["ok"]:
+            print("Workbench contract validation failed", file=sys.stderr)
+            for error in validation["errors"]:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        print(render_workbench_dashboard(payload), end="")
+        rendered += 1
+        if not watch:
+            return 0
+        if iterations is not None and rendered >= iterations:
+            return 0
+        if interval > 0:
+            try:
+                time.sleep(interval)
+            except KeyboardInterrupt:
+                return 130
 
 
 def controls_command(args: argparse.Namespace) -> int:
@@ -12522,6 +12539,9 @@ def build_parser() -> argparse.ArgumentParser:
         "dashboard",
         help="Render the read-only workbench snapshot as a human-readable text dashboard",
     )
+    dashboard.add_argument("--watch", action="store_true", help="Re-render the text dashboard on an interval")
+    dashboard.add_argument("--interval", type=float, default=1.0, help="Seconds between --watch renders")
+    dashboard.add_argument("--iterations", type=int, default=None, help="Stop after this many --watch renders")
     dashboard.set_defaults(func=dashboard_command)
 
     controls = subparsers.add_parser("controls", help="Show the GUI-ready command palette from the workbench")
