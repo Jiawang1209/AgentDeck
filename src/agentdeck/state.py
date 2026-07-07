@@ -246,6 +246,40 @@ class StateStore:
         self.save(state)
         return record
 
+    def record_release(
+        self,
+        *,
+        review_gate_status: str,
+        artifact_count: int,
+        review_reply_count: int,
+        code_reviewer_id: str | None,
+        round_reviewer_id: str | None,
+        code_review_reply_id: str | None,
+        round_review_reply_id: str | None,
+    ) -> dict[str, Any]:
+        state = self.load()
+        releases = state.setdefault("releases", [])
+        record = {
+            "release_id": new_id("rel"),
+            "round": len(releases) + 1,
+            "status": "released",
+            "review_gate_status": review_gate_status,
+            "artifact_count": artifact_count,
+            "review_reply_count": review_reply_count,
+            "code_reviewer_id": code_reviewer_id,
+            "round_reviewer_id": round_reviewer_id,
+            "code_review_reply_id": code_review_reply_id,
+            "round_review_reply_id": round_review_reply_id,
+            "created_at": utc_now(),
+        }
+        releases.append(record)
+        self.save(state)
+        return record
+
+    def list_releases(self) -> list[dict[str, Any]]:
+        releases = self.load().get("releases", [])
+        return [item for item in releases if isinstance(item, dict)]
+
     def list_events(self, limit: int = 20) -> list[dict[str, Any]]:
         if not self.events_path.exists():
             return []

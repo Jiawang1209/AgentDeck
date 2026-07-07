@@ -4695,6 +4695,129 @@ def policy_set_mode_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def release_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("release requires --confirm", file=sys.stderr)
+        return 1
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    review_gate_card = _workbench_review_gate_card(project_view)
+    if review_gate_card.get("can_release") is not True:
+        reason = str(review_gate_card.get("reason") or "review gate is not ready")
+        store.append_event(
+            EventRecord.create(
+                "round_release_rejected",
+                {
+                    "reason": reason,
+                    "review_gate_status": review_gate_card.get("status"),
+                },
+            )
+        )
+        print(reason, file=sys.stderr)
+        return 1
+    code_review = (
+        review_gate_card.get("code_review") if isinstance(review_gate_card.get("code_review"), dict) else {}
+    )
+    round_review = (
+        review_gate_card.get("round_review") if isinstance(review_gate_card.get("round_review"), dict) else {}
+    )
+    code_review_reply_id = code_review.get("latest_reply_id")
+    round_review_reply_id = round_review.get("latest_reply_id")
+    duplicate = next(
+        (
+            item
+            for item in store.list_releases()
+            if item.get("code_review_reply_id") == code_review_reply_id
+            and item.get("round_review_reply_id") == round_review_reply_id
+        ),
+        None,
+    )
+    if duplicate is not None:
+        store.append_event(
+            EventRecord.create(
+                "round_release_rejected",
+                {
+                    "reason": "round already released",
+                    "release_id": duplicate.get("release_id"),
+                },
+            )
+        )
+        print("round already released", file=sys.stderr)
+        return 1
+    release = store.record_release(
+        review_gate_status=str(review_gate_card.get("status")),
+        artifact_count=int(review_gate_card.get("artifact_count") or 0),
+        review_reply_count=int(review_gate_card.get("review_reply_count") or 0),
+        code_reviewer_id=code_review.get("agent_id"),
+        round_reviewer_id=round_review.get("agent_id"),
+        code_review_reply_id=code_review_reply_id,
+        round_review_reply_id=round_review_reply_id,
+    )
+    store.append_event(
+        EventRecord.create(
+            "round_released",
+            {
+                "release_id": release["release_id"],
+                "round": release["round"],
+                "code_review_reply_id": code_review_reply_id,
+                "round_review_reply_id": round_review_reply_id,
+            },
+        )
+    )
+    next_round_command = "agentdeck leader plan --task <goal>"
+    trace_commands = [
+        f"agentdeck trace --id {reply_id}"
+        for reply_id in (code_review_reply_id, round_review_reply_id)
+        if reply_id
+    ]
+    _print_json(
+        {
+            "ok": True,
+            "mode": "release",
+            "requires_explicit_user": True,
+            "safety": "explicit_user",
+            "release": release,
+            "release_count": release["round"],
+            "next_command": "agentdeck workbench",
+            "next_round_command": next_round_command,
+            "trace_commands": trace_commands,
+            "controls": [
+                _control(
+                    kind="inspect",
+                    label="Inspect workbench",
+                    command="agentdeck workbench",
+                    safety="inspect",
+                ),
+                _control(
+                    kind="trace_code_review",
+                    label="Trace code review",
+                    command=f"agentdeck trace --id {code_review_reply_id}",
+                    safety="inspect",
+                ),
+                _control(
+                    kind="trace_round_review",
+                    label="Trace round review",
+                    command=f"agentdeck trace --id {round_review_reply_id}",
+                    safety="inspect",
+                ),
+                _control(
+                    kind="next_round",
+                    label="Plan next round",
+                    command=next_round_command,
+                    safety="plan_only",
+                    enabled=False,
+                    blocker="requires goal text",
+                ),
+            ],
+        }
+    )
+    return 0
+
+
 def leader_set_provider_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -11966,6 +12089,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--provider", help="Leader provider to use; defaults to .agentdeck/config.toml")
     run.add_argument("--model", help="Provider model label recorded with the plan; defaults to config")
     run.set_defaults(func=run_command)
+
+    release = subparsers.add_parser(
+        "release", help="Explicitly record a round release once the review gate is ready"
+    )
+    release.add_argument("--confirm", action="store_true", help="Explicitly confirm the round release")
+    release.set_defaults(func=release_command)
 
     continue_parser = subparsers.add_parser("continue", help="Show the current recovery-driven next step")
     continue_parser.set_defaults(func=continue_command)

@@ -2495,6 +2495,233 @@ def test_leader_chat_release_preview_is_read_only_and_surfaces_control_palette(
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
 
 
+def _seed_review_gate_ledger(root: Path, *, include_round_review: bool) -> None:
+    store = StateStore(root)
+    state = store.load()
+    state["messages"] = [
+        {
+            "message_id": "msg_work",
+            "from_actor": "leader",
+            "to_agent": "planner",
+            "task": "Implement release flow",
+            "prompt": "implement",
+            "pane_id": "%42",
+            "status": "sent",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        },
+        {
+            "message_id": "msg_review",
+            "from_actor": "leader",
+            "to_agent": "reviewer",
+            "task": "Review implementation",
+            "prompt": "review",
+            "pane_id": None,
+            "status": "sent",
+            "created_at": "2026-07-04T00:00:04+00:00",
+        },
+    ]
+    state["jobs"] = [
+        {
+            "job_id": "job_work",
+            "message_id": "msg_work",
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:01+00:00",
+        },
+        {
+            "job_id": "job_review",
+            "message_id": "msg_review",
+            "agent_id": "reviewer",
+            "pane_id": None,
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:05+00:00",
+        },
+    ]
+    state["replies"] = [
+        {
+            "reply_id": "rep_review",
+            "message_id": "msg_review",
+            "job_id": "job_review",
+            "from_agent": "reviewer",
+            "to_actor": "leader",
+            "text": "code review: pass",
+            "created_at": "2026-07-04T00:00:06+00:00",
+        }
+    ]
+    state["artifacts"] = [
+        {
+            "artifact_id": "art_work",
+            "message_id": "msg_work",
+            "job_id": "job_work",
+            "reply_id": None,
+            "from_agent": "planner",
+            "path": "docs/release-flow.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:03+00:00",
+        }
+    ]
+    if include_round_review:
+        state["messages"].append(
+            {
+                "message_id": "msg_round",
+                "from_actor": "leader",
+                "to_agent": "coder",
+                "task": "Accept this round",
+                "prompt": "round review",
+                "pane_id": None,
+                "status": "sent",
+                "created_at": "2026-07-04T00:00:07+00:00",
+            }
+        )
+        state["jobs"].append(
+            {
+                "job_id": "job_round",
+                "message_id": "msg_round",
+                "agent_id": "coder",
+                "pane_id": None,
+                "status": "completed",
+                "created_at": "2026-07-04T00:00:08+00:00",
+            }
+        )
+        state["replies"].append(
+            {
+                "reply_id": "rep_round",
+                "message_id": "msg_round",
+                "job_id": "job_round",
+                "from_agent": "coder",
+                "to_actor": "leader",
+                "text": "round review: accepted",
+                "created_at": "2026-07-04T00:00:09+00:00",
+            }
+        )
+    store.save(state)
+
+
+def test_release_requires_confirm_and_does_not_write_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _seed_review_gate_ledger(root, include_round_review=True)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["release"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "release requires --confirm" in captured.err
+    state_after = StateStore(root).load()
+    assert state_after == state_before
+    assert state_after.get("releases", []) == []
+    assert all(
+        not str(event["event_type"]).startswith("round_release")
+        for event in StateStore(root).list_events(limit=10)
+    )
+
+
+def test_release_rejects_blocked_review_gate_without_writing_release(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _seed_review_gate_ledger(root, include_round_review=False)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["release", "--confirm"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "round_reviewer is not configured" in captured.err
+    state_after = StateStore(root).load()
+    assert state_after.get("releases", []) == []
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["replies"] == state_before["replies"]
+    events = StateStore(root).list_events(limit=1)
+    assert events[0]["event_type"] == "round_release_rejected"
+    assert events[0]["payload"]["reason"] == "round_reviewer is not configured"
+
+
+def test_release_records_round_release_when_gate_ready_and_blocks_duplicates(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    assert (
+        cli.main(
+            [
+                "agent",
+                "assign-role",
+                "--agent",
+                "coder",
+                "--role",
+                "round_reviewer",
+                "--role-prompt",
+                "你负责整轮验收。",
+            ]
+        )
+        == 0
+    )
+    _seed_review_gate_ledger(root, include_round_review=True)
+    capsys.readouterr()
+
+    exit_code = cli.main(["release", "--confirm"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "release"
+    assert payload["requires_explicit_user"] is True
+    assert payload["safety"] == "explicit_user"
+    release = payload["release"]
+    assert release["release_id"].startswith("rel_")
+    assert release["round"] == 1
+    assert release["status"] == "released"
+    assert release["review_gate_status"] == "ready"
+    assert release["artifact_count"] == 1
+    assert release["review_reply_count"] == 2
+    assert release["code_reviewer_id"] == "reviewer"
+    assert release["round_reviewer_id"] == "coder"
+    assert release["code_review_reply_id"] == "rep_review"
+    assert release["round_review_reply_id"] == "rep_round"
+    assert payload["release_count"] == 1
+    assert payload["next_command"] == "agentdeck workbench"
+    assert payload["next_round_command"] == "agentdeck leader plan --task <goal>"
+    assert payload["trace_commands"] == [
+        "agentdeck trace --id rep_review",
+        "agentdeck trace --id rep_round",
+    ]
+    controls = payload["controls"]
+    assert [control["kind"] for control in controls] == [
+        "inspect",
+        "trace_code_review",
+        "trace_round_review",
+        "next_round",
+    ]
+    assert controls[0]["command"] == "agentdeck workbench"
+    assert controls[0]["safety"] == "inspect"
+    assert controls[0]["enabled"] is True
+    assert controls[1]["command"] == "agentdeck trace --id rep_review"
+    assert controls[2]["command"] == "agentdeck trace --id rep_round"
+    assert controls[3]["command"] == "agentdeck leader plan --task <goal>"
+    assert controls[3]["safety"] == "plan_only"
+    assert controls[3]["enabled"] is False
+    assert controls[3]["blocker"] == "requires goal text"
+    state_after = StateStore(root).load()
+    assert len(state_after["releases"]) == 1
+    assert state_after["releases"][0] == release
+    events = StateStore(root).list_events(limit=1)
+    assert events[0]["event_type"] == "round_released"
+    assert events[0]["payload"]["release_id"] == release["release_id"]
+
+    duplicate_exit_code = cli.main(["release", "--confirm"])
+
+    assert duplicate_exit_code == 1
+    captured = capsys.readouterr()
+    assert "round already released" in captured.err
+    state_after_duplicate = StateStore(root).load()
+    assert len(state_after_duplicate["releases"]) == 1
+    duplicate_events = StateStore(root).list_events(limit=1)
+    assert duplicate_events[0]["event_type"] == "round_release_rejected"
+    assert duplicate_events[0]["payload"]["reason"] == "round already released"
+
+
 def test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls(
     tmp_path, monkeypatch, capsys
 ) -> None:

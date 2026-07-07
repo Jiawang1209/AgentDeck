@@ -4,6 +4,16 @@
 
 ## 2026-07-07
 
+### Current - Add explicit round release command
+
+- 新增 `agentdeck release --confirm`，作为北极星 G5 验收门之后的第一个显式 approval-gated release 落地命令：不带 `--confirm` 必须失败且不写 state、不追加事件。
+- 带 `--confirm` 时先通过 ProjectView contract 守门，再复用同一份 `_workbench_review_gate_card` 验收门事实：gate blocked 时拒绝、追加 `round_release_rejected` 事件并复用同一个 `reason`；gate ready 时把 release 记录写入 `state["releases"][]`（release_id/round/review gate 快照/code review 与 round review reply id/created_at），并追加 `round_released` 审计事件。
+- 防重复 release：同一对 code review / round review reply id 已 release 过时，再次 `release --confirm` 必须拒绝并追加 `round_release_rejected`（reason=`round already released`），不重复写入。
+- 成功响应是 GUI-ready 的：`mode=release`、`requires_explicit_user=true`、`safety=explicit_user`、release 记录、`release_count`、`next_command=agentdeck workbench`、`next_round_command=agentdeck leader plan --task <goal>` 模板、指向两条 review reply 的 `trace_commands[]`，以及 inspect/trace/next_round controls（next_round 模板 disabled 且 blocker=`requires goal text`）。
+- 保持北极星边界:release 只把“人类确认本轮验收通过”固化为可审计事实，不 merge、不 ack inbox、不 dispatch follow-up、不创建 plan/action/approval/message/job/inbox、不调用 provider、不读取/写入/发送 tmux;下一轮仍必须从显式 `leader plan` -> approval 主线开始。
+- 同步 README 和 `docs/handoff/current-development-state.md`，把下一步指向 `release_preview_card` 与真实 release 命令的接线。
+- 验证记录：已先确认红测失败，`agentdeck release` 最初是 argparse invalid choice；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_release_requires_confirm_and_does_not_write_state tests/test_agent_cli.py::test_release_rejects_blocked_review_gate_without_writing_release tests/test_agent_cli.py::test_release_records_round_release_when_gate_ready_and_blocks_duplicates -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 543 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 585 项通过。
+
 ### Current - Add release preview leader chat discovery
 
 - 扩展自然语言 `agentdeck leader chat --message "查看发布预览"` / `release preview`：进入只读 `mode=release_preview`，嵌入与 `agentdeck workbench` 同源的 `release_preview_card`（从同一份 `review_gate_card` 派生）。

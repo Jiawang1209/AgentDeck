@@ -172,11 +172,27 @@ Every development iteration must update HISTORY.md, run verification, and commit
 Continue the active north-star goal; do not redo completed work.
 ```
 
+The explicit release command slice is already committed:
+
+```bash
+agentdeck release --confirm
+```
+
+Expected behavior:
+
+- Refuses without `--confirm` and writes nothing.
+- Validates ProjectView, then reuses the same `review_gate_card` facts.
+- Refuses when the gate is blocked, appending `round_release_rejected` with the same gate `reason`.
+- Refuses when the same code-review / round-review reply pair was already released (`round already released`).
+- On success appends a release record to `releases[]` plus a `round_released` audit event, and returns a GUI-ready payload with `safety=explicit_user`, trace commands for both review replies, and a disabled `agentdeck leader plan --task <goal>` next-round template.
+- Does not merge, ack inbox items, dispatch follow-up work, create plan/action/approval/message/job/inbox, call a provider, or read/write tmux.
+
 ## Next Best Step
 
-After the release-preview natural-language discovery slice is committed, continue with the next Phase G5 follow-up:
+After the explicit release command slice is committed, continue with the next Phase G5 follow-up:
 
-- Design the explicit approval-gated release / next-round command itself (for example an `agentdeck release ... --confirm`-style explicit command or an approval-queue-backed release action) so the disabled `release_preview` / `next_round_preview` placeholders can point at a real explicit command.
+- Wire `release_preview_card` to the real command: when the gate is ready, `release_command` / `next_command` should point at `agentdeck release --confirm` and the `release_preview` control becomes an enabled `explicit_user` control; `next_round_command` exposes the disabled `agentdeck leader plan --task <goal>` template. Update the workbench/leader-chat validators accordingly.
+- Then surface `releases[]` into ProjectView / workbench (round history + already-released awareness for the preview card), and add `agentdeck contract release` discovery.
 - Preserve human approval before any release, merge, ack, or follow-up dispatch.
 
 ## Required Verification Before Handoff
