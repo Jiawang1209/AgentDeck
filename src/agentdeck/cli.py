@@ -3204,6 +3204,69 @@ def skills_load_preview_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def skills_suggest_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    record = store.record_skill_suggestion(
+        name=args.name,
+        summary=args.summary,
+        rationale=args.rationale,
+        source=args.source,
+        agent_id=args.agent,
+        trace_id=args.from_trace,
+    )
+    store.append_event(
+        EventRecord.create(
+            "skill_suggested",
+            {
+                "suggestion_id": record["suggestion_id"],
+                "name": record["name"],
+                "source": record["source"],
+                "agent_id": record["agent_id"],
+                "trace_id": record["trace_id"],
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "skill_suggested",
+            "suggestion": record,
+            "next_command": "agentdeck skills suggestions",
+        }
+    )
+    return 0
+
+
+def skills_suggestions_command(_args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    suggestions = list(store.load().get("skill_suggestions", []))
+    pending_count = sum(1 for item in suggestions if isinstance(item, dict) and item.get("status") == "pending")
+    _print_json(
+        {
+            "ok": True,
+            "mode": "skill_suggestions",
+            "count": len(suggestions),
+            "pending_count": pending_count,
+            "items": suggestions,
+            "controls": [
+                _control(
+                    kind="suggest",
+                    label="Suggest skill",
+                    command="agentdeck skills suggest --name <name> --summary <summary> --rationale <rationale> --source human",
+                    safety="explicit_user",
+                    enabled=False,
+                    blocker="requires suggestion fields",
+                )
+            ],
+        }
+    )
+    return 0
+
+
 def skills_import_preview_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -9454,6 +9517,22 @@ def build_parser() -> argparse.ArgumentParser:
     skills_load_preview.add_argument("--agent", default="leader", help="Agent id using this skill; defaults to leader")
     skills_load_preview.add_argument("--purpose", default="", help="Why this skill would be loaded")
     skills_load_preview.set_defaults(func=skills_load_preview_command)
+    skills_suggest = skills_subparsers.add_parser(
+        "suggest",
+        help="Record a pending skill suggestion without creating or loading a skill",
+    )
+    skills_suggest.add_argument("--name", required=True, help="Suggested skill name")
+    skills_suggest.add_argument("--summary", required=True, help="Short summary of the suggested skill")
+    skills_suggest.add_argument("--rationale", required=True, help="Why this skill should exist")
+    skills_suggest.add_argument("--source", default="human", choices=["human", "leader", "worker", "reviewer"])
+    skills_suggest.add_argument("--agent", default=None, help="Agent associated with the suggestion")
+    skills_suggest.add_argument("--from-trace", default=None, help="Optional trace/message/job/reply/artifact id")
+    skills_suggest.set_defaults(func=skills_suggest_command)
+    skills_suggestions = skills_subparsers.add_parser(
+        "suggestions",
+        help="List pending skill suggestions",
+    )
+    skills_suggestions.set_defaults(func=skills_suggestions_command)
     skills_import_preview = skills_subparsers.add_parser(
         "import-preview",
         help="Preview importing an external SKILL.md without writing project state",

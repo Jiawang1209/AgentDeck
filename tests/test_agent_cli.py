@@ -427,6 +427,107 @@ def test_skills_load_preview_is_read_only_and_surfaces_explicit_command(tmp_path
     assert StateStore(root).list_events(limit=1) == []
 
 
+def test_skills_suggest_records_pending_skill_suggestion_without_creating_skill(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(
+        [
+            "skills",
+            "suggest",
+            "--name",
+            "incident-review",
+            "--summary",
+            "Review incident response evidence.",
+            "--rationale",
+            "planner repeatedly asked for the same incident review checklist",
+            "--source",
+            "leader",
+            "--agent",
+            "reviewer",
+            "--from-trace",
+            "msg_incident",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "skill_suggested"
+    assert payload["suggestion"]["suggestion_id"].startswith("sgs_")
+    assert payload["suggestion"]["status"] == "pending"
+    assert payload["suggestion"]["name"] == "incident-review"
+    assert payload["suggestion"]["summary"] == "Review incident response evidence."
+    assert payload["suggestion"]["rationale"] == "planner repeatedly asked for the same incident review checklist"
+    assert payload["suggestion"]["source"] == "leader"
+    assert payload["suggestion"]["agent_id"] == "reviewer"
+    assert payload["suggestion"]["trace_id"] == "msg_incident"
+    assert payload["suggestion"]["draft_path"] == ".agentdeck/skills/incident-review/SKILL.md"
+    assert payload["suggestion"]["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "List skill suggestions",
+            "command": "agentdeck skills suggestions",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
+    assert payload["next_command"] == "agentdeck skills suggestions"
+    assert not (root / ".agentdeck" / "skills" / "incident-review" / "SKILL.md").exists()
+    state = StateStore(root).load()
+    assert state["skill_suggestions"] == [payload["suggestion"]]
+    latest_event = StateStore(root).list_events(limit=1)[0]
+    assert latest_event["event_type"] == "skill_suggested"
+    assert latest_event["payload"]["suggestion_id"] == payload["suggestion"]["suggestion_id"]
+
+
+def test_skills_suggestions_lists_pending_suggestions_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "skills",
+            "suggest",
+            "--name",
+            "incident-review",
+            "--summary",
+            "Review incident response evidence.",
+            "--rationale",
+            "repeatable review checklist",
+            "--source",
+            "human",
+        ]
+    )
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+
+    exit_code = cli.main(["skills", "suggestions"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "skill_suggestions"
+    assert payload["count"] == 1
+    assert payload["pending_count"] == 1
+    assert payload["items"] == state_before["skill_suggestions"]
+    assert payload["controls"] == [
+        {
+            "kind": "suggest",
+            "label": "Suggest skill",
+            "command": "agentdeck skills suggest --name <name> --summary <summary> --rationale <rationale> --source human",
+            "safety": "explicit_user",
+            "enabled": False,
+            "blocker": "requires suggestion fields",
+        }
+    ]
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=20) == events_before
+
+
 def test_skills_import_copies_external_skill_without_loading_it(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     external = tmp_path / "external" / "SKILL.md"
@@ -1804,6 +1905,10 @@ def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["skills_load_preview_command_template"] == (
         "agentdeck skills load-preview --name <name> --agent <agent_id> --purpose <purpose>"
     )
+    assert payload["skills_suggestions_command"] == "agentdeck skills suggestions"
+    assert payload["skills_suggest_command_template"] == (
+        "agentdeck skills suggest --name <name> --summary <summary> --rationale <rationale> --source <source>"
+    )
     assert payload["contract_path"].endswith("docs/contracts/skills-schema.md")
     assert payload["contract_exists"] is True
     assert payload["list_response_fields"] == expected["list_response_fields"]
@@ -1814,6 +1919,9 @@ def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["import_response_fields"] == expected["import_response_fields"]
     assert payload["load_preview_response_fields"] == expected["load_preview_response_fields"]
     assert payload["load_response_fields"] == expected["load_response_fields"]
+    assert payload["suggest_response_fields"] == expected["suggest_response_fields"]
+    assert payload["suggestions_response_fields"] == expected["suggestions_response_fields"]
+    assert payload["suggestion_item_fields"] == expected["suggestion_item_fields"]
 
 
 def test_contract_skills_example_exports_gui_ready_skill_registry(capsys) -> None:
@@ -1841,12 +1949,20 @@ def test_contract_skills_example_exports_gui_ready_skill_registry(capsys) -> Non
     assert set(payload["example_load_preview_response_fields"]) == set(example["load_preview"])
     assert payload["example_load_response_fields"] == payload["load_response_fields"]
     assert set(payload["example_load_response_fields"]) == set(example["load"])
+    assert payload["example_suggest_response_fields"] == payload["suggest_response_fields"]
+    assert set(payload["example_suggest_response_fields"]) == set(example["suggest"])
+    assert payload["example_suggestions_response_fields"] == payload["suggestions_response_fields"]
+    assert set(payload["example_suggestions_response_fields"]) == set(example["suggestions"])
+    assert payload["example_suggestion_item_fields"] == payload["suggestion_item_fields"]
+    assert set(payload["example_suggestion_item_fields"]) == set(example["suggestions"]["items"][0])
     assert example["list"]["controls"][0]["kind"] == "import"
     assert example["list"]["skills"][0]["controls"][1]["kind"] == "load"
     assert example["import_preview"]["controls"][0]["kind"] == "import"
     assert example["import_preview"]["controls"][1]["kind"] == "force_import"
     assert example["load_preview"]["controls"][0]["kind"] == "load"
     assert "content_snapshot" not in example["load_preview"]["skill"]
+    assert example["suggest"]["suggestion"]["status"] == "pending"
+    assert example["suggestions"]["items"][0]["draft_path"] == ".agentdeck/skills/incident-review/SKILL.md"
     assert example["import"]["skill"]["controls"][0]["kind"] == "show"
 
 

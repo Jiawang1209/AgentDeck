@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add pending skill suggestion queue
+
+- 新增 `agentdeck skills suggest --name <name> --summary <summary> --rationale <rationale> --source <source>`：把 Hermes 式学习/沉淀结果先写成 pending `skill_suggestions[]`，记录 suggestion_id、status、name、summary、rationale、source、agent_id、trace_id、draft_path、created_at 和 controls。
+- 新增 `agentdeck skills suggestions`：只读列出 suggestion queue、pending_count、items 和 GUI-ready suggest control，供人类或未来 GUI 决定是否后续手动创建/导入/load skill。
+- 保持自动学习安全边界：suggestion 只写待审建议和 `skill_suggested` 审计事件，不创建 `SKILL.md`、不 import、不 load、不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox、不修改 runtime/approval state。
+- 扩展 `agentdeck contract skills`：公开 suggestions/suggest 命令模板、suggest/suggestions 响应字段、suggestion item 字段和 example fixture，让 GUI/TUI 能发现“建议 -> 人类审阅 -> 后续显式导入/加载”的 skill 沉淀入口。
+- 同步 README、AGENT/CLAUDE、skills contract、架构文档和北极星路线图，明确后台 reviewer 只能提出 pending skill suggestion，不能直接覆盖、删除、导入、加载或启用技能。
+- 验证记录：已先确认红测失败，`agentdeck skills suggest` 最初不是合法子命令，skills contract 也缺少 suggestion discovery 字段；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_skills_suggest_records_pending_skill_suggestion_without_creating_skill tests/test_agent_cli.py::test_skills_suggestions_lists_pending_suggestions_without_mutating_state tests/test_agent_cli.py::test_contract_skills_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_skills_example_exports_gui_ready_skill_registry tests/test_agent_cli.py::test_contract_skills_cli_matches_contract_module -q` 5 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 127 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 533 项通过。
+
 ### Current - Preview skill loads through CLI and Leader chat
 
 - 新增 `agentdeck skills load-preview --name <name> --agent <id> --purpose <text>`：只读返回目标 agent、用途、skill summary、显式 `agentdeck skills load ...` 命令和 show/load controls，不写入 `skill_loads[]`，不追加 `skill_loaded`。

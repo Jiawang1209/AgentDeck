@@ -463,6 +463,36 @@ SKILLS_LOAD_RESPONSE_FIELDS = (
     "skill",
 )
 
+SKILLS_SUGGEST_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "suggestion",
+    "next_command",
+)
+
+SKILLS_SUGGESTIONS_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "count",
+    "pending_count",
+    "items",
+    "controls",
+)
+
+SKILLS_SUGGESTION_ITEM_FIELDS = (
+    "suggestion_id",
+    "status",
+    "name",
+    "summary",
+    "rationale",
+    "source",
+    "agent_id",
+    "trace_id",
+    "draft_path",
+    "created_at",
+    "controls",
+)
+
 SKILLS_SKILL_ITEM_FIELDS = (
     "name",
     "description",
@@ -1661,6 +1691,8 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "skills_import_command_template": "agentdeck skills import --path <SKILL.md>",
         "skills_load_preview_command_template": "agentdeck skills load-preview --name <name> --agent <agent_id> --purpose <purpose>",
         "skills_load_command_template": "agentdeck skills load --name <name> --agent <agent_id> --purpose <purpose>",
+        "skills_suggestions_command": "agentdeck skills suggestions",
+        "skills_suggest_command_template": "agentdeck skills suggest --name <name> --summary <summary> --rationale <rationale> --source <source>",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "list_response_fields": list(SKILLS_LIST_RESPONSE_FIELDS),
@@ -1669,7 +1701,10 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "import_response_fields": list(SKILLS_IMPORT_RESPONSE_FIELDS),
         "load_preview_response_fields": list(SKILLS_LOAD_PREVIEW_RESPONSE_FIELDS),
         "load_response_fields": list(SKILLS_LOAD_RESPONSE_FIELDS),
+        "suggest_response_fields": list(SKILLS_SUGGEST_RESPONSE_FIELDS),
+        "suggestions_response_fields": list(SKILLS_SUGGESTIONS_RESPONSE_FIELDS),
         "skill_item_fields": list(SKILLS_SKILL_ITEM_FIELDS),
+        "suggestion_item_fields": list(SKILLS_SUGGESTION_ITEM_FIELDS),
         "detail_skill_fields": list(SKILLS_DETAIL_SKILL_FIELDS),
         "load_skill_fields": list(SKILLS_LOAD_SKILL_FIELDS),
         "skill_control_fields": list(SKILLS_CONTROL_FIELDS),
@@ -1687,7 +1722,10 @@ def skills_contract_response(contract_path: Path, include_example: bool = False)
         payload["example_import_response_fields"] = list(example["import"])
         payload["example_load_preview_response_fields"] = list(example["load_preview"])
         payload["example_load_response_fields"] = list(example["load"])
+        payload["example_suggest_response_fields"] = list(example["suggest"])
+        payload["example_suggestions_response_fields"] = list(example["suggestions"])
         payload["example_skill_item_fields"] = list(example["list"]["skills"][0])
+        payload["example_suggestion_item_fields"] = list(example["suggestions"]["items"][0])
         payload["example_detail_skill_fields"] = list(example["detail"]["skill"])
         payload["example_load_skill_fields"] = list(example["load"]["skill"])
         payload["example_skill_control_fields"] = list(example["list"]["skills"][0]["controls"][0])
@@ -1734,6 +1772,36 @@ def skills_example() -> dict[str, object]:
         "safety": "explicit_user",
         "enabled": False,
         "blocker": "requires SKILL.md path",
+    }
+    suggest_control = {
+        "kind": "suggest",
+        "label": "Suggest skill",
+        "command": "agentdeck skills suggest --name <name> --summary <summary> --rationale <rationale> --source human",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires suggestion fields",
+    }
+    suggestion_item = {
+        "suggestion_id": "sgs_example",
+        "status": "pending",
+        "name": "incident-review",
+        "summary": "Review incident response evidence.",
+        "rationale": "planner repeatedly asked for the same incident review checklist",
+        "source": "leader",
+        "agent_id": "reviewer",
+        "trace_id": "msg_example",
+        "draft_path": ".agentdeck/skills/incident-review/SKILL.md",
+        "created_at": "2026-07-04T00:00:00+00:00",
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "List skill suggestions",
+                "command": "agentdeck skills suggestions",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            }
+        ],
     }
     return {
         "list": {
@@ -1839,6 +1907,20 @@ def skills_example() -> dict[str, object]:
                 **deepcopy(skill_item),
                 "content_snapshot": "# Planning\n\nBreak a user goal into role-aware steps.\n",
             },
+        },
+        "suggest": {
+            "ok": True,
+            "mode": "skill_suggested",
+            "suggestion": deepcopy(suggestion_item),
+            "next_command": "agentdeck skills suggestions",
+        },
+        "suggestions": {
+            "ok": True,
+            "mode": "skill_suggestions",
+            "count": 1,
+            "pending_count": 1,
+            "items": [deepcopy(suggestion_item)],
+            "controls": [suggest_control],
         },
     }
 

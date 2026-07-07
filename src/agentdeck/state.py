@@ -79,6 +79,7 @@ class StateStore:
                 "leader_errors": [],
                 "leader_actions": [],
                 "skill_loads": [],
+                "skill_suggestions": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -115,6 +116,43 @@ class StateStore:
             "created_at": utc_now(),
         }
         state.setdefault("skill_loads", []).append(record)
+        self.save(state)
+        return record
+
+    def record_skill_suggestion(
+        self,
+        *,
+        name: str,
+        summary: str,
+        rationale: str,
+        source: str,
+        agent_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        state = self.load()
+        record = {
+            "suggestion_id": new_id("sgs"),
+            "status": "pending",
+            "name": name,
+            "summary": summary,
+            "rationale": rationale,
+            "source": source,
+            "agent_id": agent_id,
+            "trace_id": trace_id,
+            "draft_path": f".agentdeck/skills/{name}/SKILL.md",
+            "created_at": utc_now(),
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "List skill suggestions",
+                    "command": "agentdeck skills suggestions",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                }
+            ],
+        }
+        state.setdefault("skill_suggestions", []).append(record)
         self.save(state)
         return record
 
