@@ -393,6 +393,18 @@ LEADER_CHAT_SKILL_IMPORT_PREVIEW_CARD_FIELDS = (
     "controls",
 )
 
+LEADER_CHAT_SKILL_LOAD_PREVIEW_CARD_FIELDS = (
+    "ok",
+    "mode",
+    "title",
+    "summary",
+    "agent_id",
+    "purpose",
+    "skill",
+    "load_command",
+    "controls",
+)
+
 SKILLS_LIST_RESPONSE_FIELDS = (
     "ok",
     "mode",
@@ -429,6 +441,16 @@ SKILLS_IMPORT_RESPONSE_FIELDS = (
     "overwritten",
     "show_command",
     "load_command",
+)
+
+SKILLS_LOAD_PREVIEW_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "agent_id",
+    "purpose",
+    "skill",
+    "load_command",
+    "controls",
 )
 
 SKILLS_LOAD_RESPONSE_FIELDS = (
@@ -618,6 +640,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "leader_status_card",
     "skill_context_card",
     "skill_import_preview_card",
+    "skill_load_preview_card",
     "continue_card",
     "run_start_card",
     "run_progress_card",
@@ -1493,6 +1516,8 @@ LEADER_CHAT_CAPABILITY_PLACEHOLDERS = (
     {"placeholder": "<provider>", "blocker": "requires leader provider"},
     {"placeholder": "<model>", "blocker": "requires leader model"},
     {"placeholder": "<SKILL.md>", "blocker": "requires SKILL.md path"},
+    {"placeholder": "<name>", "blocker": "requires skill name"},
+    {"placeholder": "<purpose>", "blocker": "requires purpose"},
 )
 
 LEADER_CHAT_INTENT_PLACEHOLDERS = (
@@ -1634,6 +1659,7 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "skills_show_command_template": "agentdeck skills show --name <name>",
         "skills_import_preview_command_template": "agentdeck skills import-preview --path <SKILL.md>",
         "skills_import_command_template": "agentdeck skills import --path <SKILL.md>",
+        "skills_load_preview_command_template": "agentdeck skills load-preview --name <name> --agent <agent_id> --purpose <purpose>",
         "skills_load_command_template": "agentdeck skills load --name <name> --agent <agent_id> --purpose <purpose>",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
@@ -1641,6 +1667,7 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "detail_response_fields": list(SKILLS_DETAIL_RESPONSE_FIELDS),
         "import_preview_response_fields": list(SKILLS_IMPORT_PREVIEW_RESPONSE_FIELDS),
         "import_response_fields": list(SKILLS_IMPORT_RESPONSE_FIELDS),
+        "load_preview_response_fields": list(SKILLS_LOAD_PREVIEW_RESPONSE_FIELDS),
         "load_response_fields": list(SKILLS_LOAD_RESPONSE_FIELDS),
         "skill_item_fields": list(SKILLS_SKILL_ITEM_FIELDS),
         "detail_skill_fields": list(SKILLS_DETAIL_SKILL_FIELDS),
@@ -1658,6 +1685,7 @@ def skills_contract_response(contract_path: Path, include_example: bool = False)
         payload["example_detail_response_fields"] = list(example["detail"])
         payload["example_import_preview_response_fields"] = list(example["import_preview"])
         payload["example_import_response_fields"] = list(example["import"])
+        payload["example_load_preview_response_fields"] = list(example["load_preview"])
         payload["example_load_response_fields"] = list(example["load"])
         payload["example_skill_item_fields"] = list(example["list"]["skills"][0])
         payload["example_detail_skill_fields"] = list(example["detail"]["skill"])
@@ -1764,6 +1792,32 @@ def skills_example() -> dict[str, object]:
                 },
             ],
         },
+        "load_preview": {
+            "ok": True,
+            "mode": "skill_load_preview",
+            "agent_id": "planner",
+            "purpose": "plan decomposition",
+            "skill": deepcopy(skill_item),
+            "load_command": "agentdeck skills load --name planning --agent planner --purpose 'plan decomposition'",
+            "controls": [
+                {
+                    "kind": "load",
+                    "label": "Load skill",
+                    "command": "agentdeck skills load --name planning --agent planner --purpose 'plan decomposition'",
+                    "safety": "explicit_user",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "show",
+                    "label": "Show skill",
+                    "command": show_command,
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
+        },
         "import": {
             "ok": True,
             "mode": "skill_imported",
@@ -1823,6 +1877,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "leader_status_queue_fields": list(LEADER_STATUS_QUEUE_FIELDS),
         "skill_context_card_fields": list(LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS),
         "skill_import_preview_card_fields": list(LEADER_CHAT_SKILL_IMPORT_PREVIEW_CARD_FIELDS),
+        "skill_load_preview_card_fields": list(LEADER_CHAT_SKILL_LOAD_PREVIEW_CARD_FIELDS),
         "skill_context_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
@@ -1899,6 +1954,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_leader_status_card_fields"] = list(example["leader_status_card"])
         payload["example_leader_status_queue_fields"] = list(example["leader_status_card"]["queues"])
         payload["example_skill_import_preview_card_fields"] = list(example["skill_import_preview_card"])
+        payload["example_skill_load_preview_card_fields"] = list(example["skill_load_preview_card"])
         payload["example_provider_health_fields"] = list(example["provider_health"])
         payload["example_queue_card_fields"] = list(example["queue_card"])
         payload["example_operator_card_fields"] = list(example["operator_card"])
@@ -2012,6 +2068,19 @@ def leader_chat_capability_card() -> dict[str, object]:
             "safety": "explicit_user",
             "requires_explicit_user": True,
             "card": "skill_import_preview_card",
+        },
+        {
+            "mode": "skill_load_preview",
+            "label": "Preview skill load",
+            "description": "Preview loading a skill for an agent before recording replayable context.",
+            "example_messages": [
+                "预览加载 skill planning 给 planner 用于 decompose work",
+                "preview load skill planning for planner purpose decompose work",
+            ],
+            "command": "agentdeck leader chat --message \"预览加载 skill <name> 给 <agent_id> 用于 <purpose>\"",
+            "safety": "explicit_user",
+            "requires_explicit_user": True,
+            "card": "skill_load_preview_card",
         },
         {
             "mode": "runtime",
@@ -2383,6 +2452,7 @@ def _capability_item_control(item: dict[str, object]) -> dict[str, object]:
         "policy": "set",
         "provider_switch": "set_provider",
         "skill_import_preview": "skill_import_preview",
+        "skill_load_preview": "skill_load_preview",
     }.get(mode, "inspect")
     blocker = _placeholder_blocker(command)
     return {
@@ -6677,6 +6747,62 @@ def leader_chat_example() -> dict[str, object]:
             },
         ],
     }
+    skill_load_preview_card = {
+        "ok": True,
+        "mode": "skill_load_preview",
+        "title": "Skill load preview",
+        "summary": "planning can be loaded for planner as replayable context.",
+        "agent_id": "planner",
+        "purpose": "plan decomposition",
+        "skill": {
+            "name": "planning",
+            "description": "Break goals into approval-gated multi-agent plans.",
+            "source": "builtin",
+            "path": None,
+            "content_hash": "sha256:example",
+            "required_tools": ["leader-plan", "approval-list"],
+            "risk": "inspect",
+            "show_command": "agentdeck skills show --name planning",
+            "load_command": "agentdeck skills load --name planning",
+            "controls": [
+                {
+                    "kind": "show",
+                    "label": "Show skill",
+                    "command": "agentdeck skills show --name planning",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "load",
+                    "label": "Load skill",
+                    "command": "agentdeck skills load --name planning",
+                    "safety": "explicit_user",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
+        },
+        "load_command": "agentdeck skills load --name planning --agent planner --purpose 'plan decomposition'",
+        "controls": [
+            {
+                "kind": "load",
+                "label": "Load skill",
+                "command": "agentdeck skills load --name planning --agent planner --purpose 'plan decomposition'",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "show",
+                "label": "Show skill",
+                "command": "agentdeck skills show --name planning",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     control_registry_card = leader_chat_control_registry_card(workbench_card)
     startup_preview_card = _startup_preview_card_from_agent_ready(agent_ready_card)
     runtime_action_card = {
@@ -6878,6 +7004,7 @@ def leader_chat_example() -> dict[str, object]:
         "leader_status_card": leader_status_card,
         "skill_context_card": skill_context_card,
         "skill_import_preview_card": skill_import_preview_card,
+        "skill_load_preview_card": skill_load_preview_card,
         "continue_card": continue_card,
         "run_start_card": run_start_card,
         "run_progress_card": run_progress_card,

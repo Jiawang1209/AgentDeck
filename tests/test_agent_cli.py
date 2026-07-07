@@ -376,6 +376,57 @@ def test_skills_load_records_replayable_snapshot_and_event(tmp_path, monkeypatch
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "skill_loaded"
 
 
+def test_skills_load_preview_is_read_only_and_surfaces_explicit_command(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(
+        [
+            "skills",
+            "load-preview",
+            "--name",
+            "planning",
+            "--agent",
+            "planner",
+            "--purpose",
+            "decompose implementation work",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "skill_load_preview"
+    assert payload["agent_id"] == "planner"
+    assert payload["purpose"] == "decompose implementation work"
+    assert payload["load_command"] == (
+        "agentdeck skills load --name planning --agent planner --purpose 'decompose implementation work'"
+    )
+    assert payload["skill"]["name"] == "planning"
+    assert payload["skill"]["source"] == "builtin"
+    assert payload["skill"]["content_hash"].startswith("sha256:")
+    assert payload["controls"] == [
+        {
+            "kind": "load",
+            "label": "Load skill",
+            "command": "agentdeck skills load --name planning --agent planner --purpose 'decompose implementation work'",
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "show",
+            "label": "Show skill",
+            "command": "agentdeck skills show --name planning",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=1) == []
+
+
 def test_skills_import_copies_external_skill_without_loading_it(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     external = tmp_path / "external" / "SKILL.md"
@@ -752,6 +803,69 @@ def test_leader_chat_previews_external_skill_import_without_mutating_registry(
     assert payload["leader_explanation"]["safety"] == "explicit_user"
     assert payload["leader_explanation"]["requires_explicit_user"] is True
     assert not target.exists()
+    state_after = StateStore(root).load()
+    assert state_after["skill_loads"] == state_before["skill_loads"]
+    assert state_after["plans"] == []
+    assert state_after["leader_errors"] == []
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
+
+
+def test_leader_chat_previews_skill_load_without_mutating_context(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(
+        [
+            "leader",
+            "chat",
+            "--message",
+            "预览加载 skill planning 给 planner 用于 decompose implementation work",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skill_load_preview"
+    assert payload["plan_id"] is None
+    assert payload["next_command"] == (
+        "agentdeck skills load --name planning --agent planner --purpose 'decompose implementation work'"
+    )
+    assert payload["skill_load_preview_card"] == {
+        "ok": True,
+        "mode": "skill_load_preview",
+        "title": "Skill load preview",
+        "summary": "planning can be loaded for planner as replayable context.",
+        "agent_id": "planner",
+        "purpose": "decompose implementation work",
+        "skill": payload["skill_load_preview_card"]["skill"],
+        "load_command": "agentdeck skills load --name planning --agent planner --purpose 'decompose implementation work'",
+        "controls": [
+            {
+                "kind": "load",
+                "label": "Load skill",
+                "command": "agentdeck skills load --name planning --agent planner --purpose 'decompose implementation work'",
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "show",
+                "label": "Show skill",
+                "command": "agentdeck skills show --name planning",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    assert payload["skill_load_preview_card"]["skill"]["name"] == "planning"
+    assert payload["intent_card"]["embedded_card"] == "skill_load_preview_card"
+    assert payload["intent_card"]["requires_explicit_user"] is True
+    assert payload["intent_card"]["read_only"] is True
+    assert payload["leader_explanation"]["action_kind"] == "skill_load_preview"
+    assert payload["leader_explanation"]["safety"] == "explicit_user"
+    assert payload["leader_explanation"]["requires_explicit_user"] is True
     state_after = StateStore(root).load()
     assert state_after["skill_loads"] == state_before["skill_loads"]
     assert state_after["plans"] == []
@@ -1687,6 +1801,9 @@ def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["skills_list_command"] == "agentdeck skills list"
     assert payload["skills_import_preview_command_template"] == "agentdeck skills import-preview --path <SKILL.md>"
     assert payload["skills_import_command_template"] == "agentdeck skills import --path <SKILL.md>"
+    assert payload["skills_load_preview_command_template"] == (
+        "agentdeck skills load-preview --name <name> --agent <agent_id> --purpose <purpose>"
+    )
     assert payload["contract_path"].endswith("docs/contracts/skills-schema.md")
     assert payload["contract_exists"] is True
     assert payload["list_response_fields"] == expected["list_response_fields"]
@@ -1695,6 +1812,7 @@ def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["detail_response_fields"] == expected["detail_response_fields"]
     assert payload["import_preview_response_fields"] == expected["import_preview_response_fields"]
     assert payload["import_response_fields"] == expected["import_response_fields"]
+    assert payload["load_preview_response_fields"] == expected["load_preview_response_fields"]
     assert payload["load_response_fields"] == expected["load_response_fields"]
 
 
@@ -1719,12 +1837,16 @@ def test_contract_skills_example_exports_gui_ready_skill_registry(capsys) -> Non
     assert set(payload["example_import_preview_response_fields"]) == set(example["import_preview"])
     assert payload["example_import_response_fields"] == payload["import_response_fields"]
     assert set(payload["example_import_response_fields"]) == set(example["import"])
+    assert payload["example_load_preview_response_fields"] == payload["load_preview_response_fields"]
+    assert set(payload["example_load_preview_response_fields"]) == set(example["load_preview"])
     assert payload["example_load_response_fields"] == payload["load_response_fields"]
     assert set(payload["example_load_response_fields"]) == set(example["load"])
     assert example["list"]["controls"][0]["kind"] == "import"
     assert example["list"]["skills"][0]["controls"][1]["kind"] == "load"
     assert example["import_preview"]["controls"][0]["kind"] == "import"
     assert example["import_preview"]["controls"][1]["kind"] == "force_import"
+    assert example["load_preview"]["controls"][0]["kind"] == "load"
+    assert "content_snapshot" not in example["load_preview"]["skill"]
     assert example["import"]["skill"]["controls"][0]["kind"] == "show"
 
 
@@ -2079,6 +2201,7 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["dispatch_preview_card_fields"] == expected["dispatch_preview_card_fields"]
     assert payload["agent_ready_card_fields"] == expected["agent_ready_card_fields"]
     assert payload["skill_import_preview_card_fields"] == expected["skill_import_preview_card_fields"]
+    assert payload["skill_load_preview_card_fields"] == expected["skill_load_preview_card_fields"]
     assert payload["artifacts_card_fields"] == expected["artifacts_card_fields"]
     assert payload["artifact_summary_fields"] == expected["artifact_summary_fields"]
     assert payload["artifact_item_fields"] == expected["artifact_item_fields"]
@@ -4938,6 +5061,8 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     assert set(payload["example_terminal_card_fields"]) == set(example["terminal_card"])
     assert payload["example_skill_import_preview_card_fields"] == payload["skill_import_preview_card_fields"]
     assert set(payload["example_skill_import_preview_card_fields"]) == set(example["skill_import_preview_card"])
+    assert payload["example_skill_load_preview_card_fields"] == payload["skill_load_preview_card_fields"]
+    assert set(payload["example_skill_load_preview_card_fields"]) == set(example["skill_load_preview_card"])
     assert payload["example_workbench_control_registry_item_fields"] == (
         payload["workbench_control_registry_item_fields"]
     )

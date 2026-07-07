@@ -121,6 +121,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "audit_card",
         "artifacts_card",
         "skill_import_preview_card",
+        "skill_load_preview_card",
         "skill_context_card",
         "control_mode_card",
         "provider_health",
@@ -333,6 +334,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "List skills"
     if command.startswith("agentdeck skills import --path "):
         return "Import skill"
+    if command.startswith("agentdeck skills load --name "):
+        return "Load skill"
     return "Next command"
 
 
@@ -403,6 +406,21 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
             else None
         )
         return f"agentdeck skills import-preview --path {source_path}" if source_path else None
+    if embedded_card == "skill_load_preview_card":
+        skill_load_preview_card = payload.get("skill_load_preview_card")
+        controls = (
+            skill_load_preview_card.get("controls")
+            if isinstance(skill_load_preview_card, dict)
+            else None
+        )
+        if isinstance(controls, list):
+            for control in controls:
+                if isinstance(control, dict) and control.get("kind") == "show":
+                    command = control.get("command")
+                    return str(command) if command else None
+        skill = skill_load_preview_card.get("skill") if isinstance(skill_load_preview_card, dict) else None
+        name = skill.get("name") if isinstance(skill, dict) else None
+        return f"agentdeck skills show --name {name}" if name else None
     if embedded_card == "trace_card":
         trace_card = payload.get("trace_card")
         query_id = trace_card.get("query_id") if isinstance(trace_card, dict) else None
@@ -474,6 +492,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("leader_status_card", None)
     payload.setdefault("skill_context_card", None)
     payload.setdefault("skill_import_preview_card", None)
+    payload.setdefault("skill_load_preview_card", None)
     payload.setdefault("lineage_card", None)
     payload.setdefault("audit_card", None)
     payload.setdefault("artifacts_card", None)
@@ -1626,6 +1645,47 @@ def _skill_import_preview_card(root: Path, source_path: Path) -> dict[str, objec
                 safety="inspect",
                 enabled=would_overwrite,
                 blocker=None if would_overwrite else "skill is not imported yet",
+            ),
+        ],
+    }
+
+
+def _skill_load_command(name: str, agent_id: str, purpose: str) -> str:
+    command = f"agentdeck skills load --name {shlex.quote(name)} --agent {shlex.quote(agent_id)}"
+    if purpose:
+        command = f"{command} --purpose {shlex.quote(purpose)}"
+    return command
+
+
+def _skill_load_preview_card(config: ProjectConfig, root: Path, name: str, agent_id: str, purpose: str) -> dict[str, object]:
+    if not _is_known_mailbox_agent(config, agent_id):
+        raise KeyError(f"unknown agent: {agent_id}")
+    skill = find_skill(root, name)
+    if skill is None:
+        raise LookupError(f"unknown skill: {name}")
+    load_command = _skill_load_command(skill.name, agent_id, purpose)
+    show_command = f"agentdeck skills show --name {shlex.quote(skill.name)}"
+    return {
+        "ok": True,
+        "mode": "skill_load_preview",
+        "title": "Skill load preview",
+        "summary": f"{skill.name} can be loaded for {agent_id} as replayable context.",
+        "agent_id": agent_id,
+        "purpose": purpose,
+        "skill": skill.summary(),
+        "load_command": load_command,
+        "controls": [
+            _control(
+                kind="load",
+                label="Load skill",
+                command=load_command,
+                safety="explicit_user",
+            ),
+            _control(
+                kind="show",
+                label="Show skill",
+                command=show_command,
+                safety="inspect",
             ),
         ],
     }
@@ -3113,6 +3173,32 @@ def skills_load_command(args: argparse.Namespace) -> int:
             "purpose": args.purpose,
             "created_at": record["created_at"],
             "skill": skill_payload,
+        }
+    )
+    return 0
+
+
+def skills_load_preview_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        card = _skill_load_preview_card(config, Path(config.root), args.name, args.agent, args.purpose)
+    except KeyError as exc:
+        print(str(exc).strip("'"), file=sys.stderr)
+        return 1
+    except LookupError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(
+        {
+            "ok": True,
+            "mode": "skill_load_preview",
+            "agent_id": card["agent_id"],
+            "purpose": card["purpose"],
+            "skill": card["skill"],
+            "load_command": card["load_command"],
+            "controls": card["controls"],
         }
     )
     return 0
@@ -4731,6 +4817,40 @@ def _chat_skill_import_preview_path(message: str) -> Path | None:
     return None
 
 
+def _chat_skill_load_preview_request(message: str) -> tuple[str, str, str] | None:
+    text = message.strip()
+    lowered = text.lower()
+    wants_preview = (
+        ("preview" in lowered and "load" in lowered and "skill" in lowered)
+        or ("预览" in text and "加载" in text and ("skill" in lowered or "技能" in text))
+    )
+    if not wants_preview:
+        return None
+    chinese_match = re.search(
+        r"(?:预览)?加载\s*(?:skill|技能)\s+([A-Za-z0-9._-]+)\s+给\s+([A-Za-z0-9._-]+)\s+用于\s+(.+)$",
+        text,
+        re.IGNORECASE,
+    )
+    if chinese_match:
+        return (
+            chinese_match.group(1),
+            chinese_match.group(2),
+            chinese_match.group(3).strip(),
+        )
+    english_match = re.search(
+        r"preview\s+load\s+skill\s+([A-Za-z0-9._-]+)\s+for\s+([A-Za-z0-9._-]+)(?:\s+(?:purpose|for-purpose)\s+(.+))?$",
+        text,
+        re.IGNORECASE,
+    )
+    if english_match:
+        return (
+            english_match.group(1),
+            english_match.group(2),
+            (english_match.group(3) or "").strip(),
+        )
+    return None
+
+
 def _chat_wants_leader_status(message: str) -> bool:
     normalized = message.strip().lower().replace(" ", "")
     explicit_phrases = {
@@ -5784,6 +5904,19 @@ def _leader_chat_explanation(
             "safety": "explicit_user",
             "requires_explicit_user": True,
         }
+    if mode == "skill_load_preview":
+        preview_card = result if isinstance(result, dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader previews loading a skill as replayable context without recording the snapshot yet.",
+            "reason": "human asked to preview loading a skill for an agent",
+            "next_command": next_command,
+            "recommended_action_id": preview_card.get("agent_id"),
+            "action_kind": "skill_load_preview",
+            "action_status": "ready",
+            "safety": "explicit_user",
+            "requires_explicit_user": True,
+        }
     if mode == "help":
         return {
             "mode": mode,
@@ -6564,6 +6697,78 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "next_command": next_command,
             "leader_action": None,
             "skill_import_preview_card": skill_import_preview_card,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    skill_load_preview_request = _chat_skill_load_preview_request(args.message)
+    if skill_load_preview_request is not None:
+        skill_name, agent_id, purpose = skill_load_preview_request
+        try:
+            skill_load_preview_card = _skill_load_preview_card(
+                config,
+                Path(config.root),
+                skill_name,
+                agent_id,
+                purpose,
+            )
+        except KeyError as exc:
+            print(str(exc).strip("'"), file=sys.stderr)
+            return 1
+        except LookupError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        next_command = skill_load_preview_card["load_command"]
+        turn = store.record_chat_turn(
+            mode="skill_load_preview",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="skill_load_preview",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "skill_load_preview",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "skill_load_preview",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "skill_load_preview",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                result=skill_load_preview_card,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "skill_load_preview_card": skill_load_preview_card,
             "continue_card": None,
             "inbox_card": None,
             "approval_card": None,
@@ -9241,6 +9446,14 @@ def build_parser() -> argparse.ArgumentParser:
     skills_load.add_argument("--agent", default="leader", help="Agent id using this skill; defaults to leader")
     skills_load.add_argument("--purpose", default="", help="Why this skill is being loaded")
     skills_load.set_defaults(func=skills_load_command)
+    skills_load_preview = skills_subparsers.add_parser(
+        "load-preview",
+        help="Preview loading a skill for an agent without recording context",
+    )
+    skills_load_preview.add_argument("--name", required=True, help="Skill name")
+    skills_load_preview.add_argument("--agent", default="leader", help="Agent id using this skill; defaults to leader")
+    skills_load_preview.add_argument("--purpose", default="", help="Why this skill would be loaded")
+    skills_load_preview.set_defaults(func=skills_load_preview_command)
     skills_import_preview = skills_subparsers.add_parser(
         "import-preview",
         help="Preview importing an external SKILL.md without writing project state",

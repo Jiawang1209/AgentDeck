@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Preview skill loads through CLI and Leader chat
+
+- 新增 `agentdeck skills load-preview --name <name> --agent <id> --purpose <text>`：只读返回目标 agent、用途、skill summary、显式 `agentdeck skills load ...` 命令和 show/load controls，不写入 `skill_loads[]`，不追加 `skill_loaded`。
+- 新增自然语言入口：`agentdeck leader chat --message "预览加载 skill planning 给 planner 用于 decompose implementation work"` 会进入 `mode=skill_load_preview`，嵌入 `skill_load_preview_card`，并把下一步停在显式 load 命令。
+- 保持 Skill Layer 人类确认边界：预览加载可记录 chat turn 和审计事件，但不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox、不修改 runtime/approval state，也不会把 skill content snapshot 注入上下文。
+- 扩展 `agentdeck contract skills` 和 `agentdeck contract leader-chat`：公开 `load_preview_response_fields`、`skill_load_preview_card_fields`、稳定 example fixture、help capability 和 `<name>` / `<purpose>` placeholder，让 GUI/TUI 能发现“预览加载 -> 显式 load”的 skill 生命周期。
+- 同步 README、AGENT/CLAUDE、skills contract、leader-chat contract 和北极星路线图，明确用户关于内置 skill、外源 skill、Hermes/WispTerm 式 skill 沉淀的诉求已经进入北极星约束，并保持可审计、显式加载、可回放。
+- 验证记录：已先确认红测失败，`agentdeck skills load-preview` 最初不是合法子命令，自然语言 `预览加载 skill ...` 最初误落入 DeepSeek provider 路径并因 `DEEPSEEK_API_KEY` 缺失失败；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_skills_load_preview_is_read_only_and_surfaces_explicit_command tests/test_agent_cli.py::test_leader_chat_previews_skill_load_without_mutating_context -q` 2 项通过；contract/help 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_skills_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_skills_example_exports_gui_ready_skill_registry tests/test_agent_cli.py::test_contract_skills_cli_matches_contract_module tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response tests/test_agent_cli.py::test_contract_leader_chat_cli_matches_contract_module tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 8 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 125 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 531 项通过。
+
 ### Current - Preview external skills through Leader chat
 
 - 新增自然语言入口：`agentdeck leader chat --message "预览导入 skill <SKILL.md>"` 会进入 `mode=skill_import_preview`，嵌入 `skill_import_preview_card`，复用 CLI `skills import-preview` 的 source path、目标项目路径、hash、覆盖状态和 import/force/show controls。
