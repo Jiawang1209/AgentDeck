@@ -169,6 +169,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("inbox_card")
     if embedded_card == "trace_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "capture_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "inbox_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "role_card" and payload.get("control_registry_card") is not None:
@@ -1418,6 +1420,14 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id=None,
         controls=trace_card.get("controls"),
     )
+    capture_card = payload.get("capture_card") if isinstance(payload.get("capture_card"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry,
+        scope="capture",
+        card="capture_card",
+        agent_id=capture_card.get("agent_id"),
+        controls=capture_card.get("controls"),
+    )
     return registry
 
 
@@ -1466,6 +1476,19 @@ def _append_workbench_control_registry_items(
         }
         item["control_id"] = control_registry_item_id(item)
         registry.append(item)
+
+
+def _capture_card_controls(capture_command: str) -> list[dict[str, object]]:
+    return [
+        {
+            "kind": "inspect",
+            "label": "Capture agent output",
+            "command": capture_command,
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
 
 
 def _workbench_change_summary(store: StateStore, since_event_id: str | None) -> dict[str, object]:
@@ -6847,6 +6870,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "lines": lines,
             "capture_command": next_command,
             "output": output,
+            "controls": _capture_card_controls(next_command),
         }
         turn = store.record_chat_turn(
             mode="capture",
@@ -6871,6 +6895,14 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         refreshed_project_view = _project_view_payload_or_error(config, store)
         if refreshed_project_view is None:
             return 1
+        registry_items = _workbench_control_registry({"capture_card": capture_card})
+        capture_control_id = registry_items[0]["control_id"] if registry_items else None
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="capture",
+            card="capture_card",
+            control_id=capture_control_id,
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -6891,6 +6923,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "leader_action": None,
             "continue_card": None,
             "capture_card": capture_card,
+            "control_registry_card": control_registry_card,
             "inbox_card": None,
             "approval_card": None,
             "runtime_card": None,

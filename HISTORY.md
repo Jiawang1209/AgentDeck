@@ -4,6 +4,16 @@
 
 ## 2026-07-07
 
+### Current - Link capture chat to command registry controls
+
+- 扩展自然语言可见 pane capture：`agentdeck leader chat --message "查看 planner 输出"` 现在返回带 GUI-ready `controls[]` 的 `capture_card`，其中 `kind=inspect` control 指向同一条只读 `agentdeck agent capture --agent planner --lines 200`。
+- 同一响应会附带过滤到 `scope=capture` / `card=capture_card` 的 `control_registry_card`，selection 指向 capture inspect control，`intent_card.secondary_embedded_cards[]` 同步列出 registry companion。
+- 扩展 `agentdeck workbench` / `agentdeck controls` 的 registry 派生逻辑和契约 helper：现在能索引局部 `capture_card.controls[]`，并校验 capture registry item 必须是 inspect-only 的 `agentdeck agent capture --agent ...`。
+- 收紧契约守门：`capture_card_fields` 新增 `controls`；`validate_leader_chat_contract()` 会拒绝缺少 capture registry companion 的 capture 响应，并要求 registry selection 与顶层 `next_command` 对齐。
+- 保持只读边界：capture controls 和 registry companion 只是可见 tmux pane 输出快照/重新抓取命令投影，不创建 plan/action/approval/message/job/inbox，不 ack，不 dispatch，不 capture reply，不发送 tmux 输入。
+- 同步 README、`docs/contracts/leader-chat-schema.md`、AGENT/CLAUDE 约束和测试。
+- 验证记录：已先确认红测失败，自然语言 pane capture 响应最初缺少 `capture_card.controls[]` 和 `control_registry_card`，validator 也会放过缺少 registry companion 的 capture 响应；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_captures_agent_output_as_read_only_card tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_capture_control_registry_card -q` 2 项通过；Leader/contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py tests/test_leader_cli.py -q` 360 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 508 项通过。
+
 ### Current - Link trace chat to command registry controls
 
 - 扩展 `agentdeck trace --id <id>` 的 trace payload：现在包含 GUI-ready `controls[]`，其中 `kind=inspect` control 指向同一条只读 `agentdeck trace --id <id>`。

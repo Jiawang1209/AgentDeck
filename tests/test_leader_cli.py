@@ -2667,6 +2667,16 @@ def test_leader_chat_captures_agent_output_as_read_only_card(tmp_path, monkeypat
         "lines": 200,
         "capture_command": "agentdeck agent capture --agent planner --lines 200",
         "output": "status: running\nsummary: planner is thinking\n",
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Capture agent output",
+                "command": "agentdeck agent capture --agent planner --lines 200",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            }
+        ],
     }
     assert payload["leader_explanation"] == {
         "mode": "capture",
@@ -2696,6 +2706,30 @@ def test_leader_chat_captures_agent_output_as_read_only_card(tmp_path, monkeypat
         "enabled": True,
         "blocker": None,
     }
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["control_registry_card"]["filters"]["scope"] == "capture"
+    assert payload["control_registry_card"]["filters"]["card"] == "capture_card"
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == [
+        "scope",
+        "card",
+        "control_id",
+    ]
+    assert payload["control_registry_card"]["filters"]["item_count_before_filter"] == 1
+    assert payload["control_registry_card"]["item_count"] == 1
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "capture",
+        "card": "capture_card",
+        "kind": "inspect",
+        "label": "Capture agent output",
+        "command": payload["next_command"],
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": "planner",
+        "control_id": selected_control["control_id"],
+    }
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
     assert fake.captured == [("%42", 200)]
     assert fake.sent == []
 
@@ -2709,6 +2743,30 @@ def test_leader_chat_captures_agent_output_as_read_only_card(tmp_path, monkeypat
     assert state_after["approvals"] == []
     assert state_after["messages"] == []
     assert state_after["jobs"] == []
+
+
+def test_validate_leader_chat_contract_requires_capture_control_registry_card(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看 planner 输出"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    assert validate_leader_chat_contract(payload) == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for capture responses",
+            "control_registry_card is required for capture responses",
+        ],
+    }
 
 
 def test_leader_chat_opens_agent_terminal_card_without_reading_pane(

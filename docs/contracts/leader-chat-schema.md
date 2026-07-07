@@ -459,12 +459,23 @@ Capture-mode responses are returned when the human asks to inspect one spawned a
     "pane_id": "%42",
     "lines": 200,
     "capture_command": "agentdeck agent capture --agent planner --lines 200",
-    "output": "status: running\n"
-  }
+    "output": "status: running\n",
+    "controls": [
+      {
+        "kind": "inspect",
+        "label": "Capture agent output",
+        "command": "agentdeck agent capture --agent planner --lines 200",
+        "safety": "inspect",
+        "enabled": true,
+        "blocker": null
+      }
+    ]
+  },
+  "control_registry_card": {}
 }
 ```
 
-When `capture_card` is present, `validate_leader_chat_contract()` checks `capture_card_fields`. Capture-mode records a chat turn and reads the requested tmux pane through the runtime backend, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, dispatch work, capture replies into the ledger, or send tmux input. If the requested agent is not spawned, the response must fail with `agent is not spawned: <agent_id>` rather than falling through to provider-backed planning.
+When `capture_card` is present, `validate_leader_chat_contract()` checks `capture_card_fields`. Live capture-mode responses also include a `control_registry_card` filtered to `scope=capture` / `card=capture_card`; its selection points at the `kind=inspect` control whose command matches the top-level `next_command`, and `intent_card.secondary_embedded_cards[]` lists `control_registry_card` so GUI shells can render the captured output and the matching recapture command together. Capture-mode records a chat turn and reads the requested tmux pane through the runtime backend, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, dispatch work, capture replies into the ledger, or send tmux input. If the requested agent is not spawned, the response must fail with `agent is not spawned: <agent_id>` rather than falling through to provider-backed planning.
 
 Natural-language capture-reply suggestions, such as `捕获 planner 对 msg_xxx 的回复` or `capture reply from planner for msg_xxx`, also return `mode=capture`, but they do not include `capture_card` and do not read the pane. They embed `trace_card` for the referenced message, set `next_command` to `agentdeck capture-reply --agent <agent_id> --message-id <message_id>`, and mark `leader_explanation.action_kind=capture_reply`, `safety=explicit_runtime`, and `requires_explicit_user=true`. Requests such as `捕获当前回复` or `回收当前结果` may resolve the current target from the latest `leader_review` only when that review is `wait_for_reply`; in that case the response should include the review and plan_id while still returning the same explicit `capture-reply` command. Unknown message ids must fail with `unknown trace id: <id>` rather than falling through to provider-backed planning.
 

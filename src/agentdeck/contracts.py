@@ -588,6 +588,7 @@ LEADER_CHAT_CAPTURE_CARD_FIELDS = (
     "lines",
     "capture_command",
     "output",
+    "controls",
 )
 
 LEADER_CHAT_TERMINAL_CARD_FIELDS = (
@@ -3901,6 +3902,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                     "intent_card.secondary_embedded_cards must include control_registry_card for trace responses"
                 )
             if (
+                explanation_action_kind == "capture"
+                and payload.get("capture_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for capture responses"
+                )
+            if (
                 explanation_action_kind in {"inbox", "inbox_ack", "inbox_trace"}
                 and payload.get("inbox_card") is not None
                 and "control_registry_card" not in secondary_embedded_cards
@@ -4305,6 +4314,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         ):
             errors.append("control_registry_card.selection.next_command must match trace next_command")
         if (
+            explanation_action_kind == "capture"
+            and isinstance(capture_card, dict)
+            and isinstance(selection, dict)
+            and selection.get("next_command") != payload.get("next_command")
+        ):
+            errors.append("control_registry_card.selection.next_command must match capture next_command")
+        if (
             explanation_action_kind in {"inbox_ack", "inbox_trace"}
             and isinstance(inbox_card, dict)
             and isinstance(selection, dict)
@@ -4361,6 +4377,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("control_registry_card is required for audit responses")
     elif explanation_action_kind == "trace":
         errors.append("control_registry_card is required for trace responses")
+    elif explanation_action_kind == "capture":
+        errors.append("control_registry_card is required for capture responses")
     elif explanation_action_kind in {"inbox", "inbox_ack", "inbox_trace"}:
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif explanation_action_kind in {"role", "role_assign"}:
@@ -4459,6 +4477,24 @@ def _validate_leader_chat_capture_card_contract(errors: list[str], capture_card:
         errors.append("capture_card.lines must be an integer")
     if "output" in capture_card and not isinstance(capture_card.get("output"), str):
         errors.append("capture_card.output must be a string")
+    controls = capture_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("capture_card.controls items must be objects")
+                continue
+            for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"capture_card.controls: missing control field: {field}")
+            if control.get("kind") == "inspect":
+                if control.get("safety") != "inspect":
+                    errors.append("capture_card.controls: inspect controls must use safety=inspect")
+                if control.get("command") != capture_card.get("capture_command"):
+                    errors.append("capture_card.controls: inspect command must match capture_command")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append("capture_card.controls: disabled controls must include blocker")
+    elif "controls" in capture_card:
+        errors.append("capture_card.controls must be a list")
 
 
 def _validate_leader_chat_terminal_card_contract(errors: list[str], terminal_card: dict[str, object]) -> None:
@@ -5117,6 +5153,11 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     errors.append("control_registry_card.items: trace inspect must use safety=inspect")
                 if not str(item.get("command") or "").startswith("agentdeck trace --id "):
                     errors.append("control_registry_card.items: trace inspect command must use trace")
+            if item.get("scope") == "capture" and item.get("kind") == "inspect":
+                if item.get("safety") != "inspect":
+                    errors.append("control_registry_card.items: capture inspect must use safety=inspect")
+                if not str(item.get("command") or "").startswith("agentdeck agent capture --agent "):
+                    errors.append("control_registry_card.items: capture inspect command must use agent capture")
             if item.get("scope") == "inbox" and item.get("kind") == "preview":
                 if not str(item.get("command") or "").startswith("agentdeck trace --id "):
                     errors.append("control_registry_card.items: inbox preview command must use trace")
@@ -6590,6 +6631,14 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
                 agent_id=agent.get("agent_id"),
                 controls=agent.get("controls"),
             )
+    capture_card = payload.get("capture_card") if isinstance(payload.get("capture_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="capture",
+        card="capture_card",
+        agent_id=capture_card.get("agent_id"),
+        controls=capture_card.get("controls"),
+    )
     role_card = payload.get("role_card") if isinstance(payload.get("role_card"), dict) else {}
     role_agents = role_card.get("agents") if isinstance(role_card.get("agents"), list) else []
     for agent in role_agents:
