@@ -3443,6 +3443,7 @@ def memory_suggestions_command(_args: argparse.Namespace) -> int:
     if store is None:
         return exit_code
     suggestions = list(store.load().get("memory_suggestions", []))
+    items = [_memory_suggestion_item_for_card(item) if isinstance(item, dict) else item for item in suggestions]
     pending_count = sum(1 for item in suggestions if isinstance(item, dict) and item.get("status") == "pending")
     _print_json(
         {
@@ -3450,7 +3451,8 @@ def memory_suggestions_command(_args: argparse.Namespace) -> int:
             "mode": "memory_suggestions",
             "count": len(suggestions),
             "pending_count": pending_count,
-            "items": suggestions,
+            "apply_preview_command_template": "agentdeck memory apply-preview --suggestion-id <id>",
+            "items": items,
             "controls": [
                 _control(
                     kind="suggest",
@@ -3459,7 +3461,15 @@ def memory_suggestions_command(_args: argparse.Namespace) -> int:
                     safety="explicit_user",
                     enabled=False,
                     blocker="requires suggestion fields",
-                )
+                ),
+                _control(
+                    kind="apply_preview",
+                    label="Preview memory apply",
+                    command="agentdeck memory apply-preview --suggestion-id <id>",
+                    safety="inspect",
+                    enabled=False,
+                    blocker="requires suggestion id",
+                ),
             ],
         }
     )

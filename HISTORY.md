@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Surface memory apply controls in suggestions CLI
+
+- 扩展 `agentdeck memory suggestions`：输出新增 `apply_preview_command_template`，每条 pending memory suggestion 现在运行时派生 `apply_preview` 和 `apply_memory` controls，和 workbench / Leader chat 的 `memory_suggestions_card` 保持同源。
+- 保持只读边界：`memory suggestions` 不写 `.agentdeck/memory/*.md`，不更新 suggestion status，不追加 `memory_applied`，也不调用 provider、读取 tmux 或注入 prompt；真正落地仍只能通过显式 `agentdeck memory apply --suggestion-id <id> --confirm`。
+- 同步 README、AGENT/CLAUDE 和架构文档，明确 CLI queue 本身也能给未来 GUI/TUI 渲染“预览 -> 显式确认写入”的控件。
+- 验证记录：已先确认红测失败，`agentdeck memory suggestions` 最初缺少 `apply_preview_command_template` 和 item 级 `apply_preview` / `apply_memory` controls；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_memory_suggestions_lists_pending_suggestions_without_mutating_state -q` 1 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 138 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 544 项通过。
+
 ### Current - Surface memory apply controls in workbench
 
 - 扩展 `memory_suggestions_card`：pending memory suggestion item 现在带 `apply_preview` 和 `apply_memory` controls，card 顶层新增 `apply_preview_command_template`，让未来 GUI/TUI 能从一屏工作台直接进入“预览 -> 显式确认写入”的长期记忆流程。

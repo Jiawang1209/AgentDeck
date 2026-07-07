@@ -603,6 +603,38 @@ def test_memory_suggestions_lists_pending_suggestions_without_mutating_state(
     capsys.readouterr()
     state_before = StateStore(root).load()
     events_before = StateStore(root).list_events(limit=20)
+    suggestion_id = state_before["memory_suggestions"][0]["suggestion_id"]
+    expected_items = [
+        {
+            **state_before["memory_suggestions"][0],
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "List memory suggestions",
+                    "command": "agentdeck memory suggestions",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "apply_preview",
+                    "label": "Preview memory apply",
+                    "command": f"agentdeck memory apply-preview --suggestion-id {suggestion_id}",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "apply_memory",
+                    "label": "Apply memory suggestion",
+                    "command": f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm",
+                    "safety": "explicit_user",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
+        }
+    ]
 
     exit_code = cli.main(["memory", "suggestions"])
 
@@ -612,7 +644,8 @@ def test_memory_suggestions_lists_pending_suggestions_without_mutating_state(
     assert payload["mode"] == "memory_suggestions"
     assert payload["count"] == 1
     assert payload["pending_count"] == 1
-    assert payload["items"] == state_before["memory_suggestions"]
+    assert payload["apply_preview_command_template"] == "agentdeck memory apply-preview --suggestion-id <id>"
+    assert payload["items"] == expected_items
     assert payload["controls"] == [
         {
             "kind": "suggest",
@@ -621,6 +654,14 @@ def test_memory_suggestions_lists_pending_suggestions_without_mutating_state(
             "safety": "explicit_user",
             "enabled": False,
             "blocker": "requires suggestion fields",
+        },
+        {
+            "kind": "apply_preview",
+            "label": "Preview memory apply",
+            "command": "agentdeck memory apply-preview --suggestion-id <id>",
+            "safety": "inspect",
+            "enabled": False,
+            "blocker": "requires suggestion id",
         }
     ]
     assert StateStore(root).load() == state_before
