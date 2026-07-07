@@ -96,8 +96,19 @@ class TuiModel:
 
     # --- shared ---
 
+    def _focus_next_command(self) -> None:
+        next_command = self._payload.get("next_command")
+        if not next_command:
+            return
+        for index, control in enumerate(self._filtered_controls()):
+            if control.get("command") == next_command:
+                self.selected_index = index
+                return
+
     def toggle_palette(self) -> None:
         self.mode = "palette" if self.mode == "overview" else "overview"
+        if self.mode == "palette":
+            self._focus_next_command()
 
     def refresh(self, payload: dict[str, Any]) -> None:
         self._set_payload(payload)

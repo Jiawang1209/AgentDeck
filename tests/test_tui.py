@@ -29,10 +29,10 @@ def test_tui_model_toggles_to_palette_and_navigates_controls() -> None:
     assert items == payload["control_registry"]
     assert len(items) > 1
 
-    # selection starts at the first control
+    # move to a known start (top), then verify stepwise navigation
+    model.move_selection(-10_000)
     assert model.selected_index == 0
-    first = model.selected_control()
-    assert first == items[0]
+    assert model.selected_control() == items[0]
 
     model.move_selection(1)
     assert model.selected_index == 1
@@ -164,3 +164,14 @@ def test_tui_model_palette_filter_narrows_controls() -> None:
     # clearing the filter restores the full list
     model.set_filter("")
     assert len(model.control_items()) == total
+
+
+def test_tui_palette_focuses_recovery_next_command_on_open() -> None:
+    payload = workbench_example()
+    model = TuiModel(payload)
+
+    model.toggle_palette()
+
+    control = model.selected_control()
+    assert control is not None
+    assert control["command"] == payload["next_command"]

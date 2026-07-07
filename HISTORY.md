@@ -4,6 +4,12 @@
 
 ## 2026-07-08
 
+### Current - Focus recovery next_command when TUI palette opens
+
+- `agentdeck tui` 打开命令面板时（`toggle_palette` 进入 palette）自动把选中项定位到 command 等于顶层 `next_command`（recovery 推荐的下一步）的控件；找不到时保持第一项。让用户一进面板就落在"当前该运行哪条命令"上。
+- 纯逻辑 `TuiModel._focus_next_command()`，仍只读——只移动选择,不执行。
+- 验证记录：已先确认红测失败，palette 打开时最初停在第一条（leader chat）而非 recovery next_command；实现后同步更新导航测试（先显式移到顶再验证步进/钳制）；`conda run -n agentdeck pytest tests/test_tui.py -q` 10 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 633 项通过。
+
 ### Current - Add palette filter to interactive TUI
 
 - 给 `agentdeck tui` 的命令面板加过滤：`TuiModel.set_filter(text)` 按子串（大小写不敏感，匹配 control 的 scope/kind/label/command）收窄 `control_items()`，选择态和页脚随过滤后列表重钳制；curses 里按 `/` 进入一个简单的过滤输入行（Enter 应用、Esc 取消、Backspace 删字），实时收窄面板。
