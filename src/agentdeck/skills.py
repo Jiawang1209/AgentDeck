@@ -133,7 +133,7 @@ def find_skill(root: Path, name: str) -> SkillSnapshot | None:
     return None
 
 
-def import_project_skill(root: Path, source_path: Path, *, force: bool = False) -> tuple[SkillSnapshot, bool]:
+def preview_project_skill_import(root: Path, source_path: Path) -> tuple[SkillSnapshot, bool, Path]:
     if not source_path.exists() or not source_path.is_file():
         raise FileNotFoundError(str(source_path))
     content = source_path.read_text(encoding="utf-8")
@@ -148,9 +148,20 @@ def import_project_skill(root: Path, source_path: Path, *, force: bool = False) 
     target_dir = root / CONFIG_DIR / "skills" / snapshot.name
     target_path = target_dir / "SKILL.md"
     overwritten = target_path.exists()
+    preview = _snapshot_from_content(
+        content,
+        source="project",
+        path=target_path,
+        fallback_name=snapshot.name,
+    )
+    return preview, overwritten, target_path
+
+
+def import_project_skill(root: Path, source_path: Path, *, force: bool = False) -> tuple[SkillSnapshot, bool]:
+    snapshot, overwritten, target_path = preview_project_skill_import(root, source_path)
     if overwritten and not force:
         raise FileExistsError(snapshot.name)
-    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source_path, target_path)
     imported = _snapshot_from_content(
         target_path.read_text(encoding="utf-8"),

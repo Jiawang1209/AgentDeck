@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Preview external skill imports
+
+- 新增 `agentdeck skills import-preview --path <SKILL.md>`：只读解析外源 skill，返回 source path、目标 `.agentdeck/skills/<name>/SKILL.md`、hash、是否会覆盖、import/force/show controls 和后续显式导入命令。
+- 保持外源 skill 人类确认边界：preview 不复制文件、不追加审计事件、不 load skill、不调用 provider、不读取 tmux、不修改 runtime/approval state；同名 skill 已存在时普通 import control disabled，force import control enabled。
+- 扩展 Skill Registry contract：`agentdeck contract skills` / `--example` 现在公开 `skills_import_preview_command_template` 和 `import_preview_response_fields`，让 GUI/Leader 能发现“预览 -> 导入/覆盖 -> 加载”的完整外源 skill 流程。
+- 同步 README、AGENT/CLAUDE、skills contract 文档、架构文档和北极星路线图，明确 Skill 诉求包含内置 skill、项目本地 skill、显式导入外源 skill、preview provenance/hash/覆盖状态、人类确认和可回放加载。
+- 验证记录：已先确认红测失败，`agentdeck skills import-preview` 最初不是合法子命令，contract payload 最初缺少 `skills_import_preview_command_template` / `example_import_preview_response_fields`；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_skills_import_preview_is_read_only_and_surfaces_controls tests/test_agent_cli.py::test_skills_import_preview_marks_existing_skill_and_force_control tests/test_agent_cli.py::test_contract_skills_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_skills_example_exports_gui_ready_skill_registry tests/test_agent_cli.py::test_contract_skills_cli_matches_contract_module -q` 5 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 122 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 528 项通过。
+
 ### Current - Add Skill Registry contract discovery
 
 - 新增 `agentdeck contract skills` / `--example`：公开 `skills list/show/import/load` 响应字段、skill item 字段、detail/load skill 字段和 skill control 字段，供 GUI/TUI 启动时发现 Skill Registry 契约。

@@ -423,6 +423,121 @@ def test_skills_import_copies_external_skill_without_loading_it(tmp_path, monkey
     assert latest_event["payload"]["name"] == "architecture-review"
 
 
+def test_skills_import_preview_is_read_only_and_surfaces_controls(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    external = tmp_path / "external" / "SKILL.md"
+    external.parent.mkdir()
+    external.write_text(
+        "---\n"
+        "name: architecture-review\n"
+        "description: Review architecture tradeoffs.\n"
+        "required_tools: rg, pytest\n"
+        "risk: inspect\n"
+        "---\n"
+        "# Architecture Review\n\n"
+        "Check boundaries, tradeoffs, and verification evidence.\n",
+        encoding="utf-8",
+    )
+    target = root / ".agentdeck" / "skills" / "architecture-review" / "SKILL.md"
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["skills", "import-preview", "--path", str(external)])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "skill_import_preview"
+    assert payload["source_path"] == str(external)
+    assert payload["project_path"] == str(target)
+    assert payload["would_overwrite"] is False
+    assert payload["import_command"] == f"agentdeck skills import --path {external}"
+    assert payload["force_import_command"] == f"agentdeck skills import --path {external} --force"
+    assert payload["skill"]["name"] == "architecture-review"
+    assert payload["skill"]["source"] == "project"
+    assert payload["skill"]["path"] == str(target)
+    assert payload["skill"]["required_tools"] == ["rg", "pytest"]
+    assert payload["controls"] == [
+        {
+            "kind": "import",
+            "label": "Import skill",
+            "command": f"agentdeck skills import --path {external}",
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "force_import",
+            "label": "Force import skill",
+            "command": f"agentdeck skills import --path {external} --force",
+            "safety": "explicit_user",
+            "enabled": False,
+            "blocker": "skill does not exist",
+        },
+        {
+            "kind": "show_after_import",
+            "label": "Show skill after import",
+            "command": "agentdeck skills show --name architecture-review",
+            "safety": "inspect",
+            "enabled": False,
+            "blocker": "skill is not imported yet",
+        },
+    ]
+    assert not target.exists()
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=1) == []
+
+
+def test_skills_import_preview_marks_existing_skill_and_force_control(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    existing_dir = root / ".agentdeck" / "skills" / "architecture-review"
+    existing_dir.mkdir(parents=True)
+    existing = existing_dir / "SKILL.md"
+    existing.write_text(
+        "---\nname: architecture-review\ndescription: Existing.\nrisk: inspect\n---\n# Existing\n",
+        encoding="utf-8",
+    )
+    external = tmp_path / "external" / "SKILL.md"
+    external.parent.mkdir()
+    external.write_text(
+        "---\nname: architecture-review\ndescription: New.\nrisk: inspect\n---\n# New\n",
+        encoding="utf-8",
+    )
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["skills", "import-preview", "--path", str(external)])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["would_overwrite"] is True
+    assert payload["controls"][0] == {
+        "kind": "import",
+        "label": "Import skill",
+        "command": f"agentdeck skills import --path {external}",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "skill already exists",
+    }
+    assert payload["controls"][1] == {
+        "kind": "force_import",
+        "label": "Force import skill",
+        "command": f"agentdeck skills import --path {external} --force",
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["controls"][2] == {
+        "kind": "show_after_import",
+        "label": "Show existing skill",
+        "command": "agentdeck skills show --name architecture-review",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert existing.read_text(encoding="utf-8").endswith("# Existing\n")
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=1) == []
+
+
 def test_skills_import_refuses_to_overwrite_without_force(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     existing_dir = root / ".agentdeck" / "skills" / "architecture-review"
@@ -1480,6 +1595,7 @@ def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     expected = skills_contract_payload(Path(payload["contract_path"]))
     assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
     assert payload["skills_list_command"] == "agentdeck skills list"
+    assert payload["skills_import_preview_command_template"] == "agentdeck skills import-preview --path <SKILL.md>"
     assert payload["skills_import_command_template"] == "agentdeck skills import --path <SKILL.md>"
     assert payload["contract_path"].endswith("docs/contracts/skills-schema.md")
     assert payload["contract_exists"] is True
@@ -1487,6 +1603,7 @@ def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["skill_item_fields"] == expected["skill_item_fields"]
     assert payload["skill_control_fields"] == expected["skill_control_fields"]
     assert payload["detail_response_fields"] == expected["detail_response_fields"]
+    assert payload["import_preview_response_fields"] == expected["import_preview_response_fields"]
     assert payload["import_response_fields"] == expected["import_response_fields"]
     assert payload["load_response_fields"] == expected["load_response_fields"]
 
@@ -1508,12 +1625,16 @@ def test_contract_skills_example_exports_gui_ready_skill_registry(capsys) -> Non
     assert set(payload["example_skill_control_fields"]) == set(example["list"]["controls"][0])
     assert payload["example_detail_response_fields"] == payload["detail_response_fields"]
     assert set(payload["example_detail_response_fields"]) == set(example["detail"])
+    assert payload["example_import_preview_response_fields"] == payload["import_preview_response_fields"]
+    assert set(payload["example_import_preview_response_fields"]) == set(example["import_preview"])
     assert payload["example_import_response_fields"] == payload["import_response_fields"]
     assert set(payload["example_import_response_fields"]) == set(example["import"])
     assert payload["example_load_response_fields"] == payload["load_response_fields"]
     assert set(payload["example_load_response_fields"]) == set(example["load"])
     assert example["list"]["controls"][0]["kind"] == "import"
     assert example["list"]["skills"][0]["controls"][1]["kind"] == "load"
+    assert example["import_preview"]["controls"][0]["kind"] == "import"
+    assert example["import_preview"]["controls"][1]["kind"] == "force_import"
     assert example["import"]["skill"]["controls"][0]["kind"] == "show"
 
 

@@ -394,6 +394,18 @@ SKILLS_DETAIL_RESPONSE_FIELDS = (
     "skill",
 )
 
+SKILLS_IMPORT_PREVIEW_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "skill",
+    "source_path",
+    "project_path",
+    "would_overwrite",
+    "import_command",
+    "force_import_command",
+    "controls",
+)
+
 SKILLS_IMPORT_RESPONSE_FIELDS = (
     "ok",
     "mode",
@@ -1604,12 +1616,14 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "skills_list_command": "agentdeck skills list",
         "skills_show_command_template": "agentdeck skills show --name <name>",
+        "skills_import_preview_command_template": "agentdeck skills import-preview --path <SKILL.md>",
         "skills_import_command_template": "agentdeck skills import --path <SKILL.md>",
         "skills_load_command_template": "agentdeck skills load --name <name> --agent <agent_id> --purpose <purpose>",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "list_response_fields": list(SKILLS_LIST_RESPONSE_FIELDS),
         "detail_response_fields": list(SKILLS_DETAIL_RESPONSE_FIELDS),
+        "import_preview_response_fields": list(SKILLS_IMPORT_PREVIEW_RESPONSE_FIELDS),
         "import_response_fields": list(SKILLS_IMPORT_RESPONSE_FIELDS),
         "load_response_fields": list(SKILLS_LOAD_RESPONSE_FIELDS),
         "skill_item_fields": list(SKILLS_SKILL_ITEM_FIELDS),
@@ -1626,6 +1640,7 @@ def skills_contract_response(contract_path: Path, include_example: bool = False)
         payload["example"] = True
         payload["example_list_response_fields"] = list(example["list"])
         payload["example_detail_response_fields"] = list(example["detail"])
+        payload["example_import_preview_response_fields"] = list(example["import_preview"])
         payload["example_import_response_fields"] = list(example["import"])
         payload["example_load_response_fields"] = list(example["load"])
         payload["example_skill_item_fields"] = list(example["list"]["skills"][0])
@@ -1692,6 +1707,46 @@ def skills_example() -> dict[str, object]:
                 **deepcopy(skill_item),
                 "content": "# Planning\n\nBreak a user goal into role-aware steps.\n",
             },
+        },
+        "import_preview": {
+            "ok": True,
+            "mode": "skill_import_preview",
+            "skill": {
+                **deepcopy(skill_item),
+                "source": "project",
+                "path": "/workspace/project/.agentdeck/skills/planning/SKILL.md",
+            },
+            "source_path": "/external/skills/planning/SKILL.md",
+            "project_path": "/workspace/project/.agentdeck/skills/planning/SKILL.md",
+            "would_overwrite": False,
+            "import_command": "agentdeck skills import --path /external/skills/planning/SKILL.md",
+            "force_import_command": "agentdeck skills import --path /external/skills/planning/SKILL.md --force",
+            "controls": [
+                {
+                    "kind": "import",
+                    "label": "Import skill",
+                    "command": "agentdeck skills import --path /external/skills/planning/SKILL.md",
+                    "safety": "explicit_user",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "force_import",
+                    "label": "Force import skill",
+                    "command": "agentdeck skills import --path /external/skills/planning/SKILL.md --force",
+                    "safety": "explicit_user",
+                    "enabled": False,
+                    "blocker": "skill does not exist",
+                },
+                {
+                    "kind": "show_after_import",
+                    "label": "Show skill after import",
+                    "command": show_command,
+                    "safety": "inspect",
+                    "enabled": False,
+                    "blocker": "skill is not imported yet",
+                },
+            ],
         },
         "import": {
             "ok": True,

@@ -69,7 +69,7 @@ from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec,
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .runtime import TmuxBackend
-from .skills import discover_skills, find_skill, import_project_skill
+from .skills import discover_skills, find_skill, import_project_skill, preview_project_skill_import
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 
 
@@ -3051,6 +3051,62 @@ def skills_load_command(args: argparse.Namespace) -> int:
             "purpose": args.purpose,
             "created_at": record["created_at"],
             "skill": skill_payload,
+        }
+    )
+    return 0
+
+
+def skills_import_preview_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        skill, would_overwrite, target_path = preview_project_skill_import(Path(config.root), Path(args.path))
+    except FileNotFoundError:
+        print(f"skill file not found: {args.path}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    import_command = f"agentdeck skills import --path {Path(args.path)}"
+    force_import_command = f"{import_command} --force"
+    show_command = f"agentdeck skills show --name {skill.name}"
+    _print_json(
+        {
+            "ok": True,
+            "mode": "skill_import_preview",
+            "skill": skill.summary(),
+            "source_path": str(Path(args.path)),
+            "project_path": str(target_path),
+            "would_overwrite": would_overwrite,
+            "import_command": import_command,
+            "force_import_command": force_import_command,
+            "controls": [
+                _control(
+                    kind="import",
+                    label="Import skill",
+                    command=import_command,
+                    safety="explicit_user",
+                    enabled=not would_overwrite,
+                    blocker="skill already exists" if would_overwrite else None,
+                ),
+                _control(
+                    kind="force_import",
+                    label="Force import skill",
+                    command=force_import_command,
+                    safety="explicit_user",
+                    enabled=would_overwrite,
+                    blocker=None if would_overwrite else "skill does not exist",
+                ),
+                _control(
+                    kind="show_after_import",
+                    label="Show existing skill" if would_overwrite else "Show skill after import",
+                    command=show_command,
+                    safety="inspect",
+                    enabled=would_overwrite,
+                    blocker=None if would_overwrite else "skill is not imported yet",
+                ),
+            ],
         }
     )
     return 0
@@ -9050,6 +9106,12 @@ def build_parser() -> argparse.ArgumentParser:
     skills_load.add_argument("--agent", default="leader", help="Agent id using this skill; defaults to leader")
     skills_load.add_argument("--purpose", default="", help="Why this skill is being loaded")
     skills_load.set_defaults(func=skills_load_command)
+    skills_import_preview = skills_subparsers.add_parser(
+        "import-preview",
+        help="Preview importing an external SKILL.md without writing project state",
+    )
+    skills_import_preview.add_argument("--path", required=True, help="Path to an external SKILL.md file")
+    skills_import_preview.set_defaults(func=skills_import_preview_command)
     skills_import = skills_subparsers.add_parser("import", help="Import an external SKILL.md into project skills")
     skills_import.add_argument("--path", required=True, help="Path to an external SKILL.md file")
     skills_import.add_argument("--force", action="store_true", help="Overwrite an existing project skill with the same name")
