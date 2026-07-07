@@ -114,6 +114,19 @@ def test_render_workbench_dashboard_omits_run_progress_when_no_plan() -> None:
     assert "Run progress" not in text
 
 
+def test_render_workbench_dashboard_shows_learning_layer_suggestions() -> None:
+    payload = workbench_example()
+
+    text = render_workbench_dashboard(payload)
+
+    assert "Learning layer" in text
+    assert "skill suggestions" in text
+    assert "incident-review" in text
+    assert "memory suggestions" in text
+    # memory suggestions expose the explicit apply command verbatim (read-only display)
+    assert "agentdeck memory apply --suggestion-id mem_example --confirm" in text
+
+
 def test_render_workbench_dashboard_flags_blocked_roles() -> None:
     payload = workbench_example()
     role = next(

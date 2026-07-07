@@ -240,6 +240,42 @@ def _render_control_palette(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_learning_layer(payload: dict[str, Any]) -> list[str]:
+    skills = _as_dict(payload.get("skill_suggestions_card"))
+    memory = _as_dict(payload.get("memory_suggestions_card"))
+    if not skills and not memory:
+        return []
+    lines = [_rule("Learning layer")]
+    if skills:
+        pending = skills.get("pending_count", skills.get("count", 0))
+        lines.append(f"skill suggestions: {pending} pending  ({skills.get('suggestions_command', 'agentdeck skills suggestions')})")
+        for item in _as_list(skills.get("items")):
+            item = _as_dict(item)
+            name = str(item.get("name") or item.get("suggestion_id") or "")
+            status = str(item.get("status") or "")
+            summary = str(item.get("summary") or "")
+            source = str(item.get("source") or "")
+            lines.append(f"  • {name} [{status}] — {summary}  (source: {source})".rstrip())
+    if memory:
+        pending = memory.get("pending_count", memory.get("count", 0))
+        lines.append(f"memory suggestions: {pending} pending  ({memory.get('suggestions_command', 'agentdeck memory suggestions')})")
+        for item in _as_list(memory.get("items")):
+            item = _as_dict(item)
+            scope = str(item.get("scope") or item.get("suggestion_id") or "")
+            status = str(item.get("status") or "")
+            summary = str(item.get("summary") or "")
+            lines.append(f"  • {scope} [{status}] — {summary}".rstrip())
+            apply_command = None
+            for control in _as_list(item.get("controls")):
+                control = _as_dict(control)
+                if control.get("kind") == "apply_memory":
+                    apply_command = control.get("command")
+                    break
+            if apply_command:
+                lines.append(f"      apply: {apply_command}")
+    return lines
+
+
 def render_workbench_dashboard(payload: dict[str, Any]) -> str:
     """Render a read-only text dashboard from a workbench snapshot payload."""
     payload = _as_dict(payload)
@@ -253,6 +289,7 @@ def render_workbench_dashboard(payload: dict[str, Any]) -> str:
         _render_release_preview(payload),
         _render_ledger(payload),
         _render_queue(payload),
+        _render_learning_layer(payload),
         _render_control_palette(payload),
     ]
     blocks = ["\n".join(section) for section in sections if section]

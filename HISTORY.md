@@ -4,6 +4,12 @@
 
 ## 2026-07-07
 
+### Current - Add learning-layer suggestions to TUI dashboard
+
+- 扩展 `agentdeck dashboard` / `render_workbench_dashboard`：新增只读 "Learning layer" 段（方向 2 首刀），从 workbench 契约的 `skill_suggestions_card` / `memory_suggestions_card` 渲染 pending skill / memory 建议队列——逐条显示 name/scope、status、summary、source，并把 memory 建议的显式 `agentdeck memory apply --suggestion-id <id> --confirm` 命令原样展示（只读展示，人类显式运行才落地）。
+- 把可审计 skill/memory 学习层队列带进 TUI 参考客户端，证明 workbench 契约同样足以驱动学习层 GUI；不写队列、不 apply、不调用 provider。
+- 验证记录：已先确认红测失败，dashboard 最初无 "Learning layer" 段；实现后目标测试 `conda run -n agentdeck pytest tests/test_dashboard.py -q` 10 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 615 项通过。
+
 ### Current - Add assisted run-progress guide to TUI dashboard
 
 - 扩展 `agentdeck dashboard` / `render_workbench_dashboard`：新增只读 "Run progress" 段（方向 1：审批门后的助跑视图）。当 workbench 契约里存在 `run_progress_card`（即已有 plan）时，逐步展示 plan_id/task/status、steps/approvals 计数、每个 step 的 agent 和 approval_status、review 的 next_action/reason，以及单条显式 `next_command`。
