@@ -4,6 +4,12 @@
 
 ## 2026-07-07
 
+### Current - Add worker activity section to TUI dashboard
+
+- 扩展 `agentdeck dashboard` / `render_workbench_dashboard`：新增 "Worker activity" 段，从 `worker_lifecycle_card.items[]` 逐 worker 输出 `lifecycle_stage` 和任务级明细（pending inbox 计数、artifact 计数、active message/job/reply id）——补上 role topology 只给状态、ledger 只给聚合计数所缺的"每个 worker 当前在做什么"。
+- 只显示非空明细，保持每 worker 一行紧凑；纯消费契约 payload，不写 state。
+- 验证记录：已先确认红测失败，dashboard 最初无 "Worker activity" 段；实现后目标测试 `conda run -n agentdeck pytest tests/test_dashboard.py -q` 7 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 612 项通过。
+
 ### Current - Document the TUI reference client
 
 - 新增 `docs/walkthroughs/tui-reference-client.md`：说明 `agentdeck dashboard` 是 workbench 契约的只读参考客户端，列出每个 section 对应的 card 来源、真实全新项目上的样例输出，并点明核心论点——只读 workbench 契约足以驱动 GUI/TUI（不读 state、不调 provider、不新增后端行为），命令面板保留每个控件的 enabled/blocker。

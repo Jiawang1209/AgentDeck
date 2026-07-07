@@ -330,7 +330,7 @@ The fourth slice is already committed:
 
 - `docs/walkthroughs/tui-reference-client.md` documents the reference client (section→card mapping, real sample output, the sufficiency argument), linked from the README `dashboard` paragraph.
 
-The TUI reference-client direction is complete: `agentdeck dashboard` renders header / recovery / role topology / review gate / release / ledger / queue / command palette purely from the `agentdeck workbench` contract, with tests (`tests/test_dashboard.py`) and a doc.
+The TUI reference-client direction is complete: `agentdeck dashboard` renders header / recovery / role topology / worker activity / review gate / release / ledger / queue / command palette purely from the `agentdeck workbench` contract, with tests (`tests/test_dashboard.py`) and a doc. A worker-activity section (per-worker lifecycle stage + active task ids + inbox/artifact counts) was added as polish.
 
 ## Next Best Step
 

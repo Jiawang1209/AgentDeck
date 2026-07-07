@@ -78,6 +78,18 @@ def test_render_workbench_dashboard_shows_ready_release_command() -> None:
     assert "agentdeck release --confirm" in text
 
 
+def test_render_workbench_dashboard_shows_worker_activity_detail() -> None:
+    payload = workbench_example()
+
+    text = render_workbench_dashboard(payload)
+
+    assert "Worker activity" in text
+    # per-worker lifecycle stage + active task detail from worker_lifecycle_card
+    assert "planner" in text
+    assert "inbox_pending" in text
+    assert "inbox:1" in text
+
+
 def test_render_workbench_dashboard_flags_blocked_roles() -> None:
     payload = workbench_example()
     role = next(

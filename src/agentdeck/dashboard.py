@@ -77,6 +77,34 @@ def _render_role_topology(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_worker_activity(payload: dict[str, Any]) -> list[str]:
+    card = _as_dict(payload.get("worker_lifecycle_card"))
+    items = _as_list(card.get("items"))
+    if not items:
+        return []
+    lines = [_rule("Worker activity")]
+    for item in items:
+        item = _as_dict(item)
+        agent_id = str(item.get("agent_id") or "")
+        stage = str(item.get("lifecycle_stage") or "")
+        detail: list[str] = []
+        pending = item.get("pending_inbox_count") or 0
+        if pending:
+            detail.append(f"inbox:{pending}")
+        artifacts = item.get("artifact_count") or 0
+        if artifacts:
+            detail.append(f"artifacts:{artifacts}")
+        for label, key in (("msg", "active_message_id"), ("job", "active_job_id"), ("reply", "latest_reply_id")):
+            value = item.get(key)
+            if value:
+                detail.append(f"{label}:{value}")
+        row = f"  {agent_id:<14} {stage:<18}"
+        if detail:
+            row += "  " + "  ".join(detail)
+        lines.append(row.rstrip())
+    return lines
+
+
 def _render_review_gate(payload: dict[str, Any]) -> list[str]:
     card = _as_dict(payload.get("review_gate_card"))
     if not card:
@@ -186,6 +214,7 @@ def render_workbench_dashboard(payload: dict[str, Any]) -> str:
         _render_header(payload),
         _render_recovery(payload),
         _render_role_topology(payload),
+        _render_worker_activity(payload),
         _render_review_gate(payload),
         _render_release_preview(payload),
         _render_ledger(payload),
