@@ -5360,14 +5360,47 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "trace",
         "inbox",
     ]
-    assert payload["review_gate_card"]["controls"][0] == {
-        "kind": "inspect",
-        "label": "Inspect review gate",
-        "command": "agentdeck workbench",
-        "safety": "inspect",
-        "enabled": True,
-        "blocker": None,
+    assert payload["review_gate_card"]["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect review gate",
+            "command": "agentdeck workbench",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "assign_code_reviewer",
+            "label": "Assign code reviewer",
+            "command": (
+                "agentdeck agent assign-role --agent <agent_id> --role code_reviewer "
+                "--role-prompt <role_prompt>"
+            ),
+            "safety": "explicit_user",
+            "enabled": False,
+            "blocker": "requires agent_id and role_prompt",
+        },
+        {
+            "kind": "assign_round_reviewer",
+            "label": "Assign round reviewer",
+            "command": (
+                "agentdeck agent assign-role --agent <agent_id> --role round_reviewer "
+                "--role-prompt <role_prompt>"
+            ),
+            "safety": "explicit_user",
+            "enabled": False,
+            "blocker": "requires agent_id and role_prompt",
+        },
+    ]
+    review_gate_controls = {
+        (item["scope"], item["card"], item["kind"], item["agent_id"])
+        for item in payload["control_registry"]
     }
+    assert {
+        ("review_gate", "review_gate_card", "inspect", None),
+        ("review_gate", "review_gate_card", "assign_code_reviewer", None),
+        ("review_gate", "review_gate_card", "assign_round_reviewer", None),
+    } <= review_gate_controls
     assert payload["leader_card"] == {
         "agent_id": "leader",
         "provider": "deepseek",
@@ -6885,7 +6918,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 93,
+        "item_count_before_filter": 95,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -7021,7 +7054,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 92,
+        "item_count_before_filter": 94,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -7064,7 +7097,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 93,
+        "item_count_before_filter": 95,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -7103,7 +7136,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 93,
+        "item_count_before_filter": 95,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -7136,7 +7169,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 93,
+        "item_count_before_filter": 95,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -7175,7 +7208,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 93,
+        "item_count_before_filter": 95,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

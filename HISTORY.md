@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add review gate role assignment templates
+
+- 扩展 `review_gate_card.controls[]`：新增 disabled `assign_code_reviewer` / `assign_round_reviewer` 模板命令，指向 `agentdeck agent assign-role --agent <agent_id> --role code_reviewer|round_reviewer --role-prompt <role_prompt>`。
+- 这些模板进入 `control_registry[]` 的 `scope=review_gate` / `card=review_gate_card`，供 GUI/TUI 在验收门旁边渲染显式角色配置表单；必须由人类填入 `agent_id` 和 `role_prompt` 后再运行。
+- 调整 review gate contract validator：stage controls 仍必须 inspect-only；顶层 assign 模板必须 `safety=explicit_user`、`enabled=false` 且带 blocker，不允许伪装成自动执行按钮。
+- 保持北极星 G5 边界：该卡仍不 release、不 merge、不 ack、不 dispatch、不推进 loop、不修改配置、不读取/写入/发送 tmux；角色配置只能通过人类显式运行返回的 assign-role 命令完成。
+- 同步 README、`docs/contracts/workbench-schema.md`、`docs/contracts/leader-chat-schema.md` 和 `docs/handoff/current-development-state.md`，把下一步推进到 release/next-round preview surface。
+- 验证记录：已先确认红测失败，`review_gate_card.controls[]` 最初只有 inspect control，缺少 reviewer 配置模板；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q` 1 项通过；review-gate/contract 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_leader_chat_review_gate_is_read_only_and_surfaces_control_palette tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_review_gate_stage_fields -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 539 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 581 项通过。
+
 ### Current - Add review gate Leader chat discovery
 
 - 扩展自然语言 `agentdeck leader chat --message "查看验收门"` / `review gate`：进入只读 `mode=review_gate`，嵌入与 `agentdeck workbench` 同源的 `review_gate_card`。

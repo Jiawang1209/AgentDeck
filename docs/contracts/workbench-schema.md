@@ -610,12 +610,28 @@ The card fuses runtime and ledger facts without creating a second state source. 
       "safety": "inspect",
       "enabled": true,
       "blocker": null
+    },
+    {
+      "kind": "assign_code_reviewer",
+      "label": "Assign code reviewer",
+      "command": "agentdeck agent assign-role --agent <agent_id> --role code_reviewer --role-prompt <role_prompt>",
+      "safety": "explicit_user",
+      "enabled": false,
+      "blocker": "requires agent_id and role_prompt"
+    },
+    {
+      "kind": "assign_round_reviewer",
+      "label": "Assign round reviewer",
+      "command": "agentdeck agent assign-role --agent <agent_id> --role round_reviewer --role-prompt <role_prompt>",
+      "safety": "explicit_user",
+      "enabled": false,
+      "blocker": "requires agent_id and role_prompt"
     }
   ]
 }
 ```
 
-The card is a gate projection, not a release action. `code_review` uses an agent whose `agent_id` or `role` is `code_reviewer` or `reviewer`; `round_review` requires an explicit `round_reviewer`. A gate is `ready` only when artifacts exist, code review has a recorded reply, and round review has a recorded reply. Missing reviewers, missing artifacts, and missing replies keep `status=blocked` with a concrete `reason`. All controls are inspect-only and must also appear in `control_registry[]` under `scope=review_gate`.
+The card is a gate projection, not a release action. `code_review` uses an agent whose `agent_id` or `role` is `code_reviewer` or `reviewer`; `round_review` requires an explicit `round_reviewer`. A gate is `ready` only when artifacts exist, code review has a recorded reply, and round review has a recorded reply. Missing reviewers, missing artifacts, and missing replies keep `status=blocked` with a concrete `reason`. Stage controls stay inspect-only. Top-level assignment controls are disabled `explicit_user` templates for GUI role-configuration forms and must not execute until a human fills `agent_id` and `role_prompt`; all controls must also appear in `control_registry[]` under `scope=review_gate`.
 
 ## Ledger Card
 

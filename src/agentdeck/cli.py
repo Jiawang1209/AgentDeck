@@ -2606,7 +2606,29 @@ def _workbench_review_gate_card(project_view: dict[str, object]) -> dict[str, ob
                 label="Inspect review gate",
                 command="agentdeck workbench",
                 safety="inspect",
-            )
+            ),
+            _control(
+                kind="assign_code_reviewer",
+                label="Assign code reviewer",
+                command=(
+                    "agentdeck agent assign-role --agent <agent_id> --role code_reviewer "
+                    "--role-prompt <role_prompt>"
+                ),
+                safety="explicit_user",
+                enabled=False,
+                blocker="requires agent_id and role_prompt",
+            ),
+            _control(
+                kind="assign_round_reviewer",
+                label="Assign round reviewer",
+                command=(
+                    "agentdeck agent assign-role --agent <agent_id> --role round_reviewer "
+                    "--role-prompt <role_prompt>"
+                ),
+                safety="explicit_user",
+                enabled=False,
+                blocker="requires agent_id and role_prompt",
+            ),
         ],
     }
 

@@ -5372,8 +5372,23 @@ def _validate_review_gate_card_contract(
                     errors.append(
                         _prefixed_contract_error(prefix, f"review_gate_card.controls missing field: {field}")
                     )
-            if control.get("safety") != "inspect":
-                errors.append(_prefixed_contract_error(prefix, "review_gate_card.controls must use safety=inspect"))
+            kind = control.get("kind")
+            if kind == "inspect" and control.get("safety") != "inspect":
+                errors.append(_prefixed_contract_error(prefix, "review_gate inspect controls must use safety=inspect"))
+            if kind in {"assign_code_reviewer", "assign_round_reviewer"}:
+                if control.get("safety") != "explicit_user":
+                    errors.append(
+                        _prefixed_contract_error(prefix, "review_gate assign controls must use safety=explicit_user")
+                    )
+                if control.get("enabled") is not False:
+                    errors.append(_prefixed_contract_error(prefix, "review_gate assign controls must be disabled"))
+                command = str(control.get("command") or "")
+                if not command.startswith("agentdeck agent assign-role --agent <agent_id> --role "):
+                    errors.append(
+                        _prefixed_contract_error(prefix, "review_gate assign controls must use assign-role template")
+                    )
+            if kind not in {"inspect", "assign_code_reviewer", "assign_round_reviewer"}:
+                errors.append(_prefixed_contract_error(prefix, f"unknown review_gate control kind: {kind}"))
             if control.get("enabled") is False and not control.get("blocker"):
                 errors.append(
                     _prefixed_contract_error(prefix, "review_gate_card.controls disabled controls need blocker")

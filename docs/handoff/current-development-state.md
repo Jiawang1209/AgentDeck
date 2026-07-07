@@ -97,6 +97,7 @@ New surface:
 - Treats `reviewer` / `code_reviewer` as the code-review stage.
 - Requires explicit `round_reviewer` configuration for round-level acceptance.
 - Exposes `status`, `reason`, `can_release=false/true`, artifact/review counts, per-stage blockers, and inspect-only trace/inbox controls.
+- Exposes disabled `assign_code_reviewer` / `assign_round_reviewer` templates as explicit-user controls so GUI/TUI can render reviewer role configuration forms without mutating config.
 - Does not release, merge, ack inbox items, dispatch follow-up work, or advance the loop.
 
 The current G5 follow-up adds natural-language discovery:
@@ -140,9 +141,9 @@ Continue the active north-star goal; do not redo completed work.
 
 ## Next Best Step
 
-After the current review gate discovery slice is committed, continue with the next Phase G5 follow-up:
+After the current review gate role-configuration slice is committed, continue with the next Phase G5 follow-up:
 
-- Add explicit role assignment UX/docs for configuring `code_reviewer` and `round_reviewer`.
+- Add a release/next-round preview surface that stays blocked until `review_gate_card.can_release=true`.
 - Preserve human approval before release, merge, ack, or follow-up dispatch.
 
 ## Required Verification Before Handoff
