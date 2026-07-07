@@ -17,6 +17,7 @@ agentdeck skills load-preview --name <name> --agent <agent_id> --purpose <purpos
 agentdeck skills load --name <name> --agent <agent_id> --purpose <purpose>
 agentdeck skills suggest --name <name> --summary <summary> --rationale <rationale> --source <source>
 agentdeck skills suggestions
+agentdeck skills draft-preview --suggestion-id <id>
 ```
 
 ## Discovery Fields
@@ -29,6 +30,7 @@ agentdeck skills suggestions
 - `skills_load_preview_command_template`: read-only skill load preview command template.
 - `skills_load_command_template`: explicit skill load command template.
 - `skills_suggestions_command`: read-only skill suggestion queue command.
+- `skills_draft_preview_command_template`: read-only skill draft preview command template.
 - `skills_suggest_command_template`: explicit skill suggestion command template.
 - `contract_path`: absolute path to this document.
 - `contract_exists`: whether this document exists in the local checkout.
@@ -40,6 +42,7 @@ agentdeck skills suggestions
 - `load_response_fields`: ordered fields returned by `agentdeck skills load`.
 - `suggest_response_fields`: ordered fields returned by `agentdeck skills suggest`.
 - `suggestions_response_fields`: ordered fields returned by `agentdeck skills suggestions`.
+- `draft_preview_response_fields`: ordered fields returned by `agentdeck skills draft-preview`.
 - `skill_item_fields`: ordered fields for available skill summaries.
 - `suggestion_item_fields`: ordered fields for pending skill suggestions.
 - `detail_skill_fields`: available skill summary fields plus `content`.
@@ -48,4 +51,4 @@ agentdeck skills suggestions
 
 ## Safety
 
-`show` controls use `safety=inspect`. `import-preview` is read-only: it parses a concrete external `SKILL.md`, returns the target project path, hash, overwrite state, and GUI-ready `import` / `force_import` / `show_after_import` controls, but it does not copy files, append events, load skills, or mutate state. `load-preview` is also read-only: it returns the target agent, purpose, skill summary, explicit `agentdeck skills load ...` command, and show/load controls, but it does not write `skill_loads[]`, append `skill_loaded`, call a provider, inspect tmux, or create plan/action/approval/message/job/inbox state. `suggestions` is read-only and lists the skill suggestion queue. `suggest` records a pending suggestion and audit event, but it does not create `SKILL.md`, import, load, install, rewrite, call a provider, inspect tmux, or alter runtime/approval state. `import` and `load` controls use `safety=explicit_user`; import controls are templates and disabled until a GUI supplies a concrete `SKILL.md` path. Import copies a local skill into the project registry, while load is the separate action that records replayable context for a Leader or Worker.
+`show` controls use `safety=inspect`. `import-preview` is read-only: it parses a concrete external `SKILL.md`, returns the target project path, hash, overwrite state, and GUI-ready `import` / `force_import` / `show_after_import` controls, but it does not copy files, append events, load skills, or mutate state. `load-preview` is also read-only: it returns the target agent, purpose, skill summary, explicit `agentdeck skills load ...` command, and show/load controls, but it does not write `skill_loads[]`, append `skill_loaded`, call a provider, inspect tmux, or create plan/action/approval/message/job/inbox state. `suggestions` is read-only and lists the skill suggestion queue; pending items include a draft-preview inspect control. `draft-preview` is read-only: it turns a pending suggestion into proposed `SKILL.md` content, hash, target path, and a disabled future create control, but it does not create files, update suggestion status, append events, import, load, call a provider, inspect tmux, or mutate runtime/approval state. `suggest` records a pending suggestion and audit event, but it does not create `SKILL.md`, import, load, install, rewrite, call a provider, inspect tmux, or alter runtime/approval state. `import` and `load` controls use `safety=explicit_user`; import controls are templates and disabled until a GUI supplies a concrete `SKILL.md` path. Import copies a local skill into the project registry, while load is the separate action that records replayable context for a Leader or Worker.

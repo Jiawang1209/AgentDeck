@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Preview skill drafts from suggestions
+
+- 新增 `agentdeck skills draft-preview --suggestion-id <id>`：把 pending `skill_suggestions[]` 只读转换为拟写入的 `SKILL.md` 内容、hash、目标路径和 disabled create control。
+- 扩展 `agentdeck skills suggestions` / workbench `skill_suggestions_card` 的 item 级 controls：pending skill suggestion 现在暴露 `draft_preview_command` 和 `draft_preview` inspect control，方便 GUI/TUI 从 suggestion queue 进入草稿审阅。
+- 保持学习层安全边界：draft-preview 不创建 `.agentdeck/skills/<name>/SKILL.md`，不更新 suggestion status，不追加事件，不 import/load skill，不调用 provider、不读取 tmux、不创建调度对象；真正创建 skill 的命令仍未开放，只作为 disabled future control 暴露。
+- 扩展 `agentdeck contract skills` / `--example` 和 `docs/contracts/skills-schema.md`：公开 `skills_draft_preview_command_template`、`draft_preview_response_fields` 和 example draft card，让 GUI 可以通过 contract discovery 发现这一环。
+- 同步 README、AGENT.md、CLAUDE.md 和测试，把 learning review 生成的 skill suggestion 推进到“可审阅 SKILL.md 草稿”的下一步。
+- 验证记录：已先确认红测失败，`draft-preview` 最初不是合法 skills 子命令，suggestion item 也缺少 draft-preview control；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_skills_suggestions_lists_pending_suggestions_without_mutating_state tests/test_agent_cli.py::test_skills_draft_preview_surfaces_skill_md_without_mutating_state tests/test_agent_cli.py::test_skills_draft_preview_rejects_unknown_suggestion_without_mutating_state -q` 3 项通过；contract 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_skills_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_skills_example_exports_gui_ready_skill_registry tests/test_agent_cli.py::test_contract_skills_cli_matches_contract_module -q` 3 项通过；skill suggestion/workbench/leader-chat 聚焦回归 9 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 148 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 226 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 143 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 559 项通过。
+
 ### Current - Add learning review contract validation
 
 - 新增 `validate_learning_review_contract()`：校验 learning review response 字段、状态、suggestion command 的 source/agent/trace、summary/suggest controls 和 `explicit_user` safety。

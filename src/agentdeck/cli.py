@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -967,6 +968,7 @@ def _skill_context_card(project_view: dict[str, object]) -> dict[str, object]:
 
 def _skill_suggestions_card(store: StateStore) -> dict[str, object]:
     suggestions = list(store.load().get("skill_suggestions", []))
+    items = [_skill_suggestion_item_for_card(item) if isinstance(item, dict) else item for item in suggestions]
     pending_count = sum(1 for item in suggestions if isinstance(item, dict) and item.get("status") == "pending")
     noun = "suggestion" if pending_count == 1 else "suggestions"
     verb = "is" if pending_count == 1 else "are"
@@ -978,7 +980,7 @@ def _skill_suggestions_card(store: StateStore) -> dict[str, object]:
         "project_view_command": "agentdeck status",
         "count": len(suggestions),
         "pending_count": pending_count,
-        "items": suggestions,
+        "items": items,
         "controls": [
             _control(
                 kind="inspect",
@@ -987,6 +989,32 @@ def _skill_suggestions_card(store: StateStore) -> dict[str, object]:
                 safety="inspect",
             ),
             _control(kind="inspect", label="Open project status", command="agentdeck status", safety="inspect"),
+        ],
+    }
+
+
+def _skill_suggestion_item_for_card(suggestion: dict[str, object]) -> dict[str, object]:
+    suggestion_id = str(suggestion.get("suggestion_id") or "<id>")
+    pending = suggestion.get("status") == "pending"
+    draft_preview_command = f"agentdeck skills draft-preview --suggestion-id {suggestion_id}"
+    return {
+        **suggestion,
+        "draft_preview_command": draft_preview_command,
+        "controls": [
+            _control(
+                kind="inspect",
+                label="List skill suggestions",
+                command="agentdeck skills suggestions",
+                safety="inspect",
+            ),
+            _control(
+                kind="draft_preview",
+                label="Preview skill draft",
+                command=draft_preview_command,
+                safety="inspect",
+                enabled=pending,
+                blocker=None if pending else "skill suggestion is not pending",
+            ),
         ],
     }
 
@@ -3421,6 +3449,7 @@ def skills_suggestions_command(_args: argparse.Namespace) -> int:
     if store is None:
         return exit_code
     suggestions = list(store.load().get("skill_suggestions", []))
+    items = [_skill_suggestion_item_for_card(item) if isinstance(item, dict) else item for item in suggestions]
     pending_count = sum(1 for item in suggestions if isinstance(item, dict) and item.get("status") == "pending")
     _print_json(
         {
@@ -3428,7 +3457,7 @@ def skills_suggestions_command(_args: argparse.Namespace) -> int:
             "mode": "skill_suggestions",
             "count": len(suggestions),
             "pending_count": pending_count,
-            "items": suggestions,
+            "items": items,
             "controls": [
                 _control(
                     kind="suggest",
@@ -3438,6 +3467,100 @@ def skills_suggestions_command(_args: argparse.Namespace) -> int:
                     enabled=False,
                     blocker="requires suggestion fields",
                 )
+            ],
+        }
+    )
+    return 0
+
+
+def _find_skill_suggestion(store: StateStore, suggestion_id: str) -> dict[str, object] | None:
+    suggestions = store.load().get("skill_suggestions", [])
+    if not isinstance(suggestions, list):
+        return None
+    for suggestion in suggestions:
+        if isinstance(suggestion, dict) and suggestion.get("suggestion_id") == suggestion_id:
+            return suggestion
+    return None
+
+
+def _skill_title(name: str) -> str:
+    words = [word for word in re.split(r"[-_.\\s]+", name) if word]
+    return " ".join(word.capitalize() for word in words) if words else "Skill"
+
+
+def _skill_draft_content(suggestion: dict[str, object]) -> str:
+    name = str(suggestion.get("name") or "suggested-skill")
+    summary = str(suggestion.get("summary") or "")
+    rationale = str(suggestion.get("rationale") or "")
+    lines = [
+        "---",
+        f"name: {name}",
+        f"description: {summary}",
+        "required_tools:",
+        "risk: inspect",
+        "---",
+        f"# {_skill_title(name)}",
+        "",
+        summary,
+        "",
+        "## Rationale",
+        "",
+        rationale,
+        "",
+        "## Provenance",
+        "",
+        f"- source: {suggestion.get('source') or ''}",
+    ]
+    if suggestion.get("agent_id"):
+        lines.append(f"- agent_id: {suggestion['agent_id']}")
+    if suggestion.get("trace_id"):
+        lines.append(f"- trace_id: {suggestion['trace_id']}")
+    return "\n".join(lines) + "\n"
+
+
+def skills_draft_preview_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    suggestion = _find_skill_suggestion(store, args.suggestion_id)
+    if suggestion is None:
+        print(f"unknown skill suggestion: {args.suggestion_id}", file=sys.stderr)
+        return 1
+    target = str(suggestion.get("draft_path") or f".agentdeck/skills/{suggestion.get('name')}/SKILL.md")
+    target_path = store.root / target
+    proposed_content = _skill_draft_content(suggestion)
+    create_command = f"agentdeck skills create --suggestion-id {args.suggestion_id} --confirm"
+    _print_json(
+        {
+            "ok": True,
+            "mode": "skill_draft_preview",
+            "suggestion_id": args.suggestion_id,
+            "suggestion": suggestion,
+            "name": suggestion.get("name"),
+            "target_path": target,
+            "would_create": not target_path.exists(),
+            "would_overwrite": target_path.exists(),
+            "source": suggestion.get("source"),
+            "agent_id": suggestion.get("agent_id"),
+            "trace_id": suggestion.get("trace_id"),
+            "proposed_content": proposed_content,
+            "proposed_content_hash": "sha256:" + hashlib.sha256(proposed_content.encode("utf-8")).hexdigest(),
+            "create_command": create_command,
+            "controls": [
+                _control(
+                    kind="create_skill",
+                    label="Create skill",
+                    command=create_command,
+                    safety="explicit_user",
+                    enabled=False,
+                    blocker="skill create is not implemented yet",
+                ),
+                _control(
+                    kind="list_suggestions",
+                    label="List skill suggestions",
+                    command="agentdeck skills suggestions",
+                    safety="inspect",
+                ),
             ],
         }
     )
@@ -10360,6 +10483,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="List pending skill suggestions",
     )
     skills_suggestions.set_defaults(func=skills_suggestions_command)
+    skills_draft_preview = skills_subparsers.add_parser(
+        "draft-preview",
+        help="Preview a SKILL.md draft from a pending skill suggestion without writing files",
+    )
+    skills_draft_preview.add_argument("--suggestion-id", required=True, help="Pending skill suggestion id")
+    skills_draft_preview.set_defaults(func=skills_draft_preview_command)
     skills_import_preview = skills_subparsers.add_parser(
         "import-preview",
         help="Preview importing an external SKILL.md without writing project state",

@@ -516,6 +516,24 @@ SKILLS_SUGGESTIONS_RESPONSE_FIELDS = (
     "controls",
 )
 
+SKILLS_DRAFT_PREVIEW_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "suggestion_id",
+    "suggestion",
+    "name",
+    "target_path",
+    "would_create",
+    "would_overwrite",
+    "source",
+    "agent_id",
+    "trace_id",
+    "proposed_content",
+    "proposed_content_hash",
+    "create_command",
+    "controls",
+)
+
 SKILLS_SUGGESTION_ITEM_FIELDS = (
     "suggestion_id",
     "status",
@@ -527,6 +545,7 @@ SKILLS_SUGGESTION_ITEM_FIELDS = (
     "trace_id",
     "draft_path",
     "created_at",
+    "draft_preview_command",
     "controls",
 )
 
@@ -1834,6 +1853,7 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "skills_load_preview_command_template": "agentdeck skills load-preview --name <name> --agent <agent_id> --purpose <purpose>",
         "skills_load_command_template": "agentdeck skills load --name <name> --agent <agent_id> --purpose <purpose>",
         "skills_suggestions_command": "agentdeck skills suggestions",
+        "skills_draft_preview_command_template": "agentdeck skills draft-preview --suggestion-id <id>",
         "skills_suggest_command_template": "agentdeck skills suggest --name <name> --summary <summary> --rationale <rationale> --source <source>",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
@@ -1845,6 +1865,7 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "load_response_fields": list(SKILLS_LOAD_RESPONSE_FIELDS),
         "suggest_response_fields": list(SKILLS_SUGGEST_RESPONSE_FIELDS),
         "suggestions_response_fields": list(SKILLS_SUGGESTIONS_RESPONSE_FIELDS),
+        "draft_preview_response_fields": list(SKILLS_DRAFT_PREVIEW_RESPONSE_FIELDS),
         "skill_item_fields": list(SKILLS_SKILL_ITEM_FIELDS),
         "suggestion_item_fields": list(SKILLS_SUGGESTION_ITEM_FIELDS),
         "detail_skill_fields": list(SKILLS_DETAIL_SKILL_FIELDS),
@@ -1866,6 +1887,7 @@ def skills_contract_response(contract_path: Path, include_example: bool = False)
         payload["example_load_response_fields"] = list(example["load"])
         payload["example_suggest_response_fields"] = list(example["suggest"])
         payload["example_suggestions_response_fields"] = list(example["suggestions"])
+        payload["example_draft_preview_response_fields"] = list(example["draft_preview"])
         payload["example_skill_item_fields"] = list(example["list"]["skills"][0])
         payload["example_suggestion_item_fields"] = list(example["suggestions"]["items"][0])
         payload["example_detail_skill_fields"] = list(example["detail"]["skill"])
@@ -1934,6 +1956,7 @@ def skills_example() -> dict[str, object]:
         "trace_id": "msg_example",
         "draft_path": ".agentdeck/skills/incident-review/SKILL.md",
         "created_at": "2026-07-04T00:00:00+00:00",
+        "draft_preview_command": "agentdeck skills draft-preview --suggestion-id sgs_example",
         "controls": [
             {
                 "kind": "inspect",
@@ -1942,9 +1965,37 @@ def skills_example() -> dict[str, object]:
                 "safety": "inspect",
                 "enabled": True,
                 "blocker": None,
+            },
+            {
+                "kind": "draft_preview",
+                "label": "Preview skill draft",
+                "command": "agentdeck skills draft-preview --suggestion-id sgs_example",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
             }
         ],
     }
+    draft_content = """---
+name: incident-review
+description: Review incident response evidence.
+required_tools:
+risk: inspect
+---
+# Incident Review
+
+Review incident response evidence.
+
+## Rationale
+
+planner repeatedly asked for the same incident review checklist
+
+## Provenance
+
+- source: leader
+- agent_id: reviewer
+- trace_id: msg_example
+"""
     return {
         "list": {
             "ok": True,
@@ -2063,6 +2114,40 @@ def skills_example() -> dict[str, object]:
             "pending_count": 1,
             "items": [deepcopy(suggestion_item)],
             "controls": [suggest_control],
+        },
+        "draft_preview": {
+            "ok": True,
+            "mode": "skill_draft_preview",
+            "suggestion_id": "sgs_example",
+            "suggestion": deepcopy(suggestion_item),
+            "name": "incident-review",
+            "target_path": ".agentdeck/skills/incident-review/SKILL.md",
+            "would_create": True,
+            "would_overwrite": False,
+            "source": "leader",
+            "agent_id": "reviewer",
+            "trace_id": "msg_example",
+            "proposed_content": draft_content,
+            "proposed_content_hash": "sha256:example-draft",
+            "create_command": "agentdeck skills create --suggestion-id sgs_example --confirm",
+            "controls": [
+                {
+                    "kind": "create_skill",
+                    "label": "Create skill",
+                    "command": "agentdeck skills create --suggestion-id sgs_example --confirm",
+                    "safety": "explicit_user",
+                    "enabled": False,
+                    "blocker": "skill create is not implemented yet",
+                },
+                {
+                    "kind": "list_suggestions",
+                    "label": "List skill suggestions",
+                    "command": "agentdeck skills suggestions",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
         },
     }
 
