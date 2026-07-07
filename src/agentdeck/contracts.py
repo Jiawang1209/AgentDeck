@@ -1216,6 +1216,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "agent_ready_card",
     "terminal_session_card",
     "role_card",
+    "worker_lifecycle_card",
     "ledger_card",
     "lineage_card",
     "queue_card",
@@ -1482,6 +1483,35 @@ WORKBENCH_ROLE_AGENT_FIELDS = (
     "workspace_mode",
     "role_prompt",
     "assign_command",
+    "controls",
+)
+
+WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS = (
+    "mode",
+    "title",
+    "source_command",
+    "count",
+    "by_stage",
+    "items",
+    "controls",
+)
+
+WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS = (
+    "agent_id",
+    "role",
+    "provider",
+    "runtime_status",
+    "pane_id",
+    "lifecycle_stage",
+    "active_message_id",
+    "active_job_id",
+    "latest_reply_id",
+    "artifact_count",
+    "pending_inbox_count",
+    "trace_command",
+    "inbox_command",
+    "terminal_command",
+    "capture_command",
     "controls",
 )
 
@@ -2778,6 +2808,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
+        "worker_lifecycle_card_fields": list(WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS),
+        "worker_lifecycle_item_fields": list(WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
@@ -3608,6 +3640,8 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "runtime_control_fields": list(WORKBENCH_RUNTIME_CONTROL_FIELDS),
         "role_card_fields": list(WORKBENCH_ROLE_CARD_FIELDS),
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
+        "worker_lifecycle_card_fields": list(WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS),
+        "worker_lifecycle_item_fields": list(WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
@@ -5142,6 +5176,132 @@ def _validate_role_card_contract(errors: list[str], role_card: dict[str, object]
         _validate_role_agents_contract(errors, role_agents, prefix=prefix)
     elif "agents" in role_card:
         errors.append(_prefixed_contract_error(prefix, "role_card.agents must be a list"))
+
+
+def _validate_worker_lifecycle_card_contract(
+    errors: list[str], worker_lifecycle_card: dict[str, object], *, prefix: str
+) -> None:
+    for field in WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS:
+        if field not in worker_lifecycle_card:
+            errors.append(_prefixed_contract_error(prefix, f"missing worker_lifecycle_card field: {field}"))
+    if worker_lifecycle_card.get("mode") != "worker_lifecycle":
+        errors.append(_prefixed_contract_error(prefix, "worker_lifecycle_card.mode must be worker_lifecycle"))
+    if "count" in worker_lifecycle_card and not isinstance(worker_lifecycle_card.get("count"), int):
+        errors.append(_prefixed_contract_error(prefix, "worker_lifecycle_card.count must be an integer"))
+    if "by_stage" in worker_lifecycle_card and not isinstance(worker_lifecycle_card.get("by_stage"), dict):
+        errors.append(_prefixed_contract_error(prefix, "worker_lifecycle_card.by_stage must be an object"))
+    controls = worker_lifecycle_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append(_prefixed_contract_error(prefix, "worker_lifecycle_card.controls items must be objects"))
+                continue
+            for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(
+                        _prefixed_contract_error(
+                            prefix, f"worker_lifecycle_card.controls: missing control field: {field}"
+                        )
+                    )
+            if control.get("safety") != "inspect":
+                errors.append(
+                    _prefixed_contract_error(prefix, "worker_lifecycle_card.controls must use safety=inspect")
+                )
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append(
+                    _prefixed_contract_error(
+                        prefix, "worker_lifecycle_card.controls: disabled controls must include blocker"
+                    )
+                )
+    elif "controls" in worker_lifecycle_card:
+        errors.append(_prefixed_contract_error(prefix, "worker_lifecycle_card.controls must be a list"))
+    items = worker_lifecycle_card.get("items")
+    if isinstance(items, list):
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                errors.append(_prefixed_contract_error(prefix, f"worker_lifecycle_card.items[{index}] must be an object"))
+                continue
+            for field in WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS:
+                if field not in item:
+                    if index == 0:
+                        errors.append(_prefixed_contract_error(prefix, f"missing worker_lifecycle item field: {field}"))
+                    else:
+                        errors.append(
+                            _prefixed_contract_error(
+                                prefix, f"worker_lifecycle_card.items[{index}] missing field: {field}"
+                            )
+                        )
+            for count_field in ("artifact_count", "pending_inbox_count"):
+                if count_field in item and not isinstance(item.get(count_field), int):
+                    errors.append(
+                        _prefixed_contract_error(
+                            prefix, f"worker_lifecycle_card.items[{index}].{count_field} must be an integer"
+                        )
+                    )
+            item_controls = item.get("controls")
+            if isinstance(item_controls, list):
+                for control in item_controls:
+                    if not isinstance(control, dict):
+                        errors.append(
+                            _prefixed_contract_error(
+                                prefix, f"worker_lifecycle_card.items[{index}].controls items must be objects"
+                            )
+                        )
+                        continue
+                    for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                        if field not in control:
+                            errors.append(
+                                _prefixed_contract_error(
+                                    prefix, f"worker_lifecycle item control missing field: {field}"
+                                )
+                            )
+                    if control.get("safety") != "inspect":
+                        errors.append(
+                            _prefixed_contract_error(
+                                prefix, "worker_lifecycle item controls must use safety=inspect"
+                            )
+                        )
+                    if control.get("kind") == "trace":
+                        if control.get("command") != item.get("trace_command"):
+                            errors.append(
+                                _prefixed_contract_error(
+                                    prefix, "worker_lifecycle trace control command must match trace_command"
+                                )
+                            )
+                    if control.get("kind") == "inbox":
+                        if control.get("command") != item.get("inbox_command"):
+                            errors.append(
+                                _prefixed_contract_error(
+                                    prefix, "worker_lifecycle inbox control command must match inbox_command"
+                                )
+                            )
+                    if control.get("kind") == "terminal":
+                        if control.get("command") != item.get("terminal_command"):
+                            errors.append(
+                                _prefixed_contract_error(
+                                    prefix, "worker_lifecycle terminal control command must match terminal_command"
+                                )
+                            )
+                    if control.get("kind") == "capture":
+                        if control.get("command") != item.get("capture_command"):
+                            errors.append(
+                                _prefixed_contract_error(
+                                    prefix, "worker_lifecycle capture control command must match capture_command"
+                                )
+                            )
+                    if control.get("enabled") is False and not control.get("blocker"):
+                        errors.append(
+                            _prefixed_contract_error(
+                                prefix,
+                                "worker_lifecycle item controls: disabled controls must include blocker",
+                            )
+                        )
+            elif "controls" in item:
+                errors.append(
+                    _prefixed_contract_error(prefix, f"worker_lifecycle_card.items[{index}].controls must be a list")
+                )
+    elif "items" in worker_lifecycle_card:
+        errors.append(_prefixed_contract_error(prefix, "worker_lifecycle_card.items must be a list"))
 
 
 def _validate_ledger_card_contract(errors: list[str], ledger_card: dict[str, object], *, prefix: str) -> None:
@@ -7321,6 +7481,11 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         _validate_role_card_contract(errors, role_card, prefix="")
     elif "role_card" in payload:
         errors.append("role_card must be an object")
+    worker_lifecycle_card = payload.get("worker_lifecycle_card")
+    if isinstance(worker_lifecycle_card, dict):
+        _validate_worker_lifecycle_card_contract(errors, worker_lifecycle_card, prefix="")
+    elif "worker_lifecycle_card" in payload:
+        errors.append("worker_lifecycle_card must be an object")
     ledger_card = payload.get("ledger_card")
     if isinstance(ledger_card, dict):
         _validate_ledger_card_contract(errors, ledger_card, prefix="")
@@ -8952,6 +9117,28 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
                 agent_id=agent.get("agent_id"),
                 controls=agent.get("controls"),
             )
+    worker_lifecycle_card = (
+        payload.get("worker_lifecycle_card") if isinstance(payload.get("worker_lifecycle_card"), dict) else {}
+    )
+    _append_control_registry_items(
+        registry,
+        scope="worker_lifecycle",
+        card="worker_lifecycle_card",
+        agent_id=None,
+        controls=worker_lifecycle_card.get("controls"),
+    )
+    worker_lifecycle_items = (
+        worker_lifecycle_card.get("items") if isinstance(worker_lifecycle_card.get("items"), list) else []
+    )
+    for item in worker_lifecycle_items:
+        if isinstance(item, dict):
+            _append_control_registry_items(
+                registry,
+                scope="worker_lifecycle",
+                card="worker_lifecycle_card",
+                agent_id=item.get("agent_id"),
+                controls=item.get("controls"),
+            )
     ledger_card = payload.get("ledger_card") if isinstance(payload.get("ledger_card"), dict) else {}
     _append_control_registry_items(
         registry,
@@ -9677,6 +9864,178 @@ def workbench_example() -> dict[str, object]:
                     ),
                     "controls": role_agent_controls("reviewer"),
                 },
+            ],
+        },
+        "worker_lifecycle_card": {
+            "mode": "worker_lifecycle",
+            "title": "Worker lifecycle",
+            "source_command": "agentdeck workbench",
+            "count": 3,
+            "by_stage": {"inbox_pending": 1, "idle": 2},
+            "items": [
+                {
+                    "agent_id": "planner",
+                    "role": "planner",
+                    "provider": "codex",
+                    "runtime_status": "running",
+                    "pane_id": "%42",
+                    "lifecycle_stage": "inbox_pending",
+                    "active_message_id": "msg_example",
+                    "active_job_id": "job_example",
+                    "latest_reply_id": "rep_example",
+                    "artifact_count": 1,
+                    "pending_inbox_count": 1,
+                    "trace_command": "agentdeck trace --id msg_example",
+                    "inbox_command": "agentdeck inbox --agent planner",
+                    "terminal_command": "agentdeck agent terminal --agent planner",
+                    "capture_command": "agentdeck agent capture --agent planner --lines 200",
+                    "controls": [
+                        {
+                            "kind": "trace",
+                            "label": "Trace active task",
+                            "command": "agentdeck trace --id msg_example",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        },
+                        {
+                            "kind": "inbox",
+                            "label": "Inspect inbox",
+                            "command": "agentdeck inbox --agent planner",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        },
+                        {
+                            "kind": "terminal",
+                            "label": "Open terminal",
+                            "command": "agentdeck agent terminal --agent planner",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        },
+                        {
+                            "kind": "capture",
+                            "label": "Capture pane output",
+                            "command": "agentdeck agent capture --agent planner --lines 200",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        },
+                    ],
+                },
+                {
+                    "agent_id": "coder",
+                    "role": "coder",
+                    "provider": "claude",
+                    "runtime_status": "configured",
+                    "pane_id": None,
+                    "lifecycle_stage": "idle",
+                    "active_message_id": None,
+                    "active_job_id": None,
+                    "latest_reply_id": None,
+                    "artifact_count": 0,
+                    "pending_inbox_count": 0,
+                    "trace_command": None,
+                    "inbox_command": "agentdeck inbox --agent coder",
+                    "terminal_command": "agentdeck agent terminal --agent coder",
+                    "capture_command": "agentdeck agent capture --agent coder --lines 200",
+                    "controls": [
+                        {
+                            "kind": "trace",
+                            "label": "Trace active task",
+                            "command": None,
+                            "safety": "inspect",
+                            "enabled": False,
+                            "blocker": "no active task",
+                        },
+                        {
+                            "kind": "inbox",
+                            "label": "Inspect inbox",
+                            "command": "agentdeck inbox --agent coder",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        },
+                        {
+                            "kind": "terminal",
+                            "label": "Open terminal",
+                            "command": "agentdeck agent terminal --agent coder",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        },
+                        {
+                            "kind": "capture",
+                            "label": "Capture pane output",
+                            "command": "agentdeck agent capture --agent coder --lines 200",
+                            "safety": "inspect",
+                            "enabled": False,
+                            "blocker": "agent is not running",
+                        },
+                    ],
+                },
+                {
+                    "agent_id": "reviewer",
+                    "role": "reviewer",
+                    "provider": "codex",
+                    "runtime_status": "configured",
+                    "pane_id": None,
+                    "lifecycle_stage": "idle",
+                    "active_message_id": None,
+                    "active_job_id": None,
+                    "latest_reply_id": None,
+                    "artifact_count": 0,
+                    "pending_inbox_count": 0,
+                    "trace_command": None,
+                    "inbox_command": "agentdeck inbox --agent reviewer",
+                    "terminal_command": "agentdeck agent terminal --agent reviewer",
+                    "capture_command": "agentdeck agent capture --agent reviewer --lines 200",
+                    "controls": [
+                        {
+                            "kind": "trace",
+                            "label": "Trace active task",
+                            "command": None,
+                            "safety": "inspect",
+                            "enabled": False,
+                            "blocker": "no active task",
+                        },
+                        {
+                            "kind": "inbox",
+                            "label": "Inspect inbox",
+                            "command": "agentdeck inbox --agent reviewer",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        },
+                        {
+                            "kind": "terminal",
+                            "label": "Open terminal",
+                            "command": "agentdeck agent terminal --agent reviewer",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        },
+                        {
+                            "kind": "capture",
+                            "label": "Capture pane output",
+                            "command": "agentdeck agent capture --agent reviewer --lines 200",
+                            "safety": "inspect",
+                            "enabled": False,
+                            "blocker": "agent is not running",
+                        },
+                    ],
+                },
+            ],
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "Refresh worker lifecycle",
+                    "command": "agentdeck workbench",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                }
             ],
         },
         "ledger_card": {

@@ -26,7 +26,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-North-star Phase G3: Run-Once Programmatic Loop.
+North-star Phase G4: Worker Lifecycle Visibility.
 
 Phase G1 is already committed: AgentDeck has a read-only `frontdesk` natural-language route:
 
@@ -52,7 +52,7 @@ Phase G2 is already committed: AgentDeck makes the layered Leader topology visib
 
 The roles are `frontdesk`, `planner`, and `orchestrator`. They are logical Leader coordination roles, not worker panes: every role must keep `runtime_kind=logical_role`, `pane_backed=false`, `pane_id=null`, and `dispatch_ready=false`. `frontdesk` is local-rule/deterministic; `planner` and `orchestrator` inherit the configured Leader provider/model and remain approval-gated.
 
-The current G3 slice adds:
+Phase G3 is already committed: AgentDeck has a read-only programmatic loop step:
 
 ```bash
 agentdeck loop once
@@ -67,6 +67,22 @@ Expected behavior:
 - Does not call a Leader provider.
 - Does not read, write, or send input to tmux.
 - Does not approve, reject, dispatch, capture replies, ack inbox, or write state.
+
+The current G4 slice adds:
+
+```bash
+agentdeck workbench
+```
+
+New surface:
+
+- Adds `worker_lifecycle_card`.
+- Derives worker status from `agents[]`, visible runtime status, messages, jobs, replies, artifacts, and inbox summary.
+- Exposes each worker's `lifecycle_stage`, active message/job/reply ids, artifact count, pending inbox count, and inspect-only controls for trace, inbox, terminal, and capture.
+- Does not spawn workers.
+- Does not dispatch approvals or messages.
+- Does not capture pane output automatically.
+- Does not ack inbox items, release work, or write state.
 
 ## Cross-Agent Goal Continuity
 
@@ -92,11 +108,11 @@ Continue the active north-star goal; do not redo completed work.
 
 ## Next Best Step
 
-After the current `loop once` slice is committed, continue with Phase G4 planning:
+After the current worker lifecycle slice is committed, continue with Phase G5 planning:
 
-- Add task-level worker lifecycle visibility for coder/reviewer/round_reviewer without auto-spawning or auto-dispatching.
-- Keep worker lifecycle state derived from messages/jobs/replies/inbox/artifacts and visible tmux runtime.
-- Preserve human approval before dispatch, capture, ack, or release.
+- Add explicit reviewer / code_reviewer / round_reviewer acceptance surfaces.
+- Keep reviewer state derived from artifacts, replies, trace, and plan status rather than model conversation memory.
+- Preserve human approval before release, merge, ack, or follow-up dispatch.
 
 ## Required Verification Before Handoff
 
@@ -106,6 +122,7 @@ At minimum, run:
 conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls -q
 conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_surfaces_logical_coordination_roles_for_planner_orchestrator_split tests/test_agent_cli.py::test_leader_status_surfaces_provider_and_queue_snapshot_without_mutating_state tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_leader_status_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_status_contract_response_includes_example_without_drift -q
 conda run -n agentdeck pytest tests/test_agent_cli.py::test_loop_once_recommends_next_explicit_command_without_mutating_state tests/test_agent_cli.py::test_contract_loop_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_loop_example_exports_gui_ready_card tests/test_contracts.py::test_loop_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_loop_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_loop_once_contract_rejects_auto_execution_claim -q
+conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_worker_lifecycle_item_fields tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q
 conda run -n agentdeck pytest -q
 git diff --check
 ```

@@ -293,6 +293,8 @@ agentdeck dispatch --agent planner --task "设计消息账本"
 
 `agentdeck workbench` 的 `role_card.agents[]` 会同时暴露每个 agent 的 `assign_command` 和 disabled `controls[]` 模板；`agentdeck controls` 会把它们索引为 `scope=role` / `kind=assign_role`。自然语言 `agentdeck leader chat --message "查看角色"` 会附带过滤到 `role_card` 的 `control_registry_card`；自然语言角色指派会让 registry selection 指向目标 agent 的 disabled assign-role 模板，同时把填好参数后的显式 `agentdeck agent assign-role ...` 放在顶层 `next_command` 和 intent next control。GUI 可以把这个 control 渲染成角色编辑表单，但必须先由人类填写具体 `role` 和 `role_prompt`，再显式运行完成后的命令。
 
+`agentdeck workbench` 现在还会暴露 `worker_lifecycle_card`：它从 `agents[]` 的 runtime status、messages/jobs/replies/artifacts/inbox 摘要派生每个 worker 的 `lifecycle_stage`、当前 message/job/reply、artifact/inbox 计数，以及 `trace` / `inbox` / `terminal` / `capture` 四类 inspect controls。它不会自动 spawn、dispatch、capture、ack、release 或写 state；GUI/TUI 可以把它渲染成任务级 worker 看板，用来回答“planner/coder/reviewer 当前卡在哪一步”，再由人类显式选择下一条命令。
+
 `agentdeck workbench` 的 `leader_card.controls[]` 也会进入 `agentdeck controls`，以 `scope=leader` 暴露 `chat`、`continue`、`review`、`actions`、`refresh`、`leader_status` 和完整 ProjectView `status`。其中 `refresh` 与 `leader_status` 都指向窄版 `agentdeck leader status`：`refresh` 适合 GUI 顶栏刷新当前 Leader/provider/recovery 状态，`leader_status` 适合命令面板打开窄版状态入口；二者都是 inspect control，不会调用 provider、读取 tmux 或写 state。
 
 `agentdeck workbench` 的 `leader_summary_card.controls[]` 会进入 `agentdeck controls`，以 `scope=leader_summary` / `card=leader_summary_card` 暴露 `summary`、`plan_status`、`review` 和 `trace` 这些只读收尾控件；自然语言 summary mode 会附带同源 `control_registry_card`，selection 指向 `kind=summary` 的 `agentdeck leader summary --plan-id <id>` inspect control。

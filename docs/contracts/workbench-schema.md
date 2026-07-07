@@ -31,6 +31,8 @@ The contract command returns:
   "runtime_control_fields": [],
   "role_card_fields": [],
   "role_agent_fields": [],
+  "worker_lifecycle_card_fields": [],
+  "worker_lifecycle_item_fields": [],
   "ledger_card_fields": [],
   "lineage_card_fields": [],
   "lineage_path_fields": [],
@@ -71,6 +73,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "agent_ready_card": {},
   "terminal_session_card": {},
   "role_card": {},
+  "worker_lifecycle_card": {},
   "ledger_card": {},
   "lineage_card": {},
   "queue_card": {},
@@ -105,6 +108,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `agent_ready_card` reuses the `agentdeck agent ready` response shape, is derived from the same `runtime_card`, and must pass the agent runtime ready card validator. Its `controls[]` expose readiness inspect, startup/dispatch next action, and runtime refresh commands for GUI clients.
 `terminal_session_card` is derived from the same `runtime_card` and project tmux config so GUI/TUI clients can render a project terminal strip without calling each agent terminal command.
 `role_card` is derived from `project_view.agents[]` role configuration.
+`worker_lifecycle_card` is derived from `project_view.agents[]`, visible runtime status, messages, jobs, replies, artifacts, and inbox summary; it is a task-level status projection for worker roles and does not spawn, dispatch, capture, ack, release, or write state.
 `ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, `project_view.artifacts`, and `project_view.inbox`; its `messages.items[]` retains compact worker `prompt_skill_context` so GUI clients can render loaded skill provenance without parsing prompt text or storing full skill snapshots. Its `controls[]` expose the read-only workbench ledger entry for GUI command palettes.
 `lineage_card` is a read-only path projection derived from the same ledger summaries plus visible inbox cards.
 `queue_card` is derived from `project_view.leader_actions`, `project_view.approvals`, `project_view.inbox`, and the recovery-driven next command.
@@ -482,6 +486,72 @@ The card does not capture pane output and does not prove task completion. It onl
 ```
 
 The card is configuration-only. It does not dispatch work or mutate roles; GUI clients must run `assign_command` or a completed `assign_role` control explicitly when a human changes a role. `validate_workbench_contract()` validates every `role_card.agents[]` item, not just the first role row, so each configured Agent must expose the same role, prompt, assign command, and GUI control surface. `controls[]` are intentionally disabled templates until the GUI supplies concrete `role` and `role_prompt` values, and they must be preserved as `scope=role` / `kind=assign_role` items in `control_registry[]`.
+
+## Worker Lifecycle Card
+
+`worker_lifecycle_card` is a GUI-ready projection of each worker's task lifecycle:
+
+```json
+{
+  "mode": "worker_lifecycle",
+  "title": "Worker lifecycle",
+  "source_command": "agentdeck workbench",
+  "count": 3,
+  "by_stage": {
+    "inbox_pending": 1,
+    "idle": 2
+  },
+  "items": [
+    {
+      "agent_id": "planner",
+      "role": "planning",
+      "provider": "codex",
+      "runtime_status": "running",
+      "pane_id": "%42",
+      "lifecycle_stage": "inbox_pending",
+      "active_message_id": "msg_xxx",
+      "active_job_id": "job_xxx",
+      "latest_reply_id": "rep_xxx",
+      "artifact_count": 1,
+      "pending_inbox_count": 1,
+      "trace_command": "agentdeck trace --id msg_xxx",
+      "inbox_command": "agentdeck inbox --agent planner",
+      "terminal_command": "agentdeck agent terminal --agent planner",
+      "capture_command": "agentdeck agent capture --agent planner --lines 200",
+      "controls": [
+        {
+          "kind": "trace",
+          "label": "Trace active task",
+          "command": "agentdeck trace --id msg_xxx",
+          "safety": "inspect",
+          "enabled": true,
+          "blocker": null
+        },
+        {
+          "kind": "capture",
+          "label": "Capture pane output",
+          "command": "agentdeck agent capture --agent planner --lines 200",
+          "safety": "inspect",
+          "enabled": true,
+          "blocker": null
+        }
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "kind": "inspect",
+      "label": "Refresh worker lifecycle",
+      "command": "agentdeck workbench",
+      "safety": "inspect",
+      "enabled": true,
+      "blocker": null
+    }
+  ]
+}
+```
+
+The card fuses runtime and ledger facts without creating a second state source. `lifecycle_stage` is derived in this order: pending inbox means `inbox_pending`; otherwise a recorded reply means `reply_recorded`; otherwise a job contributes its job status; otherwise a dispatched message means `task_dispatched`; otherwise the worker is `idle`. All item controls are inspect-only. Disabled trace controls use `blocker=no active task`; disabled capture controls use `blocker=agent is not running`. GUI clients must not treat this card as permission to spawn, dispatch, ack, capture, or release work automatically.
 
 ## Ledger Card
 

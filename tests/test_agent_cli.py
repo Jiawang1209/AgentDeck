@@ -4670,6 +4670,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "agent_ready_card",
         "terminal_session_card",
         "role_card",
+        "worker_lifecycle_card",
         "ledger_card",
         "lineage_card",
         "queue_card",
@@ -4814,6 +4815,33 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "workspace_mode",
         "role_prompt",
         "assign_command",
+        "controls",
+    ]
+    assert payload["worker_lifecycle_card_fields"] == [
+        "mode",
+        "title",
+        "source_command",
+        "count",
+        "by_stage",
+        "items",
+        "controls",
+    ]
+    assert payload["worker_lifecycle_item_fields"] == [
+        "agent_id",
+        "role",
+        "provider",
+        "runtime_status",
+        "pane_id",
+        "lifecycle_stage",
+        "active_message_id",
+        "active_job_id",
+        "latest_reply_id",
+        "artifact_count",
+        "pending_inbox_count",
+        "trace_command",
+        "inbox_command",
+        "terminal_command",
+        "capture_command",
         "controls",
     ]
     assert payload["ledger_card_fields"] == [
@@ -5063,6 +5091,59 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert payload["project_view"]["recovery"]["status"] == "inbox_pending"
     assert payload["leader_actions"] == payload["project_view"]["leader_actions"]
     assert payload["recovery"] == payload["project_view"]["recovery"]
+    assert payload["worker_lifecycle_card"]["mode"] == "worker_lifecycle"
+    assert payload["worker_lifecycle_card"]["count"] == 3
+    assert payload["worker_lifecycle_card"]["source_command"] == "agentdeck workbench"
+    assert payload["worker_lifecycle_card"]["by_stage"]["inbox_pending"] == 1
+    assert payload["worker_lifecycle_card"]["by_stage"]["idle"] == 2
+    lifecycle_items = {
+        item["agent_id"]: item
+        for item in payload["worker_lifecycle_card"]["items"]
+    }
+    assert lifecycle_items["planner"] == {
+        "agent_id": "planner",
+        "role": "planning",
+        "provider": "codex",
+        "runtime_status": "running",
+        "pane_id": "%42",
+        "lifecycle_stage": "inbox_pending",
+        "active_message_id": "msg_workbench",
+        "active_job_id": "job_workbench",
+        "latest_reply_id": "rep_workbench",
+        "artifact_count": 1,
+        "pending_inbox_count": 1,
+        "trace_command": "agentdeck trace --id msg_workbench",
+        "inbox_command": "agentdeck inbox --agent planner",
+        "terminal_command": "agentdeck agent terminal --agent planner",
+        "capture_command": "agentdeck agent capture --agent planner --lines 200",
+        "controls": lifecycle_items["planner"]["controls"],
+    }
+    assert [control["kind"] for control in lifecycle_items["planner"]["controls"]] == [
+        "trace",
+        "inbox",
+        "terminal",
+        "capture",
+    ]
+    assert lifecycle_items["planner"]["controls"][0] == {
+        "kind": "trace",
+        "label": "Trace active task",
+        "command": "agentdeck trace --id msg_workbench",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert lifecycle_items["planner"]["controls"][3] == {
+        "kind": "capture",
+        "label": "Capture pane output",
+        "command": "agentdeck agent capture --agent planner --lines 200",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert lifecycle_items["coder"]["lifecycle_stage"] == "idle"
+    assert lifecycle_items["coder"]["active_message_id"] is None
+    assert lifecycle_items["coder"]["controls"][0]["enabled"] is False
+    assert lifecycle_items["coder"]["controls"][0]["blocker"] == "no active task"
     assert payload["leader_card"] == {
         "agent_id": "leader",
         "provider": "deepseek",
@@ -6561,7 +6642,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 75,
+        "item_count_before_filter": 88,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -6697,7 +6778,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 74,
+        "item_count_before_filter": 87,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -6740,7 +6821,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 75,
+        "item_count_before_filter": 88,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -6779,7 +6860,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 75,
+        "item_count_before_filter": 88,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -6812,7 +6893,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 75,
+        "item_count_before_filter": 88,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -6851,7 +6932,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 75,
+        "item_count_before_filter": 88,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

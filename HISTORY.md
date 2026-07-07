@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add worker lifecycle workbench card
+
+- 扩展 `agentdeck workbench`：新增 `worker_lifecycle_card`，从 ProjectView agents、runtime status、messages、jobs、replies、artifacts 和 inbox 摘要派生每个 worker 的任务级生命周期状态。
+- 每个 worker item 现在暴露 `lifecycle_stage`、active message/job/reply id、artifact count、pending inbox count，以及 `trace` / `inbox` / `terminal` / `capture` 四类 inspect controls；`control_registry[]` 同步以 `scope=worker_lifecycle` 索引这些控件。
+- 保持北极星 G4 边界：worker lifecycle 是只读投影，不 spawn、不 dispatch、不 capture、不 ack、不 release、不写 state；disabled controls 必须带 blocker，capture 只在 agent running 且有 pane_id 时 enabled。
+- 扩展 workbench contract discovery/example/validator：新增 `WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS` 与 `WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS`，并校验字段、计数、inspect safety、控制命令与 item command 一致性。
+- 同步 README、`docs/contracts/workbench-schema.md` 和 `docs/handoff/current-development-state.md`，把当前相位推进到 G4，并把下一步指向 reviewer / code_reviewer / round_reviewer 验收分层与 release gate。
+- 验证记录：已先确认红测失败，`WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS` 最初不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_worker_lifecycle_item_fields tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 537 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 579 项通过。
+
 ### Current - Add run-once programmatic loop surface
 
 - 新增 `agentdeck loop once`，作为北极星 Phase G3 的只读程序化单步循环入口：它校验 ProjectView，嵌入同源 `continue_card`，输出 `next_command`、`recommended_action`、`stop_reason`、`will_execute=false`、`requires_explicit_user`、`safety` 和 GUI-ready controls。

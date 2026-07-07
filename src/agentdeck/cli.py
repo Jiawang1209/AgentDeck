@@ -1363,6 +1363,7 @@ def _workbench_snapshot_payload(
     agent_ready_card = _agent_ready_card_payload(project_view)
     terminal_session_card = _workbench_terminal_session_card(load_config(store.root), runtime_card)
     role_card = _workbench_role_card(project_view)
+    worker_lifecycle_card = _workbench_worker_lifecycle_card(project_view)
     ledger_card = _workbench_ledger_card(project_view)
     lineage_card = _workbench_lineage_card(project_view, inbox_card, leader_inbox_card)
     queue_card = _workbench_queue_card(project_view, continue_card, active_queue_source)
@@ -1389,6 +1390,7 @@ def _workbench_snapshot_payload(
         "agent_ready_card": agent_ready_card,
         "terminal_session_card": terminal_session_card,
         "role_card": role_card,
+        "worker_lifecycle_card": worker_lifecycle_card,
         "ledger_card": ledger_card,
         "lineage_card": lineage_card,
         "queue_card": queue_card,
@@ -1725,6 +1727,28 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
                 card="role_card",
                 agent_id=agent.get("agent_id"),
                 controls=agent.get("controls"),
+            )
+    worker_lifecycle_card = (
+        payload.get("worker_lifecycle_card") if isinstance(payload.get("worker_lifecycle_card"), dict) else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="worker_lifecycle",
+        card="worker_lifecycle_card",
+        agent_id=None,
+        controls=worker_lifecycle_card.get("controls"),
+    )
+    worker_lifecycle_items = (
+        worker_lifecycle_card.get("items") if isinstance(worker_lifecycle_card.get("items"), list) else []
+    )
+    for item in worker_lifecycle_items:
+        if isinstance(item, dict):
+            _append_workbench_control_registry_items(
+                registry,
+                scope="worker_lifecycle",
+                card="worker_lifecycle_card",
+                agent_id=item.get("agent_id"),
+                controls=item.get("controls"),
             )
     ledger_card = payload.get("ledger_card") if isinstance(payload.get("ledger_card"), dict) else {}
     _append_workbench_control_registry_items(
@@ -2315,6 +2339,201 @@ def _workbench_role_card(project_view: dict[str, object]) -> dict[str, object]:
             "agentdeck agent assign-role --agent <agent_id> --role <role> --role-prompt <role_prompt>"
         ),
     }
+
+
+def _workbench_worker_lifecycle_card(project_view: dict[str, object]) -> dict[str, object]:
+    agents = project_view.get("agents", [])
+    messages = project_view.get("messages") if isinstance(project_view.get("messages"), dict) else {}
+    jobs = project_view.get("jobs") if isinstance(project_view.get("jobs"), dict) else {}
+    replies = project_view.get("replies") if isinstance(project_view.get("replies"), dict) else {}
+    artifacts = project_view.get("artifacts") if isinstance(project_view.get("artifacts"), dict) else {}
+    inbox = project_view.get("inbox") if isinstance(project_view.get("inbox"), dict) else {}
+    inbox_heads = inbox.get("heads") if isinstance(inbox.get("heads"), dict) else {}
+    inbox_by_agent = inbox.get("by_agent") if isinstance(inbox.get("by_agent"), dict) else {}
+    message_items = [item for item in _summary_items(messages) if isinstance(item, dict)]
+    job_items = [item for item in _summary_items(jobs) if isinstance(item, dict)]
+    reply_items = [item for item in _summary_items(replies) if isinstance(item, dict)]
+    artifact_items = [item for item in _summary_items(artifacts) if isinstance(item, dict)]
+    items: list[dict[str, object]] = []
+    by_stage: dict[str, int] = {}
+    if isinstance(agents, list):
+        for agent in agents:
+            if not isinstance(agent, dict):
+                continue
+            agent_id = str(agent.get("agent_id"))
+            runtime = agent.get("runtime") if isinstance(agent.get("runtime"), dict) else {}
+            runtime_status = str(runtime.get("status", "unknown"))
+            pane_id = runtime.get("pane_id")
+            inbox_head = inbox_heads.get(agent_id) if isinstance(inbox_heads, dict) else None
+            inbox_head = inbox_head if isinstance(inbox_head, dict) else {}
+            active_message = _latest_agent_message(agent_id, message_items, preferred_message_id=inbox_head.get("message_id"))
+            active_message_id = active_message.get("message_id") if active_message else inbox_head.get("message_id")
+            active_job = _latest_agent_job(agent_id, job_items, active_message_id)
+            latest_reply = _latest_agent_reply(agent_id, reply_items, active_message_id)
+            pending_inbox_count = _safe_int(inbox_by_agent.get(agent_id), default=0)
+            artifact_count = _agent_artifact_count(agent_id, artifact_items)
+            lifecycle_stage = _worker_lifecycle_stage(
+                pending_inbox_count=pending_inbox_count,
+                latest_reply=latest_reply,
+                active_job=active_job,
+                active_message=active_message,
+            )
+            trace_id = active_message_id or active_job.get("job_id") or latest_reply.get("reply_id") or inbox_head.get("inbox_id")
+            trace_command = f"agentdeck trace --id {trace_id}" if trace_id else None
+            inbox_command = f"agentdeck inbox --agent {agent_id}"
+            terminal_command = f"agentdeck agent terminal --agent {agent_id}"
+            capture_command = f"agentdeck agent capture --agent {agent_id} --lines 200"
+            item = {
+                "agent_id": agent_id,
+                "role": agent.get("role"),
+                "provider": agent.get("provider"),
+                "runtime_status": runtime_status,
+                "pane_id": pane_id,
+                "lifecycle_stage": lifecycle_stage,
+                "active_message_id": active_message_id,
+                "active_job_id": active_job.get("job_id"),
+                "latest_reply_id": latest_reply.get("reply_id"),
+                "artifact_count": artifact_count,
+                "pending_inbox_count": pending_inbox_count,
+                "trace_command": trace_command,
+                "inbox_command": inbox_command,
+                "terminal_command": terminal_command,
+                "capture_command": capture_command,
+                "controls": _worker_lifecycle_controls(
+                    trace_command=trace_command,
+                    inbox_command=inbox_command,
+                    terminal_command=terminal_command,
+                    capture_command=capture_command,
+                    can_capture=runtime_status == "running" and pane_id is not None,
+                ),
+            }
+            items.append(item)
+            by_stage[lifecycle_stage] = by_stage.get(lifecycle_stage, 0) + 1
+    return {
+        "mode": "worker_lifecycle",
+        "title": "Worker lifecycle",
+        "source_command": "agentdeck workbench",
+        "count": len(items),
+        "by_stage": by_stage,
+        "items": items,
+        "controls": [
+            _control(
+                kind="inspect",
+                label="Refresh worker lifecycle",
+                command="agentdeck workbench",
+                safety="inspect",
+            )
+        ],
+    }
+
+
+def _latest_agent_message(
+    agent_id: str, message_items: list[dict[str, object]], preferred_message_id: object = None
+) -> dict[str, object]:
+    if preferred_message_id:
+        for message in reversed(message_items):
+            if message.get("message_id") == preferred_message_id:
+                return message
+    for message in reversed(message_items):
+        if message.get("to_agent") == agent_id:
+            return message
+    return {}
+
+
+def _latest_agent_job(
+    agent_id: str, job_items: list[dict[str, object]], active_message_id: object = None
+) -> dict[str, object]:
+    if active_message_id:
+        for job in reversed(job_items):
+            if job.get("message_id") == active_message_id and job.get("agent_id") == agent_id:
+                return job
+    for job in reversed(job_items):
+        if job.get("agent_id") == agent_id:
+            return job
+    return {}
+
+
+def _latest_agent_reply(
+    agent_id: str, reply_items: list[dict[str, object]], active_message_id: object = None
+) -> dict[str, object]:
+    if active_message_id:
+        for reply in reversed(reply_items):
+            if reply.get("message_id") == active_message_id and reply.get("from_agent") == agent_id:
+                return reply
+    for reply in reversed(reply_items):
+        if reply.get("from_agent") == agent_id:
+            return reply
+    return {}
+
+
+def _agent_artifact_count(agent_id: str, artifact_items: list[dict[str, object]]) -> int:
+    return sum(1 for artifact in artifact_items if artifact.get("from_agent") == agent_id)
+
+
+def _safe_int(value: object, *, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    return default
+
+
+def _worker_lifecycle_stage(
+    *,
+    pending_inbox_count: int,
+    latest_reply: dict[str, object],
+    active_job: dict[str, object],
+    active_message: dict[str, object],
+) -> str:
+    if pending_inbox_count > 0:
+        return "inbox_pending"
+    if latest_reply:
+        return "reply_recorded"
+    if active_job:
+        return str(active_job.get("status") or "job_active")
+    if active_message:
+        return "task_dispatched"
+    return "idle"
+
+
+def _worker_lifecycle_controls(
+    *,
+    trace_command: str | None,
+    inbox_command: str,
+    terminal_command: str,
+    capture_command: str,
+    can_capture: bool,
+) -> list[dict[str, object]]:
+    return [
+        _control(
+            kind="trace",
+            label="Trace active task",
+            command=trace_command,
+            safety="inspect",
+            enabled=trace_command is not None,
+            blocker=None if trace_command is not None else "no active task",
+        ),
+        _control(
+            kind="inbox",
+            label="Inspect inbox",
+            command=inbox_command,
+            safety="inspect",
+        ),
+        _control(
+            kind="terminal",
+            label="Open terminal",
+            command=terminal_command,
+            safety="inspect",
+        ),
+        _control(
+            kind="capture",
+            label="Capture pane output",
+            command=capture_command,
+            safety="inspect",
+            enabled=can_capture,
+            blocker=None if can_capture else "agent is not running",
+        ),
+    ]
 
 
 def _role_agent_controls(agent_id: str) -> list[dict[str, object]]:

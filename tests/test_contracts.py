@@ -89,6 +89,8 @@ from agentdeck.contracts import (
     WORKBENCH_TERMINAL_SESSION_CARD_FIELDS,
     WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS,
     WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS,
+    WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS,
+    WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS,
     agent_runtime_contract_payload,
     agent_runtime_contract_response,
     agent_runtime_example,
@@ -1685,6 +1687,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["terminal_session_card_fields"] == list(WORKBENCH_TERMINAL_SESSION_CARD_FIELDS)
     assert payload["terminal_session_control_fields"] == list(WORKBENCH_TERMINAL_SESSION_CONTROL_FIELDS)
     assert payload["terminal_session_item_fields"] == list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS)
+    assert payload["worker_lifecycle_card_fields"] == list(WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS)
+    assert payload["worker_lifecycle_item_fields"] == list(WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
     assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
@@ -1734,6 +1738,36 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     ]
     assert example["terminal_session_card"]["running_count"] == 1
     assert example["terminal_session_card"]["terminals"][0]["select_pane_command"].endswith("select-pane -t %42")
+    assert set(example["worker_lifecycle_card"]) == set(WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS)
+    assert example["worker_lifecycle_card"]["mode"] == "worker_lifecycle"
+    assert example["worker_lifecycle_card"]["source_command"] == "agentdeck workbench"
+    assert example["worker_lifecycle_card"]["by_stage"]["inbox_pending"] == 1
+    assert set(example["worker_lifecycle_card"]["items"][0]) == set(WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS)
+    assert example["worker_lifecycle_card"]["items"][0] == {
+        "agent_id": "planner",
+        "role": "planner",
+        "provider": "codex",
+        "runtime_status": "running",
+        "pane_id": "%42",
+        "lifecycle_stage": "inbox_pending",
+        "active_message_id": "msg_example",
+        "active_job_id": "job_example",
+        "latest_reply_id": "rep_example",
+        "artifact_count": 1,
+        "pending_inbox_count": 1,
+        "trace_command": "agentdeck trace --id msg_example",
+        "inbox_command": "agentdeck inbox --agent planner",
+        "terminal_command": "agentdeck agent terminal --agent planner",
+        "capture_command": "agentdeck agent capture --agent planner --lines 200",
+        "controls": example["worker_lifecycle_card"]["items"][0]["controls"],
+    }
+    assert [control["kind"] for control in example["worker_lifecycle_card"]["items"][0]["controls"]] == [
+        "trace",
+        "inbox",
+        "terminal",
+        "capture",
+    ]
+    assert all(control["safety"] == "inspect" for control in example["worker_lifecycle_card"]["items"][0]["controls"])
     assert example["leader_inbox_card"]["items"][0]["event_type"] == "task_reply"
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
@@ -1800,6 +1834,10 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         ("terminal_session", "terminal_session_card", "open_controls", None),
         ("terminal_session", "terminal_session_card", "refresh_runtime", None),
         ("terminal_session", "terminal_session_card", "select_pane", "planner"),
+        ("worker_lifecycle", "worker_lifecycle_card", "trace", "planner"),
+        ("worker_lifecycle", "worker_lifecycle_card", "inbox", "planner"),
+        ("worker_lifecycle", "worker_lifecycle_card", "terminal", "planner"),
+        ("worker_lifecycle", "worker_lifecycle_card", "capture", "planner"),
         ("runtime", "runtime_card", "terminal", "planner"),
         ("runtime", "runtime_card", "capture", "planner"),
         ("audit", "audit_card", "inspect", None),
@@ -2051,6 +2089,18 @@ def test_validate_workbench_contract_requires_terminal_session_control_fields() 
     assert result == {
         "ok": False,
         "errors": ["missing terminal_session control field: safety"],
+    }
+
+
+def test_validate_workbench_contract_requires_worker_lifecycle_item_fields() -> None:
+    payload = workbench_example()
+    del payload["worker_lifecycle_card"]["items"][0]["lifecycle_stage"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing worker_lifecycle item field: lifecycle_stage"],
     }
 
 
