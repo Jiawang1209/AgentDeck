@@ -2755,6 +2755,8 @@ def _review_gate_reply_count(
 def _workbench_release_preview_card(review_gate_card: dict[str, object]) -> dict[str, object]:
     can_release = review_gate_card.get("can_release") is True
     reason = None if can_release else str(review_gate_card.get("reason") or "review gate is not ready")
+    release_command = "agentdeck release --confirm" if can_release else None
+    next_round_command = "agentdeck leader plan --task <goal>" if can_release else None
     return {
         "mode": "release_preview",
         "title": "Release / next-round preview",
@@ -2763,9 +2765,9 @@ def _workbench_release_preview_card(review_gate_card: dict[str, object]) -> dict
         "reason": reason,
         "review_gate_status": review_gate_card.get("status"),
         "can_release": can_release,
-        "next_command": None,
-        "release_command": None,
-        "next_round_command": None,
+        "next_command": release_command,
+        "release_command": release_command,
+        "next_round_command": next_round_command,
         "controls": [
             _control(
                 kind="inspect_review_gate",
@@ -2775,19 +2777,19 @@ def _workbench_release_preview_card(review_gate_card: dict[str, object]) -> dict
             ),
             _control(
                 kind="release_preview",
-                label="Preview release",
-                command=None,
+                label="Release this round" if can_release else "Preview release",
+                command=release_command,
                 safety="explicit_user",
-                enabled=False,
-                blocker=reason or "release execution requires explicit approval wiring",
+                enabled=can_release,
+                blocker=None if can_release else reason,
             ),
             _control(
                 kind="next_round_preview",
-                label="Preview next round",
-                command=None,
+                label="Plan next round" if can_release else "Preview next round",
+                command=next_round_command,
                 safety="explicit_user",
                 enabled=False,
-                blocker=reason or "next-round execution requires explicit approval wiring",
+                blocker="requires goal text" if can_release else reason,
             ),
         ],
     }

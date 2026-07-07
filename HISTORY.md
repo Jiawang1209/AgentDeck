@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Wire release preview card to explicit release command
+
+- 扩展 `agentdeck workbench` / 自然语言 `查看发布预览` 共用的 `_workbench_release_preview_card`：验收门 ready 时，`release_command` / `next_command` 指向显式 `agentdeck release --confirm`，`release_preview` 控件变为 enabled `explicit_user`（command 同源），`next_round_command` 暴露 disabled `agentdeck leader plan --task <goal>` 模板且 blocker 为 `requires goal text`。
+- 验收门 blocked 时行为不变：三个 command 字段保持 `null`，`release_preview` / `next_round_preview` 控件保持 disabled 并复用 gate `reason`，唯一 enabled control 仍是回到 `agentdeck workbench`。
+- 收紧 workbench/leader-chat 共用 validator：ready 卡必须暴露 `agentdeck release --confirm` 且 `next_command` 与 `release_command` 一致；blocked 卡必须保持三个 command 字段为 `null`；enabled release 控件必须要求 `can_release=true` 且 command 与 `release_command` 一致；`next_round_preview` 必须保持 disabled 且 command 与 `next_round_command` 一致。
+- 保持北极星 G5 边界：渲染卡片永远不会执行 release、merge、ack、dispatch 或推进 loop；release 的唯一写入路径仍是人类显式运行 `agentdeck release --confirm`。
+- 同步 README、`docs/contracts/workbench-schema.md` 和 `docs/handoff/current-development-state.md`，把下一步指向 `releases[]` 进入 ProjectView/workbench 和 `agentdeck contract release` 发现。
+- 验证记录：已先确认红测失败，ready 门下卡片最初仍输出 `release_command=null`，validator 也拒绝 enabled release 控件；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_release_preview_exposes_explicit_release_command_when_gate_ready tests/test_contracts.py::test_validate_workbench_contract_rejects_release_preview_command_drift -q` 2 项通过；相邻回归 `tests/test_agent_cli.py::test_leader_chat_release_preview_is_read_only_and_surfaces_control_palette tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift` 2 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 545 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 587 项通过。
+
 ### Current - Add explicit round release command
 
 - 新增 `agentdeck release --confirm`，作为北极星 G5 验收门之后的第一个显式 approval-gated release 落地命令：不带 `--confirm` 必须失败且不写 state、不追加事件。

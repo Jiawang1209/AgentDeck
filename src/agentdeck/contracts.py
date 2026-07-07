@@ -5477,6 +5477,23 @@ def _validate_release_preview_card_contract(
         errors.append(_prefixed_contract_error(prefix, "release_preview_card.can_release must be a boolean"))
     if release_preview_card.get("status") == "blocked" and not release_preview_card.get("reason"):
         errors.append(_prefixed_contract_error(prefix, "blocked release_preview_card requires reason"))
+    if release_preview_card.get("can_release") is True:
+        if release_preview_card.get("release_command") != "agentdeck release --confirm":
+            errors.append(
+                _prefixed_contract_error(prefix, "ready release_preview_card must expose the explicit release command")
+            )
+        if release_preview_card.get("next_command") != release_preview_card.get("release_command"):
+            errors.append(
+                _prefixed_contract_error(prefix, "release_preview_card.next_command must match release_command")
+            )
+    else:
+        for command_field in ("next_command", "release_command", "next_round_command"):
+            if release_preview_card.get(command_field) is not None:
+                errors.append(
+                    _prefixed_contract_error(
+                        prefix, f"blocked release_preview_card must keep {command_field} null"
+                    )
+                )
     controls = release_preview_card.get("controls")
     if isinstance(controls, list):
         seen_kinds: set[object] = set()
@@ -5498,18 +5515,31 @@ def _validate_release_preview_card_contract(
                     )
                 if control.get("safety") != "inspect":
                     errors.append(_prefixed_contract_error(prefix, "release preview inspect must use safety=inspect"))
-            elif kind in {"release_preview", "next_round_preview"}:
+            elif kind == "release_preview":
+                if control.get("safety") != "explicit_user":
+                    errors.append(
+                        _prefixed_contract_error(prefix, "release preview explicit controls must use safety=explicit_user")
+                    )
+                if control.get("enabled") is True and release_preview_card.get("can_release") is not True:
+                    errors.append(
+                        _prefixed_contract_error(prefix, "release preview release control requires can_release=true")
+                    )
+                if control.get("command") != release_preview_card.get("release_command"):
+                    errors.append(
+                        _prefixed_contract_error(prefix, "release preview release command must match release_command")
+                    )
+            elif kind == "next_round_preview":
                 if control.get("safety") != "explicit_user":
                     errors.append(
                         _prefixed_contract_error(prefix, "release preview explicit controls must use safety=explicit_user")
                     )
                 if control.get("enabled") is not False:
-                    errors.append(_prefixed_contract_error(prefix, "release preview explicit controls must be disabled"))
-                if control.get("command") is not None:
                     errors.append(
-                        _prefixed_contract_error(
-                            prefix, "release preview explicit controls must not expose executable commands yet"
-                        )
+                        _prefixed_contract_error(prefix, "release preview next-round control must stay disabled")
+                    )
+                if control.get("command") != release_preview_card.get("next_round_command"):
+                    errors.append(
+                        _prefixed_contract_error(prefix, "release preview next-round command must match next_round_command")
                     )
             else:
                 errors.append(_prefixed_contract_error(prefix, f"unknown release_preview control kind: {kind}"))

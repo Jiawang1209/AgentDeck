@@ -187,12 +187,27 @@ Expected behavior:
 - On success appends a release record to `releases[]` plus a `round_released` audit event, and returns a GUI-ready payload with `safety=explicit_user`, trace commands for both review replies, and a disabled `agentdeck leader plan --task <goal>` next-round template.
 - Does not merge, ack inbox items, dispatch follow-up work, create plan/action/approval/message/job/inbox, call a provider, or read/write tmux.
 
+The release-preview wiring slice is already committed:
+
+```bash
+agentdeck workbench
+```
+
+New behavior:
+
+- When the review gate is ready, `release_preview_card.release_command` / `next_command` point at the explicit `agentdeck release --confirm` command and the `release_preview` control becomes an enabled `explicit_user` control with the same command.
+- `next_round_command` exposes the disabled `agentdeck leader plan --task <goal>` template with blocker `requires goal text`.
+- While the gate is blocked, all three command fields stay `null` and the explicit controls stay disabled with the gate reason.
+- The workbench validator rejects an enabled release control without `can_release=true` or with a command that drifts from `release_command`.
+- Rendering the card still never releases; only a human running `agentdeck release --confirm` records the round release.
+
 ## Next Best Step
 
-After the explicit release command slice is committed, continue with the next Phase G5 follow-up:
+After the release-preview wiring slice is committed, continue with the next Phase G5 follow-up:
 
-- Wire `release_preview_card` to the real command: when the gate is ready, `release_command` / `next_command` should point at `agentdeck release --confirm` and the `release_preview` control becomes an enabled `explicit_user` control; `next_round_command` exposes the disabled `agentdeck leader plan --task <goal>` template. Update the workbench/leader-chat validators accordingly.
-- Then surface `releases[]` into ProjectView / workbench (round history + already-released awareness for the preview card), and add `agentdeck contract release` discovery.
+- Surface `releases[]` into ProjectView / workbench (round history plus already-released awareness so a ready gate that was already released for the same reply pair is shown as such instead of re-offering the release command).
+- Add `agentdeck contract release` discovery (payload, example, docs/contracts/release-schema.md, contract index entry).
+- Optionally add natural-language discovery for the release action itself; keep it read-only and keep the explicit command as the only write path.
 - Preserve human approval before any release, merge, ack, or follow-up dispatch.
 
 ## Required Verification Before Handoff

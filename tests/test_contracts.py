@@ -2154,6 +2154,28 @@ def test_validate_workbench_contract_requires_review_gate_stage_fields() -> None
     }
 
 
+def test_validate_workbench_contract_rejects_release_preview_command_drift() -> None:
+    payload = workbench_example()
+    release_control = next(
+        control
+        for control in payload["release_preview_card"]["controls"]
+        if control["kind"] == "release_preview"
+    )
+    release_control["enabled"] = True
+    release_control["blocker"] = None
+    release_control["command"] = "agentdeck release --confirm"
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "release preview release control requires can_release=true",
+            "release preview release command must match release_command",
+        ],
+    }
+
+
 def test_validate_workbench_contract_requires_terminal_session_select_pane_control_to_match_item() -> None:
     payload = workbench_example()
     payload["terminal_session_card"]["terminals"][0]["controls"][0]["command"] = (

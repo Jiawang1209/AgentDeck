@@ -2722,6 +2722,62 @@ def test_release_records_round_release_when_gate_ready_and_blocks_duplicates(
     assert duplicate_events[0]["payload"]["reason"] == "round already released"
 
 
+def test_workbench_release_preview_exposes_explicit_release_command_when_gate_ready(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    assert (
+        cli.main(
+            [
+                "agent",
+                "assign-role",
+                "--agent",
+                "coder",
+                "--role",
+                "round_reviewer",
+                "--role-prompt",
+                "你负责整轮验收。",
+            ]
+        )
+        == 0
+    )
+    _seed_review_gate_ledger(root, include_round_review=True)
+    capsys.readouterr()
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    card = payload["release_preview_card"]
+    assert card["status"] == "ready"
+    assert card["can_release"] is True
+    assert card["reason"] is None
+    assert card["review_gate_status"] == "ready"
+    assert card["release_command"] == "agentdeck release --confirm"
+    assert card["next_command"] == "agentdeck release --confirm"
+    assert card["next_round_command"] == "agentdeck leader plan --task <goal>"
+    controls = {control["kind"]: control for control in card["controls"]}
+    assert controls["inspect_review_gate"]["enabled"] is True
+    release_control = controls["release_preview"]
+    assert release_control["command"] == "agentdeck release --confirm"
+    assert release_control["safety"] == "explicit_user"
+    assert release_control["enabled"] is True
+    assert release_control["blocker"] is None
+    next_round_control = controls["next_round_preview"]
+    assert next_round_control["command"] == "agentdeck leader plan --task <goal>"
+    assert next_round_control["safety"] == "explicit_user"
+    assert next_round_control["enabled"] is False
+    assert next_round_control["blocker"] == "requires goal text"
+    registry_release_item = next(
+        item
+        for item in payload["control_registry"]
+        if item["scope"] == "release_preview" and item["kind"] == "release_preview"
+    )
+    assert registry_release_item["command"] == "agentdeck release --confirm"
+    assert registry_release_item["safety"] == "explicit_user"
+    assert registry_release_item["enabled"] is True
+
+
 def test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls(
     tmp_path, monkeypatch, capsys
 ) -> None:
