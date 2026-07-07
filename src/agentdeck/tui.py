@@ -36,6 +36,7 @@ class TuiModel:
         self.mode = "overview"
         self.scroll = 0
         self.selected_index = 0
+        self.filter_text = ""
         self._set_payload(payload)
 
     def _set_payload(self, payload: dict[str, Any]) -> None:
@@ -46,9 +47,27 @@ class TuiModel:
         ]
         self._reclamp()
 
+    def _filtered_controls(self) -> list[dict[str, Any]]:
+        needle = self.filter_text.strip().lower()
+        if not needle:
+            return self._controls
+        matches = []
+        for control in self._controls:
+            haystack = (
+                f"{control.get('scope')}{control.get('kind')}"
+                f"{control.get('label')}{control.get('command')}"
+            ).lower()
+            if needle in haystack:
+                matches.append(control)
+        return matches
+
     def _reclamp(self) -> None:
-        self.selected_index = _clamp(self.selected_index, 0, max(0, len(self._controls) - 1))
+        self.selected_index = _clamp(self.selected_index, 0, max(0, len(self._filtered_controls()) - 1))
         self.scroll = _clamp(self.scroll, 0, max(0, len(self._overview_lines) - 1))
+
+    def set_filter(self, text: str) -> None:
+        self.filter_text = text
+        self._reclamp()
 
     # --- overview mode ---
 
@@ -62,16 +81,18 @@ class TuiModel:
     # --- palette mode ---
 
     def control_items(self) -> list[dict[str, Any]]:
-        return list(self._controls)
+        return list(self._filtered_controls())
 
     def selected_control(self) -> dict[str, Any] | None:
-        if not self._controls:
+        controls = self._filtered_controls()
+        if not controls:
             return None
-        index = _clamp(self.selected_index, 0, len(self._controls) - 1)
-        return self._controls[index]
+        index = _clamp(self.selected_index, 0, len(controls) - 1)
+        return controls[index]
 
     def move_selection(self, delta: int) -> None:
-        self.selected_index = _clamp(self.selected_index + delta, 0, max(0, len(self._controls) - 1))
+        controls = self._filtered_controls()
+        self.selected_index = _clamp(self.selected_index + delta, 0, max(0, len(controls) - 1))
 
     # --- shared ---
 
@@ -83,9 +104,14 @@ class TuiModel:
 
     def footer_text(self) -> str:
         if self.mode == "palette":
+            controls = self._filtered_controls()
+            filter_hint = f"  filter:'{self.filter_text}'" if self.filter_text else ""
             control = self.selected_control()
             if control is None:
-                return "palette: no controls  |  [tab] overview  [r] refresh  [q] quit"
+                return (
+                    f"palette: no controls{filter_hint}"
+                    "  |  [/] filter  [tab] overview  [r] refresh  [q] quit"
+                )
             command = control.get("command")
             command_text = str(command) if command else "(disabled — no command)"
             enabled = "enabled" if control.get("enabled") else "disabled"
@@ -95,8 +121,8 @@ class TuiModel:
                 f"{' · ' + str(blocker) if blocker else ''}"
             )
             return (
-                f"{self.selected_index + 1}/{len(self._controls)}  {detail}\n"
-                f"run: {command_text}  |  [tab] overview  [r] refresh  [q] quit"
+                f"{self.selected_index + 1}/{len(controls)}{filter_hint}  {detail}\n"
+                f"run: {command_text}  |  [/] filter  [tab] overview  [r] refresh  [q] quit"
             )
         return (
             f"overview  line {self.scroll + 1}/{len(self._overview_lines)}"
@@ -146,6 +172,33 @@ def render_frame(model: "TuiModel", height: int, width: int) -> list[str]:
     return frame[:height]
 
 
+def _read_filter(stdscr: Any, model: "TuiModel") -> None:
+    """Read a filter string from a simple prompt (curses shell; Enter applies, Esc cancels)."""
+    import curses
+
+    buffer = model.filter_text
+    while True:
+        height, width = stdscr.getmaxyx()
+        prompt = _fit(f"filter: {buffer}_  [Enter] apply  [Esc] cancel", width)
+        try:
+            stdscr.addstr(height - 1, 0, " " * (width - 1))
+            stdscr.addstr(height - 1, 0, prompt)
+            stdscr.refresh()
+        except Exception:
+            pass
+        key = stdscr.getch()
+        if key in (curses.KEY_ENTER, 10, 13):
+            model.set_filter(buffer)
+            return
+        if key == 27:  # Esc
+            return
+        if key in (curses.KEY_BACKSPACE, 127, 8):
+            buffer = buffer[:-1]
+        elif 32 <= key <= 126:
+            buffer += chr(key)
+        model.set_filter(buffer)
+
+
 def run_tui(stdscr: Any, model: "TuiModel", fetch: Any) -> None:
     """Thin curses shell: render the model and translate keys into model updates.
 
@@ -171,7 +224,11 @@ def run_tui(stdscr: Any, model: "TuiModel", fetch: Any) -> None:
         key = stdscr.getch()
         if key in (ord("q"), ord("Q")):
             return
-        if key in (ord("\t"), ord("p"), ord("P")):
+        if key == ord("/"):
+            if model.mode != "palette":
+                model.toggle_palette()
+            _read_filter(stdscr, model)
+        elif key in (ord("\t"), ord("p"), ord("P")):
             model.toggle_palette()
         elif key in (ord("r"), ord("R")):
             fresh = fetch()

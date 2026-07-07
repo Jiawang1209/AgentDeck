@@ -87,6 +87,7 @@ memory suggestions: 0 pending  (agentdeck memory suggestions)
 
 - `tab` / `p` — toggle between the scrollable **overview** and the **palette**.
 - `↑` / `↓` (or `k` / `j`), `PgUp` / `PgDn` — scroll the overview or move the palette selection.
+- `/` — filter the palette (type to narrow controls by scope/kind/label/command; Enter applies, Esc cancels).
 - `r` — refresh (re-fetch and re-validate the workbench snapshot).
 - `q` — quit.
 

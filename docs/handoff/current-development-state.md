@@ -350,9 +350,11 @@ All three approved directions (1 → 2 → 3) have landed committed slices; the 
 - `agentdeck tui` command: builds+validates the workbench snapshot, launches curses; declines cleanly when not a TTY.
 - Overview (scrollable dashboard) + palette (browsable `control_registry[]`); footer shows the selected control's safety/enabled/blocker and the exact `run: <command>`. Strictly read-only — it never executes.
 
+A palette filter is also committed: `/` in the palette opens a filter prompt; `TuiModel.set_filter(text)` narrows controls by substring across scope/kind/label/command, re-clamping selection. Read-only.
+
 ## Next Best Step
 
-- Optional TUI polish: a palette filter/search (type to filter controls by scope/label), or highlight the recovery `next_command` control on open, or a `--help`-style key legend overlay. All must stay read-only.
+- Optional TUI polish: highlight the recovery `next_command` control on open, a `--help`-style key legend overlay, or colorized enabled/disabled rows. All must stay read-only.
 - The curses key loop (`run_tui`) is a thin shell that isn't unit-tested (needs a TTY); the pure `TuiModel` + `render_frame` are. If deeper coverage is wanted, drive `run_tui` with a fake stdscr feeding scripted keys.
 - Otherwise revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability.
 - Preserve human approval and keep every read-only surface read-only.

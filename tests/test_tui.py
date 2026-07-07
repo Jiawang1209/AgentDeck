@@ -139,3 +139,28 @@ def test_tui_command_requires_a_tty(tmp_path, monkeypatch, capsys) -> None:
     assert "agentdeck dashboard" in err
     state_after = StateStore(root).load()
     assert state_after == state_before
+
+
+def test_tui_model_palette_filter_narrows_controls() -> None:
+    payload = workbench_example()
+    model = TuiModel(payload)
+    model.toggle_palette()
+    total = len(model.control_items())
+
+    model.set_filter("provider")
+    filtered = model.control_items()
+
+    assert 0 < len(filtered) < total
+    for control in filtered:
+        haystack = (
+            f"{control.get('scope')}{control.get('kind')}"
+            f"{control.get('label')}{control.get('command')}"
+        ).lower()
+        assert "provider" in haystack
+    # selection is re-clamped into the filtered list and the filter shows in the footer
+    assert model.selected_index < len(filtered)
+    assert "provider" in model.footer_text()
+
+    # clearing the filter restores the full list
+    model.set_filter("")
+    assert len(model.control_items()) == total

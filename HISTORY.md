@@ -4,6 +4,12 @@
 
 ## 2026-07-08
 
+### Current - Add palette filter to interactive TUI
+
+- 给 `agentdeck tui` 的命令面板加过滤：`TuiModel.set_filter(text)` 按子串（大小写不敏感，匹配 control 的 scope/kind/label/command）收窄 `control_items()`，选择态和页脚随过滤后列表重钳制；curses 里按 `/` 进入一个简单的过滤输入行（Enter 应用、Esc 取消、Backspace 删字），实时收窄面板。
+- 117 个控件时这让浏览可用(例如 `review` 收到 31 条);仍严格只读——过滤只缩小只读投影,不执行任何命令。
+- 验证记录：已先确认红测失败，`TuiModel` 最初无 `set_filter`；实现后目标测试 `conda run -n agentdeck pytest tests/test_tui.py -q` 9 项通过（新增过滤收窄 + 重钳制 + 页脚显示 + 清空恢复）；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 632 项通过。
+
 ### Current - Add interactive curses TUI
 
 - 新增 `agentdeck tui` 和 `src/agentdeck/tui.py`：workbench 契约的只读 curses 交互式查看器。核心设计是把纯逻辑和 curses I/O 分离——`TuiModel`（导航/选择/滚动/刷新状态）和 `render_frame(model, height, width)`（屏幕帧布局）都是纯函数、有单测；`run_tui(stdscr, model, fetch)` 只是薄薄的 curses 壳。
