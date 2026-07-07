@@ -1410,6 +1410,14 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id=None,
         controls=audit_card.get("controls"),
     )
+    trace_card = payload.get("trace_card") if isinstance(payload.get("trace_card"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry,
+        scope="trace",
+        card="trace_card",
+        agent_id=None,
+        controls=trace_card.get("controls"),
+    )
     return registry
 
 
@@ -6925,6 +6933,14 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         refreshed_project_view = _project_view_payload_or_error(config, store)
         if refreshed_project_view is None:
             return 1
+        registry_items = _workbench_control_registry({"trace_card": trace_card})
+        trace_control_id = registry_items[0]["control_id"] if registry_items else None
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="trace",
+            card="trace_card",
+            control_id=trace_control_id,
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -6946,6 +6962,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": None,
             "inbox_card": None,
             "trace_card": trace_card,
+            "control_registry_card": control_registry_card,
             "approval_card": None,
             "runtime_card": None,
             "queue_card": None,

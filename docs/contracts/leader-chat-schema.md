@@ -481,12 +481,23 @@ Trace-mode responses are returned when the human asks to inspect one concrete co
     "jobs": [],
     "replies": [],
     "artifacts": [],
-    "inbox_items": []
-  }
+    "inbox_items": [],
+    "controls": [
+      {
+        "kind": "inspect",
+        "label": "Inspect trace",
+        "command": "agentdeck trace --id msg_xxx",
+        "safety": "inspect",
+        "enabled": true,
+        "blocker": null
+      }
+    ]
+  },
+  "control_registry_card": {}
 }
 ```
 
-When `trace_card` is present, `validate_leader_chat_contract()` reuses `validate_trace_contract()` and prefixes nested errors with `trace_card:`. Trace-mode records a chat turn for history, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, dispatch work, capture replies, read pane output, or send tmux input. Trace intent next labels must be action-specific so GUI shells can render communication lineage controls without command parsing. Unknown trace ids must fail with `unknown trace id: <id>` rather than falling through to provider-backed planning.
+When `trace_card` is present, `validate_leader_chat_contract()` reuses `validate_trace_contract()` and prefixes nested errors with `trace_card:`. Live trace-mode responses also include a `control_registry_card` filtered to `scope=trace` / `card=trace_card`; its selection points at the `kind=inspect` control whose command matches the top-level `next_command`, and `intent_card.secondary_embedded_cards[]` lists `control_registry_card` so GUI shells can render the lineage evidence and matching command-palette selection together. Trace-mode records a chat turn for history, but it must not create plans/actions/approvals/messages/jobs/inbox items, acknowledge inbox items, dispatch work, capture replies, read pane output, execute trace, or send tmux input. Trace intent next labels must be action-specific so GUI shells can render communication lineage controls without command parsing. Unknown trace ids must fail with `unknown trace id: <id>` rather than falling through to provider-backed planning.
 
 Role-mode responses are returned when the human asks to inspect roles, role prompts, responsibilities, or assign-role commands. They return `role_card`, reusing the same role projection as `agentdeck workbench`:
 

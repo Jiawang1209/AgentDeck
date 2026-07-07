@@ -4797,6 +4797,40 @@ def test_leader_chat_traces_specific_communication_id_without_mutating_runtime(
         "enabled": True,
         "blocker": None,
     }
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["trace_card"]["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect trace",
+            "command": "agentdeck trace --id msg_trace_direct",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
+    assert payload["control_registry_card"]["filters"]["scope"] == "trace"
+    assert payload["control_registry_card"]["filters"]["card"] == "trace_card"
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == [
+        "scope",
+        "card",
+        "control_id",
+    ]
+    assert payload["control_registry_card"]["filters"]["item_count_before_filter"] == 1
+    assert payload["control_registry_card"]["item_count"] == 1
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "trace",
+        "card": "trace_card",
+        "kind": "inspect",
+        "label": "Inspect trace",
+        "command": payload["next_command"],
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": selected_control["control_id"],
+    }
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
 
     state_after = StateStore(root).load()
     assert state_after["chat_turns"][0]["mode"] == "trace"
@@ -4805,6 +4839,39 @@ def test_leader_chat_traces_specific_communication_id_without_mutating_runtime(
     assert state_after["inbox"]["planner"][0]["status"] == "pending"
     assert state_after["plans"] == []
     assert state_after["leader_actions"] == []
+
+
+def test_validate_leader_chat_contract_requires_trace_control_registry_card(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["messages"] = [
+        {
+            "message_id": "msg_trace_contract",
+            "from_actor": "coder",
+            "to_agent": "planner",
+            "task": "契约追踪消息",
+            "prompt": "# AgentDeck dispatch\n\nAgent: planner\n\n当前任务:\n契约追踪消息",
+            "status": "dispatched",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    store.save(state)
+
+    exit_code = cli.main(["leader", "chat", "--message", "追踪 msg_trace_contract"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    assert validate_leader_chat_contract(payload) == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for trace responses",
+            "control_registry_card is required for trace responses",
+        ],
+    }
 
 
 def test_leader_chat_traces_specific_artifact_id_without_mutating_runtime(

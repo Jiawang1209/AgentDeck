@@ -1372,6 +1372,7 @@ TRACE_TOP_LEVEL_FIELDS = (
     "replies",
     "artifacts",
     "inbox_items",
+    "controls",
 )
 
 TRACE_MESSAGE_FIELDS = (
@@ -2520,6 +2521,7 @@ def trace_contract_payload(contract_path: Path) -> dict[str, object]:
         "reply_fields": list(TRACE_REPLY_FIELDS),
         "artifact_fields": list(TRACE_ARTIFACT_FIELDS),
         "inbox_item_fields": list(TRACE_INBOX_ITEM_FIELDS),
+        "control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
     }
 
 
@@ -3105,6 +3107,24 @@ def validate_trace_contract(payload: dict[str, object]) -> dict[str, object]:
     _validate_trace_items(errors, payload, "replies", TRACE_REPLY_FIELDS, "reply")
     _validate_trace_items(errors, payload, "artifacts", TRACE_ARTIFACT_FIELDS, "artifact")
     _validate_trace_items(errors, payload, "inbox_items", TRACE_INBOX_ITEM_FIELDS, "inbox item")
+    controls = payload.get("controls")
+    if isinstance(controls, list):
+        for index, control in enumerate(controls):
+            if not isinstance(control, dict):
+                errors.append("trace controls must be objects")
+                continue
+            for field in LEADER_CHAT_INTENT_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"trace controls[{index}] missing control field: {field}")
+            if control.get("kind") == "inspect":
+                if control.get("safety") != "inspect":
+                    errors.append("trace inspect control must use safety=inspect")
+                if not str(control.get("command") or "").startswith("agentdeck trace --id "):
+                    errors.append("trace inspect control command must use trace")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append("trace disabled controls must include blocker")
+    elif "controls" in payload:
+        errors.append("trace controls must be a list")
     return {"ok": not errors, "errors": errors}
 
 
@@ -3873,6 +3893,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                     "intent_card.secondary_embedded_cards must include control_registry_card for audit responses"
                 )
             if (
+                explanation_action_kind == "trace"
+                and payload.get("trace_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for trace responses"
+                )
+            if (
                 explanation_action_kind in {"inbox", "inbox_ack", "inbox_trace"}
                 and payload.get("inbox_card") is not None
                 and "control_registry_card" not in secondary_embedded_cards
@@ -4270,6 +4298,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         ):
             errors.append("control_registry_card.selection.next_command must match audit_card.events_command")
         if (
+            explanation_action_kind == "trace"
+            and isinstance(trace_card, dict)
+            and isinstance(selection, dict)
+            and selection.get("next_command") != payload.get("next_command")
+        ):
+            errors.append("control_registry_card.selection.next_command must match trace next_command")
+        if (
             explanation_action_kind in {"inbox_ack", "inbox_trace"}
             and isinstance(inbox_card, dict)
             and isinstance(selection, dict)
@@ -4324,6 +4359,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("control_registry_card is required for ledger responses")
     elif explanation_action_kind == "audit":
         errors.append("control_registry_card is required for audit responses")
+    elif explanation_action_kind == "trace":
+        errors.append("control_registry_card is required for trace responses")
     elif explanation_action_kind in {"inbox", "inbox_ack", "inbox_trace"}:
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif explanation_action_kind in {"role", "role_assign"}:
@@ -5075,6 +5112,11 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     errors.append(
                         "control_registry_card.items: audit inspect command must be agentdeck events --limit 20"
                     )
+            if item.get("scope") == "trace" and item.get("kind") == "inspect":
+                if item.get("safety") != "inspect":
+                    errors.append("control_registry_card.items: trace inspect must use safety=inspect")
+                if not str(item.get("command") or "").startswith("agentdeck trace --id "):
+                    errors.append("control_registry_card.items: trace inspect command must use trace")
             if item.get("scope") == "inbox" and item.get("kind") == "preview":
                 if not str(item.get("command") or "").startswith("agentdeck trace --id "):
                     errors.append("control_registry_card.items: inbox preview command must use trace")
@@ -6614,6 +6656,14 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         card="audit_card",
         agent_id=None,
         controls=audit_card.get("controls"),
+    )
+    trace_card = payload.get("trace_card") if isinstance(payload.get("trace_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="trace",
+        card="trace_card",
+        agent_id=None,
+        controls=trace_card.get("controls"),
     )
     return registry
 
@@ -8423,6 +8473,16 @@ def trace_example() -> dict[str, object]:
                 "status": "pending",
                 "created_at": "2026-07-04T00:00:01+00:00",
             },
+        ],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect trace",
+                "command": "agentdeck trace --id rep_example",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            }
         ],
     }
 

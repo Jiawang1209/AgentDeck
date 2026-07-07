@@ -41,11 +41,12 @@ Use `agentdeck contract trace` to discover this contract from tools or GUI clien
   "job_fields": [],
   "reply_fields": [],
   "artifact_fields": [],
-  "inbox_item_fields": []
+  "inbox_item_fields": [],
+  "control_fields": []
 }
 ```
 
-Use `agentdeck contract trace --example` to include a stable GUI-ready lineage fixture. The example is deterministic and does not read live state.
+Use `agentdeck contract trace --example` to include a stable GUI-ready lineage fixture. The example is deterministic and does not read live state. Trace payloads include `controls[]` so GUI/TUI clients can render a same-card inspect action without parsing `query_id`; those controls are read-only command descriptors and must not be executed automatically.
 
 ## Lineage Blocks
 

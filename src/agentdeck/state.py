@@ -819,7 +819,22 @@ class StateStore:
             "replies": [self._trace_reply(item) for item in replies],
             "artifacts": [self._trace_artifact(item) for item in artifacts],
             "inbox_items": [self._trace_inbox_item(item) for item in inbox_items],
+            "controls": self._trace_controls(query_id),
         }
+
+    @staticmethod
+    def _trace_controls(query_id: Any) -> list[dict[str, Any]]:
+        trace_command = StateStore._trace_command(query_id)
+        return [
+            {
+                "kind": "inspect",
+                "label": "Inspect trace",
+                "command": trace_command,
+                "safety": "inspect",
+                "enabled": trace_command is not None,
+                "blocker": None if trace_command is not None else "requires trace id",
+            }
+        ]
 
     @staticmethod
     def _trace_message(message: dict[str, Any]) -> dict[str, Any]:
