@@ -81,6 +81,19 @@ memory suggestions: 0 pending  (agentdeck memory suggestions)
   role_topology        7 controls   7 enabled   0 blocked
 ```
 
+## Interactive mode (`agentdeck tui`)
+
+`agentdeck tui` is the interactive curses version of the same read-only view. It renders the dashboard as a scrollable pane and adds a browsable **command palette** built from `control_registry[]`:
+
+- `tab` / `p` — toggle between the scrollable **overview** and the **palette**.
+- `↑` / `↓` (or `k` / `j`), `PgUp` / `PgDn` — scroll the overview or move the palette selection.
+- `r` — refresh (re-fetch and re-validate the workbench snapshot).
+- `q` — quit.
+
+In the palette, each row shows a control's `scope`, `kind`, `label`, and an `[x]` / `[ ]` enabled flag; the footer surfaces the selected control's `safety`, enabled/blocker state, and the **exact command to run** (`run: <command>`). The TUI is strictly a viewer — it never executes the command, writes state, calls a provider, or touches tmux. Selecting a control just shows you what to type.
+
+The interactive loop lives in `src/agentdeck/tui.py`, but its navigation state (`TuiModel`) and screen layout (`render_frame`) are pure and unit-tested; the curses I/O is a thin shell. Without an interactive terminal, `agentdeck tui` declines with a pointer to `agentdeck dashboard`.
+
 ## Why it matters
 
 The whole layered-role design (Phases G1–G6) exposes state only through read-only contracts, with every mutation behind an explicit human command. This reference client is the proof that discipline paid off: a GUI/TUI can render the full operator picture — roles, blockers, review gate, release readiness, and a command palette that preserves each control's `enabled` / `blocker` — **without** touching tmux, state files, or providers. A richer GUI would render the same contract; this text client just makes the sufficiency check runnable and testable today.

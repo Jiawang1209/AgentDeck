@@ -342,10 +342,19 @@ The user approved doing all three directions in order, autonomously, overnight. 
 
 All three approved directions (1 → 2 → 3) have landed committed slices; the whole run kept the suite green (621 passing after the workbench `learning_review_card`).
 
+## Current Direction: interactive curses TUI
+
+`agentdeck tui` is a read-only interactive curses viewer over the workbench contract. First slices committed:
+
+- `src/agentdeck/tui.py` with the pure, unit-tested `TuiModel` (navigation/selection/scroll/refresh) and `render_frame(model, height, width)` (screen layout); the curses I/O in `run_tui` is a thin shell.
+- `agentdeck tui` command: builds+validates the workbench snapshot, launches curses; declines cleanly when not a TTY.
+- Overview (scrollable dashboard) + palette (browsable `control_registry[]`); footer shows the selected control's safety/enabled/blocker and the exact `run: <command>`. Strictly read-only — it never executes.
+
 ## Next Best Step
 
-- The workbench `learning_review_card` is now also rendered in the `agentdeck dashboard` "Learning layer" section (review-ready follow-up `skills suggest` / `memory suggest` commands). The learning-layer GUI direction is well covered end-to-end (workbench card + contract + dashboard).
-- Revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability, or deepen one of: assisted-run flow, a curses interactive TUI, or provider/runtime work.
+- Optional TUI polish: a palette filter/search (type to filter controls by scope/label), or highlight the recovery `next_command` control on open, or a `--help`-style key legend overlay. All must stay read-only.
+- The curses key loop (`run_tui`) is a thin shell that isn't unit-tested (needs a TTY); the pure `TuiModel` + `render_frame` are. If deeper coverage is wanted, drive `run_tui` with a fake stdscr feeding scripted keys.
+- Otherwise revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability.
 - Preserve human approval and keep every read-only surface read-only.
 
 ## Next Best Step

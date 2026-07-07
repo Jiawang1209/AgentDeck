@@ -4,6 +4,14 @@
 
 ## 2026-07-08
 
+### Current - Add interactive curses TUI
+
+- 新增 `agentdeck tui` 和 `src/agentdeck/tui.py`：workbench 契约的只读 curses 交互式查看器。核心设计是把纯逻辑和 curses I/O 分离——`TuiModel`（导航/选择/滚动/刷新状态）和 `render_frame(model, height, width)`（屏幕帧布局）都是纯函数、有单测；`run_tui(stdscr, model, fetch)` 只是薄薄的 curses 壳。
+- 两种模式:可滚动的 overview(复用 `render_workbench_dashboard`)和从 `control_registry[]` 派生的可浏览命令面板;`tab`/`p` 切换、方向键/PgUp/PgDn 滚动或移动选择、`r` 刷新(重新取并 `validate_workbench_contract()`)、`q` 退出。palette 每行显示 scope/kind/label 和 `[x]`/`[ ]` enabled 标记,页脚显示选中控件的 safety、enabled/blocker 和要运行的确切命令。
+- 严格只读:TUI 只是查看器,选中控件只**显示** `run: <command>` 供人类自己运行,绝不执行命令、写 state、调用 provider 或碰 tmux;非交互终端(非 TTY)下 `agentdeck tui` 优雅拒绝并指向 `agentdeck dashboard`。
+- 同步 README 和 `docs/walkthroughs/tui-reference-client.md`（新增 Interactive mode 段)。
+- 验证记录：已先确认红测失败，`agentdeck.tui` 模块 / `render_frame` 最初不存在，`agentdeck tui` 命令未注册；实现后目标测试 `conda run -n agentdeck pytest tests/test_tui.py -q` 8 项通过（含 TuiModel 只读不 mutate payload、palette 导航钳制、overview 滚动钳制、refresh 重钳制、render_frame 精确高度/选中标记、命令非 TTY 优雅拒绝且不写 state）；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 631 项通过。
+
 ### Current - Render learning review in TUI dashboard learning layer
 
 - 扩展 `agentdeck dashboard` 的 "Learning layer" 段：当 workbench 契约里的 `learning_review_card` 非空（最新 plan summarize-ready）时，展示 `learning review (plan <id>): read-only follow-ups` 和建议的 `agentdeck skills suggest ... --source learn-review` / `agentdeck memory suggest ... --source learn-review` 命令（只读展示）。

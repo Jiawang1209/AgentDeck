@@ -78,6 +78,7 @@ from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .dashboard import render_workbench_dashboard
 from .runtime import TmuxBackend
+from .tui import TuiModel, run_tui
 from .skills import discover_skills, find_skill, import_project_skill, preview_project_skill_import
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 
@@ -4019,6 +4020,44 @@ def dashboard_command(args: argparse.Namespace) -> int:
                 time.sleep(interval)
             except KeyboardInterrupt:
                 return 130
+
+
+def _workbench_snapshot_or_error(config: ProjectConfig, store: StateStore) -> dict[str, object] | None:
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return None
+    payload = _workbench_snapshot_payload(project_view, store, since_event_id=None)
+    validation = validate_workbench_contract(payload)
+    if not validation["ok"]:
+        print("Workbench contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return None
+    return payload
+
+
+def tui_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not sys.stdout.isatty():
+        print(
+            "agentdeck tui requires an interactive terminal; "
+            "use agentdeck dashboard for non-interactive output",
+            file=sys.stderr,
+        )
+        return 1
+    payload = _workbench_snapshot_or_error(config, store)
+    if payload is None:
+        return 1
+
+    def fetch() -> dict[str, object] | None:
+        return _workbench_snapshot_or_error(config, store)
+
+    import curses
+
+    curses.wrapper(lambda stdscr: run_tui(stdscr, TuiModel(payload), fetch))
+    return 0
 
 
 def controls_command(args: argparse.Namespace) -> int:
@@ -12556,6 +12595,12 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--interval", type=float, default=1.0, help="Seconds between --watch renders")
     dashboard.add_argument("--iterations", type=int, default=None, help="Stop after this many --watch renders")
     dashboard.set_defaults(func=dashboard_command)
+
+    tui = subparsers.add_parser(
+        "tui",
+        help="Read-only interactive curses dashboard over the workbench contract",
+    )
+    tui.set_defaults(func=tui_command)
 
     controls = subparsers.add_parser("controls", help="Show the GUI-ready command palette from the workbench")
     controls.add_argument("--scope", help="Filter command palette controls by scope")
