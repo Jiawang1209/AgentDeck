@@ -183,7 +183,8 @@ ToolContext 包含：
 MVP：
 
 - 支持 `skills/<name>/SKILL.md` 手动加载，内置少量基础技能，例如 planning、debugging、code-review、verification。
-- 支持 `agentdeck skills list` / `agentdeck skills show --name <name>` / `agentdeck skills load --name <name>` 这类只读和显式加载入口。
+- 支持 `agentdeck skills list` / `agentdeck skills import --path <SKILL.md>` / `agentdeck skills show --name <name>` / `agentdeck skills load --name <name>` 这类只读、显式导入和显式加载入口。
+- Skill registry 输出必须包含 GUI-ready controls：列表级 import 模板 control，以及每个 skill 的 show/load controls。
 - Skill metadata 至少包含 name、description、source、path、hash、required_tools、risk 和 allowed_placeholders。
 - 加载时记录 skill path/source、hash、content snapshot，保证历史可回放。
 - Memory 只读，不自动写长期记忆。

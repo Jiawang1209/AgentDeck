@@ -2973,6 +2973,17 @@ def skills_list_command(_args: argparse.Namespace) -> int:
             "ok": True,
             "mode": "skills_list",
             "skill_count": len(skills),
+            "import_command_template": "agentdeck skills import --path <SKILL.md>",
+            "controls": [
+                _control(
+                    kind="import",
+                    label="Import skill",
+                    command="agentdeck skills import --path <SKILL.md>",
+                    safety="explicit_user",
+                    enabled=False,
+                    blocker="requires SKILL.md path",
+                )
+            ],
             "skills": skills,
         }
     )

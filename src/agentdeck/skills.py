@@ -65,6 +65,8 @@ class SkillSnapshot:
     content: str
 
     def summary(self) -> dict[str, object]:
+        show_command = f"agentdeck skills show --name {self.name}"
+        load_command = f"agentdeck skills load --name {self.name}"
         return {
             "name": self.name,
             "description": self.description,
@@ -73,8 +75,26 @@ class SkillSnapshot:
             "content_hash": self.content_hash,
             "required_tools": self.required_tools,
             "risk": self.risk,
-            "show_command": f"agentdeck skills show --name {self.name}",
-            "load_command": f"agentdeck skills load --name {self.name}",
+            "show_command": show_command,
+            "load_command": load_command,
+            "controls": [
+                {
+                    "kind": "show",
+                    "label": "Show skill",
+                    "command": show_command,
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "load",
+                    "label": "Load skill",
+                    "command": load_command,
+                    "safety": "explicit_user",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
         }
 
     def detail(self) -> dict[str, object]:

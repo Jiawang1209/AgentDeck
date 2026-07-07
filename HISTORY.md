@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Add GUI controls to skill registry
+
+- 扩展 `agentdeck skills list`：输出新增 `import_command_template` 和列表级 `controls[]`，让 GUI 能渲染显式 import skill 的入口，而不需要硬编码命令字符串。
+- 扩展 skill summary：`skills list`、`skills show` 和 `skills import` 返回的每个 skill 现在都带 show/load `controls[]`；show 使用 `safety=inspect`，load 使用 `safety=explicit_user`，延续“导入/加载必须人类显式触发”的边界。
+- 同步 README、AGENT/CLAUDE、架构文档和 ProjectView contract 文档，明确 Skill Registry 不只是 CLI 列表，也是未来 GUI/TUI 可直接消费的控件表面。
+- 验证记录：已先确认红测失败，`skills list` 最初缺少 `import_command_template`，skill summary 最初缺少 `controls[]`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_skills_list_surfaces_builtin_and_project_skills_without_mutating_state tests/test_agent_cli.py::test_skills_import_copies_external_skill_without_loading_it -q` 2 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 117 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 523 项通过。
+
 ### Current - Import external skills into project registry
 
 - 新增 `agentdeck skills import --path <SKILL.md>`：可把外部 skill 显式复制到 `.agentdeck/skills/<name>/SKILL.md`，以 frontmatter `name` 作为项目 skill 名称，并返回 `show_command` / `load_command`。

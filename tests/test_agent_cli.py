@@ -261,6 +261,17 @@ def test_skills_list_surfaces_builtin_and_project_skills_without_mutating_state(
     assert payload["ok"] is True
     assert payload["mode"] == "skills_list"
     assert payload["skill_count"] == len(payload["skills"])
+    assert payload["import_command_template"] == "agentdeck skills import --path <SKILL.md>"
+    assert payload["controls"] == [
+        {
+            "kind": "import",
+            "label": "Import skill",
+            "command": "agentdeck skills import --path <SKILL.md>",
+            "safety": "explicit_user",
+            "enabled": False,
+            "blocker": "requires SKILL.md path",
+        }
+    ]
     names = [skill["name"] for skill in payload["skills"]]
     assert "planning" in names
     assert "debugging" in names
@@ -274,6 +285,24 @@ def test_skills_list_surfaces_builtin_and_project_skills_without_mutating_state(
     assert project_skill["risk"] == "inspect"
     assert project_skill["content_hash"].startswith("sha256:")
     assert project_skill["load_command"] == "agentdeck skills load --name release-check"
+    assert project_skill["controls"] == [
+        {
+            "kind": "show",
+            "label": "Show skill",
+            "command": "agentdeck skills show --name release-check",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "load",
+            "label": "Load skill",
+            "command": "agentdeck skills load --name release-check",
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
     assert StateStore(root).load() == state_before
 
 
@@ -372,6 +401,15 @@ def test_skills_import_copies_external_skill_without_loading_it(tmp_path, monkey
     assert payload["skill"]["source"] == "project"
     assert payload["skill"]["path"].endswith(".agentdeck/skills/architecture-review/SKILL.md")
     assert payload["skill"]["required_tools"] == ["rg", "pytest"]
+    assert payload["skill"]["controls"][0]["command"] == "agentdeck skills show --name architecture-review"
+    assert payload["skill"]["controls"][1] == {
+        "kind": "load",
+        "label": "Load skill",
+        "command": "agentdeck skills load --name architecture-review",
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+    }
     assert payload["show_command"] == "agentdeck skills show --name architecture-review"
     assert payload["load_command"] == "agentdeck skills load --name architecture-review"
     imported = root / ".agentdeck" / "skills" / "architecture-review" / "SKILL.md"
