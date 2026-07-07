@@ -627,6 +627,92 @@ def test_memory_suggestions_lists_pending_suggestions_without_mutating_state(
     assert StateStore(root).list_events(limit=20) == events_before
 
 
+def test_memory_apply_preview_is_read_only_and_surfaces_explicit_future_apply(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "memory",
+            "suggest",
+            "--summary",
+            "Keep approval-gated worker dispatch.",
+            "--rationale",
+            "project safety preference",
+            "--source",
+            "reviewer",
+            "--scope",
+            "project",
+            "--agent",
+            "leader",
+            "--from-trace",
+            "msg_memory",
+        ]
+    )
+    suggestion_payload = json.loads(capsys.readouterr().out)
+    suggestion_id = suggestion_payload["suggestion"]["suggestion_id"]
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+
+    exit_code = cli.main(["memory", "apply-preview", "--suggestion-id", suggestion_id])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "memory_apply_preview"
+    assert payload["suggestion_id"] == suggestion_id
+    assert payload["target"] == ".agentdeck/memory/project.md"
+    assert payload["target_exists"] is False
+    assert payload["would_create"] is True
+    assert payload["would_update_status"] == "approved"
+    assert payload["suggestion"] == state_before["memory_suggestions"][0]
+    assert payload["proposed_append"] == (
+        "- Keep approval-gated worker dispatch.\n"
+        "  - rationale: project safety preference\n"
+        "  - source: reviewer\n"
+        "  - agent_id: leader\n"
+        "  - trace_id: msg_memory\n"
+        f"  - suggestion_id: {suggestion_id}\n"
+    )
+    assert payload["apply_command"] == f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm"
+    assert payload["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "List memory suggestions",
+            "command": "agentdeck memory suggestions",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "apply_memory",
+            "label": "Apply memory suggestion",
+            "command": f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm",
+            "safety": "explicit_user",
+            "enabled": False,
+            "blocker": "memory apply is not implemented yet",
+        },
+    ]
+    assert not (root / ".agentdeck" / "memory" / "project.md").exists()
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=20) == events_before
+
+
+def test_memory_apply_preview_rejects_unknown_suggestion_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+
+    exit_code = cli.main(["memory", "apply-preview", "--suggestion-id", "mem_missing"])
+
+    assert exit_code == 1
+    assert capsys.readouterr().err.strip() == "unknown memory suggestion: mem_missing"
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=20) == events_before
+
+
 def test_leader_chat_skill_suggestions_is_read_only_and_avoids_provider_calls(
     tmp_path, monkeypatch, capsys
 ) -> None:

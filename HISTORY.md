@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Preview memory suggestion application
+
+- 新增 `agentdeck memory apply-preview --suggestion-id <id>`：只读查找 pending `memory_suggestions[]`，返回 `memory_apply_preview`、目标 `.agentdeck/memory/project.md` 或 `.agentdeck/memory/global.md`、是否会创建文件、将追加的 Markdown 内容、future apply command 和 GUI-ready controls。
+- 保持人类确认边界：apply-preview 不创建或修改 `.agentdeck/memory/*.md`，不更新 suggestion status，不追加事件，不注入 Leader/Worker prompt，不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox、不修改 runtime/approval state。
+- 同步 README 与 AGENT/CLAUDE，明确 memory apply-preview 只是长期记忆写入前的审阅卡，真正 `memory apply --confirm` 仍未开放。
+- 验证记录：已先确认红测失败，`agentdeck memory apply-preview` 最初不是合法子命令；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_memory_apply_preview_is_read_only_and_surfaces_explicit_future_apply tests/test_agent_cli.py::test_memory_apply_preview_rejects_unknown_suggestion_without_mutating_state -q` 2 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 135 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 541 项通过。
+
 ### Current - Surface memory suggestions in Leader chat and workbench
 
 - 新增自然语言只读入口：`agentdeck leader chat --message "查看 memory 建议"` / `"查看记忆建议"` / `"memory suggestions"` 会进入 `mode=memory_suggestions`，返回 `memory_suggestions_card`，展示 pending memory suggestion queue 的 count、pending_count、items 和 inspect controls。

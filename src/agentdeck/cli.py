@@ -3424,6 +3424,74 @@ def memory_suggestions_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _find_memory_suggestion(store: StateStore, suggestion_id: str) -> dict[str, object] | None:
+    suggestions = store.load().get("memory_suggestions", [])
+    if not isinstance(suggestions, list):
+        return None
+    for suggestion in suggestions:
+        if isinstance(suggestion, dict) and suggestion.get("suggestion_id") == suggestion_id:
+            return suggestion
+    return None
+
+
+def _memory_suggestion_proposed_append(suggestion: dict[str, object]) -> str:
+    lines = [f"- {suggestion.get('summary', '')}"]
+    if suggestion.get("rationale"):
+        lines.append(f"  - rationale: {suggestion['rationale']}")
+    if suggestion.get("source"):
+        lines.append(f"  - source: {suggestion['source']}")
+    if suggestion.get("agent_id"):
+        lines.append(f"  - agent_id: {suggestion['agent_id']}")
+    if suggestion.get("trace_id"):
+        lines.append(f"  - trace_id: {suggestion['trace_id']}")
+    lines.append(f"  - suggestion_id: {suggestion.get('suggestion_id', '')}")
+    return "\n".join(lines) + "\n"
+
+
+def memory_apply_preview_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    suggestion = _find_memory_suggestion(store, args.suggestion_id)
+    if suggestion is None:
+        print(f"unknown memory suggestion: {args.suggestion_id}", file=sys.stderr)
+        return 1
+    target = str(suggestion.get("target") or ".agentdeck/memory/project.md")
+    target_path = store.root / target
+    apply_command = f"agentdeck memory apply --suggestion-id {args.suggestion_id} --confirm"
+    _print_json(
+        {
+            "ok": True,
+            "mode": "memory_apply_preview",
+            "suggestion_id": args.suggestion_id,
+            "suggestion": suggestion,
+            "target": target,
+            "target_exists": target_path.exists(),
+            "would_create": not target_path.exists(),
+            "would_update_status": "approved",
+            "proposed_append": _memory_suggestion_proposed_append(suggestion),
+            "apply_command": apply_command,
+            "controls": [
+                _control(
+                    kind="inspect",
+                    label="List memory suggestions",
+                    command="agentdeck memory suggestions",
+                    safety="inspect",
+                ),
+                _control(
+                    kind="apply_memory",
+                    label="Apply memory suggestion",
+                    command=apply_command,
+                    safety="explicit_user",
+                    enabled=False,
+                    blocker="memory apply is not implemented yet",
+                ),
+            ],
+        }
+    )
+    return 0
+
+
 def skills_import_preview_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -9909,6 +9977,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="List pending memory suggestions",
     )
     memory_suggestions.set_defaults(func=memory_suggestions_command)
+    memory_apply_preview = memory_subparsers.add_parser(
+        "apply-preview",
+        help="Preview applying a pending memory suggestion without writing long-term memory",
+    )
+    memory_apply_preview.add_argument("--suggestion-id", required=True, help="Pending memory suggestion id")
+    memory_apply_preview.set_defaults(func=memory_apply_preview_command)
 
     policy = subparsers.add_parser("policy", help="Policy and control mode commands")
     policy_subparsers = policy.add_subparsers(dest="policy_command")
