@@ -1219,6 +1219,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "role_card",
     "worker_lifecycle_card",
     "review_gate_card",
+    "release_preview_card",
     "ledger_card",
     "lineage_card",
     "queue_card",
@@ -1540,6 +1541,20 @@ WORKBENCH_REVIEW_GATE_STAGE_FIELDS = (
     "trace_command",
     "inbox_command",
     "blocker",
+    "controls",
+)
+
+WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS = (
+    "mode",
+    "title",
+    "source_command",
+    "status",
+    "reason",
+    "review_gate_status",
+    "can_release",
+    "next_command",
+    "release_command",
+    "next_round_command",
     "controls",
 )
 
@@ -3686,6 +3701,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "worker_lifecycle_item_fields": list(WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS),
         "review_gate_card_fields": list(WORKBENCH_REVIEW_GATE_CARD_FIELDS),
         "review_gate_stage_fields": list(WORKBENCH_REVIEW_GATE_STAGE_FIELDS),
+        "release_preview_card_fields": list(WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
@@ -5430,6 +5446,69 @@ def _validate_review_gate_stage_contract(
                 errors.append(_prefixed_contract_error(prefix, "review_gate stage disabled controls need blocker"))
     elif "controls" in stage:
         errors.append(_prefixed_contract_error(prefix, "review_gate stage controls must be a list"))
+
+
+def _validate_release_preview_card_contract(
+    errors: list[str], release_preview_card: dict[str, object], *, prefix: str
+) -> None:
+    for field in WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS:
+        if field not in release_preview_card:
+            errors.append(_prefixed_contract_error(prefix, f"missing release_preview_card field: {field}"))
+    if release_preview_card.get("mode") != "release_preview":
+        errors.append(_prefixed_contract_error(prefix, "release_preview_card.mode must be release_preview"))
+    if release_preview_card.get("source_command") != "agentdeck workbench":
+        errors.append(_prefixed_contract_error(prefix, "release_preview_card.source_command must be agentdeck workbench"))
+    if release_preview_card.get("status") not in {"blocked", "ready"}:
+        errors.append(_prefixed_contract_error(prefix, "release_preview_card.status must be blocked or ready"))
+    if "can_release" in release_preview_card and not isinstance(release_preview_card.get("can_release"), bool):
+        errors.append(_prefixed_contract_error(prefix, "release_preview_card.can_release must be a boolean"))
+    if release_preview_card.get("status") == "blocked" and not release_preview_card.get("reason"):
+        errors.append(_prefixed_contract_error(prefix, "blocked release_preview_card requires reason"))
+    controls = release_preview_card.get("controls")
+    if isinstance(controls, list):
+        seen_kinds: set[object] = set()
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append(_prefixed_contract_error(prefix, "release_preview_card.controls items must be objects"))
+                continue
+            for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(
+                        _prefixed_contract_error(prefix, f"release_preview_card.controls missing field: {field}")
+                    )
+            kind = control.get("kind")
+            seen_kinds.add(kind)
+            if kind == "inspect_review_gate":
+                if control.get("command") != "agentdeck workbench":
+                    errors.append(
+                        _prefixed_contract_error(prefix, "release preview inspect command must be agentdeck workbench")
+                    )
+                if control.get("safety") != "inspect":
+                    errors.append(_prefixed_contract_error(prefix, "release preview inspect must use safety=inspect"))
+            elif kind in {"release_preview", "next_round_preview"}:
+                if control.get("safety") != "explicit_user":
+                    errors.append(
+                        _prefixed_contract_error(prefix, "release preview explicit controls must use safety=explicit_user")
+                    )
+                if control.get("enabled") is not False:
+                    errors.append(_prefixed_contract_error(prefix, "release preview explicit controls must be disabled"))
+                if control.get("command") is not None:
+                    errors.append(
+                        _prefixed_contract_error(
+                            prefix, "release preview explicit controls must not expose executable commands yet"
+                        )
+                    )
+            else:
+                errors.append(_prefixed_contract_error(prefix, f"unknown release_preview control kind: {kind}"))
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append(
+                    _prefixed_contract_error(prefix, "release_preview_card.controls disabled controls need blocker")
+                )
+        for required_kind in {"inspect_review_gate", "release_preview", "next_round_preview"}:
+            if required_kind not in seen_kinds:
+                errors.append(_prefixed_contract_error(prefix, f"release_preview_card missing {required_kind} control"))
+    elif "controls" in release_preview_card:
+        errors.append(_prefixed_contract_error(prefix, "release_preview_card.controls must be a list"))
 
 
 def _validate_ledger_card_contract(errors: list[str], ledger_card: dict[str, object], *, prefix: str) -> None:
@@ -7641,6 +7720,19 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         _validate_review_gate_card_contract(errors, review_gate_card, prefix="")
     elif "review_gate_card" in payload:
         errors.append("review_gate_card must be an object")
+    release_preview_card = payload.get("release_preview_card")
+    if isinstance(release_preview_card, dict):
+        _validate_release_preview_card_contract(errors, release_preview_card, prefix="")
+        if isinstance(review_gate_card, dict):
+            if release_preview_card.get("can_release") != review_gate_card.get("can_release"):
+                errors.append("release_preview_card.can_release must match review_gate_card.can_release")
+            if (
+                release_preview_card.get("status") == "blocked"
+                and release_preview_card.get("reason") != review_gate_card.get("reason")
+            ):
+                errors.append("blocked release_preview_card.reason must match review_gate_card.reason")
+    elif "release_preview_card" in payload:
+        errors.append("release_preview_card must be an object")
     ledger_card = payload.get("ledger_card")
     if isinstance(ledger_card, dict):
         _validate_ledger_card_contract(errors, ledger_card, prefix="")
@@ -9313,6 +9405,16 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
             agent_id=stage.get("agent_id"),
             controls=stage.get("controls"),
         )
+    release_preview_card = (
+        payload.get("release_preview_card") if isinstance(payload.get("release_preview_card"), dict) else {}
+    )
+    _append_control_registry_items(
+        registry,
+        scope="release_preview",
+        card="release_preview_card",
+        agent_id=None,
+        controls=release_preview_card.get("controls"),
+    )
     ledger_card = payload.get("ledger_card") if isinstance(payload.get("ledger_card"), dict) else {}
     _append_control_registry_items(
         registry,
@@ -10285,7 +10387,67 @@ def workbench_example() -> dict[str, object]:
                     "safety": "inspect",
                     "enabled": True,
                     "blocker": None,
-                }
+                },
+                {
+                    "kind": "assign_code_reviewer",
+                    "label": "Assign code reviewer",
+                    "command": (
+                        "agentdeck agent assign-role --agent <agent_id> --role code_reviewer "
+                        "--role-prompt <role_prompt>"
+                    ),
+                    "safety": "explicit_user",
+                    "enabled": False,
+                    "blocker": "requires agent_id and role_prompt",
+                },
+                {
+                    "kind": "assign_round_reviewer",
+                    "label": "Assign round reviewer",
+                    "command": (
+                        "agentdeck agent assign-role --agent <agent_id> --role round_reviewer "
+                        "--role-prompt <role_prompt>"
+                    ),
+                    "safety": "explicit_user",
+                    "enabled": False,
+                    "blocker": "requires agent_id and role_prompt",
+                },
+            ],
+        },
+        "release_preview_card": {
+            "mode": "release_preview",
+            "title": "Release / next-round preview",
+            "source_command": "agentdeck workbench",
+            "status": "blocked",
+            "reason": "round_reviewer is not configured",
+            "review_gate_status": "blocked",
+            "can_release": False,
+            "next_command": None,
+            "release_command": None,
+            "next_round_command": None,
+            "controls": [
+                {
+                    "kind": "inspect_review_gate",
+                    "label": "Inspect review gate",
+                    "command": "agentdeck workbench",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "release_preview",
+                    "label": "Preview release",
+                    "command": None,
+                    "safety": "explicit_user",
+                    "enabled": False,
+                    "blocker": "round_reviewer is not configured",
+                },
+                {
+                    "kind": "next_round_preview",
+                    "label": "Preview next round",
+                    "command": None,
+                    "safety": "explicit_user",
+                    "enabled": False,
+                    "blocker": "round_reviewer is not configured",
+                },
             ],
         },
         "ledger_card": {

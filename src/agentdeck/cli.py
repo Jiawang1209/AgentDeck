@@ -1371,6 +1371,7 @@ def _workbench_snapshot_payload(
     role_card = _workbench_role_card(project_view)
     worker_lifecycle_card = _workbench_worker_lifecycle_card(project_view)
     review_gate_card = _workbench_review_gate_card(project_view)
+    release_preview_card = _workbench_release_preview_card(review_gate_card)
     ledger_card = _workbench_ledger_card(project_view)
     lineage_card = _workbench_lineage_card(project_view, inbox_card, leader_inbox_card)
     queue_card = _workbench_queue_card(project_view, continue_card, active_queue_source)
@@ -1399,6 +1400,7 @@ def _workbench_snapshot_payload(
         "role_card": role_card,
         "worker_lifecycle_card": worker_lifecycle_card,
         "review_gate_card": review_gate_card,
+        "release_preview_card": release_preview_card,
         "ledger_card": ledger_card,
         "lineage_card": lineage_card,
         "queue_card": queue_card,
@@ -1775,6 +1777,16 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
             agent_id=stage.get("agent_id"),
             controls=stage.get("controls"),
         )
+    release_preview_card = (
+        payload.get("release_preview_card") if isinstance(payload.get("release_preview_card"), dict) else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="release_preview",
+        card="release_preview_card",
+        agent_id=None,
+        controls=release_preview_card.get("controls"),
+    )
     ledger_card = payload.get("ledger_card") if isinstance(payload.get("ledger_card"), dict) else {}
     _append_workbench_control_registry_items(
         registry,
@@ -2732,6 +2744,47 @@ def _review_gate_reply_count(
         if isinstance(agent, dict) and agent.get("agent_id")
     }
     return sum(1 for reply in replies if reply.get("from_agent") in reviewer_ids)
+
+
+def _workbench_release_preview_card(review_gate_card: dict[str, object]) -> dict[str, object]:
+    can_release = review_gate_card.get("can_release") is True
+    reason = None if can_release else str(review_gate_card.get("reason") or "review gate is not ready")
+    return {
+        "mode": "release_preview",
+        "title": "Release / next-round preview",
+        "source_command": "agentdeck workbench",
+        "status": "ready" if can_release else "blocked",
+        "reason": reason,
+        "review_gate_status": review_gate_card.get("status"),
+        "can_release": can_release,
+        "next_command": None,
+        "release_command": None,
+        "next_round_command": None,
+        "controls": [
+            _control(
+                kind="inspect_review_gate",
+                label="Inspect review gate",
+                command="agentdeck workbench",
+                safety="inspect",
+            ),
+            _control(
+                kind="release_preview",
+                label="Preview release",
+                command=None,
+                safety="explicit_user",
+                enabled=False,
+                blocker=reason or "release execution requires explicit approval wiring",
+            ),
+            _control(
+                kind="next_round_preview",
+                label="Preview next round",
+                command=None,
+                safety="explicit_user",
+                enabled=False,
+                blocker=reason or "next-round execution requires explicit approval wiring",
+            ),
+        ],
+    }
 
 
 def _role_agent_controls(agent_id: str) -> list[dict[str, object]]:

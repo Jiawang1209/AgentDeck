@@ -4802,6 +4802,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "role_card",
         "worker_lifecycle_card",
         "review_gate_card",
+        "release_preview_card",
         "ledger_card",
         "lineage_card",
         "queue_card",
@@ -4997,6 +4998,19 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "trace_command",
         "inbox_command",
         "blocker",
+        "controls",
+    ]
+    assert payload["release_preview_card_fields"] == [
+        "mode",
+        "title",
+        "source_command",
+        "status",
+        "reason",
+        "review_gate_status",
+        "can_release",
+        "next_command",
+        "release_command",
+        "next_round_command",
         "controls",
     ]
     assert payload["ledger_card_fields"] == [
@@ -5401,6 +5415,53 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         ("review_gate", "review_gate_card", "assign_code_reviewer", None),
         ("review_gate", "review_gate_card", "assign_round_reviewer", None),
     } <= review_gate_controls
+    assert payload["release_preview_card"] == {
+        "mode": "release_preview",
+        "title": "Release / next-round preview",
+        "source_command": "agentdeck workbench",
+        "status": "blocked",
+        "reason": "round_reviewer is not configured",
+        "review_gate_status": "blocked",
+        "can_release": False,
+        "next_command": None,
+        "release_command": None,
+        "next_round_command": None,
+        "controls": [
+            {
+                "kind": "inspect_review_gate",
+                "label": "Inspect review gate",
+                "command": "agentdeck workbench",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "release_preview",
+                "label": "Preview release",
+                "command": None,
+                "safety": "explicit_user",
+                "enabled": False,
+                "blocker": "round_reviewer is not configured",
+            },
+            {
+                "kind": "next_round_preview",
+                "label": "Preview next round",
+                "command": None,
+                "safety": "explicit_user",
+                "enabled": False,
+                "blocker": "round_reviewer is not configured",
+            },
+        ],
+    }
+    release_preview_controls = {
+        (item["scope"], item["card"], item["kind"], item["agent_id"])
+        for item in payload["control_registry"]
+    }
+    assert {
+        ("release_preview", "release_preview_card", "inspect_review_gate", None),
+        ("release_preview", "release_preview_card", "release_preview", None),
+        ("release_preview", "release_preview_card", "next_round_preview", None),
+    } <= release_preview_controls
     assert payload["leader_card"] == {
         "agent_id": "leader",
         "provider": "deepseek",
@@ -6918,7 +6979,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 95,
+        "item_count_before_filter": 98,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -7054,7 +7115,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 94,
+        "item_count_before_filter": 97,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -7097,7 +7158,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 95,
+        "item_count_before_filter": 98,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -7136,7 +7197,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 95,
+        "item_count_before_filter": 98,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -7169,7 +7230,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 95,
+        "item_count_before_filter": 98,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -7208,7 +7269,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 95,
+        "item_count_before_filter": 98,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add release preview workbench card
+
+- 扩展 `agentdeck workbench`：新增 `release_preview_card`，从 `review_gate_card` 派生 release / next-round 决策位，供 GUI/TUI 在验收门之后渲染下一步入口。
+- `release_preview_card.can_release` 与 `review_gate_card.can_release` 保持一致；当 review gate blocked 时，`release_preview_card.reason` 复用同一个阻塞原因，避免 GUI 自行推断状态。
+- 新增 `release_preview` control registry scope：`inspect_review_gate` 是唯一 enabled inspect control；`release_preview` / `next_round_preview` 是 disabled `explicit_user` placeholder，且 `command=null`。
+- 保持北极星 G5 边界：本轮不 release、不 merge、不 ack inbox、不 dispatch follow-up、不推进 loop、不调用 provider、不读取/写入/发送 tmux，也不暴露可执行 release/next-round 命令。
+- 同步 README、`docs/contracts/workbench-schema.md` 和 `docs/handoff/current-development-state.md`，把下一步推进到显式 approval-gated release / next-round 预览或自然语言发现。
+- 验证记录：已先确认红测失败，`release_preview_card` 最初未出现在 workbench payload 中；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 539 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 581 项通过。
+
 ### Current - Add review gate role assignment templates
 
 - 扩展 `review_gate_card.controls[]`：新增 disabled `assign_code_reviewer` / `assign_round_reviewer` 模板命令，指向 `agentdeck agent assign-role --agent <agent_id> --role code_reviewer|round_reviewer --role-prompt <role_prompt>`。

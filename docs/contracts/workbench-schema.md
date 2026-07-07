@@ -35,6 +35,7 @@ The contract command returns:
   "worker_lifecycle_item_fields": [],
   "review_gate_card_fields": [],
   "review_gate_stage_fields": [],
+  "release_preview_card_fields": [],
   "ledger_card_fields": [],
   "lineage_card_fields": [],
   "lineage_path_fields": [],
@@ -77,6 +78,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "role_card": {},
   "worker_lifecycle_card": {},
   "review_gate_card": {},
+  "release_preview_card": {},
   "ledger_card": {},
   "lineage_card": {},
   "queue_card": {},
@@ -113,6 +115,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `role_card` is derived from `project_view.agents[]` role configuration.
 `worker_lifecycle_card` is derived from `project_view.agents[]`, visible runtime status, messages, jobs, replies, artifacts, and inbox summary; it is a task-level status projection for worker roles and does not spawn, dispatch, capture, ack, release, or write state.
 `review_gate_card` is derived from artifacts, reviewer replies, and configured reviewer roles; it exposes code-review and round-review readiness without releasing work, merging changes, acknowledging inbox items, dispatching follow-up work, or advancing the loop.
+`release_preview_card` is derived from `review_gate_card`; it mirrors `can_release` and stays blocked with the same reason until the review gate is ready. It is a GUI/TUI preview placeholder only: release and next-round controls are disabled `explicit_user` controls with no executable command until a later approval-gated release workflow is implemented.
 `ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, `project_view.artifacts`, and `project_view.inbox`; its `messages.items[]` retains compact worker `prompt_skill_context` so GUI clients can render loaded skill provenance without parsing prompt text or storing full skill snapshots. Its `controls[]` expose the read-only workbench ledger entry for GUI command palettes.
 `lineage_card` is a read-only path projection derived from the same ledger summaries plus visible inbox cards.
 `queue_card` is derived from `project_view.leader_actions`, `project_view.approvals`, `project_view.inbox`, and the recovery-driven next command.
@@ -632,6 +635,53 @@ The card fuses runtime and ledger facts without creating a second state source. 
 ```
 
 The card is a gate projection, not a release action. `code_review` uses an agent whose `agent_id` or `role` is `code_reviewer` or `reviewer`; `round_review` requires an explicit `round_reviewer`. A gate is `ready` only when artifacts exist, code review has a recorded reply, and round review has a recorded reply. Missing reviewers, missing artifacts, and missing replies keep `status=blocked` with a concrete `reason`. Stage controls stay inspect-only. Top-level assignment controls are disabled `explicit_user` templates for GUI role-configuration forms and must not execute until a human fills `agent_id` and `role_prompt`; all controls must also appear in `control_registry[]` under `scope=review_gate`.
+
+## Release Preview Card
+
+`release_preview_card` is a GUI-ready projection for the future release / next-round decision:
+
+```json
+{
+  "mode": "release_preview",
+  "title": "Release / next-round preview",
+  "source_command": "agentdeck workbench",
+  "status": "blocked",
+  "reason": "round_reviewer is not configured",
+  "review_gate_status": "blocked",
+  "can_release": false,
+  "next_command": null,
+  "release_command": null,
+  "next_round_command": null,
+  "controls": [
+    {
+      "kind": "inspect_review_gate",
+      "label": "Inspect review gate",
+      "command": "agentdeck workbench",
+      "safety": "inspect",
+      "enabled": true,
+      "blocker": null
+    },
+    {
+      "kind": "release_preview",
+      "label": "Preview release",
+      "command": null,
+      "safety": "explicit_user",
+      "enabled": false,
+      "blocker": "round_reviewer is not configured"
+    },
+    {
+      "kind": "next_round_preview",
+      "label": "Preview next round",
+      "command": null,
+      "safety": "explicit_user",
+      "enabled": false,
+      "blocker": "round_reviewer is not configured"
+    }
+  ]
+}
+```
+
+This card deliberately exposes no executable release or next-round command yet. `can_release` must match `review_gate_card.can_release`, and a blocked card must keep the same reason as the review gate. The only enabled control is the inspect jump back to `agentdeck workbench`; `release_preview` and `next_round_preview` remain disabled `explicit_user` placeholders so GUI clients can render the future decision point without pretending release, merge, inbox ack, dispatch, or loop advancement is currently authorized. All controls must appear in `control_registry[]` under `scope=release_preview`.
 
 ## Ledger Card
 

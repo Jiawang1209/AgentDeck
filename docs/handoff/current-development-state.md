@@ -100,7 +100,7 @@ New surface:
 - Exposes disabled `assign_code_reviewer` / `assign_round_reviewer` templates as explicit-user controls so GUI/TUI can render reviewer role configuration forms without mutating config.
 - Does not release, merge, ack inbox items, dispatch follow-up work, or advance the loop.
 
-The current G5 follow-up adds natural-language discovery:
+The second G5 slice is already committed:
 
 ```bash
 agentdeck leader chat --message "查看验收门"
@@ -116,6 +116,21 @@ Expected behavior:
 - Does not call a Leader provider.
 - Does not create plan/action/approval/message/job/inbox.
 - Does not release, merge, ack inbox items, dispatch follow-up work, advance the loop, read tmux, or send tmux input.
+
+The current G5 follow-up adds release / next-round preview visibility:
+
+```bash
+agentdeck workbench
+```
+
+New surface:
+
+- Adds `release_preview_card`.
+- Derives release readiness only from `review_gate_card`.
+- Keeps `can_release` and blocked `reason` aligned with the review gate.
+- Exposes `release_preview` and `next_round_preview` controls as disabled `explicit_user` placeholders with `command=null`.
+- Exposes only `inspect_review_gate` as an enabled inspect control.
+- Does not release, merge, ack inbox items, dispatch follow-up work, advance the loop, call a provider, read tmux, write tmux, or mutate state.
 
 ## Cross-Agent Goal Continuity
 
@@ -141,10 +156,10 @@ Continue the active north-star goal; do not redo completed work.
 
 ## Next Best Step
 
-After the current review gate role-configuration slice is committed, continue with the next Phase G5 follow-up:
+After the current release-preview slice is committed, continue with the next Phase G5 follow-up:
 
-- Add a release/next-round preview surface that stays blocked until `review_gate_card.can_release=true`.
-- Preserve human approval before release, merge, ack, or follow-up dispatch.
+- Add the explicit approval-gated release / next-round command preview or natural-language discovery for the same `release_preview_card`.
+- Preserve human approval before any release, merge, ack, or follow-up dispatch.
 
 ## Required Verification Before Handoff
 

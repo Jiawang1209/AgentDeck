@@ -80,6 +80,7 @@ from agentdeck.contracts import (
     WORKBENCH_OPERATOR_CARD_FIELDS,
     WORKBENCH_PROVIDER_HEALTH_FIELDS,
     WORKBENCH_QUEUE_CARD_FIELDS,
+    WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS,
     WORKBENCH_ROLE_AGENT_FIELDS,
     WORKBENCH_ROLE_CARD_FIELDS,
     WORKBENCH_REVIEW_GATE_CARD_FIELDS,
@@ -1785,6 +1786,20 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["review_gate_card"]["code_review"]["agent_id"] == "reviewer"
     assert example["review_gate_card"]["round_review"]["status"] == "missing_reviewer"
     assert example["review_gate_card"]["round_review"]["blocker"] == "round_reviewer is not configured"
+    assert set(example["release_preview_card"]) == set(WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS)
+    assert example["release_preview_card"]["mode"] == "release_preview"
+    assert example["release_preview_card"]["source_command"] == "agentdeck workbench"
+    assert example["release_preview_card"]["status"] == "blocked"
+    assert example["release_preview_card"]["reason"] == example["review_gate_card"]["reason"]
+    assert example["release_preview_card"]["review_gate_status"] == example["review_gate_card"]["status"]
+    assert example["release_preview_card"]["can_release"] is False
+    assert example["release_preview_card"]["release_command"] is None
+    assert example["release_preview_card"]["next_round_command"] is None
+    assert [control["kind"] for control in example["release_preview_card"]["controls"]] == [
+        "inspect_review_gate",
+        "release_preview",
+        "next_round_preview",
+    ]
     assert example["leader_inbox_card"]["items"][0]["event_type"] == "task_reply"
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
@@ -1858,6 +1873,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         ("review_gate", "review_gate_card", "inspect", None),
         ("review_gate", "review_gate_card", "trace", "reviewer"),
         ("review_gate", "review_gate_card", "inbox", "reviewer"),
+        ("release_preview", "release_preview_card", "inspect_review_gate", None),
+        ("release_preview", "release_preview_card", "release_preview", None),
+        ("release_preview", "release_preview_card", "next_round_preview", None),
         ("runtime", "runtime_card", "terminal", "planner"),
         ("runtime", "runtime_card", "capture", "planner"),
         ("audit", "audit_card", "inspect", None),
