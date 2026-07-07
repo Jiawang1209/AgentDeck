@@ -45,6 +45,7 @@ from .contracts import (
     project_view_contract_response,
     runtime_agent_controls,
     run_start_contract_response,
+    terminal_card_controls,
     trace_contract_response,
     workbench_contract_response,
     validate_approval_contract,
@@ -170,6 +171,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     if embedded_card == "trace_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "capture_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "terminal_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "inbox_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
@@ -1266,6 +1269,14 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
                 agent_id=terminal.get("agent_id"),
                 controls=terminal.get("controls"),
             )
+    terminal_card = payload.get("terminal_card") if isinstance(payload.get("terminal_card"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry,
+        scope="terminal",
+        card="terminal_card",
+        agent_id=terminal_card.get("agent_id"),
+        controls=terminal_card.get("controls"),
+    )
     startup_preview_card = (
         payload.get("startup_preview_card") if isinstance(payload.get("startup_preview_card"), dict) else {}
     )
@@ -2652,6 +2663,12 @@ def _agent_terminal_card_payload(
     if binding is None:
         return None, exit_code
     pane_id = str(binding["pane_id"])
+    attach_command = _tmux_attach_command(config)
+    select_pane_command = _tmux_select_pane_command(config, pane_id)
+    capture_command = f"agentdeck agent capture --agent {agent.agent_id} --lines 200"
+    send_command_template = f"agentdeck agent send --agent {agent.agent_id} --text <text>"
+    stop_command = f"agentdeck agent stop --agent {agent.agent_id}"
+    inbox_command = f"agentdeck inbox --agent {agent.agent_id}"
     return (
         {
             "ok": True,
@@ -2664,14 +2681,21 @@ def _agent_terminal_card_payload(
             "pane_id": pane_id,
             "session_name": binding.get("session_name") or config.runtime.session_name,
             "cwd": binding.get("cwd") or config.root,
-            "attach_command": _tmux_attach_command(config),
-            "select_pane_command": _tmux_select_pane_command(config, pane_id),
-            "capture_command": f"agentdeck agent capture --agent {agent.agent_id} --lines 200",
-            "send_command_template": f"agentdeck agent send --agent {agent.agent_id} --text <text>",
-            "stop_command": f"agentdeck agent stop --agent {agent.agent_id}",
-            "inbox_command": f"agentdeck inbox --agent {agent.agent_id}",
+            "attach_command": attach_command,
+            "select_pane_command": select_pane_command,
+            "capture_command": capture_command,
+            "send_command_template": send_command_template,
+            "stop_command": stop_command,
+            "inbox_command": inbox_command,
             "refresh_command": "agentdeck agent refresh",
-            "controls": runtime_agent_controls(agent.agent_id, True),
+            "controls": terminal_card_controls(
+                attach_command=attach_command,
+                select_pane_command=select_pane_command,
+                capture_command=capture_command,
+                send_command_template=send_command_template,
+                stop_command=stop_command,
+                inbox_command=inbox_command,
+            ),
         },
         0,
     )
@@ -6694,6 +6718,21 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         refreshed_project_view = _project_view_payload_or_error(config, store)
         if refreshed_project_view is None:
             return 1
+        registry_items = _workbench_control_registry({"terminal_card": terminal_card})
+        terminal_control_id = next(
+            (
+                item["control_id"]
+                for item in registry_items
+                if item.get("kind") == "terminal" and item.get("command") == next_command
+            ),
+            registry_items[0]["control_id"] if registry_items else None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="terminal",
+            card="terminal_card",
+            control_id=terminal_control_id,
+        )
         payload = {
             "ok": True,
             "turn_id": turn["turn_id"],
@@ -6715,6 +6754,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "continue_card": None,
             "capture_card": None,
             "terminal_card": terminal_card,
+            "control_registry_card": control_registry_card,
             "inbox_card": None,
             "approval_card": None,
             "runtime_card": None,

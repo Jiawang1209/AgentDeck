@@ -175,17 +175,22 @@ ToolContext 包含：
 
 职责：
 
-- Skills 保存可复用工作流。
+- Skills 保存可复用工作流、角色提示和操作 SOP，让 Leader/Worker 不必把每次调度经验都写进核心代码。
+- Skill Registry 提供统一接口容纳内置 skill、项目本地 skill 和显式导入的外源 skill。
+- 每次加载 skill 都必须保存 path/source、hash、content snapshot 和调用者，保证历史可回放。
 - Memory 保存长期项目事实和用户偏好。
 
 MVP：
 
-- 支持 `skills/<name>/SKILL.md` 手动加载。
-- 加载时记录 skill path、hash、content snapshot，保证历史可回放。
+- 支持 `skills/<name>/SKILL.md` 手动加载，内置少量基础技能，例如 planning、debugging、code-review、verification。
+- 支持 `agentdeck skills list` / `agentdeck skills show --name <name>` / `agentdeck skills load --name <name>` 这类只读和显式加载入口。
+- Skill metadata 至少包含 name、description、source、path、hash、required_tools、risk 和 allowed_placeholders。
+- 加载时记录 skill path/source、hash、content snapshot，保证历史可回放。
 - Memory 只读，不自动写长期记忆。
 
 Phase 2：
 
+- 支持外源 skill 目录或导入包，但必须保留 provenance/hash，并由人类确认后加入 allowlist。
 - 后台 reviewer 只生成 memory/skill 建议，不直接覆盖。
 - 用户确认后落地。
 

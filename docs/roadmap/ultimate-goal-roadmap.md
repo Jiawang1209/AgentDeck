@@ -10,13 +10,14 @@ AgentDeck 的终极目标不是“做一堆 tmux 命令”，而是做一个 loc
 Human Operator
   -> API-backed Leader LLM
   -> role-aware Codex / Claude / other CLI Agents
+  -> auditable built-in and external skills
   -> visible tmux runtime today, GUI later
   -> auditable message/job/reply/inbox ledger
   -> approval-gated execution
   -> recoverable project work history
 ```
 
-用户应该能用自然语言启动一个任务，由 Leader Agent 理解目标、拆解计划、指派角色、调度多个 Agent、观察结果、要求验证，并在关键动作前让人类审批。
+用户应该能用自然语言启动一个任务，由 Leader Agent 理解目标、按需加载可审计 skill、拆解计划、指派角色、调度多个 Agent、观察结果、要求验证，并在关键动作前让人类审批。
 
 ## 2. 为什么当前开发没有跑偏
 
@@ -30,6 +31,7 @@ Human Operator
 | `message -> attempt -> job -> inbox` | CCB 式多 Agent 通信账本的最小形态 |
 | `reply` / `ack` | 请求-回复-确认闭环 |
 | `trace` | 多 Agent 调试、审计和恢复所需的 lineage |
+| `docs/reference-analysis/*` 中的 Hermes/WispTerm skill 分析 | 后续 Skill Layer 的设计输入 |
 | `HISTORY.md` | 项目自身开发过程可追溯 |
 
 这些能力还不是最终产品体验，但它们是 Leader Agent、GUI、自动调度和审批系统需要依赖的基础设施。
@@ -41,6 +43,7 @@ Human Operator
 - agent identity
 - role assignment
 - tmux runtime binding
+- explicit skill registry and skill snapshot contract
 - message ledger
 - inbox and trace
 - local project state
@@ -49,7 +52,7 @@ Human Operator
 
 - 完整 GUI
 - 远程 relay
-- 自动学习系统
+- 自动学习系统，尤其是自动改写或自动安装技能
 - 多 provider 大矩阵
 - 自研终端模拟器
 - 自动执行高风险文件操作
@@ -141,16 +144,38 @@ Human Operator
 - GUI 能显示每个 Agent 的角色、状态、pane、任务、inbox、trace。
 - GUI 不成为第二套状态源。
 
+### Phase F: Skill Layer
+
+目标：吸收 WispTerm 的 skill snapshot 思路和 Hermes 的技能整理/学习闭环，但先做可审计、显式加载、可回放的 Skill Layer，而不是让模型静默改写自己的行为。
+
+应实现：
+
+- `skills/<name>/SKILL.md` 本地技能目录。
+- 内置少量基础技能，例如 planning、debugging、code-review、verification。
+- `agentdeck skills list` / `agentdeck skills show --name <name>` / `agentdeck skills load --name <name>`。
+- skill metadata：name、description、source、path、version/hash、allowed_placeholders、required_tools、risk。
+- 每次 Leader/Worker 加载 skill 时，把 path、hash、content snapshot 和使用者写入 state，保证历史可回放。
+- 支持外源 skill 目录或导入包，但默认只做显式 allowlist，不自动执行远程安装脚本。
+- Hermes 式后台 reviewer 只能提出 `skill_suggestion`，不能直接覆盖、删除或自动启用技能。
+
+验收标准：
+
+- Leader plan 或 worker task 可以引用一个已加载 skill，并在 trace 中看到 skill snapshot。
+- 同名 skill 更新后，历史 run 仍能还原当时使用的内容。
+- 外源 skill 必须有 provenance、hash 和人类确认入口。
+- skill 不能绕过 approval、runtime safety 或 tool 权限。
+
 ## 5. 每轮开发的防跑偏检查
 
 每次开发前先问：
 
 1. 这项能力服务 Leader 调度、多 Agent 通信、可见 runtime、审批、恢复、GUI 中的哪一个？
-2. 是否能写入 state 并被 trace？
-3. 是否需要更新 HISTORY？
-4. 是否会绕过人类审批？
-5. 是否把 tmux 当 runtime 后端，而不是业务事实源？
-6. 是否过早引入 GUI、远程、provider 矩阵或自动学习复杂度？
+2. 是否服务可复用 skill、外源生态或可回放工作流？如果是，是否有 snapshot、provenance 和权限边界？
+3. 是否能写入 state 并被 trace？
+4. 是否需要更新 HISTORY？
+5. 是否会绕过人类审批？
+6. 是否把 tmux 当 runtime 后端，而不是业务事实源？
+7. 是否过早引入 GUI、远程、provider 矩阵或自动学习复杂度？
 
 如果一个功能答不上第 1 点，就先不要做。
 

@@ -3910,6 +3910,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                     "intent_card.secondary_embedded_cards must include control_registry_card for capture responses"
                 )
             if (
+                explanation_action_kind == "terminal"
+                and payload.get("terminal_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for terminal responses"
+                )
+            if (
                 explanation_action_kind in {"inbox", "inbox_ack", "inbox_trace"}
                 and payload.get("inbox_card") is not None
                 and "control_registry_card" not in secondary_embedded_cards
@@ -4321,6 +4329,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         ):
             errors.append("control_registry_card.selection.next_command must match capture next_command")
         if (
+            explanation_action_kind == "terminal"
+            and isinstance(terminal_card, dict)
+            and isinstance(selection, dict)
+            and selection.get("next_command") != payload.get("next_command")
+        ):
+            errors.append("control_registry_card.selection.next_command must match terminal next_command")
+        if (
             explanation_action_kind in {"inbox_ack", "inbox_trace"}
             and isinstance(inbox_card, dict)
             and isinstance(selection, dict)
@@ -4379,6 +4394,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("control_registry_card is required for trace responses")
     elif explanation_action_kind == "capture":
         errors.append("control_registry_card is required for capture responses")
+    elif explanation_action_kind == "terminal":
+        errors.append("control_registry_card is required for terminal responses")
     elif explanation_action_kind in {"inbox", "inbox_ack", "inbox_trace"}:
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif explanation_action_kind in {"role", "role_assign"}:
@@ -4508,6 +4525,36 @@ def _validate_leader_chat_terminal_card_contract(errors: list[str], terminal_car
                 for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
                     if field not in control:
                         errors.append(f"terminal_card.controls: missing control field: {field}")
+                if control.get("kind") == "terminal":
+                    if control.get("safety") != "inspect":
+                        errors.append("terminal_card.controls: terminal controls must use safety=inspect")
+                    if control.get("command") != terminal_card.get("attach_command"):
+                        errors.append("terminal_card.controls: terminal command must match attach_command")
+                if control.get("kind") == "select_pane":
+                    if control.get("safety") != "inspect":
+                        errors.append("terminal_card.controls: select_pane controls must use safety=inspect")
+                    if control.get("command") != terminal_card.get("select_pane_command"):
+                        errors.append("terminal_card.controls: select_pane command must match select_pane_command")
+                if control.get("kind") == "capture":
+                    if control.get("safety") != "inspect":
+                        errors.append("terminal_card.controls: capture controls must use safety=inspect")
+                    if control.get("command") != terminal_card.get("capture_command"):
+                        errors.append("terminal_card.controls: capture command must match capture_command")
+                if control.get("kind") == "send":
+                    if control.get("safety") != "explicit_runtime":
+                        errors.append("terminal_card.controls: send controls must use safety=explicit_runtime")
+                    if control.get("command") != terminal_card.get("send_command_template"):
+                        errors.append("terminal_card.controls: send command must match send_command_template")
+                if control.get("kind") == "stop":
+                    if control.get("safety") != "explicit_runtime":
+                        errors.append("terminal_card.controls: stop controls must use safety=explicit_runtime")
+                    if control.get("command") != terminal_card.get("stop_command"):
+                        errors.append("terminal_card.controls: stop command must match stop_command")
+                if control.get("kind") == "inbox":
+                    if control.get("safety") != "inspect":
+                        errors.append("terminal_card.controls: inbox controls must use safety=inspect")
+                    if control.get("command") != terminal_card.get("inbox_command"):
+                        errors.append("terminal_card.controls: inbox command must match inbox_command")
                 if control.get("enabled") is False and not control.get("blocker"):
                     errors.append("terminal_card.controls: disabled controls must include blocker")
             else:
@@ -5158,6 +5205,11 @@ def _validate_control_registry_card_contract(errors: list[str], control_registry
                     errors.append("control_registry_card.items: capture inspect must use safety=inspect")
                 if not str(item.get("command") or "").startswith("agentdeck agent capture --agent "):
                     errors.append("control_registry_card.items: capture inspect command must use agent capture")
+            if item.get("scope") == "terminal" and item.get("kind") == "terminal":
+                if item.get("safety") != "inspect":
+                    errors.append("control_registry_card.items: terminal open must use safety=inspect")
+                if not str(item.get("command") or "").startswith("tmux "):
+                    errors.append("control_registry_card.items: terminal open command must use tmux")
             if item.get("scope") == "inbox" and item.get("kind") == "preview":
                 if not str(item.get("command") or "").startswith("agentdeck trace --id "):
                     errors.append("control_registry_card.items: inbox preview command must use trace")
@@ -6526,6 +6578,67 @@ def runtime_agent_controls(agent_id: str, running: bool) -> list[dict[str, objec
     ]
 
 
+def terminal_card_controls(
+    *,
+    attach_command: str,
+    select_pane_command: str,
+    capture_command: str,
+    send_command_template: str,
+    stop_command: str,
+    inbox_command: str,
+) -> list[dict[str, object]]:
+    return [
+        {
+            "kind": "terminal",
+            "label": "Open terminal",
+            "command": attach_command,
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "select_pane",
+            "label": "Select pane",
+            "command": select_pane_command,
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "capture",
+            "label": "Capture pane output",
+            "command": capture_command,
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "send",
+            "label": "Send input",
+            "command": send_command_template,
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "stop",
+            "label": "Stop pane",
+            "command": stop_command,
+            "safety": "explicit_runtime",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "inbox",
+            "label": "Open inbox",
+            "command": inbox_command,
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+
+
 def role_agent_controls(agent_id: str) -> list[dict[str, object]]:
     return [
         {
@@ -6620,6 +6733,14 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
                 agent_id=terminal.get("agent_id"),
                 controls=terminal.get("controls"),
             )
+    terminal_card = payload.get("terminal_card") if isinstance(payload.get("terminal_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="terminal",
+        card="terminal_card",
+        agent_id=terminal_card.get("agent_id"),
+        controls=terminal_card.get("controls"),
+    )
     runtime_card = payload.get("runtime_card") if isinstance(payload.get("runtime_card"), dict) else {}
     runtime_agents = runtime_card.get("agents") if isinstance(runtime_card.get("agents"), list) else []
     for agent in runtime_agents:
@@ -7655,7 +7776,14 @@ def agent_runtime_example() -> dict[str, object]:
             "stop_command": "agentdeck agent stop --agent planner",
             "inbox_command": "agentdeck inbox --agent planner",
             "refresh_command": "agentdeck agent refresh",
-            "controls": runtime_agent_controls(agent_id, True),
+            "controls": terminal_card_controls(
+                attach_command="tmux -L agentdeck-multi-agent-explore attach -t agentdeck",
+                select_pane_command="tmux -L agentdeck-multi-agent-explore select-pane -t %42",
+                capture_command="agentdeck agent capture --agent planner --lines 200",
+                send_command_template="agentdeck agent send --agent planner --text <text>",
+                stop_command="agentdeck agent stop --agent planner",
+                inbox_command="agentdeck inbox --agent planner",
+            ),
         },
         "refresh": {
             "ok": True,

@@ -2821,6 +2821,30 @@ def test_leader_chat_opens_agent_terminal_card_without_reading_pane(
         "enabled": True,
         "blocker": None,
     }
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["control_registry_card"]["filters"]["scope"] == "terminal"
+    assert payload["control_registry_card"]["filters"]["card"] == "terminal_card"
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == [
+        "scope",
+        "card",
+        "control_id",
+    ]
+    assert payload["control_registry_card"]["filters"]["item_count_before_filter"] == 6
+    assert payload["control_registry_card"]["item_count"] == 1
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "terminal",
+        "card": "terminal_card",
+        "kind": "terminal",
+        "label": "Open terminal",
+        "command": payload["next_command"],
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": "planner",
+        "control_id": selected_control["control_id"],
+    }
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
     assert fake.captured == []
     assert fake.sent == []
 
@@ -2834,6 +2858,30 @@ def test_leader_chat_opens_agent_terminal_card_without_reading_pane(
     assert state_after["approvals"] == []
     assert state_after["messages"] == []
     assert state_after["jobs"] == []
+
+
+def test_validate_leader_chat_contract_requires_terminal_control_registry_card(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(["leader", "chat", "--message", "打开 planner 终端"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    payload["control_registry_card"] = None
+    payload["intent_card"]["secondary_embedded_cards"] = []
+
+    assert validate_leader_chat_contract(payload) == {
+        "ok": False,
+        "errors": [
+            "intent_card.secondary_embedded_cards must include control_registry_card for terminal responses",
+            "control_registry_card is required for terminal responses",
+        ],
+    }
 
 
 def test_leader_chat_rejects_capture_for_unspawned_agent_without_planning(

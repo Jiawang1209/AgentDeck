@@ -4,6 +4,16 @@
 
 ## 2026-07-07
 
+### Current - Link terminal chat to command registry controls and add skills to north star
+
+- 扩展自然语言 visible terminal mode：`agentdeck leader chat --message "打开 planner 终端"` 现在会附带过滤到 `scope=terminal` / `card=terminal_card` 的 `control_registry_card`，selection 指向同一张 `terminal_card.controls[]` 中的 `kind=terminal` tmux attach control，`intent_card.secondary_embedded_cards[]` 同步列出 registry companion。
+- 调整 `terminal_card.controls[]`：从 runtime 行控件升级为 terminal-card 专属控件，包含 tmux attach、tmux select-pane、capture、send、stop 和 inbox；`kind=terminal` 必须匹配 `terminal_card.attach_command`，`kind=select_pane` 必须匹配 `terminal_card.select_pane_command`。
+- 扩展 contract 守门：`validate_leader_chat_contract()` 会拒绝缺少 terminal registry companion 的 terminal 响应，并要求 registry selection 的 `next_command` 匹配顶层 terminal `next_command`；`validate_control_registry_card_contract()` 会校验 terminal attach control 必须 inspect-only 且使用 tmux 命令。
+- 保持只读边界：terminal chat 和 registry companion 只是 GUI/TUI 可渲染的 tmux attach/select/capture/send/stop/inbox 命令投影，不自动 attach/select pane，不读取 pane，不发送输入，不停止 pane，不创建 plan/action/approval/message/job/inbox，也不写 runtime state。
+- 将用户提出的 skill 诉求纳入北极星：`docs/roadmap/ultimate-goal-roadmap.md` 新增 Skill Layer phase，明确内置 skill、项目本地 skill、显式 allowlist 外源 skill、path/source/hash/content snapshot、provenance、人工确认和“不绕过审批/权限”的边界。
+- 同步架构文档、README、AGENT/CLAUDE 和 leader-chat contract，明确 AgentDeck 应吸收 WispTerm skill snapshot 与 Hermes skill registry/background reviewer 思路，但 MVP 先做可审计、显式加载、可回放的 Skill Layer，不做静默自动改写或自动安装技能。
+- 验证记录：已先确认红测失败，terminal chat 最初缺少 registry companion，后续实现误把 registry 构造放入 run_start 分支导致 `UnboundLocalError`，修正后又暴露 terminal card controls 仍指向 `agentdeck agent terminal --agent <id>` 而不是 tmux attach；实现 terminal-card 专属 controls 后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_opens_agent_terminal_card_without_reading_pane tests/test_leader_cli.py::test_validate_leader_chat_contract_requires_terminal_control_registry_card -q` 2 项通过；相关回归 `conda run -n agentdeck pytest tests/test_contracts.py tests/test_leader_cli.py -q` 361 项通过；全量测试先暴露独立 `agentdeck agent terminal --agent planner` 的旧断言仍期待 runtime controls，修正后失败项回归 3 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 509 项通过。
+
 ### Current - Link capture chat to command registry controls
 
 - 扩展自然语言可见 pane capture：`agentdeck leader chat --message "查看 planner 输出"` 现在返回带 GUI-ready `controls[]` 的 `capture_card`，其中 `kind=inspect` control 指向同一条只读 `agentdeck agent capture --agent planner --lines 200`。

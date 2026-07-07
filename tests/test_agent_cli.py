@@ -5347,7 +5347,15 @@ def test_agent_terminal_outputs_visible_pane_card_without_mutating_state(
             {
                 "kind": "terminal",
                 "label": "Open terminal",
-                "command": "agentdeck agent terminal --agent planner",
+                "command": "tmux -L agentdeck-repo attach -t agentdeck",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "select_pane",
+                "label": "Select pane",
+                "command": "tmux -L agentdeck-repo select-pane -t %42",
                 "safety": "inspect",
                 "enabled": True,
                 "blocker": None,
