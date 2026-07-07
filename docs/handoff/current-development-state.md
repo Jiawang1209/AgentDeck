@@ -326,13 +326,19 @@ The second and third slices are already committed:
 
 The dashboard now renders: header, recovery, role topology, review gate, release, ledger, queue, command palette — all from the workbench contract payload alone.
 
+The fourth slice is already committed:
+
+- `docs/walkthroughs/tui-reference-client.md` documents the reference client (section→card mapping, real sample output, the sufficiency argument), linked from the README `dashboard` paragraph.
+
+The TUI reference-client direction is complete: `agentdeck dashboard` renders header / recovery / role topology / review gate / release / ledger / queue / command palette purely from the `agentdeck workbench` contract, with tests (`tests/test_dashboard.py`) and a doc.
+
 ## Next Best Step
 
-Finish and document the TUI reference client:
+The TUI reference client proves the read-only workbench contract drives a GUI/TUI. Revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability. Candidate directions (all keeping read-only-contract + explicit-command discipline):
 
-- Add a short doc for the reference client — either a `docs/walkthroughs/tui-reference-client.md` or a section appended to `docs/walkthroughs/layered-role-round.md` — showing sample `agentdeck dashboard` output and stating the key point: it is a pure consumer of the `agentdeck workbench` contract (no state reads, no new backend behavior), proving the read-only contract is sufficient to drive a GUI/TUI. Link it from the README `dashboard` paragraph.
-- Optionally add a worker-lifecycle stage line to the dashboard.
-- Then the TUI reference-client direction is complete; revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability.
+- Assisted run flow behind the approval gate (`agentdeck run` advancing step-by-step, stopping at every human gate).
+- Deeper skill/memory learning-layer GUI surfaces (roadmap Phase F).
+- Optional dashboard polish: a worker-lifecycle stage line, or a `--watch` text refresh mirroring `workbench --watch`.
 - Preserve human approval and keep every read-only surface read-only.
 
 ## Required Verification Before Handoff

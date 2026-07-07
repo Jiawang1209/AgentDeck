@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Document the TUI reference client
+
+- 新增 `docs/walkthroughs/tui-reference-client.md`：说明 `agentdeck dashboard` 是 workbench 契约的只读参考客户端，列出每个 section 对应的 card 来源、真实全新项目上的样例输出，并点明核心论点——只读 workbench 契约足以驱动 GUI/TUI（不读 state、不调 provider、不新增后端行为），命令面板保留每个控件的 enabled/blocker。
+- 从 README 的 `agentdeck dashboard` 段落链接到该文档。
+- 样例输出取自真实 `git init` + `agentdeck project init` + `agentdeck dashboard`（default provider 未配置，reviewer 角色因无 artifact 而 blocked，105 controls 命令面板），保证文档与实际行为一致。
+- 收官 TUI 参考客户端方向：workbench 契约现在有一个可运行、可测试的纯消费方证明其自洽。
+- 验证记录：纯文档，无源码/测试改动；`git diff --check` 通过，全量测试保持 611 项通过。
+
 ### Current - Add release and ledger sections to TUI dashboard
 
 - 扩展 `agentdeck dashboard` / `render_workbench_dashboard`：新增 "Release" 段（从 `release_preview_card` 派生 status/reason，ready 时显示 `agentdeck release --confirm`，released 时显示已发布轮次和 latest release id）和 "Ledger" 段（从 `ledger_card` 的 messages/jobs/replies/artifacts/inbox 计数派生一行摘要）。
