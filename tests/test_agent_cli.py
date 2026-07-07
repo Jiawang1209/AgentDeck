@@ -5950,6 +5950,109 @@ def test_workbench_role_topology_marks_reviewer_blocked_when_waiting_for_artifac
     assert review_role["blocker"] == "waiting for artifacts"
 
 
+def test_workbench_role_topology_surfaces_explicit_code_and_round_reviewers(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    assert (
+        cli.main(
+            [
+                "agent",
+                "assign-role",
+                "--agent",
+                "reviewer",
+                "--role",
+                "code_reviewer",
+                "--role-prompt",
+                "你负责单任务产物审查。",
+            ]
+        )
+        == 0
+    )
+    assert (
+        cli.main(
+            [
+                "agent",
+                "assign-role",
+                "--agent",
+                "coder",
+                "--role",
+                "round_reviewer",
+                "--role-prompt",
+                "你负责整轮验收。",
+            ]
+        )
+        == 0
+    )
+    store = StateStore(root)
+    state = store.load()
+    state["messages"] = [
+        {
+            "message_id": "msg_impl",
+            "from_actor": "leader",
+            "to_agent": "planner",
+            "task": "Implement",
+            "prompt": "implement",
+            "pane_id": "%42",
+            "status": "sent",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    state["jobs"] = [
+        {
+            "job_id": "job_impl",
+            "message_id": "msg_impl",
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:01+00:00",
+        }
+    ]
+    state["artifacts"] = [
+        {
+            "artifact_id": "art_impl",
+            "message_id": "msg_impl",
+            "job_id": "job_impl",
+            "reply_id": None,
+            "from_agent": "planner",
+            "path": "docs/feature.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:02+00:00",
+        }
+    ]
+    store.save(state)
+    capsys.readouterr()
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    card = payload["role_topology_card"]
+    # worker order follows configured agents: planner, coder(round_reviewer), reviewer(code_reviewer)
+    assert [role["role_id"] for role in card["roles"]] == [
+        "frontdesk",
+        "planner",
+        "orchestrator",
+        "planning",
+        "round_reviewer",
+        "code_reviewer",
+    ]
+    roles = {role["role_id"]: role for role in card["roles"]}
+    code_reviewer = roles["code_reviewer"]
+    assert code_reviewer["kind"] == "worker"
+    assert code_reviewer["agent_id"] == "reviewer"
+    assert code_reviewer["status"] == "reviewing"
+    assert code_reviewer["blocker"] is None
+    round_reviewer = roles["round_reviewer"]
+    assert round_reviewer["agent_id"] == "coder"
+    assert round_reviewer["status"] == "blocked"
+    assert round_reviewer["blocker"] == "code review is not ready"
+    # review gate agrees on the reviewer identities
+    assert payload["review_gate_card"]["code_review"]["agent_id"] == "reviewer"
+    assert payload["review_gate_card"]["round_review"]["agent_id"] == "coder"
+
+
 def test_workbench_role_topology_marks_orchestrator_waiting_for_approval(
     tmp_path, monkeypatch, capsys
 ) -> None:

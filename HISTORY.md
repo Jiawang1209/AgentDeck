@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Cover explicit code/round reviewer role topology
+
+- 新增回归覆盖（北极星 Phase G6 第六刀，纯测试）：验证配置了显式 `code_reviewer` / `round_reviewer` 角色的项目在 `role_topology_card` 中把它们作为独立 worker 角色暴露，且 review-gate 状态叠加正确映射——有 artifact 但无 review reply 时，`code_reviewer` 显示 `reviewing`（无 blocker），`round_reviewer` 显示 `blocked` 并带 blocker `code review is not ready`（等上游代码审查）。
+- 同时锁定 worker 角色顺序跟随配置 agents 顺序（planner → coder(round_reviewer) → reviewer(code_reviewer)），并确认拓扑与 `review_gate_card` 对 reviewer 身份的判定一致。
+- 该行为在第二、四刀实现后本就正确，本刀只补测试固化 G6"分层 reviewer 可见"验收标准，无源码改动。
+- 验证记录：目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_role_topology_surfaces_explicit_code_and_round_reviewers -q` 1 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 605 项通过。
+
 ### Current - Add role topology status summary
 
 - 扩展 `agentdeck workbench` 的 `role_topology_card`（北极星 Phase G6 第五刀）：新增 `by_status`（每个角色 `status` 的计数）和 `blocked_count`（带非空 `blocker` 的角色数），让 GUI/TUI 一眼看出"有几个角色被阻塞"，无需遍历 roles。

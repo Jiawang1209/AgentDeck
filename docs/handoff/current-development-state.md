@@ -287,13 +287,19 @@ New surface:
 
 - `role_topology_card` now carries `by_status` (per-status counts) and `blocked_count` (roles with a non-null blocker); the validator requires `blocked_count` to match the roles carrying a blocker.
 
+The sixth G6 slice is already committed (test-only coverage):
+
+- A project configuring agents with roles `code_reviewer` / `round_reviewer` surfaces them as distinct worker roles; with an artifact but no review replies the code reviewer shows `reviewing` and the round reviewer shows `blocked` (`code review is not ready`). Worker order follows configured agent order.
+
+Phase G6 (Role Topology GUI) is now functionally complete: workbench `role_topology_card` (logical + worker roles, review-gate overlay, orchestrator approval/release overlay, status summary) plus the read-only natural-language `role_topology` chat discovery.
+
 ## Next Best Step
 
-Continue Phase G6 with the next follow-up:
+G6 is complete. Options for the next direction:
 
-- Add explicit-reviewer coverage: verify (and add a test proving) that a project configuring agents with roles `code_reviewer` / `round_reviewer` surfaces them as distinct topology roles and that the review-gate overlay maps to them; add any fix needed so the full "frontdesk → planner → orchestrator → coder → code_reviewer → round_reviewer" ordering shows once configured.
-- Optionally surface `blocked_count` / `by_status` into the natural-language `role_topology` chat summary text so the shell can say "N roles blocked".
-- Preserve human approval and keep every topology surface read-only.
+- Surface `blocked_count` / `by_status` into the natural-language `role_topology` chat `leader_explanation.summary` text so the shell can say "N roles blocked" without re-deriving from the card.
+- Or begin consolidating the layered-role north star into an end-to-end acceptance/demo doc under `docs/` that walks a full round (frontdesk intake → plan → approval → dispatch → review gate → release) against the read-only contract surfaces.
+- Preserve human approval and keep every read-only surface read-only.
 
 ## Required Verification Before Handoff
 
