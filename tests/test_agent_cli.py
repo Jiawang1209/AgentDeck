@@ -629,8 +629,8 @@ repeatable review checklist
             "label": "Create skill",
             "command": f"agentdeck skills create --suggestion-id {suggestion['suggestion_id']} --confirm",
             "safety": "explicit_user",
-            "enabled": False,
-            "blocker": "skill create is not implemented yet",
+            "enabled": True,
+            "blocker": None,
         },
         {
             "kind": "list_suggestions",
@@ -660,6 +660,162 @@ def test_skills_draft_preview_rejects_unknown_suggestion_without_mutating_state(
     assert "unknown skill suggestion: sgs_missing" in captured.err
     assert StateStore(root).load() == state_before
     assert StateStore(root).list_events(limit=20) == []
+
+
+def test_skills_create_requires_confirm_without_writing_skill(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "skills",
+            "suggest",
+            "--name",
+            "incident-review",
+            "--summary",
+            "Review incident response evidence.",
+            "--rationale",
+            "repeatable review checklist",
+            "--source",
+            "learn-review",
+        ]
+    )
+    suggestion = json.loads(capsys.readouterr().out)["suggestion"]
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+
+    exit_code = cli.main(["skills", "create", "--suggestion-id", suggestion["suggestion_id"]])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "skills create requires --confirm" in captured.err
+    assert not (root / ".agentdeck" / "skills" / "incident-review" / "SKILL.md").exists()
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=20) == events_before
+
+
+def test_skills_create_confirm_writes_skill_and_marks_suggestion_created(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "skills",
+            "suggest",
+            "--name",
+            "incident-review",
+            "--summary",
+            "Review incident response evidence.",
+            "--rationale",
+            "repeatable review checklist",
+            "--source",
+            "learn-review",
+            "--agent",
+            "leader",
+            "--from-trace",
+            "pln_incident",
+        ]
+    )
+    suggestion = json.loads(capsys.readouterr().out)["suggestion"]
+
+    exit_code = cli.main(["skills", "create", "--suggestion-id", suggestion["suggestion_id"], "--confirm"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    skill_path = root / ".agentdeck" / "skills" / "incident-review" / "SKILL.md"
+    expected_content = """---
+name: incident-review
+description: Review incident response evidence.
+required_tools:
+risk: inspect
+---
+# Incident Review
+
+Review incident response evidence.
+
+## Rationale
+
+repeatable review checklist
+
+## Provenance
+
+- source: learn-review
+- agent_id: leader
+- trace_id: pln_incident
+"""
+    assert payload["ok"] is True
+    assert payload["mode"] == "skill_created"
+    assert payload["suggestion_id"] == suggestion["suggestion_id"]
+    assert payload["name"] == "incident-review"
+    assert payload["path"] == ".agentdeck/skills/incident-review/SKILL.md"
+    assert payload["overwritten"] is False
+    assert payload["content_hash"].startswith("sha256:")
+    assert payload["show_command"] == "agentdeck skills show --name incident-review"
+    assert payload["load_command"] == "agentdeck skills load --name incident-review"
+    assert payload["controls"] == [
+        {
+            "kind": "show",
+            "label": "Show skill",
+            "command": "agentdeck skills show --name incident-review",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        },
+        {
+            "kind": "load",
+            "label": "Load skill",
+            "command": "agentdeck skills load --name incident-review",
+            "safety": "explicit_user",
+            "enabled": True,
+            "blocker": None,
+        },
+    ]
+    assert skill_path.read_text(encoding="utf-8") == expected_content
+    state_after = StateStore(root).load()
+    created = state_after["skill_suggestions"][0]
+    assert created["status"] == "created"
+    assert created["created_skill_path"] == ".agentdeck/skills/incident-review/SKILL.md"
+    assert created["created_content_hash"] == payload["content_hash"]
+    assert created["created_at"]
+    latest_event = StateStore(root).list_events(limit=1)[0]
+    assert latest_event["event_type"] == "skill_created"
+    assert latest_event["payload"]["suggestion_id"] == suggestion["suggestion_id"]
+
+
+def test_skills_create_rejects_already_created_suggestion_without_duplicate_write(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "skills",
+            "suggest",
+            "--name",
+            "incident-review",
+            "--summary",
+            "Review incident response evidence.",
+            "--rationale",
+            "repeatable review checklist",
+            "--source",
+            "learn-review",
+        ]
+    )
+    suggestion = json.loads(capsys.readouterr().out)["suggestion"]
+    cli.main(["skills", "create", "--suggestion-id", suggestion["suggestion_id"], "--confirm"])
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+    skill_path = root / ".agentdeck" / "skills" / "incident-review" / "SKILL.md"
+    content_before = skill_path.read_text(encoding="utf-8")
+
+    exit_code = cli.main(["skills", "create", "--suggestion-id", suggestion["suggestion_id"], "--confirm"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert f"skill suggestion is not pending: {suggestion['suggestion_id']}" in captured.err
+    assert skill_path.read_text(encoding="utf-8") == content_before
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=20) == events_before
 
 
 def test_memory_suggest_records_pending_memory_suggestion_without_writing_memory(
@@ -2952,6 +3108,7 @@ def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     )
     assert payload["skills_suggestions_command"] == "agentdeck skills suggestions"
     assert payload["skills_draft_preview_command_template"] == "agentdeck skills draft-preview --suggestion-id <id>"
+    assert payload["skills_create_command_template"] == "agentdeck skills create --suggestion-id <id> --confirm"
     assert payload["skills_suggest_command_template"] == (
         "agentdeck skills suggest --name <name> --summary <summary> --rationale <rationale> --source <source>"
     )
@@ -2968,6 +3125,7 @@ def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["suggest_response_fields"] == expected["suggest_response_fields"]
     assert payload["suggestions_response_fields"] == expected["suggestions_response_fields"]
     assert payload["draft_preview_response_fields"] == expected["draft_preview_response_fields"]
+    assert payload["create_response_fields"] == expected["create_response_fields"]
     assert payload["suggestion_item_fields"] == expected["suggestion_item_fields"]
 
 
@@ -3002,6 +3160,8 @@ def test_contract_skills_example_exports_gui_ready_skill_registry(capsys) -> Non
     assert set(payload["example_suggestions_response_fields"]) == set(example["suggestions"])
     assert payload["example_draft_preview_response_fields"] == payload["draft_preview_response_fields"]
     assert set(payload["example_draft_preview_response_fields"]) == set(example["draft_preview"])
+    assert payload["example_create_response_fields"] == payload["create_response_fields"]
+    assert set(payload["example_create_response_fields"]) == set(example["create"])
     assert payload["example_suggestion_item_fields"] == payload["suggestion_item_fields"]
     assert set(payload["example_suggestion_item_fields"]) == set(example["suggestions"]["items"][0])
     assert example["list"]["controls"][0]["kind"] == "import"
@@ -3014,7 +3174,10 @@ def test_contract_skills_example_exports_gui_ready_skill_registry(capsys) -> Non
     assert example["draft_preview"]["mode"] == "skill_draft_preview"
     assert example["draft_preview"]["create_command"].endswith("--confirm")
     assert example["draft_preview"]["controls"][0]["kind"] == "create_skill"
-    assert example["draft_preview"]["controls"][0]["enabled"] is False
+    assert example["draft_preview"]["controls"][0]["enabled"] is True
+    assert example["create"]["mode"] == "skill_created"
+    assert example["create"]["suggestion"]["status"] == "created"
+    assert example["create"]["controls"][1]["kind"] == "load"
     assert example["suggestions"]["items"][0]["draft_path"] == ".agentdeck/skills/incident-review/SKILL.md"
     assert example["suggestions"]["items"][0]["draft_preview_command"] == (
         "agentdeck skills draft-preview --suggestion-id sgs_example"

@@ -3552,8 +3552,8 @@ def skills_draft_preview_command(args: argparse.Namespace) -> int:
                     label="Create skill",
                     command=create_command,
                     safety="explicit_user",
-                    enabled=False,
-                    blocker="skill create is not implemented yet",
+                    enabled=True,
+                    blocker=None,
                 ),
                 _control(
                     kind="list_suggestions",
@@ -3561,6 +3561,99 @@ def skills_draft_preview_command(args: argparse.Namespace) -> int:
                     command="agentdeck skills suggestions",
                     safety="inspect",
                 ),
+            ],
+        }
+    )
+    return 0
+
+
+def _mark_skill_suggestion_created(
+    store: StateStore,
+    suggestion_id: str,
+    *,
+    created_skill_path: str,
+    created_content_hash: str,
+) -> dict[str, object]:
+    state = store.load()
+    suggestions = state.get("skill_suggestions", [])
+    if not isinstance(suggestions, list):
+        raise KeyError(suggestion_id)
+    for suggestion in suggestions:
+        if not isinstance(suggestion, dict) or suggestion.get("suggestion_id") != suggestion_id:
+            continue
+        if suggestion.get("status") != "pending":
+            raise ValueError(f"skill suggestion is not pending: {suggestion_id}")
+        suggestion["status"] = "created"
+        suggestion["created_skill_path"] = created_skill_path
+        suggestion["created_content_hash"] = created_content_hash
+        suggestion["created_at"] = utc_now()
+        store.save(state)
+        return suggestion
+    raise KeyError(suggestion_id)
+
+
+def skills_create_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    if not args.confirm:
+        print("skills create requires --confirm", file=sys.stderr)
+        return 1
+    suggestion = _find_skill_suggestion(store, args.suggestion_id)
+    if suggestion is None:
+        print(f"unknown skill suggestion: {args.suggestion_id}", file=sys.stderr)
+        return 1
+    if suggestion.get("status") != "pending":
+        print(f"skill suggestion is not pending: {args.suggestion_id}", file=sys.stderr)
+        return 1
+    name = str(suggestion.get("name") or "")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+        print(f"invalid skill name: {name}", file=sys.stderr)
+        return 1
+    target = str(suggestion.get("draft_path") or f".agentdeck/skills/{name}/SKILL.md")
+    target_path = store.root / target
+    proposed_content = _skill_draft_content(suggestion)
+    content_hash = "sha256:" + hashlib.sha256(proposed_content.encode("utf-8")).hexdigest()
+    overwritten = target_path.exists()
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(proposed_content, encoding="utf-8")
+    created = _mark_skill_suggestion_created(
+        store,
+        args.suggestion_id,
+        created_skill_path=target,
+        created_content_hash=content_hash,
+    )
+    store.append_event(
+        EventRecord.create(
+            "skill_created",
+            {
+                "suggestion_id": args.suggestion_id,
+                "name": name,
+                "path": target,
+                "content_hash": content_hash,
+                "source": suggestion.get("source"),
+                "agent_id": suggestion.get("agent_id"),
+                "trace_id": suggestion.get("trace_id"),
+            },
+        )
+    )
+    show_command = f"agentdeck skills show --name {name}"
+    load_command = f"agentdeck skills load --name {name}"
+    _print_json(
+        {
+            "ok": True,
+            "mode": "skill_created",
+            "suggestion_id": args.suggestion_id,
+            "suggestion": created,
+            "name": name,
+            "path": target,
+            "overwritten": overwritten,
+            "content_hash": content_hash,
+            "show_command": show_command,
+            "load_command": load_command,
+            "controls": [
+                _control(kind="show", label="Show skill", command=show_command, safety="inspect"),
+                _control(kind="load", label="Load skill", command=load_command, safety="explicit_user"),
             ],
         }
     )
@@ -10489,6 +10582,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     skills_draft_preview.add_argument("--suggestion-id", required=True, help="Pending skill suggestion id")
     skills_draft_preview.set_defaults(func=skills_draft_preview_command)
+    skills_create = skills_subparsers.add_parser(
+        "create",
+        help="Create a project SKILL.md from a pending skill suggestion after explicit confirmation",
+    )
+    skills_create.add_argument("--suggestion-id", required=True, help="Pending skill suggestion id")
+    skills_create.add_argument("--confirm", action="store_true", help="Required to write the project SKILL.md")
+    skills_create.set_defaults(func=skills_create_command)
     skills_import_preview = skills_subparsers.add_parser(
         "import-preview",
         help="Preview importing an external SKILL.md without writing project state",

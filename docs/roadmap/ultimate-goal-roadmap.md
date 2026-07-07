@@ -33,7 +33,7 @@ Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/H
 | `message -> attempt -> job -> inbox` | CCB 式多 Agent 通信账本的最小形态 |
 | `reply` / `ack` | 请求-回复-确认闭环 |
 | `trace` | 多 Agent 调试、审计和恢复所需的 lineage |
-| `skills list/show/import-preview/import/load-preview/load/suggest/suggestions` 与 plan `skill_context` provenance | 可审计、可回放、可被 GUI 消费的 Skill Layer |
+| `skills list/show/import-preview/import/load-preview/load/suggest/suggestions/draft-preview/create` 与 plan `skill_context` provenance | 可审计、可回放、可被 GUI 消费的 Skill Layer |
 | `docs/reference-analysis/*` 中的 Hermes/WispTerm skill 分析 | Skill Layer 和后续外源 skill allowlist 的设计输入 |
 | `HISTORY.md` | 项目自身开发过程可追溯 |
 
@@ -156,7 +156,7 @@ Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/H
 
 - `skills/<name>/SKILL.md` 本地技能目录。
 - 内置少量基础技能，例如 planning、debugging、code-review、verification。
-- `agentdeck skills list` / `agentdeck skills show --name <name>` / `agentdeck skills import-preview --path <SKILL.md>` / `agentdeck skills import --path <SKILL.md>` / `agentdeck skills load-preview --name <name> --agent <id> --purpose <text>` / `agentdeck skills load --name <name>` / `agentdeck skills suggest` / `agentdeck skills suggestions` / `agentdeck skills draft-preview --suggestion-id <id>`。
+- `agentdeck skills list` / `agentdeck skills show --name <name>` / `agentdeck skills import-preview --path <SKILL.md>` / `agentdeck skills import --path <SKILL.md>` / `agentdeck skills load-preview --name <name> --agent <id> --purpose <text>` / `agentdeck skills load --name <name>` / `agentdeck skills suggest` / `agentdeck skills suggestions` / `agentdeck skills draft-preview --suggestion-id <id>` / `agentdeck skills create --suggestion-id <id> --confirm`。
 - `agentdeck memory suggest --summary <summary> --rationale <rationale> --source <source>` / `agentdeck memory suggestions` / `agentdeck memory apply-preview --suggestion-id <id>` / `agentdeck memory apply --suggestion-id <id> --confirm`。
 - `agentdeck learn review --plan-id <id>` 只读复盘已有 plan/reply/artifact，生成显式 `skills suggest` / `memory suggest` 后续命令，不直接写 suggestion queue。
 - `agentdeck contract learning-review` / `--example` 把学习回顾响应、skill suggestion、memory suggestion 和 control 字段暴露给 GUI/TUI discovery。
@@ -164,7 +164,7 @@ Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/H
 - skill metadata：name、description、source、path、version/hash、allowed_placeholders、required_tools、risk。
 - 每次 Leader/Worker 加载 skill 时，把 path、hash、content snapshot 和使用者写入 state，保证历史可回放。
 - 支持外源 skill 目录或导入包，但默认先走只读 import preview，展示 source、target、hash、覆盖状态和 GUI-ready 控制项；显式 import/allowlist 后仍需先走可对话触发的 load preview，看清 agent、purpose、hash 和显式 load command，再由人类执行 load 才能进入 Leader/Worker 上下文，不自动执行远程安装脚本，也不静默把 skill 注入提示词。
-- Hermes 式后台 reviewer 只能提出 pending `skill_suggestion`，进入 `skill_suggestions[]` 队列和审计事件；人类可以用 `draft-preview` 审阅拟写入的 `SKILL.md` 内容，但 reviewer 和 preview 都不能直接创建、覆盖、删除、导入、加载或自动启用技能。
+- Hermes 式后台 reviewer 只能提出 pending `skill_suggestion`，进入 `skill_suggestions[]` 队列和审计事件；人类可以用 `draft-preview` 审阅拟写入的 `SKILL.md` 内容，再用显式 `skills create --confirm` 落地项目 skill。reviewer、preview 和 create 都不能自动加载或启用技能。
 - Hermes 式后台 reviewer 只能提出 pending `memory_suggestion`，进入 `memory_suggestions[]` 队列和审计事件，不能直接写 `.agentdeck/memory/*.md`、不能自动注入 Leader/Worker prompt；长期 memory 只能经人类审阅 `apply-preview` 后显式 `memory apply --confirm` 落地。
 - MVP 阶段的 reviewer 先以 `learn review` 的只读 learning card 形式存在：它只基于已有 run 事实生成候选命令，是否真正入队由人类显式执行。
 

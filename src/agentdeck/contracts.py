@@ -534,6 +534,20 @@ SKILLS_DRAFT_PREVIEW_RESPONSE_FIELDS = (
     "controls",
 )
 
+SKILLS_CREATE_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "suggestion_id",
+    "suggestion",
+    "name",
+    "path",
+    "overwritten",
+    "content_hash",
+    "show_command",
+    "load_command",
+    "controls",
+)
+
 SKILLS_SUGGESTION_ITEM_FIELDS = (
     "suggestion_id",
     "status",
@@ -1854,6 +1868,7 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "skills_load_command_template": "agentdeck skills load --name <name> --agent <agent_id> --purpose <purpose>",
         "skills_suggestions_command": "agentdeck skills suggestions",
         "skills_draft_preview_command_template": "agentdeck skills draft-preview --suggestion-id <id>",
+        "skills_create_command_template": "agentdeck skills create --suggestion-id <id> --confirm",
         "skills_suggest_command_template": "agentdeck skills suggest --name <name> --summary <summary> --rationale <rationale> --source <source>",
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
@@ -1866,6 +1881,7 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "suggest_response_fields": list(SKILLS_SUGGEST_RESPONSE_FIELDS),
         "suggestions_response_fields": list(SKILLS_SUGGESTIONS_RESPONSE_FIELDS),
         "draft_preview_response_fields": list(SKILLS_DRAFT_PREVIEW_RESPONSE_FIELDS),
+        "create_response_fields": list(SKILLS_CREATE_RESPONSE_FIELDS),
         "skill_item_fields": list(SKILLS_SKILL_ITEM_FIELDS),
         "suggestion_item_fields": list(SKILLS_SUGGESTION_ITEM_FIELDS),
         "detail_skill_fields": list(SKILLS_DETAIL_SKILL_FIELDS),
@@ -1888,6 +1904,7 @@ def skills_contract_response(contract_path: Path, include_example: bool = False)
         payload["example_suggest_response_fields"] = list(example["suggest"])
         payload["example_suggestions_response_fields"] = list(example["suggestions"])
         payload["example_draft_preview_response_fields"] = list(example["draft_preview"])
+        payload["example_create_response_fields"] = list(example["create"])
         payload["example_skill_item_fields"] = list(example["list"]["skills"][0])
         payload["example_suggestion_item_fields"] = list(example["suggestions"]["items"][0])
         payload["example_detail_skill_fields"] = list(example["detail"]["skill"])
@@ -1975,6 +1992,13 @@ def skills_example() -> dict[str, object]:
                 "blocker": None,
             }
         ],
+    }
+    created_suggestion_item = {
+        **deepcopy(suggestion_item),
+        "status": "created",
+        "created_skill_path": ".agentdeck/skills/incident-review/SKILL.md",
+        "created_content_hash": "sha256:example-draft",
+        "created_at": "2026-07-04T00:05:00+00:00",
     }
     draft_content = """---
 name: incident-review
@@ -2136,14 +2160,44 @@ planner repeatedly asked for the same incident review checklist
                     "label": "Create skill",
                     "command": "agentdeck skills create --suggestion-id sgs_example --confirm",
                     "safety": "explicit_user",
-                    "enabled": False,
-                    "blocker": "skill create is not implemented yet",
+                    "enabled": True,
+                    "blocker": None,
                 },
                 {
                     "kind": "list_suggestions",
                     "label": "List skill suggestions",
                     "command": "agentdeck skills suggestions",
                     "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
+        },
+        "create": {
+            "ok": True,
+            "mode": "skill_created",
+            "suggestion_id": "sgs_example",
+            "suggestion": deepcopy(created_suggestion_item),
+            "name": "incident-review",
+            "path": ".agentdeck/skills/incident-review/SKILL.md",
+            "overwritten": False,
+            "content_hash": "sha256:example-draft",
+            "show_command": "agentdeck skills show --name incident-review",
+            "load_command": "agentdeck skills load --name incident-review",
+            "controls": [
+                {
+                    "kind": "show",
+                    "label": "Show skill",
+                    "command": "agentdeck skills show --name incident-review",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "load",
+                    "label": "Load skill",
+                    "command": "agentdeck skills load --name incident-review",
+                    "safety": "explicit_user",
                     "enabled": True,
                     "blocker": None,
                 },

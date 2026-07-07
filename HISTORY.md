@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Create project skills from suggestions
+
+- 新增 `agentdeck skills create --suggestion-id <id> --confirm`：把已审阅的 pending skill suggestion 草稿写入项目 `.agentdeck/skills/<name>/SKILL.md`，完成 “suggestion -> draft-preview -> explicit create” 的 skill 学习闭环。
+- 保持人类确认边界：缺少 `--confirm` 会拒绝且不写文件；非 pending suggestion 会拒绝且不重复写入；create 只写项目 skill 文件、标记 suggestion 为 `created`、记录 `created_skill_path` / `created_content_hash` / `created_at` 并追加 `skill_created` 审计事件。
+- `agentdeck skills draft-preview --suggestion-id <id>` 的 create control 现在从 disabled future control 变成可用的 `safety=explicit_user` control，但 preview 本身仍只读。
+- 扩展 `agentdeck contract skills` / `--example` 和 `docs/contracts/skills-schema.md`：公开 `skills_create_command_template`、`create_response_fields` 和稳定 create example，让 GUI/TUI 能发现并渲染显式 create 流程。
+- 同步 README、AGENT.md、CLAUDE.md、北极星路线图和测试，明确 create 不会自动 load skill、不会调用 provider、不会读取 tmux 或修改 runtime/approval state；进入 Leader/Worker 上下文仍必须显式 `skills load`。
+- 验证记录：已先确认红测失败，`skills create` 最初不是合法 skills 子命令；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_skills_draft_preview_surfaces_skill_md_without_mutating_state tests/test_agent_cli.py::test_skills_create_requires_confirm_without_writing_skill tests/test_agent_cli.py::test_skills_create_confirm_writes_skill_and_marks_suggestion_created tests/test_agent_cli.py::test_skills_create_rejects_already_created_suggestion_without_duplicate_write -q` 4 项通过；create/contract 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_skills_draft_preview_surfaces_skill_md_without_mutating_state tests/test_agent_cli.py::test_skills_create_requires_confirm_without_writing_skill tests/test_agent_cli.py::test_skills_create_confirm_writes_skill_and_marks_suggestion_created tests/test_agent_cli.py::test_skills_create_rejects_already_created_suggestion_without_duplicate_write tests/test_agent_cli.py::test_contract_skills_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_skills_example_exports_gui_ready_skill_registry tests/test_agent_cli.py::test_contract_skills_cli_matches_contract_module -q` 7 项通过；skill/create/workbench/leader-chat 聚焦回归 10 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 151 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 226 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 143 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 562 项通过。
+
 ### Current - Preview skill drafts from suggestions
 
 - 新增 `agentdeck skills draft-preview --suggestion-id <id>`：把 pending `skill_suggestions[]` 只读转换为拟写入的 `SKILL.md` 内容、hash、目标路径和 disabled create control。
