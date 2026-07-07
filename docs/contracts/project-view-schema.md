@@ -8,7 +8,7 @@ The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in 
 
 Reusable contract response, payload, and example fixture helpers live in `src/agentdeck/contracts.py`. The CLI discovery command uses `project_view_contract_response()` directly so command output and reusable module output stay identical.
 
-Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_LEADER_FIELDS`, `PROJECT_VIEW_PLAN_ITEM_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_SKILLS_FIELDS`, `PROJECT_VIEW_SKILL_ITEM_FIELDS`, `PROJECT_VIEW_MEMORY_FIELDS`, `PROJECT_VIEW_MEMORY_ITEM_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
+Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_LEADER_FIELDS`, `PROJECT_VIEW_COORDINATION_ROLE_FIELDS`, `PROJECT_VIEW_PLAN_ITEM_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_SKILLS_FIELDS`, `PROJECT_VIEW_SKILL_ITEM_FIELDS`, `PROJECT_VIEW_MEMORY_FIELDS`, `PROJECT_VIEW_MEMORY_ITEM_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
 
 Use `validate_project_view_contract(payload)` from `src/agentdeck/contracts.py` to check any ProjectView-like payload against the v1 baseline contract.
 
@@ -47,7 +47,24 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
       "pane_id": null,
       "approval_required": true,
       "dispatch_ready": false
-    }
+    },
+    "coordination_roles": [
+      {
+        "role_id": "frontdesk",
+        "label": "Frontdesk intake",
+        "provider": "local-rule",
+        "model": "deterministic",
+        "lifecycle": "persistent",
+        "responsibility": "Intake human requests and route them without provider planning.",
+        "state_source": "chat_turns",
+        "runtime_kind": "logical_role",
+        "pane_backed": false,
+        "pane_id": null,
+        "dispatch_ready": false,
+        "approval_required": false,
+        "next_command": "agentdeck leader chat --message \"frontdesk <goal>\""
+      }
+    ]
   },
   "agents": [],
   "state_path": "/absolute/project/root/.agentdeck/state/state.json",
@@ -71,6 +88,8 @@ All ProjectView fields are read-only summaries. Commands that mutate state, send
 
 `leader` includes the configured Leader identity and `leader_backend`, a normalized logical Leader identity for the current provider/model. This lets GUI and natural-language shells render fake/API-backed/CLI-backed Leader provenance before any plan exists. It is not a tmux pane binding, provider readiness proof, dispatch permission, or execution authorization.
 
+`leader.coordination_roles[]` exposes the logical north-star split `frontdesk`, `planner`, and `orchestrator` for GUI clients. These are Leader-side coordination roles, not worker agents and not tmux panes: every item must keep `runtime_kind=logical_role`, `pane_backed=false`, `pane_id=null`, and `dispatch_ready=false`. `frontdesk` is local-rule/deterministic and does not require approval because it only routes intake; `planner` and `orchestrator` inherit the configured Leader provider/model and require approval before their output can become execution. `validate_project_view_contract()` rejects missing role fields, wrong order, pane-backed role claims, dispatch-ready roles, or incorrect approval flags.
+
 `plans.items[]` includes the configured provider name plus normalized provenance labels: `provider_backend` is `local` for the fake dry-run provider, `api` for API-backed Leader providers such as DeepSeek or OpenAI-compatible backends, `cli` for local CLI-backed Leader providers such as Codex CLI or Claude Code CLI, and `unknown` for unrecognized legacy records; `provider_transport` is `local`, `http`, `subprocess`, or `unknown`. Each plan item also includes `leader_backend`, a normalized identity card that keeps `agent_id=leader`, provider/model, backend/transport, `reasoning_backend`, `runtime_kind=logical_leader`, `pane_backed=false`, `pane_id=null`, `approval_required=true`, and `dispatch_ready=false` together for GUI/audit rendering. `skill_context` is the compact loaded-skill provenance snapshot that was visible when the Leader created the plan; it mirrors ProjectView `skills` summary shape and intentionally excludes full `content_snapshot`. `validate_project_view_contract()` checks every plan item and rejects `leader_backend` payloads that claim a worker agent, tmux pane, or dispatch-ready Leader. GUI clients may render these as plan origin metadata, but they are not separate state sources or execution permissions.
 
 `messages.items[]` includes `prompt_skill_context`, the compact worker skill provenance snapshot captured when `agentdeck dispatch` or `agentdeck approval dispatch` injected loaded skill content into the worker prompt. It uses the same compact shape as `plans.items[].skill_context`, intentionally excludes full `content_snapshot`, and exists so GUI clients can show worker skill context without parsing prompt text. Old or manually seeded messages without skill provenance are normalized to an empty summary.
@@ -93,6 +112,7 @@ Use `agentdeck contract project-view` to discover this contract from tools or GU
   "contract_exists": true,
   "top_level_fields": [],
   "leader_fields": [],
+  "coordination_role_fields": [],
   "plan_item_fields": [],
   "recovery_fields": [],
   "recovery_pending_fields": [],
@@ -119,6 +139,8 @@ Use `agentdeck contract project-view --example` to include a stable GUI-ready Pr
   "schema_version": "project-view/v1",
   "example": true,
   "example_top_level_fields": [],
+  "example_leader_fields": [],
+  "example_coordination_role_fields": [],
   "example_plan_item_fields": [],
   "example_recovery_fields": [],
   "example_recommended_action_fields": [],

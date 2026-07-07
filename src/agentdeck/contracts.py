@@ -184,6 +184,23 @@ PROJECT_VIEW_LEADER_FIELDS = (
     "model",
     "approval_mode",
     "leader_backend",
+    "coordination_roles",
+)
+
+PROJECT_VIEW_COORDINATION_ROLE_FIELDS = (
+    "role_id",
+    "label",
+    "provider",
+    "model",
+    "lifecycle",
+    "responsibility",
+    "state_source",
+    "runtime_kind",
+    "pane_backed",
+    "pane_id",
+    "dispatch_ready",
+    "approval_required",
+    "next_command",
 )
 
 PROJECT_VIEW_PLAN_ITEM_FIELDS = (
@@ -1203,6 +1220,7 @@ WORKBENCH_LEADER_CARD_FIELDS = (
     "approval_mode",
     "api_backed",
     "leader_backend",
+    "coordination_roles",
     "chat_command",
     "continue_command",
     "review_command_template",
@@ -1621,6 +1639,7 @@ LEADER_STATUS_RESPONSE_FIELDS = (
     "workbench_command",
     "leader",
     "provider_health",
+    "coordination_roles",
     "latest_plan",
     "queues",
     "recovery",
@@ -1896,6 +1915,7 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "top_level_fields": list(PROJECT_VIEW_TOP_LEVEL_FIELDS),
         "leader_fields": list(PROJECT_VIEW_LEADER_FIELDS),
+        "coordination_role_fields": list(PROJECT_VIEW_COORDINATION_ROLE_FIELDS),
         "plan_item_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
         "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
         "recovery_pending_fields": list(PROJECT_VIEW_RECOVERY_PENDING_FIELDS),
@@ -1920,6 +1940,7 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example"] = True
         payload["example_top_level_fields"] = list(example)
         payload["example_leader_fields"] = list(example["leader"])
+        payload["example_coordination_role_fields"] = list(example["leader"]["coordination_roles"][0])
         payload["example_plan_item_fields"] = list(example["plans"]["items"][0])
         payload["example_recovery_fields"] = list(example["recovery"])
         payload["example_recovery_pending_fields"] = list(example["recovery"]["pending"])
@@ -3515,6 +3536,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "leader_card_fields": list(WORKBENCH_LEADER_CARD_FIELDS),
+        "coordination_role_fields": list(PROJECT_VIEW_COORDINATION_ROLE_FIELDS),
         "leader_control_fields": list(WORKBENCH_LEADER_CONTROL_FIELDS),
         "control_mode_card_fields": list(WORKBENCH_CONTROL_MODE_CARD_FIELDS),
         "control_mode_option_fields": list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS),
@@ -3813,6 +3835,7 @@ def leader_status_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "response_fields": list(LEADER_STATUS_RESPONSE_FIELDS),
         "leader_fields": list(PROJECT_VIEW_LEADER_FIELDS),
+        "coordination_role_fields": list(PROJECT_VIEW_COORDINATION_ROLE_FIELDS),
         "provider_health_fields": list(WORKBENCH_PROVIDER_HEALTH_FIELDS),
         "latest_plan_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
         "queue_fields": list(LEADER_STATUS_QUEUE_FIELDS),
@@ -3830,6 +3853,7 @@ def leader_status_contract_response(contract_path: Path, include_example: bool =
         example = leader_status_example()
         payload["example"] = True
         payload["example_response_fields"] = list(example)
+        payload["example_coordination_role_fields"] = list(example["coordination_roles"][0])
         payload["example_provider_health_fields"] = list(example["provider_health"])
         payload["example_queue_fields"] = list(example["queues"])
         payload["example_control_fields"] = list(example["controls"][0])
@@ -3919,6 +3943,7 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
             _validate_leader_backend(errors, "project_view.leader", leader_backend)
         else:
             errors.append("project_view.leader.leader_backend must be an object")
+        _validate_coordination_roles(errors, "project_view.leader", leader.get("coordination_roles"))
     elif "leader" in payload:
         errors.append("leader must be an object")
     recovery = payload.get("recovery")
@@ -4289,6 +4314,42 @@ def _validate_leader_backend(
         errors.append(f"{prefix}.leader_backend.approval_required must be true")
     if leader_backend.get("dispatch_ready") is not False:
         errors.append(f"{prefix}.leader_backend.dispatch_ready must be false")
+
+
+def _validate_coordination_roles(
+    errors: list[str],
+    prefix: str,
+    roles: object,
+) -> None:
+    if not isinstance(roles, list):
+        errors.append(f"{prefix}.coordination_roles must be a list")
+        return
+    seen: list[object] = []
+    for index, role in enumerate(roles):
+        if not isinstance(role, dict):
+            errors.append(f"{prefix}.coordination_roles[{index}] must be an object")
+            continue
+        for field in PROJECT_VIEW_COORDINATION_ROLE_FIELDS:
+            if field not in role:
+                errors.append(f"{prefix}.coordination_roles[{index}] missing field: {field}")
+        role_id = role.get("role_id")
+        seen.append(role_id)
+        if (
+            role.get("runtime_kind") != "logical_role"
+            or role.get("pane_backed") is not False
+            or role.get("pane_id") is not None
+        ):
+            errors.append(f"{prefix}.coordination_roles[{index}] must be a logical role without a pane")
+        if role.get("dispatch_ready") is not False:
+            errors.append(f"{prefix}.coordination_roles[{index}].dispatch_ready must be false")
+        if role_id == "frontdesk" and role.get("approval_required") is not False:
+            errors.append(f"{prefix}.coordination_roles[{index}].approval_required must be false for frontdesk")
+        if role_id in {"planner", "orchestrator"} and role.get("approval_required") is not True:
+            errors.append(
+                f"{prefix}.coordination_roles[{index}].approval_required must be true for planner/orchestrator"
+            )
+    if seen != ["frontdesk", "planner", "orchestrator"]:
+        errors.append(f"{prefix}.coordination_roles must be ordered as frontdesk, planner, orchestrator")
 
 
 def validate_inbox_contract(payload: dict[str, object]) -> dict[str, object]:
@@ -5894,6 +5955,7 @@ def _validate_leader_status_card_contract(errors: list[str], status_card: dict[s
                 errors.append(f"leader_status_card: missing provider_health field: {field}")
     elif "provider_health" in status_card:
         errors.append("leader_status_card.provider_health must be an object")
+    _validate_coordination_roles(errors, "leader_status_card", status_card.get("coordination_roles"))
     queues = status_card.get("queues")
     if isinstance(queues, dict):
         for field in LEADER_STATUS_QUEUE_FIELDS:
@@ -6972,6 +7034,7 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             _validate_leader_backend(errors, "leader_card", leader_backend)
         else:
             errors.append("leader_card.leader_backend must be an object")
+        _validate_coordination_roles(errors, "leader_card", leader_card.get("coordination_roles"))
         controls = leader_card.get("controls")
         if isinstance(controls, list):
             for control in controls:
@@ -7359,6 +7422,53 @@ def project_view_example() -> dict[str, object]:
                 "approval_required": True,
                 "dispatch_ready": False,
             },
+            "coordination_roles": [
+                {
+                    "role_id": "frontdesk",
+                    "label": "Frontdesk intake",
+                    "provider": "local-rule",
+                    "model": "deterministic",
+                    "lifecycle": "persistent",
+                    "responsibility": "Intake human requests and route them without provider planning.",
+                    "state_source": "chat_turns",
+                    "runtime_kind": "logical_role",
+                    "pane_backed": False,
+                    "pane_id": None,
+                    "dispatch_ready": False,
+                    "approval_required": False,
+                    "next_command": 'agentdeck leader chat --message "frontdesk <goal>"',
+                },
+                {
+                    "role_id": "planner",
+                    "label": "Planner",
+                    "provider": "fake",
+                    "model": "fake-plan",
+                    "lifecycle": "persistent",
+                    "responsibility": "Create macro plans and acceptance criteria without dispatching workers.",
+                    "state_source": "plans",
+                    "runtime_kind": "logical_role",
+                    "pane_backed": False,
+                    "pane_id": None,
+                    "dispatch_ready": False,
+                    "approval_required": True,
+                    "next_command": "agentdeck leader plan --task <goal>",
+                },
+                {
+                    "role_id": "orchestrator",
+                    "label": "Orchestrator",
+                    "provider": "fake",
+                    "model": "fake-plan",
+                    "lifecycle": "persistent",
+                    "responsibility": "Review plans, choose approval-gated actions, and coordinate worker handoff.",
+                    "state_source": "leader_actions",
+                    "runtime_kind": "logical_role",
+                    "pane_backed": False,
+                    "pane_id": None,
+                    "dispatch_ready": False,
+                    "approval_required": True,
+                    "next_command": "agentdeck leader review --plan-id <plan_id>",
+                },
+            ],
         },
         "agents": [
             {
@@ -9256,6 +9366,7 @@ def workbench_example() -> dict[str, object]:
                 "approval_required": True,
                 "dispatch_ready": False,
             },
+            "coordination_roles": project_view["leader"]["coordination_roles"],
             "chat_command": "agentdeck leader chat --message <text>",
             "continue_command": "agentdeck continue",
             "review_command_template": "agentdeck leader review --plan-id <plan_id>",
@@ -10686,6 +10797,7 @@ def leader_status_example() -> dict[str, object]:
         "workbench_command": "agentdeck workbench",
         "leader": project_view["leader"],
         "provider_health": workbench_example()["provider_health"],
+        "coordination_roles": project_view["leader"]["coordination_roles"],
         "latest_plan": project_view["plans"]["items"][0],
         "queues": {
             "leader_actions_pending": 1,

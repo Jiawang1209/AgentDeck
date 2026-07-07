@@ -59,6 +59,56 @@ def leader_backend_identity(provider: str | None, model: str | None, dispatch_re
     }
 
 
+def leader_coordination_roles(provider: str | None, model: str | None) -> list[dict[str, Any]]:
+    return [
+        {
+            "role_id": "frontdesk",
+            "label": "Frontdesk intake",
+            "provider": "local-rule",
+            "model": "deterministic",
+            "lifecycle": "persistent",
+            "responsibility": "Intake human requests and route them without provider planning.",
+            "state_source": "chat_turns",
+            "runtime_kind": "logical_role",
+            "pane_backed": False,
+            "pane_id": None,
+            "dispatch_ready": False,
+            "approval_required": False,
+            "next_command": 'agentdeck leader chat --message "frontdesk <goal>"',
+        },
+        {
+            "role_id": "planner",
+            "label": "Planner",
+            "provider": provider,
+            "model": model,
+            "lifecycle": "persistent",
+            "responsibility": "Create macro plans and acceptance criteria without dispatching workers.",
+            "state_source": "plans",
+            "runtime_kind": "logical_role",
+            "pane_backed": False,
+            "pane_id": None,
+            "dispatch_ready": False,
+            "approval_required": True,
+            "next_command": "agentdeck leader plan --task <goal>",
+        },
+        {
+            "role_id": "orchestrator",
+            "label": "Orchestrator",
+            "provider": provider,
+            "model": model,
+            "lifecycle": "persistent",
+            "responsibility": "Review plans, choose approval-gated actions, and coordinate worker handoff.",
+            "state_source": "leader_actions",
+            "runtime_kind": "logical_role",
+            "pane_backed": False,
+            "pane_id": None,
+            "dispatch_ready": False,
+            "approval_required": True,
+            "next_command": "agentdeck leader review --plan-id <plan_id>",
+        },
+    ]
+
+
 class StateStore:
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or project_root()
@@ -1739,6 +1789,7 @@ class StateStore:
             )
         leader = asdict(config.leader)
         leader["leader_backend"] = leader_backend_identity(config.leader.provider, config.leader.model)
+        leader["coordination_roles"] = leader_coordination_roles(config.leader.provider, config.leader.model)
         return ProjectView(
             schema_version=PROJECT_VIEW_SCHEMA_VERSION,
             project=config.name,

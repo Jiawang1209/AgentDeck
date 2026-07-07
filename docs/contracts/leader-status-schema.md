@@ -22,6 +22,7 @@ The command does not call the configured Leader provider, read tmux pane output,
 - `workbench_command`: read-only full workbench command, `agentdeck workbench`.
 - `leader`: the logical Leader identity from ProjectView, including normalized `leader_backend`.
 - `provider_health`: workbench-compatible provider readiness and setup card for the configured Leader provider.
+- `coordination_roles`: the ProjectView `frontdesk`, `planner`, and `orchestrator` logical roles. These are not worker panes; each item keeps `runtime_kind=logical_role`, `pane_backed=false`, `pane_id=null`, and `dispatch_ready=false`.
 - `latest_plan`: the latest ProjectView plan item, or `null`.
 - `queues`: compact pending queue counts for the Leader operator.
 - `recovery`: ProjectView recovery object.
@@ -39,5 +40,7 @@ The command does not call the configured Leader provider, read tmux pane output,
 ## Safety
 
 All controls are projections only. `agentdeck leader status` may recommend `agentdeck doctor`, `agentdeck continue`, `agentdeck status`, or `agentdeck workbench`, but it never executes those commands.
+
+`coordination_roles` is also a projection. It lets GUI/TUI clients show the layered Leader topology from a narrow status card, but it does not grant dispatch permission, start tmux panes, or split the Leader into separate runtime agents.
 
 Use `agentdeck contract leader-status --example` for a stable example payload.

@@ -272,6 +272,23 @@ Without `--since-event`, `since_event_id` is `null`, `latest_event_id` still ref
     "approval_required": true,
     "dispatch_ready": false
   },
+  "coordination_roles": [
+    {
+      "role_id": "frontdesk",
+      "label": "Frontdesk intake",
+      "provider": "local-rule",
+      "model": "deterministic",
+      "lifecycle": "persistent",
+      "responsibility": "Intake human requests and route them without provider planning.",
+      "state_source": "chat_turns",
+      "runtime_kind": "logical_role",
+      "pane_backed": false,
+      "pane_id": null,
+      "dispatch_ready": false,
+      "approval_required": false,
+      "next_command": "agentdeck leader chat --message \"frontdesk <goal>\""
+    }
+  ],
   "chat_command": "agentdeck leader chat --message <text>",
   "continue_command": "agentdeck continue",
   "review_command_template": "agentdeck leader review --plan-id <plan_id>",
@@ -290,7 +307,7 @@ Without `--since-event`, `since_event_id` is `null`, `latest_event_id` still ref
 }
 ```
 
-The card never exposes API keys and does not call the provider. `api_backed` only indicates that the configured provider is not the local `fake` provider. `leader_backend` is the normalized logical Leader identity for the currently configured provider/model; GUI clients can render fake/API-backed/CLI-backed provenance without waiting for a plan, but it is not a tmux pane binding, readiness proof, dispatch permission, or execution authorization. `controls[]` uses `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` so GUI clients can render Leader entry points without deriving buttons from command strings. `chat` and `review` controls are disabled templates until a GUI or user supplies message text or a plan id; `continue`, `actions`, `refresh`, `leader_status`, and `status` are read-only inspect controls. `refresh` and `leader_status` both point at the narrow `agentdeck leader status` card; `refresh` is the status-card refresh affordance, while `leader_status` is the narrow status view entry. `status` points at the full ProjectView status. `review_command_template` requires a concrete plan id and must not be treated as permission to review, approve, dispatch, or capture automatically.
+The card never exposes API keys and does not call the provider. `api_backed` only indicates that the configured provider is not the local `fake` provider. `leader_backend` is the normalized logical Leader identity for the currently configured provider/model; GUI clients can render fake/API-backed/CLI-backed provenance without waiting for a plan, but it is not a tmux pane binding, readiness proof, dispatch permission, or execution authorization. `coordination_roles[]` mirrors ProjectView's `frontdesk`, `planner`, and `orchestrator` logical roles so GUI clients can render the north-star coordination topology directly in the workbench. These roles are not worker panes and must keep `pane_backed=false`, `pane_id=null`, and `dispatch_ready=false`; `planner` and `orchestrator` remain approval-gated. `controls[]` uses `kind`, `label`, `command`, `safety`, `enabled`, and `blocker` so GUI clients can render Leader entry points without deriving buttons from command strings. `chat` and `review` controls are disabled templates until a GUI or user supplies message text or a plan id; `continue`, `actions`, `refresh`, `leader_status`, and `status` are read-only inspect controls. `refresh` and `leader_status` both point at the narrow `agentdeck leader status` card; `refresh` is the status-card refresh affordance, while `leader_status` is the narrow status view entry. `status` points at the full ProjectView status. `review_command_template` requires a concrete plan id and must not be treated as permission to review, approve, dispatch, or capture automatically.
 
 ## Control Mode
 

@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Surface logical coordination roles
+
+- 新增 ProjectView `leader.coordination_roles[]`，显式暴露 `frontdesk`、`planner`、`orchestrator` 三个北极星逻辑协调角色；它们不是 worker pane，固定保持 `runtime_kind=logical_role`、`pane_backed=false`、`pane_id=null`、`dispatch_ready=false`。
+- `frontdesk` 角色使用 `local-rule` / `deterministic`，只负责接待和路由；`planner` 与 `orchestrator` 继承当前 Leader provider/model，并保持 approval-gated，分别指向显式 `agentdeck leader plan --task <goal>` 和 `agentdeck leader review --plan-id <plan_id>`。
+- 扩展 `agentdeck leader status` 与 `agentdeck workbench`：窄版 Leader 状态卡输出顶层 `coordination_roles[]`，workbench `leader_card` 输出同源 `coordination_roles[]`，让未来 GUI 可以直接渲染“frontdesk -> planner -> orchestrator”的协调拓扑。
+- 扩展 contract discovery/example/validator：`agentdeck contract project-view`、`workbench`、`leader-status` 公开 `coordination_role_fields`；validator 会拒绝缺字段、错误顺序、pane-backed role、dispatch-ready role 或错误 approval flag。
+- 同步 README、`docs/contracts/project-view-schema.md`、`docs/contracts/workbench-schema.md`、`docs/contracts/leader-status-schema.md` 和 `docs/handoff/current-development-state.md`，说明 G2 逻辑角色边界以及后续 G3 programmatic loop 方向。
+- 验证记录：已先确认红测失败，`agentdeck status` 最初缺少 `leader.coordination_roles`；实现后目标/聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_surfaces_logical_coordination_roles_for_planner_orchestrator_split tests/test_agent_cli.py::test_leader_status_surfaces_provider_and_queue_snapshot_without_mutating_state tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_leader_status_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_status_contract_response_includes_example_without_drift -q` 5 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 529 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 571 项通过。
+
 ### Current - Add frontdesk intake handoff surface
 
 - 新增自然语言入口 `agentdeck leader chat --message "frontdesk <goal>"` / `"/frontdesk <goal>"` / `"前台接待 <goal>"` / `"梳理需求 <goal>"`：进入只读 `mode=frontdesk`，嵌入 `frontdesk_card`，把用户请求整理为 `intake_summary`，并推荐显式 `agentdeck leader plan --task <goal>`。

@@ -921,6 +921,11 @@ def _leader_status_payload(project_view: dict[str, object]) -> dict[str, object]
         "workbench_command": "agentdeck workbench",
         "leader": project_view.get("leader"),
         "provider_health": _workbench_provider_health(project_view),
+        "coordination_roles": (
+            project_view.get("leader", {}).get("coordination_roles", [])
+            if isinstance(project_view.get("leader"), dict)
+            else []
+        ),
         "latest_plan": latest_plan,
         "queues": {
             "leader_actions_pending": int(leader_action_status.get("pending", 0)),
@@ -1972,6 +1977,7 @@ def _workbench_leader_card(project_view: dict[str, object]) -> dict[str, object]
         "approval_mode": leader.get("approval_mode"),
         "api_backed": provider in ("deepseek", "openai-compatible"),
         "leader_backend": leader_backend_identity(provider, str(leader.get("model") or "")),
+        "coordination_roles": leader.get("coordination_roles", []),
         "chat_command": "agentdeck leader chat --message <text>",
         "continue_command": "agentdeck continue",
         "review_command_template": "agentdeck leader review --plan-id <plan_id>",

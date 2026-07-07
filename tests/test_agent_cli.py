@@ -48,6 +48,7 @@ from agentdeck.contracts import (
     project_view_contract_payload,
     project_view_contract_response,
     PROJECT_VIEW_ARTIFACT_ITEM_FIELDS,
+    PROJECT_VIEW_COORDINATION_ROLE_FIELDS,
     run_start_contract_payload,
     run_start_contract_response,
     skills_contract_payload,
@@ -2036,6 +2037,44 @@ def test_status_surfaces_loaded_skill_context_for_project_view(tmp_path, monkeyp
     )
 
 
+def test_status_surfaces_logical_coordination_roles_for_planner_orchestrator_split(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    roles = {item["role_id"]: item for item in payload["leader"]["coordination_roles"]}
+    assert list(roles) == ["frontdesk", "planner", "orchestrator"]
+    assert roles["frontdesk"] == {
+        "role_id": "frontdesk",
+        "label": "Frontdesk intake",
+        "provider": "local-rule",
+        "model": "deterministic",
+        "lifecycle": "persistent",
+        "responsibility": "Intake human requests and route them without provider planning.",
+        "state_source": "chat_turns",
+        "runtime_kind": "logical_role",
+        "pane_backed": False,
+        "pane_id": None,
+        "dispatch_ready": False,
+        "approval_required": False,
+        "next_command": 'agentdeck leader chat --message "frontdesk <goal>"',
+    }
+    assert roles["planner"]["provider"] == payload["leader"]["provider"]
+    assert roles["planner"]["model"] == payload["leader"]["model"]
+    assert roles["planner"]["approval_required"] is True
+    assert roles["planner"]["next_command"] == "agentdeck leader plan --task <goal>"
+    assert roles["orchestrator"]["provider"] == payload["leader"]["provider"]
+    assert roles["orchestrator"]["model"] == payload["leader"]["model"]
+    assert roles["orchestrator"]["approval_required"] is True
+    assert roles["orchestrator"]["next_command"] == "agentdeck leader review --plan-id <plan_id>"
+    assert all(item["pane_backed"] is False for item in roles.values())
+    assert all(item["pane_id"] is None for item in roles.values())
+
+
 def test_leader_chat_skill_context_is_read_only_and_avoids_provider_calls(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -3230,6 +3269,14 @@ def test_leader_status_surfaces_provider_and_queue_snapshot_without_mutating_sta
     assert payload["provider_health"]["provider"] == "deepseek"
     assert payload["provider_health"]["ready"] is False
     assert payload["provider_health"]["missing_env"] == ["DEEPSEEK_API_KEY"]
+    assert payload["coordination_roles"] == payload["leader"]["coordination_roles"]
+    assert [item["role_id"] for item in payload["coordination_roles"]] == [
+        "frontdesk",
+        "planner",
+        "orchestrator",
+    ]
+    assert payload["coordination_roles"][0]["pane_backed"] is False
+    assert payload["coordination_roles"][0]["dispatch_ready"] is False
     assert payload["latest_plan"]["plan_id"] == "pln_status"
     assert payload["latest_plan"]["step_count"] == 1
     assert payload["queues"] == {
@@ -4104,6 +4151,22 @@ def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
         "model",
         "approval_mode",
         "leader_backend",
+        "coordination_roles",
+    ]
+    assert payload["coordination_role_fields"] == [
+        "role_id",
+        "label",
+        "provider",
+        "model",
+        "lifecycle",
+        "responsibility",
+        "state_source",
+        "runtime_kind",
+        "pane_backed",
+        "pane_id",
+        "dispatch_ready",
+        "approval_required",
+        "next_command",
     ]
     assert payload["recovery_fields"] == expected["recovery_fields"]
     assert payload["recovery_pending_fields"] == expected["recovery_pending_fields"]
@@ -4137,6 +4200,8 @@ def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
     assert set(payload["example_top_level_fields"]) == set(example)
     assert payload["example_leader_fields"] == payload["leader_fields"]
     assert set(payload["example_leader_fields"]) == set(example["leader"])
+    assert payload["example_coordination_role_fields"] == payload["coordination_role_fields"]
+    assert set(payload["example_coordination_role_fields"]) == set(example["leader"]["coordination_roles"][0])
     assert example["leader"]["leader_backend"] == {
         "agent_id": "leader",
         "provider": "fake",
@@ -4347,6 +4412,7 @@ def test_contract_leader_status_discovers_schema_for_gui_clients(capsys) -> None
     assert payload["project_view_contract"] == "agentdeck contract project-view"
     assert payload["workbench_contract"] == "agentdeck contract workbench"
     assert payload["provider_health_fields"] == list(WORKBENCH_PROVIDER_HEALTH_FIELDS)
+    assert payload["coordination_role_fields"] == list(PROJECT_VIEW_COORDINATION_ROLE_FIELDS)
     assert payload["control_fields"] == ["kind", "label", "command", "safety", "enabled", "blocker"]
 
 
@@ -4524,6 +4590,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "approval_mode",
         "api_backed",
         "leader_backend",
+        "coordination_roles",
         "chat_command",
         "continue_command",
         "review_command_template",
@@ -4903,6 +4970,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             "approval_required": True,
             "dispatch_ready": False,
         },
+        "coordination_roles": payload["project_view"]["leader"]["coordination_roles"],
         "chat_command": "agentdeck leader chat --message <text>",
         "continue_command": "agentdeck continue",
         "review_command_template": "agentdeck leader review --plan-id <plan_id>",

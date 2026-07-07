@@ -41,6 +41,7 @@ from agentdeck.contracts import (
     LEADER_CHAT_RUNTIME_ACTION_CARD_FIELDS,
     LEADER_CHAT_STARTUP_PREVIEW_CARD_FIELDS,
     LEADER_CHAT_TERMINAL_CARD_FIELDS,
+    PROJECT_VIEW_COORDINATION_ROLE_FIELDS,
     PROJECT_VIEW_LEADER_ACTIONS_FIELDS,
     PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS,
     PROJECT_VIEW_PLAN_ITEM_FIELDS,
@@ -962,7 +963,9 @@ def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -
         "model",
         "approval_mode",
         "leader_backend",
+        "coordination_roles",
     ]
+    assert payload["coordination_role_fields"] == list(PROJECT_VIEW_COORDINATION_ROLE_FIELDS)
     assert payload["recovery_fields"] == list(PROJECT_VIEW_RECOVERY_FIELDS)
     assert payload["recovery_pending_fields"] == list(PROJECT_VIEW_RECOVERY_PENDING_FIELDS)
     assert payload["recommended_action_fields"] == list(PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS)
@@ -1368,6 +1371,7 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
         "workbench_command",
         "leader",
         "provider_health",
+        "coordination_roles",
         "latest_plan",
         "queues",
         "recovery",
@@ -3034,12 +3038,14 @@ def test_leader_status_contract_payload_is_reusable_without_cli(tmp_path: Path) 
         "workbench_command",
         "leader",
         "provider_health",
+        "coordination_roles",
         "latest_plan",
         "queues",
         "recovery",
         "next_command",
         "controls",
     ]
+    assert payload["coordination_role_fields"] == list(PROJECT_VIEW_COORDINATION_ROLE_FIELDS)
     assert payload["queue_fields"] == [
         "leader_actions_pending",
         "approvals_pending",
@@ -3060,6 +3066,8 @@ def test_leader_status_contract_response_includes_example_without_drift(tmp_path
     assert payload["example_leader_status"] == example
     assert payload["example_response_fields"] == payload["response_fields"]
     assert set(payload["example_response_fields"]) == set(example)
+    assert payload["example_coordination_role_fields"] == payload["coordination_role_fields"]
+    assert set(payload["example_coordination_role_fields"]) == set(example["coordination_roles"][0])
     assert payload["example_provider_health_fields"] == payload["provider_health_fields"]
     assert set(payload["example_provider_health_fields"]) == set(example["provider_health"])
     assert payload["example_queue_fields"] == payload["queue_fields"]
