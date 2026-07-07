@@ -1121,6 +1121,7 @@ class StateStore:
                     "status": message.get("status"),
                     "created_at": message.get("created_at"),
                     "trace_command": self._trace_command(message.get("message_id")),
+                    "prompt_skill_context": StateStore._plan_skill_context(message.get("prompt_skill_context")),
                 }
                 for message in messages
             ],

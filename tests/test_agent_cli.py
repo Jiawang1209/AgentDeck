@@ -2195,6 +2195,31 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             "to_agent": "planner",
             "task": "展示工作台 inbox",
             "prompt": "prompt body",
+            "prompt_skill_context": {
+                "count": 1,
+                "by_agent": {"planner": 1},
+                "by_source": {"builtin": 1},
+                "items": [
+                    {
+                        "load_id": "skl_workbench",
+                        "agent_id": "planner",
+                        "purpose": "workbench ledger",
+                        "name": "verification",
+                        "source": "builtin",
+                        "path": None,
+                        "content_hash": "sha256:workbench",
+                        "description": "Prove claims with fresh command output.",
+                        "required_tools": ["pytest"],
+                        "risk": "inspect",
+                        "created_at": "2026-07-04T00:00:00+00:00",
+                        "show_command": "agentdeck skills show --name verification",
+                        "reload_command": (
+                            "agentdeck skills load --name verification --agent planner "
+                            "--purpose 'workbench ledger'"
+                        ),
+                    }
+                ],
+            },
             "status": "dispatched",
             "created_at": "2026-07-04T00:00:00+00:00",
         }
@@ -2839,6 +2864,8 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     ]
     assert payload["ledger_card"]["messages"]["count"] == 1
     assert payload["ledger_card"]["messages"]["items"][0]["trace_command"] == "agentdeck trace --id msg_workbench"
+    assert payload["ledger_card"]["messages"]["items"][0]["prompt_skill_context"]["items"][0]["name"] == "verification"
+    assert "content_snapshot" not in payload["ledger_card"]["messages"]["items"][0]["prompt_skill_context"]["items"][0]
     assert payload["ledger_card"]["jobs"]["count"] == 1
     assert payload["ledger_card"]["jobs"]["items"][0]["trace_command"] == "agentdeck trace --id job_workbench"
     assert payload["ledger_card"]["replies"]["count"] == 1
@@ -4840,6 +4867,31 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
             "from_actor": "leader",
             "to_agent": "planner",
             "task": "拆解状态快照",
+            "prompt_skill_context": {
+                "count": 1,
+                "by_agent": {"planner": 1},
+                "by_source": {"builtin": 1},
+                "items": [
+                    {
+                        "load_id": "skl_demo",
+                        "agent_id": "planner",
+                        "purpose": "decompose worker task",
+                        "name": "planning",
+                        "source": "builtin",
+                        "path": None,
+                        "content_hash": "sha256:demo",
+                        "description": "Break broad goals into reviewable steps.",
+                        "required_tools": [],
+                        "risk": "inspect",
+                        "created_at": "2026-07-04T00:00:00+00:00",
+                        "show_command": "agentdeck skills show --name planning",
+                        "reload_command": (
+                            "agentdeck skills load --name planning --agent planner "
+                            "--purpose 'decompose worker task'"
+                        ),
+                    }
+                ],
+            },
             "status": "replied",
             "created_at": "2026-07-04T00:00:00+00:00",
         }
@@ -5013,6 +5065,8 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
     assert payload["approvals"]["pending"] == 1
     assert payload["messages"]["by_status"] == {"replied": 1}
     assert payload["messages"]["items"][0]["trace_command"] == "agentdeck trace --id msg_demo"
+    assert payload["messages"]["items"][0]["prompt_skill_context"]["items"][0]["name"] == "planning"
+    assert "content_snapshot" not in payload["messages"]["items"][0]["prompt_skill_context"]["items"][0]
     assert payload["jobs"]["by_status"] == {"completed": 1}
     assert payload["jobs"]["items"][0]["trace_command"] == "agentdeck trace --id job_demo"
     assert payload["replies"]["items"][0]["reply_id"] == "rep_demo"

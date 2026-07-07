@@ -381,6 +381,7 @@ PROJECT_VIEW_MESSAGE_ITEM_FIELDS = (
     "status",
     "created_at",
     "trace_command",
+    "prompt_skill_context",
 )
 
 PROJECT_VIEW_JOB_ITEM_FIELDS = (
@@ -6099,6 +6100,31 @@ def project_view_example() -> dict[str, object]:
                     "status": "replied",
                     "created_at": "2026-07-04T00:00:00+00:00",
                     "trace_command": "agentdeck trace --id msg_example",
+                    "prompt_skill_context": {
+                        "count": 1,
+                        "by_agent": {"planner": 1},
+                        "by_source": {"builtin": 1},
+                        "items": [
+                            {
+                                "load_id": "skl_worker_example",
+                                "agent_id": "planner",
+                                "purpose": "worker dispatch context",
+                                "name": "verification",
+                                "source": "builtin",
+                                "path": "builtin://verification/SKILL.md",
+                                "content_hash": "sha256:worker-example",
+                                "description": "Prove claims with fresh command output.",
+                                "required_tools": [],
+                                "risk": "inspect",
+                                "created_at": "2026-07-04T00:00:00+00:00",
+                                "show_command": "agentdeck skills show --name verification",
+                                "reload_command": (
+                                    "agentdeck skills load --name verification --agent planner "
+                                    "--purpose 'worker dispatch context'"
+                                ),
+                            }
+                        ],
+                    },
                 }
             ],
         },

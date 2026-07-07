@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Surface worker skill provenance in ledger summaries
+
+- 扩展 ProjectView message summary：`agentdeck status` 的 `messages.items[]` 现在会返回 compact `prompt_skill_context`，展示 dispatch 时注入给 Worker 的 skill provenance，并继续剥离完整 `content_snapshot`。
+- 扩展 workbench ledger：`ledger_card.messages.items[]` 复用同一份 ProjectView message summary，让 GUI/TUI 在通信账本中直接看到 worker 使用了哪些 skill，而不需要解析长 prompt 或打开 trace。
+- 同步 ProjectView/workbench contract example、README、AGENT/CLAUDE 和 contract 文档，明确 skill 已纳入北极星的 GUI 可审计链路：Leader planning、Worker dispatch、ProjectView、ledger 和 trace 都要有 compact provenance，但 skill 仍不是权限授权。
+- 验证记录：已先确认红测失败，ProjectView / workbench ledger message summary 最初缺少 `prompt_skill_context`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_includes_project_state_summaries tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q` 2 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 114 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 520 项通过。
+
 ### Current - Inject loaded worker skills into dispatch prompts
 
 - 扩展 Worker dispatch：`agentdeck dispatch` 和 `agentdeck approval dispatch` 现在会读取目标 agent 已显式加载的 `skill_loads[]`，并把对应 skill 的 full `content_snapshot` 注入该 worker 的任务 prompt；其它 agent 的 loaded skills 不会被注入。
