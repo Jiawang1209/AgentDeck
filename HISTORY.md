@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Apply memory suggestions with confirmation
+
+- 新增 `agentdeck memory apply --suggestion-id <id> --confirm`：把 pending memory suggestion 显式写入 `.agentdeck/memory/project.md` 或 `.agentdeck/memory/global.md`，完成 Hermes/WispTerm 式“建议 -> 人类确认 -> 长期记忆”的第一条闭环。
+- 复用 `apply-preview` 的 proposed Markdown 内容，写入后更新 suggestion `status=applied`、`applied_at`、`applied_path`，并追加 `memory_applied` 审计事件。
+- 保持人类控制和幂等边界：缺少 `--confirm`、未知 suggestion 或非 pending suggestion 都会在写文件前拒绝，避免静默写入或重复追加。
+- 更新 `agentdeck memory apply-preview`：`would_update_status` 改为 `applied`，GUI-ready apply control 现在可用，仍然只读、不写 memory、不改状态、不追加事件。
+- 同步 README 与 AGENT/CLAUDE，明确 skill/memory 学习层可以沉淀可审计上下文，但不能绕过 provider、tmux、approval 或 runtime safety。
+- 验证记录：已先确认红测失败，`agentdeck memory apply` 最初不是合法子命令；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_memory_apply_preview_is_read_only_and_surfaces_explicit_future_apply tests/test_agent_cli.py::test_memory_apply_preview_rejects_unknown_suggestion_without_mutating_state tests/test_agent_cli.py::test_memory_apply_requires_confirm_and_does_not_mutate_without_it tests/test_agent_cli.py::test_memory_apply_confirm_writes_memory_and_marks_suggestion_applied tests/test_agent_cli.py::test_memory_apply_rejects_already_applied_suggestion_without_duplicate_write -q` 5 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 138 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 544 项通过。
+
 ### Current - Preview memory suggestion application
 
 - 新增 `agentdeck memory apply-preview --suggestion-id <id>`：只读查找 pending `memory_suggestions[]`，返回 `memory_apply_preview`、目标 `.agentdeck/memory/project.md` 或 `.agentdeck/memory/global.md`、是否会创建文件、将追加的 Markdown 内容、future apply command 和 GUI-ready controls。

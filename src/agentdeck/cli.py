@@ -65,7 +65,7 @@ from .contracts import (
     validate_trace_contract,
     validate_workbench_contract,
 )
-from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig
+from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, utc_now
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .runtime import TmuxBackend
@@ -3468,7 +3468,7 @@ def memory_apply_preview_command(args: argparse.Namespace) -> int:
             "target": target,
             "target_exists": target_path.exists(),
             "would_create": not target_path.exists(),
-            "would_update_status": "approved",
+            "would_update_status": "applied",
             "proposed_append": _memory_suggestion_proposed_append(suggestion),
             "apply_command": apply_command,
             "controls": [
@@ -3483,10 +3483,71 @@ def memory_apply_preview_command(args: argparse.Namespace) -> int:
                     label="Apply memory suggestion",
                     command=apply_command,
                     safety="explicit_user",
-                    enabled=False,
-                    blocker="memory apply is not implemented yet",
                 ),
             ],
+        }
+    )
+    return 0
+
+
+def _append_memory_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    prefix = "" if not existing or existing.endswith("\n") else "\n"
+    path.write_text(existing + prefix + text, encoding="utf-8")
+
+
+def memory_apply_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    if not args.confirm:
+        print("memory apply requires --confirm", file=sys.stderr)
+        return 1
+    state = store.load()
+    suggestions = state.get("memory_suggestions", [])
+    if not isinstance(suggestions, list):
+        print(f"unknown memory suggestion: {args.suggestion_id}", file=sys.stderr)
+        return 1
+    suggestion: dict[str, object] | None = None
+    for item in suggestions:
+        if isinstance(item, dict) and item.get("suggestion_id") == args.suggestion_id:
+            suggestion = item
+            break
+    if suggestion is None:
+        print(f"unknown memory suggestion: {args.suggestion_id}", file=sys.stderr)
+        return 1
+    if suggestion.get("status") != "pending":
+        print(f"memory suggestion is not pending: {args.suggestion_id}", file=sys.stderr)
+        return 1
+    target = str(suggestion.get("target") or ".agentdeck/memory/project.md")
+    target_path = store.root / target
+    appended = _memory_suggestion_proposed_append(suggestion)
+    _append_memory_text(target_path, appended)
+    applied_at = utc_now()
+    suggestion["status"] = "applied"
+    suggestion["applied_at"] = applied_at
+    suggestion["applied_path"] = target
+    store.save(state)
+    store.append_event(
+        EventRecord.create(
+            "memory_applied",
+            {
+                "suggestion_id": args.suggestion_id,
+                "target": target,
+                "applied_at": applied_at,
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "memory_applied",
+            "suggestion_id": args.suggestion_id,
+            "suggestion": suggestion,
+            "target": target,
+            "applied_path": target,
+            "appended": appended,
         }
     )
     return 0
@@ -9983,6 +10044,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_apply_preview.add_argument("--suggestion-id", required=True, help="Pending memory suggestion id")
     memory_apply_preview.set_defaults(func=memory_apply_preview_command)
+    memory_apply = memory_subparsers.add_parser(
+        "apply",
+        help="Apply a pending memory suggestion after explicit confirmation",
+    )
+    memory_apply.add_argument("--suggestion-id", required=True, help="Pending memory suggestion id")
+    memory_apply.add_argument("--confirm", action="store_true", help="Required to write long-term memory")
+    memory_apply.set_defaults(func=memory_apply_command)
 
     policy = subparsers.add_parser("policy", help="Policy and control mode commands")
     policy_subparsers = policy.add_subparsers(dest="policy_command")

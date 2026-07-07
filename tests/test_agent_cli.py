@@ -664,7 +664,7 @@ def test_memory_apply_preview_is_read_only_and_surfaces_explicit_future_apply(
     assert payload["target"] == ".agentdeck/memory/project.md"
     assert payload["target_exists"] is False
     assert payload["would_create"] is True
-    assert payload["would_update_status"] == "approved"
+    assert payload["would_update_status"] == "applied"
     assert payload["suggestion"] == state_before["memory_suggestions"][0]
     assert payload["proposed_append"] == (
         "- Keep approval-gated worker dispatch.\n"
@@ -689,8 +689,8 @@ def test_memory_apply_preview_is_read_only_and_surfaces_explicit_future_apply(
             "label": "Apply memory suggestion",
             "command": f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm",
             "safety": "explicit_user",
-            "enabled": False,
-            "blocker": "memory apply is not implemented yet",
+            "enabled": True,
+            "blocker": None,
         },
     ]
     assert not (root / ".agentdeck" / "memory" / "project.md").exists()
@@ -709,6 +709,124 @@ def test_memory_apply_preview_rejects_unknown_suggestion_without_mutating_state(
 
     assert exit_code == 1
     assert capsys.readouterr().err.strip() == "unknown memory suggestion: mem_missing"
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=20) == events_before
+
+
+def test_memory_apply_requires_confirm_and_does_not_mutate_without_it(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "memory",
+            "suggest",
+            "--summary",
+            "Keep approval-gated worker dispatch.",
+            "--rationale",
+            "project safety preference",
+            "--source",
+            "reviewer",
+        ]
+    )
+    suggestion_id = json.loads(capsys.readouterr().out)["suggestion"]["suggestion_id"]
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+
+    exit_code = cli.main(["memory", "apply", "--suggestion-id", suggestion_id])
+
+    assert exit_code == 1
+    assert capsys.readouterr().err.strip() == "memory apply requires --confirm"
+    assert not (root / ".agentdeck" / "memory" / "project.md").exists()
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=20) == events_before
+
+
+def test_memory_apply_confirm_writes_memory_and_marks_suggestion_applied(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "memory",
+            "suggest",
+            "--summary",
+            "Keep approval-gated worker dispatch.",
+            "--rationale",
+            "project safety preference",
+            "--source",
+            "reviewer",
+            "--scope",
+            "project",
+            "--agent",
+            "leader",
+            "--from-trace",
+            "msg_memory",
+        ]
+    )
+    suggestion_payload = json.loads(capsys.readouterr().out)
+    suggestion_id = suggestion_payload["suggestion"]["suggestion_id"]
+    expected_append = (
+        "- Keep approval-gated worker dispatch.\n"
+        "  - rationale: project safety preference\n"
+        "  - source: reviewer\n"
+        "  - agent_id: leader\n"
+        "  - trace_id: msg_memory\n"
+        f"  - suggestion_id: {suggestion_id}\n"
+    )
+
+    exit_code = cli.main(["memory", "apply", "--suggestion-id", suggestion_id, "--confirm"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "memory_applied"
+    assert payload["suggestion_id"] == suggestion_id
+    assert payload["target"] == ".agentdeck/memory/project.md"
+    assert payload["applied_path"] == ".agentdeck/memory/project.md"
+    assert payload["appended"] == expected_append
+    assert payload["suggestion"]["status"] == "applied"
+    assert payload["suggestion"]["applied_path"] == ".agentdeck/memory/project.md"
+    assert isinstance(payload["suggestion"]["applied_at"], str)
+    memory_path = root / ".agentdeck" / "memory" / "project.md"
+    assert memory_path.read_text(encoding="utf-8") == expected_append
+    state = StateStore(root).load()
+    assert state["memory_suggestions"][0] == payload["suggestion"]
+    latest_event = StateStore(root).list_events(limit=1)[0]
+    assert latest_event["event_type"] == "memory_applied"
+    assert latest_event["payload"]["suggestion_id"] == suggestion_id
+    assert latest_event["payload"]["target"] == ".agentdeck/memory/project.md"
+
+
+def test_memory_apply_rejects_already_applied_suggestion_without_duplicate_write(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "memory",
+            "suggest",
+            "--summary",
+            "Keep approval-gated worker dispatch.",
+            "--rationale",
+            "project safety preference",
+            "--source",
+            "human",
+        ]
+    )
+    suggestion_id = json.loads(capsys.readouterr().out)["suggestion"]["suggestion_id"]
+    assert cli.main(["memory", "apply", "--suggestion-id", suggestion_id, "--confirm"]) == 0
+    capsys.readouterr()
+    memory_path = root / ".agentdeck" / "memory" / "project.md"
+    text_before = memory_path.read_text(encoding="utf-8")
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+
+    exit_code = cli.main(["memory", "apply", "--suggestion-id", suggestion_id, "--confirm"])
+
+    assert exit_code == 1
+    assert capsys.readouterr().err.strip() == f"memory suggestion is not pending: {suggestion_id}"
+    assert memory_path.read_text(encoding="utf-8") == text_before
     assert StateStore(root).load() == state_before
     assert StateStore(root).list_events(limit=20) == events_before
 
