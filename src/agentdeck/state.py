@@ -657,6 +657,7 @@ class StateStore:
         task: str,
         prompt: str,
         pane_id: str,
+        prompt_skill_context: dict[str, Any] | None = None,
     ) -> dict[str, dict[str, Any]]:
         state = self.load()
         message = {
@@ -668,6 +669,8 @@ class StateStore:
             "status": "dispatched",
             "created_at": utc_now(),
         }
+        if prompt_skill_context is not None:
+            message["prompt_skill_context"] = self._plan_skill_context(prompt_skill_context)
         attempt = {
             "attempt_id": new_id("att"),
             "message_id": message["message_id"],
@@ -912,6 +915,7 @@ class StateStore:
             "to_agent": message.get("to_agent"),
             "task": message.get("task"),
             "prompt": message.get("prompt"),
+            "prompt_skill_context": StateStore._plan_skill_context(message.get("prompt_skill_context")),
             "status": message.get("status"),
             "created_at": message.get("created_at"),
         }

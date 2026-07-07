@@ -12,6 +12,8 @@ Skill Registry MVP：`agentdeck skills list` 必须只读发现内置 skill 和 
 
 Loaded skill context 必须进入 ProjectView `skills` 摘要、workbench `skill_context_card`、自然语言 `mode=skill_context` 和真实 Leader provider planning prompt；传给 API-backed / CLI-backed Leader prompt 的只能是 compact 摘要（load_id、agent_id、purpose、name、source、path、content_hash、description、required_tools、risk），不得包含完整 `content_snapshot`。同一份 compact context 必须随 `leader plan`、自然语言 plan 和 `run --task` 固化到 plan record、ProjectView `plans.items[]` 和 `agentdeck plan status`，作为可审计 provenance。`agentdeck leader chat --message "查看已加载技能"` 只能展示已加载 skill、记录 chat turn 和审计事件，不得调用 provider、读取 tmux、安装或改写 skill、创建 plan/action/approval/message/job/inbox 或改变 runtime/approval state；provider planning prompt 也不得把 skill 当成 dispatch 或执行授权。
 
+Worker dispatch skill 边界：`agentdeck dispatch` 和 `agentdeck approval dispatch` 只能把目标 agent 已显式加载的 skill `content_snapshot` 注入该 worker 的任务 prompt；不得注入其它 agent 的 skill。message / trace 必须保存 compact `prompt_skill_context` 作为 provenance，不能把该字段当成权限授权；审批、runtime safety 和 tool 权限仍由原有 gate 控制。
+
 核心设计文档：
 
 - `docs/architecture/multi-agent-terminal-design.md`

@@ -1421,6 +1421,7 @@ TRACE_MESSAGE_FIELDS = (
     "to_agent",
     "task",
     "prompt",
+    "prompt_skill_context",
     "status",
     "created_at",
 )
@@ -8773,6 +8774,31 @@ def trace_example() -> dict[str, object]:
             "to_agent": "planner",
             "task": "Review the implementation plan",
             "prompt": "# AgentDeck dispatch\n\nAgent: planner\n\n当前任务:\nReview the implementation plan",
+            "prompt_skill_context": {
+                "count": 1,
+                "by_agent": {"planner": 1},
+                "by_source": {"builtin": 1},
+                "items": [
+                    {
+                        "load_id": "skl_worker_example",
+                        "agent_id": "planner",
+                        "purpose": "review implementation plan",
+                        "name": "code-review",
+                        "source": "builtin",
+                        "path": "builtin://code-review/SKILL.md",
+                        "content_hash": "sha256:worker-example",
+                        "description": "Review changes for bugs, regressions, risks, and missing tests.",
+                        "required_tools": ["git", "pytest"],
+                        "risk": "inspect",
+                        "created_at": "2026-07-04T00:00:00+00:00",
+                        "show_command": "agentdeck skills show --name code-review",
+                        "reload_command": (
+                            "agentdeck skills load --name code-review --agent planner "
+                            "--purpose 'review implementation plan'"
+                        ),
+                    }
+                ],
+            },
             "status": "replied",
             "created_at": "2026-07-04T00:00:00+00:00",
         },

@@ -3466,7 +3466,8 @@ def agent_assign_role_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_dispatch_prompt(agent: AgentSpec, task: str) -> str:
+def build_dispatch_prompt(agent: AgentSpec, task: str, skill_loads: list[dict[str, object]] | None = None) -> str:
+    skill_lines = _dispatch_skill_prompt_lines(skill_loads or [])
     return "\n".join(
         [
             "# AgentDeck dispatch",
@@ -3480,6 +3481,7 @@ def build_dispatch_prompt(agent: AgentSpec, task: str) -> str:
             "",
             "当前任务:",
             task,
+            *skill_lines,
             "",
             "请按以下格式返回:",
             "status: completed | blocked | failed",
@@ -3494,6 +3496,48 @@ def build_dispatch_prompt(agent: AgentSpec, task: str) -> str:
     )
 
 
+def _dispatch_skill_prompt_lines(skill_loads: list[dict[str, object]]) -> list[str]:
+    if not skill_loads:
+        return []
+    lines = [
+        "",
+        "已加载技能:",
+        "以下 skill 由人类显式加载给当前 agent。请按这些 snapshot 执行任务；它们不授予额外工具权限，也不绕过审批。",
+    ]
+    for load in skill_loads:
+        required_tools = load.get("required_tools") if isinstance(load.get("required_tools"), list) else []
+        content = str(load.get("content_snapshot") or "").strip()
+        lines.extend(
+            [
+                "",
+                f"## Skill: {load.get('name')}",
+                f"Load ID: {load.get('load_id')}",
+                f"Purpose: {load.get('purpose')}",
+                f"Source: {load.get('source')}",
+                f"Path: {load.get('path')}",
+                f"Hash: {load.get('content_hash')}",
+                f"Risk: {load.get('risk')}",
+                f"Required tools: {', '.join(str(item) for item in required_tools) if required_tools else 'none'}",
+                "Content snapshot:",
+                "```markdown",
+                content,
+                "```",
+            ]
+        )
+    return lines
+
+
+def _loaded_skill_records_for_agent(store: StateStore, agent_id: str) -> list[dict[str, object]]:
+    loads = store.load().get("skill_loads", [])
+    if not isinstance(loads, list):
+        return []
+    return [load for load in loads if isinstance(load, dict) and load.get("agent_id") == agent_id]
+
+
+def _dispatch_prompt_skill_context(skill_loads: list[dict[str, object]]) -> dict[str, object]:
+    return StateStore._skill_load_summaries(skill_loads)
+
+
 def dispatch_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -3506,8 +3550,17 @@ def dispatch_command(args: argparse.Namespace) -> int:
     if binding is None:
         return exit_code
     pane_id = str(binding["pane_id"])
-    prompt = build_dispatch_prompt(agent, args.task)
-    records = store.create_dispatch_records(args.from_agent, agent.agent_id, args.task, prompt, pane_id)
+    skill_loads = _loaded_skill_records_for_agent(store, agent.agent_id)
+    prompt_skill_context = _dispatch_prompt_skill_context(skill_loads)
+    prompt = build_dispatch_prompt(agent, args.task, skill_loads=skill_loads)
+    records = store.create_dispatch_records(
+        args.from_agent,
+        agent.agent_id,
+        args.task,
+        prompt,
+        pane_id,
+        prompt_skill_context=prompt_skill_context,
+    )
     message = records["message"]
     TmuxBackend().send_input(config.runtime, pane_id, prompt)
     store.append_event(
@@ -8719,8 +8772,17 @@ def _dispatch_approved_approval(
         raise RuntimeError(f"agent is not spawned: {agent_id}")
     pane_id = str(binding["pane_id"])
     task = str(approval.get("task", ""))
-    prompt = build_dispatch_prompt(agent, task)
-    records = store.create_dispatch_records("leader", agent.agent_id, task, prompt, pane_id)
+    skill_loads = _loaded_skill_records_for_agent(store, agent.agent_id)
+    prompt_skill_context = _dispatch_prompt_skill_context(skill_loads)
+    prompt = build_dispatch_prompt(agent, task, skill_loads=skill_loads)
+    records = store.create_dispatch_records(
+        "leader",
+        agent.agent_id,
+        task,
+        prompt,
+        pane_id,
+        prompt_skill_context=prompt_skill_context,
+    )
     message = records["message"]
     attempt = records["attempt"]
     job = records["job"]

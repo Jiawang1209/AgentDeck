@@ -119,6 +119,37 @@ def test_dispatch_prompt_requests_full_output_path_for_artifact_recovery(tmp_pat
     assert "full_output_path:" in prompt
 
 
+def test_dispatch_injects_loaded_worker_skill_snapshot_into_prompt(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["skills", "load", "--name", "planning", "--agent", "planner", "--purpose", "decompose worker task"])
+    cli.main(["skills", "load", "--name", "debugging", "--agent", "coder", "--purpose", "debug only"])
+    capsys.readouterr()
+
+    exit_code = cli.main(["dispatch", "--agent", "planner", "--task", "使用 worker skill"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    prompt = fake.sent[0][1]
+    assert "已加载技能:" in prompt
+    assert "Skill: planning" in prompt
+    assert "Load ID:" in prompt
+    assert "Purpose: decompose worker task" in prompt
+    assert "Break a user goal into role-aware steps." in prompt
+    assert "Skill: debugging" not in prompt
+    assert "Reproduce the failure" not in prompt
+    state = StateStore(root).load()
+    assert state["messages"][0]["message_id"] == payload["message_id"]
+    assert state["messages"][0]["prompt"] == prompt
+    assert state["messages"][0]["prompt_skill_context"]["count"] == 1
+    assert state["messages"][0]["prompt_skill_context"]["items"][0]["name"] == "planning"
+    assert "content_snapshot" not in state["messages"][0]["prompt_skill_context"]["items"][0]
+
+
 def test_agent_list_outputs_configured_agents(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
 

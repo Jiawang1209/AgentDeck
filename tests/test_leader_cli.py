@@ -7391,6 +7391,8 @@ def test_approval_dispatch_sends_approved_step_to_agent_and_records_lineage(tmp_
     monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
     cli.main(["leader", "plan", "--task", "审批后派发 planner step"])
     plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["skills", "load", "--name", "verification", "--agent", "planner", "--purpose", "verify dispatched work"])
+    capsys.readouterr()
     cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
     approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
     cli.main(["approval", "approve", "--approval-id", approval_id])
@@ -7416,6 +7418,10 @@ def test_approval_dispatch_sends_approved_step_to_agent_and_records_lineage(tmp_
     assert fake.sent and fake.sent[0][0] == "%77"
     assert "AgentDeck dispatch" in fake.sent[0][1]
     assert "Break down the goal" in fake.sent[0][1]
+    assert "已加载技能:" in fake.sent[0][1]
+    assert "Skill: verification" in fake.sent[0][1]
+    assert "Purpose: verify dispatched work" in fake.sent[0][1]
+    assert "Run the commands that prove the claim" in fake.sent[0][1]
 
     state = StateStore(root).load()
     approval = state["approvals"][0]
@@ -7424,6 +7430,8 @@ def test_approval_dispatch_sends_approved_step_to_agent_and_records_lineage(tmp_
     assert state["messages"][0]["message_id"] == payload["message_id"]
     assert state["messages"][0]["from_actor"] == "leader"
     assert state["messages"][0]["to_agent"] == "planner"
+    assert state["messages"][0]["prompt"] == fake.sent[0][1]
+    assert state["messages"][0]["prompt_skill_context"]["items"][0]["name"] == "verification"
     assert state["jobs"][0]["pane_id"] == "%77"
     assert state["inbox"]["planner"][0]["event_type"] == "task_request"
 

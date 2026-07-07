@@ -61,10 +61,13 @@ Use `agentdeck contract trace --example` to include a stable GUI-ready lineage f
   "to_agent": "planner",
   "task": "Review the implementation plan",
   "prompt": "# AgentDeck dispatch...",
+  "prompt_skill_context": {},
   "status": "replied",
   "created_at": "2026-07-04T00:00:00+00:00"
 }
 ```
+
+`prompt_skill_context` is the compact provenance for the loaded worker skills injected into the dispatch prompt. The full skill snapshot, when present, lives inside `message.prompt` because the worker needed it as task context; the compact field exists so GUI clients can render loaded skill provenance without parsing prompt text or duplicating full content snapshots.
 
 `attempts[]` records execution attempts for the message. `validate_trace_contract()` checks every item in each lineage collection, not only the first row.
 

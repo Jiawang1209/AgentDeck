@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Inject loaded worker skills into dispatch prompts
+
+- 扩展 Worker dispatch：`agentdeck dispatch` 和 `agentdeck approval dispatch` 现在会读取目标 agent 已显式加载的 `skill_loads[]`，并把对应 skill 的 full `content_snapshot` 注入该 worker 的任务 prompt；其它 agent 的 loaded skills 不会被注入。
+- 扩展 message/trace provenance：dispatch 创建的 message 会保存 compact `prompt_skill_context`，`agentdeck trace --id <id>` 的 `message.prompt_skill_context` 也会展示同一份 compact skill provenance，供 GUI/审计渲染；完整 skill 内容只存在于实际发送给 worker 的 prompt 中。
+- 保持安全边界：worker skill snapshot 是任务上下文，不授予额外工具权限、不绕过 approval、不改变 runtime safety；dispatch 仍必须经过显式命令或已审批 approval。
+- 同步 README、AGENT/CLAUDE 和 trace contract 文档，明确 Worker 使用 skill 的执行层与 compact provenance 层分离。
+- 验证记录：已先确认红测失败，dispatch prompt 最初没有 `已加载技能` section，message 也没有 `prompt_skill_context`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_dispatch_injects_loaded_worker_skill_snapshot_into_prompt tests/test_leader_cli.py::test_approval_dispatch_sends_approved_step_to_agent_and_records_lineage -q` 2 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 114 项通过；Leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 520 项通过。
+
 ### Current - Surface plan skill provenance in trace lineage
 
 - 扩展 `agentdeck trace --id <id>`：当 traced message 来自已审批 plan dispatch 时，trace 顶层新增 `plan` provenance card，包含 plan_id、task、provider/backend/transport、leader_backend、model、status、dispatch_ready、step_count、created_at 和规划时保存的 compact `skill_context`。
