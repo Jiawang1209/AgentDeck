@@ -3739,6 +3739,7 @@ def test_leader_chat_inspects_audit_events_without_mutating_state(tmp_path, monk
     assert payload["queue_card"] is None
     assert payload["operator_card"] is None
     assert payload["role_card"] is None
+    assert payload["review_gate_card"] is None
     assert payload["ledger_card"] is None
     assert payload["workbench_card"] is None
     assert payload["control_registry_card"]["filters"]["scope"] == "audit"
@@ -4285,6 +4286,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "workbench",
         "runtime",
         "role",
+        "review_gate",
         "ledger",
         "queue",
         "approval",
@@ -4306,6 +4308,18 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "blocker": "requires goal text",
     }
     assert capabilities["plan"]["safety"] == "plan_only"
+    assert capabilities["review_gate"]["command"] == 'agentdeck leader chat --message "查看验收门"'
+    assert capabilities["review_gate"]["safety"] == "inspect"
+    assert capabilities["review_gate"]["requires_explicit_user"] is False
+    assert capabilities["review_gate"]["card"] == "review_gate_card"
+    assert capabilities["review_gate"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect review gate",
+        "command": 'agentdeck leader chat --message "查看验收门"',
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
     assert capabilities["plan"]["requires_explicit_user"] is False
     assert capabilities["plan"]["controls"] == [
         {

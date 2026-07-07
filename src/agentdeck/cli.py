@@ -125,6 +125,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "operator_card",
         "queue_card",
         "role_card",
+        "review_gate_card",
         "ledger_card",
         "audit_card",
         "artifacts_card",
@@ -195,6 +196,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     if embedded_card == "inbox_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "role_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "review_gate_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "leader_status_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
@@ -498,6 +501,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return _trace_command(query_id) if query_id else None
     if embedded_card == "role_card":
         return "agentdeck workbench"
+    if embedded_card == "review_gate_card":
+        return "agentdeck workbench"
     if embedded_card == "queue_card" or embedded_card == "operator_card":
         return "agentdeck workbench"
     if embedded_card == "control_mode_card":
@@ -586,6 +591,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("provider_switch_card", None)
     payload.setdefault("agent_ready_card", None)
     payload.setdefault("leader_summary_card", None)
+    payload.setdefault("review_gate_card", None)
     payload.setdefault("run_start_card", None)
     payload.setdefault("run_progress_card", None)
     leader_action = payload.get("leader_action")
@@ -6395,6 +6401,31 @@ def _chat_wants_memory_context(message: str) -> bool:
     )
 
 
+def _chat_wants_review_gate(message: str) -> bool:
+    normalized = message.strip().lower()
+    compact = normalized.replace(" ", "").replace("-", "")
+    return normalized in {
+        "review gate",
+        "review_gate",
+        "/review-gate",
+        "/review gate",
+        "查看验收门",
+        "验收门",
+        "检查验收门",
+        "查看 review gate",
+        "review gate 状态",
+    } or any(
+        token in compact
+        for token in [
+            "reviewgate",
+            "查看reviewgate",
+            "验收门",
+            "验收状态",
+            "reviewer验收",
+        ]
+    )
+
+
 def _chat_skill_import_preview_path(message: str) -> Path | None:
     text = message.strip()
     lowered = text.lower()
@@ -7389,6 +7420,19 @@ def _leader_chat_explanation(
             "recommended_action_id": None,
             "action_kind": "artifacts",
             "action_status": "has_artifacts" if count else "empty",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
+    if mode == "review_gate":
+        review_gate_card = result if isinstance(result, dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader is showing the read-only review gate without releasing or dispatching work.",
+            "reason": "human asked to inspect whether artifacts and reviewer replies satisfy the gate",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": "review_gate",
+            "action_status": review_gate_card.get("status"),
             "safety": "inspect",
             "requires_explicit_user": False,
         }
@@ -10210,6 +10254,83 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "role_card": None,
             "ledger_card": None,
             "artifacts_card": artifacts_card,
+            "workbench_card": None,
+            "control_registry_card": control_registry_card,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_review_gate(args.message):
+        next_command = "agentdeck workbench"
+        turn = store.record_chat_turn(
+            mode="review_gate",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="review_gate",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "review_gate",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        review_gate_card = _workbench_review_gate_card(refreshed_project_view)
+        registry_items = _workbench_control_registry({"review_gate_card": review_gate_card})
+        review_gate_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("scope") == "review_gate"
+                and item.get("card") == "review_gate_card"
+                and item.get("kind") == "inspect"
+                and item.get("command") == next_command
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="review_gate",
+            card="review_gate_card",
+            control_id=str(review_gate_control_id) if review_gate_control_id else None,
+        )
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "review_gate",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "review_gate",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                result=review_gate_card,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "review_gate_card": review_gate_card,
             "workbench_card": None,
             "control_registry_card": control_registry_card,
         }

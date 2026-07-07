@@ -2232,6 +2232,136 @@ def test_leader_chat_memory_context_is_read_only_and_avoids_provider_calls(
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
 
 
+def test_leader_chat_review_gate_is_read_only_and_surfaces_control_palette(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"] = {
+        "reviewer": {
+            "agent_id": "reviewer",
+            "pane_id": None,
+            "session_name": "agentdeck",
+            "cwd": str(root),
+            "status": "configured",
+            "role": "review",
+            "provider": "codex",
+            "workspace_mode": "shared",
+        }
+    }
+    state["messages"] = [
+        {
+            "message_id": "msg_work",
+            "from_actor": "leader",
+            "to_agent": "planner",
+            "task": "Implement review gate",
+            "prompt": "implement",
+            "pane_id": "%42",
+            "status": "sent",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        },
+        {
+            "message_id": "msg_review",
+            "from_actor": "leader",
+            "to_agent": "reviewer",
+            "task": "Review implementation",
+            "prompt": "review",
+            "pane_id": None,
+            "status": "sent",
+            "created_at": "2026-07-04T00:00:04+00:00",
+        },
+    ]
+    state["jobs"] = [
+        {
+            "job_id": "job_work",
+            "message_id": "msg_work",
+            "agent_id": "planner",
+            "pane_id": "%42",
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:01+00:00",
+        },
+        {
+            "job_id": "job_review",
+            "message_id": "msg_review",
+            "agent_id": "reviewer",
+            "pane_id": None,
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:05+00:00",
+        },
+    ]
+    state["replies"] = [
+        {
+            "reply_id": "rep_review",
+            "message_id": "msg_review",
+            "job_id": "job_review",
+            "from_agent": "reviewer",
+            "to_actor": "leader",
+            "text": "code review: pass",
+            "created_at": "2026-07-04T00:00:06+00:00",
+        }
+    ]
+    state["artifacts"] = [
+        {
+            "artifact_id": "art_work",
+            "message_id": "msg_work",
+            "job_id": "job_work",
+            "reply_id": None,
+            "from_agent": "planner",
+            "path": "docs/review-gate.md",
+            "kind": "markdown",
+            "status": "created",
+            "created_at": "2026-07-04T00:00:03+00:00",
+        }
+    ]
+    store.save(state)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看验收门"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "review_gate"
+    assert payload["plan_id"] is None
+    assert payload["next_command"] == "agentdeck workbench"
+    assert payload["review_gate_card"]["mode"] == "review_gate"
+    assert payload["review_gate_card"]["status"] == "blocked"
+    assert payload["review_gate_card"]["reason"] == "round_reviewer is not configured"
+    assert payload["review_gate_card"]["artifact_count"] == 1
+    assert payload["review_gate_card"]["review_reply_count"] == 1
+    assert payload["review_gate_card"]["code_review"]["latest_reply_id"] == "rep_review"
+    assert payload["review_gate_card"]["round_review"]["status"] == "missing_reviewer"
+    assert payload["intent_card"]["embedded_card"] == "review_gate_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["control_registry_card"]["filters"]["scope"] == "review_gate"
+    assert payload["control_registry_card"]["filters"]["card"] == "review_gate_card"
+    assert payload["control_registry_card"]["selection"]["matched"] is True
+    assert payload["control_registry_card"]["selection"]["next_command"] == "agentdeck workbench"
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "review_gate",
+        "card": "review_gate_card",
+        "kind": "inspect",
+        "label": "Inspect review gate",
+        "command": "agentdeck workbench",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": selected_control["control_id"],
+    }
+    state_after = StateStore(root).load()
+    assert state_after["plans"] == state_before["plans"]
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["jobs"] == state_before["jobs"]
+    assert state_after["replies"] == state_before["replies"]
+    assert state_after["artifacts"] == state_before["artifacts"]
+    assert state_after["leader_errors"] == []
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
+
+
 def test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -7546,6 +7676,10 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     assert set(payload["example_memory_apply_preview_card_fields"]) == set(example["memory_apply_preview_card"])
     assert payload["example_memory_suggestions_card_fields"] == payload["memory_suggestions_card_fields"]
     assert set(payload["example_memory_suggestions_card_fields"]) == set(example["memory_suggestions_card"])
+    assert payload["example_review_gate_card_fields"] == payload["review_gate_card_fields"]
+    assert set(payload["example_review_gate_card_fields"]) == set(example["review_gate_card"])
+    assert payload["example_review_gate_stage_fields"] == payload["review_gate_stage_fields"]
+    assert set(payload["example_review_gate_stage_fields"]) == set(example["review_gate_card"]["code_review"])
     assert payload["example_workbench_control_registry_item_fields"] == (
         payload["workbench_control_registry_item_fields"]
     )

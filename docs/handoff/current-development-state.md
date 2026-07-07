@@ -84,7 +84,7 @@ New surface:
 - Does not capture pane output automatically.
 - Does not ack inbox items, release work, or write state.
 
-The current G5 slice adds:
+The first G5 slice is already committed:
 
 ```bash
 agentdeck workbench
@@ -98,6 +98,23 @@ New surface:
 - Requires explicit `round_reviewer` configuration for round-level acceptance.
 - Exposes `status`, `reason`, `can_release=false/true`, artifact/review counts, per-stage blockers, and inspect-only trace/inbox controls.
 - Does not release, merge, ack inbox items, dispatch follow-up work, or advance the loop.
+
+The current G5 follow-up adds natural-language discovery:
+
+```bash
+agentdeck leader chat --message "查看验收门"
+```
+
+Expected behavior:
+
+- Returns `mode=review_gate`.
+- Embeds the same read-only `review_gate_card` as `agentdeck workbench`.
+- Attaches a `control_registry_card` filtered to `scope=review_gate` / `card=review_gate_card`.
+- Selects the `agentdeck workbench` inspect control.
+- Records only the chat turn and audit event.
+- Does not call a Leader provider.
+- Does not create plan/action/approval/message/job/inbox.
+- Does not release, merge, ack inbox items, dispatch follow-up work, advance the loop, read tmux, or send tmux input.
 
 ## Cross-Agent Goal Continuity
 
@@ -123,10 +140,9 @@ Continue the active north-star goal; do not redo completed work.
 
 ## Next Best Step
 
-After the current review gate slice is committed, continue with Phase G5 follow-up:
+After the current review gate discovery slice is committed, continue with the next Phase G5 follow-up:
 
 - Add explicit role assignment UX/docs for configuring `code_reviewer` and `round_reviewer`.
-- Add natural-language help/command-palette discovery for `review_gate_card`.
 - Preserve human approval before release, merge, ack, or follow-up dispatch.
 
 ## Required Verification Before Handoff
@@ -139,6 +155,7 @@ conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_surfaces_logi
 conda run -n agentdeck pytest tests/test_agent_cli.py::test_loop_once_recommends_next_explicit_command_without_mutating_state tests/test_agent_cli.py::test_contract_loop_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_loop_example_exports_gui_ready_card tests/test_contracts.py::test_loop_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_loop_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_loop_once_contract_rejects_auto_execution_claim -q
 conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_worker_lifecycle_item_fields tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q
 conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_review_gate_stage_fields tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q
+conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_review_gate_is_read_only_and_surfaces_control_palette tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q
 conda run -n agentdeck pytest -q
 git diff --check
 ```

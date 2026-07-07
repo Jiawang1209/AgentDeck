@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add review gate Leader chat discovery
+
+- 扩展自然语言 `agentdeck leader chat --message "查看验收门"` / `review gate`：进入只读 `mode=review_gate`，嵌入与 `agentdeck workbench` 同源的 `review_gate_card`。
+- 响应会附带过滤到 `scope=review_gate` / `card=review_gate_card` 的 `control_registry_card`，selection 指向 `agentdeck workbench` inspect control，让 GUI/TUI 可以从 Leader 对话或 help 直接发现验收门。
+- 扩展 `agentdeck contract leader-chat` / `--example`、help `capability_card` 和 validator：新增顶层 `review_gate_card` 字段、example 字段、`mode=review_gate` capability、secondary embedded card 校验和 registry selection 校验。
+- 保持北极星 G5 边界：自然语言验收门只记录 chat turn 和审计事件，不调用 Leader provider、不创建 plan/action/approval/message/job/inbox、不读取/写入/发送 tmux、不 release、不 merge、不 ack、不 dispatch follow-up、不推进 loop。
+- 同步 README、`docs/contracts/leader-chat-schema.md` 和 `docs/handoff/current-development-state.md`，把“review gate 自然语言发现”从待办推进为已完成，并把下一步收窄到显式 `code_reviewer` / `round_reviewer` 配置体验。
+- 验证记录：已先确认红测失败，`查看验收门` 最初落入 DeepSeek provider 路径并因缺少 `DEEPSEEK_API_KEY` 失败；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_review_gate_is_read_only_and_surfaces_control_palette -q` 1 项通过；review-gate/help/contract 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_review_gate_is_read_only_and_surfaces_control_palette tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 539 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 581 项通过。
+
 ### Current - Add review gate workbench card
 
 - 扩展 `agentdeck workbench`：新增 `review_gate_card`，从 artifacts、reviewer replies、traceable ledger 和配置的 reviewer 角色派生 code-review / round-review 验收门。
