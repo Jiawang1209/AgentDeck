@@ -5945,6 +5945,78 @@ def test_workbench_role_topology_marks_reviewer_blocked_when_waiting_for_artifac
     assert review_role["blocker"] == "waiting for artifacts"
 
 
+def test_workbench_role_topology_marks_orchestrator_waiting_for_approval(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["approvals"] = [
+        {
+            "approval_id": "apv_pending",
+            "plan_id": "pln_x",
+            "step": 1,
+            "agent_id": "planner",
+            "role": "planning",
+            "task": "Do the work",
+            "risk": "medium",
+            "status": "pending",
+            "created_at": "2026-07-04T00:00:00+00:00",
+        }
+    ]
+    store.save(state)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    roles = {role["role_id"]: role for role in payload["role_topology_card"]["roles"]}
+    orchestrator = roles["orchestrator"]
+    assert orchestrator["kind"] == "logical_role"
+    assert orchestrator["status"] == "waiting_for_approval"
+    assert orchestrator["blocker"] == "waiting for human approval"
+    # frontdesk / planner logical roles keep their derived status without a blocker
+    assert roles["frontdesk"]["status"] == "ready"
+    assert roles["frontdesk"]["blocker"] is None
+    assert roles["planner"]["blocker"] is None
+    state_after = StateStore(root).load()
+    assert state_after == state_before
+
+
+def test_workbench_role_topology_marks_orchestrator_released_after_round_release(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["releases"] = [
+        {
+            "release_id": "rel_done",
+            "round": 1,
+            "status": "released",
+            "review_gate_status": "ready",
+            "artifact_count": 1,
+            "review_reply_count": 2,
+            "code_reviewer_id": "reviewer",
+            "round_reviewer_id": "coder",
+            "code_review_reply_id": "rep_code",
+            "round_review_reply_id": "rep_round",
+            "created_at": "2026-07-04T00:00:03+00:00",
+        }
+    ]
+    store.save(state)
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    roles = {role["role_id"]: role for role in payload["role_topology_card"]["roles"]}
+    orchestrator = roles["orchestrator"]
+    assert orchestrator["status"] == "released"
+    assert orchestrator["blocker"] is None
+
+
 def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state(
     tmp_path, monkeypatch, capsys
 ) -> None:

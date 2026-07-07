@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Overlay approval/release state on role topology orchestrator
+
+- 扩展 `agentdeck workbench` 的 `role_topology_card` logical 角色叠加（北极星 Phase G6 第四刀）：orchestrator 现在按 ProjectView 事实推导更细的状态——有 pending 审批时 `waiting_for_approval`（带 blocker `waiting for human approval`），否则有 pending Leader action 时 `coordinating`，否则已 release 过时 `released`，否则 `idle`。
+- 只有 orchestrator 会带 blocker；frontdesk 恒 `ready`、planner 有计划时 `planning`，二者 blocker 恒为 `null`。这样 GUI/TUI 能一眼看出协调层是在等待人类审批、还是在协调、已收尾或空闲。
+- 实现：topology builder 现在从 `project_view.approvals.pending` 和 `project_view.releases.count` 派生 orchestrator 状态；item 字段不变，只富化 logical 角色的 `status` / `blocker`。
+- 保持北极星边界：叠加是只读投影，只映射 ProjectView 事实，不写 state、不 approve、不 dispatch、不 release。
+- 同步 README、`docs/contracts/workbench-schema.md` 和 `docs/handoff/current-development-state.md`，把下一步指向显式 code_reviewer/round_reviewer 角色拓扑排序契约。
+- 验证记录：已先确认红测失败，orchestrator 最初只有 `coordinating`/`idle`，没有 `waiting_for_approval`/`released`（其中 waiting-for-approval 红测还暴露 seed approval 需补全 step/role/risk/created_at 才能通过 workbench approval_card 校验）；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_role_topology_marks_orchestrator_waiting_for_approval tests/test_agent_cli.py::test_workbench_role_topology_marks_orchestrator_released_after_round_release tests/test_agent_cli.py::test_workbench_role_topology_card_projects_logical_and_worker_roles -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 561 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 603 项通过。
+
 ### Current - Add role topology Leader chat discovery
 
 - 新增自然语言 `agentdeck leader chat --message "查看角色拓扑"` / `role topology`（北极星 Phase G6 第三刀）：进入只读 `mode=role_topology`，嵌入与 `agentdeck workbench` 同源的 `role_topology_card`。

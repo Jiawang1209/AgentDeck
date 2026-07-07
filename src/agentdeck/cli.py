@@ -2902,6 +2902,10 @@ def _workbench_role_topology_card(
         isinstance(item, dict) and item.get("status") == "pending"
         for item in _summary_items(leader_actions)
     )
+    approvals = project_view.get("approvals") if isinstance(project_view.get("approvals"), dict) else {}
+    pending_approval = _safe_int(approvals.get("pending"), default=0) > 0
+    releases = project_view.get("releases") if isinstance(project_view.get("releases"), dict) else {}
+    release_count = _safe_int(releases.get("count"), default=0)
     logical_inspect = {
         "frontdesk": ("agentdeck leader chat-history", "Inspect intake history"),
         "planner": ("agentdeck plan list", "Inspect plans"),
@@ -2914,10 +2918,19 @@ def _workbench_role_topology_card(
             continue
         logical_count += 1
         role_id = str(role.get("role_id"))
+        logical_blocker: object = None
         if role_id == "planner":
             status = "planning" if plan_count > 0 else "idle"
         elif role_id == "orchestrator":
-            status = "coordinating" if pending_action else "idle"
+            if pending_approval:
+                status = "waiting_for_approval"
+                logical_blocker = "waiting for human approval"
+            elif pending_action:
+                status = "coordinating"
+            elif release_count > 0:
+                status = "released"
+            else:
+                status = "idle"
         else:
             status = "ready"
         inspect_command, inspect_label = logical_inspect.get(
@@ -2935,7 +2948,7 @@ def _workbench_role_topology_card(
                 "pane_backed": False,
                 "pane_id": None,
                 "status": status,
-                "blocker": None,
+                "blocker": logical_blocker,
                 "next_command": inspect_command,
                 "controls": [
                     _control(
