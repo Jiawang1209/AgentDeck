@@ -1283,6 +1283,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "memory_context_card",
     "memory_suggestions_card",
     "leader_summary_card",
+    "learning_review_card",
     "contracts_card",
     "control_mode_card",
     "recovery",
@@ -3922,6 +3923,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "memory_suggestions_card_fields": list(LEADER_CHAT_MEMORY_SUGGESTIONS_CARD_FIELDS),
         "skill_context_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
         "leader_summary_card_fields": list(LEADER_SUMMARY_RESPONSE_FIELDS),
+        "learning_review_card_fields": list(LEARNING_REVIEW_RESPONSE_FIELDS),
         "contracts_card_fields": list(WORKBENCH_CONTRACTS_CARD_FIELDS),
         "change_summary_fields": list(WORKBENCH_CHANGE_SUMMARY_FIELDS),
         "control_registry_item_fields": list(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS),
@@ -8379,6 +8381,13 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append(f"leader_summary_card: {error}")
     elif "leader_summary_card" in payload and leader_summary_card is not None:
         errors.append("leader_summary_card must be an object")
+    learning_review_card = payload.get("learning_review_card")
+    if isinstance(learning_review_card, dict):
+        learning_validation = validate_learning_review_contract(learning_review_card)
+        for error in learning_validation["errors"]:
+            errors.append(f"learning_review_card: {error}")
+    elif "learning_review_card" in payload and learning_review_card is not None:
+        errors.append("learning_review_card must be an object")
     contracts_card = payload.get("contracts_card")
     if isinstance(contracts_card, dict):
         for field in WORKBENCH_CONTRACTS_CARD_FIELDS:
@@ -10069,6 +10078,18 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         agent_id="leader",
         controls=leader_summary_card.get("controls"),
     )
+    learning_review_card = (
+        payload.get("learning_review_card")
+        if isinstance(payload.get("learning_review_card"), dict)
+        else {}
+    )
+    _append_control_registry_items(
+        registry,
+        scope="learning_review",
+        card="learning_review_card",
+        agent_id="leader",
+        controls=learning_review_card.get("controls"),
+    )
     audit_card = payload.get("audit_card") if isinstance(payload.get("audit_card"), dict) else {}
     _append_control_registry_items(
         registry,
@@ -11496,6 +11517,7 @@ def workbench_example() -> dict[str, object]:
             ],
         },
         "leader_summary_card": leader_summary_example(),
+        "learning_review_card": learning_review_example(),
         "contracts_card": {
             "contracts_command": "agentdeck contract list",
             "contract_index_contract": "docs/contracts/contract-index-schema.md",

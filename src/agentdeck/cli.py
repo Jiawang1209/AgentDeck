@@ -1399,6 +1399,7 @@ def _workbench_snapshot_payload(
     memory_context_card = _memory_context_card(project_view)
     memory_suggestions_card = _memory_suggestions_card(store)
     leader_summary_card = _workbench_leader_summary_card(store)
+    learning_review_card = _workbench_learning_review_card(store)
     contracts_card = _workbench_contracts_card()
     control_mode_card = _workbench_control_mode_card(project_view)
     run_progress_card = _workbench_run_progress_card(store)
@@ -1429,6 +1430,7 @@ def _workbench_snapshot_payload(
         "memory_context_card": memory_context_card,
         "memory_suggestions_card": memory_suggestions_card,
         "leader_summary_card": leader_summary_card,
+        "learning_review_card": learning_review_card,
         "contracts_card": contracts_card,
         "control_mode_card": control_mode_card,
         "recovery": recovery,
@@ -1464,6 +1466,17 @@ def _workbench_leader_summary_card(store: StateStore) -> dict[str, object] | Non
     if review.get("next_action") != "summarize":
         return None
     return _leader_summary_payload(store, latest_plan_id)
+
+
+def _workbench_learning_review_card(store: StateStore) -> dict[str, object] | None:
+    plans = store.list_plans()
+    if not plans:
+        return None
+    latest_plan_id = str(plans[-1]["plan_id"])
+    review = store.leader_review(latest_plan_id)
+    if review.get("next_action") != "summarize":
+        return None
+    return _learning_review_payload(store, latest_plan_id)
 
 
 def _control_mode_from_approval_mode(approval_mode: object) -> str:

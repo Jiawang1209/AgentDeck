@@ -53,6 +53,7 @@ The contract command returns:
   "memory_suggestions_card_fields": [],
   "skill_context_item_fields": [],
   "leader_summary_card_fields": [],
+  "learning_review_card_fields": [],
   "contracts_card_fields": [],
   "change_summary_fields": [],
   "control_registry_item_fields": []
@@ -93,6 +94,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "memory_context_card": {},
   "memory_suggestions_card": {},
   "leader_summary_card": null,
+  "learning_review_card": null,
   "contracts_card": {},
   "control_mode_card": {},
   "recovery": {},
@@ -131,6 +133,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `memory_context_card` is derived from `project_view.memory`; it exposes applied long-term memory file summaries plus inspect controls for `agentdeck status` and `agentdeck memory suggestions`, without embedding full memory content, mutating memory files, calling a provider, or injecting memory into prompts.
 `memory_suggestions_card` is derived from pending `memory_suggestions[]`; it exposes count, pending_count, items, `apply_preview_command_template`, item-level `apply_preview` / `apply_memory` controls, and inspect controls for `agentdeck memory suggestions` and `agentdeck status`. Rendering the card is read-only: it must not create or modify `.agentdeck/memory/*.md` or inject memory into prompts. Only a separate explicit `agentdeck memory apply --suggestion-id <id> --confirm` command may write long-term memory.
 `leader_summary_card` is `null` until the latest plan's local Leader review returns `next_action=summarize`; then it reuses `agentdeck leader summary --plan-id <id>` and must pass `validate_leader_summary_contract()`.
+`learning_review_card` is `null` under the same gate (latest plan review `next_action=summarize`); then it reuses the `agentdeck learn review --plan-id <id>` response shape and must pass `validate_learning_review_contract()`. It is the read-only Hermes-style learning reviewer: it surfaces suggested `agentdeck skills suggest ... --source learn-review` and `agentdeck memory suggest ... --source learn-review` follow-up commands (its `summary` / `suggest_skill` / `suggest_memory` controls enter `control_registry[]` under `scope=learning_review`), but rendering the workbench never writes `skill_suggestions[]` / `memory_suggestions[]`, calls a provider, or creates/loads skills — the explicit suggestion commands remain the only write path into the pending queues.
 `contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Skill Registry, memory suggestion/apply, Leader chat, and Leader review contracts.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
@@ -1031,4 +1034,5 @@ When `recovery.recommended_action.source` is:
 - `run_progress_card` is a read-only latest-run projection. It must not approve, dispatch, capture pane output, acknowledge inbox items, or send tmux input.
 - `artifacts_card` is the same read-only artifact index as `agentdeck artifacts`. Its inspect control may be rendered through `control_registry[]`, but it must not read output files or become a second artifact state source.
 - `leader_summary_card` is the same read-only final-result surface as `agentdeck leader summary --plan-id <id>` and appears only when the latest plan is ready to summarize.
+- `learning_review_card` is the same read-only Hermes-style learning reviewer as `agentdeck learn review --plan-id <id>` and appears under the same gate; its `summary` / `suggest_skill` / `suggest_memory` controls enter `control_registry[]` under `scope=learning_review`, but rendering the workbench never queues suggestions or writes state.
 - Runtime actions still require explicit commands or approval flow.

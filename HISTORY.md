@@ -2,6 +2,16 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-08
+
+### Current - Add workbench learning_review_card
+
+- 给 `agentdeck workbench` 一屏快照新增 `learning_review_card`（学习层 GUI 深挖）：镜像 `leader_summary_card` 的条件式做法——只在最新 plan 的本地 Leader review 返回 `next_action=summarize` 时非空，否则为 `null`；非空时复用 `agentdeck learn review --plan-id <id>` 的响应形状并通过 `validate_learning_review_contract()` 守门。
+- 它把 Hermes 式学习复盘直接带进一屏工作台：暴露建议的 `agentdeck skills suggest ... --source learn-review` / `agentdeck memory suggest ... --source learn-review` 后续命令，`summary` / `suggest_skill` / `suggest_memory` 控件进入 `control_registry[]` 的 `scope=learning_review`（cli 与 contracts 两处 registry builder 同步，validator 交叉校验一致）。
+- 保持只读边界：渲染工作台不写 `skill_suggestions[]` / `memory_suggestions[]`、不调用 provider、不创建/加载 skill；真正入队仍靠人类显式 suggestion 命令。默认项目（无 summarize-ready plan）里该卡为 `null`，因此 controls/help 命令面板计数不受影响。
+- 扩展 workbench contract discovery（`learning_review_card_fields`）、`WORKBENCH_SNAPSHOT_FIELDS`、workbench validator、workbench_example 与 `docs/contracts/workbench-schema.md` / README。
+- 验证记录：已先确认红测失败，workbench 最初无 `learning_review_card` 快照字段、discovery 缺 `learning_review_card_fields`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_omits_learning_review_card_when_no_plan_is_ready tests/test_agent_cli.py::test_workbench_embeds_learning_review_card_when_latest_plan_is_ready_to_summarize tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 4 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 567 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 621 项通过。
+
 ## 2026-07-07
 
 ### Current - Sync TUI reference client doc with new dashboard sections

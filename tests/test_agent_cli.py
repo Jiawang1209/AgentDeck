@@ -43,6 +43,7 @@ from agentdeck.contracts import (
     leader_summary_contract_payload,
     leader_summary_contract_response,
     LEADER_SUMMARY_RESPONSE_FIELDS,
+    LEARNING_REVIEW_RESPONSE_FIELDS,
     loop_contract_payload,
     loop_contract_response,
     memory_contract_payload,
@@ -5462,6 +5463,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "memory_context_card",
         "memory_suggestions_card",
         "leader_summary_card",
+        "learning_review_card",
         "contracts_card",
         "control_mode_card",
         "recovery",
@@ -5781,6 +5783,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "controls",
     ]
     assert payload["leader_summary_card_fields"] == list(LEADER_SUMMARY_RESPONSE_FIELDS)
+    assert payload["learning_review_card_fields"] == list(LEARNING_REVIEW_RESPONSE_FIELDS)
     assert payload["contracts_card_fields"] == [
         "contracts_command",
         "contract_index_contract",
@@ -7556,6 +7559,78 @@ def test_workbench_embeds_summary_card_when_latest_plan_is_ready_to_summarize(
     assert [item["kind"] for item in summary_registry_items] == ["summary", "plan_status", "review", "trace"]
     assert summary_registry_items[0]["command"] == f"agentdeck leader summary --plan-id {plan_id}"
     assert summary_registry_items[0]["safety"] == "inspect"
+
+
+def test_workbench_omits_learning_review_card_when_no_plan_is_ready(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["learning_review_card"] is None
+
+
+def test_workbench_embeds_learning_review_card_when_latest_plan_is_ready_to_summarize(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "复盘 workbench"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    cli.main(
+        [
+            "reply",
+            "--agent",
+            "planner",
+            "--message-id",
+            message_id,
+            "--text",
+            "status: completed\nsummary: add a workbench review checklist\nfull_output_path: docs/workbench-review.md",
+        ]
+    )
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    card = payload["learning_review_card"]
+    assert card is not None
+    assert card["mode"] == "learning_review"
+    assert card["plan_id"] == plan_id
+    assert card["status"] == "ready"
+    assert card["skill_suggestion"]["command"].startswith("agentdeck skills suggest")
+    assert "--source learn-review" in card["skill_suggestion"]["command"]
+    assert card["memory_suggestion"]["command"].startswith("agentdeck memory suggest")
+    learning_registry_items = [
+        item
+        for item in payload["control_registry"]
+        if item["scope"] == "learning_review" and item["card"] == "learning_review_card"
+    ]
+    assert [item["kind"] for item in learning_registry_items] == [
+        "summary",
+        "suggest_skill",
+        "suggest_memory",
+    ]
+    assert learning_registry_items[1]["safety"] == "explicit_user"
+    assert learning_registry_items[1]["command"] == card["skill_suggestion"]["command"]
+    # read-only: rendering the workbench never queues suggestions or writes state
+    state_after = StateStore(root).load()
+    assert state_after.get("skill_suggestions", []) == state_before.get("skill_suggestions", [])
+    assert state_after.get("memory_suggestions", []) == state_before.get("memory_suggestions", [])
+    assert state_after["plans"] == state_before["plans"]
 
     assert StateStore(root).load() == state_before
 
