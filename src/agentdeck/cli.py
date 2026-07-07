@@ -60,6 +60,7 @@ from .contracts import (
     validate_leader_actions_contract,
     validate_leader_action_contract,
     validate_leader_chat_contract,
+    validate_learning_review_contract,
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_project_view_contract,
@@ -4873,6 +4874,12 @@ def learn_review_command(args: argparse.Namespace) -> int:
         payload = _learning_review_payload(store, args.plan_id)
     except KeyError:
         print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    validation = validate_learning_review_contract(payload)
+    if not validation["ok"]:
+        print("Learning review contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
         return 1
     _print_json(payload)
     return 0

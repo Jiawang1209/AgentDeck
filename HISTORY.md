@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Add learning review contract validation
+
+- 新增 `validate_learning_review_contract()`：校验 learning review response 字段、状态、suggestion command 的 source/agent/trace、summary/suggest controls 和 `explicit_user` safety。
+- `agentdeck learn review --plan-id <id>` 输出前现在通过 validator 守门，失败时返回非 0 且不打印半坏 JSON；自然语言 `learning_review_card` 也复用同一 validator。
+- 保持学习层边界：validator 要求 `skills suggest` / `memory suggest` 命令保留 `--source learn-review`、`--agent leader` 和 `--from-trace <plan_id>`，suggest controls 仍为 `explicit_user`。
+- 同步 README、AGENT.md、CLAUDE.md、`docs/contracts/learning-review-schema.md` 和 `docs/contracts/leader-chat-schema.md`，把 skill/memory 学习入口推进为可发现、可对话、可验证的契约表面。
+- 验证记录：已先确认红测失败，`validate_learning_review_contract` 最初不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_validate_learning_review_contract_requires_explicit_suggestion_controls tests/test_contracts.py::test_validate_learning_review_contract_rejects_command_source_drift tests/test_agent_cli.py::test_learn_review_refuses_contract_violation -q` 3 项通过；learning review/leader chat 聚焦回归 10 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 146 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 226 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 143 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 557 项通过。
+
 ### Current - Add natural-language learning review
 
 - 扩展 `agentdeck leader chat --message "学习复盘 pln_xxx"`：自然语言入口现在进入只读 `mode=learning_review`，嵌入与 `agentdeck learn review --plan-id <id>` 同源的 `learning_review_card`，并在缺省 plan id 时使用最新 plan。

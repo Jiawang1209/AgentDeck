@@ -2342,6 +2342,124 @@ def learning_review_example() -> dict[str, object]:
     }
 
 
+def validate_learning_review_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in LEARNING_REVIEW_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing learning_review field: {field}")
+    if payload.get("schema_version") != PROJECT_VIEW_SCHEMA_VERSION:
+        errors.append("schema_version must match ProjectView schema version")
+    if payload.get("ok") is not True:
+        errors.append("ok must be true")
+    if payload.get("mode") != "learning_review":
+        errors.append("mode must be learning_review")
+    plan_id = payload.get("plan_id")
+    if not isinstance(plan_id, str) or not plan_id:
+        errors.append("plan_id must be a non-empty string")
+    status = payload.get("status")
+    if status not in {"ready", "waiting"}:
+        errors.append("status must be ready or waiting")
+    for count_field in ("reply_count", "artifact_count"):
+        count = payload.get(count_field)
+        if not isinstance(count, int) or count < 0:
+            errors.append(f"{count_field} must be a non-negative integer")
+    if isinstance(plan_id, str) and plan_id:
+        if payload.get("plan_status_command") != f"agentdeck plan status --plan-id {plan_id}":
+            errors.append("plan_status_command must match plan_id")
+        if payload.get("summary_command") != f"agentdeck leader summary --plan-id {plan_id}":
+            errors.append("summary_command must match plan_id")
+    skill_suggestion = payload.get("skill_suggestion")
+    if isinstance(skill_suggestion, dict):
+        for field in LEARNING_REVIEW_SKILL_SUGGESTION_FIELDS:
+            if field not in skill_suggestion:
+                errors.append(f"skill_suggestion: missing field: {field}")
+        if skill_suggestion.get("kind") != "skill_suggestion":
+            errors.append("skill_suggestion.kind must be skill_suggestion")
+        if skill_suggestion.get("source") != "learn-review":
+            errors.append("skill_suggestion.source must be learn-review")
+        if skill_suggestion.get("agent_id") != "leader":
+            errors.append("skill_suggestion.agent_id must be leader")
+        if isinstance(plan_id, str) and plan_id and skill_suggestion.get("trace_id") != plan_id:
+            errors.append("skill_suggestion.trace_id must match plan_id")
+        command = skill_suggestion.get("command")
+        if not isinstance(command, str) or not command.startswith("agentdeck skills suggest "):
+            errors.append("skill_suggestion.command must use agentdeck skills suggest")
+        elif "--source learn-review" not in command:
+            errors.append("skill_suggestion.command must include --source learn-review")
+        elif "--agent leader" not in command:
+            errors.append("skill_suggestion.command must include --agent leader")
+        elif isinstance(plan_id, str) and plan_id and f"--from-trace {plan_id}" not in command:
+            errors.append("skill_suggestion.command must include --from-trace plan_id")
+    elif "skill_suggestion" in payload:
+        errors.append("skill_suggestion must be an object")
+    memory_suggestion = payload.get("memory_suggestion")
+    if isinstance(memory_suggestion, dict):
+        for field in LEARNING_REVIEW_MEMORY_SUGGESTION_FIELDS:
+            if field not in memory_suggestion:
+                errors.append(f"memory_suggestion: missing field: {field}")
+        if memory_suggestion.get("kind") != "memory_suggestion":
+            errors.append("memory_suggestion.kind must be memory_suggestion")
+        if memory_suggestion.get("scope") != "project":
+            errors.append("memory_suggestion.scope must be project")
+        if memory_suggestion.get("source") != "learn-review":
+            errors.append("memory_suggestion.source must be learn-review")
+        if memory_suggestion.get("agent_id") != "leader":
+            errors.append("memory_suggestion.agent_id must be leader")
+        if isinstance(plan_id, str) and plan_id and memory_suggestion.get("trace_id") != plan_id:
+            errors.append("memory_suggestion.trace_id must match plan_id")
+        command = memory_suggestion.get("command")
+        if not isinstance(command, str) or not command.startswith("agentdeck memory suggest "):
+            errors.append("memory_suggestion.command must use agentdeck memory suggest")
+        elif "--source learn-review" not in command:
+            errors.append("memory_suggestion.command must include --source learn-review")
+        elif "--agent leader" not in command:
+            errors.append("memory_suggestion.command must include --agent leader")
+        elif isinstance(plan_id, str) and plan_id and f"--from-trace {plan_id}" not in command:
+            errors.append("memory_suggestion.command must include --from-trace plan_id")
+        elif "--scope project" not in command:
+            errors.append("memory_suggestion.command must include --scope project")
+    elif "memory_suggestion" in payload:
+        errors.append("memory_suggestion must be an object")
+    controls = payload.get("controls")
+    if isinstance(controls, list):
+        seen_kinds: set[str] = set()
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("controls items must be objects")
+                continue
+            for field in LEARNING_REVIEW_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"controls: missing field: {field}")
+            kind = control.get("kind")
+            if isinstance(kind, str):
+                seen_kinds.add(kind)
+            if kind == "summary":
+                if control.get("command") != payload.get("summary_command"):
+                    errors.append("controls: summary command must match summary_command")
+                if control.get("safety") != "inspect":
+                    errors.append("controls: summary must use safety=inspect")
+            if kind == "suggest_skill":
+                expected_command = skill_suggestion.get("command") if isinstance(skill_suggestion, dict) else None
+                if control.get("command") != expected_command:
+                    errors.append("controls: suggest_skill command must match skill_suggestion.command")
+                if control.get("safety") != "explicit_user":
+                    errors.append("controls: suggest_skill must use safety=explicit_user")
+            if kind == "suggest_memory":
+                expected_command = memory_suggestion.get("command") if isinstance(memory_suggestion, dict) else None
+                if control.get("command") != expected_command:
+                    errors.append("controls: suggest_memory command must match memory_suggestion.command")
+                if control.get("safety") != "explicit_user":
+                    errors.append("controls: suggest_memory must use safety=explicit_user")
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append("controls: disabled controls must include blocker")
+        missing_kinds = {"summary", "suggest_skill", "suggest_memory"} - seen_kinds
+        for kind in sorted(missing_kinds):
+            errors.append(f"controls: missing {kind} control")
+    elif "controls" in payload:
+        errors.append("controls must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
 def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -5067,11 +5185,9 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("leader_action_card must be an object")
     learning_review_card = payload.get("learning_review_card")
     if isinstance(learning_review_card, dict):
-        for field in LEARNING_REVIEW_RESPONSE_FIELDS:
-            if field not in learning_review_card:
-                errors.append(f"learning_review_card: missing field: {field}")
-        if learning_review_card.get("mode") != "learning_review":
-            errors.append("learning_review_card.mode must be learning_review")
+        learning_review_validation = validate_learning_review_contract(learning_review_card)
+        for error in learning_review_validation["errors"]:
+            errors.append(f"learning_review_card: {error}")
         if payload.get("mode") == "learning_review":
             expected_next_command = f"agentdeck learn review --plan-id {learning_review_card.get('plan_id')}"
             if payload.get("next_command") != expected_next_command:

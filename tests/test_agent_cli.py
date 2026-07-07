@@ -975,6 +975,41 @@ def test_learn_review_surfaces_read_only_skill_and_memory_suggestion_commands(
     assert state_after["artifacts"] == state_before["artifacts"]
 
 
+def test_learn_review_refuses_contract_violation(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    plan = {
+        "goal": "Review a risky learning payload.",
+        "dispatch_ready": False,
+        "steps": [
+            {
+                "step": 1,
+                "agent_id": "planner",
+                "role": "planner",
+                "task": "Return evidence.",
+                "risk": "read-only evidence review",
+                "requires_approval": True,
+            }
+        ],
+    }
+    plan_record = store.record_plan("Review a risky learning payload.", "fake", "fake-plan", plan)
+
+    def broken_validation(_payload):
+        return {"ok": False, "errors": ["controls: suggest_skill must use safety=explicit_user"]}
+
+    monkeypatch.setattr(cli, "validate_learning_review_contract", broken_validation)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["learn", "review", "--plan-id", str(plan_record["plan_id"])])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "Learning review contract validation failed" in captured.err
+    assert "controls: suggest_skill must use safety=explicit_user" in captured.err
+    assert StateStore(root).load() == state_before
+
+
 def test_leader_chat_skill_suggestions_is_read_only_and_avoids_provider_calls(
     tmp_path, monkeypatch, capsys
 ) -> None:

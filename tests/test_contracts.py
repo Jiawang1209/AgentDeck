@@ -157,6 +157,7 @@ from agentdeck.contracts import (
     validate_leader_action_contract,
     validate_leader_actions_contract,
     validate_leader_chat_contract,
+    validate_learning_review_contract,
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_project_view_contract,
@@ -2975,6 +2976,34 @@ def test_learning_review_contract_response_includes_example_without_drift(tmp_pa
     assert set(payload["example_control_fields"]) == set(example["controls"][0])
     assert example["skill_suggestion"]["source"] == "learn-review"
     assert example["memory_suggestion"]["source"] == "learn-review"
+
+
+def test_validate_learning_review_contract_requires_explicit_suggestion_controls() -> None:
+    payload = learning_review_example()
+    payload["controls"][1]["safety"] = "inspect"
+
+    result = validate_learning_review_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["controls: suggest_skill must use safety=explicit_user"],
+    }
+
+
+def test_validate_learning_review_contract_rejects_command_source_drift() -> None:
+    payload = learning_review_example()
+    payload["skill_suggestion"]["command"] = payload["skill_suggestion"]["command"].replace(
+        "--source learn-review",
+        "--source auto-review",
+    )
+    payload["controls"][1]["command"] = payload["skill_suggestion"]["command"]
+
+    result = validate_learning_review_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["skill_suggestion.command must include --source learn-review"],
+    }
 
 
 def test_leader_status_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:

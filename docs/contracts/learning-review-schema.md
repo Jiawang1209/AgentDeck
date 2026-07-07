@@ -31,3 +31,5 @@ agentdeck learn review --plan-id <id>
 `agentdeck learn review --plan-id <id>` only reuses existing plan status, Leader summary, reply, and artifact facts. It may generate GUI-ready `agentdeck skills suggest ... --source learn-review` and `agentdeck memory suggest ... --source learn-review` commands, but it must not run them.
 
 The command must not create, import, load, or modify skills; must not write `skill_suggestions[]` or `memory_suggestions[]`; must not create or modify `.agentdeck/memory/*.md`; must not call providers; must not inspect tmux panes; and must not create plans, actions, approvals, messages, jobs, replies, artifacts, or inbox items.
+
+Live `agentdeck learn review --plan-id <id>` output must pass `validate_learning_review_contract()` before JSON is printed. Contract failures must return a non-zero exit code and must not print partial learning review output. When embedded in `agentdeck leader chat` as `learning_review_card`, the same validator is reused before the chat response is printed.
