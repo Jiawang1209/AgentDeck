@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add role topology Leader chat discovery
+
+- 新增自然语言 `agentdeck leader chat --message "查看角色拓扑"` / `role topology`（北极星 Phase G6 第三刀）：进入只读 `mode=role_topology`，嵌入与 `agentdeck workbench` 同源的 `role_topology_card`。
+- 响应附带过滤到 `scope=role_topology` / `card=role_topology_card` 的 `control_registry_card`，selection 指向 card 级 `agentdeck workbench` inspect control，让 GUI/TUI 可从 Leader 对话或 help 直接发现角色拓扑。
+- 扩展 `agentdeck contract leader-chat` / `--example`、help `capability_card` 和 `validate_leader_chat_contract()`：新增顶层 `role_topology_card` 响应字段、example 卡片、`mode=role_topology` capability、secondary embedded card 校验、registry selection 校验和 `control_registry_card` required 校验。
+- 保持北极星边界：自然语言角色拓扑只记录 chat turn 和审计事件，不调用 provider、不创建 plan/action/approval/message/job/inbox、不 spawn/dispatch/capture/ack/release、不读写 tmux。
+- 同步 README、`docs/contracts/leader-chat-schema.md` 和 `docs/handoff/current-development-state.md`，把下一步指向 logical 角色 blocker/release 状态富化。
+- 验证记录：已先确认红测失败，`查看角色拓扑` 最初落入 DeepSeek provider 路径且 help capability 缺 `role_topology`；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_role_topology_is_read_only_and_surfaces_control_palette tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response tests/test_agent_cli.py::test_contract_leader_chat_cli_matches_contract_module -q` 5 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 559 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 601 项通过。
+
 ### Current - Overlay review gate status on role topology reviewer roles
 
 - 扩展 `agentdeck workbench` 的 `role_topology_card`（北极星 Phase G6 第二刀）：把 `review_gate_card` 的阶段状态叠加到对应 reviewer worker 角色上，让 GUI/TUI 一眼看出某个角色是在"审查中"还是被上游"阻塞"。

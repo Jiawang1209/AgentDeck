@@ -129,6 +129,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "role_card",
         "review_gate_card",
         "release_preview_card",
+        "role_topology_card",
         "ledger_card",
         "audit_card",
         "artifacts_card",
@@ -203,6 +204,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     if embedded_card == "review_gate_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "release_preview_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "role_topology_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "leader_status_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
@@ -510,6 +513,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck workbench"
     if embedded_card == "release_preview_card":
         return "agentdeck workbench"
+    if embedded_card == "role_topology_card":
+        return "agentdeck workbench"
     if embedded_card == "queue_card" or embedded_card == "operator_card":
         return "agentdeck workbench"
     if embedded_card == "control_mode_card":
@@ -600,6 +605,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("leader_summary_card", None)
     payload.setdefault("review_gate_card", None)
     payload.setdefault("release_preview_card", None)
+    payload.setdefault("role_topology_card", None)
     payload.setdefault("run_start_card", None)
     payload.setdefault("run_progress_card", None)
     leader_action = payload.get("leader_action")
@@ -6875,6 +6881,31 @@ def _chat_wants_release_preview(message: str) -> bool:
     )
 
 
+def _chat_wants_role_topology(message: str) -> bool:
+    normalized = message.strip().lower()
+    compact = normalized.replace(" ", "").replace("-", "")
+    return normalized in {
+        "role topology",
+        "role_topology",
+        "/role-topology",
+        "/role topology",
+        "查看角色拓扑",
+        "角色拓扑",
+        "查看角色拓补",
+        "查看 role topology",
+        "role topology 状态",
+    } or any(
+        token in compact
+        for token in [
+            "roletopology",
+            "查看roletopology",
+            "角色拓扑",
+            "角色拓补",
+            "角色地图",
+        ]
+    )
+
+
 def _chat_skill_import_preview_path(message: str) -> Path | None:
     text = message.strip()
     lowered = text.lower()
@@ -7895,6 +7926,19 @@ def _leader_chat_explanation(
             "recommended_action_id": None,
             "action_kind": "release_preview",
             "action_status": release_preview_card.get("status"),
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
+    if mode == "role_topology":
+        role_topology_card = result if isinstance(result, dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader is showing the read-only role topology without spawning, dispatching, or writing state.",
+            "reason": "human asked to inspect the logical and worker role topology",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": "role_topology",
+            "action_status": role_topology_card.get("mode"),
             "safety": "inspect",
             "requires_explicit_user": False,
         }
@@ -10873,6 +10917,88 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": None,
             "review_gate_card": None,
             "release_preview_card": release_preview_card,
+            "workbench_card": None,
+            "control_registry_card": control_registry_card,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_role_topology(args.message):
+        next_command = "agentdeck workbench"
+        turn = store.record_chat_turn(
+            mode="role_topology",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="role_topology",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "role_topology",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        role_topology_card = _workbench_role_topology_card(
+            refreshed_project_view, _workbench_review_gate_card(refreshed_project_view)
+        )
+        registry_items = _workbench_control_registry({"role_topology_card": role_topology_card})
+        role_topology_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("scope") == "role_topology"
+                and item.get("card") == "role_topology_card"
+                and item.get("kind") == "inspect"
+                and item.get("agent_id") is None
+                and item.get("command") == next_command
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="role_topology",
+            card="role_topology_card",
+            control_id=str(role_topology_control_id) if role_topology_control_id else None,
+        )
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "role_topology",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "role_topology",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                result=role_topology_card,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "review_gate_card": None,
+            "release_preview_card": None,
+            "role_topology_card": role_topology_card,
             "workbench_card": None,
             "control_registry_card": control_registry_card,
         }

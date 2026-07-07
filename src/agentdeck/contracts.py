@@ -984,6 +984,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "role_card",
     "review_gate_card",
     "release_preview_card",
+    "role_topology_card",
     "ledger_card",
     "lineage_card",
     "audit_card",
@@ -3269,6 +3270,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "safety": "inspect",
             "requires_explicit_user": False,
             "card": "release_preview_card",
+        },
+        {
+            "mode": "role_topology",
+            "label": "Inspect role topology",
+            "description": "Inspect the unified logical and worker role topology with per-role provider, status, and blocker.",
+            "example_messages": ["查看角色拓扑", "role topology"],
+            "command": 'agentdeck leader chat --message "查看角色拓扑"',
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "role_topology_card",
         },
         {
             "mode": "ledger",
@@ -6338,6 +6349,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                     "intent_card.secondary_embedded_cards must include control_registry_card for release_preview responses"
                 )
             if (
+                explanation_action_kind == "role_topology"
+                and payload.get("role_topology_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for role_topology responses"
+                )
+            if (
                 explanation_action_kind == "policy_mode"
                 and payload.get("control_mode_card") is not None
                 and "control_registry_card" not in secondary_embedded_cards
@@ -6601,6 +6620,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                 errors.append("blocked release_preview_card.reason must match review_gate_card.reason")
     elif "release_preview_card" in payload and release_preview_card is not None:
         errors.append("release_preview_card must be an object")
+    role_topology_card = payload.get("role_topology_card")
+    if isinstance(role_topology_card, dict):
+        _validate_role_topology_card_contract(errors, role_topology_card, prefix="role_topology_card")
+    elif "role_topology_card" in payload and role_topology_card is not None:
+        errors.append("role_topology_card must be an object")
     ledger_card = payload.get("ledger_card")
     if isinstance(ledger_card, dict):
         _validate_ledger_card_contract(errors, ledger_card, prefix="ledger_card")
@@ -6767,6 +6791,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         ):
             errors.append("control_registry_card.selection.next_command must match release_preview inspect command")
         if (
+            explanation_action_kind == "role_topology"
+            and isinstance(role_topology_card, dict)
+            and isinstance(selection, dict)
+            and selection.get("next_command") != "agentdeck workbench"
+        ):
+            errors.append("control_registry_card.selection.next_command must match role_topology inspect command")
+        if (
             explanation_action_kind == "ledger"
             and isinstance(ledger_card, dict)
             and isinstance(selection, dict)
@@ -6872,6 +6903,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("control_registry_card is required for review_gate responses")
     elif explanation_action_kind == "release_preview":
         errors.append("control_registry_card is required for release_preview responses")
+    elif explanation_action_kind == "role_topology":
+        errors.append("control_registry_card is required for role_topology responses")
     elif explanation_action_kind == "policy_mode":
         errors.append("control_registry_card is required for policy_mode responses")
     elif explanation_action_kind in {"approval_dispatch", "approval_dispatch_batch"}:
@@ -8801,6 +8834,7 @@ def leader_chat_example() -> dict[str, object]:
     role_card = workbench_example()["role_card"]
     review_gate_card = workbench_example()["review_gate_card"]
     release_preview_card = workbench_example()["release_preview_card"]
+    role_topology_card = workbench_example()["role_topology_card"]
     ledger_card = workbench_example()["ledger_card"]
     lineage_card = workbench_example()["lineage_card"]
     artifacts_card = artifacts_example()
@@ -9460,6 +9494,7 @@ def leader_chat_example() -> dict[str, object]:
         "role_card": role_card,
         "review_gate_card": review_gate_card,
         "release_preview_card": release_preview_card,
+        "role_topology_card": role_topology_card,
         "ledger_card": ledger_card,
         "lineage_card": lineage_card,
         "audit_card": audit_card,

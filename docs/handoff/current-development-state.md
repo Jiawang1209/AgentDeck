@@ -252,12 +252,25 @@ The first G6 surface details:
 - All controls appear in `control_registry[]` / `agentdeck controls` under `scope=role_topology`.
 - Does not spawn, dispatch, capture, ack, release, or write state; every control is inspect-only.
 
+The third G6 slice is already committed:
+
+```bash
+agentdeck leader chat --message "查看角色拓扑"
+```
+
+Expected behavior:
+
+- Returns read-only `mode=role_topology`.
+- Embeds the same `role_topology_card` as `agentdeck workbench`.
+- Attaches a `control_registry_card` filtered to `scope=role_topology` / `card=role_topology_card`, selecting the card-level `agentdeck workbench` inspect control.
+- Records only the chat turn and its audit event; does not call a provider, create plan/action/approval/message/job/inbox, spawn, dispatch, capture, ack, release, or read/write tmux.
+
 ## Next Best Step
 
 Continue Phase G6 with the next follow-up:
 
-- Add a natural-language `role topology` chat mode (`agentdeck leader chat --message "查看角色拓扑"` / `role topology`) that enters read-only `mode=role_topology`, embeds the same `role_topology_card`, and attaches a `control_registry_card` filtered to `scope=role_topology` / `card=role_topology_card` selecting the `agentdeck workbench` inspect control — mirroring the review-gate / release-preview chat discovery pattern.
-- Optionally extend the blocker overlay to logical roles (e.g. mark `orchestrator` waiting when approvals are pending) and surface release state (`released`) onto the topology.
+- Extend the blocker/status overlay to logical roles: e.g. mark `orchestrator` as `waiting_for_approval` (with a blocker) when there are pending approvals, and surface release state (`released`) onto the topology when the latest round was released.
+- Optionally add a Phase G6 acceptance-focused view or contract that asserts the full "frontdesk → planner → orchestrator → coder → code_reviewer → round_reviewer" ordering and per-role safety once round/code reviewer roles are explicitly configured.
 - Preserve human approval and keep every topology surface read-only.
 
 ## Required Verification Before Handoff

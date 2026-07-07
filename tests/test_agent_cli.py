@@ -2364,6 +2364,56 @@ def test_leader_chat_review_gate_is_read_only_and_surfaces_control_palette(
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
 
 
+def test_leader_chat_role_topology_is_read_only_and_surfaces_control_palette(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看角色拓扑"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "role_topology"
+    assert payload["plan_id"] is None
+    assert payload["next_command"] == "agentdeck workbench"
+    card = payload["role_topology_card"]
+    assert card["mode"] == "role_topology"
+    assert card["logical_role_count"] == 3
+    assert card["worker_role_count"] == 3
+    assert card["count"] == 6
+    assert payload["review_gate_card"] is None
+    assert payload["release_preview_card"] is None
+    assert payload["intent_card"]["embedded_card"] == "role_topology_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["control_registry_card"]["filters"]["scope"] == "role_topology"
+    assert payload["control_registry_card"]["filters"]["card"] == "role_topology_card"
+    assert payload["control_registry_card"]["selection"]["matched"] is True
+    assert payload["control_registry_card"]["selection"]["next_command"] == "agentdeck workbench"
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "role_topology",
+        "card": "role_topology_card",
+        "kind": "inspect",
+        "label": "Inspect role topology",
+        "command": "agentdeck workbench",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": selected_control["control_id"],
+    }
+    assert payload["leader_explanation"]["action_kind"] == "role_topology"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    state_after = StateStore(root).load()
+    assert state_after["plans"] == state_before["plans"]
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["leader_errors"] == []
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
+
+
 def test_leader_chat_release_preview_is_read_only_and_surfaces_control_palette(
     tmp_path, monkeypatch, capsys
 ) -> None:

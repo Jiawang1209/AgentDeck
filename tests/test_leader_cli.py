@@ -4288,6 +4288,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "role",
         "review_gate",
         "release_preview",
+        "role_topology",
         "ledger",
         "queue",
         "approval",
@@ -4329,6 +4330,18 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "kind": "inspect",
         "label": "Inspect release preview",
         "command": 'agentdeck leader chat --message "查看发布预览"',
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert capabilities["role_topology"]["command"] == 'agentdeck leader chat --message "查看角色拓扑"'
+    assert capabilities["role_topology"]["safety"] == "inspect"
+    assert capabilities["role_topology"]["requires_explicit_user"] is False
+    assert capabilities["role_topology"]["card"] == "role_topology_card"
+    assert capabilities["role_topology"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect role topology",
+        "command": 'agentdeck leader chat --message "查看角色拓扑"',
         "safety": "inspect",
         "enabled": True,
         "blocker": None,
