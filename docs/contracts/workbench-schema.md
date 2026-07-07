@@ -113,7 +113,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `skill_suggestions_card` is derived from pending `skill_suggestions[]`; it exposes count, pending_count, items, and inspect controls for `agentdeck skills suggestions` and `agentdeck status`, without creating, importing, or loading skills.
 `memory_suggestions_card` is derived from pending `memory_suggestions[]`; it exposes count, pending_count, items, `apply_preview_command_template`, item-level `apply_preview` / `apply_memory` controls, and inspect controls for `agentdeck memory suggestions` and `agentdeck status`. Rendering the card is read-only: it must not create or modify `.agentdeck/memory/*.md` or inject memory into prompts. Only a separate explicit `agentdeck memory apply --suggestion-id <id> --confirm` command may write long-term memory.
 `leader_summary_card` is `null` until the latest plan's local Leader review returns `next_action=summarize`; then it reuses `agentdeck leader summary --plan-id <id>` and must pass `validate_leader_summary_contract()`.
-`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Skill Registry, Leader chat, and Leader review contracts.
+`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Skill Registry, memory suggestion/apply, Leader chat, and Leader review contracts.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `run_progress_card` is `null` when there is no plan; otherwise it reuses the latest plan's `agentdeck run --plan-id <id>` response shape and must pass `validate_run_start_contract()`. Its `leader_backend` field is the same normalized logical Leader identity card stored with the plan; it is not a tmux pane binding or execution permission.
@@ -705,6 +705,8 @@ The card reuses `validate_leader_summary_contract()`. It only aggregates existin
   "contract_index_contract": "docs/contracts/contract-index-schema.md",
   "workbench_contract": "agentdeck contract workbench",
   "controls_contract": "agentdeck contract controls",
+  "skills_contract": "agentdeck contract skills",
+  "memory_contract": "agentdeck contract memory",
   "agent_runtime_contract": "agentdeck contract agent-runtime",
   "leader_chat_contract": "agentdeck contract leader-chat",
   "leader_review_contract": "agentdeck contract leader-review",
@@ -717,7 +719,7 @@ The card reuses `validate_leader_summary_contract()`. It only aggregates existin
 }
 ```
 
-This card lets GUI/TUI clients bootstrap from a single workbench snapshot and then discover the full machine-readable contract index on demand, including the dedicated `run` start card contract, the `controls` command palette contract, the `agent-runtime` command contract for visible tmux pane controls, the `leader-chat` response contract for natural-language Leader interactions, the `leader-summary` response contract for deterministic reply/artifact aggregation, and the `artifacts` contract for the read-only worker output index. It is static metadata and does not read state, inspect tmux panes, call providers, or execute any contract command.
+This card lets GUI/TUI clients bootstrap from a single workbench snapshot and then discover the full machine-readable contract index on demand, including the dedicated `run` start card contract, the `controls` command palette contract, the `skills` registry contract, the `memory` suggestion/apply contract, the `agent-runtime` command contract for visible tmux pane controls, the `leader-chat` response contract for natural-language Leader interactions, the `leader-summary` response contract for deterministic reply/artifact aggregation, and the `artifacts` contract for the read-only worker output index. It is static metadata and does not read state, inspect tmux panes, call providers, or execute any contract command.
 
 When `recovery.recommended_action.source` is:
 

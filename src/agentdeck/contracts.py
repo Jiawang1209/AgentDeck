@@ -75,6 +75,12 @@ CONTRACT_INDEX_SPECS = (
         "skills-schema.md",
     ),
     (
+        "memory",
+        "agentdeck contract memory",
+        "agentdeck contract memory --example",
+        "memory-schema.md",
+    ),
+    (
         "agent-runtime",
         "agentdeck contract agent-runtime",
         "agentdeck contract agent-runtime --example",
@@ -542,6 +548,63 @@ SKILLS_CONTROL_FIELDS = (
     "enabled",
     "blocker",
 )
+
+MEMORY_SUGGEST_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "suggestion",
+    "next_command",
+)
+
+MEMORY_SUGGESTIONS_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "count",
+    "pending_count",
+    "apply_preview_command_template",
+    "items",
+    "controls",
+)
+
+MEMORY_APPLY_PREVIEW_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "suggestion_id",
+    "suggestion",
+    "target",
+    "target_exists",
+    "would_create",
+    "would_update_status",
+    "proposed_append",
+    "apply_command",
+    "controls",
+)
+
+MEMORY_APPLY_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "suggestion_id",
+    "suggestion",
+    "target",
+    "applied_path",
+    "appended",
+)
+
+MEMORY_SUGGESTION_ITEM_FIELDS = (
+    "suggestion_id",
+    "status",
+    "scope",
+    "summary",
+    "rationale",
+    "source",
+    "agent_id",
+    "trace_id",
+    "target",
+    "created_at",
+    "controls",
+)
+
+MEMORY_CONTROL_FIELDS = SKILLS_CONTROL_FIELDS
 
 PROJECT_VIEW_MESSAGE_ITEM_FIELDS = (
     "message_id",
@@ -1302,6 +1365,7 @@ WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "workbench_contract",
     "controls_contract",
     "skills_contract",
+    "memory_contract",
     "agent_runtime_contract",
     "leader_chat_contract",
     "leader_review_contract",
@@ -1950,6 +2014,164 @@ def skills_example() -> dict[str, object]:
             "pending_count": 1,
             "items": [deepcopy(suggestion_item)],
             "controls": [suggest_control],
+        },
+    }
+
+
+def memory_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "memory_suggest_command_template": "agentdeck memory suggest --summary <summary> --rationale <rationale> --source <source>",
+        "memory_suggestions_command": "agentdeck memory suggestions",
+        "memory_apply_preview_command_template": "agentdeck memory apply-preview --suggestion-id <id>",
+        "memory_apply_command_template": "agentdeck memory apply --suggestion-id <id> --confirm",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "suggest_response_fields": list(MEMORY_SUGGEST_RESPONSE_FIELDS),
+        "suggestions_response_fields": list(MEMORY_SUGGESTIONS_RESPONSE_FIELDS),
+        "apply_preview_response_fields": list(MEMORY_APPLY_PREVIEW_RESPONSE_FIELDS),
+        "apply_response_fields": list(MEMORY_APPLY_RESPONSE_FIELDS),
+        "suggestion_item_fields": list(MEMORY_SUGGESTION_ITEM_FIELDS),
+        "control_fields": list(MEMORY_CONTROL_FIELDS),
+    }
+
+
+def memory_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = memory_contract_payload(contract_path)
+    if include_example:
+        example = memory_example()
+        payload["example"] = True
+        payload["example_suggest_response_fields"] = list(example["suggest"])
+        payload["example_suggestions_response_fields"] = list(example["suggestions"])
+        payload["example_apply_preview_response_fields"] = list(example["apply_preview"])
+        payload["example_apply_response_fields"] = list(example["apply"])
+        payload["example_suggestion_item_fields"] = list(example["suggestions"]["items"][0])
+        payload["example_control_fields"] = list(example["suggestions"]["items"][0]["controls"][0])
+        payload["example_memory"] = example
+    return payload
+
+
+def memory_example() -> dict[str, object]:
+    suggestion_id = "mem_example"
+    target = ".agentdeck/memory/project.md"
+    proposed_append = (
+        "- Keep approval-gated worker dispatch.\n"
+        "  - rationale: project safety preference\n"
+        "  - source: reviewer\n"
+        "  - agent_id: leader\n"
+        "  - trace_id: msg_memory\n"
+        f"  - suggestion_id: {suggestion_id}\n"
+    )
+    inspect_control = {
+        "kind": "inspect",
+        "label": "List memory suggestions",
+        "command": "agentdeck memory suggestions",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    apply_preview_control = {
+        "kind": "apply_preview",
+        "label": "Preview memory apply",
+        "command": f"agentdeck memory apply-preview --suggestion-id {suggestion_id}",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    apply_memory_control = {
+        "kind": "apply_memory",
+        "label": "Apply memory suggestion",
+        "command": f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm",
+        "safety": "explicit_user",
+        "enabled": True,
+        "blocker": None,
+    }
+    suggestion_item = {
+        "suggestion_id": suggestion_id,
+        "status": "pending",
+        "scope": "project",
+        "summary": "Keep approval-gated worker dispatch.",
+        "rationale": "project safety preference",
+        "source": "reviewer",
+        "agent_id": "leader",
+        "trace_id": "msg_memory",
+        "target": target,
+        "created_at": "2026-07-07T00:00:00Z",
+        "controls": [inspect_control, apply_preview_control, apply_memory_control],
+    }
+    applied_suggestion = {
+        **deepcopy(suggestion_item),
+        "status": "applied",
+        "applied_at": "2026-07-07T00:01:00Z",
+        "applied_path": target,
+        "controls": [
+            inspect_control,
+            {
+                **apply_preview_control,
+                "enabled": False,
+                "blocker": "memory suggestion is not pending",
+            },
+            {
+                **apply_memory_control,
+                "enabled": False,
+                "blocker": "memory suggestion is not pending",
+            },
+        ],
+    }
+    return {
+        "suggest": {
+            "ok": True,
+            "mode": "memory_suggested",
+            "suggestion": deepcopy(suggestion_item),
+            "next_command": "agentdeck memory suggestions",
+        },
+        "suggestions": {
+            "ok": True,
+            "mode": "memory_suggestions",
+            "count": 1,
+            "pending_count": 1,
+            "apply_preview_command_template": "agentdeck memory apply-preview --suggestion-id <id>",
+            "items": [deepcopy(suggestion_item)],
+            "controls": [
+                {
+                    "kind": "suggest",
+                    "label": "Suggest memory",
+                    "command": "agentdeck memory suggest --summary <summary> --rationale <rationale> --source human",
+                    "safety": "explicit_user",
+                    "enabled": False,
+                    "blocker": "requires suggestion fields",
+                },
+                {
+                    "kind": "apply_preview",
+                    "label": "Preview memory apply",
+                    "command": "agentdeck memory apply-preview --suggestion-id <id>",
+                    "safety": "inspect",
+                    "enabled": False,
+                    "blocker": "requires suggestion id",
+                },
+            ],
+        },
+        "apply_preview": {
+            "ok": True,
+            "mode": "memory_apply_preview",
+            "suggestion_id": suggestion_id,
+            "suggestion": deepcopy(suggestion_item),
+            "target": target,
+            "target_exists": False,
+            "would_create": True,
+            "would_update_status": "applied",
+            "proposed_append": proposed_append,
+            "apply_command": f"agentdeck memory apply --suggestion-id {suggestion_id} --confirm",
+            "controls": [inspect_control, apply_memory_control],
+        },
+        "apply": {
+            "ok": True,
+            "mode": "memory_applied",
+            "suggestion_id": suggestion_id,
+            "suggestion": applied_suggestion,
+            "target": target,
+            "applied_path": target,
+            "appended": proposed_append,
         },
     }
 
@@ -8682,6 +8904,7 @@ def workbench_example() -> dict[str, object]:
             "workbench_contract": "agentdeck contract workbench",
             "controls_contract": "agentdeck contract controls",
             "skills_contract": "agentdeck contract skills",
+            "memory_contract": "agentdeck contract memory",
             "agent_runtime_contract": "agentdeck contract agent-runtime",
             "leader_chat_contract": "agentdeck contract leader-chat",
             "leader_review_contract": "agentdeck contract leader-review",

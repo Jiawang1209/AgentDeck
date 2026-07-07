@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Add memory contract discovery
+
+- 新增 `agentdeck contract memory` / `--example`：公开 `memory suggest/suggestions/apply-preview/apply` 的响应字段、memory suggestion item 字段、GUI control 字段和稳定 example fixture。
+- 扩展 contract index 与 workbench `contracts_card`：`memory` 进入 `agentdeck contract list`，`agentdeck workbench` 也会暴露 `memory_contract=agentdeck contract memory`，让未来 GUI/TUI 能从统一 discovery 路径发现长期记忆建议、只读预览和显式 apply 流程。
+- 新增 `docs/contracts/memory-schema.md`，同步 contract index/workbench schema、README、AGENT.md 和 CLAUDE.md，把“内源/外源 memory 建议可进入 pending queue，但最终写入必须 `--confirm`”纳入北极星学习层约束。
+- 验证记录：已先确认红测失败，`memory_contract_payload` 最初不存在且 `agentdeck contract memory` 不是合法子命令；实现后聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_list_discovers_all_gui_contracts tests/test_agent_cli.py::test_contract_memory_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_memory_example_exports_gui_ready_memory_flow tests/test_agent_cli.py::test_contract_memory_cli_matches_contract_module tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 8 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 141 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；`conda run -n agentdeck python -m compileall src tests` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 547 项通过。
+
 ### Current - Surface memory apply controls in suggestions CLI
 
 - 扩展 `agentdeck memory suggestions`：输出新增 `apply_preview_command_template`，每条 pending memory suggestion 现在运行时派生 `apply_preview` 和 `apply_memory` controls，和 workbench / Leader chat 的 `memory_suggestions_card` 保持同源。

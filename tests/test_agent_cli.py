@@ -41,6 +41,8 @@ from agentdeck.contracts import (
     leader_summary_contract_payload,
     leader_summary_contract_response,
     LEADER_SUMMARY_RESPONSE_FIELDS,
+    memory_contract_payload,
+    memory_contract_response,
     project_view_contract_payload,
     project_view_contract_response,
     PROJECT_VIEW_ARTIFACT_ITEM_FIELDS,
@@ -2603,6 +2605,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "workbench",
         "controls",
         "skills",
+        "memory",
         "agent-runtime",
         "leader-chat",
         "leader-status",
@@ -2700,6 +2703,64 @@ def test_contract_skills_cli_matches_contract_module(capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     expected = skills_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+
+
+def test_contract_memory_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "memory"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = memory_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["memory_suggest_command_template"] == (
+        "agentdeck memory suggest --summary <summary> --rationale <rationale> --source <source>"
+    )
+    assert payload["memory_suggestions_command"] == "agentdeck memory suggestions"
+    assert payload["memory_apply_preview_command_template"] == "agentdeck memory apply-preview --suggestion-id <id>"
+    assert payload["memory_apply_command_template"] == "agentdeck memory apply --suggestion-id <id> --confirm"
+    assert payload["contract_path"].endswith("docs/contracts/memory-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["suggest_response_fields"] == expected["suggest_response_fields"]
+    assert payload["suggestions_response_fields"] == expected["suggestions_response_fields"]
+    assert payload["apply_preview_response_fields"] == expected["apply_preview_response_fields"]
+    assert payload["apply_response_fields"] == expected["apply_response_fields"]
+    assert payload["suggestion_item_fields"] == expected["suggestion_item_fields"]
+    assert payload["control_fields"] == expected["control_fields"]
+
+
+def test_contract_memory_example_exports_gui_ready_memory_flow(capsys) -> None:
+    exit_code = cli.main(["contract", "memory", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["example"] is True
+    example = payload["example_memory"]
+    assert payload["example_suggest_response_fields"] == payload["suggest_response_fields"]
+    assert set(payload["example_suggest_response_fields"]) == set(example["suggest"])
+    assert payload["example_suggestions_response_fields"] == payload["suggestions_response_fields"]
+    assert set(payload["example_suggestions_response_fields"]) == set(example["suggestions"])
+    assert payload["example_apply_preview_response_fields"] == payload["apply_preview_response_fields"]
+    assert set(payload["example_apply_preview_response_fields"]) == set(example["apply_preview"])
+    assert payload["example_apply_response_fields"] == payload["apply_response_fields"]
+    assert set(payload["example_apply_response_fields"]) == set(example["apply"])
+    assert payload["example_suggestion_item_fields"] == payload["suggestion_item_fields"]
+    assert set(payload["example_suggestion_item_fields"]) == set(example["suggestions"]["items"][0])
+    assert payload["example_control_fields"] == payload["control_fields"]
+    assert set(payload["example_control_fields"]) == set(example["suggestions"]["items"][0]["controls"][0])
+    assert example["suggest"]["suggestion"]["status"] == "pending"
+    assert example["suggestions"]["items"][0]["controls"][1]["kind"] == "apply_preview"
+    assert example["suggestions"]["items"][0]["controls"][2]["kind"] == "apply_memory"
+    assert example["apply_preview"]["would_update_status"] == "applied"
+    assert example["apply"]["suggestion"]["status"] == "applied"
+
+
+def test_contract_memory_cli_matches_contract_module(capsys) -> None:
+    cli.main(["contract", "memory", "--example"])
+
+    payload = json.loads(capsys.readouterr().out)
+    expected = memory_contract_response(Path(payload["contract_path"]), include_example=True)
     assert payload == expected
 
 
@@ -3512,6 +3573,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "workbench_contract",
         "controls_contract",
         "skills_contract",
+        "memory_contract",
         "agent_runtime_contract",
         "leader_chat_contract",
         "leader_review_contract",
@@ -4494,6 +4556,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "agent_runtime_contract": "agentdeck contract agent-runtime",
         "controls_contract": "agentdeck contract controls",
         "skills_contract": "agentdeck contract skills",
+        "memory_contract": "agentdeck contract memory",
         "leader_chat_contract": "agentdeck contract leader-chat",
         "leader_review_contract": "agentdeck contract leader-review",
         "leader_summary_contract": "agentdeck contract leader-summary",
