@@ -204,6 +204,127 @@ def test_agent_ready_outputs_startup_card_without_mutating_state(tmp_path, monke
     assert StateStore(root).load() == state_before
 
 
+def test_skills_list_surfaces_builtin_and_project_skills_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    skill_dir = root / ".agentdeck" / "skills" / "release-check"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: release-check\n"
+        "description: Verify release readiness.\n"
+        "required_tools: pytest, git\n"
+        "risk: inspect\n"
+        "---\n"
+        "# Release Check\n\n"
+        "Run tests and inspect git status.\n",
+        encoding="utf-8",
+    )
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["skills", "list"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "skills_list"
+    assert payload["skill_count"] == len(payload["skills"])
+    names = [skill["name"] for skill in payload["skills"]]
+    assert "planning" in names
+    assert "debugging" in names
+    assert "code-review" in names
+    assert "verification" in names
+    project_skill = next(skill for skill in payload["skills"] if skill["name"] == "release-check")
+    assert project_skill["source"] == "project"
+    assert project_skill["path"].endswith(".agentdeck/skills/release-check/SKILL.md")
+    assert project_skill["description"] == "Verify release readiness."
+    assert project_skill["required_tools"] == ["pytest", "git"]
+    assert project_skill["risk"] == "inspect"
+    assert project_skill["content_hash"].startswith("sha256:")
+    assert project_skill["load_command"] == "agentdeck skills load --name release-check"
+    assert StateStore(root).load() == state_before
+
+
+def test_skills_show_returns_snapshot_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    skill_dir = root / ".agentdeck" / "skills" / "release-check"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: release-check\ndescription: Verify release readiness.\nrisk: inspect\n---\n"
+        "# Release Check\n\n"
+        "Run tests and inspect git status.\n",
+        encoding="utf-8",
+    )
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["skills", "show", "--name", "release-check"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "skill_detail"
+    assert payload["skill"]["name"] == "release-check"
+    assert payload["skill"]["source"] == "project"
+    assert payload["skill"]["content"].startswith("---\nname: release-check")
+    assert payload["skill"]["content_hash"].startswith("sha256:")
+    assert payload["skill"]["load_command"] == "agentdeck skills load --name release-check"
+    assert StateStore(root).load() == state_before
+
+
+def test_skills_load_records_replayable_snapshot_and_event(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    skill_dir = root / ".agentdeck" / "skills" / "release-check"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: release-check\ndescription: Verify release readiness.\nrisk: inspect\n---\n"
+        "# Release Check\n\n"
+        "Run tests and inspect git status.\n",
+        encoding="utf-8",
+    )
+
+    exit_code = cli.main(["skills", "load", "--name", "release-check", "--agent", "leader", "--purpose", "release gate"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "skill_loaded"
+    assert payload["agent_id"] == "leader"
+    assert payload["purpose"] == "release gate"
+    assert payload["skill"]["name"] == "release-check"
+    assert payload["skill"]["content_hash"].startswith("sha256:")
+    assert payload["skill"]["content_snapshot"].startswith("---\nname: release-check")
+    state = StateStore(root).load()
+    assert state["skill_loads"] == [
+        {
+            "load_id": payload["load_id"],
+            "agent_id": "leader",
+            "purpose": "release gate",
+            "name": "release-check",
+            "source": "project",
+            "path": payload["skill"]["path"],
+            "content_hash": payload["skill"]["content_hash"],
+            "content_snapshot": payload["skill"]["content_snapshot"],
+            "description": "Verify release readiness.",
+            "required_tools": [],
+            "risk": "inspect",
+            "created_at": payload["created_at"],
+        }
+    ]
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "skill_loaded"
+
+
+def test_skills_show_unknown_skill_fails_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["skills", "show", "--name", "missing"])
+
+    assert exit_code == 1
+    assert "unknown skill: missing" in capsys.readouterr().err
+    assert StateStore(root).load() == state_before
+
+
 def test_doctor_reports_openai_compatible_provider_state(tmp_path, monkeypatch, capsys) -> None:
     prepare_project(tmp_path, monkeypatch)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)

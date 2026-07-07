@@ -4,6 +4,16 @@
 
 ## 2026-07-07
 
+### Current - Add replayable skills MVP
+
+- 新增 `src/agentdeck/skills.py` Skill Registry MVP：内置 `planning`、`debugging`、`code-review`、`verification` 四个基础 skill，并扫描 `.agentdeck/skills/<name>/SKILL.md` 项目本地 skill。
+- 新增 `agentdeck skills list`：只读返回内置和项目 skill 的 name、description、source、path、content_hash、required_tools、risk、show/load commands，不写 state、不调用 provider、不读取 tmux。
+- 新增 `agentdeck skills show --name <name>`：只读返回单个 skill 的 metadata、hash 和完整 content snapshot，未知 skill 返回非 0 且不修改 state。
+- 新增 `agentdeck skills load --name <name> --agent <id> --purpose <text>`：显式把 skill 的 path/source/hash/content snapshot、调用者和用途写入 `skill_loads[]`，并追加 `skill_loaded` 审计事件，保证后续 run/trace 能还原当时使用的 skill 内容。
+- 保持安全边界：skills 命令不调用 Leader provider、不读取 tmux pane、不发送输入、不创建 plan/action/approval/message/job/inbox、不修改 runtime state；外源 skill 仍只作为后续显式 allowlist 方向，不做静默安装或自动启用。
+- 同步 README、AGENT/CLAUDE 约束和测试，把 Skill Layer 从路线图推进到可运行 MVP 入口。
+- 验证记录：已先确认红测失败，`skills` 顶层命令最初不存在，四个目标测试均因 argparse invalid choice 失败；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_skills_list_surfaces_builtin_and_project_skills_without_mutating_state tests/test_agent_cli.py::test_skills_show_returns_snapshot_without_mutating_state tests/test_agent_cli.py::test_skills_load_records_replayable_snapshot_and_event tests/test_agent_cli.py::test_skills_show_unknown_skill_fails_without_mutating_state -q` 4 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 110 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 513 项通过。
+
 ### Current - Link terminal chat to command registry controls and add skills to north star
 
 - 扩展自然语言 visible terminal mode：`agentdeck leader chat --message "打开 planner 终端"` 现在会附带过滤到 `scope=terminal` / `card=terminal_card` 的 `control_registry_card`，selection 指向同一张 `terminal_card.controls[]` 中的 `kind=terminal` tmux attach control，`intent_card.secondary_embedded_cards[]` 同步列出 registry companion。

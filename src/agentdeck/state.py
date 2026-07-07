@@ -77,6 +77,7 @@ class StateStore:
                 "chat_turns": [],
                 "leader_errors": [],
                 "leader_actions": [],
+                "skill_loads": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -89,6 +90,32 @@ class StateStore:
     def append_event(self, event: EventRecord) -> None:
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
+
+    def record_skill_load(
+        self,
+        *,
+        agent_id: str,
+        purpose: str,
+        skill: dict[str, Any],
+    ) -> dict[str, Any]:
+        state = self.load()
+        record = {
+            "load_id": new_id("skl"),
+            "agent_id": agent_id,
+            "purpose": purpose,
+            "name": skill.get("name"),
+            "source": skill.get("source"),
+            "path": skill.get("path"),
+            "content_hash": skill.get("content_hash"),
+            "content_snapshot": skill.get("content_snapshot"),
+            "description": skill.get("description"),
+            "required_tools": skill.get("required_tools") if isinstance(skill.get("required_tools"), list) else [],
+            "risk": skill.get("risk"),
+            "created_at": utc_now(),
+        }
+        state.setdefault("skill_loads", []).append(record)
+        self.save(state)
+        return record
 
     def list_events(self, limit: int = 20) -> list[dict[str, Any]]:
         if not self.events_path.exists():

@@ -68,6 +68,7 @@ from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec,
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .runtime import TmuxBackend
+from .skills import discover_skills, find_skill
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 
 
@@ -2924,6 +2925,79 @@ def _load_project_or_error() -> tuple[ProjectConfig | None, StateStore | None, i
         print("Run: conda activate agentdeck && agentdeck project init", file=sys.stderr)
         return None, None, 1
     return config, StateStore(root), 0
+
+
+def skills_list_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    skills = [skill.summary() for skill in discover_skills(Path(config.root))]
+    _print_json(
+        {
+            "ok": True,
+            "mode": "skills_list",
+            "skill_count": len(skills),
+            "skills": skills,
+        }
+    )
+    return 0
+
+
+def skills_show_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    skill = find_skill(Path(config.root), args.name)
+    if skill is None:
+        print(f"unknown skill: {args.name}", file=sys.stderr)
+        return 1
+    _print_json(
+        {
+            "ok": True,
+            "mode": "skill_detail",
+            "skill": skill.detail(),
+        }
+    )
+    return 0
+
+
+def skills_load_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not _is_known_mailbox_agent(config, args.agent):
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    skill = find_skill(Path(config.root), args.name)
+    if skill is None:
+        print(f"unknown skill: {args.name}", file=sys.stderr)
+        return 1
+    skill_payload = skill.load_payload()
+    record = store.record_skill_load(agent_id=args.agent, purpose=args.purpose, skill=skill_payload)
+    store.append_event(
+        EventRecord.create(
+            "skill_loaded",
+            {
+                "load_id": record["load_id"],
+                "agent_id": args.agent,
+                "name": skill.name,
+                "source": skill.source,
+                "content_hash": skill.content_hash,
+            },
+        )
+    )
+    _print_json(
+        {
+            "ok": True,
+            "mode": "skill_loaded",
+            "load_id": record["load_id"],
+            "agent_id": args.agent,
+            "purpose": args.purpose,
+            "created_at": record["created_at"],
+            "skill": skill_payload,
+        }
+    )
+    return 0
 
 
 def _agent_by_id(config: ProjectConfig, agent_id: str) -> AgentSpec | None:
@@ -8706,6 +8780,19 @@ def build_parser() -> argparse.ArgumentParser:
     controls.add_argument("--control-id", help="Filter command palette controls by stable control_id")
     controls.add_argument("--enabled-only", action="store_true", help="Only include enabled command palette controls")
     controls.set_defaults(func=controls_command)
+
+    skills = subparsers.add_parser("skills", help="Discover and load replayable AgentDeck skills")
+    skills_subparsers = skills.add_subparsers(dest="skills_command")
+    skills_list = skills_subparsers.add_parser("list", help="List builtin and project skills")
+    skills_list.set_defaults(func=skills_list_command)
+    skills_show = skills_subparsers.add_parser("show", help="Show one skill snapshot")
+    skills_show.add_argument("--name", required=True, help="Skill name")
+    skills_show.set_defaults(func=skills_show_command)
+    skills_load = skills_subparsers.add_parser("load", help="Record a replayable skill snapshot")
+    skills_load.add_argument("--name", required=True, help="Skill name")
+    skills_load.add_argument("--agent", default="leader", help="Agent id using this skill; defaults to leader")
+    skills_load.add_argument("--purpose", default="", help="Why this skill is being loaded")
+    skills_load.set_defaults(func=skills_load_command)
 
     policy = subparsers.add_parser("policy", help="Policy and control mode commands")
     policy_subparsers = policy.add_subparsers(dest="policy_command")

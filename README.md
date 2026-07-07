@@ -44,6 +44,9 @@ agentdeck status
 agentdeck continue
 agentdeck workbench
 agentdeck controls
+agentdeck skills list
+agentdeck skills show --name planning
+agentdeck skills load --name planning --agent leader --purpose "plan decomposition"
 agentdeck contract list
 agentdeck contract agent-runtime
 agentdeck contract agent-runtime --example
@@ -157,6 +160,8 @@ agentdeck artifacts
   artifacts/
   skills/
 ```
+
+`agentdeck skills list` 会发现内置 skill 和 `.agentdeck/skills/<name>/SKILL.md` 项目本地 skill；`agentdeck skills show --name <name>` 只读返回 skill 内容、source、path、hash、required_tools 和 risk；`agentdeck skills load --name <name>` 会把该 skill 的 path/source/hash/content snapshot、调用者和用途写入 `skill_loads[]`，并追加 `skill_loaded` 审计事件。Skill load 不调用 provider、不读取 tmux、不发送输入、不改变权限；它只是给 Leader/Worker 后续推理使用的可回放工作流上下文。
 
 ## 快速开始
 
