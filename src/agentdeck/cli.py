@@ -45,6 +45,7 @@ from .contracts import (
     project_view_contract_response,
     runtime_agent_controls,
     run_start_contract_response,
+    skills_contract_response,
     terminal_card_controls,
     trace_contract_response,
     workbench_contract_response,
@@ -1913,6 +1914,7 @@ def _workbench_contracts_card() -> dict[str, object]:
         "contract_index_contract": "docs/contracts/contract-index-schema.md",
         "workbench_contract": "agentdeck contract workbench",
         "controls_contract": "agentdeck contract controls",
+        "skills_contract": "agentdeck contract skills",
         "agent_runtime_contract": "agentdeck contract agent-runtime",
         "leader_chat_contract": "agentdeck contract leader-chat",
         "leader_review_contract": "agentdeck contract leader-review",
@@ -2885,6 +2887,13 @@ def contract_workbench_command(args: argparse.Namespace) -> int:
 def contract_controls_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "controls-schema.md"
     payload = controls_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_skills_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "skills-schema.md"
+    payload = skills_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -9117,6 +9126,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_controls.add_argument("--example", action="store_true", help="Include a GUI-ready controls example")
     contract_controls.set_defaults(func=contract_controls_command)
+    contract_skills = contract_subparsers.add_parser(
+        "skills",
+        help="Show skill registry contract discovery metadata",
+    )
+    contract_skills.add_argument("--example", action="store_true", help="Include a GUI-ready skills example")
+    contract_skills.set_defaults(func=contract_skills_command)
     contract_agent_runtime = contract_subparsers.add_parser(
         "agent-runtime",
         help="Show agent runtime command contract discovery metadata",

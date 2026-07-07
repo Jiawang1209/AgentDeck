@@ -46,6 +46,8 @@ from agentdeck.contracts import (
     PROJECT_VIEW_ARTIFACT_ITEM_FIELDS,
     run_start_contract_payload,
     run_start_contract_response,
+    skills_contract_payload,
+    skills_contract_response,
     trace_contract_payload,
     trace_contract_response,
     validate_trace_contract,
@@ -1451,6 +1453,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "run",
         "workbench",
         "controls",
+        "skills",
         "agent-runtime",
         "leader-chat",
         "leader-status",
@@ -1467,6 +1470,59 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
     assert payload["contracts"][0]["command"] == "agentdeck contract project-view"
     assert payload["contracts"][0]["example_command"] == "agentdeck contract project-view --example"
     assert payload["contracts"][0]["contract_path"].endswith("docs/contracts/project-view-schema.md")
+
+
+def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "skills"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = skills_contract_payload(Path(payload["contract_path"]))
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["skills_list_command"] == "agentdeck skills list"
+    assert payload["skills_import_command_template"] == "agentdeck skills import --path <SKILL.md>"
+    assert payload["contract_path"].endswith("docs/contracts/skills-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["list_response_fields"] == expected["list_response_fields"]
+    assert payload["skill_item_fields"] == expected["skill_item_fields"]
+    assert payload["skill_control_fields"] == expected["skill_control_fields"]
+    assert payload["detail_response_fields"] == expected["detail_response_fields"]
+    assert payload["import_response_fields"] == expected["import_response_fields"]
+    assert payload["load_response_fields"] == expected["load_response_fields"]
+
+
+def test_contract_skills_example_exports_gui_ready_skill_registry(capsys) -> None:
+    exit_code = cli.main(["contract", "skills", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["example"] is True
+    example = payload["example_skills"]
+    assert payload["example_list_response_fields"] == payload["list_response_fields"]
+    assert set(payload["example_list_response_fields"]) == set(example["list"])
+    assert payload["example_skill_item_fields"] == payload["skill_item_fields"]
+    assert set(payload["example_skill_item_fields"]) == set(example["list"]["skills"][0])
+    assert payload["example_skill_control_fields"] == payload["skill_control_fields"]
+    assert set(payload["example_skill_control_fields"]) == set(example["list"]["skills"][0]["controls"][0])
+    assert set(payload["example_skill_control_fields"]) == set(example["list"]["controls"][0])
+    assert payload["example_detail_response_fields"] == payload["detail_response_fields"]
+    assert set(payload["example_detail_response_fields"]) == set(example["detail"])
+    assert payload["example_import_response_fields"] == payload["import_response_fields"]
+    assert set(payload["example_import_response_fields"]) == set(example["import"])
+    assert payload["example_load_response_fields"] == payload["load_response_fields"]
+    assert set(payload["example_load_response_fields"]) == set(example["load"])
+    assert example["list"]["controls"][0]["kind"] == "import"
+    assert example["list"]["skills"][0]["controls"][1]["kind"] == "load"
+    assert example["import"]["skill"]["controls"][0]["kind"] == "show"
+
+
+def test_contract_skills_cli_matches_contract_module(capsys) -> None:
+    cli.main(["contract", "skills", "--example"])
+
+    payload = json.loads(capsys.readouterr().out)
+    expected = skills_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
 
 
 def test_contract_run_discovers_schema_for_gui_clients(capsys) -> None:
@@ -2248,6 +2304,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "contract_index_contract",
         "workbench_contract",
         "controls_contract",
+        "skills_contract",
         "agent_runtime_contract",
         "leader_chat_contract",
         "leader_review_contract",
@@ -3229,6 +3286,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "workbench_contract": "agentdeck contract workbench",
         "agent_runtime_contract": "agentdeck contract agent-runtime",
         "controls_contract": "agentdeck contract controls",
+        "skills_contract": "agentdeck contract skills",
         "leader_chat_contract": "agentdeck contract leader-chat",
         "leader_review_contract": "agentdeck contract leader-review",
         "leader_summary_contract": "agentdeck contract leader-summary",

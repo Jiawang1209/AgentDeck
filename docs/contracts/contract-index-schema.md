@@ -39,6 +39,7 @@ The index currently lists these contract names in order:
 - `run`
 - `workbench`
 - `controls`
+- `skills`
 - `agent-runtime`
 - `leader-chat`
 - `leader-status`

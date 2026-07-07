@@ -107,7 +107,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `artifacts_card` reuses the `agentdeck artifacts` response shape, is derived from `project_view.artifacts`, and must pass `validate_artifacts_contract()`.
 `skill_context_card` is derived from `project_view.skills`; it exposes loaded skill summaries plus inspect controls for `agentdeck skills list` and `agentdeck status`, without embedding full content snapshots or loading/installing skills.
 `leader_summary_card` is `null` until the latest plan's local Leader review returns `next_action=summarize`; then it reuses `agentdeck leader summary --plan-id <id>` and must pass `validate_leader_summary_contract()`.
-`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Leader chat, and Leader review contracts.
+`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Skill Registry, Leader chat, and Leader review contracts.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `run_progress_card` is `null` when there is no plan; otherwise it reuses the latest plan's `agentdeck run --plan-id <id>` response shape and must pass `validate_run_start_contract()`. Its `leader_backend` field is the same normalized logical Leader identity card stored with the plan; it is not a tmux pane binding or execution permission.

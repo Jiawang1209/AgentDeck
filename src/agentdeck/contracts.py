@@ -69,6 +69,12 @@ CONTRACT_INDEX_SPECS = (
         "controls-schema.md",
     ),
     (
+        "skills",
+        "agentdeck contract skills",
+        "agentdeck contract skills --example",
+        "skills-schema.md",
+    ),
+    (
         "agent-runtime",
         "agentdeck contract agent-runtime",
         "agentdeck contract agent-runtime --example",
@@ -371,6 +377,67 @@ LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS = (
     "count",
     "items",
     "controls",
+)
+
+SKILLS_LIST_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "skill_count",
+    "import_command_template",
+    "controls",
+    "skills",
+)
+
+SKILLS_DETAIL_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "skill",
+)
+
+SKILLS_IMPORT_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "skill",
+    "source_path",
+    "project_path",
+    "overwritten",
+    "show_command",
+    "load_command",
+)
+
+SKILLS_LOAD_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "load_id",
+    "agent_id",
+    "purpose",
+    "created_at",
+    "skill",
+)
+
+SKILLS_SKILL_ITEM_FIELDS = (
+    "name",
+    "description",
+    "source",
+    "path",
+    "content_hash",
+    "required_tools",
+    "risk",
+    "show_command",
+    "load_command",
+    "controls",
+)
+
+SKILLS_DETAIL_SKILL_FIELDS = SKILLS_SKILL_ITEM_FIELDS + ("content",)
+SKILLS_LOAD_SKILL_FIELDS = SKILLS_SKILL_ITEM_FIELDS + ("content_snapshot",)
+
+SKILLS_CONTROL_FIELDS = (
+    "kind",
+    "label",
+    "command",
+    "safety",
+    "enabled",
+    "blocker",
 )
 
 PROJECT_VIEW_MESSAGE_ITEM_FIELDS = (
@@ -1125,6 +1192,7 @@ WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "contract_index_contract",
     "workbench_contract",
     "controls_contract",
+    "skills_contract",
     "agent_runtime_contract",
     "leader_chat_contract",
     "leader_review_contract",
@@ -1529,6 +1597,125 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_artifact_item_fields"] = list(example["artifacts"]["items"][0])
         payload["example_project_view"] = example
     return payload
+
+
+def skills_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "skills_list_command": "agentdeck skills list",
+        "skills_show_command_template": "agentdeck skills show --name <name>",
+        "skills_import_command_template": "agentdeck skills import --path <SKILL.md>",
+        "skills_load_command_template": "agentdeck skills load --name <name> --agent <agent_id> --purpose <purpose>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "list_response_fields": list(SKILLS_LIST_RESPONSE_FIELDS),
+        "detail_response_fields": list(SKILLS_DETAIL_RESPONSE_FIELDS),
+        "import_response_fields": list(SKILLS_IMPORT_RESPONSE_FIELDS),
+        "load_response_fields": list(SKILLS_LOAD_RESPONSE_FIELDS),
+        "skill_item_fields": list(SKILLS_SKILL_ITEM_FIELDS),
+        "detail_skill_fields": list(SKILLS_DETAIL_SKILL_FIELDS),
+        "load_skill_fields": list(SKILLS_LOAD_SKILL_FIELDS),
+        "skill_control_fields": list(SKILLS_CONTROL_FIELDS),
+    }
+
+
+def skills_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = skills_contract_payload(contract_path)
+    if include_example:
+        example = skills_example()
+        payload["example"] = True
+        payload["example_list_response_fields"] = list(example["list"])
+        payload["example_detail_response_fields"] = list(example["detail"])
+        payload["example_import_response_fields"] = list(example["import"])
+        payload["example_load_response_fields"] = list(example["load"])
+        payload["example_skill_item_fields"] = list(example["list"]["skills"][0])
+        payload["example_detail_skill_fields"] = list(example["detail"]["skill"])
+        payload["example_load_skill_fields"] = list(example["load"]["skill"])
+        payload["example_skill_control_fields"] = list(example["list"]["skills"][0]["controls"][0])
+        payload["example_skills"] = example
+    return payload
+
+
+def skills_example() -> dict[str, object]:
+    show_command = "agentdeck skills show --name planning"
+    load_command = "agentdeck skills load --name planning"
+    skill_item = {
+        "name": "planning",
+        "description": "Break goals into approval-gated multi-agent plans.",
+        "source": "builtin",
+        "path": None,
+        "content_hash": "sha256:example",
+        "required_tools": ["leader-plan", "approval-list"],
+        "risk": "inspect",
+        "show_command": show_command,
+        "load_command": load_command,
+        "controls": [
+            {
+                "kind": "show",
+                "label": "Show skill",
+                "command": show_command,
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "load",
+                "label": "Load skill",
+                "command": load_command,
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    import_control = {
+        "kind": "import",
+        "label": "Import skill",
+        "command": "agentdeck skills import --path <SKILL.md>",
+        "safety": "explicit_user",
+        "enabled": False,
+        "blocker": "requires SKILL.md path",
+    }
+    return {
+        "list": {
+            "ok": True,
+            "mode": "skills_list",
+            "skill_count": 1,
+            "import_command_template": "agentdeck skills import --path <SKILL.md>",
+            "controls": [import_control],
+            "skills": [deepcopy(skill_item)],
+        },
+        "detail": {
+            "ok": True,
+            "mode": "skill_detail",
+            "skill": {
+                **deepcopy(skill_item),
+                "content": "# Planning\n\nBreak a user goal into role-aware steps.\n",
+            },
+        },
+        "import": {
+            "ok": True,
+            "mode": "skill_imported",
+            "skill": deepcopy(skill_item),
+            "source_path": "/external/skills/planning/SKILL.md",
+            "project_path": "/workspace/project/.agentdeck/skills/planning/SKILL.md",
+            "overwritten": False,
+            "show_command": show_command,
+            "load_command": load_command,
+        },
+        "load": {
+            "ok": True,
+            "mode": "skill_loaded",
+            "load_id": "skl_example",
+            "agent_id": "leader",
+            "purpose": "plan decomposition",
+            "created_at": "2026-07-04T00:00:00+00:00",
+            "skill": {
+                **deepcopy(skill_item),
+                "content_snapshot": "# Planning\n\nBreak a user goal into role-aware steps.\n",
+            },
+        },
+    }
 
 
 def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
@@ -7813,6 +8000,7 @@ def workbench_example() -> dict[str, object]:
             "contract_index_contract": "docs/contracts/contract-index-schema.md",
             "workbench_contract": "agentdeck contract workbench",
             "controls_contract": "agentdeck contract controls",
+            "skills_contract": "agentdeck contract skills",
             "agent_runtime_contract": "agentdeck contract agent-runtime",
             "leader_chat_contract": "agentdeck contract leader-chat",
             "leader_review_contract": "agentdeck contract leader-review",

@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Add Skill Registry contract discovery
+
+- 新增 `agentdeck contract skills` / `--example`：公开 `skills list/show/import/load` 响应字段、skill item 字段、detail/load skill 字段和 skill control 字段，供 GUI/TUI 启动时发现 Skill Registry 契约。
+- 扩展 contract index：`skills` 进入 `agentdeck contract list` 和 `docs/contracts/contract-index-schema.md`，并新增 `docs/contracts/skills-schema.md`。
+- 扩展 workbench `contracts_card`：新增 `skills_contract=agentdeck contract skills`，让一屏工作台也能跳转到 Skill Registry schema。
+- 同步 README、AGENT/CLAUDE 和 workbench schema，明确修改 Skill Registry 输出、import/load safety 或 show/load controls 时必须同步 skills contract。
+- 验证记录：已先确认红测失败，`skills_contract_payload` 最初不存在且 `agentdeck contract skills` 不是合法子命令；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_contract_list_discovers_all_gui_contracts tests/test_agent_cli.py::test_contract_skills_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_skills_example_exports_gui_ready_skill_registry tests/test_agent_cli.py::test_contract_skills_cli_matches_contract_module tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli -q` 5 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 120 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 222 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 526 项通过。
+
 ### Current - Add GUI controls to skill registry
 
 - 扩展 `agentdeck skills list`：输出新增 `import_command_template` 和列表级 `controls[]`，让 GUI 能渲染显式 import skill 的入口，而不需要硬编码命令字符串。
