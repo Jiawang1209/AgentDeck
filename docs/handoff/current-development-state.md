@@ -26,7 +26,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-North-star Phase G2: Logical Coordination Roles.
+North-star Phase G3: Run-Once Programmatic Loop.
 
 Phase G1 is already committed: AgentDeck has a read-only `frontdesk` natural-language route:
 
@@ -44,13 +44,29 @@ Expected behavior:
 - Does not create plan/action/approval/message/job/inbox.
 - Does not inspect or write tmux.
 
-The current G2 slice makes the layered Leader topology visible to CLI/GUI clients through `coordination_roles[]` on:
+Phase G2 is already committed: AgentDeck makes the layered Leader topology visible to CLI/GUI clients through `coordination_roles[]` on:
 
 - `agentdeck status` as `leader.coordination_roles`.
 - `agentdeck leader status` as top-level `coordination_roles`.
 - `agentdeck workbench` as `leader_card.coordination_roles`.
 
 The roles are `frontdesk`, `planner`, and `orchestrator`. They are logical Leader coordination roles, not worker panes: every role must keep `runtime_kind=logical_role`, `pane_backed=false`, `pane_id=null`, and `dispatch_ready=false`. `frontdesk` is local-rule/deterministic; `planner` and `orchestrator` inherit the configured Leader provider/model and remain approval-gated.
+
+The current G3 slice adds:
+
+```bash
+agentdeck loop once
+```
+
+Expected behavior:
+
+- Validates ProjectView.
+- Embeds the same `continue_card` used by `agentdeck continue`.
+- Recommends exactly one explicit `next_command`.
+- Returns `stop_reason`, `will_execute=false`, `requires_explicit_user`, `safety`, and GUI-ready controls.
+- Does not call a Leader provider.
+- Does not read, write, or send input to tmux.
+- Does not approve, reject, dispatch, capture replies, ack inbox, or write state.
 
 ## Cross-Agent Goal Continuity
 
@@ -76,11 +92,11 @@ Continue the active north-star goal; do not redo completed work.
 
 ## Next Best Step
 
-After the current `coordination_roles` slice is committed, continue with Phase G3 planning:
+After the current `loop once` slice is committed, continue with Phase G4 planning:
 
-- Add a run-once programmatic loop surface that reads plan/task status and recommends the next explicit command.
-- Keep the loop deterministic and state-driven; models should provide semantics, while program code owns locks, completion checks, retries, and approval gates.
-- Do not auto-dispatch from the loop until a human explicitly approves the generated command.
+- Add task-level worker lifecycle visibility for coder/reviewer/round_reviewer without auto-spawning or auto-dispatching.
+- Keep worker lifecycle state derived from messages/jobs/replies/inbox/artifacts and visible tmux runtime.
+- Preserve human approval before dispatch, capture, ack, or release.
 
 ## Required Verification Before Handoff
 
@@ -89,6 +105,7 @@ At minimum, run:
 ```bash
 conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls -q
 conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_surfaces_logical_coordination_roles_for_planner_orchestrator_split tests/test_agent_cli.py::test_leader_status_surfaces_provider_and_queue_snapshot_without_mutating_state tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_leader_status_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_status_contract_response_includes_example_without_drift -q
+conda run -n agentdeck pytest tests/test_agent_cli.py::test_loop_once_recommends_next_explicit_command_without_mutating_state tests/test_agent_cli.py::test_contract_loop_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_loop_example_exports_gui_ready_card tests/test_contracts.py::test_loop_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_loop_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_loop_once_contract_rejects_auto_execution_claim -q
 conda run -n agentdeck pytest -q
 git diff --check
 ```

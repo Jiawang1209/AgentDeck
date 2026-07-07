@@ -34,6 +34,7 @@ from agentdeck.contracts import (
     LEADER_SUMMARY_CONTROL_FIELDS,
     LEADER_SUMMARY_RESPONSE_FIELDS,
     LEADER_SUMMARY_STEP_FIELDS,
+    LOOP_ONCE_RESPONSE_FIELDS,
     LEADER_CHAT_EXPLANATION_FIELDS,
     LEADER_CHAT_INTENT_CARD_FIELDS,
     LEADER_CHAT_INTENT_CONTROL_FIELDS,
@@ -114,6 +115,9 @@ from agentdeck.contracts import (
     leader_status_contract_payload,
     leader_status_contract_response,
     leader_status_example,
+    loop_contract_payload,
+    loop_contract_response,
+    loop_once_example,
     learning_review_contract_payload,
     learning_review_contract_response,
     learning_review_example,
@@ -159,6 +163,7 @@ from agentdeck.contracts import (
     validate_leader_actions_contract,
     validate_leader_chat_contract,
     validate_learning_review_contract,
+    validate_loop_once_contract,
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_project_view_contract,
@@ -214,6 +219,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     docs = {
         "project-view-schema.md",
         "continue-card-schema.md",
+        "loop-schema.md",
         "doctor-schema.md",
         "events-schema.md",
         "run-schema.md",
@@ -244,20 +250,21 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 21
+    assert payload["count"] == 22
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
         "continue",
+        "loop",
         "doctor",
         "events",
         "run",
         "workbench",
-            "controls",
-            "skills",
-            "memory",
-            "learning-review",
-            "agent-runtime",
+        "controls",
+        "skills",
+        "memory",
+        "learning-review",
+        "agent-runtime",
         "leader-chat",
         "leader-status",
         "leader-actions",
@@ -1444,6 +1451,42 @@ def test_continue_contract_response_includes_example_without_drift(tmp_path: Pat
     assert example["action_detail_command"] == "agentdeck leader action --action-id act_example"
 
 
+def test_loop_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
+    contract_path = tmp_path / "loop-schema.md"
+    contract_path.write_text("# Loop Contract\n", encoding="utf-8")
+
+    payload = loop_contract_payload(contract_path)
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["loop_once_command"] == "agentdeck loop once"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["contract_exists"] is True
+    assert payload["loop_once_response_fields"] == list(LOOP_ONCE_RESPONSE_FIELDS)
+    assert payload["continue_card_fields"] == list(CONTINUE_CARD_FIELDS)
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["continue_contract"] == "agentdeck contract continue"
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+
+
+def test_loop_contract_response_includes_example_without_drift(tmp_path: Path) -> None:
+    contract_path = tmp_path / "loop-schema.md"
+    contract_path.write_text("# Loop Contract\n", encoding="utf-8")
+
+    payload = loop_contract_response(contract_path, include_example=True)
+    example = loop_once_example()
+
+    assert payload["example"] is True
+    assert payload["example_loop_once"] == example
+    assert payload["example_loop_once_response_fields"] == payload["loop_once_response_fields"]
+    assert set(payload["example_loop_once_response_fields"]) == set(example)
+    assert payload["example_continue_card_fields"] == payload["continue_card_fields"]
+    assert set(payload["example_continue_card_fields"]) == set(example["continue_card"])
+    assert example["mode"] == "loop_once"
+    assert example["source_command"] == "agentdeck loop once"
+    assert example["will_execute"] is False
+    assert example["stop_reason"] == "requires_human_command"
+
+
 def test_doctor_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
     contract_path = tmp_path / "doctor-schema.md"
     contract_path.write_text("# Doctor Contract\n", encoding="utf-8")
@@ -1575,6 +1618,22 @@ def test_validate_continue_contract_reports_missing_field() -> None:
     result = validate_continue_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing continue_card field: next_command"]}
+
+
+def test_validate_loop_once_contract_rejects_auto_execution_claim() -> None:
+    payload = loop_once_example()
+    payload["will_execute"] = True
+    payload["requires_explicit_user"] = False
+
+    result = validate_loop_once_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "loop_once.will_execute must be false",
+            "loop_once.requires_explicit_user must be true when next_command exists",
+        ],
+    }
 
 
 def test_workbench_contract_response_includes_example_without_drift(tmp_path: Path) -> None:

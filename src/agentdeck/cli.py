@@ -44,6 +44,7 @@ from .contracts import (
     leader_status_contract_response,
     leader_summary_contract_response,
     learning_review_contract_response,
+    loop_contract_response,
     memory_contract_response,
     project_view_contract_response,
     runtime_agent_controls,
@@ -64,6 +65,7 @@ from .contracts import (
     validate_learning_review_contract,
     validate_leader_review_contract,
     validate_leader_summary_contract,
+    validate_loop_once_contract,
     validate_project_view_contract,
     validate_run_start_contract,
     validate_trace_contract,
@@ -1249,6 +1251,68 @@ def _continue_should_promote_dispatch_ready(
     if int(approvals.get("approved", 0)) <= 1:
         return False
     return True
+
+
+def _loop_once_payload(project_view: dict[str, object], store: StateStore) -> dict[str, object]:
+    continue_card = _continue_card_payload(project_view, store)
+    next_command = continue_card.get("next_command")
+    recommended_action = continue_card.get("recommended_action")
+    safety = recommended_action.get("safety") if isinstance(recommended_action, dict) else "inspect"
+    has_next_command = bool(next_command)
+    execute_next_control = _control(
+        kind="execute_next",
+        label="Run explicit next command",
+        command=str(next_command) if next_command else "agentdeck continue",
+        safety=str(safety or "inspect"),
+        enabled=has_next_command,
+        blocker=None if has_next_command else "no next command",
+    )
+    recovery = project_view.get("recovery") if isinstance(project_view.get("recovery"), dict) else {}
+    return {
+        "ok": True,
+        "mode": "loop_once",
+        "loop_id": "run_once",
+        "iteration": 1,
+        "max_iterations": 1,
+        "source_command": "agentdeck loop once",
+        "project_view_command": "agentdeck status",
+        "continue_command": "agentdeck continue",
+        "workbench_command": "agentdeck workbench",
+        "status": continue_card.get("status"),
+        "reason": continue_card.get("reason"),
+        "recovery": recovery,
+        "continue_card": continue_card,
+        "recommended_action": recommended_action,
+        "next_command": next_command,
+        "stop_reason": "requires_human_command" if has_next_command else "idle",
+        "will_execute": False,
+        "requires_explicit_user": has_next_command,
+        "safety": safety,
+        "controls": [
+            _control(kind="inspect", label="Inspect project status", command="agentdeck status", safety="inspect"),
+            _control(kind="inspect", label="Inspect continue card", command="agentdeck continue", safety="inspect"),
+            execute_next_control,
+            _control(kind="inspect", label="Open workbench", command="agentdeck workbench", safety="inspect"),
+        ],
+    }
+
+
+def loop_once_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    payload = _loop_once_payload(project_view, store)
+    validation = validate_loop_once_contract(payload)
+    if not validation["ok"]:
+        print("Loop once contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
 
 
 def _inbox_agent_id_for_item(store: StateStore, inbox_id: object) -> str | None:
@@ -3253,6 +3317,13 @@ def contract_leader_status_command(args: argparse.Namespace) -> int:
 def contract_continue_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "continue-card-schema.md"
     payload = continue_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_loop_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "loop-schema.md"
+    payload = loop_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -11190,6 +11261,14 @@ def build_parser() -> argparse.ArgumentParser:
     continue_parser = subparsers.add_parser("continue", help="Show the current recovery-driven next step")
     continue_parser.set_defaults(func=continue_command)
 
+    loop = subparsers.add_parser("loop", help="Run deterministic programmatic loop helpers")
+    loop_subparsers = loop.add_subparsers(dest="loop_command")
+    loop_once = loop_subparsers.add_parser(
+        "once",
+        help="Recommend the next explicit command without executing it",
+    )
+    loop_once.set_defaults(func=loop_once_command)
+
     workbench = subparsers.add_parser("workbench", help="Show a GUI-ready read-only workbench snapshot")
     workbench.add_argument("--watch", action="store_true", help="Stream validated workbench snapshots as JSONL")
     workbench.add_argument("--since-event", default=None, help="Summarize audit events after this event id")
@@ -11360,6 +11439,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_continue.add_argument("--example", action="store_true", help="Include a GUI-ready continue card example")
     contract_continue.set_defaults(func=contract_continue_command)
+    contract_loop = contract_subparsers.add_parser(
+        "loop",
+        help="Show loop once contract discovery metadata",
+    )
+    contract_loop.add_argument("--example", action="store_true", help="Include a GUI-ready loop once example")
+    contract_loop.set_defaults(func=contract_loop_command)
     contract_doctor = contract_subparsers.add_parser(
         "doctor",
         help="Show doctor diagnostics contract discovery metadata",

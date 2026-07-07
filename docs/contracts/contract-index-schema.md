@@ -34,6 +34,7 @@ The index currently lists these contract names in order:
 
 - `project-view`
 - `continue`
+- `loop`
 - `doctor`
 - `events`
 - `run`

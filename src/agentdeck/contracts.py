@@ -39,6 +39,12 @@ CONTRACT_INDEX_SPECS = (
         "continue-card-schema.md",
     ),
     (
+        "loop",
+        "agentdeck contract loop",
+        "agentdeck contract loop --example",
+        "loop-schema.md",
+    ),
+    (
         "doctor",
         "agentdeck contract doctor",
         "agentdeck contract doctor --example",
@@ -1173,6 +1179,29 @@ CONTINUE_CARD_FIELDS = (
     "pending",
     "leader_action",
     "action_detail_command",
+)
+
+LOOP_ONCE_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "loop_id",
+    "iteration",
+    "max_iterations",
+    "source_command",
+    "project_view_command",
+    "continue_command",
+    "workbench_command",
+    "status",
+    "reason",
+    "recovery",
+    "continue_card",
+    "recommended_action",
+    "next_command",
+    "stop_reason",
+    "will_execute",
+    "requires_explicit_user",
+    "safety",
+    "controls",
 )
 
 WORKBENCH_SNAPSHOT_FIELDS = (
@@ -3442,6 +3471,34 @@ def continue_contract_response(contract_path: Path, include_example: bool = Fals
     return payload
 
 
+def loop_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "loop_once_command": "agentdeck loop once",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "loop_once_response_fields": list(LOOP_ONCE_RESPONSE_FIELDS),
+        "continue_card_fields": list(CONTINUE_CARD_FIELDS),
+        "control_fields": list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS),
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "project_view_contract": "agentdeck contract project-view",
+        "continue_contract": "agentdeck contract continue",
+        "workbench_contract": "agentdeck contract workbench",
+    }
+
+
+def loop_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = loop_contract_payload(contract_path)
+    if include_example:
+        example = loop_once_example()
+        payload["example"] = True
+        payload["example_loop_once_response_fields"] = list(example)
+        payload["example_continue_card_fields"] = list(example["continue_card"])
+        payload["example_control_fields"] = list(example["controls"][0])
+        payload["example_loop_once"] = example
+    return payload
+
+
 def doctor_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -4144,6 +4201,63 @@ def validate_continue_contract(payload: dict[str, object]) -> dict[str, object]:
                 errors.append(f"missing pending field: {field}")
     elif "pending" in payload and pending is not None:
         errors.append("pending must be an object")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_loop_once_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in LOOP_ONCE_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing loop_once field: {field}")
+    if payload.get("mode") != "loop_once":
+        errors.append(f"loop_once.mode must be loop_once, got {payload.get('mode')}")
+    if payload.get("loop_id") != "run_once":
+        errors.append("loop_once.loop_id must be run_once")
+    if payload.get("iteration") != 1:
+        errors.append("loop_once.iteration must be 1")
+    if payload.get("max_iterations") != 1:
+        errors.append("loop_once.max_iterations must be 1")
+    if payload.get("source_command") != "agentdeck loop once":
+        errors.append("loop_once.source_command must be agentdeck loop once")
+    if payload.get("project_view_command") != "agentdeck status":
+        errors.append("loop_once.project_view_command must be agentdeck status")
+    if payload.get("continue_command") != "agentdeck continue":
+        errors.append("loop_once.continue_command must be agentdeck continue")
+    if payload.get("workbench_command") != "agentdeck workbench":
+        errors.append("loop_once.workbench_command must be agentdeck workbench")
+    if payload.get("will_execute") is not False:
+        errors.append("loop_once.will_execute must be false")
+    next_command = payload.get("next_command")
+    if next_command and payload.get("requires_explicit_user") is not True:
+        errors.append("loop_once.requires_explicit_user must be true when next_command exists")
+    continue_card = payload.get("continue_card")
+    if isinstance(continue_card, dict):
+        continue_validation = validate_continue_contract(continue_card)
+        for error in continue_validation["errors"]:
+            errors.append(f"continue_card: {error}")
+        if payload.get("next_command") != continue_card.get("next_command"):
+            errors.append("loop_once.next_command must match continue_card.next_command")
+        if payload.get("recommended_action") != continue_card.get("recommended_action"):
+            errors.append("loop_once.recommended_action must match continue_card.recommended_action")
+    elif "continue_card" in payload:
+        errors.append("loop_once.continue_card must be an object")
+    controls = payload.get("controls")
+    if isinstance(controls, list):
+        if not controls:
+            errors.append("loop_once.controls must not be empty")
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append("loop_once.controls items must be objects")
+                continue
+            for field in WORKBENCH_CONTROL_MODE_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(f"loop_once.controls: missing control field: {field}")
+            if control.get("kind") == "execute_next" and next_command and control.get("command") != next_command:
+                errors.append("loop_once.controls: execute_next command must match next_command")
+            if control.get("kind") == "execute_next" and control.get("enabled") is True and not next_command:
+                errors.append("loop_once.controls: execute_next cannot be enabled without next_command")
+    elif "controls" in payload:
+        errors.append("loop_once.controls must be a list")
     return {"ok": not errors, "errors": errors}
 
 
@@ -10202,6 +10316,67 @@ def continue_example() -> dict[str, object]:
         "pending": recovery["pending"],
         "leader_action": leader_action,
         "action_detail_command": "agentdeck leader action --action-id act_example",
+    }
+
+
+def loop_once_example() -> dict[str, object]:
+    continue_card = continue_example()
+    recovery = project_view_example()["recovery"]
+    next_command = continue_card["next_command"]
+    return {
+        "ok": True,
+        "mode": "loop_once",
+        "loop_id": "run_once",
+        "iteration": 1,
+        "max_iterations": 1,
+        "source_command": "agentdeck loop once",
+        "project_view_command": "agentdeck status",
+        "continue_command": "agentdeck continue",
+        "workbench_command": "agentdeck workbench",
+        "status": continue_card["status"],
+        "reason": continue_card["reason"],
+        "recovery": recovery,
+        "continue_card": continue_card,
+        "recommended_action": continue_card["recommended_action"],
+        "next_command": next_command,
+        "stop_reason": "requires_human_command",
+        "will_execute": False,
+        "requires_explicit_user": True,
+        "safety": continue_card["recommended_action"]["safety"],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Inspect continue card",
+                "command": "agentdeck continue",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "execute_next",
+                "label": "Run explicit next command",
+                "command": next_command,
+                "safety": continue_card["recommended_action"]["safety"],
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "Open workbench",
+                "command": "agentdeck workbench",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
     }
 
 

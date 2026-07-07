@@ -43,6 +43,8 @@ from agentdeck.contracts import (
     leader_summary_contract_payload,
     leader_summary_contract_response,
     LEADER_SUMMARY_RESPONSE_FIELDS,
+    loop_contract_payload,
+    loop_contract_response,
     memory_contract_payload,
     memory_contract_response,
     project_view_contract_payload,
@@ -3143,6 +3145,86 @@ def test_continue_returns_recovery_card_without_mutating_state(tmp_path, monkeyp
     assert StateStore(root).load() == state_before
 
 
+def test_loop_once_recommends_next_explicit_command_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["run", "--task", "实现 loop once"])
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["loop", "once"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "loop_once"
+    assert payload["loop_id"] == "run_once"
+    assert payload["iteration"] == 1
+    assert payload["max_iterations"] == 1
+    assert payload["source_command"] == "agentdeck loop once"
+    assert payload["project_view_command"] == "agentdeck status"
+    assert payload["continue_command"] == "agentdeck continue"
+    assert payload["workbench_command"] == "agentdeck workbench"
+    assert payload["continue_card"]["mode"] == "continue"
+    assert payload["recovery"]["pending"] == payload["continue_card"]["pending"]
+    assert payload["next_command"] == payload["continue_card"]["next_command"]
+    assert payload["recommended_action"] == payload["continue_card"]["recommended_action"]
+    assert payload["stop_reason"] == "requires_human_command"
+    assert payload["will_execute"] is False
+    assert payload["requires_explicit_user"] is True
+    assert payload["safety"] == payload["recommended_action"]["safety"]
+    assert payload["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect project status",
+        "command": "agentdeck status",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["controls"][1]["command"] == "agentdeck continue"
+    assert payload["controls"][2]["command"] == payload["next_command"]
+    assert payload["controls"][2]["safety"] == payload["safety"]
+    assert payload["controls"][2]["enabled"] is True
+    assert StateStore(root).load() == state_before
+    assert fake.sent == []
+    assert fake.captured == []
+
+
+def test_loop_once_surfaces_idle_without_enabled_execute_control(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_text = config_text.replace('provider = "deepseek"', 'provider = "fake"', 1)
+    config_text = config_text.replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
+    config_path.write_text(config_text, encoding="utf-8")
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["loop", "once"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "loop_once"
+    assert payload["status"] == "idle"
+    assert payload["next_command"] is None
+    assert payload["stop_reason"] == "idle"
+    assert payload["will_execute"] is False
+    assert payload["requires_explicit_user"] is False
+    assert payload["controls"][2] == {
+        "kind": "execute_next",
+        "label": "Run explicit next command",
+        "command": "agentdeck continue",
+        "safety": "inspect",
+        "enabled": False,
+        "blocker": "no next command",
+    }
+    assert StateStore(root).load() == state_before
+
+
 def test_continue_surfaces_provider_setup_when_configured_leader_is_not_ready(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -3662,6 +3744,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
         "continue",
+        "loop",
         "doctor",
         "events",
         "run",
@@ -4463,6 +4546,35 @@ def test_contract_continue_example_exports_gui_ready_card(capsys) -> None:
     assert set(payload["example_continue_card_fields"]) == set(example)
     assert example["mode"] == "continue"
     assert example["next_command"] == "agentdeck leader apply-action --action-id act_example"
+
+
+def test_contract_loop_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "loop"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = loop_contract_payload(Path(payload["contract_path"]))
+    assert payload == expected
+    assert payload["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["loop_once_command"] == "agentdeck loop once"
+    assert payload["contract_path"].endswith("docs/contracts/loop-schema.md")
+    assert payload["contract_exists"] is True
+    assert payload["continue_contract"] == "agentdeck contract continue"
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+
+
+def test_contract_loop_example_exports_gui_ready_card(capsys) -> None:
+    exit_code = cli.main(["contract", "loop", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = loop_contract_response(Path(payload["contract_path"]), include_example=True)
+    assert payload == expected
+    example = payload["example_loop_once"]
+    assert payload["example_loop_once_response_fields"] == payload["loop_once_response_fields"]
+    assert set(payload["example_loop_once_response_fields"]) == set(example)
+    assert example["mode"] == "loop_once"
+    assert example["will_execute"] is False
 
 
 def test_contract_doctor_discovers_schema_for_gui_clients(capsys) -> None:

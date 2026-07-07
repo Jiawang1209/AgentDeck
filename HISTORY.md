@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add run-once programmatic loop surface
+
+- 新增 `agentdeck loop once`，作为北极星 Phase G3 的只读程序化单步循环入口：它校验 ProjectView，嵌入同源 `continue_card`，输出 `next_command`、`recommended_action`、`stop_reason`、`will_execute=false`、`requires_explicit_user`、`safety` 和 GUI-ready controls。
+- 保持 loop 边界：`loop once` 只读取状态并推荐下一条显式命令，不调用 Leader provider、不读取/写入/发送 tmux、不 approve/reject/dispatch、不 capture reply、不 ack inbox、不写 state；当存在下一步时以 `stop_reason=requires_human_command` 停住。
+- 新增 `agentdeck contract loop` / `--example`、`docs/contracts/loop-schema.md` 和 contract index `loop` 条目，让 GUI/TUI 或未来 scheduler 能发现 loop_once 字段、嵌入 continue card 字段和 controls 字段。
+- 扩展 `validate_loop_once_contract()`：拒绝缺字段、错误 mode/source command、`will_execute=true`、有 `next_command` 却不要求显式用户、以及 `execute_next` control 与 `next_command` 不一致。
+- 同步 README、`docs/contracts/contract-index-schema.md` 和 `docs/handoff/current-development-state.md`，把当前相位推进到 G3，并把下一步指向任务级 worker lifecycle / reviewer 分层的 G4。
+- 验证记录：已先确认红测失败，`LOOP_ONCE_RESPONSE_FIELDS` / loop contract 最初不存在；补充 idle 红测确认无下一步时 disabled `execute_next` 不应匹配空 `next_command`；实现后目标/contract 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_loop_once_recommends_next_explicit_command_without_mutating_state tests/test_agent_cli.py::test_loop_once_surfaces_idle_without_enabled_execute_control tests/test_agent_cli.py::test_contract_loop_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_loop_example_exports_gui_ready_card tests/test_contracts.py::test_contract_index_response_is_reusable_without_cli tests/test_contracts.py::test_loop_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_loop_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_loop_once_contract_rejects_auto_execution_claim -q` 8 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 536 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 578 项通过。
+
 ### Current - Surface logical coordination roles
 
 - 新增 ProjectView `leader.coordination_roles[]`，显式暴露 `frontdesk`、`planner`、`orchestrator` 三个北极星逻辑协调角色；它们不是 worker pane，固定保持 `runtime_kind=logical_role`、`pane_backed=false`、`pane_id=null`、`dispatch_ready=false`。
