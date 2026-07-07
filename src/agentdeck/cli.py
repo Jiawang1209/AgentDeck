@@ -1364,6 +1364,7 @@ def _workbench_snapshot_payload(
     terminal_session_card = _workbench_terminal_session_card(load_config(store.root), runtime_card)
     role_card = _workbench_role_card(project_view)
     worker_lifecycle_card = _workbench_worker_lifecycle_card(project_view)
+    review_gate_card = _workbench_review_gate_card(project_view)
     ledger_card = _workbench_ledger_card(project_view)
     lineage_card = _workbench_lineage_card(project_view, inbox_card, leader_inbox_card)
     queue_card = _workbench_queue_card(project_view, continue_card, active_queue_source)
@@ -1391,6 +1392,7 @@ def _workbench_snapshot_payload(
         "terminal_session_card": terminal_session_card,
         "role_card": role_card,
         "worker_lifecycle_card": worker_lifecycle_card,
+        "review_gate_card": review_gate_card,
         "ledger_card": ledger_card,
         "lineage_card": lineage_card,
         "queue_card": queue_card,
@@ -1750,6 +1752,23 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
                 agent_id=item.get("agent_id"),
                 controls=item.get("controls"),
             )
+    review_gate_card = payload.get("review_gate_card") if isinstance(payload.get("review_gate_card"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry,
+        scope="review_gate",
+        card="review_gate_card",
+        agent_id=None,
+        controls=review_gate_card.get("controls"),
+    )
+    for stage_name in ("code_review", "round_review"):
+        stage = review_gate_card.get(stage_name) if isinstance(review_gate_card.get(stage_name), dict) else {}
+        _append_workbench_control_registry_items(
+            registry,
+            scope="review_gate",
+            card="review_gate_card",
+            agent_id=stage.get("agent_id"),
+            controls=stage.get("controls"),
+        )
     ledger_card = payload.get("ledger_card") if isinstance(payload.get("ledger_card"), dict) else {}
     _append_workbench_control_registry_items(
         registry,
@@ -2534,6 +2553,157 @@ def _worker_lifecycle_controls(
             blocker=None if can_capture else "agent is not running",
         ),
     ]
+
+
+def _workbench_review_gate_card(project_view: dict[str, object]) -> dict[str, object]:
+    agents = project_view.get("agents") if isinstance(project_view.get("agents"), list) else []
+    replies = project_view.get("replies") if isinstance(project_view.get("replies"), dict) else {}
+    artifacts = project_view.get("artifacts") if isinstance(project_view.get("artifacts"), dict) else {}
+    reply_items = [item for item in _summary_items(replies) if isinstance(item, dict)]
+    artifact_items = [item for item in _summary_items(artifacts) if isinstance(item, dict)]
+    artifact_count = len(artifact_items)
+    code_reviewer = _review_gate_agent(agents, preferred=("code_reviewer", "reviewer"))
+    round_reviewer = _review_gate_agent(agents, preferred=("round_reviewer",))
+    code_review = _review_gate_stage(
+        stage="code_review",
+        agent=code_reviewer,
+        replies=reply_items,
+        artifact_count=artifact_count,
+        missing_blocker="code_reviewer is not configured",
+        waiting_blocker="waiting for code review reply",
+    )
+    round_review = _review_gate_stage(
+        stage="round_review",
+        agent=round_reviewer,
+        replies=reply_items,
+        artifact_count=artifact_count,
+        missing_blocker="round_reviewer is not configured",
+        waiting_blocker="waiting for round review reply",
+        prerequisite_ready=code_review.get("status") == "ready",
+        prerequisite_blocker="code review is not ready",
+    )
+    status, reason = _review_gate_status(code_review, round_review, artifact_count)
+    return {
+        "mode": "review_gate",
+        "title": "Review gate",
+        "source_command": "agentdeck workbench",
+        "status": status,
+        "reason": reason,
+        "can_release": status == "ready",
+        "artifact_count": artifact_count,
+        "review_reply_count": _review_gate_reply_count(reply_items, code_reviewer, round_reviewer),
+        "code_review": code_review,
+        "round_review": round_review,
+        "controls": [
+            _control(
+                kind="inspect",
+                label="Inspect review gate",
+                command="agentdeck workbench",
+                safety="inspect",
+            )
+        ],
+    }
+
+
+def _review_gate_agent(agents: list[object], *, preferred: tuple[str, ...]) -> dict[str, object]:
+    for key in preferred:
+        for agent in agents:
+            if not isinstance(agent, dict):
+                continue
+            agent_id = str(agent.get("agent_id") or "")
+            role = str(agent.get("role") or "")
+            if agent_id == key or role == key:
+                return agent
+    return {}
+
+
+def _review_gate_stage(
+    *,
+    stage: str,
+    agent: dict[str, object],
+    replies: list[dict[str, object]],
+    artifact_count: int,
+    missing_blocker: str,
+    waiting_blocker: str,
+    prerequisite_ready: bool = True,
+    prerequisite_blocker: str | None = None,
+) -> dict[str, object]:
+    agent_id = str(agent.get("agent_id")) if agent else None
+    role = agent.get("role") if agent else None
+    latest_reply = _latest_agent_reply(agent_id, replies) if agent_id else {}
+    trace_command = f"agentdeck trace --id {latest_reply.get('reply_id')}" if latest_reply.get("reply_id") else None
+    inbox_command = f"agentdeck inbox --agent {agent_id}" if agent_id else None
+    status = "ready"
+    blocker = None
+    if not agent_id:
+        status = "missing_reviewer"
+        blocker = missing_blocker
+    elif artifact_count == 0:
+        status = "waiting_for_artifacts"
+        blocker = "waiting for artifacts"
+    elif not prerequisite_ready:
+        status = "blocked"
+        blocker = prerequisite_blocker or "prerequisite is not ready"
+    elif not latest_reply:
+        status = "waiting_for_review"
+        blocker = waiting_blocker
+    return {
+        "stage": stage,
+        "agent_id": agent_id,
+        "role": role,
+        "status": status,
+        "latest_reply_id": latest_reply.get("reply_id"),
+        "trace_command": trace_command,
+        "inbox_command": inbox_command,
+        "blocker": blocker,
+        "controls": _review_gate_stage_controls(trace_command, inbox_command, blocker),
+    }
+
+
+def _review_gate_stage_controls(
+    trace_command: str | None, inbox_command: str | None, blocker: str | None
+) -> list[dict[str, object]]:
+    return [
+        _control(
+            kind="trace",
+            label="Trace review",
+            command=trace_command,
+            safety="inspect",
+            enabled=trace_command is not None,
+            blocker=None if trace_command is not None else blocker or "no review reply",
+        ),
+        _control(
+            kind="inbox",
+            label="Inspect reviewer inbox",
+            command=inbox_command,
+            safety="inspect",
+            enabled=inbox_command is not None,
+            blocker=None if inbox_command is not None else blocker or "reviewer is not configured",
+        ),
+    ]
+
+
+def _review_gate_status(
+    code_review: dict[str, object], round_review: dict[str, object], artifact_count: int
+) -> tuple[str, str | None]:
+    if artifact_count == 0:
+        return "blocked", "waiting for artifacts"
+    if code_review.get("status") != "ready":
+        return "blocked", str(code_review.get("blocker") or "code review is not ready")
+    if round_review.get("status") != "ready":
+        return "blocked", str(round_review.get("blocker") or "round review is not ready")
+    return "ready", None
+
+
+def _review_gate_reply_count(
+    replies: list[dict[str, object]], code_reviewer: dict[str, object], round_reviewer: dict[str, object]
+) -> int:
+    reviewer_ids = {
+        str(agent.get("agent_id"))
+        for agent in (code_reviewer, round_reviewer)
+        if isinstance(agent, dict) and agent.get("agent_id")
+    }
+    return sum(1 for reply in replies if reply.get("from_agent") in reviewer_ids)
 
 
 def _role_agent_controls(agent_id: str) -> list[dict[str, object]]:

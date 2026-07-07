@@ -82,6 +82,8 @@ from agentdeck.contracts import (
     WORKBENCH_QUEUE_CARD_FIELDS,
     WORKBENCH_ROLE_AGENT_FIELDS,
     WORKBENCH_ROLE_CARD_FIELDS,
+    WORKBENCH_REVIEW_GATE_CARD_FIELDS,
+    WORKBENCH_REVIEW_GATE_STAGE_FIELDS,
     WORKBENCH_RUNTIME_AGENT_FIELDS,
     WORKBENCH_RUNTIME_CARD_FIELDS,
     WORKBENCH_RUNTIME_CONTROL_FIELDS,
@@ -1689,6 +1691,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["terminal_session_item_fields"] == list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS)
     assert payload["worker_lifecycle_card_fields"] == list(WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS)
     assert payload["worker_lifecycle_item_fields"] == list(WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS)
+    assert payload["review_gate_card_fields"] == list(WORKBENCH_REVIEW_GATE_CARD_FIELDS)
+    assert payload["review_gate_stage_fields"] == list(WORKBENCH_REVIEW_GATE_STAGE_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
     assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
     assert payload["role_card_fields"] == list(WORKBENCH_ROLE_CARD_FIELDS)
@@ -1768,6 +1772,19 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         "capture",
     ]
     assert all(control["safety"] == "inspect" for control in example["worker_lifecycle_card"]["items"][0]["controls"])
+    assert set(example["review_gate_card"]) == set(WORKBENCH_REVIEW_GATE_CARD_FIELDS)
+    assert example["review_gate_card"]["mode"] == "review_gate"
+    assert example["review_gate_card"]["source_command"] == "agentdeck workbench"
+    assert example["review_gate_card"]["status"] == "blocked"
+    assert example["review_gate_card"]["can_release"] is False
+    assert example["review_gate_card"]["artifact_count"] == 1
+    assert example["review_gate_card"]["review_reply_count"] == 1
+    assert set(example["review_gate_card"]["code_review"]) == set(WORKBENCH_REVIEW_GATE_STAGE_FIELDS)
+    assert set(example["review_gate_card"]["round_review"]) == set(WORKBENCH_REVIEW_GATE_STAGE_FIELDS)
+    assert example["review_gate_card"]["code_review"]["status"] == "ready"
+    assert example["review_gate_card"]["code_review"]["agent_id"] == "reviewer"
+    assert example["review_gate_card"]["round_review"]["status"] == "missing_reviewer"
+    assert example["review_gate_card"]["round_review"]["blocker"] == "round_reviewer is not configured"
     assert example["leader_inbox_card"]["items"][0]["event_type"] == "task_reply"
     assert example["mode"] == "workbench"
     assert example["leader_actions"] == example["project_view"]["leader_actions"]
@@ -1838,6 +1855,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         ("worker_lifecycle", "worker_lifecycle_card", "inbox", "planner"),
         ("worker_lifecycle", "worker_lifecycle_card", "terminal", "planner"),
         ("worker_lifecycle", "worker_lifecycle_card", "capture", "planner"),
+        ("review_gate", "review_gate_card", "inspect", None),
+        ("review_gate", "review_gate_card", "trace", "reviewer"),
+        ("review_gate", "review_gate_card", "inbox", "reviewer"),
         ("runtime", "runtime_card", "terminal", "planner"),
         ("runtime", "runtime_card", "capture", "planner"),
         ("audit", "audit_card", "inspect", None),
@@ -2101,6 +2121,18 @@ def test_validate_workbench_contract_requires_worker_lifecycle_item_fields() -> 
     assert result == {
         "ok": False,
         "errors": ["missing worker_lifecycle item field: lifecycle_stage"],
+    }
+
+
+def test_validate_workbench_contract_requires_review_gate_stage_fields() -> None:
+    payload = workbench_example()
+    del payload["review_gate_card"]["code_review"]["status"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing review_gate stage field: status"],
     }
 
 

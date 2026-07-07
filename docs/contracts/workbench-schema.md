@@ -33,6 +33,8 @@ The contract command returns:
   "role_agent_fields": [],
   "worker_lifecycle_card_fields": [],
   "worker_lifecycle_item_fields": [],
+  "review_gate_card_fields": [],
+  "review_gate_stage_fields": [],
   "ledger_card_fields": [],
   "lineage_card_fields": [],
   "lineage_path_fields": [],
@@ -74,6 +76,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "terminal_session_card": {},
   "role_card": {},
   "worker_lifecycle_card": {},
+  "review_gate_card": {},
   "ledger_card": {},
   "lineage_card": {},
   "queue_card": {},
@@ -109,6 +112,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `terminal_session_card` is derived from the same `runtime_card` and project tmux config so GUI/TUI clients can render a project terminal strip without calling each agent terminal command.
 `role_card` is derived from `project_view.agents[]` role configuration.
 `worker_lifecycle_card` is derived from `project_view.agents[]`, visible runtime status, messages, jobs, replies, artifacts, and inbox summary; it is a task-level status projection for worker roles and does not spawn, dispatch, capture, ack, release, or write state.
+`review_gate_card` is derived from artifacts, reviewer replies, and configured reviewer roles; it exposes code-review and round-review readiness without releasing work, merging changes, acknowledging inbox items, dispatching follow-up work, or advancing the loop.
 `ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, `project_view.artifacts`, and `project_view.inbox`; its `messages.items[]` retains compact worker `prompt_skill_context` so GUI clients can render loaded skill provenance without parsing prompt text or storing full skill snapshots. Its `controls[]` expose the read-only workbench ledger entry for GUI command palettes.
 `lineage_card` is a read-only path projection derived from the same ledger summaries plus visible inbox cards.
 `queue_card` is derived from `project_view.leader_actions`, `project_view.approvals`, `project_view.inbox`, and the recovery-driven next command.
@@ -552,6 +556,66 @@ The card is configuration-only. It does not dispatch work or mutate roles; GUI c
 ```
 
 The card fuses runtime and ledger facts without creating a second state source. `lifecycle_stage` is derived in this order: pending inbox means `inbox_pending`; otherwise a recorded reply means `reply_recorded`; otherwise a job contributes its job status; otherwise a dispatched message means `task_dispatched`; otherwise the worker is `idle`. All item controls are inspect-only. Disabled trace controls use `blocker=no active task`; disabled capture controls use `blocker=agent is not running`. GUI clients must not treat this card as permission to spawn, dispatch, ack, capture, or release work automatically.
+
+## Review Gate Card
+
+`review_gate_card` is a GUI-ready projection of code-review and round-review readiness:
+
+```json
+{
+  "mode": "review_gate",
+  "title": "Review gate",
+  "source_command": "agentdeck workbench",
+  "status": "blocked",
+  "reason": "round_reviewer is not configured",
+  "can_release": false,
+  "artifact_count": 1,
+  "review_reply_count": 1,
+  "code_review": {
+    "stage": "code_review",
+    "agent_id": "reviewer",
+    "role": "review",
+    "status": "ready",
+    "latest_reply_id": "rep_xxx",
+    "trace_command": "agentdeck trace --id rep_xxx",
+    "inbox_command": "agentdeck inbox --agent reviewer",
+    "blocker": null,
+    "controls": [
+      {
+        "kind": "trace",
+        "label": "Trace review",
+        "command": "agentdeck trace --id rep_xxx",
+        "safety": "inspect",
+        "enabled": true,
+        "blocker": null
+      }
+    ]
+  },
+  "round_review": {
+    "stage": "round_review",
+    "agent_id": null,
+    "role": null,
+    "status": "missing_reviewer",
+    "latest_reply_id": null,
+    "trace_command": null,
+    "inbox_command": null,
+    "blocker": "round_reviewer is not configured",
+    "controls": []
+  },
+  "controls": [
+    {
+      "kind": "inspect",
+      "label": "Inspect review gate",
+      "command": "agentdeck workbench",
+      "safety": "inspect",
+      "enabled": true,
+      "blocker": null
+    }
+  ]
+}
+```
+
+The card is a gate projection, not a release action. `code_review` uses an agent whose `agent_id` or `role` is `code_reviewer` or `reviewer`; `round_review` requires an explicit `round_reviewer`. A gate is `ready` only when artifacts exist, code review has a recorded reply, and round review has a recorded reply. Missing reviewers, missing artifacts, and missing replies keep `status=blocked` with a concrete `reason`. All controls are inspect-only and must also appear in `control_registry[]` under `scope=review_gate`.
 
 ## Ledger Card
 

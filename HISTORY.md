@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add review gate workbench card
+
+- 扩展 `agentdeck workbench`：新增 `review_gate_card`，从 artifacts、reviewer replies、traceable ledger 和配置的 reviewer 角色派生 code-review / round-review 验收门。
+- `code_review` 阶段可复用现有 `reviewer` 或显式 `code_reviewer`；`round_review` 阶段要求显式 `round_reviewer`。缺少 artifact、review reply 或 round reviewer 时，card 保持 `status=blocked` 并输出具体 `reason` / `blocker`。
+- 保持北极星 G5 边界：review gate 是只读验收投影，不 release、不 merge、不 ack inbox、不 dispatch follow-up、不推进 loop；所有 card/stage controls 都是 inspect-only，并进入 `control_registry[]` 的 `scope=review_gate`。
+- 扩展 workbench contract discovery/example/validator：新增 `WORKBENCH_REVIEW_GATE_CARD_FIELDS` 与 `WORKBENCH_REVIEW_GATE_STAGE_FIELDS`，校验字段、计数、`can_release` boolean、inspect safety，以及 trace/inbox controls 与 stage command 一致性。
+- 同步 README、`docs/contracts/workbench-schema.md` 和 `docs/handoff/current-development-state.md`，把当前相位推进到 G5，并把下一步指向显式 `code_reviewer` / `round_reviewer` 配置与自然语言发现入口。
+- 验证记录：已先确认红测失败，`WORKBENCH_REVIEW_GATE_CARD_FIELDS` 最初不存在；实现后目标测试 `conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_review_gate_stage_fields tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 538 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 580 项通过。
+
 ### Current - Add worker lifecycle workbench card
 
 - 扩展 `agentdeck workbench`：新增 `worker_lifecycle_card`，从 ProjectView agents、runtime status、messages、jobs、replies、artifacts 和 inbox 摘要派生每个 worker 的任务级生命周期状态。

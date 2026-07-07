@@ -4671,6 +4671,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "terminal_session_card",
         "role_card",
         "worker_lifecycle_card",
+        "review_gate_card",
         "ledger_card",
         "lineage_card",
         "queue_card",
@@ -4842,6 +4843,30 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "inbox_command",
         "terminal_command",
         "capture_command",
+        "controls",
+    ]
+    assert payload["review_gate_card_fields"] == [
+        "mode",
+        "title",
+        "source_command",
+        "status",
+        "reason",
+        "can_release",
+        "artifact_count",
+        "review_reply_count",
+        "code_review",
+        "round_review",
+        "controls",
+    ]
+    assert payload["review_gate_stage_fields"] == [
+        "stage",
+        "agent_id",
+        "role",
+        "status",
+        "latest_reply_id",
+        "trace_command",
+        "inbox_command",
+        "blocker",
         "controls",
     ]
     assert payload["ledger_card_fields"] == [
@@ -5041,6 +5066,15 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             },
             "status": "dispatched",
             "created_at": "2026-07-04T00:00:00+00:00",
+        },
+        {
+            "message_id": "msg_review",
+            "from_actor": "leader",
+            "to_agent": "reviewer",
+            "task": "Review docs/workbench-plan.md",
+            "prompt": "review prompt",
+            "status": "dispatched",
+            "created_at": "2026-07-04T00:00:04+00:00",
         }
     ]
     state["jobs"] = [
@@ -5051,6 +5085,14 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             "pane_id": "%42",
             "status": "running",
             "created_at": "2026-07-04T00:00:01+00:00",
+        },
+        {
+            "job_id": "job_review",
+            "message_id": "msg_review",
+            "agent_id": "reviewer",
+            "pane_id": None,
+            "status": "completed",
+            "created_at": "2026-07-04T00:00:05+00:00",
         }
     ]
     state["replies"] = [
@@ -5062,6 +5104,15 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             "to_actor": "leader",
             "text": "status: completed",
             "created_at": "2026-07-04T00:00:02+00:00",
+        },
+        {
+            "reply_id": "rep_review",
+            "message_id": "msg_review",
+            "job_id": "job_review",
+            "from_agent": "reviewer",
+            "to_actor": "leader",
+            "text": "code review: pass with minor notes",
+            "created_at": "2026-07-04T00:00:06+00:00",
         }
     ]
     state["artifacts"] = [
@@ -5095,7 +5146,8 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert payload["worker_lifecycle_card"]["count"] == 3
     assert payload["worker_lifecycle_card"]["source_command"] == "agentdeck workbench"
     assert payload["worker_lifecycle_card"]["by_stage"]["inbox_pending"] == 1
-    assert payload["worker_lifecycle_card"]["by_stage"]["idle"] == 2
+    assert payload["worker_lifecycle_card"]["by_stage"]["idle"] == 1
+    assert payload["worker_lifecycle_card"]["by_stage"]["reply_recorded"] == 1
     lifecycle_items = {
         item["agent_id"]: item
         for item in payload["worker_lifecycle_card"]["items"]
@@ -5144,6 +5196,48 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert lifecycle_items["coder"]["active_message_id"] is None
     assert lifecycle_items["coder"]["controls"][0]["enabled"] is False
     assert lifecycle_items["coder"]["controls"][0]["blocker"] == "no active task"
+    assert lifecycle_items["reviewer"]["lifecycle_stage"] == "reply_recorded"
+    assert lifecycle_items["reviewer"]["latest_reply_id"] == "rep_review"
+    assert payload["review_gate_card"] == {
+        "mode": "review_gate",
+        "title": "Review gate",
+        "source_command": "agentdeck workbench",
+        "status": "blocked",
+        "reason": "round_reviewer is not configured",
+        "can_release": False,
+        "artifact_count": 1,
+        "review_reply_count": 1,
+        "code_review": payload["review_gate_card"]["code_review"],
+        "round_review": payload["review_gate_card"]["round_review"],
+        "controls": payload["review_gate_card"]["controls"],
+    }
+    assert payload["review_gate_card"]["code_review"] == {
+        "stage": "code_review",
+        "agent_id": "reviewer",
+        "role": "review",
+        "status": "ready",
+        "latest_reply_id": "rep_review",
+        "trace_command": "agentdeck trace --id rep_review",
+        "inbox_command": "agentdeck inbox --agent reviewer",
+        "blocker": None,
+        "controls": payload["review_gate_card"]["code_review"]["controls"],
+    }
+    assert payload["review_gate_card"]["round_review"]["stage"] == "round_review"
+    assert payload["review_gate_card"]["round_review"]["agent_id"] is None
+    assert payload["review_gate_card"]["round_review"]["status"] == "missing_reviewer"
+    assert payload["review_gate_card"]["round_review"]["blocker"] == "round_reviewer is not configured"
+    assert [control["kind"] for control in payload["review_gate_card"]["code_review"]["controls"]] == [
+        "trace",
+        "inbox",
+    ]
+    assert payload["review_gate_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect review gate",
+        "command": "agentdeck workbench",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
     assert payload["leader_card"] == {
         "agent_id": "leader",
         "provider": "deepseek",
@@ -5735,14 +5829,17 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             "control_id": terminal_select_controls[2]["control_id"],
         },
     ]
-    assert payload["ledger_card"]["messages"]["count"] == 1
+    assert payload["ledger_card"]["messages"]["count"] == 2
     assert payload["ledger_card"]["messages"]["items"][0]["trace_command"] == "agentdeck trace --id msg_workbench"
+    assert payload["ledger_card"]["messages"]["items"][1]["trace_command"] == "agentdeck trace --id msg_review"
     assert payload["ledger_card"]["messages"]["items"][0]["prompt_skill_context"]["items"][0]["name"] == "verification"
     assert "content_snapshot" not in payload["ledger_card"]["messages"]["items"][0]["prompt_skill_context"]["items"][0]
-    assert payload["ledger_card"]["jobs"]["count"] == 1
+    assert payload["ledger_card"]["jobs"]["count"] == 2
     assert payload["ledger_card"]["jobs"]["items"][0]["trace_command"] == "agentdeck trace --id job_workbench"
-    assert payload["ledger_card"]["replies"]["count"] == 1
+    assert payload["ledger_card"]["jobs"]["items"][1]["trace_command"] == "agentdeck trace --id job_review"
+    assert payload["ledger_card"]["replies"]["count"] == 2
     assert payload["ledger_card"]["replies"]["items"][0]["trace_command"] == "agentdeck trace --id rep_workbench"
+    assert payload["ledger_card"]["replies"]["items"][1]["trace_command"] == "agentdeck trace --id rep_review"
     assert payload["ledger_card"]["artifacts"]["count"] == 1
     assert payload["ledger_card"]["artifacts"]["items"][0]["artifact_id"] == "art_workbench"
     assert payload["ledger_card"]["artifacts"]["items"][0]["path"] == "docs/workbench-plan.md"
@@ -5766,16 +5863,19 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
     assert payload["ledger_card"]["inbox"]["heads"]["planner"]["inbox_id"] == "inb_workbench_head"
     assert payload["ledger_card"]["trace_commands"] == [
         "agentdeck trace --id msg_workbench",
+        "agentdeck trace --id msg_review",
         "agentdeck trace --id job_workbench",
+        "agentdeck trace --id job_review",
         "agentdeck trace --id rep_workbench",
+        "agentdeck trace --id rep_review",
         "agentdeck trace --id inb_workbench_head",
     ]
     assert payload["lineage_card"] == {
         "mode": "lineage",
         "title": "Communication lineage",
-        "message_count": 1,
-        "job_count": 1,
-        "reply_count": 1,
+        "message_count": 2,
+        "job_count": 2,
+        "reply_count": 2,
         "inbox_count": 1,
         "trace_command_template": "agentdeck trace --id <id>",
         "recent_paths": [
@@ -5791,6 +5891,19 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "task": "展示工作台 inbox",
                 "status": "reply_pending_ack",
                 "trace_command": "agentdeck trace --id msg_workbench",
+            },
+            {
+                "message_id": "msg_review",
+                "job_id": "job_review",
+                "reply_id": "rep_review",
+                "inbox_id": None,
+                "from_actor": "leader",
+                "to_agent": "reviewer",
+                "from_agent": "reviewer",
+                "to_actor": "leader",
+                "task": "Review docs/workbench-plan.md",
+                "status": "replied",
+                "trace_command": "agentdeck trace --id msg_review",
             }
         ],
     }
@@ -6642,7 +6755,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 88,
+        "item_count_before_filter": 93,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -6778,7 +6891,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 87,
+        "item_count_before_filter": 92,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -6821,7 +6934,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 88,
+        "item_count_before_filter": 93,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -6860,7 +6973,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 88,
+        "item_count_before_filter": 93,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -6893,7 +7006,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 88,
+        "item_count_before_filter": 93,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -6932,7 +7045,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 88,
+        "item_count_before_filter": 93,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

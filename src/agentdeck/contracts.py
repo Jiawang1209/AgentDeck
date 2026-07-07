@@ -1217,6 +1217,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "terminal_session_card",
     "role_card",
     "worker_lifecycle_card",
+    "review_gate_card",
     "ledger_card",
     "lineage_card",
     "queue_card",
@@ -1512,6 +1513,32 @@ WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS = (
     "inbox_command",
     "terminal_command",
     "capture_command",
+    "controls",
+)
+
+WORKBENCH_REVIEW_GATE_CARD_FIELDS = (
+    "mode",
+    "title",
+    "source_command",
+    "status",
+    "reason",
+    "can_release",
+    "artifact_count",
+    "review_reply_count",
+    "code_review",
+    "round_review",
+    "controls",
+)
+
+WORKBENCH_REVIEW_GATE_STAGE_FIELDS = (
+    "stage",
+    "agent_id",
+    "role",
+    "status",
+    "latest_reply_id",
+    "trace_command",
+    "inbox_command",
+    "blocker",
     "controls",
 )
 
@@ -2810,6 +2837,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "worker_lifecycle_card_fields": list(WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS),
         "worker_lifecycle_item_fields": list(WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS),
+        "review_gate_card_fields": list(WORKBENCH_REVIEW_GATE_CARD_FIELDS),
+        "review_gate_stage_fields": list(WORKBENCH_REVIEW_GATE_STAGE_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
@@ -3642,6 +3671,8 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "role_agent_fields": list(WORKBENCH_ROLE_AGENT_FIELDS),
         "worker_lifecycle_card_fields": list(WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS),
         "worker_lifecycle_item_fields": list(WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS),
+        "review_gate_card_fields": list(WORKBENCH_REVIEW_GATE_CARD_FIELDS),
+        "review_gate_stage_fields": list(WORKBENCH_REVIEW_GATE_STAGE_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
@@ -5302,6 +5333,75 @@ def _validate_worker_lifecycle_card_contract(
                 )
     elif "items" in worker_lifecycle_card:
         errors.append(_prefixed_contract_error(prefix, "worker_lifecycle_card.items must be a list"))
+
+
+def _validate_review_gate_card_contract(
+    errors: list[str], review_gate_card: dict[str, object], *, prefix: str
+) -> None:
+    for field in WORKBENCH_REVIEW_GATE_CARD_FIELDS:
+        if field not in review_gate_card:
+            errors.append(_prefixed_contract_error(prefix, f"missing review_gate_card field: {field}"))
+    if review_gate_card.get("mode") != "review_gate":
+        errors.append(_prefixed_contract_error(prefix, "review_gate_card.mode must be review_gate"))
+    if "can_release" in review_gate_card and not isinstance(review_gate_card.get("can_release"), bool):
+        errors.append(_prefixed_contract_error(prefix, "review_gate_card.can_release must be a boolean"))
+    for count_field in ("artifact_count", "review_reply_count"):
+        if count_field in review_gate_card and not isinstance(review_gate_card.get(count_field), int):
+            errors.append(_prefixed_contract_error(prefix, f"review_gate_card.{count_field} must be an integer"))
+    controls = review_gate_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append(_prefixed_contract_error(prefix, "review_gate_card.controls items must be objects"))
+                continue
+            for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(
+                        _prefixed_contract_error(prefix, f"review_gate_card.controls missing field: {field}")
+                    )
+            if control.get("safety") != "inspect":
+                errors.append(_prefixed_contract_error(prefix, "review_gate_card.controls must use safety=inspect"))
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append(
+                    _prefixed_contract_error(prefix, "review_gate_card.controls disabled controls need blocker")
+                )
+    elif "controls" in review_gate_card:
+        errors.append(_prefixed_contract_error(prefix, "review_gate_card.controls must be a list"))
+    for stage_name in ("code_review", "round_review"):
+        stage = review_gate_card.get(stage_name)
+        if isinstance(stage, dict):
+            _validate_review_gate_stage_contract(errors, stage, prefix=prefix)
+        elif stage_name in review_gate_card:
+            errors.append(_prefixed_contract_error(prefix, f"review_gate_card.{stage_name} must be an object"))
+
+
+def _validate_review_gate_stage_contract(
+    errors: list[str], stage: dict[str, object], *, prefix: str
+) -> None:
+    for field in WORKBENCH_REVIEW_GATE_STAGE_FIELDS:
+        if field not in stage:
+            errors.append(_prefixed_contract_error(prefix, f"missing review_gate stage field: {field}"))
+    controls = stage.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append(_prefixed_contract_error(prefix, "review_gate stage controls items must be objects"))
+                continue
+            for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(
+                        _prefixed_contract_error(prefix, f"review_gate stage control missing field: {field}")
+                    )
+            if control.get("safety") != "inspect":
+                errors.append(_prefixed_contract_error(prefix, "review_gate stage controls must use safety=inspect"))
+            if control.get("kind") == "trace" and control.get("command") != stage.get("trace_command"):
+                errors.append(_prefixed_contract_error(prefix, "review_gate trace command must match trace_command"))
+            if control.get("kind") == "inbox" and control.get("command") != stage.get("inbox_command"):
+                errors.append(_prefixed_contract_error(prefix, "review_gate inbox command must match inbox_command"))
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append(_prefixed_contract_error(prefix, "review_gate stage disabled controls need blocker"))
+    elif "controls" in stage:
+        errors.append(_prefixed_contract_error(prefix, "review_gate stage controls must be a list"))
 
 
 def _validate_ledger_card_contract(errors: list[str], ledger_card: dict[str, object], *, prefix: str) -> None:
@@ -7486,6 +7586,11 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         _validate_worker_lifecycle_card_contract(errors, worker_lifecycle_card, prefix="")
     elif "worker_lifecycle_card" in payload:
         errors.append("worker_lifecycle_card must be an object")
+    review_gate_card = payload.get("review_gate_card")
+    if isinstance(review_gate_card, dict):
+        _validate_review_gate_card_contract(errors, review_gate_card, prefix="")
+    elif "review_gate_card" in payload:
+        errors.append("review_gate_card must be an object")
     ledger_card = payload.get("ledger_card")
     if isinstance(ledger_card, dict):
         _validate_ledger_card_contract(errors, ledger_card, prefix="")
@@ -9139,6 +9244,23 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
                 agent_id=item.get("agent_id"),
                 controls=item.get("controls"),
             )
+    review_gate_card = payload.get("review_gate_card") if isinstance(payload.get("review_gate_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="review_gate",
+        card="review_gate_card",
+        agent_id=None,
+        controls=review_gate_card.get("controls"),
+    )
+    for stage_name in ("code_review", "round_review"):
+        stage = review_gate_card.get(stage_name) if isinstance(review_gate_card.get(stage_name), dict) else {}
+        _append_control_registry_items(
+            registry,
+            scope="review_gate",
+            card="review_gate_card",
+            agent_id=stage.get("agent_id"),
+            controls=stage.get("controls"),
+        )
     ledger_card = payload.get("ledger_card") if isinstance(payload.get("ledger_card"), dict) else {}
     _append_control_registry_items(
         registry,
@@ -10031,6 +10153,82 @@ def workbench_example() -> dict[str, object]:
                 {
                     "kind": "inspect",
                     "label": "Refresh worker lifecycle",
+                    "command": "agentdeck workbench",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                }
+            ],
+        },
+        "review_gate_card": {
+            "mode": "review_gate",
+            "title": "Review gate",
+            "source_command": "agentdeck workbench",
+            "status": "blocked",
+            "reason": "round_reviewer is not configured",
+            "can_release": False,
+            "artifact_count": 1,
+            "review_reply_count": 1,
+            "code_review": {
+                "stage": "code_review",
+                "agent_id": "reviewer",
+                "role": "reviewer",
+                "status": "ready",
+                "latest_reply_id": "rep_review",
+                "trace_command": "agentdeck trace --id rep_review",
+                "inbox_command": "agentdeck inbox --agent reviewer",
+                "blocker": None,
+                "controls": [
+                    {
+                        "kind": "trace",
+                        "label": "Trace review",
+                        "command": "agentdeck trace --id rep_review",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                    {
+                        "kind": "inbox",
+                        "label": "Inspect reviewer inbox",
+                        "command": "agentdeck inbox --agent reviewer",
+                        "safety": "inspect",
+                        "enabled": True,
+                        "blocker": None,
+                    },
+                ],
+            },
+            "round_review": {
+                "stage": "round_review",
+                "agent_id": None,
+                "role": None,
+                "status": "missing_reviewer",
+                "latest_reply_id": None,
+                "trace_command": None,
+                "inbox_command": None,
+                "blocker": "round_reviewer is not configured",
+                "controls": [
+                    {
+                        "kind": "trace",
+                        "label": "Trace review",
+                        "command": None,
+                        "safety": "inspect",
+                        "enabled": False,
+                        "blocker": "round_reviewer is not configured",
+                    },
+                    {
+                        "kind": "inbox",
+                        "label": "Inspect reviewer inbox",
+                        "command": None,
+                        "safety": "inspect",
+                        "enabled": False,
+                        "blocker": "round_reviewer is not configured",
+                    },
+                ],
+            },
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "Inspect review gate",
                     "command": "agentdeck workbench",
                     "safety": "inspect",
                     "enabled": True,

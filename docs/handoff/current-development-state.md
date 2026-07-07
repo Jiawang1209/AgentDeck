@@ -26,7 +26,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-North-star Phase G4: Worker Lifecycle Visibility.
+North-star Phase G5: Reviewer Gate Visibility.
 
 Phase G1 is already committed: AgentDeck has a read-only `frontdesk` natural-language route:
 
@@ -68,7 +68,7 @@ Expected behavior:
 - Does not read, write, or send input to tmux.
 - Does not approve, reject, dispatch, capture replies, ack inbox, or write state.
 
-The current G4 slice adds:
+Phase G4 is already committed: AgentDeck exposes worker lifecycle visibility through:
 
 ```bash
 agentdeck workbench
@@ -83,6 +83,21 @@ New surface:
 - Does not dispatch approvals or messages.
 - Does not capture pane output automatically.
 - Does not ack inbox items, release work, or write state.
+
+The current G5 slice adds:
+
+```bash
+agentdeck workbench
+```
+
+New surface:
+
+- Adds `review_gate_card`.
+- Derives code-review and round-review readiness from artifacts, replies, traceable reviewer messages, and configured reviewer roles.
+- Treats `reviewer` / `code_reviewer` as the code-review stage.
+- Requires explicit `round_reviewer` configuration for round-level acceptance.
+- Exposes `status`, `reason`, `can_release=false/true`, artifact/review counts, per-stage blockers, and inspect-only trace/inbox controls.
+- Does not release, merge, ack inbox items, dispatch follow-up work, or advance the loop.
 
 ## Cross-Agent Goal Continuity
 
@@ -108,10 +123,10 @@ Continue the active north-star goal; do not redo completed work.
 
 ## Next Best Step
 
-After the current worker lifecycle slice is committed, continue with Phase G5 planning:
+After the current review gate slice is committed, continue with Phase G5 follow-up:
 
-- Add explicit reviewer / code_reviewer / round_reviewer acceptance surfaces.
-- Keep reviewer state derived from artifacts, replies, trace, and plan status rather than model conversation memory.
+- Add explicit role assignment UX/docs for configuring `code_reviewer` and `round_reviewer`.
+- Add natural-language help/command-palette discovery for `review_gate_card`.
 - Preserve human approval before release, merge, ack, or follow-up dispatch.
 
 ## Required Verification Before Handoff
@@ -123,6 +138,7 @@ conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_frontdes
 conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_surfaces_logical_coordination_roles_for_planner_orchestrator_split tests/test_agent_cli.py::test_leader_status_surfaces_provider_and_queue_snapshot_without_mutating_state tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state tests/test_contracts.py::test_leader_status_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_leader_status_contract_response_includes_example_without_drift -q
 conda run -n agentdeck pytest tests/test_agent_cli.py::test_loop_once_recommends_next_explicit_command_without_mutating_state tests/test_agent_cli.py::test_contract_loop_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_loop_example_exports_gui_ready_card tests/test_contracts.py::test_loop_contract_payload_is_reusable_without_cli tests/test_contracts.py::test_loop_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_loop_once_contract_rejects_auto_execution_claim -q
 conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_worker_lifecycle_item_fields tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q
+conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_review_gate_stage_fields tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q
 conda run -n agentdeck pytest -q
 git diff --check
 ```
