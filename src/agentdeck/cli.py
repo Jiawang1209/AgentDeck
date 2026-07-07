@@ -1380,6 +1380,7 @@ def _workbench_snapshot_payload(
     worker_lifecycle_card = _workbench_worker_lifecycle_card(project_view)
     review_gate_card = _workbench_review_gate_card(project_view)
     release_preview_card = _workbench_release_preview_card(review_gate_card, project_view)
+    role_topology_card = _workbench_role_topology_card(project_view)
     ledger_card = _workbench_ledger_card(project_view)
     lineage_card = _workbench_lineage_card(project_view, inbox_card, leader_inbox_card)
     queue_card = _workbench_queue_card(project_view, continue_card, active_queue_source)
@@ -1409,6 +1410,7 @@ def _workbench_snapshot_payload(
         "worker_lifecycle_card": worker_lifecycle_card,
         "review_gate_card": review_gate_card,
         "release_preview_card": release_preview_card,
+        "role_topology_card": role_topology_card,
         "ledger_card": ledger_card,
         "lineage_card": lineage_card,
         "queue_card": queue_card,
@@ -1795,6 +1797,28 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id=None,
         controls=release_preview_card.get("controls"),
     )
+    role_topology_card = (
+        payload.get("role_topology_card") if isinstance(payload.get("role_topology_card"), dict) else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="role_topology",
+        card="role_topology_card",
+        agent_id=None,
+        controls=role_topology_card.get("controls"),
+    )
+    role_topology_roles = (
+        role_topology_card.get("roles") if isinstance(role_topology_card.get("roles"), list) else []
+    )
+    for role in role_topology_roles:
+        if isinstance(role, dict):
+            _append_workbench_control_registry_items(
+                registry,
+                scope="role_topology",
+                card="role_topology_card",
+                agent_id=role.get("agent_id"),
+                controls=role.get("controls"),
+            )
     ledger_card = payload.get("ledger_card") if isinstance(payload.get("ledger_card"), dict) else {}
     _append_workbench_control_registry_items(
         registry,
@@ -2831,6 +2855,119 @@ def _workbench_release_preview_card(
                 enabled=False,
                 blocker="requires goal text" if status in {"ready", "released"} else reason,
             ),
+        ],
+    }
+
+
+def _workbench_role_topology_card(project_view: dict[str, object]) -> dict[str, object]:
+    leader = project_view.get("leader") if isinstance(project_view.get("leader"), dict) else {}
+    coordination_roles = (
+        leader.get("coordination_roles") if isinstance(leader.get("coordination_roles"), list) else []
+    )
+    plans = project_view.get("plans") if isinstance(project_view.get("plans"), dict) else {}
+    plan_count = _safe_int(plans.get("count"), default=0)
+    leader_actions = (
+        project_view.get("leader_actions") if isinstance(project_view.get("leader_actions"), dict) else {}
+    )
+    pending_action = any(
+        isinstance(item, dict) and item.get("status") == "pending"
+        for item in _summary_items(leader_actions)
+    )
+    logical_inspect = {
+        "frontdesk": ("agentdeck leader chat-history", "Inspect intake history"),
+        "planner": ("agentdeck plan list", "Inspect plans"),
+        "orchestrator": ("agentdeck leader actions", "Inspect Leader actions"),
+    }
+    roles: list[dict[str, object]] = []
+    logical_count = 0
+    for role in coordination_roles:
+        if not isinstance(role, dict):
+            continue
+        logical_count += 1
+        role_id = str(role.get("role_id"))
+        if role_id == "planner":
+            status = "planning" if plan_count > 0 else "idle"
+        elif role_id == "orchestrator":
+            status = "coordinating" if pending_action else "idle"
+        else:
+            status = "ready"
+        inspect_command, inspect_label = logical_inspect.get(
+            role_id, ("agentdeck leader status", "Inspect Leader status")
+        )
+        roles.append(
+            {
+                "role_id": role_id,
+                "label": role.get("label"),
+                "agent_id": None,
+                "kind": "logical_role",
+                "provider": role.get("provider"),
+                "lifecycle": role.get("lifecycle"),
+                "runtime_kind": "logical_role",
+                "pane_backed": False,
+                "pane_id": None,
+                "status": status,
+                "blocker": None,
+                "next_command": inspect_command,
+                "controls": [
+                    _control(
+                        kind="inspect",
+                        label=inspect_label,
+                        command=inspect_command,
+                        safety="inspect",
+                    )
+                ],
+            }
+        )
+    worker_card = _workbench_worker_lifecycle_card(project_view)
+    worker_items = worker_card.get("items") if isinstance(worker_card.get("items"), list) else []
+    worker_count = 0
+    for item in worker_items:
+        if not isinstance(item, dict):
+            continue
+        worker_count += 1
+        agent_id = item.get("agent_id")
+        runtime_status = str(item.get("runtime_status") or "unknown")
+        pane_id = item.get("pane_id")
+        inbox_command = item.get("inbox_command")
+        roles.append(
+            {
+                "role_id": item.get("role") or agent_id,
+                "label": item.get("role") or agent_id,
+                "agent_id": agent_id,
+                "kind": "worker",
+                "provider": item.get("provider"),
+                "lifecycle": runtime_status,
+                "runtime_kind": "worker_pane",
+                "pane_backed": runtime_status == "running" and pane_id is not None,
+                "pane_id": pane_id,
+                "status": item.get("lifecycle_stage"),
+                "blocker": None,
+                "next_command": inbox_command,
+                "controls": [
+                    _control(
+                        kind="inspect",
+                        label="Inspect mailbox",
+                        command=inbox_command,
+                        safety="inspect",
+                    )
+                ],
+            }
+        )
+    return {
+        "mode": "role_topology",
+        "title": "Role topology",
+        "source_command": "agentdeck workbench",
+        "count": logical_count + worker_count,
+        "logical_role_count": logical_count,
+        "worker_role_count": worker_count,
+        "roles": roles,
+        "controls": [
+            _control(
+                kind="inspect",
+                label="Inspect role topology",
+                command="agentdeck workbench",
+                safety="inspect",
+            )
         ],
     }
 

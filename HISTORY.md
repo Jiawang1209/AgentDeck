@@ -4,6 +4,16 @@
 
 ## 2026-07-07
 
+### Current - Add role topology workbench card
+
+- 新增 `agentdeck workbench` 的 `role_topology_card`（北极星 Phase G6 第一刀）：把 logical Leader 协调角色（`frontdesk` / `planner` / `orchestrator`，来自 `leader.coordination_roles[]`）和配置的 worker 角色（复用同一份 `worker_lifecycle_card` items）合成一个有序只读角色拓扑。
+- 每个角色暴露 `kind`（`logical_role` | `worker`）、`provider`、`lifecycle`、`runtime_kind`、`pane_backed`、`pane_id`、派生 `status`、`blocker`、`next_command` 和单个 inspect-only 控件；logical 角色恒为 `runtime_kind=logical_role` / `pane_backed=false` / `pane_id=null` / `agent_id=null`，status 由 ProjectView 事实推导（frontdesk=ready，planner 有计划则 planning 否则 idle，orchestrator 有 pending action 则 coordinating 否则 idle），inspect 指向各自只读状态源（chat-history / plan list / leader actions）；worker 角色用 `runtime_kind=worker_pane`，复用 `lifecycle_stage` 作 status，inspect 指向 `agentdeck inbox --agent <id>`。
+- 所有控件进入 `control_registry[]` / `agentdeck controls` 的 `scope=role_topology`（card 级 + 每角色一项，worker 行带 `agent_id`）；三个 logical 角色的 inspect 命令按状态源区分以保证 control_id 唯一。
+- 扩展 workbench contract discovery/example/validator：新增 `WORKBENCH_ROLE_TOPOLOGY_CARD_FIELDS` / `WORKBENCH_ROLE_TOPOLOGY_ITEM_FIELDS`、snapshot 字段、discovery 字段、example 卡片和 `_validate_role_topology_card_contract()`（拒绝 pane-backed logical role、错误 runtime_kind、非 inspect 控件、控件命令与 next_command 漂移等），并把 role_topology scope 同步进 contracts.py 与 cli.py 两处 control registry builder。
+- 保持北极星边界：role topology 是只读投影，不 spawn、不 dispatch、不 capture、不 ack、不 release、不写 state；每个控件都是 inspect-only。
+- 同步 README、`docs/contracts/workbench-schema.md` 和 `docs/handoff/current-development-state.md`，把当前相位推进到 G6，并把下一步指向 per-role blocker/状态富化与自然语言 role topology 发现。
+- 验证记录：已先确认红测失败，`WORKBENCH_ROLE_TOPOLOGY_CARD_FIELDS` 最初不存在（ImportError）、live 输出缺 `role_topology_card`、control_id 冲突与 registry 不匹配；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_workbench_role_topology_card_projects_logical_and_worker_roles tests/test_contracts.py::test_validate_workbench_contract_requires_role_topology_item_fields tests/test_contracts.py::test_validate_workbench_contract_rejects_pane_backed_logical_role tests/test_agent_cli.py::test_contract_workbench_discovers_schema_for_gui_clients tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift -q` 5 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 556 项通过（同步更新 controls/help 命令面板 `item_count_before_filter` 计数 +7）；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 598 项通过。
+
 ### Current - Add release contract discovery
 
 - 新增 `agentdeck contract release` / `--example` 只读契约发现入口：公开 `agentdeck release --confirm` 成功响应的 `response_fields`、`release_record_fields`、ProjectView `release_item_fields` 和 control 字段，example 返回稳定 release 响应示例，不读取或修改 live state。

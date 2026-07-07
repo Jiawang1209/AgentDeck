@@ -86,6 +86,8 @@ from agentdeck.contracts import (
     WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS,
     WORKBENCH_ROLE_AGENT_FIELDS,
     WORKBENCH_ROLE_CARD_FIELDS,
+    WORKBENCH_ROLE_TOPOLOGY_CARD_FIELDS,
+    WORKBENCH_ROLE_TOPOLOGY_ITEM_FIELDS,
     WORKBENCH_REVIEW_GATE_CARD_FIELDS,
     WORKBENCH_REVIEW_GATE_STAGE_FIELDS,
     WORKBENCH_RUNTIME_AGENT_FIELDS,
@@ -1761,6 +1763,8 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert payload["terminal_session_item_fields"] == list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS)
     assert payload["worker_lifecycle_card_fields"] == list(WORKBENCH_WORKER_LIFECYCLE_CARD_FIELDS)
     assert payload["worker_lifecycle_item_fields"] == list(WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS)
+    assert payload["role_topology_card_fields"] == list(WORKBENCH_ROLE_TOPOLOGY_CARD_FIELDS)
+    assert payload["role_topology_item_fields"] == list(WORKBENCH_ROLE_TOPOLOGY_ITEM_FIELDS)
     assert payload["review_gate_card_fields"] == list(WORKBENCH_REVIEW_GATE_CARD_FIELDS)
     assert payload["review_gate_stage_fields"] == list(WORKBENCH_REVIEW_GATE_STAGE_FIELDS)
     assert payload["runtime_agent_fields"] == list(WORKBENCH_RUNTIME_AGENT_FIELDS)
@@ -2208,6 +2212,33 @@ def test_validate_workbench_contract_requires_worker_lifecycle_item_fields() -> 
     assert result == {
         "ok": False,
         "errors": ["missing worker_lifecycle item field: lifecycle_stage"],
+    }
+
+
+def test_validate_workbench_contract_requires_role_topology_item_fields() -> None:
+    payload = workbench_example()
+    del payload["role_topology_card"]["roles"][0]["status"]
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["missing role_topology item field: status"],
+    }
+
+
+def test_validate_workbench_contract_rejects_pane_backed_logical_role() -> None:
+    payload = workbench_example()
+    logical = next(
+        role for role in payload["role_topology_card"]["roles"] if role["kind"] == "logical_role"
+    )
+    logical["pane_backed"] = True
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": ["role_topology logical roles must not be pane-backed"],
     }
 
 

@@ -36,6 +36,8 @@ The contract command returns:
   "review_gate_card_fields": [],
   "review_gate_stage_fields": [],
   "release_preview_card_fields": [],
+  "role_topology_card_fields": [],
+  "role_topology_item_fields": [],
   "ledger_card_fields": [],
   "lineage_card_fields": [],
   "lineage_path_fields": [],
@@ -79,6 +81,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "worker_lifecycle_card": {},
   "review_gate_card": {},
   "release_preview_card": {},
+  "role_topology_card": {},
   "ledger_card": {},
   "lineage_card": {},
   "queue_card": {},
@@ -116,6 +119,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `worker_lifecycle_card` is derived from `project_view.agents[]`, visible runtime status, messages, jobs, replies, artifacts, and inbox summary; it is a task-level status projection for worker roles and does not spawn, dispatch, capture, ack, release, or write state.
 `review_gate_card` is derived from artifacts, reviewer replies, and configured reviewer roles; it exposes code-review and round-review readiness without releasing work, merging changes, acknowledging inbox items, dispatching follow-up work, or advancing the loop.
 `release_preview_card` is derived from `review_gate_card` and the ProjectView `releases` summary; it stays blocked with the same reason until the review gate is ready. While blocked, `next_command` / `release_command` / `next_round_command` stay `null` and the release / next-round controls are disabled `explicit_user` controls without commands. Once the gate is ready, `release_command` and `next_command` must point at the explicit `agentdeck release --confirm` command, the `release_preview` control becomes an enabled `explicit_user` control with the same command, and `next_round_command` exposes the disabled `agentdeck leader plan --task <goal>` template (blocker `requires goal text`). When the current reply pair was already released, the card reports `status=released` / `already_released=true` with reason `round already released` and withdraws the release command, leaving the next-round plan template as the follow-up. Rendering the card never executes the release; only a human running `agentdeck release --confirm` records the round release.
+`role_topology_card` is derived from `leader.coordination_roles[]` and the same `worker_lifecycle_card` items; it is the read-only Phase G6 role topology that unifies logical Leader roles (`frontdesk`, `planner`, `orchestrator`) and configured worker roles with per-role provider, lifecycle, status, blocker, and an inspect-only next-step control. Logical roles stay `runtime_kind=logical_role` / `pane_backed=false` / `pane_id=null` / `agent_id=null`; worker roles use `runtime_kind=worker_pane` and reuse the worker `lifecycle_stage`. Rendering it never spawns, dispatches, captures, acks, releases, or writes state.
 `ledger_card` is derived from `project_view.messages`, `project_view.jobs`, `project_view.replies`, `project_view.artifacts`, and `project_view.inbox`; its `messages.items[]` retains compact worker `prompt_skill_context` so GUI clients can render loaded skill provenance without parsing prompt text or storing full skill snapshots. Its `controls[]` expose the read-only workbench ledger entry for GUI command palettes.
 `lineage_card` is a read-only path projection derived from the same ledger summaries plus visible inbox cards.
 `queue_card` is derived from `project_view.leader_actions`, `project_view.approvals`, `project_view.inbox`, and the recovery-driven next command.
@@ -685,6 +689,63 @@ The card is a gate projection, not a release action. `code_review` uses an agent
 ```
 
 The card has three states. While the gate is `blocked`, `can_release` mirrors the review gate, the card keeps the same reason, exposes no executable release or next-round command, and `release_preview` / `next_round_preview` stay disabled `explicit_user` placeholders with `command=null`; the only enabled control is the inspect jump back to `agentdeck workbench`. Once the gate is `ready`, `release_command` / `next_command` must both be the explicit `agentdeck release --confirm` command, the `release_preview` control becomes enabled with that same command, and `next_round_preview` stays disabled with the `agentdeck leader plan --task <goal>` template and blocker `requires goal text`. When the gate is ready but the current code-review / round-review reply pair already appears in `project_view.releases[]`, the card switches to `status=released`: `can_release` drops to `false`, `already_released` is `true`, the reason is `round already released`, `release_command` / `next_command` return to `null`, and only the disabled next-round plan template remains as the suggested follow-up. `already_released`, `release_count`, and `latest_release_id` are derived from the same ProjectView `releases` summary. The validator rejects an enabled release control whose card is not `can_release=true`, a command that drifts from `release_command`, or a released card that still exposes executable release commands, and a released card requires a ready review gate. Rendering the card never releases, merges, acks inbox items, dispatches follow-up work, or advances the loop; only a human explicitly running `agentdeck release --confirm` records the round release. All controls must appear in `control_registry[]` under `scope=release_preview`.
+
+## Role Topology Card
+
+`role_topology_card` is the Phase G6 read-only role topology projection: it unifies the logical Leader coordination roles (`frontdesk`, `planner`, `orchestrator`) and the configured worker roles into one ordered list so a GUI/TUI can show, at a glance, which role is thinking, waiting, executing, reviewing, or idle.
+
+```json
+{
+  "mode": "role_topology",
+  "title": "Role topology",
+  "source_command": "agentdeck workbench",
+  "count": 6,
+  "logical_role_count": 3,
+  "worker_role_count": 3,
+  "roles": [
+    {
+      "role_id": "frontdesk",
+      "label": "Frontdesk intake",
+      "agent_id": null,
+      "kind": "logical_role",
+      "provider": "local-rule",
+      "lifecycle": "persistent",
+      "runtime_kind": "logical_role",
+      "pane_backed": false,
+      "pane_id": null,
+      "status": "ready",
+      "blocker": null,
+      "next_command": "agentdeck leader chat-history",
+      "controls": [
+        {
+          "kind": "inspect",
+          "label": "Inspect intake history",
+          "command": "agentdeck leader chat-history",
+          "safety": "inspect",
+          "enabled": true,
+          "blocker": null
+        }
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "kind": "inspect",
+      "label": "Inspect role topology",
+      "command": "agentdeck workbench",
+      "safety": "inspect",
+      "enabled": true,
+      "blocker": null
+    }
+  ]
+}
+```
+
+The logical roles are projected from `leader.coordination_roles[]`: they keep `kind=logical_role`, `runtime_kind=logical_role`, `pane_backed=false`, `pane_id=null`, and `agent_id=null`. Their `status` is derived from ProjectView facts — `frontdesk` is always `ready`, `planner` is `planning` when at least one plan exists (else `idle`), and `orchestrator` is `coordinating` when a pending Leader action exists (else `idle`). Each logical role's inspect control points at its own read-only state source: `frontdesk` → `agentdeck leader chat-history`, `planner` → `agentdeck plan list`, `orchestrator` → `agentdeck leader actions`.
+
+The worker roles are projected from the same `worker_lifecycle_card` items: they use `kind=worker`, `runtime_kind=worker_pane`, carry the agent's `agent_id`/`provider`, set `pane_backed` only when the pane is running, reuse the worker `lifecycle_stage` as `status`, and expose an inspect control pointing at `agentdeck inbox --agent <id>`. Each role's single control command must equal that role's `next_command`.
+
+The validator rejects a logical role that claims to be pane-backed, has a pane id, or carries an agent id; a worker role that is not `runtime_kind=worker_pane`; and any role control that is not `safety=inspect` or whose command drifts from `next_command`. Rendering the card never spawns, dispatches, captures, acks, releases, or writes state. All controls appear in `control_registry[]` under `scope=role_topology` (card-level plus one per role, with worker rows carrying their `agent_id`).
 
 ## Ledger Card
 

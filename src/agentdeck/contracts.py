@@ -1270,6 +1270,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "worker_lifecycle_card",
     "review_gate_card",
     "release_preview_card",
+    "role_topology_card",
     "ledger_card",
     "lineage_card",
     "queue_card",
@@ -1608,6 +1609,33 @@ WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS = (
     "next_command",
     "release_command",
     "next_round_command",
+    "controls",
+)
+
+WORKBENCH_ROLE_TOPOLOGY_CARD_FIELDS = (
+    "mode",
+    "title",
+    "source_command",
+    "count",
+    "logical_role_count",
+    "worker_role_count",
+    "roles",
+    "controls",
+)
+
+WORKBENCH_ROLE_TOPOLOGY_ITEM_FIELDS = (
+    "role_id",
+    "label",
+    "agent_id",
+    "kind",
+    "provider",
+    "lifecycle",
+    "runtime_kind",
+    "pane_backed",
+    "pane_id",
+    "status",
+    "blocker",
+    "next_command",
     "controls",
 )
 
@@ -2911,6 +2939,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "review_gate_card_fields": list(WORKBENCH_REVIEW_GATE_CARD_FIELDS),
         "review_gate_stage_fields": list(WORKBENCH_REVIEW_GATE_STAGE_FIELDS),
         "release_preview_card_fields": list(WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS),
+        "role_topology_card_fields": list(WORKBENCH_ROLE_TOPOLOGY_CARD_FIELDS),
+        "role_topology_item_fields": list(WORKBENCH_ROLE_TOPOLOGY_ITEM_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
@@ -3860,6 +3890,8 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "review_gate_card_fields": list(WORKBENCH_REVIEW_GATE_CARD_FIELDS),
         "review_gate_stage_fields": list(WORKBENCH_REVIEW_GATE_STAGE_FIELDS),
         "release_preview_card_fields": list(WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS),
+        "role_topology_card_fields": list(WORKBENCH_ROLE_TOPOLOGY_CARD_FIELDS),
+        "role_topology_item_fields": list(WORKBENCH_ROLE_TOPOLOGY_ITEM_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
@@ -5597,6 +5629,102 @@ def _validate_worker_lifecycle_card_contract(
                 )
     elif "items" in worker_lifecycle_card:
         errors.append(_prefixed_contract_error(prefix, "worker_lifecycle_card.items must be a list"))
+
+
+def _validate_role_topology_card_contract(
+    errors: list[str], role_topology_card: dict[str, object], *, prefix: str
+) -> None:
+    for field in WORKBENCH_ROLE_TOPOLOGY_CARD_FIELDS:
+        if field not in role_topology_card:
+            errors.append(_prefixed_contract_error(prefix, f"missing role_topology_card field: {field}"))
+    if role_topology_card.get("mode") != "role_topology":
+        errors.append(_prefixed_contract_error(prefix, "role_topology_card.mode must be role_topology"))
+    if role_topology_card.get("source_command") != "agentdeck workbench":
+        errors.append(
+            _prefixed_contract_error(prefix, "role_topology_card.source_command must be agentdeck workbench")
+        )
+    for count_field in ("count", "logical_role_count", "worker_role_count"):
+        if count_field in role_topology_card and not isinstance(role_topology_card.get(count_field), int):
+            errors.append(_prefixed_contract_error(prefix, f"role_topology_card.{count_field} must be an integer"))
+    controls = role_topology_card.get("controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                errors.append(_prefixed_contract_error(prefix, "role_topology_card.controls items must be objects"))
+                continue
+            for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                if field not in control:
+                    errors.append(
+                        _prefixed_contract_error(prefix, f"role_topology_card.controls missing field: {field}")
+                    )
+            if control.get("safety") != "inspect":
+                errors.append(_prefixed_contract_error(prefix, "role_topology_card.controls must use safety=inspect"))
+            if control.get("enabled") is False and not control.get("blocker"):
+                errors.append(
+                    _prefixed_contract_error(prefix, "role_topology_card.controls disabled controls need blocker")
+                )
+    elif "controls" in role_topology_card:
+        errors.append(_prefixed_contract_error(prefix, "role_topology_card.controls must be a list"))
+    roles = role_topology_card.get("roles")
+    if isinstance(roles, list):
+        for index, role in enumerate(roles):
+            if not isinstance(role, dict):
+                errors.append(_prefixed_contract_error(prefix, f"role_topology_card.roles[{index}] must be an object"))
+                continue
+            for field in WORKBENCH_ROLE_TOPOLOGY_ITEM_FIELDS:
+                if field not in role:
+                    if index == 0:
+                        errors.append(_prefixed_contract_error(prefix, f"missing role_topology item field: {field}"))
+                    else:
+                        errors.append(
+                            _prefixed_contract_error(
+                                prefix, f"role_topology_card.roles[{index}] missing field: {field}"
+                            )
+                        )
+            kind = role.get("kind")
+            if kind not in {"logical_role", "worker"}:
+                errors.append(
+                    _prefixed_contract_error(prefix, f"role_topology_card.roles[{index}].kind must be logical_role or worker")
+                )
+            if kind == "logical_role":
+                if role.get("runtime_kind") != "logical_role":
+                    errors.append(_prefixed_contract_error(prefix, "role_topology logical roles must use runtime_kind=logical_role"))
+                if role.get("pane_backed") is not False:
+                    errors.append(_prefixed_contract_error(prefix, "role_topology logical roles must not be pane-backed"))
+                if role.get("pane_id") is not None:
+                    errors.append(_prefixed_contract_error(prefix, "role_topology logical roles must keep pane_id null"))
+                if role.get("agent_id") is not None:
+                    errors.append(_prefixed_contract_error(prefix, "role_topology logical roles must keep agent_id null"))
+            elif kind == "worker":
+                if role.get("runtime_kind") != "worker_pane":
+                    errors.append(_prefixed_contract_error(prefix, "role_topology worker roles must use runtime_kind=worker_pane"))
+                if not isinstance(role.get("pane_backed"), bool):
+                    errors.append(_prefixed_contract_error(prefix, "role_topology worker roles must set boolean pane_backed"))
+            role_controls = role.get("controls")
+            if isinstance(role_controls, list):
+                for control in role_controls:
+                    if not isinstance(control, dict):
+                        errors.append(
+                            _prefixed_contract_error(prefix, f"role_topology_card.roles[{index}].controls items must be objects")
+                        )
+                        continue
+                    for field in WORKBENCH_RUNTIME_CONTROL_FIELDS:
+                        if field not in control:
+                            errors.append(
+                                _prefixed_contract_error(prefix, f"role_topology role control missing field: {field}")
+                            )
+                    if control.get("safety") != "inspect":
+                        errors.append(
+                            _prefixed_contract_error(prefix, "role_topology role controls must use safety=inspect")
+                        )
+                    if control.get("command") != role.get("next_command"):
+                        errors.append(
+                            _prefixed_contract_error(prefix, "role_topology role control command must match next_command")
+                        )
+            elif "controls" in role:
+                errors.append(_prefixed_contract_error(prefix, f"role_topology_card.roles[{index}].controls must be a list"))
+    elif "roles" in role_topology_card:
+        errors.append(_prefixed_contract_error(prefix, "role_topology_card.roles must be a list"))
 
 
 def _validate_review_gate_card_contract(
@@ -8077,6 +8205,11 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
                 errors.append("blocked release_preview_card.reason must match review_gate_card.reason")
     elif "release_preview_card" in payload:
         errors.append("release_preview_card must be an object")
+    role_topology_card = payload.get("role_topology_card")
+    if isinstance(role_topology_card, dict):
+        _validate_role_topology_card_contract(errors, role_topology_card, prefix="")
+    elif "role_topology_card" in payload:
+        errors.append("role_topology_card must be an object")
     ledger_card = payload.get("ledger_card")
     if isinstance(ledger_card, dict):
         _validate_ledger_card_contract(errors, ledger_card, prefix="")
@@ -9780,6 +9913,28 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         agent_id=None,
         controls=release_preview_card.get("controls"),
     )
+    role_topology_card = (
+        payload.get("role_topology_card") if isinstance(payload.get("role_topology_card"), dict) else {}
+    )
+    _append_control_registry_items(
+        registry,
+        scope="role_topology",
+        card="role_topology_card",
+        agent_id=None,
+        controls=role_topology_card.get("controls"),
+    )
+    role_topology_roles = (
+        role_topology_card.get("roles") if isinstance(role_topology_card.get("roles"), list) else []
+    )
+    for role in role_topology_roles:
+        if isinstance(role, dict):
+            _append_control_registry_items(
+                registry,
+                scope="role_topology",
+                card="role_topology_card",
+                agent_id=role.get("agent_id"),
+                controls=role.get("controls"),
+            )
     ledger_card = payload.get("ledger_card") if isinstance(payload.get("ledger_card"), dict) else {}
     _append_control_registry_items(
         registry,
@@ -10816,6 +10971,170 @@ def workbench_example() -> dict[str, object]:
                     "enabled": False,
                     "blocker": "round_reviewer is not configured",
                 },
+            ],
+        },
+        "role_topology_card": {
+            "mode": "role_topology",
+            "title": "Role topology",
+            "source_command": "agentdeck workbench",
+            "count": 6,
+            "logical_role_count": 3,
+            "worker_role_count": 3,
+            "roles": [
+                {
+                    "role_id": "frontdesk",
+                    "label": "Frontdesk intake",
+                    "agent_id": None,
+                    "kind": "logical_role",
+                    "provider": "local-rule",
+                    "lifecycle": "persistent",
+                    "runtime_kind": "logical_role",
+                    "pane_backed": False,
+                    "pane_id": None,
+                    "status": "ready",
+                    "blocker": None,
+                    "next_command": "agentdeck leader chat-history",
+                    "controls": [
+                        {
+                            "kind": "inspect",
+                            "label": "Inspect intake history",
+                            "command": "agentdeck leader chat-history",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        }
+                    ],
+                },
+                {
+                    "role_id": "planner",
+                    "label": "Planner",
+                    "agent_id": None,
+                    "kind": "logical_role",
+                    "provider": "fake",
+                    "lifecycle": "persistent",
+                    "runtime_kind": "logical_role",
+                    "pane_backed": False,
+                    "pane_id": None,
+                    "status": "planning",
+                    "blocker": None,
+                    "next_command": "agentdeck plan list",
+                    "controls": [
+                        {
+                            "kind": "inspect",
+                            "label": "Inspect plans",
+                            "command": "agentdeck plan list",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        }
+                    ],
+                },
+                {
+                    "role_id": "orchestrator",
+                    "label": "Orchestrator",
+                    "agent_id": None,
+                    "kind": "logical_role",
+                    "provider": "fake",
+                    "lifecycle": "persistent",
+                    "runtime_kind": "logical_role",
+                    "pane_backed": False,
+                    "pane_id": None,
+                    "status": "coordinating",
+                    "blocker": None,
+                    "next_command": "agentdeck leader actions",
+                    "controls": [
+                        {
+                            "kind": "inspect",
+                            "label": "Inspect Leader actions",
+                            "command": "agentdeck leader actions",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        }
+                    ],
+                },
+                {
+                    "role_id": "planner",
+                    "label": "planner",
+                    "agent_id": "planner",
+                    "kind": "worker",
+                    "provider": "codex",
+                    "lifecycle": "running",
+                    "runtime_kind": "worker_pane",
+                    "pane_backed": True,
+                    "pane_id": "%42",
+                    "status": "inbox_pending",
+                    "blocker": None,
+                    "next_command": "agentdeck inbox --agent planner",
+                    "controls": [
+                        {
+                            "kind": "inspect",
+                            "label": "Inspect mailbox",
+                            "command": "agentdeck inbox --agent planner",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        }
+                    ],
+                },
+                {
+                    "role_id": "coder",
+                    "label": "coder",
+                    "agent_id": "coder",
+                    "kind": "worker",
+                    "provider": "claude",
+                    "lifecycle": "configured",
+                    "runtime_kind": "worker_pane",
+                    "pane_backed": False,
+                    "pane_id": None,
+                    "status": "idle",
+                    "blocker": None,
+                    "next_command": "agentdeck inbox --agent coder",
+                    "controls": [
+                        {
+                            "kind": "inspect",
+                            "label": "Inspect mailbox",
+                            "command": "agentdeck inbox --agent coder",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        }
+                    ],
+                },
+                {
+                    "role_id": "reviewer",
+                    "label": "reviewer",
+                    "agent_id": "reviewer",
+                    "kind": "worker",
+                    "provider": "codex",
+                    "lifecycle": "configured",
+                    "runtime_kind": "worker_pane",
+                    "pane_backed": False,
+                    "pane_id": None,
+                    "status": "idle",
+                    "blocker": None,
+                    "next_command": "agentdeck inbox --agent reviewer",
+                    "controls": [
+                        {
+                            "kind": "inspect",
+                            "label": "Inspect mailbox",
+                            "command": "agentdeck inbox --agent reviewer",
+                            "safety": "inspect",
+                            "enabled": True,
+                            "blocker": None,
+                        }
+                    ],
+                },
+            ],
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "Inspect role topology",
+                    "command": "agentdeck workbench",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                }
             ],
         },
         "ledger_card": {

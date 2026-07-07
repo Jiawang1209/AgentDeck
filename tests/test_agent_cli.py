@@ -5353,6 +5353,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "worker_lifecycle_card",
         "review_gate_card",
         "release_preview_card",
+        "role_topology_card",
         "ledger_card",
         "lineage_card",
         "queue_card",
@@ -5566,6 +5567,31 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "next_round_command",
         "controls",
     ]
+    assert payload["role_topology_card_fields"] == [
+        "mode",
+        "title",
+        "source_command",
+        "count",
+        "logical_role_count",
+        "worker_role_count",
+        "roles",
+        "controls",
+    ]
+    assert payload["role_topology_item_fields"] == [
+        "role_id",
+        "label",
+        "agent_id",
+        "kind",
+        "provider",
+        "lifecycle",
+        "runtime_kind",
+        "pane_backed",
+        "pane_id",
+        "status",
+        "blocker",
+        "next_command",
+        "controls",
+    ]
     assert payload["ledger_card_fields"] == [
         "messages",
         "jobs",
@@ -5695,6 +5721,99 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
     ]
     assert payload["project_view_contract"] == "agentdeck contract project-view"
     assert payload["continue_contract"] == "agentdeck contract continue"
+
+
+def test_workbench_role_topology_card_projects_logical_and_worker_roles(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    card = payload["role_topology_card"]
+    assert card["mode"] == "role_topology"
+    assert card["source_command"] == "agentdeck workbench"
+    assert card["logical_role_count"] == 3
+    assert card["worker_role_count"] == 3
+    assert card["count"] == 6
+    assert card["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect role topology",
+            "command": "agentdeck workbench",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
+    roles = {role["role_id"]: role for role in card["roles"]}
+    assert [role["role_id"] for role in card["roles"]] == [
+        "frontdesk",
+        "planner",
+        "orchestrator",
+        "planning",
+        "implementation",
+        "review",
+    ]
+    frontdesk = roles["frontdesk"]
+    assert frontdesk["kind"] == "logical_role"
+    assert frontdesk["agent_id"] is None
+    assert frontdesk["provider"] == "local-rule"
+    assert frontdesk["runtime_kind"] == "logical_role"
+    assert frontdesk["pane_backed"] is False
+    assert frontdesk["pane_id"] is None
+    assert frontdesk["status"] == "ready"
+    assert frontdesk["blocker"] is None
+    assert frontdesk["next_command"] == "agentdeck leader chat-history"
+    assert frontdesk["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect intake history",
+            "command": "agentdeck leader chat-history",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
+    planner_logical = roles["planner"]
+    assert planner_logical["kind"] == "logical_role"
+    assert planner_logical["provider"] == "deepseek"
+    assert planner_logical["status"] == "idle"
+    assert planner_logical["next_command"] == "agentdeck plan list"
+    assert roles["orchestrator"]["status"] == "idle"
+    assert roles["orchestrator"]["next_command"] == "agentdeck leader actions"
+    worker = roles["implementation"]
+    assert worker["kind"] == "worker"
+    assert worker["agent_id"] == "coder"
+    assert worker["provider"] == "codex"
+    assert worker["runtime_kind"] == "worker_pane"
+    assert worker["pane_backed"] is False
+    assert worker["lifecycle"] == "configured"
+    assert worker["status"] == "idle"
+    assert worker["next_command"] == "agentdeck inbox --agent coder"
+    assert worker["controls"] == [
+        {
+            "kind": "inspect",
+            "label": "Inspect mailbox",
+            "command": "agentdeck inbox --agent coder",
+            "safety": "inspect",
+            "enabled": True,
+            "blocker": None,
+        }
+    ]
+    topology_controls = {
+        (item["scope"], item["card"], item["kind"], item["agent_id"])
+        for item in payload["control_registry"]
+    }
+    assert {
+        ("role_topology", "role_topology_card", "inspect", None),
+        ("role_topology", "role_topology_card", "inspect", "coder"),
+    } <= topology_controls
+    state_after = StateStore(root).load()
+    assert state_after == state_before
 
 
 def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state(
@@ -7535,7 +7654,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 98,
+        "item_count_before_filter": 105,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -7671,7 +7790,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 97,
+        "item_count_before_filter": 104,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -7714,7 +7833,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 98,
+        "item_count_before_filter": 105,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -7753,7 +7872,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 98,
+        "item_count_before_filter": 105,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -7786,7 +7905,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 98,
+        "item_count_before_filter": 105,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -7825,7 +7944,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 98,
+        "item_count_before_filter": 105,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

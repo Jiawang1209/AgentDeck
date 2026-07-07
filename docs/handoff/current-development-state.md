@@ -215,25 +215,36 @@ New behavior:
 - When the review gate is ready but the current code-review / round-review reply pair was already released, the card reports `status=released` with reason `round already released`, withdraws `release_command` / `next_command`, and keeps only the disabled next-round plan template.
 - Validators reject a released card that still exposes executable release commands and require a ready review gate behind any released card.
 
-The release contract discovery slice is already committed:
+The release contract discovery slice is already committed (Phase G5 complete):
+
+- Read-only `agentdeck contract release` / `--example` discovery, and `agentdeck release --confirm` now self-validates via `validate_release_contract()`.
+
+## Current Phase
+
+North-star Phase G6: Role Topology GUI.
+
+The first G6 slice is already committed:
 
 ```bash
-agentdeck contract release
-agentdeck contract release --example
+agentdeck workbench
 ```
 
-New behavior:
+New surface:
 
-- Read-only discovery of the `agentdeck release --confirm` success response: `response_fields`, `release_record_fields`, ProjectView `release_item_fields`, and control fields, documented in `docs/contracts/release-schema.md` and indexed by `agentdeck contract list`.
-- `agentdeck release --confirm` now gates its success payload through `validate_release_contract()` before printing; a payload that fails the contract returns non-zero instead of printing half-broken JSON.
+- Adds `role_topology_card`, a read-only unified role topology.
+- Projects the three logical Leader coordination roles (`frontdesk`, `planner`, `orchestrator`) from `leader.coordination_roles[]` plus the configured worker roles from the same `worker_lifecycle_card` items.
+- Each role carries `kind` (`logical_role` | `worker`), `provider`, `lifecycle`, `runtime_kind`, `pane_backed`, `pane_id`, a derived `status`, `blocker`, `next_command`, and a single inspect-only control.
+- Logical roles keep `runtime_kind=logical_role` / `pane_backed=false` / `pane_id=null` / `agent_id=null`; their inspect control points at their own read-only state source (`frontdesk` → `agentdeck leader chat-history`, `planner` → `agentdeck plan list`, `orchestrator` → `agentdeck leader actions`). Worker roles use `runtime_kind=worker_pane`, reuse the worker `lifecycle_stage` as `status`, and inspect via `agentdeck inbox --agent <id>`.
+- All controls appear in `control_registry[]` / `agentdeck controls` under `scope=role_topology`.
+- Does not spawn, dispatch, capture, ack, release, or write state; every control is inspect-only.
 
 ## Next Best Step
 
-With Phase G5 (review gate → release preview → explicit release → history → contract discovery) complete, continue with the next north-star follow-up:
+Continue Phase G6 with the next follow-up:
 
-- Optionally add natural-language discovery for the release action (e.g. a read-only release-preview chat mode already exists; a release-history chat mode could reuse ProjectView `releases`); keep the explicit command as the only write path.
-- Or move to the next roadmap phase after G5 per `docs/roadmap/ultimate-goal-roadmap.md`.
-- Preserve human approval before any release, merge, ack, or follow-up dispatch.
+- Add per-role blocker derivation and richer status (e.g. surface review-gate stage status onto the matching reviewer role, and mark a role blocked when it is waiting on an upstream role or approval), so the "at a glance which role is blocked" acceptance criterion is fully met.
+- Optionally add a natural-language `role topology` chat mode that embeds the same `role_topology_card` with a filtered `control_registry_card` (mirroring the review-gate / release-preview chat discovery pattern).
+- Preserve human approval and keep every topology surface read-only.
 
 ## Required Verification Before Handoff
 
