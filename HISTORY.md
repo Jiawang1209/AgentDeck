@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Surface release round history and already-released awareness
+
+- 新增 ProjectView 顶层 `releases` 摘要：`count` + `items[]`，每条包含 release_id、round、status、review gate 快照、code/round reviewer 与 reply id、created_at，以及指向 round review reply lineage 的 `trace_command`；`agentdeck status` / workbench 同源暴露轮次历史。
+- 扩展 `release_preview_card`：新增 `already_released` / `release_count` / `latest_release_id`，全部派生自同一份 ProjectView `releases` 摘要；验收门 ready 但当前 code review / round review reply 对已 release 过时，卡片进入 `status=released`，reason 为 `round already released`，`release_command` / `next_command` 收回为 `null`，只保留 disabled 下一轮 plan 模板，和 `agentdeck release --confirm` 的防重复拒绝语义保持同源。
+- 扩展契约与 validator：`PROJECT_VIEW_TOP_LEVEL_FIELDS` 加入 `releases`，新增 `PROJECT_VIEW_RELEASE_ITEM_FIELDS` 与 summary item 校验；release preview validator 支持 blocked/ready/released 三态，released 卡必须 can_release=false、already_released=true、命令字段为 null 且仍暴露下一轮模板；workbench / leader-chat 的 release/review-gate 一致性检查放宽为 released 卡要求 ready 验收门。
+- 保持北极星边界：releases 摘要与 released 卡都是只读审计投影，不 release、不 merge、不 ack、不 dispatch、不调用 provider、不碰 tmux;唯一写入路径仍是显式 `agentdeck release --confirm`。
+- 同步 README、`docs/contracts/project-view-schema.md`、`docs/contracts/workbench-schema.md` 和 `docs/handoff/current-development-state.md`，把下一步指向 `agentdeck contract release` 契约发现。
+- 验证记录：已先确认红测失败，`agentdeck status` 最初没有 `releases` 顶层字段、released 状态下卡片仍暴露 release 命令、validator 缺少 released 规则；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_status_surfaces_release_round_history_after_explicit_release tests/test_agent_cli.py::test_workbench_release_preview_marks_round_released_after_release tests/test_contracts.py::test_validate_workbench_contract_rejects_released_preview_with_executable_command -q` 3 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 548 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 590 项通过。
+
 ### Current - Wire release preview card to explicit release command
 
 - 扩展 `agentdeck workbench` / 自然语言 `查看发布预览` 共用的 `_workbench_release_preview_card`：验收门 ready 时，`release_command` / `next_command` 指向显式 `agentdeck release --confirm`，`release_preview` 控件变为 enabled `explicit_user`（command 同源），`next_round_command` 暴露 disabled `agentdeck leader plan --task <goal>` 模板且 blocker 为 `requires goal text`。

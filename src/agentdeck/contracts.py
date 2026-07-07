@@ -175,6 +175,7 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "jobs",
     "replies",
     "artifacts",
+    "releases",
     "chat_turns",
     "leader_errors",
     "leader_actions",
@@ -819,6 +820,21 @@ PROJECT_VIEW_ARTIFACT_ITEM_FIELDS = (
     "path",
     "kind",
     "status",
+    "created_at",
+    "trace_command",
+)
+
+PROJECT_VIEW_RELEASE_ITEM_FIELDS = (
+    "release_id",
+    "round",
+    "status",
+    "review_gate_status",
+    "artifact_count",
+    "review_reply_count",
+    "code_reviewer_id",
+    "round_reviewer_id",
+    "code_review_reply_id",
+    "round_review_reply_id",
     "created_at",
     "trace_command",
 )
@@ -1553,6 +1569,9 @@ WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS = (
     "reason",
     "review_gate_status",
     "can_release",
+    "already_released",
+    "release_count",
+    "latest_release_id",
     "next_command",
     "release_command",
     "next_round_command",
@@ -2033,6 +2052,7 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "job_item_fields": list(PROJECT_VIEW_JOB_ITEM_FIELDS),
         "reply_item_fields": list(PROJECT_VIEW_REPLY_ITEM_FIELDS),
         "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
+        "release_item_fields": list(PROJECT_VIEW_RELEASE_ITEM_FIELDS),
     }
 
 
@@ -2058,6 +2078,7 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_job_item_fields"] = list(example["jobs"]["items"][0])
         payload["example_reply_item_fields"] = list(example["replies"]["items"][0])
         payload["example_artifact_item_fields"] = list(example["artifacts"]["items"][0])
+        payload["example_release_item_fields"] = list(example["releases"]["items"][0])
         payload["example_project_view"] = example
     return payload
 
@@ -4160,6 +4181,7 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     _validate_project_view_summary_items(errors, payload, "jobs", PROJECT_VIEW_JOB_ITEM_FIELDS, "job")
     _validate_project_view_summary_items(errors, payload, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
     _validate_project_view_summary_items(errors, payload, "artifacts", PROJECT_VIEW_ARTIFACT_ITEM_FIELDS, "artifact")
+    _validate_project_view_summary_items(errors, payload, "releases", PROJECT_VIEW_RELEASE_ITEM_FIELDS, "release")
     return {"ok": not errors, "errors": errors}
 
 
@@ -5471,13 +5493,22 @@ def _validate_release_preview_card_contract(
         errors.append(_prefixed_contract_error(prefix, "release_preview_card.mode must be release_preview"))
     if release_preview_card.get("source_command") != "agentdeck workbench":
         errors.append(_prefixed_contract_error(prefix, "release_preview_card.source_command must be agentdeck workbench"))
-    if release_preview_card.get("status") not in {"blocked", "ready"}:
-        errors.append(_prefixed_contract_error(prefix, "release_preview_card.status must be blocked or ready"))
+    if release_preview_card.get("status") not in {"blocked", "ready", "released"}:
+        errors.append(_prefixed_contract_error(prefix, "release_preview_card.status must be blocked, ready, or released"))
     if "can_release" in release_preview_card and not isinstance(release_preview_card.get("can_release"), bool):
         errors.append(_prefixed_contract_error(prefix, "release_preview_card.can_release must be a boolean"))
+    if "already_released" in release_preview_card and not isinstance(
+        release_preview_card.get("already_released"), bool
+    ):
+        errors.append(_prefixed_contract_error(prefix, "release_preview_card.already_released must be a boolean"))
+    if "release_count" in release_preview_card and not isinstance(release_preview_card.get("release_count"), int):
+        errors.append(_prefixed_contract_error(prefix, "release_preview_card.release_count must be an integer"))
     if release_preview_card.get("status") == "blocked" and not release_preview_card.get("reason"):
         errors.append(_prefixed_contract_error(prefix, "blocked release_preview_card requires reason"))
-    if release_preview_card.get("can_release") is True:
+    next_round_template = "agentdeck leader plan --task <goal>"
+    if release_preview_card.get("status") == "ready":
+        if release_preview_card.get("can_release") is not True:
+            errors.append(_prefixed_contract_error(prefix, "ready release_preview_card requires can_release=true"))
         if release_preview_card.get("release_command") != "agentdeck release --confirm":
             errors.append(
                 _prefixed_contract_error(prefix, "ready release_preview_card must expose the explicit release command")
@@ -5486,7 +5517,41 @@ def _validate_release_preview_card_contract(
             errors.append(
                 _prefixed_contract_error(prefix, "release_preview_card.next_command must match release_command")
             )
+        if release_preview_card.get("next_round_command") != next_round_template:
+            errors.append(
+                _prefixed_contract_error(prefix, "ready release_preview_card must expose the next-round plan template")
+            )
+    elif release_preview_card.get("status") == "released":
+        if release_preview_card.get("can_release") is not False:
+            errors.append(
+                _prefixed_contract_error(prefix, "released release_preview_card must keep can_release false")
+            )
+        if release_preview_card.get("already_released") is not True:
+            errors.append(
+                _prefixed_contract_error(prefix, "released release_preview_card must set already_released true")
+            )
+        if release_preview_card.get("reason") != "round already released":
+            errors.append(
+                _prefixed_contract_error(prefix, "released release_preview_card must use reason round already released")
+            )
+        for command_field in ("next_command", "release_command"):
+            if release_preview_card.get(command_field) is not None:
+                errors.append(
+                    _prefixed_contract_error(
+                        prefix, f"released release_preview_card must keep {command_field} null"
+                    )
+                )
+        if release_preview_card.get("next_round_command") != next_round_template:
+            errors.append(
+                _prefixed_contract_error(
+                    prefix, "released release_preview_card must expose the next-round plan template"
+                )
+            )
     else:
+        if release_preview_card.get("already_released") is not False:
+            errors.append(
+                _prefixed_contract_error(prefix, "blocked release_preview_card must keep already_released false")
+            )
         for command_field in ("next_command", "release_command", "next_round_command"):
             if release_preview_card.get(command_field) is not None:
                 errors.append(
@@ -6196,7 +6261,10 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
     if isinstance(release_preview_card, dict):
         _validate_release_preview_card_contract(errors, release_preview_card, prefix="release_preview_card")
         if isinstance(review_gate_card, dict):
-            if release_preview_card.get("can_release") != review_gate_card.get("can_release"):
+            if release_preview_card.get("status") == "released":
+                if review_gate_card.get("can_release") is not True:
+                    errors.append("released release_preview_card requires a ready review gate")
+            elif release_preview_card.get("can_release") != review_gate_card.get("can_release"):
                 errors.append("release_preview_card.can_release must match review_gate_card.can_release")
             if (
                 release_preview_card.get("status") == "blocked"
@@ -7797,7 +7865,10 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
     if isinstance(release_preview_card, dict):
         _validate_release_preview_card_contract(errors, release_preview_card, prefix="")
         if isinstance(review_gate_card, dict):
-            if release_preview_card.get("can_release") != review_gate_card.get("can_release"):
+            if release_preview_card.get("status") == "released":
+                if review_gate_card.get("can_release") is not True:
+                    errors.append("released release_preview_card requires a ready review gate")
+            elif release_preview_card.get("can_release") != review_gate_card.get("can_release"):
                 errors.append("release_preview_card.can_release must match review_gate_card.can_release")
             if (
                 release_preview_card.get("status") == "blocked"
@@ -8227,6 +8298,25 @@ def project_view_example() -> dict[str, object]:
                     "status": "created",
                     "created_at": "2026-07-04T00:00:02+00:00",
                     "trace_command": "agentdeck trace --id msg_example",
+                }
+            ],
+        },
+        "releases": {
+            "count": 1,
+            "items": [
+                {
+                    "release_id": "rel_example",
+                    "round": 1,
+                    "status": "released",
+                    "review_gate_status": "ready",
+                    "artifact_count": 1,
+                    "review_reply_count": 2,
+                    "code_reviewer_id": "reviewer",
+                    "round_reviewer_id": "coder",
+                    "code_review_reply_id": "rep_example",
+                    "round_review_reply_id": "rep_round_example",
+                    "created_at": "2026-07-04T00:00:03+00:00",
+                    "trace_command": "agentdeck trace --id rep_round_example",
                 }
             ],
         },
@@ -10495,6 +10585,9 @@ def workbench_example() -> dict[str, object]:
             "reason": "round_reviewer is not configured",
             "review_gate_status": "blocked",
             "can_release": False,
+            "already_released": False,
+            "release_count": 1,
+            "latest_release_id": "rel_example",
             "next_command": None,
             "release_command": None,
             "next_round_command": None,

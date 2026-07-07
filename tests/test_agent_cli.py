@@ -2778,6 +2778,105 @@ def test_workbench_release_preview_exposes_explicit_release_command_when_gate_re
     assert registry_release_item["enabled"] is True
 
 
+def test_status_surfaces_release_round_history_after_explicit_release(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    assert (
+        cli.main(
+            [
+                "agent",
+                "assign-role",
+                "--agent",
+                "coder",
+                "--role",
+                "round_reviewer",
+                "--role-prompt",
+                "你负责整轮验收。",
+            ]
+        )
+        == 0
+    )
+    _seed_review_gate_ledger(root, include_round_review=True)
+    capsys.readouterr()
+    assert cli.main(["release", "--confirm"]) == 0
+    release_id = json.loads(capsys.readouterr().out)["release"]["release_id"]
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    releases = payload["releases"]
+    assert releases["count"] == 1
+    item = releases["items"][0]
+    assert item == {
+        "release_id": release_id,
+        "round": 1,
+        "status": "released",
+        "review_gate_status": "ready",
+        "artifact_count": 1,
+        "review_reply_count": 2,
+        "code_reviewer_id": "reviewer",
+        "round_reviewer_id": "coder",
+        "code_review_reply_id": "rep_review",
+        "round_review_reply_id": "rep_round",
+        "created_at": item["created_at"],
+        "trace_command": "agentdeck trace --id rep_round",
+    }
+
+
+def test_workbench_release_preview_marks_round_released_after_release(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    assert (
+        cli.main(
+            [
+                "agent",
+                "assign-role",
+                "--agent",
+                "coder",
+                "--role",
+                "round_reviewer",
+                "--role-prompt",
+                "你负责整轮验收。",
+            ]
+        )
+        == 0
+    )
+    _seed_review_gate_ledger(root, include_round_review=True)
+    capsys.readouterr()
+    assert cli.main(["release", "--confirm"]) == 0
+    release_id = json.loads(capsys.readouterr().out)["release"]["release_id"]
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    card = payload["release_preview_card"]
+    assert card["status"] == "released"
+    assert card["can_release"] is False
+    assert card["reason"] == "round already released"
+    assert card["review_gate_status"] == "ready"
+    assert card["already_released"] is True
+    assert card["release_count"] == 1
+    assert card["latest_release_id"] == release_id
+    assert card["release_command"] is None
+    assert card["next_command"] is None
+    assert card["next_round_command"] == "agentdeck leader plan --task <goal>"
+    controls = {control["kind"]: control for control in card["controls"]}
+    release_control = controls["release_preview"]
+    assert release_control["command"] is None
+    assert release_control["enabled"] is False
+    assert release_control["blocker"] == "round already released"
+    next_round_control = controls["next_round_preview"]
+    assert next_round_control["command"] == "agentdeck leader plan --task <goal>"
+    assert next_round_control["enabled"] is False
+    assert next_round_control["blocker"] == "requires goal text"
+    assert payload["project_view"]["releases"]["count"] == 1
+    assert payload["project_view"]["releases"]["items"][0]["release_id"] == release_id
+
+
 def test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -5424,6 +5523,9 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "reason",
         "review_gate_status",
         "can_release",
+        "already_released",
+        "release_count",
+        "latest_release_id",
         "next_command",
         "release_command",
         "next_round_command",
@@ -5839,6 +5941,9 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "reason": "round_reviewer is not configured",
         "review_gate_status": "blocked",
         "can_release": False,
+        "already_released": False,
+        "release_count": 0,
+        "latest_release_id": None,
         "next_command": None,
         "release_command": None,
         "next_round_command": None,

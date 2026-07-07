@@ -2154,6 +2154,29 @@ def test_validate_workbench_contract_requires_review_gate_stage_fields() -> None
     }
 
 
+def test_validate_workbench_contract_rejects_released_preview_with_executable_command() -> None:
+    payload = workbench_example()
+    card = payload["release_preview_card"]
+    card["status"] = "released"
+    card["reason"] = "round already released"
+    card["already_released"] = True
+    card["release_command"] = "agentdeck release --confirm"
+    card["next_command"] = "agentdeck release --confirm"
+
+    result = validate_workbench_contract(payload)
+
+    assert result == {
+        "ok": False,
+        "errors": [
+            "released release_preview_card must keep next_command null",
+            "released release_preview_card must keep release_command null",
+            "released release_preview_card must expose the next-round plan template",
+            "release preview release command must match release_command",
+            "released release_preview_card requires a ready review gate",
+        ],
+    }
+
+
 def test_validate_workbench_contract_rejects_release_preview_command_drift() -> None:
     payload = workbench_example()
     release_control = next(

@@ -1323,6 +1323,28 @@ class StateStore:
             ],
         }
 
+    def _release_summaries(self, releases: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "count": len(releases),
+            "items": [
+                {
+                    "release_id": release.get("release_id"),
+                    "round": release.get("round"),
+                    "status": release.get("status"),
+                    "review_gate_status": release.get("review_gate_status"),
+                    "artifact_count": release.get("artifact_count"),
+                    "review_reply_count": release.get("review_reply_count"),
+                    "code_reviewer_id": release.get("code_reviewer_id"),
+                    "round_reviewer_id": release.get("round_reviewer_id"),
+                    "code_review_reply_id": release.get("code_review_reply_id"),
+                    "round_review_reply_id": release.get("round_review_reply_id"),
+                    "created_at": release.get("created_at"),
+                    "trace_command": self._trace_command(release.get("round_review_reply_id")),
+                }
+                for release in releases
+            ],
+        }
+
     def artifact_summaries(self, artifacts: list[dict[str, Any]]) -> dict[str, Any]:
         by_kind: dict[str, int] = {}
         for artifact in artifacts:
@@ -1838,6 +1860,7 @@ class StateStore:
             jobs=self._job_summaries(state.get("jobs", [])),
             replies=self._reply_summaries(state.get("replies", [])),
             artifacts=self.artifact_summaries(state.get("artifacts", [])),
+            releases=self._release_summaries(state.get("releases", [])),
             chat_turns=self._chat_turn_summaries(state.get("chat_turns", [])),
             leader_errors=self._leader_error_summaries(state.get("leader_errors", [])),
             leader_actions=self._leader_action_summaries(state.get("leader_actions", [])),

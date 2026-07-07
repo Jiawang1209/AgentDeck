@@ -74,6 +74,7 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
   "jobs": {},
   "replies": {},
   "artifacts": {},
+  "releases": {},
   "chat_turns": {},
   "leader_errors": {},
   "leader_actions": {},
@@ -208,6 +209,7 @@ The following blocks use a consistent summary pattern:
 - `jobs`: `count`, `by_status`, `items[]`
 - `replies`: `count`, `items[]`
 - `artifacts`: `count`, `by_status`, `by_kind`, `items[]`
+- `releases`: `count`, `items[]`
 - `skills`: `count`, `by_agent`, `by_source`, `items[]`
 - `memory`: `count`, `by_scope`, `items[]`
 
@@ -220,7 +222,9 @@ The following blocks use a consistent summary pattern:
 
 Summary items intentionally omit long prompts and pane output. Use detail commands such as `agentdeck plan show --plan-id <id>`, `agentdeck plan status --plan-id <id>`, `agentdeck trace --id <id>`, and `agentdeck events --limit <n>` when a client needs more context.
 
-Every item in `messages.items[]`, `jobs.items[]`, `replies.items[]`, and `artifacts.items[]` must include `trace_command`. Every message item must also include compact `prompt_skill_context`. `validate_project_view_contract()` checks every summary item, not only the first row. This gives GUI clients, natural-language shells, and humans a stable one-click path from summary rows to the full communication lineage while keeping `agentdeck trace --id <id>` as the detail source. Artifact trace commands should point at the closest linked message/job/reply lineage id, so the artifact remains recoverable without making filesystem paths a workflow source of truth.
+`releases.items[]` is the ProjectView summary of explicit `agentdeck release --confirm` round releases. Each item includes `release_id`, `round`, `status`, `review_gate_status`, `artifact_count`, `review_reply_count`, `code_reviewer_id`, `round_reviewer_id`, `code_review_reply_id`, `round_review_reply_id`, `created_at`, and a `trace_command` pointing at the round-review reply lineage. It is a read-only audit history: rendering it never releases, merges, acks inbox items, or dispatches follow-up work, and the only write path stays the explicit `agentdeck release --confirm` command.
+
+Every item in `messages.items[]`, `jobs.items[]`, `replies.items[]`, `artifacts.items[]`, and `releases.items[]` must include `trace_command`. Every message item must also include compact `prompt_skill_context`. `validate_project_view_contract()` checks every summary item, not only the first row. This gives GUI clients, natural-language shells, and humans a stable one-click path from summary rows to the full communication lineage while keeping `agentdeck trace --id <id>` as the detail source. Artifact trace commands should point at the closest linked message/job/reply lineage id, so the artifact remains recoverable without making filesystem paths a workflow source of truth.
 
 ## Leader Actions
 

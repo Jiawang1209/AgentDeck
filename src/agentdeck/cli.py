@@ -1377,7 +1377,7 @@ def _workbench_snapshot_payload(
     role_card = _workbench_role_card(project_view)
     worker_lifecycle_card = _workbench_worker_lifecycle_card(project_view)
     review_gate_card = _workbench_review_gate_card(project_view)
-    release_preview_card = _workbench_release_preview_card(review_gate_card)
+    release_preview_card = _workbench_release_preview_card(review_gate_card, project_view)
     ledger_card = _workbench_ledger_card(project_view)
     lineage_card = _workbench_lineage_card(project_view, inbox_card, leader_inbox_card)
     queue_card = _workbench_queue_card(project_view, continue_card, active_queue_source)
@@ -2752,19 +2752,57 @@ def _review_gate_reply_count(
     return sum(1 for reply in replies if reply.get("from_agent") in reviewer_ids)
 
 
-def _workbench_release_preview_card(review_gate_card: dict[str, object]) -> dict[str, object]:
-    can_release = review_gate_card.get("can_release") is True
-    reason = None if can_release else str(review_gate_card.get("reason") or "review gate is not ready")
-    release_command = "agentdeck release --confirm" if can_release else None
-    next_round_command = "agentdeck leader plan --task <goal>" if can_release else None
+def _workbench_release_preview_card(
+    review_gate_card: dict[str, object], project_view: dict[str, object]
+) -> dict[str, object]:
+    releases = project_view.get("releases") if isinstance(project_view.get("releases"), dict) else {}
+    release_items = [item for item in _summary_items(releases) if isinstance(item, dict)]
+    release_count = len(release_items)
+    latest_release_id = release_items[-1].get("release_id") if release_items else None
+    gate_ready = review_gate_card.get("can_release") is True
+    code_review = (
+        review_gate_card.get("code_review") if isinstance(review_gate_card.get("code_review"), dict) else {}
+    )
+    round_review = (
+        review_gate_card.get("round_review") if isinstance(review_gate_card.get("round_review"), dict) else {}
+    )
+    already_released = gate_ready and any(
+        item.get("code_review_reply_id") == code_review.get("latest_reply_id")
+        and item.get("round_review_reply_id") == round_review.get("latest_reply_id")
+        for item in release_items
+    )
+    can_release = gate_ready and not already_released
+    if already_released:
+        status = "released"
+        reason = "round already released"
+    elif gate_ready:
+        status = "ready"
+        reason = None
+    else:
+        status = "blocked"
+        reason = str(review_gate_card.get("reason") or "review gate is not ready")
+    release_command = "agentdeck release --confirm" if status == "ready" else None
+    next_round_command = "agentdeck leader plan --task <goal>" if status in {"ready", "released"} else None
+    if status == "ready":
+        release_label = "Release this round"
+        next_round_label = "Plan next round"
+    elif status == "released":
+        release_label = "Round released"
+        next_round_label = "Plan next round"
+    else:
+        release_label = "Preview release"
+        next_round_label = "Preview next round"
     return {
         "mode": "release_preview",
         "title": "Release / next-round preview",
         "source_command": "agentdeck workbench",
-        "status": "ready" if can_release else "blocked",
+        "status": status,
         "reason": reason,
         "review_gate_status": review_gate_card.get("status"),
         "can_release": can_release,
+        "already_released": already_released,
+        "release_count": release_count,
+        "latest_release_id": latest_release_id,
         "next_command": release_command,
         "release_command": release_command,
         "next_round_command": next_round_command,
@@ -2777,19 +2815,19 @@ def _workbench_release_preview_card(review_gate_card: dict[str, object]) -> dict
             ),
             _control(
                 kind="release_preview",
-                label="Release this round" if can_release else "Preview release",
+                label=release_label,
                 command=release_command,
                 safety="explicit_user",
-                enabled=can_release,
-                blocker=None if can_release else reason,
+                enabled=status == "ready",
+                blocker=None if status == "ready" else reason,
             ),
             _control(
                 kind="next_round_preview",
-                label="Plan next round" if can_release else "Preview next round",
+                label=next_round_label,
                 command=next_round_command,
                 safety="explicit_user",
                 enabled=False,
-                blocker="requires goal text" if can_release else reason,
+                blocker="requires goal text" if status in {"ready", "released"} else reason,
             ),
         ],
     }
@@ -10606,7 +10644,7 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         if refreshed_project_view is None:
             return 1
         release_preview_card = _workbench_release_preview_card(
-            _workbench_review_gate_card(refreshed_project_view)
+            _workbench_review_gate_card(refreshed_project_view), refreshed_project_view
         )
         registry_items = _workbench_control_registry({"release_preview_card": release_preview_card})
         release_preview_control_id = next(

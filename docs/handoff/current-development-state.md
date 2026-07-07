@@ -201,12 +201,25 @@ New behavior:
 - The workbench validator rejects an enabled release control without `can_release=true` or with a command that drifts from `release_command`.
 - Rendering the card still never releases; only a human running `agentdeck release --confirm` records the round release.
 
+The release history slice is already committed:
+
+```bash
+agentdeck status
+agentdeck workbench
+```
+
+New behavior:
+
+- ProjectView exposes a top-level `releases` summary (`count`, `items[]`); each item carries the release id, round number, review-gate snapshot, both reviewer/reply ids, and a `trace_command` pointing at the round-review reply lineage.
+- `release_preview_card` gains `already_released`, `release_count`, and `latest_release_id` derived from the same summary.
+- When the review gate is ready but the current code-review / round-review reply pair was already released, the card reports `status=released` with reason `round already released`, withdraws `release_command` / `next_command`, and keeps only the disabled next-round plan template.
+- Validators reject a released card that still exposes executable release commands and require a ready review gate behind any released card.
+
 ## Next Best Step
 
-After the release-preview wiring slice is committed, continue with the next Phase G5 follow-up:
+After the release history slice is committed, continue with the next Phase G5 follow-up:
 
-- Surface `releases[]` into ProjectView / workbench (round history plus already-released awareness so a ready gate that was already released for the same reply pair is shown as such instead of re-offering the release command).
-- Add `agentdeck contract release` discovery (payload, example, docs/contracts/release-schema.md, contract index entry).
+- Add `agentdeck contract release` discovery (payload, example, docs/contracts/release-schema.md, contract index entry) so GUI clients can discover the release response and release history fields.
 - Optionally add natural-language discovery for the release action itself; keep it read-only and keep the explicit command as the only write path.
 - Preserve human approval before any release, merge, ack, or follow-up dispatch.
 
