@@ -127,6 +127,26 @@ def test_render_workbench_dashboard_shows_learning_layer_suggestions() -> None:
     assert "agentdeck memory apply --suggestion-id mem_example --confirm" in text
 
 
+def test_render_workbench_dashboard_shows_learning_review_when_ready() -> None:
+    payload = workbench_example()
+
+    text = render_workbench_dashboard(payload)
+
+    # when the latest plan is summarize-ready, the learning review follow-ups show up
+    assert "learning review" in text
+    assert "pln_example" in text
+    assert "--source learn-review" in text
+
+
+def test_render_workbench_dashboard_omits_learning_review_when_null() -> None:
+    payload = workbench_example()
+    payload["learning_review_card"] = None
+
+    text = render_workbench_dashboard(payload)
+
+    assert "learning review" not in text
+
+
 def test_render_workbench_dashboard_flags_blocked_roles() -> None:
     payload = workbench_example()
     role = next(

@@ -4,6 +4,12 @@
 
 ## 2026-07-08
 
+### Current - Render learning review in TUI dashboard learning layer
+
+- 扩展 `agentdeck dashboard` 的 "Learning layer" 段：当 workbench 契约里的 `learning_review_card` 非空（最新 plan summarize-ready）时，展示 `learning review (plan <id>): read-only follow-ups` 和建议的 `agentdeck skills suggest ... --source learn-review` / `agentdeck memory suggest ... --source learn-review` 命令（只读展示）。
+- 把刚接入工作台的学习复盘卡也带进 TUI 参考客户端,闭合"workbench 契约 → dashboard 渲染"这一环;`learning_review_card` 为 null 时该子段省略。
+- 验证记录：已先确认红测失败，dashboard 最初不渲染 learning review（另有一条 red 确认 null 时省略）；实现后目标测试 `conda run -n agentdeck pytest tests/test_dashboard.py -q` 14 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 623 项通过。
+
 ### Current - Add workbench learning_review_card
 
 - 给 `agentdeck workbench` 一屏快照新增 `learning_review_card`（学习层 GUI 深挖）：镜像 `leader_summary_card` 的条件式做法——只在最新 plan 的本地 Leader review 返回 `next_action=summarize` 时非空，否则为 `null`；非空时复用 `agentdeck learn review --plan-id <id>` 的响应形状并通过 `validate_learning_review_contract()` 守门。

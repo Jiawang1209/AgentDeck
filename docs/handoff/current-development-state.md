@@ -344,8 +344,8 @@ All three approved directions (1 → 2 → 3) have landed committed slices; the 
 
 ## Next Best Step
 
-- Optional: render `learning_review_card` in the `agentdeck dashboard` "Learning layer" section (when non-null, show the suggested `skills suggest` / `memory suggest` follow-up commands) so the TUI reference client surfaces the review-ready learning suggestions too.
-- Otherwise revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability.
+- The workbench `learning_review_card` is now also rendered in the `agentdeck dashboard` "Learning layer" section (review-ready follow-up `skills suggest` / `memory suggest` commands). The learning-layer GUI direction is well covered end-to-end (workbench card + contract + dashboard).
+- Revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability, or deepen one of: assisted-run flow, a curses interactive TUI, or provider/runtime work.
 - Preserve human approval and keep every read-only surface read-only.
 
 ## Next Best Step

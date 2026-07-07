@@ -243,7 +243,8 @@ def _render_control_palette(payload: dict[str, Any]) -> list[str]:
 def _render_learning_layer(payload: dict[str, Any]) -> list[str]:
     skills = _as_dict(payload.get("skill_suggestions_card"))
     memory = _as_dict(payload.get("memory_suggestions_card"))
-    if not skills and not memory:
+    review = _as_dict(payload.get("learning_review_card"))
+    if not skills and not memory and not review:
         return []
     lines = [_rule("Learning layer")]
     if skills:
@@ -273,6 +274,15 @@ def _render_learning_layer(payload: dict[str, Any]) -> list[str]:
                     break
             if apply_command:
                 lines.append(f"      apply: {apply_command}")
+    if review:
+        plan_id = review.get("plan_id") or ""
+        lines.append(f"learning review (plan {plan_id}): read-only follow-ups")
+        skill_suggestion = _as_dict(review.get("skill_suggestion"))
+        if skill_suggestion.get("command"):
+            lines.append(f"  suggest skill: {skill_suggestion.get('command')}")
+        memory_suggestion = _as_dict(review.get("memory_suggestion"))
+        if memory_suggestion.get("command"):
+            lines.append(f"  suggest memory: {memory_suggestion.get('command')}")
     return lines
 
 
