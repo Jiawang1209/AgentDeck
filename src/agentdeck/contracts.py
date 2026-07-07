@@ -2951,6 +2951,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "card": "skill_suggestions_card",
         },
         {
+            "mode": "skill_context",
+            "label": "Inspect loaded skills",
+            "description": "Inspect loaded skill provenance without installing, loading, or rewriting skills.",
+            "example_messages": ["查看已加载技能", "skill context"],
+            "command": 'agentdeck leader chat --message "查看已加载技能"',
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "skill_context_card",
+        },
+        {
             "mode": "memory_suggestions",
             "label": "Inspect memory suggestions",
             "description": "Inspect pending memory suggestions without writing long-term memory.",

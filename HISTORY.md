@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Discover loaded skill context from Leader help
+
+- 扩展 `agentdeck leader chat --message "帮助"` 的 `capability_card`：新增 `mode=skill_context` 能力，命令为 `agentdeck leader chat --message "查看已加载技能"`，`safety=inspect`，`card=skill_context_card`。
+- 让 GUI/TUI 和自然语言壳能从 help/capability map 发现“已加载 skill 摘要”入口，承接北极星里可内置、可外源、可审阅、可加载、可回放的 skill 生态诉求。
+- 保持只读边界：help 本身只记录 chat turn；`skill_context` 路由只展示 compact loaded skill provenance，不安装、不导入、不加载、不重写 skill，不调用 provider、不读取 tmux、不创建 plan/action/approval/message/job/inbox。
+- 同步 README 和 `docs/contracts/leader-chat-schema.md`，说明 `skill_context` 是可发现、只读、GUI-ready 的 capability。
+- 验证记录：已先确认红测失败，help `capability_card` 最初缺少 `skill_context`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning -q` 1 项通过；help/contract 聚焦测试 5 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 158 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 226 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 143 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 569 项通过。
+
 ### Current - Discover memory context from Leader help
 
 - 扩展 `agentdeck leader chat --message "帮助"` 的 `capability_card`：新增 `mode=memory_context` 能力，命令为 `agentdeck leader chat --message "查看长期记忆"`，`safety=inspect`，`card=memory_context_card`。

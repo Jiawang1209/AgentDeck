@@ -4275,10 +4275,11 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "leader_status",
         "learning_review",
         "skill_import_preview",
-        "skill_load_preview",
-        "skill_create_preview",
-        "skill_suggestions",
-        "memory_suggestions",
+            "skill_load_preview",
+            "skill_create_preview",
+            "skill_suggestions",
+            "skill_context",
+            "memory_suggestions",
         "memory_apply_preview",
         "workbench",
         "runtime",
@@ -4364,6 +4365,22 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "kind": "inspect",
         "label": "Inspect skill suggestions",
         "command": "agentdeck skills suggestions",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert capabilities["skill_context"]["command"] == 'agentdeck leader chat --message "查看已加载技能"'
+    assert capabilities["skill_context"]["safety"] == "inspect"
+    assert capabilities["skill_context"]["requires_explicit_user"] is False
+    assert capabilities["skill_context"]["card"] == "skill_context_card"
+    assert capabilities["skill_context"]["example_messages"] == [
+        "查看已加载技能",
+        "skill context",
+    ]
+    assert capabilities["skill_context"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect loaded skills",
+        "command": 'agentdeck leader chat --message "查看已加载技能"',
         "safety": "inspect",
         "enabled": True,
         "blocker": None,
