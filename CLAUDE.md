@@ -10,7 +10,7 @@ Skill 是北极星的一部分：AgentDeck 后续应支持内置 skill、项目�
 
 Skill Registry MVP：`agentdeck skills list` 必须只读发现内置 skill 和 `.agentdeck/skills/<name>/SKILL.md` 项目本地 skill；`agentdeck skills show --name <name>` 必须只读返回 skill metadata、hash 和 content；`agentdeck skills load --name <name> --agent <id> --purpose <text>` 才能写入 `skill_loads[]` 和 `skill_loaded` 审计事件，并保存 content snapshot。skills 命令不得调用 provider、读取 tmux、发送输入、修改 approval/runtime state，外源 skill 不得静默安装或启用。
 
-Loaded skill context 必须进入 ProjectView `skills` 摘要、workbench `skill_context_card`、自然语言 `mode=skill_context` 和真实 Leader provider planning prompt；传给 API-backed / CLI-backed Leader prompt 的只能是 compact 摘要（load_id、agent_id、purpose、name、source、path、content_hash、description、required_tools、risk），不得包含完整 `content_snapshot`。`agentdeck leader chat --message "查看已加载技能"` 只能展示已加载 skill、记录 chat turn 和审计事件，不得调用 provider、读取 tmux、安装或改写 skill、创建 plan/action/approval/message/job/inbox 或改变 runtime/approval state；provider planning prompt 也不得把 skill 当成 dispatch 或执行授权。
+Loaded skill context 必须进入 ProjectView `skills` 摘要、workbench `skill_context_card`、自然语言 `mode=skill_context` 和真实 Leader provider planning prompt；传给 API-backed / CLI-backed Leader prompt 的只能是 compact 摘要（load_id、agent_id、purpose、name、source、path、content_hash、description、required_tools、risk），不得包含完整 `content_snapshot`。同一份 compact context 必须随 `leader plan`、自然语言 plan 和 `run --task` 固化到 plan record、ProjectView `plans.items[]` 和 `agentdeck plan status`，作为可审计 provenance。`agentdeck leader chat --message "查看已加载技能"` 只能展示已加载 skill、记录 chat turn 和审计事件，不得调用 provider、读取 tmux、安装或改写 skill、创建 plan/action/approval/message/job/inbox 或改变 runtime/approval state；provider planning prompt 也不得把 skill 当成 dispatch 或执行授权。
 
 核心设计文档：
 

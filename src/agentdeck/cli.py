@@ -3813,13 +3813,14 @@ def leader_plan_command(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     orchestrator = LeaderOrchestrator(config, provider)
+    skill_context = _leader_skill_context(config, store)
     try:
-        plan = orchestrator.plan(args.task, model_label, skill_context=_leader_skill_context(config, store))
+        plan = orchestrator.plan(args.task, model_label, skill_context=skill_context)
     except RuntimeError as exc:
         _record_leader_provider_failure(store, "plan", provider.name, model_label, args.task, exc)
         print(f"leader provider failed: {exc}", file=sys.stderr)
         return 1
-    record = store.record_plan(args.task, provider.name, model_label, plan)
+    record = store.record_plan(args.task, provider.name, model_label, plan, skill_context=skill_context)
     store.append_event(
         EventRecord.create(
             "leader_plan_created",
@@ -3904,12 +3905,13 @@ def _create_run_start_payload(
     model_label = _leader_model_label(config, model_override)
     provider = leader_provider(provider_name)
     orchestrator = LeaderOrchestrator(config, provider)
+    skill_context = _leader_skill_context(config, store)
     try:
-        plan = orchestrator.plan(task, model_label, skill_context=_leader_skill_context(config, store))
+        plan = orchestrator.plan(task, model_label, skill_context=skill_context)
     except RuntimeError as exc:
         _record_leader_provider_failure(store, source, provider.name, model_label, task, exc)
         raise
-    record = store.record_plan(task, provider.name, model_label, plan)
+    record = store.record_plan(task, provider.name, model_label, plan, skill_context=skill_context)
     approvals = store.create_approvals_from_plan(record["plan_id"])
     store.append_event(
         EventRecord.create(
@@ -8372,13 +8374,14 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     orchestrator = LeaderOrchestrator(config, provider)
+    skill_context = _leader_skill_context(config, store)
     try:
-        plan = orchestrator.plan(args.message, model_label, skill_context=_leader_skill_context(config, store))
+        plan = orchestrator.plan(args.message, model_label, skill_context=skill_context)
     except RuntimeError as exc:
         _record_leader_provider_failure(store, "chat", provider.name, model_label, args.message, exc)
         print(f"leader provider failed: {exc}", file=sys.stderr)
         return 1
-    record = store.record_plan(args.message, provider.name, model_label, plan)
+    record = store.record_plan(args.message, provider.name, model_label, plan, skill_context=skill_context)
     action = store.suggest_leader_action(str(record["plan_id"]))
     action_detail = store.leader_action_detail(str(action["action_id"]))
     project_view_with_action = _project_view_payload_or_error(config, store)

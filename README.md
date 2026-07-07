@@ -162,7 +162,7 @@ agentdeck artifacts
   skills/
 ```
 
-`agentdeck skills list` 会发现内置 skill 和 `.agentdeck/skills/<name>/SKILL.md` 项目本地 skill；`agentdeck skills show --name <name>` 只读返回 skill 内容、source、path、hash、required_tools 和 risk；`agentdeck skills load --name <name>` 会把该 skill 的 path/source/hash/content snapshot、调用者和用途写入 `skill_loads[]`，并追加 `skill_loaded` 审计事件。Skill load 不调用 provider、不读取 tmux、不发送输入、不改变权限；它会进入 ProjectView 的 `skills` 摘要，并在 `agentdeck workbench` 与自然语言 `agentdeck leader chat --message "查看已加载技能"` 中作为 `skill_context_card` 暴露给 Leader/GUI 使用。`agentdeck leader plan`、自然语言 plan 和 `agentdeck run --task` 会把 compact loaded skill 摘要传入 API-backed / CLI-backed Leader prompt，但不会传完整 `content_snapshot`，也不会把 skill 当成 dispatch 或执行授权。
+`agentdeck skills list` 会发现内置 skill 和 `.agentdeck/skills/<name>/SKILL.md` 项目本地 skill；`agentdeck skills show --name <name>` 只读返回 skill 内容、source、path、hash、required_tools 和 risk；`agentdeck skills load --name <name>` 会把该 skill 的 path/source/hash/content snapshot、调用者和用途写入 `skill_loads[]`，并追加 `skill_loaded` 审计事件。Skill load 不调用 provider、不读取 tmux、不发送输入、不改变权限；它会进入 ProjectView 的 `skills` 摘要，并在 `agentdeck workbench` 与自然语言 `agentdeck leader chat --message "查看已加载技能"` 中作为 `skill_context_card` 暴露给 Leader/GUI 使用。`agentdeck leader plan`、自然语言 plan 和 `agentdeck run --task` 会把 compact loaded skill 摘要传入 API-backed / CLI-backed Leader prompt，并把同一份 compact `skill_context` 固化到 plan record、ProjectView `plans.items[]` 和 `agentdeck plan status`；这些位置不会传完整 `content_snapshot`，也不会把 skill 当成 dispatch 或执行授权。
 
 ## 快速开始
 

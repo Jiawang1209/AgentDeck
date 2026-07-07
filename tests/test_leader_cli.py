@@ -529,6 +529,42 @@ def test_leader_plan_passes_loaded_skill_context_to_provider_without_dispatching
     assert state["jobs"] == []
 
 
+def test_leader_plan_persists_loaded_skill_provenance_for_project_view(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project_with_default_leader(tmp_path, monkeypatch)
+    cli.main(["skills", "load", "--name", "planning", "--agent", "leader", "--purpose", "decompose task"])
+    capsys.readouterr()
+
+    monkeypatch.setattr(cli, "leader_provider", lambda name: FakeLeaderProvider())
+
+    exit_code = cli.main(["leader", "plan", "--task", "记录规划技能来源"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    store = StateStore(root)
+    state = store.load()
+    persisted_context = state["plans"][0]["skill_context"]
+    assert persisted_context["count"] == 1
+    assert persisted_context["items"][0]["name"] == "planning"
+    assert persisted_context["items"][0]["content_hash"].startswith("sha256:")
+    assert "content_snapshot" not in persisted_context["items"][0]
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    project_view = json.loads(capsys.readouterr().out)
+    assert project_view["plans"]["items"][0]["skill_context"] == persisted_context
+
+    exit_code = cli.main(["plan", "status", "--plan-id", payload["plan_id"]])
+
+    assert exit_code == 0
+    plan_status = json.loads(capsys.readouterr().out)
+    assert plan_status["skill_context"] == persisted_context
+    assert state["messages"] == []
+    assert state["jobs"] == []
+
+
 def test_api_and_cli_leader_prompts_include_loaded_skill_context(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     config = cli.load_config(root)

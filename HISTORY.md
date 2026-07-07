@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Persist loaded skill provenance on plans
+
+- 扩展 plan state：`StateStore.record_plan()` 现在接收并保存 compact `skill_context`，只保留 load_id、agent_id、purpose、name、source、path、content_hash、description、required_tools、risk、created_at 和 inspect/reload commands，不保存完整 `content_snapshot`。
+- 扩展 ProjectView / plan status：`plans.items[]` 和 `agentdeck plan status --plan-id <id>` 现在会暴露规划时可见的 loaded skill provenance；旧 plan 缺失该字段时返回空 skill 摘要，保持兼容。
+- 调整 `leader plan`、自然语言 plan 和 `run --task`：规划入口先读取一次 loaded skill context，再把同一份 context 同时传给 provider prompt 和 plan record，避免上下文读取漂移。
+- 同步北极星、README、AGENT/CLAUDE 和 ProjectView contract 文档，明确 skill 是可审计的一等能力：可以作为 Leader 工作流上下文，但不能成为绕过 approval/runtime/tool 权限的后门。
+- 验证记录：已先确认红测失败，plan record 最初缺少 `skill_context`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_plan_persists_loaded_skill_provenance_for_project_view -q` 1 项通过；Leader 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 142 项通过；contract/agent CLI 回归 `conda run -n agentdeck pytest tests/test_contracts.py tests/test_agent_cli.py -q` 334 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 518 项通过。
+
 ### Current - Inject loaded skills into Leader provider prompts
 
 - 扩展 `LeaderPlanRequest`：新增 `skill_context` 字段，由 `agentdeck leader plan`、自然语言 plan 分支和 `agentdeck run --task` 从已校验 ProjectView `skills` 摘要派生并传入 `LeaderOrchestrator.plan()`。

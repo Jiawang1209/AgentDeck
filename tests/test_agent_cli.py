@@ -4919,6 +4919,7 @@ def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) 
         },
         "model": "local-plan",
         "dispatch_ready": False,
+        "skill_context": {"count": 0, "by_agent": {}, "by_source": {}, "items": []},
         "step_count": 2,
         "created_at": "2026-07-04T00:00:00+00:00",
     }

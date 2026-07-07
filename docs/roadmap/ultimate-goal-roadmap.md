@@ -19,6 +19,8 @@ Human Operator
 
 用户应该能用自然语言启动一个任务，由 Leader Agent 理解目标、按需加载可审计 skill、拆解计划、指派角色、调度多个 Agent、观察结果、要求验证，并在关键动作前让人类审批。
 
+Skill 是北极星的一等能力：AgentDeck 要像 WispTerm/Hermes 那样把可复用工作流沉淀为 skill，但所有 skill 都必须显式加载、记录 source/path/hash/content snapshot，并在每次 Leader 规划时把 compact skill provenance 固化到 plan 记录和 ProjectView，而不是变成不可追溯的隐藏提示词或权限后门。
+
 ## 2. 为什么当前开发没有跑偏
 
 当前已经实现的能力都对应终极目标中的底座：
@@ -31,7 +33,8 @@ Human Operator
 | `message -> attempt -> job -> inbox` | CCB 式多 Agent 通信账本的最小形态 |
 | `reply` / `ack` | 请求-回复-确认闭环 |
 | `trace` | 多 Agent 调试、审计和恢复所需的 lineage |
-| `docs/reference-analysis/*` 中的 Hermes/WispTerm skill 分析 | 后续 Skill Layer 的设计输入 |
+| `skills list/show/load` 与 plan `skill_context` provenance | 可审计、可回放、可被 GUI 消费的 Skill Layer |
+| `docs/reference-analysis/*` 中的 Hermes/WispTerm skill 分析 | Skill Layer 和后续外源 skill allowlist 的设计输入 |
 | `HISTORY.md` | 项目自身开发过程可追溯 |
 
 这些能力还不是最终产品体验，但它们是 Leader Agent、GUI、自动调度和审批系统需要依赖的基础设施。
@@ -44,6 +47,7 @@ Human Operator
 - role assignment
 - tmux runtime binding
 - explicit skill registry and skill snapshot contract
+- plan-level skill provenance for Leader/GUI/audit replay
 - message ledger
 - inbox and trace
 - local project state

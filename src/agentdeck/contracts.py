@@ -177,6 +177,7 @@ PROJECT_VIEW_PLAN_ITEM_FIELDS = (
     "model",
     "status",
     "dispatch_ready",
+    "skill_context",
     "step_count",
     "created_at",
 )
@@ -6039,6 +6040,31 @@ def project_view_example() -> dict[str, object]:
                     "model": "fake-plan",
                     "status": "planned",
                     "dispatch_ready": False,
+                    "skill_context": {
+                        "count": 1,
+                        "by_agent": {"leader": 1},
+                        "by_source": {"builtin": 1},
+                        "items": [
+                            {
+                                "load_id": "skl_example",
+                                "agent_id": "leader",
+                                "purpose": "decompose task",
+                                "name": "planning",
+                                "source": "builtin",
+                                "path": "builtin://planning/SKILL.md",
+                                "content_hash": "sha256:example",
+                                "description": "Break broad goals into reviewable steps.",
+                                "required_tools": [],
+                                "risk": "inspect",
+                                "created_at": "2026-07-04T00:00:00+00:00",
+                                "show_command": "agentdeck skills show --name planning",
+                                "reload_command": (
+                                    "agentdeck skills load --name planning --agent leader "
+                                    "--purpose 'decompose task'"
+                                ),
+                            }
+                        ],
+                    },
                     "step_count": 1,
                     "created_at": "2026-07-04T00:00:00+00:00",
                 }

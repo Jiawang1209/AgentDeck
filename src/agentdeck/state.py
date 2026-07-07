@@ -197,6 +197,7 @@ class StateStore:
         provider: str,
         model: str,
         plan: dict[str, Any],
+        skill_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         state = self.load()
         record = {
@@ -209,6 +210,7 @@ class StateStore:
             "model": model,
             "status": "planned",
             "dispatch_ready": bool(plan.get("dispatch_ready", False)),
+            "skill_context": self._plan_skill_context(skill_context),
             "plan": plan,
             "created_at": utc_now(),
         }
@@ -282,6 +284,7 @@ class StateStore:
             ),
             "model": plan_record.get("model"),
             "created_at": plan_record.get("created_at"),
+            "skill_context": self._plan_skill_context(plan_record.get("skill_context")),
             "counts": status_counts,
             "steps": status_steps,
         }
@@ -996,11 +999,48 @@ class StateStore:
                     ),
                     "model": plan.get("model"),
                     "dispatch_ready": plan.get("dispatch_ready"),
+                    "skill_context": StateStore._plan_skill_context(plan.get("skill_context")),
                     "step_count": len(steps) if isinstance(steps, list) else 0,
                     "created_at": plan.get("created_at"),
                 }
             )
         return {"count": len(items), "items": items}
+
+    @staticmethod
+    def _plan_skill_context(skill_context: Any) -> dict[str, Any]:
+        if not isinstance(skill_context, dict):
+            return {"count": 0, "by_agent": {}, "by_source": {}, "items": []}
+        items = []
+        for raw_item in skill_context.get("items", []):
+            if not isinstance(raw_item, dict):
+                continue
+            items.append(
+                {
+                    "load_id": raw_item.get("load_id"),
+                    "agent_id": raw_item.get("agent_id"),
+                    "purpose": raw_item.get("purpose"),
+                    "name": raw_item.get("name"),
+                    "source": raw_item.get("source"),
+                    "path": raw_item.get("path"),
+                    "content_hash": raw_item.get("content_hash"),
+                    "description": raw_item.get("description"),
+                    "required_tools": raw_item.get("required_tools")
+                    if isinstance(raw_item.get("required_tools"), list)
+                    else [],
+                    "risk": raw_item.get("risk"),
+                    "created_at": raw_item.get("created_at"),
+                    "show_command": raw_item.get("show_command"),
+                    "reload_command": raw_item.get("reload_command"),
+                }
+            )
+        by_agent = skill_context.get("by_agent") if isinstance(skill_context.get("by_agent"), dict) else {}
+        by_source = skill_context.get("by_source") if isinstance(skill_context.get("by_source"), dict) else {}
+        return {
+            "count": len(items),
+            "by_agent": dict(by_agent),
+            "by_source": dict(by_source),
+            "items": items,
+        }
 
     def _approval_summaries(self, approvals: list[dict[str, Any]]) -> dict[str, Any]:
         counts = self._status_counts(approvals)
