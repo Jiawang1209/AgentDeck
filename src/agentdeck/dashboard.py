@@ -52,6 +52,39 @@ def _render_recovery(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_run_progress(payload: dict[str, Any]) -> list[str]:
+    card = payload.get("run_progress_card")
+    if not isinstance(card, dict):
+        return []
+    plan_id = card.get("plan_id") or ""
+    task = card.get("task") or ""
+    status = card.get("status") or ""
+    lines = [_rule("Run progress"), f"plan {plan_id} — {task}  [status: {status}]"]
+    counts = _as_dict(card.get("counts"))
+    if counts:
+        lines.append(
+            f"steps {counts.get('steps', 0)}  approvals {counts.get('approvals', 0)} "
+            f"(pending {counts.get('pending', 0)}, approved {counts.get('approved', 0)}, "
+            f"dispatched {counts.get('dispatched', 0)})"
+        )
+    for step in _as_list(card.get("steps")):
+        step = _as_dict(step)
+        num = step.get("step")
+        agent_id = str(step.get("agent_id") or "")
+        approval_status = str(step.get("approval_status") or "")
+        step_task = str(step.get("task") or "")
+        lines.append(f"  step {num}  {agent_id:<12} {approval_status:<12} {step_task}".rstrip())
+    review = _as_dict(card.get("review"))
+    next_action = review.get("next_action")
+    if next_action:
+        reason = review.get("reason")
+        lines.append(f"review: {next_action}" + (f" — {reason}" if reason else ""))
+    next_command = card.get("next_command")
+    if next_command:
+        lines.append(f"  → {next_command}")
+    return lines
+
+
 def _render_role_topology(payload: dict[str, Any]) -> list[str]:
     card = _as_dict(payload.get("role_topology_card"))
     if not card:
@@ -213,6 +246,7 @@ def render_workbench_dashboard(payload: dict[str, Any]) -> str:
     sections: list[list[str]] = [
         _render_header(payload),
         _render_recovery(payload),
+        _render_run_progress(payload),
         _render_role_topology(payload),
         _render_worker_activity(payload),
         _render_review_gate(payload),

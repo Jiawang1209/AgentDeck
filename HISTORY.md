@@ -4,6 +4,13 @@
 
 ## 2026-07-07
 
+### Current - Add assisted run-progress guide to TUI dashboard
+
+- 扩展 `agentdeck dashboard` / `render_workbench_dashboard`：新增只读 "Run progress" 段（方向 1：审批门后的助跑视图）。当 workbench 契约里存在 `run_progress_card`（即已有 plan）时，逐步展示 plan_id/task/status、steps/approvals 计数、每个 step 的 agent 和 approval_status、review 的 next_action/reason，以及单条显式 `next_command`。
+- 这是"assisted run flow, stopping at every human gate"的正确安全形态：它只从既有 workbench 契约派生一个引导视图，指出下一条显式命令，但绝不执行、不 approve、不 dispatch、不写 state——推进仍由人类显式运行返回的命令完成。
+- 无 plan 时该段自动省略。
+- 验证记录：已先确认红测失败，dashboard 最初无 "Run progress" 段（另有一条 red 确认无 plan 时省略）；实现后目标测试 `conda run -n agentdeck pytest tests/test_dashboard.py -q` 9 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 614 项通过。
+
 ### Current - Add worker activity section to TUI dashboard
 
 - 扩展 `agentdeck dashboard` / `render_workbench_dashboard`：新增 "Worker activity" 段，从 `worker_lifecycle_card.items[]` 逐 worker 输出 `lifecycle_stage` 和任务级明细（pending inbox 计数、artifact 计数、active message/job/reply id）——补上 role topology 只给状态、ledger 只给聚合计数所缺的"每个 worker 当前在做什么"。

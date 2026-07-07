@@ -332,13 +332,20 @@ The fourth slice is already committed:
 
 The TUI reference-client direction is complete: `agentdeck dashboard` renders header / recovery / role topology / worker activity / review gate / release / ledger / queue / command palette purely from the `agentdeck workbench` contract, with tests (`tests/test_dashboard.py`) and a doc. A worker-activity section (per-worker lifecycle stage + active task ids + inbox/artifact counts) was added as polish.
 
+## Autonomous run in progress (directions 1 → 2 → 3)
+
+The user approved doing all three directions in order, autonomously, overnight. Progress:
+
+- Direction 1 (assisted run flow): first slice committed — a read-only "Run progress" section in `agentdeck dashboard`, derived from the existing `run_progress_card`, showing plan/step/approval status and the single explicit next command. It guides the human step-by-step but never executes (approval discipline preserved).
+- Direction 2 (learning-layer GUI, Phase F): not started.
+- Direction 3 (dashboard `--watch` polish): not started.
+
 ## Next Best Step
 
-The TUI reference client proves the read-only workbench contract drives a GUI/TUI. Revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability. Candidate directions (all keeping read-only-contract + explicit-command discipline):
+Continue the autonomous run:
 
-- Assisted run flow behind the approval gate (`agentdeck run` advancing step-by-step, stopping at every human gate).
-- Deeper skill/memory learning-layer GUI surfaces (roadmap Phase F).
-- Optional dashboard polish: a worker-lifecycle stage line, or a `--watch` text refresh mirroring `workbench --watch`.
+- Direction 2: surface `learn review` suggestions into a GUI-consumable workbench card (mirroring `skill_suggestions_card` / `memory_suggestions_card`), read-only, with a discovery contract; keep the explicit `skills suggest` / `memory suggest` commands as the only write path into the pending queues.
+- Direction 3: add `agentdeck dashboard --watch [--interval N] [--iterations N]` that re-renders the text dashboard, mirroring `workbench --watch`, still read-only.
 - Preserve human approval and keep every read-only surface read-only.
 
 ## Required Verification Before Handoff

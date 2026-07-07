@@ -90,6 +90,30 @@ def test_render_workbench_dashboard_shows_worker_activity_detail() -> None:
     assert "inbox:1" in text
 
 
+def test_render_workbench_dashboard_shows_run_progress_guide() -> None:
+    payload = workbench_example()
+    card = payload["run_progress_card"]
+
+    text = render_workbench_dashboard(payload)
+
+    # assisted run flow: read-only guide showing the plan, step statuses, and next command
+    assert "Run progress" in text
+    assert card["plan_id"] in text
+    assert "planned" in text
+    assert "pending" in text
+    # the single explicit next command is surfaced verbatim from the contract
+    assert card["next_command"] in text
+
+
+def test_render_workbench_dashboard_omits_run_progress_when_no_plan() -> None:
+    payload = workbench_example()
+    payload["run_progress_card"] = None
+
+    text = render_workbench_dashboard(payload)
+
+    assert "Run progress" not in text
+
+
 def test_render_workbench_dashboard_flags_blocked_roles() -> None:
     payload = workbench_example()
     role = next(
