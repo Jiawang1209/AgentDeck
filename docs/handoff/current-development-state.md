@@ -319,16 +319,20 @@ agentdeck dashboard
 - Renders header / recovery / role topology / review gate / queue as human-readable text, deriving every value and echoed command from the workbench contract payload alone.
 - Reuses the same `_workbench_snapshot_payload` + `validate_workbench_contract()` as `agentdeck workbench`; read-only, no state writes.
 
-The second slice is already committed:
+The second and third slices are already committed:
 
-- `agentdeck dashboard` now renders a "Command palette" section from `control_registry[]` grouped by scope with per-scope total / enabled / blocked counts and a `agentdeck controls --scope <scope>` drill-down pointer.
+- Slice 2: a "Command palette" section from `control_registry[]` grouped by scope (total / enabled / blocked per scope) with a `agentdeck controls --scope <scope>` drill-down pointer.
+- Slice 3: "Release" and "Ledger" sections derived from `release_preview_card` (shows `agentdeck release --confirm` when ready) and `ledger_card` counts.
+
+The dashboard now renders: header, recovery, role topology, review gate, release, ledger, queue, command palette — all from the workbench contract payload alone.
 
 ## Next Best Step
 
-Continue the TUI reference client:
+Finish and document the TUI reference client:
 
-- Add a `release_preview` line to the dashboard (ready → show `agentdeck release --confirm`; blocked/released → show status/reason), plus a worker-lifecycle or ledger summary line, all derived from the contract payload.
-- Then document the reference client under `docs/` (e.g. a short `docs/walkthroughs/` note or a section in the layered-role walkthrough) emphasizing it is a pure contract consumer that proves the read-only workbench contract is sufficient to drive a GUI/TUI.
+- Add a short doc for the reference client — either a `docs/walkthroughs/tui-reference-client.md` or a section appended to `docs/walkthroughs/layered-role-round.md` — showing sample `agentdeck dashboard` output and stating the key point: it is a pure consumer of the `agentdeck workbench` contract (no state reads, no new backend behavior), proving the read-only contract is sufficient to drive a GUI/TUI. Link it from the README `dashboard` paragraph.
+- Optionally add a worker-lifecycle stage line to the dashboard.
+- Then the TUI reference-client direction is complete; revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability.
 - Preserve human approval and keep every read-only surface read-only.
 
 ## Required Verification Before Handoff

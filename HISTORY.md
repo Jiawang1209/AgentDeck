@@ -4,6 +4,12 @@
 
 ## 2026-07-07
 
+### Current - Add release and ledger sections to TUI dashboard
+
+- 扩展 `agentdeck dashboard` / `render_workbench_dashboard`：新增 "Release" 段（从 `release_preview_card` 派生 status/reason，ready 时显示 `agentdeck release --confirm`，released 时显示已发布轮次和 latest release id）和 "Ledger" 段（从 `ledger_card` 的 messages/jobs/replies/artifacts/inbox 计数派生一行摘要）。
+- 两段都只消费 workbench 契约 payload，不发明命令、不写 state；ready-release 行原样回显契约里的 `release_command`。
+- 验证记录：已先确认红测失败，dashboard 最初无 "Release"/"Ledger" 段；实现后目标测试 `conda run -n agentdeck pytest tests/test_dashboard.py -q` 6 项通过（新增 blocked release + ledger counts、ready release 显示 `agentdeck release --confirm`）；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 611 项通过。
+
 ### Current - Add control palette to TUI dashboard
 
 - 扩展 `agentdeck dashboard` / `render_workbench_dashboard`：新增"Command palette"段，从 workbench 契约的 `control_registry[]` 按 scope 分组，逐 scope 输出 total / enabled / blocked 计数，并指向 `agentdeck controls --scope <scope>` 下钻。

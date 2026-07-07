@@ -99,6 +99,40 @@ def _render_review_gate(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_release_preview(payload: dict[str, Any]) -> list[str]:
+    card = _as_dict(payload.get("release_preview_card"))
+    if not card:
+        return []
+    status = card.get("status") or "unknown"
+    lines = [_rule("Release"), f"status: {status}"]
+    reason = card.get("reason")
+    if reason:
+        lines[-1] += f" — {reason}"
+    release_command = card.get("release_command")
+    if release_command:
+        lines.append(f"  → {release_command}")
+    release_count = card.get("release_count")
+    if release_count:
+        detail = f"  released rounds: {release_count}"
+        latest = card.get("latest_release_id")
+        if latest:
+            detail += f" (latest {latest})"
+        lines.append(detail)
+    return lines
+
+
+def _render_ledger(payload: dict[str, Any]) -> list[str]:
+    card = _as_dict(payload.get("ledger_card"))
+    if not card:
+        return []
+    parts = []
+    for name in ("messages", "jobs", "replies", "artifacts", "inbox"):
+        summary = _as_dict(card.get(name))
+        count = summary.get("count", 0)
+        parts.append(f"{name} {count}")
+    return [_rule("Ledger"), "  " + "  ".join(parts)]
+
+
 def _render_queue(payload: dict[str, Any]) -> list[str]:
     card = _as_dict(payload.get("queue_card"))
     if not card:
@@ -153,6 +187,8 @@ def render_workbench_dashboard(payload: dict[str, Any]) -> str:
         _render_recovery(payload),
         _render_role_topology(payload),
         _render_review_gate(payload),
+        _render_release_preview(payload),
+        _render_ledger(payload),
         _render_queue(payload),
         _render_control_palette(payload),
     ]

@@ -51,6 +51,33 @@ def test_render_workbench_dashboard_summarizes_control_palette_by_scope() -> Non
     assert "agentdeck controls" in text
 
 
+def test_render_workbench_dashboard_shows_release_and_ledger_from_contract() -> None:
+    payload = workbench_example()
+
+    text = render_workbench_dashboard(payload)
+
+    # release preview reflects the blocked gate reason from the contract
+    assert "Release" in text
+    assert "blocked" in text
+    # ledger summary is derived from the ledger card counts
+    assert "Ledger" in text
+    assert "messages" in text
+
+
+def test_render_workbench_dashboard_shows_ready_release_command() -> None:
+    payload = workbench_example()
+    card = payload["release_preview_card"]
+    card["status"] = "ready"
+    card["can_release"] = True
+    card["reason"] = None
+    card["release_command"] = "agentdeck release --confirm"
+    card["next_command"] = "agentdeck release --confirm"
+
+    text = render_workbench_dashboard(payload)
+
+    assert "agentdeck release --confirm" in text
+
+
 def test_render_workbench_dashboard_flags_blocked_roles() -> None:
     payload = workbench_example()
     role = next(
