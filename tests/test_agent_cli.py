@@ -2041,6 +2041,25 @@ def test_leader_chat_skill_context_is_read_only_and_avoids_provider_calls(tmp_pa
             },
         ],
     }
+    assert payload["intent_card"]["embedded_card"] == "skill_context_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["control_registry_card"]["filters"]["scope"] == "skills"
+    assert payload["control_registry_card"]["filters"]["card"] == "skill_context_card"
+    assert payload["control_registry_card"]["selection"]["matched"] is True
+    assert payload["control_registry_card"]["selection"]["next_command"] == "agentdeck skills list"
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control == {
+        "scope": "skills",
+        "card": "skill_context_card",
+        "kind": "inspect",
+        "label": "List skills",
+        "command": "agentdeck skills list",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+        "agent_id": None,
+        "control_id": selected_control["control_id"],
+    }
     state_after = StateStore(root).load()
     assert state_after["skill_loads"] == state_before["skill_loads"]
     assert state_after["plans"] == []
