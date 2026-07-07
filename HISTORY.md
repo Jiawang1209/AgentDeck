@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Add layered role gap plan to north star
+
+- 根据用户提供的目标图，把 AgentDeck 终局形态进一步凝练为 `frontdesk -> planner -> orchestrator -> programmatic loop -> coder/code_reviewer/round_reviewer -> GUI topology` 的分层角色路线。
+- 更新 `docs/roadmap/ultimate-goal-roadmap.md`：新增“分层角色北极星与图片差距计划”，明确用户交互层与深度计划层分离、模型只管语义而程序内核负责状态/锁/审批/轮次推进。
+- 将当前 AgentDeck 与目标图逐项对标：已具备 provider-agnostic Leader、Codex/Claude CLI worker、tmux runtime、审批、ledger、trace、skill/memory provenance 和 GUI-ready contract；仍需补 `frontdesk`、planner/orchestrator split、run-once loop、任务级 worker lifecycle、reviewer 分层和角色拓扑 GUI。
+- 调整北极星推荐下一步为 **Phase G1: Frontdesk Intake**：先做只读 `frontdesk_card`，推荐显式 `agentdeck leader plan --task <goal>`，不调用 provider、不创建 plan/action/approval/message/job/inbox、不读取或写入 tmux。
+- 验证记录：本轮为路线图文档变更；已检查 roadmap heading 顺序；`git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 569 项通过。
+
 ### Current - Select memory context in command palette
 
 - 扩展自然语言 `agentdeck leader chat --message "查看长期记忆"`：除 `memory_context_card` 外，现在返回过滤到 `scope=memory` / `card=memory_context_card` 的 `control_registry_card`。

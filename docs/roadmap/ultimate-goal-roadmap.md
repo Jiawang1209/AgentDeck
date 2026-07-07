@@ -21,7 +21,100 @@ Human Operator
 
 Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/Hermes 那样把可复用工作流沉淀为 skill，把长期项目事实和用户偏好沉淀为 memory；但所有 skill 都必须显式加载、记录 source/path/hash/content snapshot，并在每次 Leader 规划时把 compact skill provenance 固化到 plan 记录和 ProjectView。Skill 也是未来生态接口：内置 skill 用来沉淀稳定高频工作流，外源 skill 可以进入项目，但必须先经过只读 preview、hash/provenance 展示、显式 import、显式 load 和审计，不能静默安装或自动启用。Skill suggestion 在 MVP 阶段必须先进入 pending queue，经 `draft-preview` 或自然语言 `skill_create_preview` 审阅后只能由人类显式运行 `skills create --confirm` 写入项目 skill；Memory 同样必须先进入 pending suggestion queue，经 `apply-preview` 或自然语言 `memory_apply_preview` 审阅后只能由人类显式运行 `memory apply --confirm` 写入长期记忆。已应用 memory 只通过 ProjectView `memory`、workbench `memory_context_card` 和自然语言 `memory_context` 暴露 compact 摘要，不暴露全文，不自动注入 prompt，避免变成不可追溯的隐藏提示词或权限后门。
 
-## 2. 为什么当前开发没有跑偏
+## 2. 分层角色北极星与图片差距计划
+
+用户给出的目标图把 AgentDeck 的终局体验进一步收束为两条原则：
+
+1. 用户交互与深度计划分开：`frontdesk` 只负责接待、澄清、转述、确认和最终汇报；真正消耗高推理 token 的 `planner` 只处理稳定 brief；任务分解、派发和聚合交给 `orchestrator`。
+2. 模型负责语义，程序负责循环：状态读取、锁、轮次推进、异常停机、审批和提交规则由 AgentDeck 程序内核执行，不交给任何一个 LLM 自由发挥。
+
+目标分层如下：
+
+| 层级 | 角色 | 推荐 provider | 生命周期 | 责任边界 |
+| --- | --- | --- | --- | --- |
+| 用户交互层 | `frontdesk` | Gemini/Qwen/轻量 provider，未来也可用任意便宜模型 | 常驻，不 unload | 接收用户自然语言、澄清目标、压缩成 brief、展示最终汇报；不得创建 plan、审批、dispatch 或发送 tmux 输入 |
+| 用户交互层 | `broker` 可选 | Gemini/Qwen/规则引擎 | 按需 | 过滤不阻塞的问题，为缺省值给出建议；不得代替人类审批 |
+| 计划编排层 | `planner` | Codex 高推理档或其他强推理 provider | 常驻；每轮从文件/state 重水化，不靠聊天记忆 | 产出宏观计划、验收标准、风险和任务 brief；不直接 dispatch worker |
+| 计划编排层 | `orchestrator` | Claude 或其他工具调用密集型 provider | 常驻 | 把 planner brief 拆成可执行任务，选择 worker、创建审批、聚合结果；不得绕过 approval gate |
+| 程序化 loop | `agentic-loop-workflow` | AgentDeck Python 内核 | 每轮运行一次，可恢复 | 读取 authoritative state，驱动一轮 `plan -> approval -> dispatch -> capture -> review -> next`，状态异常时停止并要求人类处理 |
+| 工作层 | `coder` | Claude/Codex/其他 CLI Agent | 任务级动态加载，完成后 release | 在隔离 worktree 或指定工作区完成任务包；只吃当前任务 brief、相关文件和必要 skill，不吃全局历史 |
+| 工作层 | `code_reviewer` | Codex/其他审查型 provider | 任务级动态加载，完成后 release | 独立审查 coder 产物、测试和风险；与 coder 上下文隔离 |
+| 验收层 | `round_reviewer` | Codex/其他审查型 provider | 按需 | 对 planner 的验收类型、整轮结果和是否继续下一轮打分 |
+
+这张图对当前 AgentDeck 的差距要求：
+
+- 已具备底座：provider-agnostic Leader、Codex/Claude CLI worker、tmux runtime、role prompt、审批队列、message/job/reply/inbox ledger、trace、skill/memory provenance、GUI-ready contract。
+- 缺少 `frontdesk`：现在 `leader chat` 已经能做 help、run_start、skill/memory route，但还没有一个只读接待层把用户请求整理为 brief 并推荐下一步命令。
+- `planner` 与 `orchestrator` 还混在一个 Leader 逻辑身份里：当前 Leader 能 plan/review/apply action，但还没有明确区分“宏观规划者”和“执行编排者”的 state、card 与 provider binding。
+- loop 还不够程序化：已有 `run_start`、`run_progress`、`continue` 等卡片，但缺少一个明确的 run-once loop 命令，根据 authoritative state 推进一轮并在异常状态停止。
+- worker 生命周期还不够任务级：现在可以 spawn/capture/send/stop，但还需要 worktree isolation、任务完成 release、上下文清零和产物归档。
+- reviewer 分层还不完整：已有 learning review、trace、leader summary，但还缺少 task-level `code_reviewer` 和 round-level `round_reviewer` 的显式角色、卡片和验收分数。
+- GUI 还缺少角色拓扑：workbench 已有很多卡片，但未来应展示 frontdesk/planner/orchestrator/coder/reviewer 的角色、provider、生命周期、当前任务和阻塞点。
+
+执行路线：
+
+### Phase G1: Frontdesk Intake
+
+新增只读 `frontdesk` 自然语言入口和 `frontdesk_card`。它可以把用户原话整理为 intake summary、分类为 plan/run/help/skill/memory 等候选路径，并推荐显式下一步命令，例如 `agentdeck leader plan --task <goal>` 或 `agentdeck leader chat --message "帮助"`。
+
+验收标准：
+
+- 不调用 Leader provider。
+- 不创建 plan/action/approval/message/job/inbox。
+- 不读取 tmux，不发送 tmux 输入。
+- 输出 GUI-ready `frontdesk_card`、`intent_card` 和可审计 chat turn。
+
+### Phase G2: Planner / Orchestrator Split
+
+把当前逻辑 Leader 拆成两个可配置语义角色：`planner` 负责高推理计划和验收标准，`orchestrator` 负责任务分解、审批创建、worker 选择和结果聚合。二者都仍是 `agent_id=leader` 体系下的逻辑子角色，不复用 worker pane。
+
+验收标准：
+
+- state 中能看到 planner brief 与 orchestrator actions 的来源。
+- 两者都可绑定不同 provider/model。
+- planner 输出不直接 dispatch；orchestrator 也必须经过 approval gate。
+
+### Phase G3: Programmatic Run-Once Loop
+
+新增程序化 loop 命令，只推进一轮：读取 plan/task/approval/job/inbox/trace 的 authoritative state，决定下一步应该 plan、等待审批、dispatch、capture、review、summarize 还是停止。
+
+验收标准：
+
+- loop 不依赖对话记忆判断状态。
+- 每轮只有一个明确 state transition。
+- 异常状态、缺少审批、worker 未就绪或 trace 不一致时停止并生成 blocker。
+
+### Phase G4: Task-Scoped Worker Lifecycle
+
+把 coder/reviewer 变成任务级动态节点：按任务准备 brief、必要文件、必要 skill 和 worktree；任务完成后 release pane/context，只保留 artifact、reply、trace 和 summary。
+
+验收标准：
+
+- coder 不需要读取全局历史。
+- 每个任务能追踪 worktree、pane、skill snapshot、artifact 和测试结果。
+- release 不会删除未经确认的用户改动。
+
+### Phase G5: Reviewer Roles
+
+增加 `code_reviewer` 和 `round_reviewer` 的显式角色与卡片。`code_reviewer` 审查单个任务产物；`round_reviewer` 对整轮结果、planner 验收标准和是否进入下一轮给出结论。
+
+验收标准：
+
+- reviewer 与 coder 上下文隔离。
+- reviewer 输出进入 trace 和 inbox，而不是只停留在 pane 文本。
+- round reviewer 可以阻止下一轮自动推进。
+
+### Phase G6: Role Topology GUI
+
+在 ProjectView/workbench contract 中形成角色拓扑，让 GUI/TUI 能显示 frontdesk、planner、orchestrator、coder、code_reviewer、round_reviewer 的 provider、生命周期、当前状态、阻塞点和下一步控制。
+
+验收标准：
+
+- GUI 不直接扫描 tmux 或私有 state 文件。
+- 所有按钮来自 contract controls，保留 safety/enabled/blocker。
+- 人类可以一眼看出哪个角色在思考、等待审批、执行、审查或已 release。
+
+## 3. 为什么当前开发没有跑偏
 
 当前已经实现的能力都对应终极目标中的底座：
 
@@ -40,7 +133,7 @@ Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/H
 
 这些能力还不是最终产品体验，但它们是 Leader Agent、GUI、自动调度和审批系统需要依赖的基础设施。
 
-## 3. 当前阶段边界
+## 4. 当前阶段边界
 
 当前阶段是 **MVP Control Plane**，重点是把底层契约做稳：
 
@@ -64,7 +157,7 @@ Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/H
 
 这些不是不要做，而是必须等 control plane 稳定后再做。
 
-## 4. 下一阶段目标
+## 5. 下一阶段目标
 
 ### Phase A: Leader Agent MVP
 
@@ -178,7 +271,7 @@ Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/H
 - 外源 skill 必须有 provenance、hash、人类确认入口和覆盖前 preview。
 - skill 不能绕过 approval、runtime safety 或 tool 权限。
 
-## 5. 每轮开发的防跑偏检查
+## 6. 每轮开发的防跑偏检查
 
 每次开发前先问：
 
@@ -192,12 +285,12 @@ Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/H
 
 如果一个功能答不上第 1 点，就先不要做。
 
-## 6. 推荐下一步
+## 7. 推荐下一步
 
-下一步建议做 **Phase A: Leader Agent MVP** 的第一刀：
+下一步建议做 **Phase G1: Frontdesk Intake** 的第一刀：
 
 ```text
-agentdeck leader plan --task <text>
+agentdeck leader chat --message "frontdesk <goal>"
 ```
 
-它先不自动 dispatch，只调用配置的 Leader LLM provider 或 dry-run fake provider 生成结构化 plan，并写入 state。这样项目就从“用户手动调度多个 agent”前进到“Leader Agent 开始规划多 agent 协作”。
+它先不自动 planning，也不 dispatch，只把用户原话整理成只读 `frontdesk_card`，推荐显式下一步命令，例如 `agentdeck leader plan --task <goal>`。这样项目就从“自然语言入口直接落到 planner/provider”前进到“用户交互层与深度计划层分离”，为后续 planner/orchestrator split 打底。
