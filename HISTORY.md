@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add frontdesk intake handoff surface
+
+- 新增自然语言入口 `agentdeck leader chat --message "frontdesk <goal>"` / `"/frontdesk <goal>"` / `"前台接待 <goal>"` / `"梳理需求 <goal>"`：进入只读 `mode=frontdesk`，嵌入 `frontdesk_card`，把用户请求整理为 `intake_summary`，并推荐显式 `agentdeck leader plan --task <goal>`。
+- 保持北极星 Phase G1 边界：frontdesk 只负责接待和路由，不调用 Leader provider、不创建 plan/action/approval/message/job/inbox、不读取 tmux、不发送 tmux 输入；缺少目标文本时返回 `needs_goal` 并引导到 help。
+- 扩展 `agentdeck contract leader-chat` / `--example` 和 help `capability_card`：新增 `frontdesk_card_fields`、稳定 `frontdesk_card` example、`mode=frontdesk` capability 和 GUI-ready controls，方便未来 GUI 在进入 planner/orchestrator 之前先渲染用户交互层。
+- 新增 `docs/handoff/current-development-state.md`，作为 Codex -> Claude Code CLI 或其他本地 agent 的接力棒；明确 Codex App `/goal` 是会话内状态，不能自动跨 CLI，但 Claude 可以通过 `CLAUDE.md`、`AGENT.md`、`HISTORY.md`、北极星 roadmap、handoff 文件和 git commit 续上同一个开发目标。
+- 同步 README 和 `docs/contracts/leader-chat-schema.md`，说明 frontdesk 的只读契约、GUI 消费方式、handoff 文件用途和跨 Agent 续开发方式。
+- 验证记录：已先确认红测失败，`frontdesk ...` 最初落入 provider planning 并因缺少 `DEEPSEEK_API_KEY` 失败；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls -q` 1 项通过；frontdesk/contract/help 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning -q` 5 项通过；扩展聚焦测试 7 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 528 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 570 项通过。
+
 ### Current - Add layered role gap plan to north star
 
 - 根据用户提供的目标图，把 AgentDeck 终局形态进一步凝练为 `frontdesk -> planner -> orchestrator -> programmatic loop -> coder/code_reviewer/round_reviewer -> GUI topology` 的分层角色路线。

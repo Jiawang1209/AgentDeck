@@ -3306,6 +3306,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
     assert payload["example_artifacts_card_fields"] == payload["artifacts_card_fields"]
     assert payload["example_artifacts_card_fields"] == list(example["artifacts_card"])
+    assert payload["example_frontdesk_card_fields"] == payload["frontdesk_card_fields"]
+    assert payload["example_frontdesk_card_fields"] == list(example["frontdesk_card"])
     assert payload["example_memory_context_card_fields"] == payload["memory_context_card_fields"]
     assert payload["example_memory_context_card_fields"] == list(example["memory_context_card"])
     assert example["trace_card"] is None

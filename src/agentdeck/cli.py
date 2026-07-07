@@ -102,6 +102,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         and payload.get("trace_card") is not None
     )
     card_names = (
+        "frontdesk_card",
         "workbench_card",
         "continue_card",
         "run_start_card",
@@ -296,6 +297,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
 
 
 def _leader_chat_intent_inspect_label(embedded_card: object) -> str:
+    if embedded_card == "frontdesk_card":
+        return "Inspect frontdesk routing"
     if embedded_card == "skill_suggestions_card":
         return "List skill suggestions"
     if embedded_card == "memory_context_card":
@@ -362,6 +365,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Summarize plan"
     if re.fullmatch(r"agentdeck learn review --plan-id [^\s]+", command):
         return "Review learning"
+    if command.startswith("agentdeck leader plan --task "):
+        return "Create Leader plan"
     if command == "agentdeck skills list":
         return "List skills"
     if command == "agentdeck skills suggestions":
@@ -376,6 +381,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
 
 
 def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str, object]) -> str | None:
+    if embedded_card == "frontdesk_card":
+        return 'agentdeck leader chat --message "帮助"'
     if embedded_card == "workbench_card":
         return "agentdeck workbench"
     if embedded_card == "continue_card":
@@ -551,6 +558,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("control_registry_card", None)
     payload.setdefault("control_mode_card", None)
     payload.setdefault("provider_health", None)
+    payload.setdefault("frontdesk_card", None)
     payload.setdefault("leader_status_card", None)
     payload.setdefault("learning_review_card", None)
     payload.setdefault("skill_context_card", None)
@@ -5680,6 +5688,74 @@ def _is_continue_chat_message(message: str) -> bool:
     return normalized in {"继续", "继续吧", "/continue", "continue"}
 
 
+def _chat_wants_frontdesk(message: str) -> bool:
+    normalized = message.strip().lower()
+    compact = normalized.replace(" ", "")
+    return (
+        normalized.startswith("frontdesk")
+        or normalized.startswith("/frontdesk")
+        or "前台接待" in compact
+        or "前台处理" in compact
+        or "前台路由" in compact
+        or "梳理需求" in compact
+        or "澄清需求" in compact
+    )
+
+
+def _frontdesk_goal_from_message(message: str) -> str:
+    text = message.strip()
+    text = re.sub(r"^/?frontdesk[:：\s-]*", "", text, flags=re.IGNORECASE).strip()
+    for token in [
+        "前台接待",
+        "前台处理",
+        "前台路由",
+        "帮我梳理需求",
+        "帮我澄清需求",
+        "梳理需求",
+        "澄清需求",
+    ]:
+        if text.startswith(token):
+            text = text[len(token) :].strip(" ：:-")
+    return text
+
+
+def _frontdesk_card(message: str) -> dict[str, object]:
+    goal = _frontdesk_goal_from_message(message)
+    has_goal = bool(goal)
+    next_command = (
+        f"agentdeck leader plan --task {shlex.quote(goal)}"
+        if has_goal
+        else 'agentdeck leader chat --message "帮助"'
+    )
+    return {
+        "mode": "frontdesk",
+        "title": "Frontdesk intake",
+        "summary": "Frontdesk routed the request without calling a planning provider.",
+        "user_message": message,
+        "intake_summary": goal,
+        "classification": "planning_candidate" if has_goal else "needs_goal",
+        "next_command": next_command,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Open Leader help",
+                "command": 'agentdeck leader chat --message "帮助"',
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "plan",
+                "label": "Create Leader plan",
+                "command": next_command if has_goal else None,
+                "safety": "plan_only",
+                "enabled": has_goal,
+                "blocker": None if has_goal else "requires goal text",
+            },
+        ],
+    }
+
+
 def _chat_wants_help(message: str) -> bool:
     normalized = message.strip().lower()
     return normalized in {
@@ -6783,6 +6859,19 @@ def _leader_chat_explanation(
         reason = review.get("reason")
     if reason is None and isinstance(leader_action, dict):
         reason = leader_action.get("reason")
+    if mode == "frontdesk":
+        status = "routed" if str(next_command or "").startswith("agentdeck leader plan --task ") else "needs_goal"
+        return {
+            "mode": mode,
+            "summary": "Frontdesk is routing the human request without calling a planning provider.",
+            "reason": "human asked frontdesk to intake or clarify a request",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": "frontdesk",
+            "action_status": status,
+            "safety": "plan_only" if status == "routed" else "inspect",
+            "requires_explicit_user": False,
+        }
     if mode == "plan":
         return {
             "mode": mode,
@@ -7473,6 +7562,61 @@ def leader_chat_command(args: argparse.Namespace) -> int:
     project_view = _project_view_payload_or_error(config, store)
     if project_view is None:
         return 1
+    if _chat_wants_frontdesk(args.message):
+        frontdesk_card = _frontdesk_card(args.message)
+        next_command = frontdesk_card["next_command"]
+        turn = store.record_chat_turn(
+            mode="frontdesk",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="frontdesk",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "frontdesk",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "frontdesk",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "frontdesk",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "frontdesk_card": frontdesk_card,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
     apply_action_id = _chat_apply_action_id(args.message)
     if apply_action_id:
         try:

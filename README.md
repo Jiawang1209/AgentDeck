@@ -99,6 +99,7 @@ agentdeck agent refresh
 agentdeck agent stop --agent planner
 agentdeck agent assign-role --agent planner --role "architecture planning" --role-prompt "你负责架构规划和任务拆解。"
 agentdeck leader chat --message "帮我设计自动 reply extraction"
+agentdeck leader chat --message "frontdesk 帮我梳理多 Agent 分层开发"
 agentdeck leader chat --message "查看 Leader 状态"
 agentdeck leader chat --message "查看已加载技能"
 agentdeck leader chat --message "查看 skill 建议"
@@ -161,6 +162,8 @@ agentdeck trace --id msg_xxx
 agentdeck events --limit 20
 agentdeck artifacts
 ```
+
+`agentdeck leader chat --message "frontdesk <goal>"` 是北极星 Phase G1 的只读前台接待入口：它会进入 `mode=frontdesk`，返回 `frontdesk_card`、`intent_card` 和显式下一步 `agentdeck leader plan --task <goal>`，但不调用 Leader provider、不创建 plan/action/approval/message/job/inbox、不读取 tmux，也不发送 tmux 输入。这个入口用于把用户交互层和 planner/orchestrator 深度推理层分开，未来 GUI 可以先渲染 frontdesk intake，再由人类决定是否进入 plan。
 
 `agentdeck trace --id <id>` 和自然语言 `agentdeck leader chat --message "追踪 msg_xxx"` 都会返回同源通信链路卡；trace 卡片包含只读 `controls[]`，自然语言 trace 响应还会附带过滤到 `scope=trace` / `card=trace_card` 的 `control_registry_card`，方便 GUI/TUI 直接高亮“Inspect trace”命令。它们都只是检查入口，不会自动执行 trace、capture、ack、dispatch 或 tmux 输入。
 
@@ -365,6 +368,8 @@ agentdeck contract artifacts --example
 Leader chat contract 的 `capability_card` 现在会把学习层自然语言入口作为 GUI/TUI 可发现能力暴露：`skill_context`、`skill_import_preview`、`skill_load_preview`、`skill_create_preview`、`skill_suggestions`、`memory_context`、`memory_suggestions` 和 `memory_apply_preview`。其中 `skill_context` 指向 `agentdeck leader chat --message "查看已加载技能"`，只展示已加载 skill 的 compact provenance，并附带过滤到 `scope=skills` / `card=skill_context_card` 的 `control_registry_card`，selection 指向 `agentdeck skills list` inspect control，方便 GUI 同屏高亮命令面板入口；`skill_create_preview` 与 `memory_apply_preview` 都使用 `<suggestion_id>` placeholder 和 `requires suggestion_id` blocker，帮助 GUI 渲染“从 pending suggestion 预览创建 skill / 预览写入长期记忆”的表单；`memory_context` 指向 `agentdeck leader chat --message "查看长期记忆"`，只展示已应用 memory 的 compact 摘要；help 本身只读，不创建 `SKILL.md`、不修改 suggestion 队列、不写 `.agentdeck/memory/*.md`，也不执行 create/apply 命令。
 
 `agentdeck contract memory` 会发现 `memory suggest/suggestions/apply-preview/apply` 的建议、队列、只读预览、显式写入响应字段和 GUI control 字段，`--example` 会附带稳定 memory suggestion/apply 示例。这个 contract 是 AgentDeck 北极星里“可学习但不失控”的长期记忆接口：可以容纳人类、Leader 或 Worker 提出的 memory 候选，但最终写入必须由显式确认命令完成。已应用 memory 只通过 ProjectView `memory` 和 `memory_context_card` 作为只读摘要可见，不作为隐藏 prompt 注入。
+
+开发交接状态记录在 `docs/handoff/current-development-state.md`。Codex 额度用完后切到 Claude Code CLI 时，先让 Claude 阅读 `CLAUDE.md`、`AGENT.md`、`HISTORY.md` 顶部、`docs/roadmap/ultimate-goal-roadmap.md` 和该 handoff 文件，再从当前 git commit 继续。Codex App 的 `/goal` 是会话内状态，不会自动进入 Claude Code CLI；handoff 文件会保存同一段目标和下一步命令，让 Claude 能按仓库事实续上。
 
 `agentdeck contract learning-review` 会发现 `agentdeck learn review --plan-id <id>` 的只读学习回顾响应字段、skill suggestion 字段、memory suggestion 字段和 GUI control 字段，`--example` 会附带稳定 learning review 示例。这个 contract 把 Hermes 式后台 reviewer 和 WispTerm 式 skill/memory 沉淀接到 AgentDeck 北极星：review 可以提出 `agentdeck skills suggest ... --source learn-review` 与 `agentdeck memory suggest ... --source learn-review` 后续命令，但不会自动创建 skill、写 memory、安装外源内容、调用 provider 或读取 tmux pane。live 输出和自然语言 `learning_review_card` 都会通过 `validate_learning_review_contract()` 守门，失败时不打印半坏 JSON。
 

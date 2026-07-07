@@ -419,6 +419,17 @@ LEADER_CHAT_MEMORY_CONTEXT_CARD_FIELDS = (
     "controls",
 )
 
+LEADER_CHAT_FRONTDESK_CARD_FIELDS = (
+    "mode",
+    "title",
+    "summary",
+    "user_message",
+    "intake_summary",
+    "classification",
+    "next_command",
+    "controls",
+)
+
 LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS = (
     "mode",
     "title",
@@ -897,6 +908,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "learning_review_card",
     "leader_summary_card",
     "leader_status_card",
+    "frontdesk_card",
     "skill_context_card",
     "memory_context_card",
     "skill_import_preview_card",
@@ -2701,6 +2713,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "terminal_session_item_fields": list(WORKBENCH_TERMINAL_SESSION_ITEM_FIELDS),
         "leader_status_card_fields": list(LEADER_STATUS_RESPONSE_FIELDS),
         "leader_status_queue_fields": list(LEADER_STATUS_QUEUE_FIELDS),
+        "frontdesk_card_fields": list(LEADER_CHAT_FRONTDESK_CARD_FIELDS),
         "skill_context_card_fields": list(LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS),
         "memory_context_card_fields": list(LEADER_CHAT_MEMORY_CONTEXT_CARD_FIELDS),
         "skill_import_preview_card_fields": list(LEADER_CHAT_SKILL_IMPORT_PREVIEW_CARD_FIELDS),
@@ -2785,6 +2798,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_terminal_session_item_fields"] = list(terminal_session_card["terminals"][0])
         payload["example_leader_status_card_fields"] = list(example["leader_status_card"])
         payload["example_leader_status_queue_fields"] = list(example["leader_status_card"]["queues"])
+        payload["example_frontdesk_card_fields"] = list(example["frontdesk_card"])
         payload["example_skill_context_card_fields"] = list(example["skill_context_card"])
         payload["example_memory_context_card_fields"] = list(example["memory_context_card"])
         payload["example_skill_import_preview_card_fields"] = list(example["skill_import_preview_card"])
@@ -2829,6 +2843,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "safety": "inspect",
             "requires_explicit_user": False,
             "card": "workbench_card",
+        },
+        {
+            "mode": "frontdesk",
+            "label": "Route with frontdesk",
+            "description": "Intake a human request before deep planning or dispatch.",
+            "example_messages": ["frontdesk 帮我梳理需求", "前台接待 帮我澄清任务"],
+            "command": 'agentdeck leader chat --message "frontdesk <goal>"',
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "frontdesk_card",
         },
         {
             "mode": "plan",
@@ -7650,6 +7674,33 @@ def leader_chat_example() -> dict[str, object]:
     audit_card = workbench_card["audit_card"]
     control_mode_card = workbench_card["control_mode_card"]
     capability_card = leader_chat_capability_card()
+    frontdesk_card = {
+        "mode": "frontdesk",
+        "title": "Frontdesk intake",
+        "summary": "Frontdesk routed the request without calling a planning provider.",
+        "user_message": "frontdesk Build a multi-agent smoke test",
+        "intake_summary": "Build a multi-agent smoke test",
+        "classification": "planning_candidate",
+        "next_command": "agentdeck leader plan --task 'Build a multi-agent smoke test'",
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Open Leader help",
+                "command": 'agentdeck leader chat --message "帮助"',
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "plan",
+                "label": "Create Leader plan",
+                "command": "agentdeck leader plan --task 'Build a multi-agent smoke test'",
+                "safety": "plan_only",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
     skill_context_card = {
         "mode": "skill_context",
         "title": "Loaded skill context",
@@ -8244,6 +8295,7 @@ def leader_chat_example() -> dict[str, object]:
         "learning_review_card": learning_review_card,
         "leader_summary_card": leader_summary_card,
         "leader_status_card": leader_status_card,
+        "frontdesk_card": frontdesk_card,
         "skill_context_card": skill_context_card,
         "memory_context_card": memory_context_card,
         "skill_import_preview_card": skill_import_preview_card,

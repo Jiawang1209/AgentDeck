@@ -2191,6 +2191,84 @@ def test_leader_chat_memory_context_is_read_only_and_avoids_provider_calls(
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
 
 
+def test_leader_chat_frontdesk_routes_request_without_planning_or_provider_calls(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "frontdesk 帮我梳理多 Agent 分层开发"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected_next = "agentdeck leader plan --task '帮我梳理多 Agent 分层开发'"
+    assert payload["mode"] == "frontdesk"
+    assert payload["plan_id"] is None
+    assert payload["review"] is None
+    assert payload["leader_action"] is None
+    assert payload["next_command"] == expected_next
+    assert payload["frontdesk_card"] == {
+        "mode": "frontdesk",
+        "title": "Frontdesk intake",
+        "summary": "Frontdesk routed the request without calling a planning provider.",
+        "user_message": "frontdesk 帮我梳理多 Agent 分层开发",
+        "intake_summary": "帮我梳理多 Agent 分层开发",
+        "classification": "planning_candidate",
+        "next_command": expected_next,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Open Leader help",
+                "command": 'agentdeck leader chat --message "帮助"',
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "plan",
+                "label": "Create Leader plan",
+                "command": expected_next,
+                "safety": "plan_only",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    assert payload["intent_card"]["embedded_card"] == "frontdesk_card"
+    assert payload["intent_card"]["read_only"] is True
+    assert payload["intent_card"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect frontdesk routing",
+        "command": 'agentdeck leader chat --message "帮助"',
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["intent_card"]["controls"][1] == {
+        "kind": "next",
+        "label": "Create Leader plan",
+        "command": expected_next,
+        "safety": "plan_only",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["leader_explanation"]["action_kind"] == "frontdesk"
+    assert payload["leader_explanation"]["action_status"] == "routed"
+    assert payload["leader_explanation"]["safety"] == "plan_only"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+
+    state_after = StateStore(root).load()
+    assert state_after["plans"] == state_before["plans"] == []
+    assert state_after["approvals"] == state_before["approvals"] == []
+    assert state_after["messages"] == state_before["messages"] == []
+    assert state_after["jobs"] == state_before["jobs"] == []
+    assert state_after.get("inbox", {}) == state_before.get("inbox", {}) == {}
+    assert state_after["leader_errors"] == []
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
+
+
 def test_workbench_surfaces_pending_skill_suggestions_for_gui_without_mutating_state(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -4127,6 +4205,16 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["terminal_card_fields"] == expected["terminal_card_fields"]
     assert payload["dispatch_preview_card_fields"] == expected["dispatch_preview_card_fields"]
     assert payload["agent_ready_card_fields"] == expected["agent_ready_card_fields"]
+    assert payload["frontdesk_card_fields"] == [
+        "mode",
+        "title",
+        "summary",
+        "user_message",
+        "intake_summary",
+        "classification",
+        "next_command",
+        "controls",
+    ]
     assert payload["skill_import_preview_card_fields"] == expected["skill_import_preview_card_fields"]
     assert payload["skill_load_preview_card_fields"] == expected["skill_load_preview_card_fields"]
     assert payload["skill_create_preview_card_fields"] == [
@@ -7074,6 +7162,8 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     assert set(payload["example_skill_load_preview_card_fields"]) == set(example["skill_load_preview_card"])
     assert payload["example_skill_create_preview_card_fields"] == payload["skill_create_preview_card_fields"]
     assert set(payload["example_skill_create_preview_card_fields"]) == set(example["skill_create_preview_card"])
+    assert payload["example_frontdesk_card_fields"] == payload["frontdesk_card_fields"]
+    assert set(payload["example_frontdesk_card_fields"]) == set(example["frontdesk_card"])
     assert payload["example_skill_suggestions_card_fields"] == payload["skill_suggestions_card_fields"]
     assert set(payload["example_skill_suggestions_card_fields"]) == set(example["skill_suggestions_card"])
     assert payload["example_memory_context_card_fields"] == payload["memory_context_card_fields"]

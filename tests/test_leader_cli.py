@@ -4268,6 +4268,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
     assert payload["capability_card"]["capability_count"] == len(payload["capability_card"]["capabilities"])
     capability_modes = {item["mode"] for item in payload["capability_card"]["capabilities"]}
     assert {
+        "frontdesk",
         "plan",
         "review",
         "apply_action",
@@ -4292,6 +4293,18 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "provider_switch",
     } <= capability_modes
     capabilities = {item["mode"]: item for item in payload["capability_card"]["capabilities"]}
+    assert capabilities["frontdesk"]["command"] == 'agentdeck leader chat --message "frontdesk <goal>"'
+    assert capabilities["frontdesk"]["safety"] == "inspect"
+    assert capabilities["frontdesk"]["requires_explicit_user"] is False
+    assert capabilities["frontdesk"]["card"] == "frontdesk_card"
+    assert capabilities["frontdesk"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Route with frontdesk",
+        "command": 'agentdeck leader chat --message "frontdesk <goal>"',
+        "safety": "inspect",
+        "enabled": False,
+        "blocker": "requires goal text",
+    }
     assert capabilities["plan"]["safety"] == "plan_only"
     assert capabilities["plan"]["requires_explicit_user"] is False
     assert capabilities["plan"]["controls"] == [
