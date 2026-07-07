@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Add read-only TUI reference client (dashboard)
+
+- 新增 `src/agentdeck/dashboard.py` 和 `agentdeck dashboard` 命令：作为只读参考客户端，验证 workbench 契约足以驱动 GUI/TUI。`render_workbench_dashboard(payload)` 是纯函数，只消费 `agentdeck workbench` 契约 payload（像外部 GUI 那样），渲染出 header / recovery / role topology / review gate / queue 的人类可读文本面板，并原样回显每个角色和 recovery/queue 的显式下一步命令。
+- `agentdeck dashboard` 复用与 `agentdeck workbench` 完全相同的 `_workbench_snapshot_payload` + `validate_workbench_contract()`，只是把 JSON 换成文本视图；它不读取额外 state、不调用 provider、不写 state、不 spawn/dispatch/capture/ack/release。
+- 参考客户端刻意只从契约 payload 派生所有展示值（角色 kind/status/blocker/next_command、review gate 阶段、queue source/next），不解析私有 state，也不发明命令——证明只读契约面自洽可消费。
+- 保持北极星边界：这是纯消费方，不新增后端行为，不改任何现有命令。
+- 验证记录：已先确认红测失败，`agentdeck.dashboard` 模块最初不存在（ModuleNotFoundError）；实现后目标测试 `conda run -n agentdeck pytest tests/test_dashboard.py -q` 3 项通过（含只读不 mutate payload、blocked 角色高亮、`dashboard` 命令输出非 JSON 文本且不改 state）；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 608 项通过。
+
 ### Current - Add layered-role end-to-end walkthrough
 
 - 新增 `docs/walkthroughs/layered-role-round.md`（北极星 Phase G6 收官，docs）：把分层角色主线 G1–G6 串成一份端到端走查——frontdesk intake → coordination topology → plan → approval → dispatch + worker lifecycle → review gate → release → role topology → recovery/loop，逐 phase 标注是"显式人类命令"还是"只读契约面"，并交叉链接每个 phase 的 contract（`agentdeck contract ...`）。

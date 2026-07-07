@@ -305,13 +305,27 @@ The layered-role walkthrough is already committed:
 
 Phases G1–G6 are complete and now documented end-to-end.
 
+## Current Direction: TUI reference client
+
+The user chose to build a read-only TUI/CLI reference client that consumes the workbench + control_registry contracts, proving the contracts are sufficient to drive a GUI (no new backend behavior).
+
+The first slice is already committed:
+
+```bash
+agentdeck dashboard
+```
+
+- Adds `src/agentdeck/dashboard.py` with the pure function `render_workbench_dashboard(payload)` and the `agentdeck dashboard` command.
+- Renders header / recovery / role topology / review gate / queue as human-readable text, deriving every value and echoed command from the workbench contract payload alone.
+- Reuses the same `_workbench_snapshot_payload` + `validate_workbench_contract()` as `agentdeck workbench`; read-only, no state writes.
+
 ## Next Best Step
 
-The layered-role plan (G1–G6) is delivered. Revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability. Candidate directions, all keeping the read-only-contract + explicit-command discipline:
+Continue the TUI reference client:
 
-- Real end-to-end run automation behind the approval gate: a guided `agentdeck run` loop that, after each human approval, advances to the next explicit step (still stopping at every human gate) — turning the walkthrough into an assisted flow without removing approvals.
-- Deeper skill/memory learning-layer surfaces (roadmap Phase F): e.g. wiring `learn review` suggestions into GUI-consumable queues end-to-end.
-- A GUI/TUI reference client that consumes the workbench + control_registry contracts (no new backend behavior; proves the contracts are sufficient).
+- Add a control-palette section to the dashboard that renders `control_registry[]` grouped by scope, preserving each control's `safety` / `enabled` / `blocker` (so the reference client shows exactly which buttons a GUI would render and which are disabled and why). Reuse `agentdeck controls` filters conceptually.
+- Add worker-lifecycle and ledger/lineage sections, and a `release_preview` line when a round is ready/released.
+- Then document the reference client under `docs/` (or extend the walkthrough) and note it is a pure contract consumer.
 - Preserve human approval and keep every read-only surface read-only.
 
 ## Required Verification Before Handoff
