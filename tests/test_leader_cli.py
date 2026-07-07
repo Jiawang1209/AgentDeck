@@ -4287,6 +4287,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "runtime",
         "role",
         "review_gate",
+        "release_preview",
         "ledger",
         "queue",
         "approval",
@@ -4316,6 +4317,18 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "kind": "inspect",
         "label": "Inspect review gate",
         "command": 'agentdeck leader chat --message "查看验收门"',
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert capabilities["release_preview"]["command"] == 'agentdeck leader chat --message "查看发布预览"'
+    assert capabilities["release_preview"]["safety"] == "inspect"
+    assert capabilities["release_preview"]["requires_explicit_user"] is False
+    assert capabilities["release_preview"]["card"] == "release_preview_card"
+    assert capabilities["release_preview"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Inspect release preview",
+        "command": 'agentdeck leader chat --message "查看发布预览"',
         "safety": "inspect",
         "enabled": True,
         "blocker": None,

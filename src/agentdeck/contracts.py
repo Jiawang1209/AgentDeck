@@ -961,6 +961,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "operator_card",
     "role_card",
     "review_gate_card",
+    "release_preview_card",
     "ledger_card",
     "lineage_card",
     "audit_card",
@@ -2855,6 +2856,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "worker_lifecycle_item_fields": list(WORKBENCH_WORKER_LIFECYCLE_ITEM_FIELDS),
         "review_gate_card_fields": list(WORKBENCH_REVIEW_GATE_CARD_FIELDS),
         "review_gate_stage_fields": list(WORKBENCH_REVIEW_GATE_STAGE_FIELDS),
+        "release_preview_card_fields": list(WORKBENCH_RELEASE_PREVIEW_CARD_FIELDS),
         "ledger_card_fields": list(WORKBENCH_LEDGER_CARD_FIELDS),
         "lineage_card_fields": list(WORKBENCH_LINEAGE_CARD_FIELDS),
         "lineage_path_fields": list(WORKBENCH_LINEAGE_PATH_FIELDS),
@@ -2941,6 +2943,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_role_agent_fields"] = list(example["role_card"]["agents"][0])
         payload["example_review_gate_card_fields"] = list(example["review_gate_card"])
         payload["example_review_gate_stage_fields"] = list(example["review_gate_card"]["code_review"])
+        payload["example_release_preview_card_fields"] = list(example["release_preview_card"])
         payload["example_ledger_card_fields"] = list(example["ledger_card"])
         payload["example_lineage_card_fields"] = list(example["lineage_card"])
         payload["example_lineage_path_fields"] = list(example["lineage_card"]["recent_paths"][0])
@@ -3172,6 +3175,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "safety": "inspect",
             "requires_explicit_user": False,
             "card": "review_gate_card",
+        },
+        {
+            "mode": "release_preview",
+            "label": "Inspect release preview",
+            "description": "Inspect release / next-round readiness derived from the review gate before any explicit release command exists.",
+            "example_messages": ["查看发布预览", "release preview"],
+            "command": 'agentdeck leader chat --message "查看发布预览"',
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "release_preview_card",
         },
         {
             "mode": "ledger",
@@ -5894,6 +5907,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                     "intent_card.secondary_embedded_cards must include control_registry_card for review_gate responses"
                 )
             if (
+                explanation_action_kind == "release_preview"
+                and payload.get("release_preview_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for release_preview responses"
+                )
+            if (
                 explanation_action_kind == "policy_mode"
                 and payload.get("control_mode_card") is not None
                 and "control_registry_card" not in secondary_embedded_cards
@@ -6141,6 +6162,19 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         _validate_review_gate_card_contract(errors, review_gate_card, prefix="review_gate_card")
     elif "review_gate_card" in payload and review_gate_card is not None:
         errors.append("review_gate_card must be an object")
+    release_preview_card = payload.get("release_preview_card")
+    if isinstance(release_preview_card, dict):
+        _validate_release_preview_card_contract(errors, release_preview_card, prefix="release_preview_card")
+        if isinstance(review_gate_card, dict):
+            if release_preview_card.get("can_release") != review_gate_card.get("can_release"):
+                errors.append("release_preview_card.can_release must match review_gate_card.can_release")
+            if (
+                release_preview_card.get("status") == "blocked"
+                and release_preview_card.get("reason") != review_gate_card.get("reason")
+            ):
+                errors.append("blocked release_preview_card.reason must match review_gate_card.reason")
+    elif "release_preview_card" in payload and release_preview_card is not None:
+        errors.append("release_preview_card must be an object")
     ledger_card = payload.get("ledger_card")
     if isinstance(ledger_card, dict):
         _validate_ledger_card_contract(errors, ledger_card, prefix="ledger_card")
@@ -6300,6 +6334,13 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         ):
             errors.append("control_registry_card.selection.next_command must match review_gate inspect command")
         if (
+            explanation_action_kind == "release_preview"
+            and isinstance(release_preview_card, dict)
+            and isinstance(selection, dict)
+            and selection.get("next_command") != "agentdeck workbench"
+        ):
+            errors.append("control_registry_card.selection.next_command must match release_preview inspect command")
+        if (
             explanation_action_kind == "ledger"
             and isinstance(ledger_card, dict)
             and isinstance(selection, dict)
@@ -6403,6 +6444,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append(f"control_registry_card is required for {explanation_action_kind} responses")
     elif explanation_action_kind == "review_gate":
         errors.append("control_registry_card is required for review_gate responses")
+    elif explanation_action_kind == "release_preview":
+        errors.append("control_registry_card is required for release_preview responses")
     elif explanation_action_kind == "policy_mode":
         errors.append("control_registry_card is required for policy_mode responses")
     elif explanation_action_kind in {"approval_dispatch", "approval_dispatch_batch"}:
@@ -8304,6 +8347,7 @@ def leader_chat_example() -> dict[str, object]:
     operator_card = workbench_example()["operator_card"]
     role_card = workbench_example()["role_card"]
     review_gate_card = workbench_example()["review_gate_card"]
+    release_preview_card = workbench_example()["release_preview_card"]
     ledger_card = workbench_example()["ledger_card"]
     lineage_card = workbench_example()["lineage_card"]
     artifacts_card = artifacts_example()
@@ -8962,6 +9006,7 @@ def leader_chat_example() -> dict[str, object]:
         "operator_card": operator_card,
         "role_card": role_card,
         "review_gate_card": review_gate_card,
+        "release_preview_card": release_preview_card,
         "ledger_card": ledger_card,
         "lineage_card": lineage_card,
         "audit_card": audit_card,

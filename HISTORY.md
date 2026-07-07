@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Add release preview leader chat discovery
+
+- 扩展自然语言 `agentdeck leader chat --message "查看发布预览"` / `release preview`：进入只读 `mode=release_preview`，嵌入与 `agentdeck workbench` 同源的 `release_preview_card`（从同一份 `review_gate_card` 派生）。
+- 响应会附带过滤到 `scope=release_preview` / `card=release_preview_card` 的 `control_registry_card`，selection 指向 `inspect_review_gate` control（`agentdeck workbench`）；`release_preview` / `next_round_preview` 控件保持 disabled `explicit_user` placeholder 且 `command=null`，直到显式 approval-gated release 命令存在。
+- 扩展 `agentdeck contract leader-chat` / `--example`、help `capability_card` 和 validator：新增顶层 `release_preview_card` 字段、`release_preview_card_fields` discovery、example 字段、`mode=release_preview` capability、secondary embedded card 校验、registry selection 校验和 release/review-gate 一致性校验。
+- 保持北极星 G5 边界：自然语言发布预览只记录 chat turn 和审计事件，不调用 Leader provider、不创建 plan/action/approval/message/job/inbox、不读取/写入/发送 tmux、不 release、不 merge、不 ack、不 dispatch follow-up、不推进 loop。
+- 同步 README、`docs/contracts/leader-chat-schema.md` 和 `docs/handoff/current-development-state.md`，把“release preview 自然语言发现”从待办推进为已完成，并把下一步收窄到显式 approval-gated release / next-round 命令设计。
+- 验证记录：已先确认红测失败，`查看发布预览` 最初落入 DeepSeek provider 路径并因缺少 `DEEPSEEK_API_KEY` 失败；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_release_preview_is_read_only_and_surfaces_control_palette -q` 1 项通过；release-preview/help/contract 聚焦测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_release_preview_is_read_only_and_surfaces_control_palette tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response tests/test_agent_cli.py::test_contract_leader_chat_cli_matches_contract_module tests/test_contracts.py::test_leader_chat_contract_response_includes_example_without_drift -q` 6 项通过；核心回归 `conda run -n agentdeck pytest tests/test_agent_cli.py tests/test_contracts.py tests/test_leader_cli.py -q` 540 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 582 项通过。
+
 ### Current - Add release preview workbench card
 
 - 扩展 `agentdeck workbench`：新增 `release_preview_card`，从 `review_gate_card` 派生 release / next-round 决策位，供 GUI/TUI 在验收门之后渲染下一步入口。

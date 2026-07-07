@@ -117,7 +117,7 @@ Expected behavior:
 - Does not create plan/action/approval/message/job/inbox.
 - Does not release, merge, ack inbox items, dispatch follow-up work, advance the loop, read tmux, or send tmux input.
 
-The current G5 follow-up adds release / next-round preview visibility:
+The release-preview workbench slice is already committed:
 
 ```bash
 agentdeck workbench
@@ -131,6 +131,24 @@ New surface:
 - Exposes `release_preview` and `next_round_preview` controls as disabled `explicit_user` placeholders with `command=null`.
 - Exposes only `inspect_review_gate` as an enabled inspect control.
 - Does not release, merge, ack inbox items, dispatch follow-up work, advance the loop, call a provider, read tmux, write tmux, or mutate state.
+
+The current G5 follow-up adds release-preview natural-language discovery:
+
+```bash
+agentdeck leader chat --message "查看发布预览"
+```
+
+Expected behavior:
+
+- Returns `mode=release_preview`.
+- Embeds the same read-only `release_preview_card` as `agentdeck workbench`.
+- Attaches a `control_registry_card` filtered to `scope=release_preview` / `card=release_preview_card`.
+- Selects the `inspect_review_gate` control pointing at `agentdeck workbench`.
+- Keeps `release_preview` / `next_round_preview` controls as disabled `explicit_user` placeholders with `command=null`.
+- Records only the chat turn and audit event.
+- Does not call a Leader provider.
+- Does not create plan/action/approval/message/job/inbox.
+- Does not release, merge, ack inbox items, dispatch follow-up work, advance the loop, read tmux, or send tmux input.
 
 ## Cross-Agent Goal Continuity
 
@@ -156,9 +174,9 @@ Continue the active north-star goal; do not redo completed work.
 
 ## Next Best Step
 
-After the current release-preview slice is committed, continue with the next Phase G5 follow-up:
+After the release-preview natural-language discovery slice is committed, continue with the next Phase G5 follow-up:
 
-- Add the explicit approval-gated release / next-round command preview or natural-language discovery for the same `release_preview_card`.
+- Design the explicit approval-gated release / next-round command itself (for example an `agentdeck release ... --confirm`-style explicit command or an approval-queue-backed release action) so the disabled `release_preview` / `next_round_preview` placeholders can point at a real explicit command.
 - Preserve human approval before any release, merge, ack, or follow-up dispatch.
 
 ## Required Verification Before Handoff
@@ -172,6 +190,7 @@ conda run -n agentdeck pytest tests/test_agent_cli.py::test_loop_once_recommends
 conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_worker_lifecycle_item_fields tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q
 conda run -n agentdeck pytest tests/test_contracts.py::test_workbench_contract_response_includes_example_without_drift tests/test_contracts.py::test_validate_workbench_contract_requires_review_gate_stage_fields tests/test_agent_cli.py::test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without_mutating_state -q
 conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_review_gate_is_read_only_and_surfaces_control_palette tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q
+conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_release_preview_is_read_only_and_surfaces_control_palette tests/test_leader_cli.py::test_leader_chat_help_returns_capability_card_without_planning tests/test_agent_cli.py::test_contract_leader_chat_discovers_schema_for_gui_clients tests/test_agent_cli.py::test_contract_leader_chat_example_exports_gui_ready_response -q
 conda run -n agentdeck pytest -q
 git diff --check
 ```
