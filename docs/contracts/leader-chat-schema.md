@@ -22,6 +22,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "leader_status_card_fields": [],
   "leader_status_queue_fields": [],
   "skill_context_card_fields": [],
+  "memory_context_card_fields": [],
   "skill_import_preview_card_fields": [],
   "skill_load_preview_card_fields": [],
   "skill_create_preview_card_fields": [],
@@ -105,6 +106,7 @@ The review-mode response shape is:
   "leader_summary_card": null,
   "leader_status_card": null,
   "skill_context_card": null,
+  "memory_context_card": null,
   "skill_import_preview_card": null,
   "skill_load_preview_card": null,
   "skill_create_preview_card": null,
@@ -163,6 +165,8 @@ The card is derived from the same action detail and does not introduce a second 
 `leader_status_card` is the same read-only status projection returned by `agentdeck leader status`. Natural-language messages such as `查看 Leader 状态`, `刷新 Leader 状态`, `Leader 概览`, `leader status`, `leader refresh`, or `leader overview` enter `mode=leader_status`, embed this card, mirror its `provider_health` and `next_command` at the top level, and expose `intent_card.embedded_card=leader_status_card` with a refresh control matching `leader_status_card.refresh_command` plus an inspect control for `agentdeck leader status`. The same response includes `control_registry_card` filtered to `scope=leader` / `card=leader_card`; its selection points at the workbench `kind=refresh` control whose command matches `leader_status_card.refresh_command`, and `intent_card.secondary_embedded_cards[]` lists `control_registry_card` so GUI shells can highlight the same refresh action in the command palette. The card is derived from the validated ProjectView and workbench provider health projection; it may record the chat turn for history, but it must not call a Leader provider, inspect tmux panes, create plans, actions, approvals, messages, jobs, or inbox items, or execute any recommended command.
 
 `skill_context_card` is the read-only loaded-skill projection for messages such as `查看已加载技能`, `/skills`, `skills`, or `skill context`. These messages enter `mode=skill_context`, embed `project_view.skills.items[]`, set `next_command=agentdeck skills list`, and expose inspect controls for `agentdeck skills list` and `agentdeck status`. The route records only a chat turn and audit event. It must not call a Leader provider, inspect tmux panes, install or rewrite skills, create plans/actions/approvals/messages/jobs/inbox items, or change approval/runtime state.
+
+`memory_context_card` is the read-only applied long-term memory projection for messages such as `查看长期记忆`, `长期记忆`, `已应用记忆`, or `memory context`. These messages enter `mode=memory_context`, embed `project_view.memory.items[]`, set `next_command=agentdeck status`, and expose inspect controls for `agentdeck status` and `agentdeck memory suggestions`. The route records only a chat turn and audit event. It must not call a Leader provider, inspect tmux panes, read full memory content into the response, inject memory into Leader or Worker prompts, create plans/actions/approvals/messages/jobs/inbox items, or change approval/runtime state.
 
 `skill_import_preview_card` is the natural-language wrapper around `agentdeck skills import-preview --path <SKILL.md>` for messages such as `预览导入 skill /path/to/SKILL.md` or `preview skill import /path/to/SKILL.md`. These messages enter `mode=skill_import_preview`, parse a concrete local `SKILL.md` path, embed the preview card with source path, target project path, hash-bearing skill summary, overwrite state, import command, force import command, and GUI-ready controls. The top-level `next_command` points at the explicit import command when no overwrite is needed, or the explicit force import command when an overwrite would occur. The route may record only a chat turn and audit event; it must not copy files, load skills, call a Leader provider, inspect tmux panes, create plans/actions/approvals/messages/jobs/inbox items, or change approval/runtime state.
 

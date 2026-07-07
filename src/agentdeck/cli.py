@@ -129,6 +129,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "skill_load_preview_card",
         "skill_create_preview_card",
         "skill_suggestions_card",
+        "memory_context_card",
         "memory_apply_preview_card",
         "memory_suggestions_card",
         "skill_context_card",
@@ -289,6 +290,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
 def _leader_chat_intent_inspect_label(embedded_card: object) -> str:
     if embedded_card == "skill_suggestions_card":
         return "List skill suggestions"
+    if embedded_card == "memory_context_card":
+        return "Inspect memory context"
     if embedded_card == "memory_suggestions_card":
         return "List memory suggestions"
     return f"Inspect {embedded_card}"
@@ -355,6 +358,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "List skills"
     if command == "agentdeck skills suggestions":
         return "List skill suggestions"
+    if command == "agentdeck memory suggestions":
+        return "List memory suggestions"
     if command.startswith("agentdeck skills import --path "):
         return "Import skill"
     if command.startswith("agentdeck skills load --name "):
@@ -435,6 +440,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return str(command) if command else None
     if embedded_card == "memory_suggestions_card":
         return "agentdeck memory suggestions"
+    if embedded_card == "memory_context_card":
+        return "agentdeck status"
     if embedded_card == "memory_apply_preview_card":
         memory_apply_preview_card = payload.get("memory_apply_preview_card")
         command = (
@@ -543,6 +550,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("skill_load_preview_card", None)
     payload.setdefault("skill_create_preview_card", None)
     payload.setdefault("skill_suggestions_card", None)
+    payload.setdefault("memory_context_card", None)
     payload.setdefault("memory_apply_preview_card", None)
     payload.setdefault("memory_suggestions_card", None)
     payload.setdefault("lineage_card", None)
@@ -986,6 +994,32 @@ def _skill_context_card(project_view: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _memory_context_card(project_view: dict[str, object]) -> dict[str, object]:
+    memory = project_view.get("memory") if isinstance(project_view.get("memory"), dict) else {}
+    items = memory.get("items") if isinstance(memory.get("items"), list) else []
+    count = len(items)
+    noun = "file" if count == 1 else "files"
+    verb = "is" if count == 1 else "are"
+    return {
+        "mode": "memory_context",
+        "title": "Long-term memory context",
+        "summary": f"{count} memory {noun} {verb} available for human review.",
+        "project_view_command": "agentdeck status",
+        "suggestions_command": "agentdeck memory suggestions",
+        "count": count,
+        "items": items,
+        "controls": [
+            _control(kind="inspect", label="Open project status", command="agentdeck status", safety="inspect"),
+            _control(
+                kind="inspect",
+                label="List memory suggestions",
+                command="agentdeck memory suggestions",
+                safety="inspect",
+            ),
+        ],
+    }
+
+
 def _skill_suggestions_card(store: StateStore) -> dict[str, object]:
     suggestions = list(store.load().get("skill_suggestions", []))
     items = [_skill_suggestion_item_for_card(item) if isinstance(item, dict) else item for item in suggestions]
@@ -1252,6 +1286,7 @@ def _workbench_snapshot_payload(
     artifacts_card = _artifacts_card_payload(project_view)
     skill_context_card = _skill_context_card(project_view)
     skill_suggestions_card = _skill_suggestions_card(store)
+    memory_context_card = _memory_context_card(project_view)
     memory_suggestions_card = _memory_suggestions_card(store)
     leader_summary_card = _workbench_leader_summary_card(store)
     contracts_card = _workbench_contracts_card()
@@ -1277,6 +1312,7 @@ def _workbench_snapshot_payload(
         "artifacts_card": artifacts_card,
         "skill_context_card": skill_context_card,
         "skill_suggestions_card": skill_suggestions_card,
+        "memory_context_card": memory_context_card,
         "memory_suggestions_card": memory_suggestions_card,
         "leader_summary_card": leader_summary_card,
         "contracts_card": contracts_card,
@@ -1658,6 +1694,16 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         card="skill_suggestions_card",
         agent_id=None,
         controls=skill_suggestions_card.get("controls"),
+    )
+    memory_context_card = (
+        payload.get("memory_context_card") if isinstance(payload.get("memory_context_card"), dict) else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="memory",
+        card="memory_context_card",
+        agent_id=None,
+        controls=memory_context_card.get("controls"),
     )
     memory_suggestions_card = (
         payload.get("memory_suggestions_card") if isinstance(payload.get("memory_suggestions_card"), dict) else {}
@@ -5772,6 +5818,33 @@ def _chat_wants_memory_suggestions(message: str) -> bool:
     )
 
 
+def _chat_wants_memory_context(message: str) -> bool:
+    normalized = message.strip().lower()
+    compact = normalized.replace(" ", "")
+    return normalized in {
+        "memory context",
+        "/memory-context",
+        "/memory context",
+        "long-term memory",
+        "long term memory",
+        "查看 memory context",
+        "查看长期记忆",
+        "长期记忆",
+        "已应用记忆",
+        "查看已应用记忆",
+    } or any(
+        token in compact
+        for token in [
+            "memorycontext",
+            "long-termmemory",
+            "longtermmemory",
+            "查看长期记忆",
+            "查看已应用记忆",
+            "已应用记忆",
+        ]
+    )
+
+
 def _chat_skill_import_preview_path(message: str) -> Path | None:
     text = message.strip()
     lowered = text.lower()
@@ -6875,6 +6948,19 @@ def _leader_chat_explanation(
             "recommended_action_id": None,
             "action_kind": "skill_context",
             "action_status": "loaded" if int(skill_context_card.get("count", 0)) else "empty",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
+    if mode == "memory_context":
+        memory_context_card = result if isinstance(result, dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader is showing long-term memory context without injecting it into prompts or calling a provider.",
+            "reason": "human asked to inspect long-term memory",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": "memory_context",
+            "action_status": "available" if int(memory_context_card.get("count", 0)) else "empty",
             "safety": "inspect",
             "requires_explicit_user": False,
         }
@@ -8103,6 +8189,63 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "next_command": next_command,
             "leader_action": None,
             "memory_apply_preview_card": memory_apply_preview_card,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_memory_context(args.message):
+        next_command = "agentdeck status"
+        turn = store.record_chat_turn(
+            mode="memory_context",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="memory_context",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "memory_context",
+                    "plan_id": None,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        memory_context_card = _memory_context_card(refreshed_project_view)
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "memory_context",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "memory_context",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                result=memory_context_card,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "memory_context_card": memory_context_card,
             "continue_card": None,
             "inbox_card": None,
             "approval_card": None,

@@ -4,6 +4,15 @@
 
 ## 2026-07-07
 
+### Current - Surface applied memory context and Skill north star
+
+- 扩展 ProjectView：`agentdeck status` 新增只读 `memory` 摘要，从 `.agentdeck/memory/project.md` / `global.md` 读取已应用长期记忆的 scope、relative path、exists、line_count、byte_count、sha256 hash 和首条 preview，但不暴露全文。
+- 新增 `memory_context_card`：`agentdeck workbench` 和自然语言 `agentdeck leader chat --message "查看长期记忆"` 都会展示已应用 memory 的 compact 摘要，并暴露 `agentdeck status` / `agentdeck memory suggestions` inspect controls；该入口只记录 chat turn 和审计事件，不调用 provider、不读取 tmux、不注入 Leader/Worker prompt、不创建调度对象。
+- 扩展 contract discovery/example/validator：`agentdeck contract project-view` 公开 `memory_summary_fields` / `memory_item_fields`，`agentdeck contract workbench` 与 `agentdeck contract leader-chat` 公开 `memory_context_card_fields`，example fixture 和 control registry 同步包含 memory context 控件。
+- 把用户的 Skill 诉求写入北极星约束：AgentDeck 应形成可内置、可外源、可建议、可审阅、可加载、可回放的 skill 生态；外源 `SKILL.md` 必须经过 preview、hash/provenance、显式 import/load 和审计，不能静默安装、自动启用或绕过 approval/runtime safety。
+- 同步 README、AGENT.md、CLAUDE.md、`docs/roadmap/ultimate-goal-roadmap.md`、`docs/architecture/multi-agent-terminal-design.md`、`docs/contracts/project-view-schema.md`、`docs/contracts/workbench-schema.md` 和 `docs/contracts/leader-chat-schema.md`。
+- 验证记录：已先确认红测失败，ProjectView 缺少 `memory`、`查看长期记忆` 落入 provider 调用并因缺少 `DEEPSEEK_API_KEY` 失败、workbench 缺少 `memory_context_card`、contract discovery/example 缺少 memory context 字段；实现后目标测试 12 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 158 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 226 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 143 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 569 项通过。
+
 ### Current - Preview memory apply from Leader chat
 
 - 新增自然语言入口 `agentdeck leader chat --message "预览 memory 建议 mem_xxx"`：进入只读 `mode=memory_apply_preview`，嵌入 `memory_apply_preview_card`，复用 `agentdeck memory apply-preview` 的目标 memory 文件、拟追加 Markdown、是否会创建文件和显式 `agentdeck memory apply --suggestion-id <id> --confirm`。

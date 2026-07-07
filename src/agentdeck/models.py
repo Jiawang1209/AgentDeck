@@ -96,5 +96,6 @@ class ProjectView:
     leader_errors: dict[str, Any] = field(default_factory=dict)
     leader_actions: dict[str, Any] = field(default_factory=dict)
     skills: dict[str, Any] = field(default_factory=dict)
+    memory: dict[str, Any] = field(default_factory=dict)
     inbox: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)

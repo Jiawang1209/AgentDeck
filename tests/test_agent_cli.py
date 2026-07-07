@@ -1129,6 +1129,61 @@ def test_memory_apply_confirm_writes_memory_and_marks_suggestion_applied(
     assert latest_event["payload"]["target"] == ".agentdeck/memory/project.md"
 
 
+def test_status_surfaces_applied_memory_context_without_full_prompt_injection(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "memory",
+            "suggest",
+            "--summary",
+            "Keep approval-gated worker dispatch.",
+            "--rationale",
+            "project safety preference",
+            "--source",
+            "reviewer",
+            "--scope",
+            "project",
+            "--agent",
+            "leader",
+            "--from-trace",
+            "msg_memory",
+        ]
+    )
+    suggestion_id = json.loads(capsys.readouterr().out)["suggestion"]["suggestion_id"]
+    cli.main(["memory", "apply", "--suggestion-id", suggestion_id, "--confirm"])
+    capsys.readouterr()
+    expected_append = (
+        "- Keep approval-gated worker dispatch.\n"
+        "  - rationale: project safety preference\n"
+        "  - source: reviewer\n"
+        "  - agent_id: leader\n"
+        "  - trace_id: msg_memory\n"
+        f"  - suggestion_id: {suggestion_id}\n"
+    )
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["memory"]["count"] == 1
+    assert payload["memory"]["by_scope"] == {"project": 1}
+    assert payload["memory"]["items"] == [
+        {
+            "scope": "project",
+            "path": ".agentdeck/memory/project.md",
+            "exists": True,
+            "line_count": 6,
+            "byte_count": len(expected_append.encode("utf-8")),
+            "content_hash": payload["memory"]["items"][0]["content_hash"],
+            "preview": "- Keep approval-gated worker dispatch.",
+        }
+    ]
+    assert payload["memory"]["items"][0]["content_hash"].startswith("sha256:")
+    assert "content" not in payload["memory"]["items"][0]
+
+
 def test_memory_apply_rejects_already_applied_suggestion_without_duplicate_write(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -1993,6 +2048,76 @@ def test_leader_chat_skill_context_is_read_only_and_avoids_provider_calls(tmp_pa
     assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
 
 
+def test_leader_chat_memory_context_is_read_only_and_avoids_provider_calls(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    cli.main(
+        [
+            "memory",
+            "suggest",
+            "--summary",
+            "Keep approval-gated worker dispatch.",
+            "--rationale",
+            "project safety preference",
+            "--source",
+            "reviewer",
+            "--scope",
+            "project",
+        ]
+    )
+    suggestion_id = json.loads(capsys.readouterr().out)["suggestion"]["suggestion_id"]
+    cli.main(["memory", "apply", "--suggestion-id", suggestion_id, "--confirm"])
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["leader", "chat", "--message", "查看长期记忆"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "memory_context"
+    assert payload["plan_id"] is None
+    assert payload["next_command"] == "agentdeck status"
+    assert payload["memory_context_card"] == {
+        "mode": "memory_context",
+        "title": "Long-term memory context",
+        "summary": "1 memory file is available for human review.",
+        "project_view_command": "agentdeck status",
+        "suggestions_command": "agentdeck memory suggestions",
+        "count": 1,
+        "items": payload["project_view"]["memory"]["items"],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Open project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "List memory suggestions",
+                "command": "agentdeck memory suggestions",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    assert payload["intent_card"]["embedded_card"] == "memory_context_card"
+    assert payload["intent_card"]["read_only"] is True
+    assert payload["leader_explanation"]["action_kind"] == "memory_context"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    state_after = StateStore(root).load()
+    assert state_after["memory_suggestions"] == state_before["memory_suggestions"]
+    assert state_after["plans"] == []
+    assert state_after["leader_errors"] == []
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "leader_chat_turn"
+
+
 def test_workbench_surfaces_pending_skill_suggestions_for_gui_without_mutating_state(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -2211,6 +2336,85 @@ def test_workbench_surfaces_pending_memory_suggestions_for_gui_without_mutating_
     assert StateStore(root).load() == state_before
     assert StateStore(root).list_events(limit=20) == events_before
     assert not (root / ".agentdeck" / "memory" / "project.md").exists()
+
+
+def test_workbench_surfaces_applied_memory_context_for_gui_without_prompt_injection(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(
+        [
+            "memory",
+            "suggest",
+            "--summary",
+            "Keep approval-gated worker dispatch.",
+            "--rationale",
+            "project safety preference",
+            "--source",
+            "reviewer",
+            "--scope",
+            "project",
+        ]
+    )
+    suggestion_id = json.loads(capsys.readouterr().out)["suggestion"]["suggestion_id"]
+    cli.main(["memory", "apply", "--suggestion-id", suggestion_id, "--confirm"])
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+    events_before = StateStore(root).list_events(limit=20)
+
+    exit_code = cli.main(["workbench"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["memory_context_card"] == {
+        "mode": "memory_context",
+        "title": "Long-term memory context",
+        "summary": "1 memory file is available for human review.",
+        "project_view_command": "agentdeck status",
+        "suggestions_command": "agentdeck memory suggestions",
+        "count": 1,
+        "items": payload["project_view"]["memory"]["items"],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Open project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "List memory suggestions",
+                "command": "agentdeck memory suggestions",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    assert {
+        (item["scope"], item["card"], item["kind"], item["command"], item["safety"])
+        for item in payload["control_registry"]
+    } >= {
+        (
+            "memory",
+            "memory_context_card",
+            "inspect",
+            "agentdeck status",
+            "inspect",
+        ),
+        (
+            "memory",
+            "memory_context_card",
+            "inspect",
+            "agentdeck memory suggestions",
+            "inspect",
+        ),
+    }
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).list_events(limit=20) == events_before
+    assert "content" not in payload["memory_context_card"]["items"][0]
 
 
 def test_leader_chat_previews_external_skill_import_without_mutating_registry(
@@ -3755,6 +3959,16 @@ def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
     assert payload["recommended_action_fields"] == expected["recommended_action_fields"]
     assert payload["leader_actions_fields"] == expected["leader_actions_fields"]
     assert payload["leader_action_item_fields"] == expected["leader_action_item_fields"]
+    assert payload["memory_summary_fields"] == ["count", "by_scope", "items"]
+    assert payload["memory_item_fields"] == [
+        "scope",
+        "path",
+        "exists",
+        "line_count",
+        "byte_count",
+        "content_hash",
+        "preview",
+    ]
     assert payload["message_item_fields"] == expected["message_item_fields"]
     assert payload["job_item_fields"] == expected["job_item_fields"]
     assert payload["reply_item_fields"] == expected["reply_item_fields"]
@@ -3791,6 +4005,10 @@ def test_contract_project_view_example_exports_gui_ready_status(capsys) -> None:
     assert set(payload["example_recovery_pending_fields"]) == set(example["recovery"]["pending"])
     assert payload["example_recommended_action_fields"] == payload["recommended_action_fields"]
     assert set(payload["example_recommended_action_fields"]) == set(example["recovery"]["recommended_action"])
+    assert payload["example_memory_summary_fields"] == payload["memory_summary_fields"]
+    assert set(payload["example_memory_summary_fields"]) == set(example["memory"])
+    assert payload["example_memory_item_fields"] == payload["memory_item_fields"]
+    assert set(payload["example_memory_item_fields"]) == set(example["memory"]["items"][0])
     assert example["schema_version"] == cli.PROJECT_VIEW_SCHEMA_VERSION
     assert validate_project_view_contract(example) == {"ok": True, "errors": []}
     assert example["runtime_backend"] == "tmux"
@@ -3856,6 +4074,16 @@ def test_contract_leader_chat_discovers_schema_for_gui_clients(capsys) -> None:
         "controls",
     ]
     assert payload["skill_suggestions_card_fields"] == expected["skill_suggestions_card_fields"]
+    assert payload["memory_context_card_fields"] == [
+        "mode",
+        "title",
+        "summary",
+        "project_view_command",
+        "suggestions_command",
+        "count",
+        "items",
+        "controls",
+    ]
     assert payload["memory_apply_preview_card_fields"] == [
         "ok",
         "mode",
@@ -4111,6 +4339,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "artifacts_card",
         "skill_context_card",
         "skill_suggestions_card",
+        "memory_context_card",
         "memory_suggestions_card",
         "leader_summary_card",
         "contracts_card",
@@ -4311,6 +4540,16 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "project_view_command",
         "count",
         "pending_count",
+        "items",
+        "controls",
+    ]
+    assert payload["memory_context_card_fields"] == [
+        "mode",
+        "title",
+        "summary",
+        "project_view_command",
+        "suggestions_command",
+        "count",
         "items",
         "controls",
     ]
@@ -5981,7 +6220,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 73,
+        "item_count_before_filter": 75,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -6117,7 +6356,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 72,
+        "item_count_before_filter": 74,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -6160,7 +6399,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 73,
+        "item_count_before_filter": 75,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -6199,7 +6438,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 73,
+        "item_count_before_filter": 75,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -6232,7 +6471,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 73,
+        "item_count_before_filter": 75,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -6271,7 +6510,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 73,
+        "item_count_before_filter": 75,
     }
     assert payload["items"] == []
     assert payload["groups"] == []
@@ -6764,6 +7003,8 @@ def test_contract_leader_chat_example_exports_gui_ready_response(capsys) -> None
     assert set(payload["example_skill_create_preview_card_fields"]) == set(example["skill_create_preview_card"])
     assert payload["example_skill_suggestions_card_fields"] == payload["skill_suggestions_card_fields"]
     assert set(payload["example_skill_suggestions_card_fields"]) == set(example["skill_suggestions_card"])
+    assert payload["example_memory_context_card_fields"] == payload["memory_context_card_fields"]
+    assert set(payload["example_memory_context_card_fields"]) == set(example["memory_context_card"])
     assert payload["example_memory_apply_preview_card_fields"] == payload["memory_apply_preview_card_fields"]
     assert set(payload["example_memory_apply_preview_card_fields"]) == set(example["memory_apply_preview_card"])
     assert payload["example_memory_suggestions_card_fields"] == payload["memory_suggestions_card_fields"]

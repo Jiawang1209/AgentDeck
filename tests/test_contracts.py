@@ -1033,6 +1033,8 @@ def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> No
     assert set(payload["recommended_action_fields"]) == set(example["recovery"]["recommended_action"])
     assert set(payload["leader_actions_fields"]) == set(example["leader_actions"])
     assert set(payload["leader_action_item_fields"]) == set(example["leader_actions"]["items"][0])
+    assert set(payload["memory_summary_fields"]) == set(example["memory"])
+    assert set(payload["memory_item_fields"]) == set(example["memory"]["items"][0])
     assert set(payload["message_item_fields"]) == set(example["messages"]["items"][0])
     assert set(payload["job_item_fields"]) == set(example["jobs"]["items"][0])
     assert set(payload["reply_item_fields"]) == set(example["replies"]["items"][0])
@@ -1064,6 +1066,10 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
     assert set(payload["example_top_level_fields"]) == set(example)
     assert payload["example_leader_fields"] == payload["leader_fields"]
     assert set(payload["example_leader_fields"]) == set(example["leader"])
+    assert payload["example_memory_summary_fields"] == payload["memory_summary_fields"]
+    assert set(payload["example_memory_summary_fields"]) == set(example["memory"])
+    assert payload["example_memory_item_fields"] == payload["memory_item_fields"]
+    assert set(payload["example_memory_item_fields"]) == set(example["memory"]["items"][0])
     assert example["leader"]["leader_backend"] == {
         "agent_id": "leader",
         "provider": "fake",
@@ -3300,6 +3306,8 @@ def test_leader_chat_contract_response_includes_example_without_drift(tmp_path: 
     assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
     assert payload["example_artifacts_card_fields"] == payload["artifacts_card_fields"]
     assert payload["example_artifacts_card_fields"] == list(example["artifacts_card"])
+    assert payload["example_memory_context_card_fields"] == payload["memory_context_card_fields"]
+    assert payload["example_memory_context_card_fields"] == list(example["memory_context_card"])
     assert example["trace_card"] is None
     assert payload["example_workbench_card_fields"] == payload["workbench_card_fields"]
     assert payload["example_workbench_card_fields"] == list(example["workbench_card"])

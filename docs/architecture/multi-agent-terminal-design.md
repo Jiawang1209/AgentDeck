@@ -179,6 +179,7 @@ ToolContext 包含：
 - Skill Registry 提供统一接口容纳内置 skill、项目本地 skill 和显式导入的外源 skill。
 - 每次加载 skill 都必须保存 path/source、hash、content snapshot 和调用者，保证历史可回放。
 - Memory 保存长期项目事实和用户偏好，但 MVP 阶段必须先接受 pending 建议，再经只读 preview 和人类显式 confirm 写入长期记忆。
+- 已应用 Memory 只能以 compact 摘要进入 ProjectView、Workbench 和自然语言 Leader chat；摘要包含 scope/path/hash/行数/字节数/preview，不包含全文，也不自动注入 Leader/Worker prompt。
 
 MVP：
 
@@ -186,6 +187,7 @@ MVP：
 - 支持 `agentdeck skills list` / `agentdeck skills import-preview --path <SKILL.md>` / `agentdeck skills import --path <SKILL.md>` / `agentdeck skills show --name <name>` / `agentdeck skills load-preview --name <name> --agent <id> --purpose <text>` / `agentdeck skills load --name <name>` / `agentdeck skills suggest` / `agentdeck skills suggestions` / `agentdeck skills draft-preview --suggestion-id <id>` / `agentdeck skills create --suggestion-id <id> --confirm` 这类只读预览、显式导入、显式加载、待审建议和显式创建入口。
 - 支持 `agentdeck memory suggest --summary <summary> --rationale <rationale> --source <source>` / `agentdeck memory suggestions`，先只写 pending `memory_suggestions[]` 和审计事件，不创建 `.agentdeck/memory/*.md`；`memory suggestions` 返回只读队列、`apply_preview_command_template` 和 item 级 preview/apply controls，方便 GUI 渲染下一步。
 - 支持 `agentdeck memory apply-preview --suggestion-id <id>` / `agentdeck memory apply --suggestion-id <id> --confirm`，把长期 memory 写入拆成只读审阅和显式确认两步，并记录 `memory_applied` 审计事件。
+- 支持 `agentdeck status` 的 ProjectView `memory` 摘要、`agentdeck workbench` 的 `memory_context_card` 和自然语言 `agentdeck leader chat --message "查看长期记忆"`，让已应用长期记忆可见、可审计、可被 GUI 渲染，但不变成隐藏 prompt。
 - 支持自然语言 `agentdeck leader chat --message "查看 skill 建议"`，以只读 `skill_suggestions_card` 把 pending suggestion queue 暴露给 Leader shell 和未来 GUI，而不自动创建、导入或加载 skill。
 - 支持自然语言 `agentdeck leader chat --message "创建 skill 建议 sgs_xxx"`，以只读 `skill_create_preview_card` 把拟写入 `SKILL.md`、hash、目标路径和显式 create 命令暴露给 Leader shell 和未来 GUI，而不创建文件、不修改 suggestion queue、不加载 skill。
 - Skill registry 输出必须包含 GUI-ready controls：列表级 import 模板 control、外源 skill import-preview 的 import/force/show controls，以及每个 skill 的 show/load controls。

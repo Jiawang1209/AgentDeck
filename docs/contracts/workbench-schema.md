@@ -42,6 +42,7 @@ The contract command returns:
   "artifact_item_fields": [],
   "skill_context_card_fields": [],
   "skill_suggestions_card_fields": [],
+  "memory_context_card_fields": [],
   "memory_suggestions_card_fields": [],
   "skill_context_item_fields": [],
   "leader_summary_card_fields": [],
@@ -78,6 +79,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
   "artifacts_card": {},
   "skill_context_card": {},
   "skill_suggestions_card": {},
+  "memory_context_card": {},
   "memory_suggestions_card": {},
   "leader_summary_card": null,
   "contracts_card": {},
@@ -111,6 +113,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `artifacts_card` reuses the `agentdeck artifacts` response shape, is derived from `project_view.artifacts`, and must pass `validate_artifacts_contract()`.
 `skill_context_card` is derived from `project_view.skills`; it exposes loaded skill summaries plus inspect controls for `agentdeck skills list` and `agentdeck status`, without embedding full content snapshots or loading/installing skills.
 `skill_suggestions_card` is derived from pending `skill_suggestions[]`; it exposes count, pending_count, items, and inspect controls for `agentdeck skills suggestions` and `agentdeck status`, without creating, importing, or loading skills.
+`memory_context_card` is derived from `project_view.memory`; it exposes applied long-term memory file summaries plus inspect controls for `agentdeck status` and `agentdeck memory suggestions`, without embedding full memory content, mutating memory files, calling a provider, or injecting memory into prompts.
 `memory_suggestions_card` is derived from pending `memory_suggestions[]`; it exposes count, pending_count, items, `apply_preview_command_template`, item-level `apply_preview` / `apply_memory` controls, and inspect controls for `agentdeck memory suggestions` and `agentdeck status`. Rendering the card is read-only: it must not create or modify `.agentdeck/memory/*.md` or inject memory into prompts. Only a separate explicit `agentdeck memory apply --suggestion-id <id> --confirm` command may write long-term memory.
 `leader_summary_card` is `null` until the latest plan's local Leader review returns `next_action=summarize`; then it reuses `agentdeck leader summary --plan-id <id>` and must pass `validate_leader_summary_contract()`.
 `contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Skill Registry, memory suggestion/apply, Leader chat, and Leader review contracts.

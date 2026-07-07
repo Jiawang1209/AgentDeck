@@ -8,7 +8,7 @@ The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in 
 
 Reusable contract response, payload, and example fixture helpers live in `src/agentdeck/contracts.py`. The CLI discovery command uses `project_view_contract_response()` directly so command output and reusable module output stay identical.
 
-Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_LEADER_FIELDS`, `PROJECT_VIEW_PLAN_ITEM_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_SKILLS_FIELDS`, `PROJECT_VIEW_SKILL_ITEM_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
+Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_LEADER_FIELDS`, `PROJECT_VIEW_PLAN_ITEM_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_SKILLS_FIELDS`, `PROJECT_VIEW_SKILL_ITEM_FIELDS`, `PROJECT_VIEW_MEMORY_FIELDS`, `PROJECT_VIEW_MEMORY_ITEM_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
 
 Use `validate_project_view_contract(payload)` from `src/agentdeck/contracts.py` to check any ProjectView-like payload against the v1 baseline contract.
 
@@ -61,6 +61,7 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
   "leader_errors": {},
   "leader_actions": {},
   "skills": {},
+  "memory": {},
   "inbox": {},
   "recovery": {}
 }
@@ -100,6 +101,8 @@ Use `agentdeck contract project-view` to discover this contract from tools or GU
   "leader_action_item_fields": [],
   "skill_summary_fields": [],
   "skill_item_fields": [],
+  "memory_summary_fields": [],
+  "memory_item_fields": [],
   "message_item_fields": [],
   "job_item_fields": [],
   "reply_item_fields": [],
@@ -184,8 +187,11 @@ The following blocks use a consistent summary pattern:
 - `replies`: `count`, `items[]`
 - `artifacts`: `count`, `by_status`, `by_kind`, `items[]`
 - `skills`: `count`, `by_agent`, `by_source`, `items[]`
+- `memory`: `count`, `by_scope`, `items[]`
 
 `skills.items[]` is the ProjectView summary of explicit `agentdeck skills load` records. Each item includes `load_id`, `agent_id`, `purpose`, `name`, `source`, `path`, `content_hash`, `description`, `required_tools`, `risk`, `created_at`, `show_command`, and `reload_command`. ProjectView intentionally keeps the full `content_snapshot` out of the summary so status/workbench payloads stay compact; use `agentdeck skills list` for the available skill registry with GUI-ready show/load controls, `agentdeck skills show --name <name>` for current content, and the persisted `skill_loads[]` record for replay. External skills must first be copied into the project with `agentdeck skills import --path <SKILL.md>` and still do not appear here until a human explicitly runs `agentdeck skills load`. The summary is read-only and does not load, install, rewrite, or enable skills.
+
+`memory.items[]` is the ProjectView summary of applied long-term memory files under `.agentdeck/memory/`. Each item includes `scope`, relative `path`, `exists`, `line_count`, `byte_count`, `content_hash`, and a first non-empty-line `preview`. ProjectView intentionally excludes full memory content and never injects this summary into Leader or Worker prompts. Use `agentdeck memory suggestions` and `agentdeck memory apply-preview --suggestion-id <id>` to review pending memory changes, and use explicit `agentdeck memory apply --suggestion-id <id> --confirm` as the only write path.
 - `chat_turns`: `count`, `by_mode`, `items[]`
 - `leader_errors`: `count`, `by_mode`, `items[]`
 - `leader_actions`: `count`, `by_kind`, `by_status`, `items[]`

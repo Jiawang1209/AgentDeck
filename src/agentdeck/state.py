@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -1682,6 +1683,34 @@ class StateStore:
             "created_at": event.get("created_at"),
         }
 
+    @staticmethod
+    def _memory_context_summary(root: Path) -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
+        by_scope: dict[str, int] = {}
+        for scope, relative_path in (
+            ("project", ".agentdeck/memory/project.md"),
+            ("global", ".agentdeck/memory/global.md"),
+        ):
+            path = root / relative_path
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8")
+            encoded = text.encode("utf-8")
+            preview = next((line for line in text.splitlines() if line.strip()), "")
+            items.append(
+                {
+                    "scope": scope,
+                    "path": relative_path,
+                    "exists": True,
+                    "line_count": len(text.splitlines()),
+                    "byte_count": len(encoded),
+                    "content_hash": f"sha256:{hashlib.sha256(encoded).hexdigest()}",
+                    "preview": preview,
+                }
+            )
+            by_scope[scope] = by_scope.get(scope, 0) + 1
+        return {"count": len(items), "by_scope": by_scope, "items": items}
+
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
         bindings = state.get("agents", {})
@@ -1728,6 +1757,7 @@ class StateStore:
             leader_errors=self._leader_error_summaries(state.get("leader_errors", [])),
             leader_actions=self._leader_action_summaries(state.get("leader_actions", [])),
             skills=self._skill_load_summaries(state.get("skill_loads", [])),
+            memory=self._memory_context_summary(self.root),
             inbox=self._inbox_summary(state.get("inbox", {})),
             recovery=self._recovery_summary(state, config),
         )

@@ -19,7 +19,7 @@ Human Operator
 
 用户应该能用自然语言启动一个任务，由 Leader Agent 理解目标、按需加载可审计 skill、拆解计划、指派角色、调度多个 Agent、观察结果、要求验证，并在关键动作前让人类审批。
 
-Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/Hermes 那样把可复用工作流沉淀为 skill，把长期项目事实和用户偏好沉淀为 memory；但所有 skill 都必须显式加载、记录 source/path/hash/content snapshot，并在每次 Leader 规划时把 compact skill provenance 固化到 plan 记录和 ProjectView。Skill suggestion 在 MVP 阶段必须先进入 pending queue，经 `draft-preview` 或自然语言 `skill_create_preview` 审阅后只能由人类显式运行 `skills create --confirm` 写入项目 skill；Memory 同样必须先进入 pending suggestion queue，经 `apply-preview` 或自然语言 `memory_apply_preview` 审阅后只能由人类显式运行 `memory apply --confirm` 写入长期记忆，且不会自动注入 prompt，避免变成不可追溯的隐藏提示词或权限后门。
+Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/Hermes 那样把可复用工作流沉淀为 skill，把长期项目事实和用户偏好沉淀为 memory；但所有 skill 都必须显式加载、记录 source/path/hash/content snapshot，并在每次 Leader 规划时把 compact skill provenance 固化到 plan 记录和 ProjectView。Skill 也是未来生态接口：内置 skill 用来沉淀稳定高频工作流，外源 skill 可以进入项目，但必须先经过只读 preview、hash/provenance 展示、显式 import、显式 load 和审计，不能静默安装或自动启用。Skill suggestion 在 MVP 阶段必须先进入 pending queue，经 `draft-preview` 或自然语言 `skill_create_preview` 审阅后只能由人类显式运行 `skills create --confirm` 写入项目 skill；Memory 同样必须先进入 pending suggestion queue，经 `apply-preview` 或自然语言 `memory_apply_preview` 审阅后只能由人类显式运行 `memory apply --confirm` 写入长期记忆。已应用 memory 只通过 ProjectView `memory`、workbench `memory_context_card` 和自然语言 `memory_context` 暴露 compact 摘要，不暴露全文，不自动注入 prompt，避免变成不可追溯的隐藏提示词或权限后门。
 
 ## 2. 为什么当前开发没有跑偏
 
@@ -34,6 +34,7 @@ Skill 与 Memory 是北极星的一等学习能力：AgentDeck 要像 WispTerm/H
 | `reply` / `ack` | 请求-回复-确认闭环 |
 | `trace` | 多 Agent 调试、审计和恢复所需的 lineage |
 | `skills list/show/import-preview/import/load-preview/load/suggest/suggestions/draft-preview/create` 与 plan `skill_context` provenance | 可审计、可回放、可被 GUI 消费的 Skill Layer |
+| ProjectView `memory` 与 `memory_context_card` | 已应用长期记忆的只读可见面，不做隐藏 prompt 注入 |
 | `docs/reference-analysis/*` 中的 Hermes/WispTerm skill 分析 | Skill Layer 和后续外源 skill allowlist 的设计输入 |
 | `HISTORY.md` | 项目自身开发过程可追溯 |
 

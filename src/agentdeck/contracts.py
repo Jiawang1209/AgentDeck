@@ -173,6 +173,7 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "leader_errors",
     "leader_actions",
     "skills",
+    "memory",
     "inbox",
     "recovery",
 )
@@ -380,12 +381,39 @@ PROJECT_VIEW_SKILL_ITEM_FIELDS = (
     "reload_command",
 )
 
+PROJECT_VIEW_MEMORY_FIELDS = (
+    "count",
+    "by_scope",
+    "items",
+)
+
+PROJECT_VIEW_MEMORY_ITEM_FIELDS = (
+    "scope",
+    "path",
+    "exists",
+    "line_count",
+    "byte_count",
+    "content_hash",
+    "preview",
+)
+
 LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS = (
     "mode",
     "title",
     "summary",
     "skills_command",
     "project_view_command",
+    "count",
+    "items",
+    "controls",
+)
+
+LEADER_CHAT_MEMORY_CONTEXT_CARD_FIELDS = (
+    "mode",
+    "title",
+    "summary",
+    "project_view_command",
+    "suggestions_command",
     "count",
     "items",
     "controls",
@@ -870,6 +898,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "leader_summary_card",
     "leader_status_card",
     "skill_context_card",
+    "memory_context_card",
     "skill_import_preview_card",
     "skill_load_preview_card",
     "skill_create_preview_card",
@@ -1137,6 +1166,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "artifacts_card",
     "skill_context_card",
     "skill_suggestions_card",
+    "memory_context_card",
     "memory_suggestions_card",
     "leader_summary_card",
     "contracts_card",
@@ -1862,6 +1892,8 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "leader_action_item_fields": list(PROJECT_VIEW_LEADER_ACTION_ITEM_FIELDS),
         "skill_summary_fields": list(PROJECT_VIEW_SKILLS_FIELDS),
         "skill_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
+        "memory_summary_fields": list(PROJECT_VIEW_MEMORY_FIELDS),
+        "memory_item_fields": list(PROJECT_VIEW_MEMORY_ITEM_FIELDS),
         "message_item_fields": list(PROJECT_VIEW_MESSAGE_ITEM_FIELDS),
         "job_item_fields": list(PROJECT_VIEW_JOB_ITEM_FIELDS),
         "reply_item_fields": list(PROJECT_VIEW_REPLY_ITEM_FIELDS),
@@ -1884,6 +1916,8 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_leader_action_item_fields"] = list(example["leader_actions"]["items"][0])
         payload["example_skill_summary_fields"] = list(example["skills"])
         payload["example_skill_item_fields"] = list(example["skills"]["items"][0])
+        payload["example_memory_summary_fields"] = list(example["memory"])
+        payload["example_memory_item_fields"] = list(example["memory"]["items"][0])
         payload["example_message_item_fields"] = list(example["messages"]["items"][0])
         payload["example_job_item_fields"] = list(example["jobs"]["items"][0])
         payload["example_reply_item_fields"] = list(example["replies"]["items"][0])
@@ -2668,6 +2702,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "leader_status_card_fields": list(LEADER_STATUS_RESPONSE_FIELDS),
         "leader_status_queue_fields": list(LEADER_STATUS_QUEUE_FIELDS),
         "skill_context_card_fields": list(LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS),
+        "memory_context_card_fields": list(LEADER_CHAT_MEMORY_CONTEXT_CARD_FIELDS),
         "skill_import_preview_card_fields": list(LEADER_CHAT_SKILL_IMPORT_PREVIEW_CARD_FIELDS),
         "skill_load_preview_card_fields": list(LEADER_CHAT_SKILL_LOAD_PREVIEW_CARD_FIELDS),
         "skill_create_preview_card_fields": list(LEADER_CHAT_SKILL_CREATE_PREVIEW_CARD_FIELDS),
@@ -2750,6 +2785,8 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_terminal_session_item_fields"] = list(terminal_session_card["terminals"][0])
         payload["example_leader_status_card_fields"] = list(example["leader_status_card"])
         payload["example_leader_status_queue_fields"] = list(example["leader_status_card"]["queues"])
+        payload["example_skill_context_card_fields"] = list(example["skill_context_card"])
+        payload["example_memory_context_card_fields"] = list(example["memory_context_card"])
         payload["example_skill_import_preview_card_fields"] = list(example["skill_import_preview_card"])
         payload["example_skill_load_preview_card_fields"] = list(example["skill_load_preview_card"])
         payload["example_skill_create_preview_card_fields"] = list(example["skill_create_preview_card"])
@@ -3461,6 +3498,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
         "skill_context_card_fields": list(LEADER_CHAT_SKILL_CONTEXT_CARD_FIELDS),
         "skill_suggestions_card_fields": list(LEADER_CHAT_SKILL_SUGGESTIONS_CARD_FIELDS),
+        "memory_context_card_fields": list(LEADER_CHAT_MEMORY_CONTEXT_CARD_FIELDS),
         "memory_suggestions_card_fields": list(LEADER_CHAT_MEMORY_SUGGESTIONS_CARD_FIELDS),
         "skill_context_item_fields": list(PROJECT_VIEW_SKILL_ITEM_FIELDS),
         "leader_summary_card_fields": list(LEADER_SUMMARY_RESPONSE_FIELDS),
@@ -3482,6 +3520,7 @@ def workbench_contract_response(contract_path: Path, include_example: bool = Fal
         example = workbench_example()
         payload["example"] = True
         payload["example_snapshot_fields"] = list(example)
+        payload["example_memory_context_card_fields"] = list(example["memory_context_card"])
         payload["example_workbench"] = example
     return payload
 
@@ -3883,6 +3922,7 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
         errors.append("leader_actions must be an object")
     _validate_project_view_plan_items(errors, payload)
     _validate_project_view_skill_items(errors, payload)
+    _validate_project_view_memory_items(errors, payload)
     _validate_project_view_summary_items(errors, payload, "messages", PROJECT_VIEW_MESSAGE_ITEM_FIELDS, "message")
     _validate_project_view_summary_items(errors, payload, "jobs", PROJECT_VIEW_JOB_ITEM_FIELDS, "job")
     _validate_project_view_summary_items(errors, payload, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
@@ -3917,6 +3957,35 @@ def _validate_project_view_skill_items(errors: list[str], payload: dict[str, obj
                     errors.append(f"missing skill item field: {field}")
                 else:
                     errors.append(f"missing skill item field at index {index}: {field}")
+
+
+def _validate_project_view_memory_items(errors: list[str], payload: dict[str, object]) -> None:
+    memory = payload.get("memory")
+    if not isinstance(memory, dict):
+        if "memory" in payload:
+            errors.append("memory must be an object")
+        return
+    for field in PROJECT_VIEW_MEMORY_FIELDS:
+        if field not in memory:
+            errors.append(f"missing memory field: {field}")
+    items = memory.get("items")
+    if not isinstance(items, list):
+        if "items" in memory:
+            errors.append("memory.items must be a list")
+        return
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            if index == 0:
+                errors.append("memory.items must contain objects")
+            else:
+                errors.append(f"memory.items[{index}] must be an object")
+            continue
+        for field in PROJECT_VIEW_MEMORY_ITEM_FIELDS:
+            if field not in item:
+                if index == 0:
+                    errors.append(f"missing memory item field: {field}")
+                else:
+                    errors.append(f"missing memory item field at index {index}: {field}")
 
 
 def _validate_project_view_plan_items(errors: list[str], payload: dict[str, object]) -> None:
@@ -7480,6 +7549,21 @@ def project_view_example() -> dict[str, object]:
                 }
             ],
         },
+        "memory": {
+            "count": 1,
+            "by_scope": {"project": 1},
+            "items": [
+                {
+                    "scope": "project",
+                    "path": ".agentdeck/memory/project.md",
+                    "exists": True,
+                    "line_count": 6,
+                    "byte_count": 172,
+                    "content_hash": "sha256:memoryexample",
+                    "preview": "- Keep approval-gated worker dispatch.",
+                }
+            ],
+        },
         "inbox": {"total": 0, "by_agent": {}, "by_status": {}, "heads": {}},
         "recovery": {
             "status": "action_required",
@@ -7567,6 +7651,33 @@ def leader_chat_example() -> dict[str, object]:
                 "kind": "inspect",
                 "label": "Open project status",
                 "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+    memory_context_card = {
+        "mode": "memory_context",
+        "title": "Long-term memory context",
+        "summary": "1 memory file is available for human review.",
+        "project_view_command": "agentdeck status",
+        "suggestions_command": "agentdeck memory suggestions",
+        "count": 1,
+        "items": project_view["memory"]["items"],
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Open project status",
+                "command": "agentdeck status",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "inspect",
+                "label": "List memory suggestions",
+                "command": "agentdeck memory suggestions",
                 "safety": "inspect",
                 "enabled": True,
                 "blocker": None,
@@ -8114,6 +8225,7 @@ def leader_chat_example() -> dict[str, object]:
         "leader_summary_card": leader_summary_card,
         "leader_status_card": leader_status_card,
         "skill_context_card": skill_context_card,
+        "memory_context_card": memory_context_card,
         "skill_import_preview_card": skill_import_preview_card,
         "skill_load_preview_card": skill_load_preview_card,
         "skill_create_preview_card": skill_create_preview_card,
@@ -8597,6 +8709,16 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         card="skill_suggestions_card",
         agent_id=None,
         controls=skill_suggestions_card.get("controls"),
+    )
+    memory_context_card = (
+        payload.get("memory_context_card") if isinstance(payload.get("memory_context_card"), dict) else {}
+    )
+    _append_control_registry_items(
+        registry,
+        scope="memory",
+        card="memory_context_card",
+        agent_id=None,
+        controls=memory_context_card.get("controls"),
     )
     memory_suggestions_card = (
         payload.get("memory_suggestions_card") if isinstance(payload.get("memory_suggestions_card"), dict) else {}
@@ -9452,6 +9574,33 @@ def workbench_example() -> dict[str, object]:
                     "kind": "inspect",
                     "label": "Open project status",
                     "command": "agentdeck status",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            ],
+        },
+        "memory_context_card": {
+            "mode": "memory_context",
+            "title": "Long-term memory context",
+            "summary": "1 memory file is available for human review.",
+            "project_view_command": "agentdeck status",
+            "suggestions_command": "agentdeck memory suggestions",
+            "count": 1,
+            "items": project_view["memory"]["items"],
+            "controls": [
+                {
+                    "kind": "inspect",
+                    "label": "Open project status",
+                    "command": "agentdeck status",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+                {
+                    "kind": "inspect",
+                    "label": "List memory suggestions",
+                    "command": "agentdeck memory suggestions",
                     "safety": "inspect",
                     "enabled": True,
                     "blocker": None,
