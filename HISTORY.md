@@ -4,6 +4,14 @@
 
 ## 2026-07-07
 
+### Current - Add natural-language learning review
+
+- 扩展 `agentdeck leader chat --message "学习复盘 pln_xxx"`：自然语言入口现在进入只读 `mode=learning_review`，嵌入与 `agentdeck learn review --plan-id <id>` 同源的 `learning_review_card`，并在缺省 plan id 时使用最新 plan。
+- 扩展 GUI/TUI discovery：leader-chat 响应新增 `learning_review_card` 字段，`agentdeck contract leader-chat` 公开 `learning_review_card_fields`，help capability card 新增 `learning_review` 能力，`control_registry_card` 过滤到 `scope=learning_review` / `card=learning_review_card` 并选中 `suggest_skill` control。
+- 保持学习层安全边界：自然语言 learning review 只记录 chat turn，不执行 `skills suggest` / `memory suggest` 命令，不写 `skill_suggestions[]` 或 `memory_suggestions[]`，不创建/导入/load skill，不写 `.agentdeck/memory/*.md`，不调用 provider、不读取 tmux、不创建调度对象。
+- 同步 README、AGENT.md、CLAUDE.md、`docs/contracts/leader-chat-schema.md` 和北极星路线图，明确 learning review 已成为可对话、可发现、但仍需人类显式确认的 skill/memory 学习入口。
+- 验证记录：已先确认红测失败，`agentdeck leader chat --message "学习复盘 pln_xxx"` 最初落入普通 `mode=review`；实现后目标测试 `conda run -n agentdeck pytest tests/test_leader_cli.py::test_leader_chat_learning_review_embeds_review_card_without_mutating_suggestions -q` 1 项通过；聚焦 leader/contract 回归 9 项通过；agent CLI 回归 `conda run -n agentdeck pytest tests/test_agent_cli.py -q` 145 项通过；contract 回归 `conda run -n agentdeck pytest tests/test_contracts.py -q` 224 项通过；leader CLI 回归 `conda run -n agentdeck pytest tests/test_leader_cli.py -q` 143 项通过；`conda run -n agentdeck python -m compileall src tests`、`git diff --check` 和 `conda run -n agentdeck pytest -q` 通过，全量测试 554 项通过。
+
 ### Current - Add learning review contract discovery
 
 - 新增 `agentdeck contract learning-review` / `--example`：公开 `agentdeck learn review --plan-id <id>` 的 response 字段、skill suggestion 字段、memory suggestion 字段、GUI control 字段和稳定 example fixture。

@@ -801,6 +801,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "next_command",
     "leader_action",
     "leader_action_card",
+    "learning_review_card",
     "leader_summary_card",
     "leader_status_card",
     "skill_context_card",
@@ -2352,6 +2353,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "intent_card_fields": list(LEADER_CHAT_INTENT_CARD_FIELDS),
         "intent_control_fields": list(LEADER_CHAT_INTENT_CONTROL_FIELDS),
         "leader_action_card_fields": list(LEADER_CHAT_ACTION_CARD_FIELDS),
+        "learning_review_card_fields": list(LEARNING_REVIEW_RESPONSE_FIELDS),
         "leader_summary_card_fields": list(LEADER_SUMMARY_RESPONSE_FIELDS),
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "run_start_card_fields": list(RUN_START_RESPONSE_FIELDS),
@@ -2428,6 +2430,7 @@ def leader_chat_contract_response(contract_path: Path, include_example: bool = F
         payload["example_intent_card_fields"] = list(example["intent_card"])
         payload["example_intent_control_fields"] = list(example["intent_card"]["controls"][0])
         payload["example_leader_action_card_fields"] = list(example["leader_action_card"])
+        payload["example_learning_review_card_fields"] = list(example["learning_review_card"])
         payload["example_leader_summary_card_fields"] = list(example["leader_summary_card"])
         payload["example_continue_card_fields"] = list(example["continue_card"])
         payload["example_run_start_card_fields"] = list(RUN_START_RESPONSE_FIELDS)
@@ -2560,6 +2563,16 @@ def leader_chat_capability_card() -> dict[str, object]:
             "safety": "inspect",
             "requires_explicit_user": False,
             "card": "leader_status_card",
+        },
+        {
+            "mode": "learning_review",
+            "label": "Review learning",
+            "description": "Inspect a completed plan for explicit skill and memory suggestion commands.",
+            "example_messages": ["学习复盘 pln_xxx", "learning review pln_xxx"],
+            "command": "agentdeck learn review --plan-id <plan_id>",
+            "safety": "inspect",
+            "requires_explicit_user": False,
+            "card": "learning_review_card",
         },
         {
             "mode": "skill_import_preview",
@@ -4818,6 +4831,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
                     "intent_card.secondary_embedded_cards must include control_registry_card for run_progress responses"
                 )
             if (
+                explanation_action_kind == "learning_review"
+                and payload.get("learning_review_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for learning_review responses"
+                )
+            if (
                 explanation_action_kind == "artifacts"
                 and payload.get("artifacts_card") is not None
                 and "control_registry_card" not in secondary_embedded_cards
@@ -5044,6 +5065,19 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("leader_action_card is required when leader_action is present")
     elif "leader_action_card" in payload and leader_action_card is not None:
         errors.append("leader_action_card must be an object")
+    learning_review_card = payload.get("learning_review_card")
+    if isinstance(learning_review_card, dict):
+        for field in LEARNING_REVIEW_RESPONSE_FIELDS:
+            if field not in learning_review_card:
+                errors.append(f"learning_review_card: missing field: {field}")
+        if learning_review_card.get("mode") != "learning_review":
+            errors.append("learning_review_card.mode must be learning_review")
+        if payload.get("mode") == "learning_review":
+            expected_next_command = f"agentdeck learn review --plan-id {learning_review_card.get('plan_id')}"
+            if payload.get("next_command") != expected_next_command:
+                errors.append("learning_review_card next_command must match agentdeck learn review")
+    elif "learning_review_card" in payload and learning_review_card is not None:
+        errors.append("learning_review_card must be an object")
     leader_summary_card = payload.get("leader_summary_card")
     if isinstance(leader_summary_card, dict):
         summary_validation = validate_leader_summary_contract(leader_summary_card)
@@ -5242,6 +5276,22 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             if selection.get("next_command") != expected_plan_status_command:
                 errors.append("control_registry_card.selection.next_command must match run_progress plan_status command")
         if (
+            explanation_action_kind == "learning_review"
+            and isinstance(learning_review_card, dict)
+            and isinstance(selection, dict)
+        ):
+            selected_control = selection.get("selected_control")
+            selected_kind = selected_control.get("kind") if isinstance(selected_control, dict) else None
+            selected_command = selected_control.get("command") if isinstance(selected_control, dict) else None
+            skill_suggestion = learning_review_card.get("skill_suggestion")
+            expected_command = skill_suggestion.get("command") if isinstance(skill_suggestion, dict) else None
+            if selected_kind != "suggest_skill":
+                errors.append("control_registry_card.selection.selected_control.kind must be suggest_skill for learning_review responses")
+            if selected_command != expected_command:
+                errors.append("control_registry_card.selection.selected_control.command must match learning_review skill suggestion")
+            if selection.get("next_command") != expected_command:
+                errors.append("control_registry_card.selection.next_command must match learning_review skill suggestion command")
+        if (
             explanation_action_kind == "artifacts"
             and isinstance(artifacts_card, dict)
             and isinstance(selection, dict)
@@ -5332,6 +5382,8 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("control_registry_card is required for leader_summary responses")
     elif explanation_action_kind == "run_progress":
         errors.append("control_registry_card is required for run_progress responses")
+    elif explanation_action_kind == "learning_review":
+        errors.append("control_registry_card is required for learning_review responses")
     elif explanation_action_kind == "artifacts":
         errors.append("control_registry_card is required for artifacts responses")
     elif explanation_action_kind == "ledger":
@@ -7480,6 +7532,7 @@ def leader_chat_example() -> dict[str, object]:
     }
     leader_action_card = leader_chat_action_card(leader_action)
     leader_summary_card = leader_summary_example()
+    learning_review_card = learning_review_example()
     leader_status_card = leader_status_example()
     run_start_card = run_start_example()
     run_progress_card = run_progress_example()
@@ -7641,6 +7694,7 @@ def leader_chat_example() -> dict[str, object]:
         "next_command": next_command,
         "leader_action": leader_action,
         "leader_action_card": leader_action_card,
+        "learning_review_card": learning_review_card,
         "leader_summary_card": leader_summary_card,
         "leader_status_card": leader_status_card,
         "skill_context_card": skill_context_card,

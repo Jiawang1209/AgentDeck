@@ -104,6 +104,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "continue_card",
         "run_start_card",
         "run_progress_card",
+        "learning_review_card",
         "leader_summary_card",
         "leader_status_card",
         "capture_card",
@@ -194,6 +195,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     if embedded_card == "run_progress_card" and payload.get("approval_card") is not None:
         secondary_embedded_cards.append("approval_card")
     if embedded_card == "run_progress_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "learning_review_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "artifacts_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
@@ -342,6 +345,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Inspect trace"
     if re.fullmatch(r"agentdeck leader summary --plan-id [^\s]+", command):
         return "Summarize plan"
+    if re.fullmatch(r"agentdeck learn review --plan-id [^\s]+", command):
+        return "Review learning"
     if command == "agentdeck skills list":
         return "List skills"
     if command == "agentdeck skills suggestions":
@@ -364,6 +369,10 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         run_progress_card = payload.get("run_progress_card")
         plan_id = run_progress_card.get("plan_id") if isinstance(run_progress_card, dict) else None
         return f"agentdeck run --plan-id {plan_id}" if plan_id else None
+    if embedded_card == "learning_review_card":
+        learning_review_card = payload.get("learning_review_card")
+        plan_id = learning_review_card.get("plan_id") if isinstance(learning_review_card, dict) else None
+        return f"agentdeck learn review --plan-id {plan_id}" if plan_id else None
     if embedded_card == "leader_summary_card":
         summary_card = payload.get("leader_summary_card")
         command = (
@@ -508,6 +517,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("control_mode_card", None)
     payload.setdefault("provider_health", None)
     payload.setdefault("leader_status_card", None)
+    payload.setdefault("learning_review_card", None)
     payload.setdefault("skill_context_card", None)
     payload.setdefault("skill_import_preview_card", None)
     payload.setdefault("skill_load_preview_card", None)
@@ -1621,6 +1631,18 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         card="leader_summary_card",
         agent_id="leader",
         controls=leader_summary_card.get("controls"),
+    )
+    learning_review_card = (
+        payload.get("learning_review_card")
+        if isinstance(payload.get("learning_review_card"), dict)
+        else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="learning_review",
+        card="learning_review_card",
+        agent_id="leader",
+        controls=learning_review_card.get("controls"),
     )
     audit_card = payload.get("audit_card") if isinstance(payload.get("audit_card"), dict) else {}
     _append_workbench_control_registry_items(
@@ -6422,6 +6444,19 @@ def _leader_chat_explanation(
             "safety": "inspect",
             "requires_explicit_user": False,
         }
+    if mode == "learning_review":
+        review_card = result if isinstance(result, dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader is showing a read-only learning review with explicit skill and memory suggestion commands.",
+            "reason": "human asked to review a run for reusable skills and durable memory",
+            "next_command": next_command,
+            "recommended_action_id": review_card.get("plan_id"),
+            "action_kind": "learning_review",
+            "action_status": review_card.get("status"),
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
     if mode == "leader_status":
         return {
             "mode": mode,
@@ -6931,6 +6966,23 @@ def _chat_wants_run_progress(message: str) -> bool:
     )
 
 
+def _chat_learning_review_plan_id(message: str) -> str | None:
+    if not _chat_wants_learning_review(message):
+        return None
+    text = message.strip()
+    match = re.search(r"\bpln_[A-Za-z0-9_-]+\b", text)
+    return match.group(0) if match else None
+
+
+def _chat_wants_learning_review(message: str) -> bool:
+    text = message.strip()
+    return bool(
+        re.search(r"(学习复盘|学习回顾|经验复盘|沉淀).*", text, re.IGNORECASE)
+        or re.search(r"(learn|learning).*(review|retrospective)", text, re.IGNORECASE)
+        or re.search(r"(review|retrospective).*(learn|learning)", text, re.IGNORECASE)
+    )
+
+
 def leader_chat_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -7188,6 +7240,94 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "run_progress_card": run_progress_card,
             "inbox_card": None,
             "approval_card": run_progress_card.get("approval_card"),
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "control_registry_card": control_registry_card,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_learning_review(args.message):
+        learning_review_plan_id = _chat_learning_review_plan_id(args.message)
+        if learning_review_plan_id is None:
+            plans = store.list_plans()
+            if not plans:
+                print("no saved plans to review for learning", file=sys.stderr)
+                return 1
+            learning_review_plan_id = str(plans[-1]["plan_id"])
+        try:
+            learning_review_card = _learning_review_payload(store, learning_review_plan_id)
+        except KeyError:
+            print(f"unknown plan: {learning_review_plan_id}", file=sys.stderr)
+            return 1
+        next_command = f"agentdeck learn review --plan-id {learning_review_plan_id}"
+        registry_items = _workbench_control_registry({"learning_review_card": learning_review_card})
+        skill_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("scope") == "learning_review"
+                and item.get("card") == "learning_review_card"
+                and item.get("kind") == "suggest_skill"
+                and item.get("command") == learning_review_card["skill_suggestion"]["command"]
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="learning_review",
+            card="learning_review_card",
+            control_id=str(skill_control_id) if skill_control_id else None,
+        )
+        turn = store.record_chat_turn(
+            mode="learning_review",
+            message=args.message,
+            plan_id=learning_review_plan_id,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="learning_review",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "learning_review",
+                    "plan_id": learning_review_plan_id,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "learning_review",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "learning_review",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                result=learning_review_card,
+            ),
+            "plan_id": learning_review_plan_id,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "learning_review_card": learning_review_card,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
             "runtime_card": None,
             "queue_card": None,
             "operator_card": None,

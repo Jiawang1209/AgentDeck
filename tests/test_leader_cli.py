@@ -4273,6 +4273,7 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "apply_action",
         "continue",
         "leader_status",
+        "learning_review",
         "skill_import_preview",
         "skill_load_preview",
         "skill_suggestions",
@@ -4345,6 +4346,18 @@ def test_leader_chat_help_returns_capability_card_without_planning(tmp_path, mon
         "safety": "inspect",
         "enabled": True,
         "blocker": None,
+    }
+    assert capabilities["learning_review"]["command"] == "agentdeck learn review --plan-id <plan_id>"
+    assert capabilities["learning_review"]["safety"] == "inspect"
+    assert capabilities["learning_review"]["requires_explicit_user"] is False
+    assert capabilities["learning_review"]["card"] == "learning_review_card"
+    assert capabilities["learning_review"]["controls"][0] == {
+        "kind": "inspect",
+        "label": "Review learning",
+        "command": "agentdeck learn review --plan-id <plan_id>",
+        "safety": "inspect",
+        "enabled": False,
+        "blocker": "requires plan_id",
     }
     assert capabilities["apply_action"]["command"] == "agentdeck leader apply-action --action-id <action_id>"
     assert capabilities["apply_action"]["safety"] == "safe_apply"
@@ -7068,6 +7081,102 @@ def test_leader_chat_summary_intent_embeds_summary_card_without_creating_actions
     assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
     assert state_after["chat_turns"][-1]["mode"] == "summary"
     assert state_after["chat_turns"][-1]["next_command"] == f"agentdeck leader summary --plan-id {plan_id}"
+    assert fake.sent == sent_before
+    assert fake.captured == captured_before
+
+
+def test_leader_chat_learning_review_embeds_review_card_without_mutating_suggestions(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%77")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["leader", "plan", "--task", "Review a failed deployment."])
+    planned = json.loads(capsys.readouterr().out)
+    plan_id = planned["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+    cli.main(["approval", "dispatch", "--approval-id", approval_id])
+    message_id = json.loads(capsys.readouterr().out)["message_id"]
+    cli.main(
+        [
+            "reply",
+            "--agent",
+            "planner",
+            "--message-id",
+            message_id,
+            "--text",
+            "status: completed\nsummary: deployment review ready\nfull_output_path: docs/deploy-review.md",
+        ]
+    )
+    capsys.readouterr()
+    state_before = StateStore(root).load()
+    sent_before = list(fake.sent)
+    captured_before = list(fake.captured)
+
+    exit_code = cli.main(["leader", "chat", "--message", f"学习复盘 {plan_id}"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "learning_review"
+    assert payload["plan_id"] == plan_id
+    assert payload["next_command"] == f"agentdeck learn review --plan-id {plan_id}"
+    assert payload["learning_review_card"]["mode"] == "learning_review"
+    assert payload["learning_review_card"]["plan_id"] == plan_id
+    assert payload["learning_review_card"]["status"] == "ready"
+    assert payload["learning_review_card"]["reply_count"] == 1
+    assert payload["learning_review_card"]["artifact_count"] == 1
+    assert payload["learning_review_card"]["skill_suggestion"]["command"].startswith(
+        "agentdeck skills suggest --name deployment-review"
+    )
+    assert payload["learning_review_card"]["memory_suggestion"]["command"].startswith(
+        "agentdeck memory suggest --summary"
+    )
+    assert payload["intent_card"]["embedded_card"] == "learning_review_card"
+    assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
+    assert payload["intent_card"]["read_only"] is True
+    assert payload["intent_card"]["controls"][-1] == {
+        "kind": "next",
+        "label": "Review learning",
+        "command": f"agentdeck learn review --plan-id {plan_id}",
+        "safety": "inspect",
+        "enabled": True,
+        "blocker": None,
+    }
+    assert payload["control_registry_card"]["filters"]["scope"] == "learning_review"
+    assert payload["control_registry_card"]["filters"]["card"] == "learning_review_card"
+    assert payload["control_registry_card"]["filters"]["active_filter_keys"] == [
+        "scope",
+        "card",
+        "control_id",
+    ]
+    selected_control = payload["control_registry_card"]["selection"]["selected_control"]
+    assert selected_control["kind"] == "suggest_skill"
+    assert selected_control["scope"] == "learning_review"
+    assert selected_control["card"] == "learning_review_card"
+    assert selected_control["safety"] == "explicit_user"
+    assert selected_control["command"] == payload["learning_review_card"]["skill_suggestion"]["command"]
+    assert payload["control_registry_card"]["selection"]["next_command"] == selected_control["command"]
+    assert payload["leader_explanation"]["action_kind"] == "learning_review"
+    assert payload["leader_explanation"]["safety"] == "inspect"
+    assert payload["leader_explanation"]["requires_explicit_user"] is False
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+
+    state_after = StateStore(root).load()
+    assert state_after["skill_suggestions"] == state_before["skill_suggestions"]
+    assert state_after["memory_suggestions"] == state_before["memory_suggestions"]
+    assert state_after["leader_actions"] == state_before["leader_actions"]
+    assert state_after["approvals"] == state_before["approvals"]
+    assert state_after["messages"] == state_before["messages"]
+    assert state_after["jobs"] == state_before["jobs"]
+    assert state_after["replies"] == state_before["replies"]
+    assert state_after["artifacts"] == state_before["artifacts"]
+    assert len(state_after["chat_turns"]) == len(state_before["chat_turns"]) + 1
+    assert state_after["chat_turns"][-1]["mode"] == "learning_review"
+    assert state_after["chat_turns"][-1]["next_command"] == f"agentdeck learn review --plan-id {plan_id}"
     assert fake.sent == sent_before
     assert fake.captured == captured_before
 
