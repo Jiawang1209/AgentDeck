@@ -4,6 +4,12 @@
 
 ## 2026-07-07
 
+### Current - Report role topology blocked count in chat summary
+
+- 扩展自然语言 `agentdeck leader chat --message "查看角色拓扑"`（北极星 Phase G6 第七刀）：`leader_explanation.summary` 现在从嵌入的 `role_topology_card` 派生角色总数和被阻塞数，例如"...role topology with 6 roles (1 blocked)..."，让自然语言壳无需重新遍历卡片就能说出"有几个角色被阻塞"。
+- 只改 summary 文案，`mode` / `action_kind` / `safety` / `next_command` / 卡片本身不变；仍是只读，不写 state、不调用 provider。
+- 验证记录：已先确认红测失败，summary 最初是固定文案不含计数；实现后目标测试 `conda run -n agentdeck pytest tests/test_agent_cli.py::test_leader_chat_role_topology_is_read_only_and_surfaces_control_palette -q` 1 项通过；`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过；`conda run -n agentdeck pytest -q` 通过，全量测试 605 项通过。
+
 ### Current - Cover explicit code/round reviewer role topology
 
 - 新增回归覆盖（北极星 Phase G6 第六刀，纯测试）：验证配置了显式 `code_reviewer` / `round_reviewer` 角色的项目在 `role_topology_card` 中把它们作为独立 worker 角色暴露，且 review-gate 状态叠加正确映射——有 artifact 但无 review reply 时，`code_reviewer` 显示 `reviewing`（无 blocker），`round_reviewer` 显示 `blocked` 并带 blocker `code review is not ready`（等上游代码审查）。

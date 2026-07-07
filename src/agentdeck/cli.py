@@ -7953,9 +7953,14 @@ def _leader_chat_explanation(
         }
     if mode == "role_topology":
         role_topology_card = result if isinstance(result, dict) else {}
+        role_count = _safe_int(role_topology_card.get("count"), default=0)
+        blocked_count = _safe_int(role_topology_card.get("blocked_count"), default=0)
         return {
             "mode": mode,
-            "summary": "Leader is showing the read-only role topology without spawning, dispatching, or writing state.",
+            "summary": (
+                f"Leader is showing the read-only role topology with {role_count} roles "
+                f"({blocked_count} blocked) without spawning, dispatching, or writing state."
+            ),
             "reason": "human asked to inspect the logical and worker role topology",
             "next_command": next_command,
             "recommended_action_id": None,

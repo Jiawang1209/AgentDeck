@@ -293,12 +293,18 @@ The sixth G6 slice is already committed (test-only coverage):
 
 Phase G6 (Role Topology GUI) is now functionally complete: workbench `role_topology_card` (logical + worker roles, review-gate overlay, orchestrator approval/release overlay, status summary) plus the read-only natural-language `role_topology` chat discovery.
 
+The seventh G6 slice is already committed:
+
+- The natural-language `role_topology` chat `leader_explanation.summary` now reports role count and blocked count (e.g. "...role topology with 6 roles (1 blocked)...").
+
+Phase G6 (Role Topology GUI) is complete across workbench + natural-language surfaces.
+
 ## Next Best Step
 
-G6 is complete. Options for the next direction:
+G6 is complete. Recommended next direction:
 
-- Surface `blocked_count` / `by_status` into the natural-language `role_topology` chat `leader_explanation.summary` text so the shell can say "N roles blocked" without re-deriving from the card.
-- Or begin consolidating the layered-role north star into an end-to-end acceptance/demo doc under `docs/` that walks a full round (frontdesk intake → plan → approval → dispatch → review gate → release) against the read-only contract surfaces.
+- Consolidate the layered-role north star into an end-to-end acceptance/demo doc under `docs/` (e.g. `docs/walkthroughs/layered-role-round.md`) that walks a full round — frontdesk intake → plan → approval → dispatch → review gate → release — entirely against the read-only contract surfaces and explicit human commands, cross-linking each phase's contract. This ties G1–G6 together for GUI/TUI builders.
+- Then revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability beyond the layered-role plan.
 - Preserve human approval and keep every read-only surface read-only.
 
 ## Required Verification Before Handoff

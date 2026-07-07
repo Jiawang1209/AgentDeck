@@ -2406,6 +2406,9 @@ def test_leader_chat_role_topology_is_read_only_and_surfaces_control_palette(
     }
     assert payload["leader_explanation"]["action_kind"] == "role_topology"
     assert payload["leader_explanation"]["safety"] == "inspect"
+    # default project leaves the reviewer role blocked upstream, so the shell summary reports it
+    assert "6 roles" in payload["leader_explanation"]["summary"]
+    assert "1 blocked" in payload["leader_explanation"]["summary"]
     state_after = StateStore(root).load()
     assert state_after["plans"] == state_before["plans"]
     assert state_after["messages"] == state_before["messages"]
