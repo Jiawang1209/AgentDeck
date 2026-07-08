@@ -4,7 +4,18 @@
 
 ## 2026-07-08
 
-### Current - Natural-language run-loop preview intent（mode=run_loop_preview）
+### Current - Show control mode + autonomous commands in the text dashboard / TUI
+
+- **类型**: feat
+- **动机**: autonomous 三块 + 命令面板 + 自然语言入口都做完了，但人类面向的文字 dashboard（也是 TUI overview 的数据源 `render_workbench_dashboard`）里没有任何"当前授权档位 / autonomous 命令"的区块——ask/approve/autonomous 梯度和刚建好的 `approval auto` / `run-loop` 命令在一屏总览里看不见。这是"把契约做成人能看见的驾驶舱"方向的第一刀。
+- **What**:
+  - `src/agentdeck/dashboard.py` 新增只读 `_render_control_mode(payload)`：从 `control_mode_card` 派生一段 "Control mode" 区块，显示 `mode: <current_mode> (approval_mode: <approval_mode>)` 和每条 `autonomous_actions`（`approval auto` / `run-loop` 命令 + enabled/blocked 状态），并接进 `render_workbench_dashboard` 的 sections（放在 Queue 之后、Learning layer 之前）。
+  - 因为 TUI overview 复用同一个渲染器（`tui.py::_set_payload` → `render_workbench_dashboard`），`agentdeck dashboard` 和交互式 TUI 同时获得该区块。
+  - 纯函数、只读：不改 payload、不调 provider、不碰 tmux、不写 state。
+- **Impact**: dashboard / TUI 一屏可见授权档位与 autonomous 命令入口；无行为变化、无破坏性改动。
+- **Verification**: `conda run -n agentdeck pytest tests/test_dashboard.py -q`（含新 `test_render_workbench_dashboard_shows_control_mode_and_autonomous_commands`，红→绿）；全套 `pytest -q`（679 passed）；`python -m compileall src tests`；`git diff --check`；并对 `workbench_example()` 实跑渲染确认区块正确。
+
+### Natural-language run-loop preview intent（mode=run_loop_preview）
 
 - **类型**: feat
 - **动机**: `agentdeck run-loop --plan-id <id> --confirm` 及其 `scope=autonomous` 命令面板组已就绪，但自然语言壳还无法发现它。补最后一条 GUI 主线 slice：让人类输入“推进计划 pln_xxx”即可只读预览并拿到显式 run-loop 命令，且 chat 绝不执行它，保持 `leader chat` 永不触发 runtime/dispatch 的项目不变量。

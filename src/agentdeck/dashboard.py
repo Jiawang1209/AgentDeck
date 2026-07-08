@@ -206,6 +206,26 @@ def _render_queue(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_control_mode(payload: dict[str, Any]) -> list[str]:
+    card = _as_dict(payload.get("control_mode_card"))
+    if not card:
+        return []
+    current = str(card.get("current_mode") or "")
+    approval_mode = str(card.get("approval_mode") or "")
+    lines = [_rule("Control mode"), f"mode: {current}  (approval_mode: {approval_mode})"]
+    for action in _as_list(card.get("autonomous_actions")):
+        action = _as_dict(action)
+        command = str(action.get("command") or "")
+        if not command:
+            continue
+        if action.get("enabled") is True:
+            status = "enabled"
+        else:
+            status = f"blocked: {action.get('blocker') or 'disabled'}"
+        lines.append(f"  {command}  [{status}]".rstrip())
+    return lines
+
+
 def _render_control_palette(payload: dict[str, Any]) -> list[str]:
     registry = _as_list(payload.get("control_registry"))
     if not registry:
@@ -299,6 +319,7 @@ def render_workbench_dashboard(payload: dict[str, Any]) -> str:
         _render_release_preview(payload),
         _render_ledger(payload),
         _render_queue(payload),
+        _render_control_mode(payload),
         _render_learning_layer(payload),
         _render_control_palette(payload),
     ]

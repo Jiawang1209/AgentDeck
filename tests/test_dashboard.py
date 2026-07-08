@@ -34,6 +34,24 @@ def test_render_workbench_dashboard_consumes_only_the_contract_payload() -> None
     assert payload == snapshot
 
 
+def test_render_workbench_dashboard_shows_control_mode_and_autonomous_commands() -> None:
+    payload = workbench_example()
+    snapshot = copy.deepcopy(payload)
+
+    text = render_workbench_dashboard(payload)
+
+    # the ask/approve/autonomous authorization gradient is visible at a glance
+    assert "Control mode" in text
+    assert "mode: ask" in text
+    # the autonomous commands are surfaced as read-only hints
+    assert "agentdeck approval auto --confirm" in text
+    assert "agentdeck run-loop --plan-id <id> --confirm" in text
+    # the disabled ones show their blocker (example is not in autonomous mode)
+    assert "autonomous mode is not enabled" in text
+    # rendering is read-only
+    assert payload == snapshot
+
+
 def test_render_workbench_dashboard_summarizes_control_palette_by_scope() -> None:
     payload = workbench_example()
     total = len(payload["control_registry"])
