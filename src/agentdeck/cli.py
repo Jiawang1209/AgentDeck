@@ -118,6 +118,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "continue_card",
         "run_start_card",
         "run_progress_card",
+        "run_loop_preview_card",
         "learning_review_card",
         "leader_summary_card",
         "leader_status_card",
@@ -225,6 +226,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     if embedded_card == "run_progress_card" and payload.get("approval_card") is not None:
         secondary_embedded_cards.append("approval_card")
     if embedded_card == "run_progress_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "run_loop_preview_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "learning_review_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
@@ -400,6 +403,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Import skill"
     if command.startswith("agentdeck skills load --name "):
         return "Load skill"
+    if re.fullmatch(r"agentdeck run-loop --plan-id [^\s]+ --confirm", command):
+        return "Drive plan forward"
     return "Next command"
 
 
@@ -415,6 +420,10 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
     if embedded_card == "run_progress_card":
         run_progress_card = payload.get("run_progress_card")
         plan_id = run_progress_card.get("plan_id") if isinstance(run_progress_card, dict) else None
+        return f"agentdeck run --plan-id {plan_id}" if plan_id else None
+    if embedded_card == "run_loop_preview_card":
+        card = payload.get("run_loop_preview_card")
+        plan_id = card.get("plan_id") if isinstance(card, dict) else None
         return f"agentdeck run --plan-id {plan_id}" if plan_id else None
     if embedded_card == "learning_review_card":
         learning_review_card = payload.get("learning_review_card")
@@ -563,6 +572,10 @@ def _leader_chat_intent_card_blocker(embedded_card: object, payload: dict[str, o
                 if isinstance(control, dict) and control.get("command") == payload.get("next_command"):
                     blocker = control.get("blocker")
                     return str(blocker) if blocker else None
+    if embedded_card == "run_loop_preview_card":
+        card = payload.get("run_loop_preview_card")
+        blocker = card.get("blocker") if isinstance(card, dict) else None
+        return str(blocker) if blocker else None
     return None
 
 
@@ -618,6 +631,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("role_topology_card", None)
     payload.setdefault("run_start_card", None)
     payload.setdefault("run_progress_card", None)
+    payload.setdefault("run_loop_preview_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -8113,6 +8127,19 @@ def _leader_chat_explanation(
             "safety": "approval_gated",
             "requires_explicit_user": True,
         }
+    if mode == "run_loop_preview":
+        card = result if isinstance(result, dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader is previewing the explicit run-loop command without executing it.",
+            "reason": "human asked to drive a plan forward within the autonomous policy",
+            "next_command": next_command,
+            "recommended_action_id": card.get("plan_id"),
+            "action_kind": "run_loop_preview",
+            "action_status": "autonomous" if card.get("autonomous_enabled") else "autonomous_disabled",
+            "safety": "explicit_runtime",
+            "requires_explicit_user": True,
+        }
     if mode == "run_progress":
         run_progress_card = result if isinstance(result, dict) else {}
         return {
@@ -9052,6 +9079,92 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "operator_card": None,
             "role_card": None,
             "ledger_card": None,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_run_loop_preview(args.message):
+        run_loop_plan_id = _chat_run_loop_preview_plan_id(args.message)
+        if run_loop_plan_id is None:
+            print("run-loop preview requires a plan id (e.g. 推进计划 pln_xxx)", file=sys.stderr)
+            return 1
+        try:
+            store.plan_status(run_loop_plan_id)
+        except KeyError:
+            print(f"unknown plan: {run_loop_plan_id}", file=sys.stderr)
+            return 1
+        run_loop_preview_card = _run_loop_preview_card(store, config, run_loop_plan_id)
+        control_mode_card = _workbench_control_mode_card(_project_view_payload_or_error(config, store) or {})
+        registry_items = _workbench_control_registry({"control_mode_card": control_mode_card})
+        run_loop_template_command = "agentdeck run-loop --plan-id <id> --confirm"
+        run_loop_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("scope") == "autonomous"
+                and item.get("kind") == "run_loop"
+                and item.get("command") == run_loop_template_command
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="autonomous",
+            card="control_mode_card",
+            control_id=str(run_loop_control_id) if run_loop_control_id else None,
+        )
+        turn = store.record_chat_turn(
+            mode="run_loop_preview",
+            message=args.message,
+            plan_id=run_loop_plan_id,
+            next_command=run_loop_preview_card["command"],
+            review=None,
+            action_id=None,
+            action_kind="run_loop_preview",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "run_loop_preview",
+                    "plan_id": run_loop_plan_id,
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "run_loop_preview",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "run_loop_preview",
+                next_command=run_loop_preview_card["command"],
+                project_view=refreshed_project_view,
+                result=run_loop_preview_card,
+            ),
+            "plan_id": run_loop_plan_id,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": run_loop_preview_card["command"],
+            "leader_action": None,
+            "continue_card": None,
+            "run_loop_preview_card": run_loop_preview_card,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "control_registry_card": control_registry_card,
             "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)

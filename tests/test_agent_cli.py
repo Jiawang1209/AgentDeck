@@ -10521,3 +10521,56 @@ def test_chat_run_loop_preview_detector_needs_verb_and_plan_id():
     # run-loop verb but no plan id → wants=True, plan_id=None (caller rejects)
     assert _chat_wants_run_loop_preview("推进计划") is True
     assert _chat_run_loop_preview_plan_id("推进计划") is None
+
+
+def test_leader_chat_run_loop_preview_is_read_only_and_hands_back_explicit_command(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = _seed_plan_with_pending_approval(root, agent_id="planner")
+    before = StateStore(root).load()
+
+    assert cli.main(["leader", "chat", "--message", f"推进计划 {plan_id}"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "run_loop_preview"
+    card = payload["run_loop_preview_card"]
+    assert card["command"] == f"agentdeck run-loop --plan-id {plan_id} --confirm"
+    assert payload["next_command"] == card["command"]
+    intent = payload["intent_card"]
+    assert intent["embedded_card"] == "run_loop_preview_card"
+    assert intent["requires_explicit_user"] is True
+    next_ctrl = next(c for c in intent["controls"] if c["kind"] == "next")
+    assert next_ctrl["safety"] == "explicit_runtime"  # not inspect
+    # autonomous off → next control disabled with the blocker
+    assert next_ctrl["enabled"] is False
+    assert next_ctrl["blocker"] == "autonomous mode is not enabled"
+    assert "control_registry_card" in intent["secondary_embedded_cards"]
+
+    # read-only: no plan/approval/message/event mutation beyond the chat turn + its audit event
+    after = StateStore(root).load()
+    assert after["approvals"] == before["approvals"]
+    assert after.get("messages", []) == before.get("messages", [])
+
+
+def test_leader_chat_run_loop_preview_enables_next_control_in_autonomous_mode(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    plan_id = _seed_plan_with_pending_approval(root, agent_id="planner")
+    cli.main(["policy", "set-mode", "--mode", "autonomous", "--confirm", "--allow-agent", "planner", "--max-approvals", "3"])
+    capsys.readouterr()
+
+    assert cli.main(["leader", "chat", "--message", f"推进计划 {plan_id}"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    intent = payload["intent_card"]
+    next_ctrl = next(c for c in intent["controls"] if c["kind"] == "next")
+    assert next_ctrl["enabled"] is True
+    assert next_ctrl["blocker"] is None
+    # the embedded registry card is filtered to scope=autonomous and selects the run_loop template
+    reg = payload["control_registry_card"]
+    assert reg["filters"]["scope"] == "autonomous"
+
+
+def test_leader_chat_run_loop_preview_rejects_missing_plan_id(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    before = StateStore(root).load()
+    assert cli.main(["leader", "chat", "--message", "推进计划"]) == 1
+    err = capsys.readouterr().err
+    assert "plan" in err.lower()
+    assert StateStore(root).load() == before  # nothing written, no chat turn
