@@ -4,7 +4,17 @@
 
 ## 2026-07-09
 
-### Current - Show a Plans section in the text dashboard / TUI (multi-plan lane slice 3)
+### Current - Add a navigable plans board view to the interactive TUI (multi-plan lane slice 4)
+
+- **类型**: feat
+- **动机**: 多计划并行 lane 第四刀。审批(`a`)、runtime(`g`)已有可选视图,补上对称的 plans 看板视图,让操作者在 TUI 里专注浏览所有计划、逐个看下一步。
+- **What**:
+  - `src/agentdeck/tui.py` 新增只读 `plans` mode(与 overview/palette/approvals/runtime/help 并列),消费 workbench 契约的 `plan_board_card.plans[]`:`TuiModel.plan_board_items` / `selected_plan` / `selected_plan_command`(= 该计划的 `next_command`)/ `toggle_plans`;`move_selection`、`focused_command`、`_frame_row_attributes`、`run_tui` 导航都扩展到 plans;footer 显示选中计划的 gate + next_command;新增 `_plans_window` / `_plans_rows`(active/done · gate · plan_id · task);`run_tui` 新增 `[b]` 键(board);help 列出 `[b]`。
+  - 命令直接来自契约字段(每行的 `next_command`),不自造;纯只读:选中只展示「run: <命令>」,TUI 从不执行、不写 state、不碰 tmux。
+- **Impact**: TUI 里按 `b` 可专注浏览多计划看板并看到每个计划该敲什么;无行为变化、无破坏性改动。
+- **Verification**: `conda run -n agentdeck pytest tests/test_tui.py -q`(含新 `test_tui_model_plans_view_navigates_and_shows_next_command` / `test_tui_render_frame_plans_lists_items`,红→绿);全套 `pytest -q`(696 passed);`python -m compileall src tests`;`git diff --check`;并对 `workbench_example()` 实跑 `render_frame` 确认视图与 footer 命令正确。
+
+### Show a Plans section in the text dashboard / TUI (multi-plan lane slice 3)
 
 - **类型**: feat
 - **动机**: 多计划并行 lane 第三刀。上一刀让 workbench 带上 `plan_board_card`,这一刀把它渲染进人类面向的一屏总览——一眼看到手上所有计划各自卡在哪、下一步敲什么。

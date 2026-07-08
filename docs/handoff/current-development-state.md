@@ -399,12 +399,13 @@ The human picked the multi-plan-parallel lane: see all active plans at once and 
 
 **Slice 3 of the multi-plan lane is done:** a read-only **Plans** section in `render_workbench_dashboard` (`_render_plans`, `src/agentdeck/dashboard.py`), derived from the `plan_board_card` — `<active>/<total> active` + one row per plan (`plan_id · active/done · gate · task`) with an indented `→ <next_command>`; shared by `agentdeck dashboard` and the TUI overview. Test: `tests/test_dashboard.py::test_render_workbench_dashboard_shows_plans_board` (a position-brittle TUI viewport assertion was repointed from "Role topology" to "Run progress"). Read-only.
 
+**Slice 4 of the multi-plan lane is done:** a navigable read-only **`plans`** mode in the TUI (`src/agentdeck/tui.py`, key `[b]` for board), mirroring the approvals/runtime views — rows = `active/done · gate · plan_id · task`, footer = the selected plan's `next_command`, and `focused_command()` returns it on quit. Consumes `plan_board_card.plans[]`; never executes. Tests: `tests/test_tui.py::test_tui_model_plans_view_navigates_and_shows_next_command` / `::test_tui_render_frame_plans_lists_items`.
+
 **Next Best Step:** continue the multi-plan lane, in order — the remaining read-only visibility slices first, then the scheduler:
 
-1. A TUI plans view in `src/agentdeck/tui.py`, mirroring the approvals/runtime views (rows = plan · gate · status; footer = per-plan `next_command`). Note: `[p]` is taken by the palette — pick a free key (e.g. `[b]` for board or `[n]` for plans).
-2. Make `recovery` multi-plan aware (recommend across plans, not just the latest).
-3. A natural-language `leader chat --message "查看所有计划" / "计划看板"` intent (read-only `mode=plan_board`, embed the same card + filtered `control_registry_card`).
-4. **Then** the parallel scheduler (the bigger slice): auto-advance across plans + agent-contention logic — this is the first write-capable multi-plan slice and must stay approval-gated. ⚠️ This is a genuine product fork (core semantics) — the overnight loop must STOP here and leave a "⏸ 需要你决策" note rather than choose unilaterally.
+1. Make `recovery` multi-plan aware (recommend across plans, not just the latest `plans[-1]`).
+2. A natural-language `leader chat --message "查看所有计划" / "计划看板"` intent (read-only `mode=plan_board`, embed the same card + filtered `control_registry_card`).
+3. **Then** the parallel scheduler (the bigger slice): auto-advance across plans + agent-contention logic — the first write-capable multi-plan slice, must stay approval-gated. ⚠️ Genuine product fork (core semantics) — the overnight loop must STOP here and leave a "⏸ 需要你决策" note rather than choose unilaterally.
 
 (Not yet wired: a `control_registry[]` `scope=plan_board` entry — deferred until a plan-board control surface is actually needed, e.g. the dashboard/TUI plans view or the NL intent.)
 

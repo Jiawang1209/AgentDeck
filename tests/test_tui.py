@@ -81,6 +81,40 @@ def test_tui_render_frame_approvals_lists_items() -> None:
     assert "pending" in text
 
 
+def test_tui_model_plans_view_navigates_and_shows_next_command() -> None:
+    payload = workbench_example()
+    snapshot = copy.deepcopy(payload)
+
+    model = TuiModel(payload)
+    model.toggle_plans()
+    assert model.mode == "plans"
+
+    plans = model.plan_board_items()
+    assert [p["plan_id"] for p in plans] == ["pln_a", "pln_b"]
+
+    model.move_selection(-100)
+    assert model.selected_plan()["plan_id"] == "pln_a"
+    assert "agentdeck approval list" in model.footer_text()
+
+    model.move_selection(1)
+    assert model.selected_plan()["plan_id"] == "pln_b"
+    assert "agentdeck leader summary --plan-id pln_b" in model.footer_text()
+
+    assert payload == snapshot
+
+
+def test_tui_render_frame_plans_lists_items() -> None:
+    payload = workbench_example()
+    model = TuiModel(payload)
+    model.toggle_plans()
+
+    frame = render_frame(model, 12, 80)
+    text = "\n".join(frame)
+    assert "plans" in frame[0]
+    assert "pln_a" in text
+    assert "needs_human_approval" in text
+
+
 def test_tui_model_focused_command_reflects_active_view() -> None:
     payload = _payload_with_approvals()
     model = TuiModel(payload)
