@@ -81,3 +81,31 @@ def test_render_history_markdown_handles_empty_ledger():
 
     assert md.startswith("# AgentDeck History — demo")
     assert "_No recorded activity yet._" in md
+
+
+def test_history_command_prints_markdown_timeline(tmp_path, monkeypatch, capsys):
+    import json
+
+    from agentdeck import cli
+
+    root = _init_project(tmp_path)
+    monkeypatch.chdir(root)
+    store = StateStore(root)
+    store.append_event(EventRecord.create("leader_plan_created", {"plan_id": "pln_1"}))
+    events_before = store.all_events()
+
+    exit_code = cli.main(["history"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert out.startswith("# AgentDeck History")
+    assert "Plan created · pln_1" in out
+    # it is a text timeline, not JSON
+    try:
+        json.loads(out)
+        is_json = True
+    except json.JSONDecodeError:
+        is_json = False
+    assert is_json is False
+    # read-only: the ledger is unchanged
+    assert StateStore(root).all_events() == events_before

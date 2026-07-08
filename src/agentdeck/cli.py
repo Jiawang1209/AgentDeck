@@ -77,6 +77,7 @@ from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec,
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .dashboard import render_workbench_dashboard
+from .history import render_history_markdown
 from .runtime import TmuxBackend
 from .tui import TuiModel, run_tui
 from .skills import discover_skills, find_skill, import_project_skill, preview_project_skill_import
@@ -4057,6 +4058,19 @@ def tui_command(args: argparse.Namespace) -> int:
     import curses
 
     curses.wrapper(lambda stdscr: run_tui(stdscr, TuiModel(payload), fetch))
+    return 0
+
+
+def history_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    limit = getattr(args, "limit", None)
+    if limit and limit > 0:
+        events = store.list_events(limit=limit)
+    else:
+        events = store.all_events()
+    print(render_history_markdown(events, config.name), end="")
     return 0
 
 
@@ -12595,6 +12609,15 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--interval", type=float, default=1.0, help="Seconds between --watch renders")
     dashboard.add_argument("--iterations", type=int, default=None, help="Stop after this many --watch renders")
     dashboard.set_defaults(func=dashboard_command)
+
+    history = subparsers.add_parser(
+        "history",
+        help="Render a human-readable Markdown timeline from the audit ledger",
+    )
+    history.add_argument(
+        "--limit", type=int, default=None, help="Only include the most recent N events (default: all)"
+    )
+    history.set_defaults(func=history_command)
 
     tui = subparsers.add_parser(
         "tui",
