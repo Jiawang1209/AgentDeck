@@ -48,6 +48,7 @@ from .contracts import (
     loop_contract_response,
     release_contract_response,
     memory_contract_response,
+    plan_board_contract_response,
     project_view_contract_response,
     runtime_agent_controls,
     run_loop_contract_response,
@@ -69,6 +70,7 @@ from .contracts import (
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_loop_once_contract,
+    validate_plan_board_contract,
     validate_release_contract,
     validate_project_view_contract,
     validate_run_loop_contract,
@@ -12424,6 +12426,46 @@ def plan_list_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+def plan_board_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    items: list[dict[str, object]] = []
+    for plan in store.list_plans():
+        if not isinstance(plan, dict):
+            continue
+        plan_id = str(plan.get("plan_id", ""))
+        review = store.leader_review(plan_id)
+        gate, next_command = run_loop_gate(review, False, plan_id)
+        items.append({
+            "plan_id": plan_id,
+            "task": plan.get("task"),
+            "provider_backend": plan.get("provider_backend"),
+            "created_at": plan.get("created_at"),
+            "status": plan.get("status"),
+            "gate": gate,
+            "next_command": next_command,
+            "active": gate != "complete",
+            "counts": review.get("counts") or {},
+        })
+    payload = {
+        "ok": True,
+        "mode": "plan_board",
+        "board_command": "agentdeck plan board",
+        "plan_count": len(items),
+        "active_count": sum(1 for item in items if item["active"]),
+        "plans": items,
+    }
+    validation = validate_plan_board_contract(payload)
+    if not validation["ok"]:
+        print("plan board contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
 def plan_show_command(args: argparse.Namespace) -> int:
     _config, store, exit_code = _load_project_or_error()
     if store is None:
@@ -13486,6 +13528,8 @@ def build_parser() -> argparse.ArgumentParser:
     plan_status = plan_subparsers.add_parser("status", help="Show plan progress across approvals and dispatches")
     plan_status.add_argument("--plan-id", required=True, help="Plan id from agentdeck leader plan")
     plan_status.set_defaults(func=plan_status_command)
+    plan_board = plan_subparsers.add_parser("board", help="Read-only overview of every plan with its gate and next command")
+    plan_board.set_defaults(func=plan_board_command)
 
     approval = subparsers.add_parser("approval", help="Approval gate commands")
     approval_subparsers = approval.add_subparsers(dest="approval_command")

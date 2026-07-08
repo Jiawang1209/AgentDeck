@@ -10574,3 +10574,50 @@ def test_leader_chat_run_loop_preview_rejects_missing_plan_id(tmp_path, monkeypa
     err = capsys.readouterr().err
     assert "plan" in err.lower()
     assert StateStore(root).load() == before  # nothing written, no chat turn
+
+
+def _seed_named_plan(root, plan_id, task, agent_id="planner"):
+    store = StateStore(root)
+    state = store.load()
+    role = next(a.role for a in cli.load_config(root).agents if a.agent_id == agent_id)
+    state.setdefault("plans", []).append({
+        "plan_id": plan_id, "task": task, "status": "planned",
+        "provider": "fake", "model": "fake-plan", "provider_backend": "local",
+        "plan": {"goal": task, "summary": "s", "steps": [
+            {"step": 1, "agent_id": agent_id, "role": role, "task": "do", "risk": "low", "requires_approval": True}]},
+        "created_at": "2026-07-04T00:00:00+00:00",
+    })
+    store.save(state)
+    store.create_approvals_from_plan(plan_id)
+    return plan_id
+
+
+def test_plan_board_lists_all_plans_with_gate_and_next_command(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _seed_named_plan(root, "pln_a", "demoA")
+    _seed_named_plan(root, "pln_b", "demoB")
+    before = StateStore(root).load()
+
+    assert cli.main(["plan", "board"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "plan_board"
+    assert payload["plan_count"] == 2
+    ids = {p["plan_id"] for p in payload["plans"]}
+    assert ids == {"pln_a", "pln_b"}
+    # both are pending approval -> needs_human_approval, active
+    for p in payload["plans"]:
+        assert p["gate"] == "needs_human_approval"
+        assert p["next_command"] == "agentdeck approval list"
+        assert p["active"] is True
+    assert payload["active_count"] == 2
+    # read-only
+    assert StateStore(root).load() == before
+
+
+def test_plan_board_empty_project_is_valid(tmp_path, monkeypatch, capsys):
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["plan", "board"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["plan_count"] == 0
+    assert payload["plans"] == []
+    assert payload["active_count"] == 0
