@@ -1664,6 +1664,13 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id=None,
         controls=control_mode_card.get("active_controls"),
     )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="autonomous",
+        card="control_mode_card",
+        agent_id=None,
+        controls=control_mode_card.get("autonomous_actions"),
+    )
     agent_ready_card = payload.get("agent_ready_card") if isinstance(payload.get("agent_ready_card"), dict) else {}
     _append_workbench_control_registry_items(
         registry,

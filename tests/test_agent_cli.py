@@ -10441,3 +10441,30 @@ def test_control_mode_card_exposes_autonomous_action_controls(tmp_path, monkeypa
     assert actions2["approval_auto"]["enabled"] is True
     assert actions2["approval_auto"]["blocker"] is None
     assert actions2["run_loop"]["enabled"] is False  # still a template
+
+
+def test_control_registry_and_controls_expose_autonomous_scope(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    cli.main(["policy", "set-mode", "--mode", "autonomous", "--confirm",
+              "--allow-agent", "planner", "--max-approvals", "3"])
+    capsys.readouterr()
+
+    # workbench control_registry carries the two autonomous items
+    assert cli.main(["workbench"]) == 0
+    registry = json.loads(capsys.readouterr().out)["control_registry"]
+    auto = [i for i in registry if i["scope"] == "autonomous"]
+    kinds = {i["kind"] for i in auto}
+    assert kinds == {"approval_auto", "run_loop"}
+    assert all(i["card"] == "control_mode_card" for i in auto)
+    assert all(isinstance(i["control_id"], str) and i["control_id"] for i in auto)
+
+    # agentdeck controls --scope autonomous returns exactly those two
+    assert cli.main(["controls", "--scope", "autonomous"]) == 0
+    card = json.loads(capsys.readouterr().out)
+    assert card["item_count"] == 2
+    assert {i["kind"] for i in card["items"]} == {"approval_auto", "run_loop"}
+
+    # --enabled-only leaves just approval_auto (run_loop template is disabled)
+    assert cli.main(["controls", "--scope", "autonomous", "--enabled-only"]) == 0
+    enabled = json.loads(capsys.readouterr().out)
+    assert {i["kind"] for i in enabled["items"]} == {"approval_auto"}
