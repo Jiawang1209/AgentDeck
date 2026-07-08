@@ -223,3 +223,91 @@ def test_palette_row_styles_mark_selected_enabled_disabled() -> None:
     assert styles[0] == "selected"
     # every style is one of the known tokens
     assert set(styles) <= {"selected", "enabled", "disabled"}
+
+
+class _FakeStdscr:
+    """Minimal fake curses window that replays scripted keys for run_tui tests."""
+
+    def __init__(self, keys, height=24, width=90):
+        self._keys = list(keys)
+        self._height = height
+        self._width = width
+        self.drawn: list[tuple] = []
+
+    def getmaxyx(self):
+        return (self._height, self._width)
+
+    def getch(self):
+        if self._keys:
+            return self._keys.pop(0)
+        return ord("q")  # safety: quit when the script is exhausted
+
+    def erase(self):
+        self.drawn.append(("erase",))
+
+    def refresh(self):
+        pass
+
+    def addstr(self, row, col, text, *attr):
+        self.drawn.append((row, col, text))
+
+
+def test_run_tui_navigates_palette_refreshes_and_quits() -> None:
+    from agentdeck.tui import run_tui
+
+    payload = workbench_example()
+    model = TuiModel(payload)
+    calls = {"fetch": 0}
+
+    def fetch():
+        calls["fetch"] += 1
+        return workbench_example()
+
+    # open palette, move down twice, refresh, then quit
+    stdscr = _FakeStdscr([ord("p"), ord("j"), ord("j"), ord("r"), ord("q")])
+    run_tui(stdscr, model, fetch)
+
+    assert model.mode == "palette"
+    assert calls["fetch"] == 1
+    assert stdscr.drawn  # it rendered at least one frame
+
+
+def test_run_tui_refresh_ignores_none_payload() -> None:
+    from agentdeck.tui import run_tui
+
+    model = TuiModel(workbench_example())
+    before = model.control_items()
+
+    # a failing refresh (fetch -> None) must not crash or blank the model
+    stdscr = _FakeStdscr([ord("p"), ord("r"), ord("q")])
+    run_tui(stdscr, model, lambda: None)
+
+    assert model.control_items() == before
+
+
+def test_run_tui_help_toggle_and_quit() -> None:
+    from agentdeck.tui import run_tui
+
+    model = TuiModel(workbench_example())
+    stdscr = _FakeStdscr([ord("?"), ord("q")])
+    run_tui(stdscr, model, lambda: None)
+
+    assert model.mode == "help"
+
+
+def test_run_tui_filter_prompt_applies_filter() -> None:
+    from agentdeck.tui import run_tui
+
+    model = TuiModel(workbench_example())
+    # '/' opens the filter prompt; type "role", Enter applies; then quit
+    keys = [ord("/"), ord("r"), ord("o"), ord("l"), ord("e"), 10, ord("q")]
+    run_tui(_FakeStdscr(keys), model, lambda: None)
+
+    assert model.mode == "palette"
+    assert model.filter_text == "role"
+    for control in model.control_items():
+        haystack = (
+            f"{control.get('scope')}{control.get('kind')}"
+            f"{control.get('label')}{control.get('command')}"
+        ).lower()
+        assert "role" in haystack

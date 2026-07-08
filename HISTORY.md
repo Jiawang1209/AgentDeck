@@ -4,6 +4,12 @@
 
 ## 2026-07-08
 
+### Current - Cover run_tui curses loop with a fake stdscr
+
+- 用假 stdscr 端到端覆盖 `agentdeck tui` 的 curses 主循环 `run_tui`(此前唯一未测的薄壳)。`tests/test_tui.py` 新增 `_FakeStdscr`(重放脚本化按键、记录绘制),驱动四条路径:palette 切换+导航+`r` 刷新(fetch 被调一次)+`q` 退出;`r` 刷新遇 fetch 返回 None 时不崩溃/不清空 model;`?` 切 help;`/` 过滤输入(喂 `role`+Enter,断言 filter 生效且结果都含 "role")。
+- 这是覆盖型切片(`run_tui` 本就正确,故无红-先):它锁定 curses 循环的按键→模型行为,补齐 TUI 唯一的测试缺口,正是 handoff 命名的下一步。仍只读:测试只驱动查看器,不执行任何命令。
+- 验证记录:目标测试 `conda run -n agentdeck pytest tests/test_tui.py -q` 16 项通过;`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过;`conda run -n agentdeck pytest -q` 通过,全量测试 639 项通过。
+
 ### Current - Colorize enabled/disabled palette rows in interactive TUI
 
 - 给 `agentdeck tui` 命令面板的行上视觉区分:选中行反显(A_REVERSE)、disabled 行变暗(A_DIM)、enabled 行常规,让"哪些按钮可用/被阻塞/当前选中"一眼可辨。

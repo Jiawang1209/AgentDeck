@@ -356,9 +356,13 @@ All three optional TUI polish items are now committed: (1) the palette focuses t
 
 ## Next Best Step
 
-The interactive TUI is feature-complete (overview/palette/help, filter, refresh, focus, colors). Options:
-- Revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability beyond the TUI/dashboard reference-client work.
-- Or, if deeper TUI coverage is wanted, drive `run_tui` with a fake stdscr feeding scripted keys to test the loop end-to-end.
+The interactive TUI is feature-complete (overview/palette/help, filter, refresh, focus, colors) and now fully tested — `run_tui` is covered end-to-end via a fake stdscr (`tests/test_tui.py`). The TUI/dashboard reference-client line is done.
+
+## Next Best Step
+
+This is a genuine product fork — pick a direction (the running `/loop` should stop and ask here rather than choose arbitrarily):
+- **New capability from `docs/roadmap/ultimate-goal-roadmap.md`** beyond the reference-client work (e.g. assisted-run flow deepening, provider/runtime work, or a Phase past G6).
+- **Harden an existing subsystem** (e.g. more adversarial contract validator tests, or a real end-to-end round smoke test wired into CI-style checks).
 - Preserve human approval and keep every read-only surface read-only.
 - The curses key loop (`run_tui`) is a thin shell that isn't unit-tested (needs a TTY); the pure `TuiModel` + `render_frame` are. If deeper coverage is wanted, drive `run_tui` with a fake stdscr feeding scripted keys.
 - Otherwise revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability.
