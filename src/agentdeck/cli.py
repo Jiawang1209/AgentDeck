@@ -1527,6 +1527,24 @@ def _workbench_control_mode_card(project_view: dict[str, object]) -> dict[str, o
             "blocker": None,
         },
     ]
+    autonomous_actions = [
+        _control(
+            kind="approval_auto",
+            label="Auto-approve (autonomous)",
+            command="agentdeck approval auto --confirm",
+            safety="delegated",
+            enabled=approval_mode == "autonomous",
+            blocker=None if approval_mode == "autonomous" else "autonomous mode is not enabled",
+        ),
+        _control(
+            kind="run_loop",
+            label="Run-loop (autonomous)",
+            command="agentdeck run-loop --plan-id <id> --confirm",
+            safety="delegated",
+            enabled=False,
+            blocker="requires --plan-id",
+        ),
+    ]
     return {
         "mode": "control_mode",
         "title": "Control mode",
@@ -1538,6 +1556,7 @@ def _workbench_control_mode_card(project_view: dict[str, object]) -> dict[str, o
             _control(kind="inspect", label="Inspect policy", command="agentdeck workbench", safety="inspect"),
             *_control_mode_set_controls(current_mode, available_modes),
         ],
+        "autonomous_actions": autonomous_actions,
         "set_mode_command_template": "agentdeck policy set-mode --mode <mode>",
         "policy_source": ".agentdeck/config.toml:leader.approval_mode",
     }

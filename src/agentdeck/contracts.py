@@ -1338,6 +1338,7 @@ WORKBENCH_CONTROL_MODE_CARD_FIELDS = (
     "default_safety",
     "available_modes",
     "active_controls",
+    "autonomous_actions",
     "set_mode_command_template",
     "policy_source",
 )
@@ -8212,6 +8213,21 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
                     errors.append("disabled control mode control requires blocker")
         elif "active_controls" in control_mode_card:
             errors.append("control_mode_card.active_controls must be a list")
+        autonomous_actions = control_mode_card.get("autonomous_actions")
+        if isinstance(autonomous_actions, list):
+            for control in autonomous_actions:
+                if not isinstance(control, dict):
+                    errors.append("autonomous action controls must be objects")
+                    continue
+                for field in WORKBENCH_CONTROL_MODE_CONTROL_FIELDS:
+                    if field not in control:
+                        errors.append(f"missing autonomous action control field: {field}")
+                if "enabled" in control and not isinstance(control.get("enabled"), bool):
+                    errors.append("autonomous action control enabled must be a boolean")
+                if control.get("enabled") is False and not control.get("blocker"):
+                    errors.append("disabled autonomous action control requires blocker")
+        elif "autonomous_actions" in control_mode_card:
+            errors.append("control_mode_card.autonomous_actions must be a list")
     elif "control_mode_card" in payload:
         errors.append("control_mode_card must be an object")
     control_registry_shape_valid = False
@@ -11704,6 +11720,24 @@ def workbench_example() -> dict[str, object]:
                     "safety": "delegated",
                     "enabled": False,
                     "blocker": "requires --allow-agent and --max-approvals",
+                },
+            ],
+            "autonomous_actions": [
+                {
+                    "kind": "approval_auto",
+                    "label": "Auto-approve (autonomous)",
+                    "command": "agentdeck approval auto --confirm",
+                    "safety": "delegated",
+                    "enabled": False,
+                    "blocker": "autonomous mode is not enabled",
+                },
+                {
+                    "kind": "run_loop",
+                    "label": "Run-loop (autonomous)",
+                    "command": "agentdeck run-loop --plan-id <id> --confirm",
+                    "safety": "delegated",
+                    "enabled": False,
+                    "blocker": "requires --plan-id",
                 },
             ],
             "set_mode_command_template": "agentdeck policy set-mode --mode <mode>",

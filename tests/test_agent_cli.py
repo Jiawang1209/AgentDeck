@@ -10413,3 +10413,31 @@ def test_run_loop_drives_plan_to_completion_across_invocations(tmp_path, monkeyp
     # the whole chain is audited: two run-loop advances in the ledger
     advances = [e for e in StateStore(root).all_events() if e["event_type"] == "run_loop_advanced"]
     assert [a["payload"]["stopped_reason"] for a in advances] == ["waiting_for_reply", "complete"]
+
+
+def test_control_mode_card_exposes_autonomous_action_controls(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+
+    # default (confirm) mode: approval_auto disabled with a blocker, run_loop template disabled
+    assert cli.main(["workbench"]) == 0
+    card = json.loads(capsys.readouterr().out)["control_mode_card"]
+    actions = {c["kind"]: c for c in card["autonomous_actions"]}
+    assert set(actions) == {"approval_auto", "run_loop"}
+    assert actions["approval_auto"]["command"] == "agentdeck approval auto --confirm"
+    assert actions["approval_auto"]["safety"] == "delegated"
+    assert actions["approval_auto"]["enabled"] is False
+    assert actions["approval_auto"]["blocker"] == "autonomous mode is not enabled"
+    assert actions["run_loop"]["command"] == "agentdeck run-loop --plan-id <id> --confirm"
+    assert actions["run_loop"]["enabled"] is False
+    assert actions["run_loop"]["blocker"] == "requires --plan-id"
+
+    # enable autonomous mode: approval_auto becomes enabled with no blocker
+    cli.main(["policy", "set-mode", "--mode", "autonomous", "--confirm",
+              "--allow-agent", "planner", "--max-approvals", "3"])
+    capsys.readouterr()
+    assert cli.main(["workbench"]) == 0
+    card2 = json.loads(capsys.readouterr().out)["control_mode_card"]
+    actions2 = {c["kind"]: c for c in card2["autonomous_actions"]}
+    assert actions2["approval_auto"]["enabled"] is True
+    assert actions2["approval_auto"]["blocker"] is None
+    assert actions2["run_loop"]["enabled"] is False  # still a template
