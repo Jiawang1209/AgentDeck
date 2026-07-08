@@ -292,6 +292,15 @@ class StateStore:
             return []
         return events[-limit:]
 
+    def all_events(self) -> list[dict[str, Any]]:
+        if not self.events_path.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in self.events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
     def bind_agent(self, binding: AgentRuntimeBinding) -> None:
         state = self.load()
         agents = state.setdefault("agents", {})
