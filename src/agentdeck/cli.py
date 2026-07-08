@@ -6142,6 +6142,32 @@ def _create_run_start_payload(
     return _run_start_payload(record, approvals, approval_card), record, approvals
 
 
+def _run_loop_preview_card(store: StateStore, config: ProjectConfig, plan_id: str) -> dict[str, object]:
+    autonomous = config.leader.approval_mode == "autonomous"
+    command = f"agentdeck run-loop --plan-id {plan_id} --confirm"
+    blocker = None if autonomous else "autonomous mode is not enabled"
+    enable_command = (
+        None if autonomous
+        else "agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>"
+    )
+    return {
+        "mode": "run_loop_preview",
+        "plan_id": plan_id,
+        "command": command,
+        "autonomous_enabled": autonomous,
+        "safety": "delegated",
+        "requires_explicit_user": True,
+        "blocker": blocker,
+        "enable_command": enable_command,
+        "controls": [
+            _control(kind="run_loop", label="Run-loop (autonomous)", command=command,
+                     safety="delegated", enabled=autonomous, blocker=blocker),
+            _control(kind="inspect", label="Inspect run progress",
+                     command=f"agentdeck run --plan-id {plan_id}", safety="inspect"),
+        ],
+    }
+
+
 def _run_progress_payload(store: StateStore, plan_id: str) -> dict[str, object]:
     status = store.plan_status(plan_id)
     review = _leader_review_payload(store.leader_review(plan_id))
@@ -8769,6 +8795,20 @@ def _chat_wants_run_progress(message: str) -> bool:
         or re.search(r"(查看|检查|inspect|show|status).*(progress|进度)", text, re.IGNORECASE)
         or re.search(r"(progress|进度).*(查看|检查|inspect|show|status)", text, re.IGNORECASE)
     )
+
+
+def _chat_wants_run_loop_preview(message: str) -> bool:
+    text = message.strip()
+    return bool(
+        re.search(r"(推进计划|推进这个计划|往前推|驱动计划|推进 ?pln|run-loop|run loop)", text, re.IGNORECASE)
+    )
+
+
+def _chat_run_loop_preview_plan_id(message: str) -> str | None:
+    if not _chat_wants_run_loop_preview(message):
+        return None
+    match = re.search(r"\bpln_[A-Za-z0-9_-]+\b", message.strip())
+    return match.group(0) if match else None
 
 
 def _chat_learning_review_plan_id(message: str) -> str | None:

@@ -10487,3 +10487,37 @@ def test_control_registry_and_controls_expose_autonomous_scope(tmp_path, monkeyp
     assert cli.main(["controls", "--scope", "autonomous", "--enabled-only"]) == 0
     enabled = json.loads(capsys.readouterr().out)
     assert {i["kind"] for i in enabled["items"]} == {"approval_auto"}
+
+
+def test_run_loop_preview_card_builder_reflects_autonomous_mode(tmp_path, monkeypatch):
+    root = prepare_project(tmp_path, monkeypatch)
+    from agentdeck.cli import _run_loop_preview_card, load_config
+    from agentdeck.state import StateStore
+
+    store = StateStore(root)
+    config = load_config(root)  # default approval_mode == "confirm"
+    card = _run_loop_preview_card(store, config, "pln_1")
+    assert card["mode"] == "run_loop_preview"
+    assert card["plan_id"] == "pln_1"
+    assert card["command"] == "agentdeck run-loop --plan-id pln_1 --confirm"
+    assert card["autonomous_enabled"] is False
+    assert card["blocker"] == "autonomous mode is not enabled"
+    assert card["enable_command"].startswith("agentdeck policy set-mode --mode autonomous")
+    kinds = {c["kind"] for c in card["controls"]}
+    assert kinds == {"run_loop", "inspect"}
+    run_loop_ctrl = next(c for c in card["controls"] if c["kind"] == "run_loop")
+    assert run_loop_ctrl["enabled"] is False
+    assert run_loop_ctrl["safety"] == "delegated"
+
+
+def test_chat_run_loop_preview_detector_needs_verb_and_plan_id():
+    from agentdeck.cli import _chat_wants_run_loop_preview, _chat_run_loop_preview_plan_id
+
+    assert _chat_wants_run_loop_preview("推进计划 pln_abc") is True
+    assert _chat_run_loop_preview_plan_id("推进计划 pln_abc") == "pln_abc"
+    assert _chat_wants_run_loop_preview("run-loop pln_x") is True
+    # a plain progress query must NOT be captured by run-loop preview
+    assert _chat_wants_run_loop_preview("查看运行进度 pln_x") is False
+    # run-loop verb but no plan id → wants=True, plan_id=None (caller rejects)
+    assert _chat_wants_run_loop_preview("推进计划") is True
+    assert _chat_run_loop_preview_plan_id("推进计划") is None

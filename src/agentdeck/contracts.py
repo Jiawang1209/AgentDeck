@@ -1076,6 +1076,18 @@ LEADER_CHAT_CAPTURE_CARD_FIELDS = (
     "controls",
 )
 
+LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS = (
+    "mode",
+    "plan_id",
+    "command",
+    "autonomous_enabled",
+    "safety",
+    "requires_explicit_user",
+    "blocker",
+    "enable_command",
+    "controls",
+)
+
 LEADER_CHAT_TERMINAL_CARD_FIELDS = (
     "ok",
     "mode",
