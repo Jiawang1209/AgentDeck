@@ -4493,6 +4493,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "doctor",
         "events",
         "run",
+        "run-loop",
         "release",
         "workbench",
         "controls",

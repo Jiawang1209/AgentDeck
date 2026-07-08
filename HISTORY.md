@@ -4,6 +4,18 @@
 
 ## 2026-07-08
 
+### Current - Add `agentdeck run-loop` executing engine（autonomous 子项目 3，autonomous 目标收官）
+
+- **类型**: feat
+- **动机**: 完成北极星 autonomous 三块拆分的子项目 3（执行循环）。此前 plan→approve→dispatch→capture→review→release 每步都要人手一条命令；本子项目在预授权的 autonomous 策略内加一个"drive-forward"命令，把这条链自动走到下一个需要人类的 gate 再停下，交回控制权。
+- **What**:
+  - 新增纯 gate 诊断 `src/agentdeck/autonomy.py::run_loop_gate(review, has_error, plan_id)`：把 `leader review` 的 `next_action`（+ error 优先）映射为 `(stopped_reason, next_command)`，覆盖 error/blocked/needs_human_approval/waiting_for_reply/complete/idle 六种 stop。
+  - 新增 `agentdeck run-loop --plan-id <id> --confirm` 执行引擎（`cli.py`）：要求 `--confirm` 且 `leader.approval_mode==autonomous`，复用 `select_auto_approvals` 自动批准该 plan 内 allowlist+预算内 pending approvals，复用 `_approval_dispatch_preview_card` / `_dispatch_approved_approval` 把 approved-and-ready 审批派发给 running pane，再用 `leader review` + `run_loop_gate` 诊断 gate 并停下；绝不 force-spawn、绝不 capture reply、绝不推断完成。输出前经 `validate_run_loop_contract()` 守门。
+  - 新增 run-loop 契约（`contracts.py`：`RUN_LOOP_RESPONSE_FIELDS`、`RUN_LOOP_STOP_REASONS`、`run_loop_example`、`run_loop_contract_payload/response`、`validate_run_loop_contract`），注册进 `CONTRACT_INDEX_SPECS`，新增 `agentdeck contract run-loop`（`--example`）发现命令，文档 `docs/contracts/run-loop-schema.md`。
+  - `history.py` humanize `run_loop_advanced`（渲染为 `Run-loop advanced · N dispatched, stopped: <reason>`）。
+- **Impact**: 新增 CLI 命令、契约与审计事件，不破坏既有契约；安全边界保持：只组合已被单独 sanction 的 auto-approve + dispatch（scope 到单个 plan），停在每个人类 gate 并交回显式命令，全程审计。三块 autonomous 子项目（审计/HISTORY 门 + 有界放权开关 + 执行循环）至此收官。设计与计划见 `docs/superpowers/specs/2026-07-08-run-loop-engine-design.md` 和 `docs/superpowers/plans/2026-07-08-run-loop-engine.md`。
+- **Verification**: `conda run -n agentdeck pytest tests/test_autonomy.py tests/test_contracts.py tests/test_history.py -q` 通过；`conda run -n agentdeck pytest -q` 全量通过；`conda run -n agentdeck python -m compileall src tests -q` 和 `git diff --check` 通过。
+
 ### Current - Add bounded autonomous mode and `approval auto`（autonomous 子项目 2）
 
 - **类型**: feat
