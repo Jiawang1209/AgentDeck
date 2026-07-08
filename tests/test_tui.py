@@ -81,6 +81,42 @@ def test_tui_render_frame_approvals_lists_items() -> None:
     assert "pending" in text
 
 
+def test_tui_model_runtime_view_navigates_and_shows_status_aware_command() -> None:
+    payload = workbench_example()
+    snapshot = copy.deepcopy(payload)
+
+    model = TuiModel(payload)
+    model.toggle_runtime()
+    assert model.mode == "runtime"
+
+    agents = model.runtime_agents()
+    assert [a["agent_id"] for a in agents] == ["planner", "coder", "reviewer"]
+
+    model.move_selection(-100)
+    assert model.selected_agent()["agent_id"] == "planner"
+    # running -> the footer offers the capture command
+    assert "agentdeck agent capture --agent planner" in model.footer_text()
+
+    model.move_selection(1)
+    assert model.selected_agent()["agent_id"] == "coder"
+    # not running -> the footer offers the spawn command
+    assert "agentdeck agent spawn --agent coder" in model.footer_text()
+
+    assert payload == snapshot
+
+
+def test_tui_render_frame_runtime_lists_agents() -> None:
+    payload = workbench_example()
+    model = TuiModel(payload)
+    model.toggle_runtime()
+
+    frame = render_frame(model, 12, 80)
+    text = "\n".join(frame)
+    assert "runtime" in frame[0]
+    assert "planner" in text
+    assert "running" in text
+
+
 def test_tui_model_toggles_to_palette_and_navigates_controls() -> None:
     payload = workbench_example()
     model = TuiModel(payload)

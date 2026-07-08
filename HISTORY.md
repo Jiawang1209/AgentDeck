@@ -4,7 +4,17 @@
 
 ## 2026-07-08
 
-### Current - Add a navigable approvals view to the interactive TUI
+### Current - Add a navigable runtime (agents) view to the interactive TUI
+
+- **类型**: feat
+- **动机**: "驾驶舱"方向第五刀，补齐操作者两个核心面里的另一半——审批视图已有，现在加对称的 runtime/agents 视图（北极星优先级 #4 runtime 可见）。
+- **What**:
+  - `src/agentdeck/tui.py` 新增只读 `runtime` mode（与 overview/palette/approvals/help 并列），消费 workbench 契约的 `runtime_card.agents[]`：`TuiModel.runtime_agents` / `selected_agent` / `selected_agent_command`（按 status 派生：running→`capture_command`，否则 `spawn_command`）/ `toggle_runtime`；`move_selection` 扩展到 runtime；footer 显示选中 agent 的 status-aware 命令；`render_frame` 新增 runtime 分支；新增 `_runtime_window` / `_runtime_rows`（显示 status·agent·role·pane）；`_frame_row_attributes` 给选中行加 `A_REVERSE`；`run_tui` 新增 `[g]` 键并让 runtime 参与上下/翻页导航；help 列出 `[g]`。
+  - 命令直接来自契约字段（`capture_command`/`spawn_command`），不自造；纯只读：选中只展示「run: <命令>」，TUI 从不执行、不写 state、不碰 tmux。
+- **Impact**: TUI 里按 `g` 可专注浏览各 agent 运行状态/pane，并看到该对它敲什么命令（running 看输出、未起就启动）；无行为变化、无破坏性改动。
+- **Verification**: `conda run -n agentdeck pytest tests/test_tui.py -q`（含新 `test_tui_model_runtime_view_navigates_and_shows_status_aware_command` / `test_tui_render_frame_runtime_lists_agents`，红→绿）；全套 `pytest -q`（685 passed）；`python -m compileall src tests`；`git diff --check`；并对 `workbench_example()` 实跑 `render_frame` 确认视图与 footer 命令正确。
+
+### Add a navigable approvals view to the interactive TUI
 
 - **类型**: feat
 - **动机**: "驾驶舱"方向第四刀，也是首个动 TUI 交互层的。命令面板（palette）会把所有 scope 的几十个 control 铺在一起；操作者最核心的循环是「现在有哪些审批要我拍板」（北极星优先级 #3 人类审批）。给 TUI 加一个专注的、可上下选的只读审批视图。

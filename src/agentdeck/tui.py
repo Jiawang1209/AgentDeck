@@ -51,6 +51,11 @@ class TuiModel:
             for item in _as_list(_as_dict(self._payload.get("approval_card")).get("approvals"))
             if isinstance(item, dict)
         ]
+        self._runtime_agents = [
+            item
+            for item in _as_list(_as_dict(self._payload.get("runtime_card")).get("agents"))
+            if isinstance(item, dict)
+        ]
         self._reclamp()
 
     def _filtered_controls(self) -> list[dict[str, Any]]:
@@ -97,8 +102,39 @@ class TuiModel:
         return controls[index]
 
     def move_selection(self, delta: int) -> None:
-        length = len(self._approvals) if self.mode == "approvals" else len(self._filtered_controls())
+        if self.mode == "approvals":
+            length = len(self._approvals)
+        elif self.mode == "runtime":
+            length = len(self._runtime_agents)
+        else:
+            length = len(self._filtered_controls())
         self.selected_index = _clamp(self.selected_index + delta, 0, max(0, length - 1))
+
+    # --- runtime mode ---
+
+    def runtime_agents(self) -> list[dict[str, Any]]:
+        return list(self._runtime_agents)
+
+    def selected_agent(self) -> dict[str, Any] | None:
+        if not self._runtime_agents:
+            return None
+        index = _clamp(self.selected_index, 0, len(self._runtime_agents) - 1)
+        return self._runtime_agents[index]
+
+    def selected_agent_command(self) -> str | None:
+        agent = self.selected_agent()
+        if agent is None:
+            return None
+        if agent.get("status") == "running":
+            return agent.get("capture_command")
+        return agent.get("spawn_command")
+
+    def toggle_runtime(self) -> None:
+        if self.mode == "help":
+            self.mode = self._prev_mode
+        self.mode = "runtime" if self.mode != "runtime" else "overview"
+        if self.mode == "runtime":
+            self.selected_index = 0
 
     # --- approvals mode ---
 
@@ -159,6 +195,7 @@ class TuiModel:
             "Keys",
             "  [tab] / [p]    toggle overview <-> command palette",
             "  [a]            toggle overview <-> approvals view",
+            "  [g]            toggle overview <-> runtime (agents) view",
             "  [up]/[down] ([k]/[j])   scroll overview or move palette/approvals selection",
             "  [PgUp]/[PgDn] ([space]) jump by 10",
             "  [/]            filter the palette (Enter apply, Esc cancel)",
@@ -176,6 +213,19 @@ class TuiModel:
     def footer_text(self) -> str:
         if self.mode == "help":
             return "help  |  [?] back  [q] quit"
+        if self.mode == "runtime":
+            agents = self._runtime_agents
+            if not agents:
+                return "runtime: no agents  |  [g] overview  [r] refresh  [q] quit"
+            agent = self.selected_agent() or {}
+            command = self.selected_agent_command()
+            command_text = str(command) if command else "(no command)"
+            status = str(agent.get("status") or "")
+            agent_id = str(agent.get("agent_id") or "")
+            return (
+                f"{self.selected_index + 1}/{len(agents)}  [{status}] {agent_id}\n"
+                f"run: {command_text}  |  [g] overview  [r] refresh  [q] quit"
+            )
         if self.mode == "approvals":
             approvals = self._approvals
             if not approvals:
@@ -270,6 +320,32 @@ def _approval_rows(model: "TuiModel", body_height: int, width: int) -> list[str]
     return rows
 
 
+def _runtime_window(model: "TuiModel", body_height: int) -> list[int]:
+    agents = model.runtime_agents()
+    if not agents:
+        return []
+    top = _clamp(model.selected_index - body_height // 2, 0, max(0, len(agents) - body_height))
+    return list(range(top, min(len(agents), top + max(1, body_height))))
+
+
+def _runtime_rows(model: "TuiModel", body_height: int, width: int) -> list[str]:
+    agents = model.runtime_agents()
+    if not agents:
+        return ["(no agents in this snapshot)"]
+    rows: list[str] = []
+    for index in _runtime_window(model, body_height):
+        agent = _as_dict(agents[index])
+        marker = ">" if index == model.selected_index else " "
+        status = str(agent.get("status") or "")
+        agent_id = str(agent.get("agent_id") or "")
+        role = str(agent.get("role") or "")
+        pane_id = agent.get("pane_id")
+        tail = f"  pane:{pane_id}" if pane_id else ""
+        row = f"{marker} {status:<10} {agent_id:<12} {role:<14}{tail}"
+        rows.append(_fit(row, width))
+    return rows
+
+
 def palette_row_style(control: dict[str, Any], is_selected: bool) -> str:
     """Pure styling decision for a palette row: selected > enabled > disabled."""
     if is_selected:
@@ -301,6 +377,8 @@ def render_frame(model: "TuiModel", height: int, width: int) -> list[str]:
         body = _palette_rows(model, body_height, width)
     elif model.mode == "approvals":
         body = _approval_rows(model, body_height, width)
+    elif model.mode == "runtime":
+        body = _runtime_rows(model, body_height, width)
     else:
         lines = model.overview_lines()
         body = [_fit(line, width) for line in lines[model.scroll : model.scroll + body_height]]
@@ -322,6 +400,12 @@ def _frame_row_attributes(model: "TuiModel", height: int, frame_len: int) -> lis
     body_height = max(1, height - 1 - footer_count)
     if model.mode == "approvals":
         for offset, index in enumerate(_approval_window(model, body_height)):
+            row = 1 + offset
+            if row < frame_len and index == model.selected_index:
+                attrs[row] = curses.A_REVERSE
+        return attrs
+    if model.mode == "runtime":
+        for offset, index in enumerate(_runtime_window(model, body_height)):
             row = 1 + offset
             if row < frame_len and index == model.selected_index:
                 attrs[row] = curses.A_REVERSE
@@ -405,27 +489,29 @@ def run_tui(stdscr: Any, model: "TuiModel", fetch: Any) -> None:
             model.toggle_palette()
         elif key in (ord("a"), ord("A")):
             model.toggle_approvals()
+        elif key in (ord("g"), ord("G")):
+            model.toggle_runtime()
         elif key in (ord("r"), ord("R")):
             fresh = fetch()
             if isinstance(fresh, dict):
                 model.refresh(fresh)
         elif key in (curses.KEY_DOWN, ord("j")):
-            if model.mode in ("palette", "approvals"):
+            if model.mode in ("palette", "approvals", "runtime"):
                 model.move_selection(1)
             else:
                 model.scroll_by(1, max(1, stdscr.getmaxyx()[0] - 3))
         elif key in (curses.KEY_UP, ord("k")):
-            if model.mode in ("palette", "approvals"):
+            if model.mode in ("palette", "approvals", "runtime"):
                 model.move_selection(-1)
             else:
                 model.scroll_by(-1, max(1, stdscr.getmaxyx()[0] - 3))
         elif key in (curses.KEY_NPAGE, ord(" ")):
-            if model.mode in ("palette", "approvals"):
+            if model.mode in ("palette", "approvals", "runtime"):
                 model.move_selection(10)
             else:
                 model.scroll_by(10, max(1, stdscr.getmaxyx()[0] - 3))
         elif key == curses.KEY_PPAGE:
-            if model.mode in ("palette", "approvals"):
+            if model.mode in ("palette", "approvals", "runtime"):
                 model.move_selection(-10)
             else:
                 model.scroll_by(-10, max(1, stdscr.getmaxyx()[0] - 3))
