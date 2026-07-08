@@ -134,3 +134,75 @@ def test_history_command_write_materializes_file(tmp_path, monkeypatch, capsys):
     assert not out.startswith("# AgentDeck History")
     # writing the projection leaves the audit ledger unchanged
     assert StateStore(root).all_events() == events_before
+
+
+def test_humanize_run_started_uses_plan_id():
+    from agentdeck.history import _humanize_event
+
+    assert (
+        _humanize_event({"event_type": "run_started", "payload": {"plan_id": "pln_9"}})
+        == "Run started · pln_9"
+    )
+
+
+def test_render_history_markdown_tolerates_blank_created_at():
+    from agentdeck.history import render_history_markdown
+
+    events = [
+        {"event_type": "project_initialized", "created_at": "", "payload": {}},
+    ]
+
+    md = render_history_markdown(events, "demo")
+
+    # blank date groups under `## unknown`, never a dangling `## ` header
+    assert "## unknown" in md
+    for line in md.splitlines():
+        assert line != "## "
+        assert not line.startswith("## ") or line[3:].strip()
+    # blank time renders `- <text>` with no leading `  · `
+    assert "- Project initialized" in md
+    assert "-  · " not in md
+
+
+def test_history_command_limit_returns_only_recent(tmp_path, monkeypatch, capsys):
+    from agentdeck import cli
+
+    root = _init_project(tmp_path)
+    monkeypatch.chdir(root)
+    store = StateStore(root)
+    store.append_event(EventRecord.create("leader_plan_created", {"plan_id": "pln_1"}))
+    store.append_event(EventRecord.create("leader_plan_created", {"plan_id": "pln_2"}))
+    store.append_event(EventRecord.create("leader_plan_created", {"plan_id": "pln_3"}))
+
+    exit_code = cli.main(["history", "--limit", "1"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "Plan created · pln_3" in out
+    assert "Plan created · pln_2" not in out
+    assert "Plan created · pln_1" not in out
+
+
+def test_history_command_write_custom_path(tmp_path, monkeypatch, capsys):
+    from agentdeck import cli
+
+    root = _init_project(tmp_path)
+    monkeypatch.chdir(root)
+    store = StateStore(root)
+    store.append_event(EventRecord.create("leader_plan_created", {"plan_id": "pln_1"}))
+    events_before = store.all_events()
+
+    custom = root / "docs" / "timeline.md"
+    exit_code = cli.main(["history", "--write", str(custom)])
+
+    assert exit_code == 0
+    assert custom.exists()
+    # the default projection was not written
+    assert not (root / ".agentdeck" / "HISTORY.md").exists()
+    content = custom.read_text(encoding="utf-8")
+    assert content.startswith("# AgentDeck History")
+    assert "Plan created · pln_1" in content
+    out = capsys.readouterr().out
+    assert "wrote" in out and str(custom) in out
+    # read-only: the audit ledger is unchanged
+    assert StateStore(root).all_events() == events_before

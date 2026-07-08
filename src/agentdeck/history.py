@@ -25,7 +25,7 @@ def _detail(payload: dict[str, Any], *keys: str) -> str:
 _MILESTONES = {
     "project_initialized": lambda p: ("Project initialized", ""),
     "leader_plan_created": lambda p: ("Plan created", _detail(p, "plan_id")),
-    "run_started": lambda p: ("Run started", _detail(p, "task")),
+    "run_started": lambda p: ("Run started", _detail(p, "plan_id")),
     "approvals_created_from_plan": lambda p: ("Approvals created from plan", _detail(p, "plan_id")),
     "approval_created_from_chat": lambda p: ("Approval created (from chat)", ""),
     "approval_decided": lambda p: (f"Approval {_detail(p, 'status') or 'decided'}", _detail(p, "approval_id")),
@@ -92,11 +92,11 @@ def render_history_markdown(events: list[dict[str, Any]], project: str) -> str:
     rendered.reverse()  # ledger is oldest-first; reverse for newest-first
     by_date: "OrderedDict[str, list[tuple[str, str]]]" = OrderedDict()
     for date, time, text in rendered:
-        by_date.setdefault(date, []).append((time, text))
+        by_date.setdefault(date or "unknown", []).append((time, text))
     lines = list(header)
     for date, entries in by_date.items():
         lines.append(f"## {date}")
         for time, text in entries:
-            lines.append(f"- {time} · {text}")
+            lines.append(f"- {time} · {text}" if time else f"- {text}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"

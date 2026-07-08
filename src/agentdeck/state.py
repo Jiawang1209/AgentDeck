@@ -281,13 +281,7 @@ class StateStore:
         return [item for item in releases if isinstance(item, dict)]
 
     def list_events(self, limit: int = 20) -> list[dict[str, Any]]:
-        if not self.events_path.exists():
-            return []
-        events = [
-            json.loads(line)
-            for line in self.events_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        events = self.all_events()
         if limit <= 0:
             return []
         return events[-limit:]
