@@ -50,6 +50,7 @@ from .contracts import (
     memory_contract_response,
     project_view_contract_response,
     runtime_agent_controls,
+    run_loop_contract_response,
     run_start_contract_response,
     skills_contract_response,
     terminal_card_controls,
@@ -4187,6 +4188,13 @@ def contract_events_command(args: argparse.Namespace) -> int:
 def contract_run_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "run-schema.md"
     payload = run_start_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_run_loop_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "run-loop-schema.md"
+    payload = run_loop_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -12931,6 +12939,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_run.add_argument("--example", action="store_true", help="Include a GUI-ready run start example")
     contract_run.set_defaults(func=contract_run_command)
+    contract_run_loop = contract_subparsers.add_parser(
+        "run-loop",
+        help="Show run-loop executing-engine contract discovery metadata",
+    )
+    contract_run_loop.add_argument("--example", action="store_true", help="Include a GUI-ready run-loop example")
+    contract_run_loop.set_defaults(func=contract_run_loop_command)
     contract_workbench = contract_subparsers.add_parser(
         "workbench",
         help="Show workbench snapshot contract discovery metadata",

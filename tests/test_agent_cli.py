@@ -10263,3 +10263,23 @@ def test_approval_auto_approves_and_dispatches_within_policy(tmp_path, monkeypat
     assert apv["status"] == "dispatched"
     types = [e["event_type"] for e in StateStore(root).list_events(limit=20)]
     assert "approval_auto_completed" in types
+
+
+def test_contract_run_loop_discovers_schema_for_gui_clients(tmp_path, monkeypatch, capsys):
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["contract", "run-loop"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run_loop_command"] == "agentdeck run-loop --plan-id <id> --confirm"
+    assert "run_loop_response_fields" in payload
+
+    assert cli.main(["contract", "run-loop", "--example"]) == 0
+    example_payload = json.loads(capsys.readouterr().out)
+    assert example_payload["example_run_loop"]["mode"] == "run_loop"
+
+
+def test_contract_list_includes_run_loop(tmp_path, monkeypatch, capsys):
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["contract", "list"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    names = {c["name"] for c in payload["contracts"]}
+    assert "run-loop" in names
