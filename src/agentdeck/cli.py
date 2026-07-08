@@ -17,6 +17,7 @@ from .config import (
     load_config,
     project_root,
     update_agent_role,
+    update_autonomous_policy,
     update_leader_approval_mode,
     update_leader_provider,
     write_default_config,
@@ -5011,18 +5012,42 @@ def policy_set_mode_command(args: argparse.Namespace) -> int:
         return exit_code
     mode = str(args.mode)
     if mode == "autonomous":
-        store.append_event(
-            EventRecord.create(
-                "policy_mode_rejected",
-                {
-                    "mode": mode,
-                    "reason": "autonomous control mode is not implemented",
-                    "policy_source": ".agentdeck/config.toml:leader.approval_mode",
-                },
-            )
-        )
-        print("autonomous control mode is not implemented", file=sys.stderr)
-        return 1
+        config = _config
+        if config is None:
+            return exit_code
+        allow = args.allow_agent or []
+        max_approvals = args.max_approvals
+        reason = None
+        if not args.confirm:
+            reason = "autonomous requires --confirm"
+        elif not allow or not max_approvals or max_approvals < 1:
+            reason = "autonomous requires --allow-agent and --max-approvals >= 1"
+        else:
+            known = {a.agent_id for a in config.agents}
+            unknown = [a for a in allow if a not in known]
+            if unknown:
+                reason = f"unknown agent: {unknown[0]}"
+        if reason is not None:
+            store.append_event(EventRecord.create("policy_mode_rejected", {"mode": mode, "reason": reason}))
+            print(reason, file=sys.stderr)
+            return 1
+        leader = update_leader_approval_mode(project_root(), "autonomous")
+        policy = update_autonomous_policy(project_root(), tuple(allow), int(max_approvals))
+        store.append_event(EventRecord.create("policy_mode_updated", {
+            "mode": "autonomous",
+            "approval_mode": leader.approval_mode,
+            "allowed_agents": list(policy.allowed_agents),
+            "max_approvals": policy.max_approvals,
+        }))
+        _print_json({
+            "ok": True,
+            "mode": "autonomous",
+            "approval_mode": leader.approval_mode,
+            "allowed_agents": list(policy.allowed_agents),
+            "max_approvals": policy.max_approvals,
+            "auto_command": "agentdeck approval auto --confirm",
+        })
+        return 0
 
     approval_mode = "confirm" if mode == "ask" else "approve"
     leader = update_leader_approval_mode(project_root(), approval_mode)
@@ -12765,6 +12790,9 @@ def build_parser() -> argparse.ArgumentParser:
     policy_subparsers = policy.add_subparsers(dest="policy_command")
     policy_set_mode = policy_subparsers.add_parser("set-mode", help="Set explicit control mode")
     policy_set_mode.add_argument("--mode", required=True, choices=["ask", "approve", "autonomous"])
+    policy_set_mode.add_argument("--allow-agent", action="append", default=None, help="Agent id allowed for autonomous auto-approval (repeatable)")
+    policy_set_mode.add_argument("--max-approvals", type=int, default=None, help="Max auto-approvals per autonomous run")
+    policy_set_mode.add_argument("--confirm", action="store_true", help="Explicitly confirm autonomous mode")
     policy_set_mode.set_defaults(func=policy_set_mode_command)
 
     contract = subparsers.add_parser("contract", help="Discover machine-readable AgentDeck contracts")

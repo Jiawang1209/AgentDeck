@@ -7752,27 +7752,42 @@ def test_policy_set_mode_updates_config_and_workbench_control_mode(tmp_path, mon
     assert 'approval_mode = "confirm"' in (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
 
 
-def test_policy_set_mode_rejects_autonomous_without_mutating_config(tmp_path, monkeypatch, capsys) -> None:
+def test_policy_set_mode_enables_autonomous_with_confirm_and_allowlist(tmp_path, monkeypatch, capsys):
     root = prepare_project(tmp_path, monkeypatch)
-    config_before = (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8")
 
-    exit_code = cli.main(["policy", "set-mode", "--mode", "autonomous"])
-
-    assert exit_code == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "autonomous control mode is not implemented" in captured.err
-    assert (root / ".agentdeck" / "config.toml").read_text(encoding="utf-8") == config_before
-    events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
-    assert '"event_type": "policy_mode_rejected"' in events
-    assert '"mode": "autonomous"' in events
-
-    exit_code = cli.main(["workbench"])
+    exit_code = cli.main([
+        "policy", "set-mode", "--mode", "autonomous", "--confirm",
+        "--allow-agent", "planner", "--allow-agent", "coder", "--max-approvals", "3",
+    ])
 
     assert exit_code == 0
-    workbench = json.loads(capsys.readouterr().out)
-    assert workbench["control_mode_card"]["current_mode"] == "ask"
-    assert workbench["control_mode_card"]["approval_mode"] == "confirm"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "autonomous"
+    assert payload["allowed_agents"] == ["planner", "coder"]
+    assert payload["max_approvals"] == 3
+    from agentdeck.config import load_config
+    config = load_config(root)
+    assert config.leader.approval_mode == "autonomous"
+    assert config.autonomous.allowed_agents == ("planner", "coder")
+    assert config.autonomous.max_approvals == 3
+    assert StateStore(root).list_events(limit=1)[0]["event_type"] == "policy_mode_updated"
+
+
+def test_policy_set_mode_autonomous_requires_confirm_and_valid_scope(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    from agentdeck.config import load_config
+
+    # missing --confirm
+    assert cli.main(["policy", "set-mode", "--mode", "autonomous", "--allow-agent", "planner", "--max-approvals", "1"]) == 1
+    assert "confirm" in capsys.readouterr().err
+    # missing allowlist
+    assert cli.main(["policy", "set-mode", "--mode", "autonomous", "--confirm", "--max-approvals", "1"]) == 1
+    capsys.readouterr()
+    # unknown agent
+    assert cli.main(["policy", "set-mode", "--mode", "autonomous", "--confirm", "--allow-agent", "ghost", "--max-approvals", "1"]) == 1
+    assert "ghost" in capsys.readouterr().err
+    # config unchanged (still confirm)
+    assert load_config(root).leader.approval_mode == "confirm"
 
 
 def test_workbench_blocks_dispatch_operator_when_approved_agent_is_not_spawned(
