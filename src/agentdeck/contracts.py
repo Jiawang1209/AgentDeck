@@ -977,6 +977,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "continue_card",
     "run_start_card",
     "run_progress_card",
+    "plan_board_card",
     "run_loop_preview_card",
     "capture_card",
     "terminal_card",
@@ -1922,6 +1923,9 @@ PLAN_BOARD_ITEM_FIELDS = (
 PLAN_BOARD_GATES = (
     "blocked", "needs_human_approval", "waiting_for_reply", "complete", "idle",
 )
+
+# The natural-language plan_board chat card reuses the plan-board response shape.
+LEADER_CHAT_PLAN_BOARD_CARD_FIELDS = PLAN_BOARD_RESPONSE_FIELDS
 
 RUN_LOOP_STOP_REASONS = (
     "error",
@@ -2970,6 +2974,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "run_start_card_fields": list(RUN_START_RESPONSE_FIELDS),
         "run_progress_card_fields": list(RUN_PROGRESS_RESPONSE_FIELDS),
+        "plan_board_card_fields": list(LEADER_CHAT_PLAN_BOARD_CARD_FIELDS),
         "run_loop_preview_card_fields": list(LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS),
         "capture_card_fields": list(LEADER_CHAT_CAPTURE_CARD_FIELDS),
         "terminal_card_fields": list(LEADER_CHAT_TERMINAL_CARD_FIELDS),
@@ -6701,6 +6706,21 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append("run_progress_card: next_command must match response next_command")
     elif "run_progress_card" in payload and run_progress_card is not None:
         errors.append("run_progress_card must be an object")
+    plan_board_card = payload.get("plan_board_card")
+    if isinstance(plan_board_card, dict):
+        plan_board_validation = validate_plan_board_contract(plan_board_card)
+        for error in plan_board_validation["errors"]:
+            errors.append(f"plan_board_card: {error}")
+    elif "plan_board_card" in payload and plan_board_card is not None:
+        errors.append("plan_board_card must be an object")
+    if payload.get("mode") == "plan_board":
+        if not isinstance(plan_board_card, dict):
+            errors.append("plan_board mode requires plan_board_card")
+        if payload.get("next_command") != "agentdeck plan board":
+            errors.append("plan_board.next_command must be agentdeck plan board")
+        intent_card = payload.get("intent_card")
+        if isinstance(intent_card, dict) and intent_card.get("embedded_card") != "plan_board_card":
+            errors.append("plan_board intent_card.embedded_card must be plan_board_card")
     run_loop_preview_card = payload.get("run_loop_preview_card")
     if isinstance(run_loop_preview_card, dict):
         for field in LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS:
@@ -9755,6 +9775,7 @@ def leader_chat_example() -> dict[str, object]:
         "continue_card": continue_card,
         "run_start_card": run_start_card,
         "run_progress_card": run_progress_card,
+        "plan_board_card": None,
         "run_loop_preview_card": None,
         "capture_card": None,
         "terminal_card": terminal_card,

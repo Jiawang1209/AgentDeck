@@ -1,0 +1,346 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1783409498101,
+  "projectRoot": "/Users/liuyue/Desktop/Github_repos/multi-agent-explore",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "pyproject.toml"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "conda run -n agentdeck pytest -q 2>&1 | tail -4; echo \"=== compileall ===\"; conda run -n agentdeck python -m compileall src tests -q 2>&1 | tail -4; echo \"=== diff check ===\"; git diff --check && echo \"diff-check-clean\"",
+    "lintCommand": "ruff check",
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "src",
+      "tests"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "References": {
+      "path": "References",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1783409498088,
+      "keyFiles": [
+        "claude_codex_bridge-main.zip",
+        "hermes-agent-main.zip",
+        "tmux-master.zip",
+        "wispterm-main.zip"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1783409498089,
+      "keyFiles": []
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 0,
+      "lastAccessed": 1783409498096,
+      "keyFiles": []
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 5,
+      "lastAccessed": 1783409498097,
+      "keyFiles": [
+        "test_agent_cli.py",
+        "test_contracts.py",
+        "test_dispatch_cli.py",
+        "test_leader_cli.py",
+        "test_provider_openai_compatible.py"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/agentdeck/cli.py",
+      "accessCount": 180,
+      "lastAccessed": 1783530235162,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/contracts.py",
+      "accessCount": 137,
+      "lastAccessed": 1783530271924,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_agent_cli.py",
+      "accessCount": 75,
+      "lastAccessed": 1783530159662,
+      "type": "file"
+    },
+    {
+      "path": "docs/handoff/current-development-state.md",
+      "accessCount": 65,
+      "lastAccessed": 1783530420022,
+      "type": "file"
+    },
+    {
+      "path": "HISTORY.md",
+      "accessCount": 60,
+      "lastAccessed": 1783530390211,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/tui.py",
+      "accessCount": 48,
+      "lastAccessed": 1783528440908,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 39,
+      "lastAccessed": 1783530367039,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/workbench-schema.md",
+      "accessCount": 32,
+      "lastAccessed": 1783527909941,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_contracts.py",
+      "accessCount": 28,
+      "lastAccessed": 1783527528450,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/dashboard.py",
+      "accessCount": 25,
+      "lastAccessed": 1783528133641,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/leader-chat-schema.md",
+      "accessCount": 18,
+      "lastAccessed": 1783530340426,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_leader_cli.py",
+      "accessCount": 13,
+      "lastAccessed": 1783502933656,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/state.py",
+      "accessCount": 12,
+      "lastAccessed": 1783494132809,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_dashboard.py",
+      "accessCount": 12,
+      "lastAccessed": 1783528110903,
+      "type": "file"
+    },
+    {
+      "path": "docs/walkthroughs/tui-reference-client.md",
+      "accessCount": 10,
+      "lastAccessed": 1783474478054,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_tui.py",
+      "accessCount": 10,
+      "lastAccessed": 1783528362474,
+      "type": "file"
+    },
+    {
+      "path": "CLAUDE.md",
+      "accessCount": 10,
+      "lastAccessed": 1783530358094,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/history.py",
+      "accessCount": 8,
+      "lastAccessed": 1783494516221,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-08-autonomous-mode.md",
+      "accessCount": 7,
+      "lastAccessed": 1783491932660,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/config.py",
+      "accessCount": 5,
+      "lastAccessed": 1783492018512,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/project-view-schema.md",
+      "accessCount": 4,
+      "lastAccessed": 1783412307052,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-08-agentdeck-history-timeline.md",
+      "accessCount": 4,
+      "lastAccessed": 1783480799986,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-08-run-loop-engine-design.md",
+      "accessCount": 4,
+      "lastAccessed": 1783494107733,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-08-agentdeck-history-timeline-design.md",
+      "accessCount": 3,
+      "lastAccessed": 1783480242907,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/models.py",
+      "accessCount": 3,
+      "lastAccessed": 1783491967665,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_autonomy.py",
+      "accessCount": 3,
+      "lastAccessed": 1783492040216,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-08-run-loop-engine.md",
+      "accessCount": 3,
+      "lastAccessed": 1783494108330,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/autonomy.py",
+      "accessCount": 3,
+      "lastAccessed": 1783527137761,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-08-autonomous-mode-design.md",
+      "accessCount": 2,
+      "lastAccessed": 1783490129742,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-08-autonomous-controls-lighting.md",
+      "accessCount": 2,
+      "lastAccessed": 1783502341280,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-08-autonomous-controls-lighting-design.md",
+      "accessCount": 2,
+      "lastAccessed": 1783502341529,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-08-run-loop-chat-intent.md",
+      "accessCount": 2,
+      "lastAccessed": 1783520900644,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-08-run-loop-chat-intent-design.md",
+      "accessCount": 2,
+      "lastAccessed": 1783520901268,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-09-plan-board.md",
+      "accessCount": 2,
+      "lastAccessed": 1783527108405,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-09-plan-board-design.md",
+      "accessCount": 2,
+      "lastAccessed": 1783527108750,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/run-loop-schema.md",
+      "accessCount": 2,
+      "lastAccessed": 1783527354004,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/contract-index-schema.md",
+      "accessCount": 1,
+      "lastAccessed": 1783412809914,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/release-schema.md",
+      "accessCount": 1,
+      "lastAccessed": 1783412824368,
+      "type": "file"
+    },
+    {
+      "path": "docs/walkthroughs/layered-role-round.md",
+      "accessCount": 1,
+      "lastAccessed": 1783436793693,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_history.py",
+      "accessCount": 1,
+      "lastAccessed": 1783480824439,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/run-schema.md",
+      "accessCount": 1,
+      "lastAccessed": 1783494537806,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/controls-schema.md",
+      "accessCount": 1,
+      "lastAccessed": 1783502570340,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/plans-schema.md",
+      "accessCount": 1,
+      "lastAccessed": 1783527371811,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

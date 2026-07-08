@@ -10637,6 +10637,33 @@ def test_workbench_embeds_plan_board_card(tmp_path, monkeypatch, capsys):
     assert {p["plan_id"] for p in card["plans"]} == {"pln_a", "pln_b"}
 
 
+def test_leader_chat_plan_board_is_read_only_and_embeds_board(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _seed_named_plan(root, "pln_a", "demoA")
+    _seed_named_plan(root, "pln_b", "demoB")
+    before = StateStore(root).load()
+    assert cli.main(["leader", "chat", "--message", "查看所有计划"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "plan_board"
+    card = payload["plan_board_card"]
+    assert card["mode"] == "plan_board"
+    assert {p["plan_id"] for p in card["plans"]} == {"pln_a", "pln_b"}
+    assert payload["next_command"] == "agentdeck plan board"
+    assert payload["intent_card"]["embedded_card"] == "plan_board_card"
+    assert payload["intent_card"]["requires_explicit_user"] is False
+    # read-only: only a chat turn + its audit event may be added (no plan/approval/message changes)
+    after = StateStore(root).load()
+    assert after.get("approvals", []) == before.get("approvals", [])
+    assert after.get("plans") == before.get("plans")
+
+
+def test_leader_chat_plan_board_variants_route(tmp_path, monkeypatch, capsys):
+    from agentdeck.cli import _chat_wants_plan_board
+    for message in ("计划看板", "所有计划", "查看计划列表", "plan board", "计划总览"):
+        assert _chat_wants_plan_board(message) is True
+    assert _chat_wants_plan_board("查看运行进度") is False
+
+
 def test_contract_plans_discovers_schema_and_is_in_index(tmp_path, monkeypatch, capsys):
     prepare_project(tmp_path, monkeypatch)
     assert cli.main(["contract", "plans"]) == 0

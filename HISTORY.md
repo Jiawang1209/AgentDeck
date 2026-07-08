@@ -4,7 +4,18 @@
 
 ## 2026-07-09
 
-### Current - Add a navigable plans board view to the interactive TUI (multi-plan lane slice 4)
+### Current - Add natural-language read-only `mode=plan_board` chat intent (multi-plan lane slice 5)
+
+- **类型**: feat
+- **动机**: 多计划并行 lane 第五刀。plan board 命令、workbench 卡片、text dashboard Plans、TUI plans 视图都已交付,补上自然语言入口——让操作者在 Leader chat 里直接问「查看所有计划」就能看到多计划看板。
+- **What**:
+  - `src/agentdeck/cli.py`:新增 `_chat_wants_plan_board()` 检测器(匹配 `查看所有计划|计划看板|所有计划|查看计划列表|计划总览|计划列表|plan board`,不与 `run_progress`/`run_loop_preview` 冲突——它们要求 `进度`/`推进`);在 leader chat dispatch 新增只读 `mode=plan_board` 路由,嵌入 `_plan_board_payload(store)` 的 `plan_board_card`,`next_command="agentdeck plan board"`,`control_registry_card=None`;`_leader_chat_explanation` 新增 `plan_board` 分支(`safety=inspect`、`requires_explicit_user=False`、`action_kind=plan_board`);`_leader_chat_intent_card` 的 `card_names` 加入 `plan_board_card`,inspect command 返回 `agentdeck plan board`,next control label 返回 `Open plan board`;`_print_leader_chat_payload_or_error` setdefault `plan_board_card`。
+  - `src/agentdeck/contracts.py`:新增 `LEADER_CHAT_PLAN_BOARD_CARD_FIELDS = PLAN_BOARD_RESPONSE_FIELDS`,`plan_board_card` 加入 `LEADER_CHAT_RESPONSE_FIELDS` 与 leader-chat example fixture;`validate_leader_chat_contract()` 新增 `mode=plan_board` 校验(要求 `plan_board_card` 存在、通过 `validate_plan_board_contract()`、`next_command==agentdeck plan board`、`intent_card.embedded_card==plan_board_card`);discovery payload 公开 `plan_board_card_fields`。
+  - 文档同步:`docs/contracts/leader-chat-schema.md`、`CLAUDE.md`、`README.md`。
+- **Impact**: `agentdeck leader chat --message "查看所有计划"` 进入只读 `mode=plan_board`,复用已有 plan board 契约;纯只读,只记录 chat turn + 审计事件,不调用 provider、不碰 tmux、不改 state。至此多计划只读可见性已由 plan board 命令 + workbench 卡片 + dashboard Plans + TUI plans 视图 + 本 NL intent 完整交付。
+- **Verification**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k plan_board tests/test_contracts.py -k "leader_chat or plan_board" -q`(含新红→绿测试 `test_leader_chat_plan_board_is_read_only_and_embeds_board` / `test_leader_chat_plan_board_variants_route`);全套 `pytest -q`(698 passed);`python -m compileall src tests`;`git diff --check`。
+
+### Add a navigable plans board view to the interactive TUI (multi-plan lane slice 4)
 
 - **类型**: feat
 - **动机**: 多计划并行 lane 第四刀。审批(`a`)、runtime(`g`)已有可选视图,补上对称的 plans 看板视图,让操作者在 TUI 里专注浏览所有计划、逐个看下一步。
