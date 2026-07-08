@@ -2,6 +2,23 @@
 
 Updated: 2026-07-09
 
+## ⏸ 需要你决策 — 多计划"并行调度器"方向（overnight loop 停在这里）
+
+**这一夜的进度**：多计划并行 lane 的**只读可见性部分全部做完并提交**（详见 `HISTORY.md` 置顶 5 条 + 下方 "Current Direction: multi-plan lane"）：
+1. `agentdeck plan board` 只读多计划看板 → 2. `workbench.plan_board_card` → 3. dashboard **Plans** 段 → 4. TUI **plans** 视图（`b` 键）→ 5. 自然语言 `mode=plan_board`（"查看所有计划"）。全套测试 **698 passed**，编译干净，全部本地提交（未 push）。
+
+**为什么停在这里**：剩下唯一的多计划项是**并行调度器**——第一个"写操作"多计划刀（自动在多个计划间推进 + 处理 agent 冲突）。它涉及几个**核心语义决策**，是真正的产品岔路，不该我在你睡觉时替你押注。请你醒来定这几点，我再继续：
+
+- **调度策略**：多个可推进的计划，按 **轮转**（round-robin 依次各推一步）还是 **优先级**（比如创建顺序 / 你手动设的优先级，先把一个推到底再下一个）？
+- **agent 冲突**：一个 agent 正忙于 A 计划的步骤时，B 计划里指向同一个 agent 的步骤该 **跳过继续别的**，还是 **排队等它空出来**？
+- **一次跑多远**：一条调度命令 **推一波就停**（每个计划各推进到下一个人类关口）还是 **持续跑到所有计划都卡在人类关口**？
+- **复用还是新写**：直接 **复用现成的 `run_loop_gate` + `approval auto`**（每个计划跑一遍 run-loop wave）还是需要**新的跨计划调度逻辑**？
+- **安全边界**（我的默认，除非你改）：无论怎么选，都**保持 approval-gated**、只自动批准白名单+预算内的、只派给 running pane、绝不 force-spawn、绝不自动回收 reply、全程记账——和现有 `run-loop` 一致。
+
+**多计划 recovery 仲裁**（让 `recovery`/`agentdeck continue` 跨计划推荐而非只看最新计划）也并入这个决策——"该把操作者引向哪个计划"本质是调度策略的一部分。
+
+> 你回一句选择（哪怕"轮转 / 跳过 / 一波 / 复用"这种四个词），我就据此走 brainstorm→spec→plan→实现。
+
 ## Active Goal
 
 按照 AgentDeck 北极星目标持续开发本地多智能体终端工作台：保持 API-backed Leader LLM、角色化多 Agent、可见 tmux runtime、人类审批、可恢复状态、通信账本和未来 GUI 可消费的主线；每轮开发都更新 `HISTORY.md`、运行验证并提交。
