@@ -10621,3 +10621,19 @@ def test_plan_board_empty_project_is_valid(tmp_path, monkeypatch, capsys):
     assert payload["plan_count"] == 0
     assert payload["plans"] == []
     assert payload["active_count"] == 0
+
+
+def test_contract_plans_discovers_schema_and_is_in_index(tmp_path, monkeypatch, capsys):
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["contract", "plans"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["board_command"] == "agentdeck plan board"
+    assert "plan_board_response_fields" in payload
+
+    assert cli.main(["contract", "plans", "--example"]) == 0
+    example_payload = json.loads(capsys.readouterr().out)
+    assert example_payload["example_plan_board"]["mode"] == "plan_board"
+
+    assert cli.main(["contract", "list"]) == 0
+    listing = json.loads(capsys.readouterr().out)
+    assert "plans" in {c["name"] for c in listing["contracts"]}

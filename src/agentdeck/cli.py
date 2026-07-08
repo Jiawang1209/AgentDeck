@@ -4246,6 +4246,13 @@ def contract_run_loop_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def contract_plans_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "plans-schema.md"
+    payload = plan_board_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
 def contract_workbench_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "workbench-schema.md"
     payload = workbench_contract_response(contract_path, include_example=args.example)
@@ -13292,6 +13299,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_run_loop.add_argument("--example", action="store_true", help="Include a GUI-ready run-loop example")
     contract_run_loop.set_defaults(func=contract_run_loop_command)
+    contract_plans = contract_subparsers.add_parser("plans", help="Show plan board contract discovery metadata")
+    contract_plans.add_argument("--example", action="store_true", help="Include a GUI-ready plan board example")
+    contract_plans.set_defaults(func=contract_plans_command)
     contract_workbench = contract_subparsers.add_parser(
         "workbench",
         help="Show workbench snapshot contract discovery metadata",
