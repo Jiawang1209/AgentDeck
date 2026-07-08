@@ -1909,7 +1909,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert set(example["control_mode_card"]["available_modes"][0]) == set(WORKBENCH_CONTROL_MODE_OPTION_FIELDS)
     assert set(example["control_mode_card"]["active_controls"][0]) == set(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS)
     assert example["control_mode_card"]["current_mode"] == "ask"
-    assert example["control_mode_card"]["available_modes"][2]["enabled"] is False
+    assert example["control_mode_card"]["available_modes"][2]["mode"] == "autonomous"
+    assert example["control_mode_card"]["available_modes"][2]["enabled"] is True
+    assert example["control_mode_card"]["available_modes"][2]["blocker"] is None
     assert set(example["control_registry"][0]) == set(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
     assert example["control_registry"][0] == {
         "scope": "leader",

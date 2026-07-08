@@ -345,7 +345,10 @@ def _leader_chat_next_control_label(next_command: object) -> str:
     stop_match = re.fullmatch(r"agentdeck agent stop --agent ([^\s]+)", command)
     if stop_match:
         return f"Stop {stop_match.group(1)}"
-    policy_match = re.fullmatch(r"agentdeck policy set-mode --mode (ask|approve|autonomous)", command)
+    policy_match = re.fullmatch(
+        r"agentdeck policy set-mode --mode (ask|approve|autonomous)(?: --confirm --allow-agent <id> --max-approvals <N>)?",
+        command,
+    )
     if policy_match:
         mode = policy_match.group(1)
         if mode == "ask":
@@ -1484,6 +1487,8 @@ def _workbench_learning_review_card(store: StateStore) -> dict[str, object] | No
 
 
 def _control_mode_from_approval_mode(approval_mode: object) -> str:
+    if approval_mode == "autonomous":
+        return "autonomous"
     return "approve" if approval_mode in {"auto_approve", "approve"} else "ask"
 
 
@@ -1513,11 +1518,11 @@ def _workbench_control_mode_card(project_view: dict[str, object]) -> dict[str, o
         {
             "mode": "autonomous",
             "label": "Autonomous bounded",
-            "description": "Reserved for future scoped delegation with budgets, allowlists, and audit gates.",
-            "enabled": False,
+            "description": "Scoped delegation: auto-approve allowlisted pending approvals within a count budget, fully audited.",
+            "enabled": True,
             "requires_explicit_user": True,
             "safety": "delegated",
-            "blocker": "autonomous execution policy is not implemented",
+            "blocker": None,
         },
     ]
     return {
@@ -1543,11 +1548,17 @@ def _control_mode_set_controls(current_mode: str, available_modes: list[dict[str
         enabled = bool(option.get("enabled")) and mode != current_mode
         blocker = "already current mode" if mode == current_mode else option.get("blocker")
         safety = "explicit_user" if mode == "approve" else option.get("safety")
+        command = f"agentdeck policy set-mode --mode {mode}"
+        if mode == "autonomous":
+            command = "agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>"
+            if mode != current_mode:
+                enabled = False
+                blocker = "requires --allow-agent and --max-approvals"
         controls.append(
             _control(
                 kind="set_mode",
                 label=str(option.get("label", mode)),
-                command=f"agentdeck policy set-mode --mode {mode}",
+                command=command,
                 safety=str(safety),
                 enabled=enabled,
                 blocker=str(blocker) if blocker else None,
@@ -8348,7 +8359,8 @@ def _leader_chat_explanation(
             "requires_explicit_user": False,
         }
     if mode == "policy":
-        target_mode = str(next_command).rsplit(" ", 1)[-1] if next_command else None
+        mode_match = re.search(r"--mode (\S+)", str(next_command or ""))
+        target_mode = mode_match.group(1) if mode_match else None
         return {
             "mode": mode,
             "summary": "Leader recommends an explicit control mode command without mutating policy.",
@@ -10067,7 +10079,10 @@ def leader_chat_command(args: argparse.Namespace) -> int:
 
     policy_mode = _chat_policy_mode(args.message)
     if policy_mode is not None:
-        next_command = f"agentdeck policy set-mode --mode {policy_mode}"
+        if policy_mode == "autonomous":
+            next_command = "agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>"
+        else:
+            next_command = f"agentdeck policy set-mode --mode {policy_mode}"
         turn = store.record_chat_turn(
             mode="policy",
             message=args.message,

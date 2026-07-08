@@ -4135,7 +4135,7 @@ def test_leader_chat_suggests_policy_mode_change_without_mutating_config(
     assert state_after["jobs"] == []
 
 
-def test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked(
+def test_leader_chat_suggests_autonomous_policy_command_template(
     tmp_path, monkeypatch, capsys
 ) -> None:
     root = prepare_project(tmp_path, monkeypatch)
@@ -4147,12 +4147,12 @@ def test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "policy"
-    assert payload["next_command"] == "agentdeck policy set-mode --mode autonomous"
-    assert payload["control_mode_card"]["available_modes"][2]["mode"] == "autonomous"
-    assert payload["control_mode_card"]["available_modes"][2]["enabled"] is False
-    assert payload["control_mode_card"]["available_modes"][2]["blocker"] == (
-        "autonomous execution policy is not implemented"
+    assert payload["next_command"] == (
+        "agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>"
     )
+    assert payload["control_mode_card"]["available_modes"][2]["mode"] == "autonomous"
+    assert payload["control_mode_card"]["available_modes"][2]["enabled"] is True
+    assert payload["control_mode_card"]["available_modes"][2]["blocker"] is None
     assert payload["leader_explanation"]["recommended_action_id"] == "autonomous"
     assert payload["leader_explanation"]["action_status"] == "blocked"
     assert payload["leader_explanation"]["safety"] == "explicit_user"
@@ -4160,10 +4160,10 @@ def test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked(
     assert payload["intent_card"]["controls"][1] == {
         "kind": "next",
         "label": "Request autonomous mode",
-        "command": "agentdeck policy set-mode --mode autonomous",
+        "command": "agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>",
         "safety": "explicit_user",
-        "enabled": True,
-        "blocker": None,
+        "enabled": False,
+        "blocker": "requires template input",
     }
     assert payload["intent_card"]["secondary_embedded_cards"] == ["control_registry_card"]
     assert payload["control_registry_card"]["filters"]["scope"] == "policy"
@@ -4175,10 +4175,10 @@ def test_leader_chat_suggests_autonomous_policy_command_but_keeps_it_blocked(
         "card": "control_mode_card",
         "kind": "set_mode",
         "label": "Autonomous bounded",
-        "command": "agentdeck policy set-mode --mode autonomous",
+        "command": "agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>",
         "safety": "delegated",
         "enabled": False,
-        "blocker": "autonomous execution policy is not implemented",
+        "blocker": "requires --allow-agent and --max-approvals",
         "agent_id": None,
         "control_id": selected_control["control_id"],
     }

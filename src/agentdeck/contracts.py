@@ -11564,11 +11564,11 @@ def workbench_example() -> dict[str, object]:
                 {
                     "mode": "autonomous",
                     "label": "Autonomous bounded",
-                    "description": "Reserved for future scoped delegation with budgets, allowlists, and audit gates.",
-                    "enabled": False,
+                    "description": "Scoped delegation: auto-approve allowlisted pending approvals within a count budget, fully audited.",
+                    "enabled": True,
                     "requires_explicit_user": True,
                     "safety": "delegated",
-                    "blocker": "autonomous execution policy is not implemented",
+                    "blocker": None,
                 },
             ],
             "active_controls": [
@@ -11599,10 +11599,10 @@ def workbench_example() -> dict[str, object]:
                 {
                     "kind": "set_mode",
                     "label": "Autonomous bounded",
-                    "command": "agentdeck policy set-mode --mode autonomous",
+                    "command": "agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>",
                     "safety": "delegated",
                     "enabled": False,
-                    "blocker": "autonomous execution policy is not implemented",
+                    "blocker": "requires --allow-agent and --max-approvals",
                 },
             ],
             "set_mode_command_template": "agentdeck policy set-mode --mode <mode>",

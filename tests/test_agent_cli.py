@@ -7388,11 +7388,11 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             {
                 "mode": "autonomous",
                 "label": "Autonomous bounded",
-                "description": "Reserved for future scoped delegation with budgets, allowlists, and audit gates.",
-                "enabled": False,
+                "description": "Scoped delegation: auto-approve allowlisted pending approvals within a count budget, fully audited.",
+                "enabled": True,
                 "requires_explicit_user": True,
                 "safety": "delegated",
-                "blocker": "autonomous execution policy is not implemented",
+                "blocker": None,
             },
         ],
         "active_controls": [
@@ -7423,10 +7423,10 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
             {
                 "kind": "set_mode",
                 "label": "Autonomous bounded",
-                "command": "agentdeck policy set-mode --mode autonomous",
+                "command": "agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>",
                 "safety": "delegated",
                 "enabled": False,
-                "blocker": "autonomous execution policy is not implemented",
+                "blocker": "requires --allow-agent and --max-approvals",
             },
         ],
         "set_mode_command_template": "agentdeck policy set-mode --mode <mode>",
@@ -7788,6 +7788,23 @@ def test_policy_set_mode_autonomous_requires_confirm_and_valid_scope(tmp_path, m
     assert "ghost" in capsys.readouterr().err
     # config unchanged (still confirm)
     assert load_config(root).leader.approval_mode == "confirm"
+
+
+def test_control_mode_card_enables_autonomous_when_policy_supported(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    exit_code = cli.main(["workbench"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    modes = {m["mode"]: m for m in payload["control_mode_card"]["available_modes"]}
+    auto = modes["autonomous"]
+    assert auto["enabled"] is True
+    assert auto["blocker"] is None
+    # the set-mode control is a disabled template requiring explicit args
+    ctrls = {c.get("label"): c for c in payload["control_mode_card"]["active_controls"] if c.get("kind") == "set_mode"}
+    auto_ctrl = ctrls["Autonomous bounded"]
+    assert auto_ctrl["enabled"] is False
+    assert "--allow-agent" in auto_ctrl["command"]
+    assert auto_ctrl["blocker"] == "requires --allow-agent and --max-approvals"
 
 
 def test_workbench_blocks_dispatch_operator_when_approved_agent_is_not_spawned(
