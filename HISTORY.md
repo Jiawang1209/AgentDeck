@@ -4,7 +4,19 @@
 
 ## 2026-07-09
 
-### Current - Add read-only `agentdeck plan board` multi-plan overview (multi-plan lane slice 1)
+### Current - Surface the plan board in the read-only workbench as `plan_board_card` (multi-plan lane slice 2)
+
+- **类型**: feat
+- **动机**: 多计划并行 lane 第二刀。`agentdeck plan board`（slice 1）已能只读列出每个计划的 gate 与下一步命令，但它是独立命令；GUI/TUI/dashboard 的主入口是一屏 `agentdeck workbench` 快照。把同一份看板 payload 作为 `workbench.plan_board_card` 嵌进快照，让主控制面无需另发命令即可同屏看见每个计划。
+- **What**:
+  - `src/agentdeck/cli.py`：抽出共享 helper `_plan_board_payload(store)`（纯 payload 构造，`plan_board_command` 改为调用它，无行为变化）；在 `_workbench_snapshot_payload` 里计算 `plan_board_card = _plan_board_payload(store)` 并加入返回 dict（紧邻 `run_progress_card`）。
+  - `src/agentdeck/contracts.py`：`WORKBENCH_SNAPSHOT_FIELDS` 增加 `"plan_board_card"`；`validate_workbench_contract` 对嵌入卡片跑 `validate_plan_board_contract` 并以 `plan_board_card: ` 前缀报错（该卡片恒存在，非 null）；`workbench_example()` 增加 `"plan_board_card": plan_board_example()`；workbench 契约发现 payload 增加 `"plan_board_card_fields"`。
+  - `docs/contracts/workbench-schema.md` 记录 `plan_board_card`（复用 plan-board 契约形状、恒存在、只读）；`tests/test_agent_cli.py` 新增 `test_workbench_embeds_plan_board_card`，并同步 workbench snapshot 字段 drift 断言。
+  - 纯只读：workbench 渲染不调用 provider、不读写 tmux、不写 state、不追加事件。
+- **Impact**: `agentdeck workbench` 快照现含 `plan_board_card`，GUI/TUI/dashboard 可从一屏快照消费多计划总览；为后续 dashboard Plans 区、TUI plans 视图、多计划 recovery、NL "查看所有计划" intent 和并行调度器打底；无破坏性改动。
+- **Verification**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k "plan_board or workbench" tests/test_contracts.py -k workbench -q`（新测试红→绿，含 workbench drift 断言修正）；全套 `pytest -q`；`python -m compileall src tests -q`；`git diff --check`。
+
+### Add read-only `agentdeck plan board` multi-plan overview (multi-plan lane slice 1)
 
 - **类型**: feat
 - **动机**: 多计划并行 lane 第一刀。state 层早已 per-plan（`list_plans`/`leader_review`/`run_loop_gate`），但几乎所有只读面都默认最新一个 plan（`plans[-1]`）；缺的是"同屏看见每个计划、分别推进"的可见性。加一个只读看板，一眼看清"A 等我审批、B 等回复、C 已完成"，并给出每个计划显式的下一步命令。

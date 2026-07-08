@@ -1316,6 +1316,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "continue_card",
     "active_queue_source",
     "run_progress_card",
+    "plan_board_card",
     "inbox_card",
     "leader_inbox_card",
     "approval_card",
@@ -4130,6 +4131,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "queue_card_fields": list(WORKBENCH_QUEUE_CARD_FIELDS),
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "run_progress_card_fields": list(RUN_PROGRESS_RESPONSE_FIELDS),
+        "plan_board_card_fields": list(PLAN_BOARD_RESPONSE_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
         "audit_event_fields": list(WORKBENCH_AUDIT_EVENT_FIELDS),
         "artifacts_card_fields": list(ARTIFACTS_RESPONSE_FIELDS),
@@ -8611,6 +8613,13 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append(f"run_progress_card: {error}")
     elif "run_progress_card" in payload and run_progress_card is not None:
         errors.append("run_progress_card must be an object")
+    plan_board_card = payload.get("plan_board_card")
+    if isinstance(plan_board_card, dict):
+        plan_board_validation = validate_plan_board_contract(plan_board_card)
+        for error in plan_board_validation["errors"]:
+            errors.append(f"plan_board_card: {error}")
+    else:
+        errors.append("plan_board_card must be an object")
     audit_card = payload.get("audit_card")
     if isinstance(audit_card, dict):
         _validate_audit_card_contract(errors, audit_card, prefix="audit_card")
@@ -11888,6 +11897,7 @@ def workbench_example() -> dict[str, object]:
         "continue_card": continue_example(),
         "active_queue_source": "leader_action",
         "run_progress_card": run_progress_example(),
+        "plan_board_card": plan_board_example(),
         "inbox_card": None,
         "leader_inbox_card": {
             "agent_id": "leader",

@@ -1428,6 +1428,7 @@ def _workbench_snapshot_payload(
     contracts_card = _workbench_contracts_card()
     control_mode_card = _workbench_control_mode_card(project_view)
     run_progress_card = _workbench_run_progress_card(store)
+    plan_board_card = _plan_board_payload(store)
     payload = {
         "ok": True,
         "mode": "workbench",
@@ -1463,6 +1464,7 @@ def _workbench_snapshot_payload(
         "continue_card": continue_card,
         "active_queue_source": active_queue_source,
         "run_progress_card": run_progress_card,
+        "plan_board_card": plan_board_card,
         "inbox_card": inbox_card,
         "leader_inbox_card": leader_inbox_card,
         "approval_card": approval_card,
@@ -12433,10 +12435,7 @@ def plan_list_command(_args: argparse.Namespace) -> int:
     return 0
 
 
-def plan_board_command(args: argparse.Namespace) -> int:
-    config, store, exit_code = _load_project_or_error()
-    if config is None or store is None:
-        return exit_code
+def _plan_board_payload(store) -> dict[str, object]:
     items: list[dict[str, object]] = []
     for plan in store.list_plans():
         if not isinstance(plan, dict):
@@ -12455,7 +12454,7 @@ def plan_board_command(args: argparse.Namespace) -> int:
             "active": gate != "complete",
             "counts": review.get("counts") or {},
         })
-    payload = {
+    return {
         "ok": True,
         "mode": "plan_board",
         "board_command": "agentdeck plan board",
@@ -12463,6 +12462,13 @@ def plan_board_command(args: argparse.Namespace) -> int:
         "active_count": sum(1 for item in items if item["active"]),
         "plans": items,
     }
+
+
+def plan_board_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    payload = _plan_board_payload(store)
     validation = validate_plan_board_contract(payload)
     if not validation["ok"]:
         print("plan board contract validation failed", file=sys.stderr)

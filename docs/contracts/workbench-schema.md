@@ -138,6 +138,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `run_progress_card` is `null` when there is no plan; otherwise it reuses the latest plan's `agentdeck run --plan-id <id>` response shape and must pass `validate_run_start_contract()`. Its `leader_backend` field is the same normalized logical Leader identity card stored with the plan; it is not a tmux pane binding or execution permission.
+`plan_board_card` is always present (never `null`). It reuses the read-only `agentdeck plan board` payload shape (`mode`, `board_command`, `plan_count`, `active_count`, `plans[]`) and must pass `validate_plan_board_contract()`. It is a multi-plan overview: every plan with its derived `gate` and explicit per-plan `next_command`. Empty projects render `plan_count=0` / `plans=[]`. Read-only aggregation only — rendering it never calls a provider, reads tmux, writes state, or appends events.
 `next_command` must equal `continue_card.next_command`.
 `change_summary` is computed from the audit event ledger and is never persisted as a cursor.
 

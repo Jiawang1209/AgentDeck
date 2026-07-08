@@ -395,14 +395,17 @@ The human picked the multi-plan-parallel lane: see all active plans at once and 
 
 **Slice 1 of the multi-plan lane is done:** read-only `agentdeck plan board` — a multi-plan overview that lists every plan with its derived `gate` and explicit per-plan `next_command`, plus `plan_count` / `active_count`. It reuses only the read-only `store.leader_review(plan_id)` + the pure `run_loop_gate(review, False, plan_id)` (`src/agentdeck/autonomy.py`); it calls no provider, reads no tmux, writes no state, appends no event. Contract: `agentdeck contract plans` + `docs/contracts/plans-schema.md` (`plan_board_*` helpers + `validate_plan_board_contract` in `contracts.py`, registered in `CONTRACT_INDEX_SPECS`). Design + plan: `docs/superpowers/specs/2026-07-09-plan-board-design.md` and `docs/superpowers/plans/2026-07-09-plan-board.md`.
 
+**Slice 2 of the multi-plan lane is done:** the board is now embedded in the one-screen `agentdeck workbench` snapshot as `plan_board_card` (always present, never `null`). A shared helper `_plan_board_payload(store)` (`src/agentdeck/cli.py`) builds the same payload for both `agentdeck plan board` and `_workbench_snapshot_payload`; `WORKBENCH_SNAPSHOT_FIELDS` carries `"plan_board_card"`, `validate_workbench_contract` runs `validate_plan_board_contract` on the embedded card (prefix `plan_board_card: `), `workbench_example()` embeds `plan_board_example()`, and the workbench contract discovery payload exposes `plan_board_card_fields`. Doc: `docs/contracts/workbench-schema.md`. Read-only.
+
 **Next Best Step:** continue the multi-plan lane, in order — the remaining read-only visibility slices first, then the scheduler:
 
-1. Surface the board as a workbench `plan_board_card` (reuse `plan_board_example` / `validate_plan_board_contract`; add to `control_registry[]` under `scope=plan_board`).
-2. A dashboard **Plans** section in `render_workbench_dashboard` (`src/agentdeck/dashboard.py`), derived from the `plan_board_card`.
-3. A TUI plans view (`[p]`) in `src/agentdeck/tui.py`, mirroring the approvals/runtime views (rows = plan · gate · status; footer = per-plan `next_command`).
-4. Make `recovery` multi-plan aware (recommend across plans, not just the latest).
-5. A natural-language `leader chat --message "查看所有计划" / "计划看板"` intent (read-only `mode=plan_board`, embed the same card + filtered `control_registry_card`).
-6. **Then** the parallel scheduler (the bigger slice): auto-advance across plans + agent-contention logic — this is the first write-capable multi-plan slice and must stay approval-gated.
+1. A dashboard **Plans** section in `render_workbench_dashboard` (`src/agentdeck/dashboard.py`), derived from the `plan_board_card`.
+2. A TUI plans view (`[p]`) in `src/agentdeck/tui.py`, mirroring the approvals/runtime views (rows = plan · gate · status; footer = per-plan `next_command`).
+3. Make `recovery` multi-plan aware (recommend across plans, not just the latest).
+4. A natural-language `leader chat --message "查看所有计划" / "计划看板"` intent (read-only `mode=plan_board`, embed the same card + filtered `control_registry_card`).
+5. **Then** the parallel scheduler (the bigger slice): auto-advance across plans + agent-contention logic — this is the first write-capable multi-plan slice and must stay approval-gated.
+
+(Not yet wired: a `control_registry[]` `scope=plan_board` entry — deferred until a plan-board control surface is actually needed, e.g. the dashboard/TUI plans view or the NL intent.)
 
 Whatever is chosen next must preserve human approval and keep every read-only surface read-only.
 

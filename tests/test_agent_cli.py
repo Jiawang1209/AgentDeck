@@ -5473,6 +5473,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "continue_card",
         "active_queue_source",
         "run_progress_card",
+        "plan_board_card",
         "inbox_card",
         "leader_inbox_card",
         "approval_card",
@@ -10622,6 +10623,18 @@ def test_plan_board_empty_project_is_valid(tmp_path, monkeypatch, capsys):
     assert payload["plan_count"] == 0
     assert payload["plans"] == []
     assert payload["active_count"] == 0
+
+
+def test_workbench_embeds_plan_board_card(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _seed_named_plan(root, "pln_a", "demoA")
+    _seed_named_plan(root, "pln_b", "demoB")
+    assert cli.main(["workbench"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    card = payload["plan_board_card"]
+    assert card["mode"] == "plan_board"
+    assert card["plan_count"] == 2
+    assert {p["plan_id"] for p in card["plans"]} == {"pln_a", "pln_b"}
 
 
 def test_contract_plans_discovers_schema_and_is_in_index(tmp_path, monkeypatch, capsys):
