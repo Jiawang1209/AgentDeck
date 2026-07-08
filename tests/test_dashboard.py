@@ -34,6 +34,25 @@ def test_render_workbench_dashboard_consumes_only_the_contract_payload() -> None
     assert payload == snapshot
 
 
+def test_render_workbench_dashboard_shows_runtime_pane_binding() -> None:
+    payload = workbench_example()
+    snapshot = copy.deepcopy(payload)
+
+    text = render_workbench_dashboard(payload)
+
+    # the visible tmux runtime (status + pane) is shown, distinct from logical topology
+    assert "Runtime" in text
+    assert "1/3 running" in text
+    runtime_block = [b for b in text.split("\n\n") if b.splitlines()[0].startswith("── Runtime")][0]
+    assert "planner" in runtime_block
+    assert "running" in runtime_block
+    assert "pane:%42" in runtime_block
+    assert "coder" in runtime_block
+    assert "configured" in runtime_block
+    # rendering is read-only
+    assert payload == snapshot
+
+
 def test_render_workbench_dashboard_shows_control_mode_and_autonomous_commands() -> None:
     payload = workbench_example()
     snapshot = copy.deepcopy(payload)

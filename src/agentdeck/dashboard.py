@@ -85,6 +85,26 @@ def _render_run_progress(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_runtime(payload: dict[str, Any]) -> list[str]:
+    card = _as_dict(payload.get("runtime_card"))
+    agents = _as_list(card.get("agents"))
+    if not agents:
+        return []
+    running = sum(1 for agent in agents if _as_dict(agent).get("status") == "running")
+    lines = [_rule("Runtime"), f"{running}/{len(agents)} running"]
+    for agent in agents:
+        agent = _as_dict(agent)
+        agent_id = str(agent.get("agent_id") or "")
+        role = str(agent.get("role") or "")
+        status = str(agent.get("status") or "")
+        row = f"  {agent_id:<14} {role:<16} {status:<12}"
+        pane_id = agent.get("pane_id")
+        if pane_id:
+            row += f"  pane:{pane_id}"
+        lines.append(row.rstrip())
+    return lines
+
+
 def _render_role_topology(payload: dict[str, Any]) -> list[str]:
     card = _as_dict(payload.get("role_topology_card"))
     if not card:
@@ -313,6 +333,7 @@ def render_workbench_dashboard(payload: dict[str, Any]) -> str:
         _render_header(payload),
         _render_recovery(payload),
         _render_run_progress(payload),
+        _render_runtime(payload),
         _render_role_topology(payload),
         _render_worker_activity(payload),
         _render_review_gate(payload),

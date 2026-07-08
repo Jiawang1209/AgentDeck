@@ -4,7 +4,18 @@
 
 ## 2026-07-08
 
-### Current - Show control mode + autonomous commands in the text dashboard / TUI
+### Current - Show the tmux runtime binding in the text dashboard / TUI
+
+- **类型**: feat
+- **动机**: "驾驶舱"方向第二刀。文字 dashboard（也是 TUI overview 数据源）有逻辑角色拓扑（role_topology）和 worker 活动（worker_activity），但没有一段直接显示"可见 tmux runtime"——每个 agent 的 status（running/configured/stale）和 pane 绑定。这是北极星优先级 #4「runtime 可见」的一屏入口。
+- **What**:
+  - `src/agentdeck/dashboard.py` 新增只读 `_render_runtime(payload)`：从 `runtime_card.agents[]` 派生 "Runtime" 区块，显示 `<running>/<total> running` 和每个 agent 的 `agent_id · role · status · pane:<pane_id>`，接进 `render_workbench_dashboard`（放在 run_progress 之后、role_topology 之前）。它展示 pane/status 绑定，和逻辑 role_topology、worker lifecycle 明确区分、不重复。
+  - dashboard 与交互式 TUI overview 共用渲染器，两处同时获得该区块。
+  - 纯函数、只读：不改 payload、不调 provider、不碰 tmux、不写 state。
+- **Impact**: 一屏可见每个 worker 的运行状态与终端 pane 绑定；无行为变化、无破坏性改动。
+- **Verification**: `conda run -n agentdeck pytest tests/test_dashboard.py -q`（含新 `test_render_workbench_dashboard_shows_runtime_pane_binding`，红→绿）；全套 `pytest -q`（680 passed）；`python -m compileall src tests`；`git diff --check`；并对 `workbench_example()` 实跑渲染确认 `1/3 running` + `planner … pane:%42`。
+
+### Show control mode + autonomous commands in the text dashboard / TUI
 
 - **类型**: feat
 - **动机**: autonomous 三块 + 命令面板 + 自然语言入口都做完了，但人类面向的文字 dashboard（也是 TUI overview 的数据源 `render_workbench_dashboard`）里没有任何"当前授权档位 / autonomous 命令"的区块——ask/approve/autonomous 梯度和刚建好的 `approval auto` / `run-loop` 命令在一屏总览里看不见。这是"把契约做成人能看见的驾驶舱"方向的第一刀。
