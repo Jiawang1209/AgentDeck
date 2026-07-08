@@ -34,6 +34,21 @@ def test_render_workbench_dashboard_consumes_only_the_contract_payload() -> None
     assert payload == snapshot
 
 
+def test_render_workbench_dashboard_shows_recent_activity_ledger_tail() -> None:
+    payload = workbench_example()
+    snapshot = copy.deepcopy(payload)
+
+    text = render_workbench_dashboard(payload)
+
+    # the audit-ledger tail is visible in the cockpit (complements `agentdeck history`)
+    assert "Recent activity" in text
+    block = [b for b in text.split("\n\n") if b.splitlines()[0].startswith("── Recent activity")][0]
+    assert "leader_chat_turn" in block
+    assert "agentdeck events --limit 20" in block
+    # rendering is read-only
+    assert payload == snapshot
+
+
 def test_render_workbench_dashboard_shows_runtime_pane_binding() -> None:
     payload = workbench_example()
     snapshot = copy.deepcopy(payload)

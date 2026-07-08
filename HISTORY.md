@@ -4,7 +4,18 @@
 
 ## 2026-07-08
 
-### Current - Show the tmux runtime binding in the text dashboard / TUI
+### Current - Show the recent-activity ledger tail in the text dashboard / TUI
+
+- **类型**: feat
+- **动机**: "驾驶舱"方向第三刀，直接呼应用户最看重的「全程记账」。文字 dashboard（也是 TUI overview 数据源）里没有事件账本的入口——你得单独跑 `agentdeck history` 或 `agentdeck events` 才能看最近发生了啥。给一屏总览补上账本尾巴。
+- **What**:
+  - `src/agentdeck/dashboard.py` 新增只读 `_render_recent_activity(payload)`：从 `audit_card` 派生 "Recent activity" 区块，显示 `<event_count> events (agentdeck events --limit 20)` 和最近至多 5 条事件（`created_at · event_type · event_id`），接进 `render_workbench_dashboard`（放在 Learning layer 之后、Command palette 之前）。它是账本尾巴，和完整时间线 `agentdeck history` 互补、不重复。
+  - dashboard 与交互式 TUI overview 共用渲染器，两处同时获得该区块。
+  - 纯函数、只读：不改 payload、不调 provider、不碰 tmux、不写 state。
+- **Impact**: 一屏可见最近审计事件与查看全量事件的入口命令；无行为变化、无破坏性改动。
+- **Verification**: `conda run -n agentdeck pytest tests/test_dashboard.py -q`（含新 `test_render_workbench_dashboard_shows_recent_activity_ledger_tail`，红→绿）；全套 `pytest -q`（681 passed）；`python -m compileall src tests`；`git diff --check`；并对 `workbench_example()` 实跑渲染确认区块正确。
+
+### Show the tmux runtime binding in the text dashboard / TUI
 
 - **类型**: feat
 - **动机**: "驾驶舱"方向第二刀。文字 dashboard（也是 TUI overview 数据源）有逻辑角色拓扑（role_topology）和 worker 活动（worker_activity），但没有一段直接显示"可见 tmux runtime"——每个 agent 的 status（running/configured/stale）和 pane 绑定。这是北极星优先级 #4「runtime 可见」的一屏入口。

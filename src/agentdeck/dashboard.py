@@ -246,6 +246,23 @@ def _render_control_mode(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_recent_activity(payload: dict[str, Any]) -> list[str]:
+    card = _as_dict(payload.get("audit_card"))
+    events = _as_list(card.get("recent_events"))
+    if not events:
+        return []
+    events_command = str(card.get("events_command") or "agentdeck events --limit 20")
+    count = card.get("event_count", len(events))
+    lines = [_rule("Recent activity"), f"{count} events  ({events_command})"]
+    for event in events[:5]:
+        event = _as_dict(event)
+        created = str(event.get("created_at") or "")
+        event_type = str(event.get("event_type") or "")
+        event_id = str(event.get("event_id") or "")
+        lines.append(f"  {created:<26} {event_type:<26} {event_id}".rstrip())
+    return lines
+
+
 def _render_control_palette(payload: dict[str, Any]) -> list[str]:
     registry = _as_list(payload.get("control_registry"))
     if not registry:
@@ -342,6 +359,7 @@ def render_workbench_dashboard(payload: dict[str, Any]) -> str:
         _render_queue(payload),
         _render_control_mode(payload),
         _render_learning_layer(payload),
+        _render_recent_activity(payload),
         _render_control_palette(payload),
     ]
     blocks = ["\n".join(section) for section in sections if section]
