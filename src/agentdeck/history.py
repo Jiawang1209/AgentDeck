@@ -58,6 +58,10 @@ _MILESTONES = {
     "skill_loaded": lambda p: ("Skill loaded", _detail(p, "name")),
     "skill_suggested": lambda p: ("Skill suggested", _detail(p, "name")),
     "skill_created": lambda p: ("Skill created", _detail(p, "name")),
+    "run_loop_advanced": lambda p: (
+        "Run-loop advanced",
+        f"{_detail(p, 'dispatched') or 0} dispatched, stopped: {_detail(p, 'stopped_reason') or 'unknown'}",
+    ),
     "memory_suggested": lambda p: ("Memory suggested", ""),
     "memory_applied": lambda p: ("Memory applied", ""),
 }

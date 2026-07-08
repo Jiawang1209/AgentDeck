@@ -230,3 +230,16 @@ def test_render_history_distinguishes_autonomous_approval():
     }]
     md = render_history_markdown(events, "demo")
     assert "Approval auto-approved · apv_9" in md
+
+
+def test_render_history_humanizes_run_loop_advance():
+    from agentdeck.history import render_history_markdown
+
+    events = [{
+        "event_type": "run_loop_advanced",
+        "created_at": "2026-07-08T12:00:00+00:00",
+        "payload": {"plan_id": "pln_1", "auto_approved": 1, "dispatched": 1,
+                    "blocked": 0, "skipped": 1, "stopped_reason": "waiting_for_reply"},
+    }]
+    md = render_history_markdown(events, "demo")
+    assert "Run-loop advanced · 1 dispatched, stopped: waiting_for_reply" in md
