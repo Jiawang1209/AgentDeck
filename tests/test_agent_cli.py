@@ -5510,6 +5510,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "default_safety",
         "available_modes",
         "active_controls",
+        "autonomous_actions",
         "set_mode_command_template",
         "policy_source",
     ]
@@ -7430,6 +7431,24 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
                 "blocker": "requires --allow-agent and --max-approvals",
             },
         ],
+        "autonomous_actions": [
+            {
+                "kind": "approval_auto",
+                "label": "Auto-approve (autonomous)",
+                "command": "agentdeck approval auto --confirm",
+                "safety": "delegated",
+                "enabled": False,
+                "blocker": "autonomous mode is not enabled",
+            },
+            {
+                "kind": "run_loop",
+                "label": "Run-loop (autonomous)",
+                "command": "agentdeck run-loop --plan-id <id> --confirm",
+                "safety": "delegated",
+                "enabled": False,
+                "blocker": "requires --plan-id",
+            },
+        ],
         "set_mode_command_template": "agentdeck policy set-mode --mode <mode>",
         "policy_source": ".agentdeck/config.toml:leader.approval_mode",
     }
@@ -8118,7 +8137,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 105,
+        "item_count_before_filter": 107,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -8254,7 +8273,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 104,
+        "item_count_before_filter": 106,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -8297,7 +8316,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 105,
+        "item_count_before_filter": 107,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -8336,7 +8355,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 105,
+        "item_count_before_filter": 107,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -8369,7 +8388,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 105,
+        "item_count_before_filter": 107,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -8408,7 +8427,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 105,
+        "item_count_before_filter": 107,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

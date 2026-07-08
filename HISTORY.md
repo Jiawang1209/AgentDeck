@@ -4,7 +4,19 @@
 
 ## 2026-07-08
 
-### Current - Add end-to-end autonomous-chain integration test
+### Current - Light autonomous commands into the control registry（scope=autonomous）
+
+- **类型**: feat
+- **动机**: autonomous 目标已收官，但 `agentdeck approval auto --confirm` 和 `agentdeck run-loop --plan-id <id> --confirm` 从未进入只读命令面板（`control_registry` / `agentdeck controls`），未来 GUI/TUI 无法发现它们。补这条 surfacing slice，把两条命令暴露为可渲染的 palette control，为后续 NL intent 打底。渲染不是授权。
+- **What**:
+  - `control_mode_card` 新增 `autonomous_actions[]`（正好两条，从 `approval_mode` 派生）：`kind=approval_auto`（`agentdeck approval auto --confirm`、`safety=delegated`、只有 autonomous 模式 enabled，否则 blocker `autonomous mode is not enabled`）和 disabled `kind=run_loop`（`agentdeck run-loop --plan-id <id> --confirm`、blocker `requires --plan-id`）。
+  - `_workbench_control_registry`（`cli.py`）与镜像的 `workbench_control_registry`（`contracts.py`，validator 交叉校验用）各加一条 `scope=autonomous` append，使两条 control 流入 `control_registry[]`、`agentdeck controls --scope autonomous`、filters 和 groups。
+  - `WORKBENCH_CONTROL_MODE_CARD_FIELDS` 加 `autonomous_actions`；`validate_workbench_contract` 逐项校验（要求 disabled item 带 blocker）；`workbench_example()` fixture 同步补 `autonomous_actions`。
+  - 同步 `docs/contracts/workbench-schema.md`、`docs/contracts/controls-schema.md`、`CLAUDE.md`、`README.md`、`docs/handoff/current-development-state.md`。
+- **Impact**: 只读 surfacing，新增 `scope=autonomous` 命令面板组；无 provider 调用、无 tmux、无 state 写入、无执行；两条命令仍需人类显式 `--confirm`（run-loop 还需 autonomous 模式）。`control_mode_card` 新增字段属于 workbench 契约的加法扩展。
+- **Verification**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k "autonomous or control_registry or control_mode" tests/test_contracts.py -k "workbench or controls" -q`；全套 `pytest -q`；`python -m compileall src tests`；`git diff --check`。
+
+### Add end-to-end autonomous-chain integration test
 
 - **类型**: test
 - **动机**: autonomous 三块（history 账本 / 有界放权开关 / run-loop 执行循环）各自有单命令测试，但没有一条测试证明它们**跨多次 run-loop 调用真正推进到完成**。补一条端到端集成测试锁定这条主链，避免回归。
