@@ -4070,7 +4070,15 @@ def history_command(args: argparse.Namespace) -> int:
         events = store.list_events(limit=limit)
     else:
         events = store.all_events()
-    print(render_history_markdown(events, config.name), end="")
+    markdown = render_history_markdown(events, config.name)
+    write_target = getattr(args, "write", None)
+    if write_target is not None:
+        target = (Path(store.deck_dir) / "HISTORY.md") if write_target == "" else Path(write_target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(markdown, encoding="utf-8")
+        print(f"wrote {target}")
+        return 0
+    print(markdown, end="")
     return 0
 
 
@@ -12616,6 +12624,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     history.add_argument(
         "--limit", type=int, default=None, help="Only include the most recent N events (default: all)"
+    )
+    history.add_argument(
+        "--write",
+        nargs="?",
+        const="",
+        default=None,
+        help="Write the timeline to a file (default .agentdeck/HISTORY.md; pass a path to override)",
     )
     history.set_defaults(func=history_command)
 

@@ -109,3 +109,28 @@ def test_history_command_prints_markdown_timeline(tmp_path, monkeypatch, capsys)
     assert is_json is False
     # read-only: the ledger is unchanged
     assert StateStore(root).all_events() == events_before
+
+
+def test_history_command_write_materializes_file(tmp_path, monkeypatch, capsys):
+    from agentdeck import cli
+
+    root = _init_project(tmp_path)
+    monkeypatch.chdir(root)
+    store = StateStore(root)
+    store.append_event(EventRecord.create("round_released", {"round": 1}))
+    events_before = store.all_events()
+
+    exit_code = cli.main(["history", "--write"])
+
+    assert exit_code == 0
+    target = root / ".agentdeck" / "HISTORY.md"
+    assert target.exists()
+    content = target.read_text(encoding="utf-8")
+    assert content.startswith("# AgentDeck History")
+    assert "Round released · round 1" in content
+    # stdout reports the write rather than dumping the markdown
+    out = capsys.readouterr().out
+    assert "wrote" in out and "HISTORY.md" in out
+    assert not out.startswith("# AgentDeck History")
+    # writing the projection leaves the audit ledger unchanged
+    assert StateStore(root).all_events() == events_before
