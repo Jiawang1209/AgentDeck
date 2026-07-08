@@ -39,7 +39,7 @@ The project already ships a **read-only** `agentdeck loop` (loop-once: recommend
 - `--plan-id <id>` required; must resolve to a saved plan (else error, no writes).
 - `--confirm` required (else reject: "run-loop requires --confirm"; no writes).
 - Requires autonomous mode (else reject: "autonomous mode is not enabled; run agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>"; no writes).
-- Reads state through the ProjectView contract gate (`validate_project_view_contract()`) before acting, like other commands.
+- Validates the plan exists (`store.plan_status(plan_id)`; unknown → error, no writes). It otherwise mirrors its sibling `approval auto` (loads state directly; no separate ProjectView gate — the read-only surfaces it feeds already self-validate).
 
 ### 2. The forward wave (write actions — both already sanctioned)
 
@@ -56,13 +56,14 @@ After the wave, determine where the plan is stuck by reusing the existing `leade
 
 | review next_action | stopped_reason | next_command (explicit, for the human) |
 |---|---|---|
-| a dispatch/auto-approve errored this run | `error` | inspect: `agentdeck plan status --plan-id <id>` |
+| a dispatch errored this run | `error` | inspect: `agentdeck plan status --plan-id <id>` |
+| `dispatch_approved` still present after the wave (an approved step could not be dispatched → its agent has no running pane) | `blocked` | `agentdeck agent spawn --agent <id>` |
 | `wait_for_approval` (pending, non-auto) | `needs_human_approval` | `agentdeck approval list` |
 | `wait_for_reply` | `waiting_for_reply` | `agentdeck capture-reply --agent <id> --message-id <msg_id>` (the head awaiting reply) |
 | `summarize` / complete | `complete` | `agentdeck leader summary --plan-id <id>` |
 | nothing actionable | `idle` | `agentdeck run --plan-id <id>` (read-only progress) |
 
-Priority order when several apply: `error` > `needs_human_approval` > `waiting_for_reply` > `complete` > `idle`.
+Priority: `error` first, then the single `leader review` next_action determines the reason (`dispatch_approved`→`blocked`, `wait_for_approval`→`needs_human_approval`, `wait_for_reply`→`waiting_for_reply`, `summarize`→`complete`, else `idle`). The `blocked` reason covers an approved-but-undispatchable step (agent not running): run-loop does not force-spawn, so the human is handed the explicit spawn command.
 
 ### 4. Output — read-only `run_loop_card`
 
