@@ -237,6 +237,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "doctor-schema.md",
         "events-schema.md",
         "run-schema.md",
+        "run-loop-schema.md",
         "release-schema.md",
         "workbench-schema.md",
         "controls-schema.md",
@@ -265,7 +266,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 23
+    assert payload["count"] == 24
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -274,6 +275,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "doctor",
         "events",
         "run",
+        "run-loop",
         "release",
         "workbench",
         "controls",
@@ -5052,3 +5054,37 @@ def test_validate_artifacts_contract_reports_missing_artifact_field() -> None:
     result = validate_artifacts_contract(payload)
 
     assert result == {"ok": False, "errors": ["missing artifact item field: trace_command"]}
+
+
+def test_run_loop_contract_payload_and_validator_accept_example():
+    from pathlib import Path
+    from agentdeck.contracts import (
+        run_loop_contract_response,
+        run_loop_example,
+        validate_run_loop_contract,
+    )
+
+    path = Path("docs/contracts/run-loop-schema.md")
+    payload = run_loop_contract_response(path, include_example=True)
+    assert payload["run_loop_command"] == "agentdeck run-loop --plan-id <id> --confirm"
+    assert "run_loop_response_fields" in payload
+    assert payload["example_run_loop"]["mode"] == "run_loop"
+
+    result = validate_run_loop_contract(run_loop_example())
+    assert result["ok"], result["errors"]
+
+
+def test_validate_run_loop_contract_rejects_bad_mode_and_reason():
+    from agentdeck.contracts import run_loop_example, validate_run_loop_contract
+
+    bad = dict(run_loop_example())
+    bad["mode"] = "run"
+    assert not validate_run_loop_contract(bad)["ok"]
+
+    bad2 = dict(run_loop_example())
+    bad2["stopped_reason"] = "made_up"
+    assert not validate_run_loop_contract(bad2)["ok"]
+
+    bad3 = dict(run_loop_example())
+    bad3["safety"] = "inspect"
+    assert not validate_run_loop_contract(bad3)["ok"]

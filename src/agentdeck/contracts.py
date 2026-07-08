@@ -63,6 +63,12 @@ CONTRACT_INDEX_SPECS = (
         "run-schema.md",
     ),
     (
+        "run-loop",
+        "agentdeck contract run-loop",
+        "agentdeck contract run-loop --example",
+        "run-loop-schema.md",
+    ),
+    (
         "release",
         "agentdeck contract release",
         "agentdeck contract release --example",
@@ -1867,6 +1873,30 @@ LEADER_SUMMARY_ARTIFACT_FIELDS = (
 )
 
 LEADER_SUMMARY_CONTROL_FIELDS = LEADER_REVIEW_CONTROL_FIELDS
+
+RUN_LOOP_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "plan_id",
+    "requires_explicit_user",
+    "safety",
+    "auto_approved",
+    "dispatched",
+    "blocked",
+    "skipped",
+    "stopped_reason",
+    "next_command",
+    "policy",
+)
+
+RUN_LOOP_STOP_REASONS = (
+    "error",
+    "blocked",
+    "needs_human_approval",
+    "waiting_for_reply",
+    "complete",
+    "idle",
+)
 
 RUN_START_RESPONSE_FIELDS = (
     "schema_version",
@@ -3843,6 +3873,77 @@ def events_contract_response(contract_path: Path, include_example: bool = False)
         payload["example_event_item_fields"] = list(example["events"][0])
         payload["example_events"] = example
     return payload
+
+
+def run_loop_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "run_loop",
+        "plan_id": "pln_example",
+        "requires_explicit_user": True,
+        "safety": "delegated",
+        "auto_approved": 1,
+        "dispatched": [
+            {
+                "approval_id": "apv_example",
+                "agent_id": "planner",
+                "message_id": "msg_example",
+                "trace_command": "agentdeck trace --id msg_example",
+            }
+        ],
+        "blocked": [],
+        "skipped": [
+            {"approval_id": "apv_other", "agent_id": "reviewer", "reason": "agent not in allowlist"}
+        ],
+        "stopped_reason": "waiting_for_reply",
+        "next_command": "agentdeck capture-reply --agent planner --message-id msg_example",
+        "policy": {"allowed_agents": ["planner"], "max_approvals": 3},
+    }
+
+
+def run_loop_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "run_loop_command": "agentdeck run-loop --plan-id <id> --confirm",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "run_loop_response_fields": list(RUN_LOOP_RESPONSE_FIELDS),
+        "stop_reasons": list(RUN_LOOP_STOP_REASONS),
+        "loop_contract": "agentdeck contract loop",
+        "approvals_contract": "agentdeck contract approvals",
+        "project_view_contract": "agentdeck contract project-view",
+    }
+
+
+def run_loop_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = run_loop_contract_payload(contract_path)
+    if include_example:
+        example = run_loop_example()
+        payload["example"] = True
+        payload["example_run_loop_response_fields"] = list(example)
+        payload["example_run_loop"] = example
+    return payload
+
+
+def validate_run_loop_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in RUN_LOOP_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing run_loop field: {field}")
+    if payload.get("mode") != "run_loop":
+        errors.append(f"run_loop.mode must be run_loop, got {payload.get('mode')}")
+    if payload.get("safety") != "delegated":
+        errors.append("run_loop.safety must be delegated")
+    if payload.get("requires_explicit_user") is not True:
+        errors.append("run_loop.requires_explicit_user must be true")
+    if payload.get("stopped_reason") not in RUN_LOOP_STOP_REASONS:
+        errors.append(f"run_loop.stopped_reason must be one of {RUN_LOOP_STOP_REASONS}")
+    if not isinstance(payload.get("next_command"), str) or not payload.get("next_command"):
+        errors.append("run_loop.next_command must be a non-empty string")
+    for list_field in ("dispatched", "blocked", "skipped"):
+        if not isinstance(payload.get(list_field), list):
+            errors.append(f"run_loop.{list_field} must be a list")
+    return {"ok": not errors, "errors": errors}
 
 
 def run_start_contract_payload(contract_path: Path) -> dict[str, object]:
