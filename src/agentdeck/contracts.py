@@ -2950,6 +2950,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "continue_card_fields": list(CONTINUE_CARD_FIELDS),
         "run_start_card_fields": list(RUN_START_RESPONSE_FIELDS),
         "run_progress_card_fields": list(RUN_PROGRESS_RESPONSE_FIELDS),
+        "run_loop_preview_card_fields": list(LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS),
         "capture_card_fields": list(LEADER_CHAT_CAPTURE_CARD_FIELDS),
         "terminal_card_fields": list(LEADER_CHAT_TERMINAL_CARD_FIELDS),
         "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
@@ -6596,6 +6597,22 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append("run_progress_card: next_command must match response next_command")
     elif "run_progress_card" in payload and run_progress_card is not None:
         errors.append("run_progress_card must be an object")
+    run_loop_preview_card = payload.get("run_loop_preview_card")
+    if isinstance(run_loop_preview_card, dict):
+        for field in LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS:
+            if field not in run_loop_preview_card:
+                errors.append(f"missing run_loop_preview_card field: {field}")
+    elif "run_loop_preview_card" in payload and run_loop_preview_card is not None:
+        errors.append("run_loop_preview_card must be an object")
+    if payload.get("mode") == "run_loop_preview":
+        if not isinstance(run_loop_preview_card, dict):
+            errors.append("run_loop_preview mode requires run_loop_preview_card")
+        else:
+            if payload.get("next_command") != run_loop_preview_card.get("command"):
+                errors.append("run_loop_preview.next_command must match run_loop_preview_card.command")
+            intent_card = payload.get("intent_card")
+            if isinstance(intent_card, dict) and intent_card.get("embedded_card") != "run_loop_preview_card":
+                errors.append("run_loop_preview intent_card.embedded_card must be run_loop_preview_card")
     capture_card = payload.get("capture_card")
     if isinstance(capture_card, dict):
         _validate_leader_chat_capture_card_contract(errors, capture_card)

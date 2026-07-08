@@ -5088,3 +5088,12 @@ def test_validate_run_loop_contract_rejects_bad_mode_and_reason():
     bad3 = dict(run_loop_example())
     bad3["safety"] = "inspect"
     assert not validate_run_loop_contract(bad3)["ok"]
+
+
+def test_leader_chat_contract_exposes_run_loop_preview_card_fields():
+    from pathlib import Path
+    from agentdeck.contracts import leader_chat_contract_response, LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS
+
+    path = Path("docs/contracts/leader-chat-schema.md")
+    payload = leader_chat_contract_response(path)
+    assert payload["run_loop_preview_card_fields"] == list(LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS)
