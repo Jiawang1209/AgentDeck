@@ -176,6 +176,20 @@ class TuiModel:
                 self.selected_index = index
                 return
 
+    def focused_command(self) -> str | None:
+        """The explicit command for the current selection (for launch-on-quit).
+
+        Read-only: this only *names* the command; the human runs it.
+        """
+        if self.mode == "palette":
+            control = self.selected_control()
+            return control.get("command") if control else None
+        if self.mode == "approvals":
+            return self.selected_approval_command()
+        if self.mode == "runtime":
+            return self.selected_agent_command()
+        return None
+
     def toggle_palette(self) -> None:
         if self.mode == "help":
             self.mode = self._prev_mode
@@ -201,7 +215,7 @@ class TuiModel:
             "  [/]            filter the palette (Enter apply, Esc cancel)",
             "  [r]            refresh (re-fetch + validate workbench snapshot)",
             "  [?] / [h]      toggle this help",
-            "  [q]            quit",
+            "  [q]            quit (prints the currently selected command so you can run it)",
             "",
             "Read-only viewer: selecting a control only shows the exact command",
             "to run (run: ...); the TUI never executes, writes state, or touches tmux.",
@@ -478,7 +492,7 @@ def run_tui(stdscr: Any, model: "TuiModel", fetch: Any) -> None:
         stdscr.refresh()
         key = stdscr.getch()
         if key in (ord("q"), ord("Q")):
-            return
+            return model.focused_command()
         if key in (ord("?"), ord("h"), ord("H")):
             model.toggle_help()
         elif key == ord("/"):

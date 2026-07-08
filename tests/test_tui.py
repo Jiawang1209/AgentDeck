@@ -81,6 +81,38 @@ def test_tui_render_frame_approvals_lists_items() -> None:
     assert "pending" in text
 
 
+def test_tui_model_focused_command_reflects_active_view() -> None:
+    payload = _payload_with_approvals()
+    model = TuiModel(payload)
+
+    # overview: nothing is "focused" for launching
+    assert model.focused_command() is None
+
+    model.toggle_approvals()
+    model.move_selection(-100)
+    assert model.focused_command() == "agentdeck approval approve --approval-id apv_1"
+
+    model.toggle_approvals()  # back to overview
+    model.toggle_runtime()
+    model.move_selection(-100)
+    assert model.focused_command() == "agentdeck agent capture --agent planner --lines 200"
+
+    model.toggle_runtime()  # back to overview
+    model.toggle_palette()
+    assert model.focused_command() == (model.selected_control() or {}).get("command")
+
+
+def test_run_tui_returns_focused_command_on_quit() -> None:
+    from agentdeck.tui import run_tui
+
+    payload = _payload_with_approvals()
+    model = TuiModel(payload)
+    # enter the approvals view (selects the first, pending, approval), then quit
+    stdscr = _FakeStdscr([ord("a"), ord("q")])
+    result = run_tui(stdscr, model, lambda: None)
+    assert result == "agentdeck approval approve --approval-id apv_1"
+
+
 def test_tui_model_runtime_view_navigates_and_shows_status_aware_command() -> None:
     payload = workbench_example()
     snapshot = copy.deepcopy(payload)

@@ -2,9 +2,20 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
-## 2026-07-08
+## 2026-07-09
 
-### Current - Add a navigable runtime (agents) view to the interactive TUI
+### Current - TUI prints the selected command on quit (view→run bridge)
+
+- **类型**: feat
+- **动机**: TUI 此前只能"看"——选中项的命令只在 footer 一闪而过、抓不住。给它一个只读的 view→run 桥：退出时把你当前选中的那条命令打印到 stdout，逛完直接能拿去敲。仍严守"TUI 从不执行"——它只打印，执行还是人。
+- **What**:
+  - `src/agentdeck/tui.py` 新增 `TuiModel.focused_command()`：按当前 mode 返回选中项的命令（palette→control command，approvals→status-aware approve/dispatch，runtime→capture/spawn，overview/help→None）；`run_tui` 在 `q` 退出时 `return model.focused_command()`；help 更新 `[q]` 说明。
+  - `src/agentdeck/cli.py::tui_command` 接收 `curses.wrapper(...)` 的返回值，在 curses 退出后 `print(focused_command)`（非空时）。
+  - 纯只读：不执行、不写 state、不碰 tmux。
+- **Impact**: `agentdeck tui` 退出后直接给出你正在看的那条命令，方便复制执行；无破坏性改动（run_tui 返回值此前为 None，既有调用忽略返回值）。
+- **Verification**: `conda run -n agentdeck pytest tests/test_tui.py -q`（含新 `test_tui_model_focused_command_reflects_active_view` / `test_run_tui_returns_focused_command_on_quit`，红→绿；用 `_FakeStdscr` 脚本化按键驱动 run_tui）；全套 `pytest -q`（687 passed）；`python -m compileall src tests`；`git diff --check`。
+
+### Add a navigable runtime (agents) view to the interactive TUI
 
 - **类型**: feat
 - **动机**: "驾驶舱"方向第五刀，补齐操作者两个核心面里的另一半——审批视图已有，现在加对称的 runtime/agents 视图（北极星优先级 #4 runtime 可见）。

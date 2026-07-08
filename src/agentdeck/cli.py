@@ -4112,7 +4112,11 @@ def tui_command(args: argparse.Namespace) -> int:
 
     import curses
 
-    curses.wrapper(lambda stdscr: run_tui(stdscr, TuiModel(payload), fetch))
+    focused_command = curses.wrapper(lambda stdscr: run_tui(stdscr, TuiModel(payload), fetch))
+    if focused_command:
+        # Read-only bridge from view to run: print the command the user was
+        # looking at so they can run it themselves. The TUI never executes it.
+        print(focused_command)
     return 0
 
 
