@@ -364,11 +364,13 @@ All three optional TUI polish items are now committed: (1) the palette focuses t
 
 The interactive TUI is feature-complete (overview/palette/help, filter, refresh, focus, colors) and fully tested — `run_tui` is covered end-to-end via a fake stdscr (`tests/test_tui.py`). The TUI/dashboard reference-client line is done.
 
-**Deferred follow-ups (candidate next slices, each a safe single slice that needs no big decision):**
-- Light `agentdeck approval auto --confirm` **and** `agentdeck run-loop --plan-id <id> --confirm` into the workbench `control_registry`/operator card so GUI/TUI can render them (touches the strict `control_registry` derivation + `validate_workbench_contract()` per-item rules).
-- Add a natural-language `leader chat` intent for `run-loop` (explicitly out of scope in the run-loop design; the command is fully functional and audited without it).
-- Surface `learn review` suggestions into a read-only workbench card.
-- `agentdeck dashboard --watch` polish (if any remains).
+An end-to-end integration test now locks the whole autonomous chain across invocations: `tests/test_agent_cli.py::test_run_loop_drives_plan_to_completion_across_invocations` (policy set-mode autonomous → run-loop auto-approve+dispatch → `waiting_for_reply` gate → capture-reply → run-loop → `complete`, with two `run_loop_advanced` ledger events).
+
+**Remaining GUI-mainline follow-ups (both genuinely undone; each is substantial and touches strict validators — pick ONE as the next direction):**
+- Light `agentdeck approval auto --confirm` **and** `agentdeck run-loop --plan-id <id> --confirm` into the workbench `control_registry` / `agentdeck controls` (needs a new card + `scope`, plus `validate_workbench_contract()` per-item rules and the controls contract). Foundational GUI-discovery plumbing; lower user-visibility now, unblocks the NL intent later.
+- Add a natural-language `leader chat` intent for `run-loop` (e.g. "推进计划 pln_xxx" → read-only preview that suggests the explicit `run-loop` command; out of scope in the run-loop design). More user-tangible; larger/riskier (the leader_chat dispatch is huge with strict intent/validator machinery).
+
+Already done, do NOT redo: `agentdeck dashboard --watch [--interval N] [--iterations N]` exists (`dashboard_command`, cli.py); `learning_review_card` is already a read-only workbench card (`_workbench_learning_review_card`, cli.py:1480).
 
 Whatever is chosen next must preserve human approval and keep every read-only surface read-only.
 

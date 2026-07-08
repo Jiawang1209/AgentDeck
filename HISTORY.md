@@ -4,7 +4,17 @@
 
 ## 2026-07-08
 
-### Current - Add `agentdeck run-loop` executing engine（autonomous 子项目 3，autonomous 目标收官）
+### Current - Add end-to-end autonomous-chain integration test
+
+- **类型**: test
+- **动机**: autonomous 三块（history 账本 / 有界放权开关 / run-loop 执行循环）各自有单命令测试，但没有一条测试证明它们**跨多次 run-loop 调用真正推进到完成**。补一条端到端集成测试锁定这条主链，避免回归。
+- **What**:
+  - 新增 `tests/test_agent_cli.py::test_run_loop_drives_plan_to_completion_across_invocations`：`policy set-mode --mode autonomous`（子项目 2）→ 第一次 `run-loop` 自动批准+派发并停在 `waiting_for_reply` gate（子项目 3）→ 人类 `capture-reply` 回收 worker 回复 → 第二次 `run-loop` 判定 `complete` 且 `next_command` 指向 `leader summary` → 断言账本里有两条 `run_loop_advanced`（子项目 1）。
+  - 复用现有 `FakeTmuxBackend` / `_seed_plan_with_pending_approval` / `_enable_autonomous` helper，无生产代码改动。
+- **Impact**: 纯测试加固；证明三块协同工作、run-loop 能跨调用推进到收尾；无行为变化、无破坏性改动。
+- **Verification**: `conda run -n agentdeck pytest tests/test_agent_cli.py::test_run_loop_drives_plan_to_completion_across_invocations -q`（1 passed）；全套 `pytest -q`；`python -m compileall src tests`；`git diff --check`。
+
+### Add `agentdeck run-loop` executing engine（autonomous 子项目 3，autonomous 目标收官）
 
 - **类型**: feat
 - **动机**: 完成北极星 autonomous 三块拆分的子项目 3（执行循环）。此前 plan→approve→dispatch→capture→review→release 每步都要人手一条命令；本子项目在预授权的 autonomous 策略内加一个"drive-forward"命令，把这条链自动走到下一个需要人类的 gate 再停下，交回控制权。

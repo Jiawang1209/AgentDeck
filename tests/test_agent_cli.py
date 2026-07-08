@@ -10375,3 +10375,41 @@ def test_run_loop_stops_at_human_approval_for_non_allowlisted(tmp_path, monkeypa
     assert payload["stopped_reason"] == "needs_human_approval"
     assert payload["next_command"] == "agentdeck approval list"
     assert any(s["agent_id"] == "reviewer" for s in payload["skipped"])
+
+
+def test_run_loop_drives_plan_to_completion_across_invocations(tmp_path, monkeypatch, capsys):
+    """End-to-end over all three autonomous-mode sub-projects: policy set-mode
+    autonomous (2) → run-loop wave + gate (3) → capture-reply → run-loop again →
+    complete, with every advance audited into the history ledger (1)."""
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    _enable_autonomous(root, monkeypatch, capsys, ["planner"], 5)
+    plan_id = _seed_plan_with_pending_approval(root, agent_id="planner")
+
+    # 1) first run-loop: auto-approve + dispatch, then stop at the reply gate
+    assert cli.main(["run-loop", "--plan-id", plan_id, "--confirm"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["stopped_reason"] == "waiting_for_reply"
+    message_id = first["dispatched"][0]["message_id"]
+
+    # 2) the human captures the worker reply — the exact gate run-loop handed back
+    def capture_output(_config, pane_id, lines=200):
+        fake.captured.append((pane_id, lines))
+        return "status: completed\nsummary: done"
+
+    fake.capture_output = capture_output
+    assert cli.main(["capture-reply", "--agent", "planner", "--message-id", message_id]) == 0
+    capsys.readouterr()
+
+    # 3) second run-loop: nothing left to auto-approve; the plan is now complete
+    assert cli.main(["run-loop", "--plan-id", plan_id, "--confirm"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["auto_approved"] == 0
+    assert second["stopped_reason"] == "complete"
+    assert second["next_command"] == f"agentdeck leader summary --plan-id {plan_id}"
+
+    # the whole chain is audited: two run-loop advances in the ledger
+    advances = [e for e in StateStore(root).all_events() if e["event_type"] == "run_loop_advanced"]
+    assert [a["payload"]["stopped_reason"] for a in advances] == ["waiting_for_reply", "complete"]
