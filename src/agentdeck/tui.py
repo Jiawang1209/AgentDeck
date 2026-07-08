@@ -34,6 +34,7 @@ class TuiModel:
 
     def __init__(self, payload: dict[str, Any]) -> None:
         self.mode = "overview"
+        self._prev_mode = "overview"
         self.scroll = 0
         self.selected_index = 0
         self.filter_text = ""
@@ -106,14 +107,40 @@ class TuiModel:
                 return
 
     def toggle_palette(self) -> None:
+        if self.mode == "help":
+            self.mode = self._prev_mode
         self.mode = "palette" if self.mode == "overview" else "overview"
         if self.mode == "palette":
             self._focus_next_command()
+
+    def toggle_help(self) -> None:
+        if self.mode == "help":
+            self.mode = self._prev_mode
+        else:
+            self._prev_mode = self.mode
+            self.mode = "help"
+
+    def help_lines(self) -> list[str]:
+        return [
+            "Keys",
+            "  [tab] / [p]    toggle overview <-> command palette",
+            "  [up]/[down] ([k]/[j])   scroll overview or move palette selection",
+            "  [PgUp]/[PgDn] ([space]) jump by 10",
+            "  [/]            filter the palette (Enter apply, Esc cancel)",
+            "  [r]            refresh (re-fetch + validate workbench snapshot)",
+            "  [?] / [h]      toggle this help",
+            "  [q]            quit",
+            "",
+            "Read-only viewer: selecting a control only shows the exact command",
+            "to run (run: ...); the TUI never executes, writes state, or touches tmux.",
+        ]
 
     def refresh(self, payload: dict[str, Any]) -> None:
         self._set_payload(payload)
 
     def footer_text(self) -> str:
+        if self.mode == "help":
+            return "help  |  [?] back  [q] quit"
         if self.mode == "palette":
             controls = self._filtered_controls()
             filter_hint = f"  filter:'{self.filter_text}'" if self.filter_text else ""
@@ -171,7 +198,9 @@ def render_frame(model: "TuiModel", height: int, width: int) -> list[str]:
     title = _fit(f"AgentDeck TUI — {model.mode}", width)
     footer_lines = [_fit(line, width) for line in model.footer_text().split("\n")]
     body_height = height - 1 - len(footer_lines)
-    if model.mode == "palette":
+    if model.mode == "help":
+        body = [_fit(line, width) for line in model.help_lines()]
+    elif model.mode == "palette":
         body = _palette_rows(model, body_height, width)
     else:
         lines = model.overview_lines()
@@ -235,7 +264,9 @@ def run_tui(stdscr: Any, model: "TuiModel", fetch: Any) -> None:
         key = stdscr.getch()
         if key in (ord("q"), ord("Q")):
             return
-        if key == ord("/"):
+        if key in (ord("?"), ord("h"), ord("H")):
+            model.toggle_help()
+        elif key == ord("/"):
             if model.mode != "palette":
                 model.toggle_palette()
             _read_filter(stdscr, model)

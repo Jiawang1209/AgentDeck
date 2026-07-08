@@ -4,6 +4,12 @@
 
 ## 2026-07-08
 
+### Current - Add key legend help overlay to interactive TUI
+
+- 给 `agentdeck tui` 加 help 模式:按 `?`(或 `h`)切换一个快捷键图例浮层,列出 tab/p、方向键、PgUp/PgDn、`/`、`r`、`?`、`q` 的作用,并重申只读语义;再按一次返回之前的 overview/palette 模式。
+- 纯逻辑 `TuiModel.toggle_help()` / `help_lines()`,`render_frame` 新增 help 分支渲染图例;curses 里 `?`/`h` 绑定 toggle_help。仍只读。
+- 验证记录:已先确认红测失败,`TuiModel` 最初无 `toggle_help`;实现后目标测试 `conda run -n agentdeck pytest tests/test_tui.py -q` 11 项通过(含 help 图例内容 + 退出恢复前一模式);`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过;`conda run -n agentdeck pytest -q` 通过,全量测试 634 项通过。
+
 ### Current - Focus recovery next_command when TUI palette opens
 
 - `agentdeck tui` 打开命令面板时（`toggle_palette` 进入 palette）自动把选中项定位到 command 等于顶层 `next_command`（recovery 推荐的下一步）的控件；找不到时保持第一项。让用户一进面板就落在"当前该运行哪条命令"上。

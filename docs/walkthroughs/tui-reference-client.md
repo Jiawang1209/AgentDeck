@@ -89,6 +89,7 @@ memory suggestions: 0 pending  (agentdeck memory suggestions)
 - `↑` / `↓` (or `k` / `j`), `PgUp` / `PgDn` — scroll the overview or move the palette selection.
 - `/` — filter the palette (type to narrow controls by scope/kind/label/command; Enter applies, Esc cancels).
 - `r` — refresh (re-fetch and re-validate the workbench snapshot).
+- `?` / `h` — toggle a key-legend help overlay.
 - `q` — quit.
 
 In the palette, each row shows a control's `scope`, `kind`, `label`, and an `[x]` / `[ ]` enabled flag; the footer surfaces the selected control's `safety`, enabled/blocker state, and the **exact command to run** (`run: <command>`). The TUI is strictly a viewer — it never executes the command, writes state, calls a provider, or touches tmux. Selecting a control just shows you what to type.

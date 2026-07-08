@@ -175,3 +175,22 @@ def test_tui_palette_focuses_recovery_next_command_on_open() -> None:
     control = model.selected_control()
     assert control is not None
     assert control["command"] == payload["next_command"]
+
+
+def test_tui_help_mode_shows_key_legend_and_restores_previous_mode() -> None:
+    payload = workbench_example()
+    model = TuiModel(payload)
+    model.toggle_palette()
+
+    model.toggle_help()
+    assert model.mode == "help"
+    frame = render_frame(model, 20, 80)
+    joined = "\n".join(frame)
+    assert "Keys" in joined
+    assert "[tab]" in joined
+    assert "[/]" in joined
+    assert "quit" in joined
+
+    # leaving help returns to whatever mode was active before
+    model.toggle_help()
+    assert model.mode == "palette"
