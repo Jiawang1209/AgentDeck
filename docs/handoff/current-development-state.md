@@ -365,23 +365,10 @@ Both must preserve human approval and keep every read-only surface read-only.
 
 The interactive TUI is feature-complete (overview/palette/help, filter, refresh, focus, colors) and now fully tested — `run_tui` is covered end-to-end via a fake stdscr (`tests/test_tui.py`). The TUI/dashboard reference-client line is done.
 
-## Next Best Step
-
-This is a genuine product fork — pick a direction (the running `/loop` should stop and ask here rather than choose arbitrarily):
-- **New capability from `docs/roadmap/ultimate-goal-roadmap.md`** beyond the reference-client work (e.g. assisted-run flow deepening, provider/runtime work, or a Phase past G6).
-- **Harden an existing subsystem** (e.g. more adversarial contract validator tests, or a real end-to-end round smoke test wired into CI-style checks).
-- Preserve human approval and keep every read-only surface read-only.
-- The curses key loop (`run_tui`) is a thin shell that isn't unit-tested (needs a TTY); the pure `TuiModel` + `render_frame` are. If deeper coverage is wanted, drive `run_tui` with a fake stdscr feeding scripted keys.
-- Otherwise revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability.
-- Preserve human approval and keep every read-only surface read-only.
-
-## Next Best Step
-
-Continue the autonomous run:
-
-- Direction 2: surface `learn review` suggestions into a GUI-consumable workbench card (mirroring `skill_suggestions_card` / `memory_suggestions_card`), read-only, with a discovery contract; keep the explicit `skills suggest` / `memory suggest` commands as the only write path into the pending queues.
-- Direction 3: add `agentdeck dashboard --watch [--interval N] [--iterations N]` that re-renders the text dashboard, mirroring `workbench --watch`, still read-only.
-- Preserve human approval and keep every read-only surface read-only.
+**Sub-project 3 is a genuine product fork — the `/loop` stopped here to ask the human rather than choose arbitrarily.** Candidate directions:
+- **Sub-project 3 (the autonomous-mode payoff): the executing round loop** — a command that walks plan → (auto-)approval → dispatch → capture → review → release, reusing `select_auto_approvals`. This is what makes autonomous mode actually *act* end to end; it is the largest and highest-risk piece and needs a scoped design decision (how far one invocation runs, when it stops, how failures surface).
+- **Smaller follow-ups that don't need a big decision** (any of these is a safe single slice): expose `agentdeck approval auto --confirm` as a `control_registry`/operator control (deferred in the plan's Notes §Deferred); surface `learn review` suggestions into a read-only workbench card; add `agentdeck dashboard --watch`.
+- Whatever is chosen must preserve human approval and keep every read-only surface read-only.
 
 ## Required Verification Before Handoff
 
