@@ -4,7 +4,19 @@
 
 ## 2026-07-09
 
-### Current - TUI prints the selected command on quit (view→run bridge)
+### Current - Add read-only `agentdeck plan board` multi-plan overview (multi-plan lane slice 1)
+
+- **类型**: feat
+- **动机**: 多计划并行 lane 第一刀。state 层早已 per-plan（`list_plans`/`leader_review`/`run_loop_gate`），但几乎所有只读面都默认最新一个 plan（`plans[-1]`）；缺的是"同屏看见每个计划、分别推进"的可见性。加一个只读看板，一眼看清"A 等我审批、B 等回复、C 已完成"，并给出每个计划显式的下一步命令。
+- **What**:
+  - `src/agentdeck/contracts.py` 新增 `PLAN_BOARD_RESPONSE_FIELDS`/`PLAN_BOARD_ITEM_FIELDS`/`PLAN_BOARD_GATES`、`plan_board_example()`、`plan_board_contract_payload/response()`、`validate_plan_board_contract()`，并把 `plans` 注册进 `CONTRACT_INDEX_SPECS`。
+  - `src/agentdeck/cli.py` 新增 `plan_board_command`（`agentdeck plan board` 子命令）：对每个 `store.list_plans()` 用只读 `store.leader_review(plan_id)` + 纯 `run_loop_gate(review, False, plan_id)` 派生 `gate`/`next_command`/`active`/`counts`，输出前经 `validate_plan_board_contract()` 守门；新增 `contract_plans_command`（`agentdeck contract plans [--example]`）。
+  - 新增 `docs/contracts/plans-schema.md`（镜像 run-loop 契约文档）；README 命令清单与契约发现段、HISTORY、handoff 同步更新。
+  - 纯只读聚合：不调用 provider、不读写 tmux、不写 state、不追加事件；每个 `next_command` 都是操作者本就会敲的显式命令，看板只呈现、从不执行。
+- **Impact**: `agentdeck plan board` 与 `agentdeck contract plans` 上线，为后续 workbench `plan_board_card`、dashboard Plans 区、TUI plans 视图、多计划 recovery、NL "查看所有计划" intent 和并行调度器打底；空项目返回 `plan_count=0`/`plans=[]`，有效非错误；无破坏性改动。
+- **Verification**: `conda run -n agentdeck pytest tests/test_contracts.py -k plan_board tests/test_agent_cli.py -k "plan_board or contract_plans" -q`（新测试红→绿，含只读断言 `state == before`）；全套 `pytest -q`；`python -m compileall src tests -q`；`git diff --check`。
+
+### TUI prints the selected command on quit (view→run bridge)
 
 - **类型**: feat
 - **动机**: TUI 此前只能"看"——选中项的命令只在 footer 一闪而过、抓不住。给它一个只读的 view→run 桥：退出时把你当前选中的那条命令打印到 stdout，逛完直接能拿去敲。仍严守"TUI 从不执行"——它只打印，执行还是人。

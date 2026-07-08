@@ -1,6 +1,6 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-08
+Updated: 2026-07-09
 
 ## Active Goal
 
@@ -385,9 +385,24 @@ The interactive TUI (`src/agentdeck/tui.py`) also gained two navigable read-only
 
 The TUI is now a view→run bridge: on quit it returns/prints the currently-focused command (`TuiModel.focused_command()` — palette control / status-aware approval / status-aware agent command; `run_tui` returns it; `tui_command` prints it after curses teardown). Still read-only — it prints, never executes. Tests: `tests/test_tui.py::test_tui_model_focused_command_reflects_active_view` / `::test_run_tui_returns_focused_command_on_quit`.
 
-The "make the contracts visible" lane is now substantial (dashboard: Control mode + Runtime + Recent activity sections; TUI: approvals + runtime interactive views + print-selected-command-on-quit). Candidate next slices (contained): a TUI queue/run-progress view; select-to-focus other card types. Larger forks still open (ask the human): a full standalone GUI client; Skill Registry marketplace/allowlist; multi-plan/parallel orchestration; remote/MCP transport. Whatever is chosen must preserve human approval and keep every read-only surface read-only.
+The "make the contracts visible" lane is now substantial (dashboard: Control mode + Runtime + Recent activity sections; TUI: approvals + runtime interactive views + print-selected-command-on-quit).
 
 Already done, do NOT redo: `agentdeck dashboard --watch [--interval N] [--iterations N]` exists (`dashboard_command`, cli.py); `learning_review_card` is already a read-only workbench card (`_workbench_learning_review_card`, cli.py:1480).
+
+## Current Direction: multi-plan lane ("多个计划同屏可见、分别推进")
+
+The human picked the multi-plan-parallel lane: see all active plans at once and drive any of them separately. The state layer is already per-plan (`list_plans`, `plan_by_id`, `plan_status`, `leader_review`); the gap was purely visibility — nearly every read-only surface defaults to the single latest plan (`plans[-1]`).
+
+**Slice 1 of the multi-plan lane is done:** read-only `agentdeck plan board` — a multi-plan overview that lists every plan with its derived `gate` and explicit per-plan `next_command`, plus `plan_count` / `active_count`. It reuses only the read-only `store.leader_review(plan_id)` + the pure `run_loop_gate(review, False, plan_id)` (`src/agentdeck/autonomy.py`); it calls no provider, reads no tmux, writes no state, appends no event. Contract: `agentdeck contract plans` + `docs/contracts/plans-schema.md` (`plan_board_*` helpers + `validate_plan_board_contract` in `contracts.py`, registered in `CONTRACT_INDEX_SPECS`). Design + plan: `docs/superpowers/specs/2026-07-09-plan-board-design.md` and `docs/superpowers/plans/2026-07-09-plan-board.md`.
+
+**Next Best Step:** continue the multi-plan lane, in order — the remaining read-only visibility slices first, then the scheduler:
+
+1. Surface the board as a workbench `plan_board_card` (reuse `plan_board_example` / `validate_plan_board_contract`; add to `control_registry[]` under `scope=plan_board`).
+2. A dashboard **Plans** section in `render_workbench_dashboard` (`src/agentdeck/dashboard.py`), derived from the `plan_board_card`.
+3. A TUI plans view (`[p]`) in `src/agentdeck/tui.py`, mirroring the approvals/runtime views (rows = plan · gate · status; footer = per-plan `next_command`).
+4. Make `recovery` multi-plan aware (recommend across plans, not just the latest).
+5. A natural-language `leader chat --message "查看所有计划" / "计划看板"` intent (read-only `mode=plan_board`, embed the same card + filtered `control_registry_card`).
+6. **Then** the parallel scheduler (the bigger slice): auto-advance across plans + agent-contention logic — this is the first write-capable multi-plan slice and must stay approval-gated.
 
 Whatever is chosen next must preserve human approval and keep every read-only surface read-only.
 
