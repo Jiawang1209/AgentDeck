@@ -172,14 +172,21 @@ def _fit(text: str, width: int) -> str:
     return text[:width]
 
 
+def _palette_window(model: "TuiModel", body_height: int) -> list[int]:
+    controls = model.control_items()
+    if not controls:
+        return []
+    # scroll a window of controls so the selected row stays visible
+    top = _clamp(model.selected_index - body_height // 2, 0, max(0, len(controls) - body_height))
+    return list(range(top, min(len(controls), top + max(1, body_height))))
+
+
 def _palette_rows(model: "TuiModel", body_height: int, width: int) -> list[str]:
     controls = model.control_items()
     if not controls:
         return ["(no controls in this snapshot)"]
-    # scroll a window of controls so the selected row stays visible
-    top = _clamp(model.selected_index - body_height // 2, 0, max(0, len(controls) - body_height))
     rows: list[str] = []
-    for index in range(top, min(len(controls), top + body_height)):
+    for index in _palette_window(model, body_height):
         control = _as_dict(controls[index])
         marker = ">" if index == model.selected_index else " "
         state = "x" if control.get("enabled") else " "
@@ -189,6 +196,24 @@ def _palette_rows(model: "TuiModel", body_height: int, width: int) -> list[str]:
         )
         rows.append(_fit(row, width))
     return rows
+
+
+def palette_row_style(control: dict[str, Any], is_selected: bool) -> str:
+    """Pure styling decision for a palette row: selected > enabled > disabled."""
+    if is_selected:
+        return "selected"
+    return "enabled" if _as_dict(control).get("enabled") else "disabled"
+
+
+def palette_row_styles(model: "TuiModel", body_height: int) -> list[str]:
+    """Style token per visible palette row, parallel to :func:`_palette_rows`."""
+    controls = model.control_items()
+    if not controls:
+        return ["disabled"]
+    return [
+        palette_row_style(_as_dict(controls[index]), index == model.selected_index)
+        for index in _palette_window(model, body_height)
+    ]
 
 
 def render_frame(model: "TuiModel", height: int, width: int) -> list[str]:
@@ -210,6 +235,27 @@ def render_frame(model: "TuiModel", height: int, width: int) -> list[str]:
         body.append("")
     frame = [title, *body, *footer_lines]
     return frame[:height]
+
+
+def _frame_row_attributes(model: "TuiModel", height: int, frame_len: int) -> list[int]:
+    """Map palette-body rows to curses attributes (selected reverse, disabled dim)."""
+    import curses
+
+    attrs = [0] * frame_len
+    if model.mode != "palette":
+        return attrs
+    footer_count = len(model.footer_text().split("\n"))
+    body_height = max(1, height - 1 - footer_count)
+    style_attr = {
+        "selected": curses.A_REVERSE,
+        "disabled": curses.A_DIM,
+        "enabled": curses.A_NORMAL,
+    }
+    for offset, style in enumerate(palette_row_styles(model, body_height)):
+        row = 1 + offset  # body starts after the title row
+        if row < frame_len:
+            attrs[row] = style_attr.get(style, 0)
+    return attrs
 
 
 def _read_filter(stdscr: Any, model: "TuiModel") -> None:
@@ -254,12 +300,17 @@ def run_tui(stdscr: Any, model: "TuiModel", fetch: Any) -> None:
     while True:
         height, width = stdscr.getmaxyx()
         frame = render_frame(model, height, width)
+        row_attrs = _frame_row_attributes(model, height, len(frame))
         stdscr.erase()
         for row, line in enumerate(frame):
+            attr = row_attrs[row] if row < len(row_attrs) else 0
             try:
-                stdscr.addstr(row, 0, line)
+                stdscr.addstr(row, 0, line, attr)
             except Exception:
-                pass
+                try:
+                    stdscr.addstr(row, 0, line)
+                except Exception:
+                    pass
         stdscr.refresh()
         key = stdscr.getch()
         if key in (ord("q"), ord("Q")):

@@ -4,6 +4,13 @@
 
 ## 2026-07-08
 
+### Current - Colorize enabled/disabled palette rows in interactive TUI
+
+- 给 `agentdeck tui` 命令面板的行上视觉区分:选中行反显(A_REVERSE)、disabled 行变暗(A_DIM)、enabled 行常规,让"哪些按钮可用/被阻塞/当前选中"一眼可辨。
+- 把上色**决策**抽成纯函数并单测:`palette_row_style(control, is_selected)`（selected > enabled > disabled）和 `palette_row_styles(model, body_height)`（与 `_palette_rows` 可见窗口并行);curses 里 `_frame_row_attributes` 只负责把 style token 映射成 curses 属性(薄壳、未测)。
+- 仍只读:上色只是显示,不改变任何行为。
+- 验证记录:已先确认红测失败,`palette_row_style` / `palette_row_styles` 最初不存在;实现后目标测试 `conda run -n agentdeck pytest tests/test_tui.py -q` 12 项通过;`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过;`conda run -n agentdeck pytest -q` 通过,全量测试 635 项通过。
+
 ### Current - Add key legend help overlay to interactive TUI
 
 - 给 `agentdeck tui` 加 help 模式:按 `?`(或 `h`)切换一个快捷键图例浮层,列出 tab/p、方向键、PgUp/PgDn、`/`、`r`、`?`、`q` 的作用,并重申只读语义;再按一次返回之前的 overview/palette 模式。

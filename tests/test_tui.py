@@ -194,3 +194,32 @@ def test_tui_help_mode_shows_key_legend_and_restores_previous_mode() -> None:
     # leaving help returns to whatever mode was active before
     model.toggle_help()
     assert model.mode == "palette"
+
+
+def test_palette_row_styles_mark_selected_enabled_disabled() -> None:
+    from agentdeck.tui import palette_row_style, palette_row_styles
+
+    assert palette_row_style({"enabled": True}, is_selected=True) == "selected"
+    assert palette_row_style({"enabled": True}, is_selected=False) == "enabled"
+    assert palette_row_style({"enabled": False}, is_selected=False) == "disabled"
+    # selection wins over enabled/disabled
+    assert palette_row_style({"enabled": False}, is_selected=True) == "selected"
+
+    payload = workbench_example()
+    model = TuiModel(payload)
+    model.toggle_palette()
+    model.move_selection(-10_000)  # top of the list
+    body_height = 8
+
+    styles = palette_row_styles(model, body_height)
+    rows = [
+        line
+        for line in __import__("agentdeck.tui", fromlist=["_palette_rows"])._palette_rows(
+            model, body_height, 120
+        )
+    ]
+    assert len(styles) == len(rows)
+    # the first visible row is the selected one
+    assert styles[0] == "selected"
+    # every style is one of the known tokens
+    assert set(styles) <= {"selected", "enabled", "disabled"}

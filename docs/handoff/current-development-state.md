@@ -352,9 +352,14 @@ All three approved directions (1 → 2 → 3) have landed committed slices; the 
 
 A palette filter is also committed: `/` in the palette opens a filter prompt; `TuiModel.set_filter(text)` narrows controls by substring across scope/kind/label/command, re-clamping selection. Read-only.
 
+All three optional TUI polish items are now committed: (1) the palette focuses the recovery `next_command` on open; (2) `?`/`h` opens a key-legend help overlay; (3) palette rows are colorized (selected reverse, disabled dim). All read-only; the styling decision is a pure, unit-tested `palette_row_style` / `palette_row_styles`.
+
 ## Next Best Step
 
-- Optional TUI polish: highlight the recovery `next_command` control on open, a `--help`-style key legend overlay, or colorized enabled/disabled rows. All must stay read-only.
+The interactive TUI is feature-complete (overview/palette/help, filter, refresh, focus, colors). Options:
+- Revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability beyond the TUI/dashboard reference-client work.
+- Or, if deeper TUI coverage is wanted, drive `run_tui` with a fake stdscr feeding scripted keys to test the loop end-to-end.
+- Preserve human approval and keep every read-only surface read-only.
 - The curses key loop (`run_tui`) is a thin shell that isn't unit-tested (needs a TTY); the pure `TuiModel` + `render_frame` are. If deeper coverage is wanted, drive `run_tui` with a fake stdscr feeding scripted keys.
 - Otherwise revisit `docs/roadmap/ultimate-goal-roadmap.md` for the next capability.
 - Preserve human approval and keep every read-only surface read-only.
