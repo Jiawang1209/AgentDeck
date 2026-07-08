@@ -69,6 +69,12 @@ CONTRACT_INDEX_SPECS = (
         "run-loop-schema.md",
     ),
     (
+        "plans",
+        "agentdeck contract plans",
+        "agentdeck contract plans --example",
+        "plans-schema.md",
+    ),
+    (
         "release",
         "agentdeck contract release",
         "agentdeck contract release --example",
@@ -1901,6 +1907,19 @@ RUN_LOOP_RESPONSE_FIELDS = (
     "stopped_reason",
     "next_command",
     "policy",
+)
+
+PLAN_BOARD_RESPONSE_FIELDS = (
+    "ok", "mode", "board_command", "plan_count", "active_count", "plans",
+)
+
+PLAN_BOARD_ITEM_FIELDS = (
+    "plan_id", "task", "provider_backend", "created_at", "status",
+    "gate", "next_command", "active", "counts",
+)
+
+PLAN_BOARD_GATES = (
+    "blocked", "needs_human_approval", "waiting_for_reply", "complete", "idle",
 )
 
 RUN_LOOP_STOP_REASONS = (
@@ -3958,6 +3977,89 @@ def validate_run_loop_contract(payload: dict[str, object]) -> dict[str, object]:
     for list_field in ("dispatched", "blocked", "skipped"):
         if not isinstance(payload.get(list_field), list):
             errors.append(f"run_loop.{list_field} must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
+def plan_board_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "plan_board",
+        "board_command": "agentdeck plan board",
+        "plan_count": 2,
+        "active_count": 1,
+        "plans": [
+            {
+                "plan_id": "pln_a", "task": "demoA", "provider_backend": "local",
+                "created_at": "2026-07-04T00:00:00+00:00", "status": "planned",
+                "gate": "needs_human_approval", "next_command": "agentdeck approval list",
+                "active": True, "counts": {"steps": 1, "approvals": 1},
+            },
+            {
+                "plan_id": "pln_b", "task": "demoB", "provider_backend": "local",
+                "created_at": "2026-07-04T00:00:00+00:00", "status": "completed",
+                "gate": "complete", "next_command": "agentdeck leader summary --plan-id pln_b",
+                "active": False, "counts": {"steps": 1, "approvals": 1},
+            },
+        ],
+    }
+
+
+def plan_board_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "board_command": "agentdeck plan board",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "plan_board_response_fields": list(PLAN_BOARD_RESPONSE_FIELDS),
+        "plan_board_item_fields": list(PLAN_BOARD_ITEM_FIELDS),
+        "gates": list(PLAN_BOARD_GATES),
+        "project_view_contract": "agentdeck contract project-view",
+        "run_loop_contract": "agentdeck contract run-loop",
+    }
+
+
+def plan_board_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = plan_board_contract_payload(contract_path)
+    if include_example:
+        example = plan_board_example()
+        payload["example"] = True
+        payload["example_plan_board_response_fields"] = list(example)
+        payload["example_plan_board_item_fields"] = list(example["plans"][0])
+        payload["example_plan_board"] = example
+    return payload
+
+
+def validate_plan_board_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in PLAN_BOARD_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing plan_board field: {field}")
+    if payload.get("mode") != "plan_board":
+        errors.append(f"plan_board.mode must be plan_board, got {payload.get('mode')}")
+    if payload.get("board_command") != "agentdeck plan board":
+        errors.append("plan_board.board_command must be agentdeck plan board")
+    plans = payload.get("plans")
+    if not isinstance(plans, list):
+        errors.append("plan_board.plans must be a list")
+        return {"ok": not errors, "errors": errors}
+    if payload.get("plan_count") != len(plans):
+        errors.append("plan_board.plan_count must equal len(plans)")
+    active = 0
+    for index, item in enumerate(plans):
+        if not isinstance(item, dict):
+            errors.append(f"plan_board.plans[{index}] must be an object")
+            continue
+        for field in PLAN_BOARD_ITEM_FIELDS:
+            if field not in item:
+                errors.append(f"plan_board.plans[{index}] missing field: {field}")
+        if item.get("gate") not in PLAN_BOARD_GATES:
+            errors.append(f"plan_board.plans[{index}].gate must be one of {PLAN_BOARD_GATES}")
+        if not isinstance(item.get("next_command"), str) or not item.get("next_command"):
+            errors.append(f"plan_board.plans[{index}].next_command must be a non-empty string")
+        if item.get("active") is True:
+            active += 1
+    if payload.get("active_count") != active:
+        errors.append("plan_board.active_count must equal the number of active plans")
     return {"ok": not errors, "errors": errors}
 
 

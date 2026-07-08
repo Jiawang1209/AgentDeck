@@ -5097,3 +5097,26 @@ def test_leader_chat_contract_exposes_run_loop_preview_card_fields():
     path = Path("docs/contracts/leader-chat-schema.md")
     payload = leader_chat_contract_response(path)
     assert payload["run_loop_preview_card_fields"] == list(LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS)
+
+
+def test_plan_board_contract_and_validator_accept_example():
+    from pathlib import Path
+    from agentdeck.contracts import (
+        plan_board_contract_response, plan_board_example, validate_plan_board_contract,
+    )
+    path = Path("docs/contracts/plans-schema.md")
+    payload = plan_board_contract_response(path, include_example=True)
+    assert payload["board_command"] == "agentdeck plan board"
+    assert "plan_board_response_fields" in payload
+    assert payload["example_plan_board"]["mode"] == "plan_board"
+    assert validate_plan_board_contract(plan_board_example())["ok"]
+
+
+def test_validate_plan_board_contract_rejects_bad_counts_and_gate():
+    from agentdeck.contracts import plan_board_example, validate_plan_board_contract
+    bad = dict(plan_board_example()); bad["active_count"] = 99
+    assert not validate_plan_board_contract(bad)["ok"]
+    bad2 = dict(plan_board_example())
+    bad2["plans"] = [dict(bad2["plans"][0], gate="made_up")]
+    bad2["plan_count"] = 1; bad2["active_count"] = 1
+    assert not validate_plan_board_contract(bad2)["ok"]
