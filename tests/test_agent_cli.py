@@ -10283,3 +10283,94 @@ def test_contract_list_includes_run_loop(tmp_path, monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     names = {c["name"] for c in payload["contracts"]}
     assert "run-loop" in names
+
+
+def _enable_autonomous(root, monkeypatch, capsys, allow, budget):
+    cli.main(["policy", "set-mode", "--mode", "autonomous", "--confirm",
+              *sum((["--allow-agent", a] for a in allow), []), "--max-approvals", str(budget)])
+    capsys.readouterr()
+
+
+def _seed_plan_with_pending_approval(root, agent_id):
+    """Save a one-step plan for `agent_id` and materialize its pending approval.
+
+    Mirrors the real plan-record shape: steps live under plan_record["plan"]["steps"]
+    (as plan_status / create_approvals_from_plan read them), and the step role must
+    match the agent's configured role. Returns the plan_id.
+    """
+    store = StateStore(root)
+    state = store.load()
+    plan_id = "pln_loop_1"
+    role = next(a.role for a in cli.load_config(root).agents if a.agent_id == agent_id)
+    state.setdefault("plans", []).append({
+        "plan_id": plan_id, "task": "g", "status": "planned",
+        "provider": "fake", "model": "fake-plan",
+        "plan": {
+            "goal": "g", "summary": "s",
+            "steps": [{"step": 1, "agent_id": agent_id, "role": role, "task": "do",
+                       "risk": "low", "requires_approval": True}],
+        },
+        "created_at": "2026-07-04T00:00:00+00:00",
+    })
+    store.save(state)
+    store.create_approvals_from_plan(plan_id)
+    return plan_id
+
+
+def test_run_loop_requires_confirm_mode_and_plan(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    before = StateStore(root).load()
+    # not autonomous yet, and no --confirm
+    assert cli.main(["run-loop", "--plan-id", "pln_x"]) == 1
+    assert "confirm" in capsys.readouterr().err
+    # confirm but not autonomous
+    assert cli.main(["run-loop", "--plan-id", "pln_x", "--confirm"]) == 1
+    assert "autonomous mode is not enabled" in capsys.readouterr().err
+    # autonomous but unknown plan
+    _enable_autonomous(root, monkeypatch, capsys, ["planner"], 3)
+    assert cli.main(["run-loop", "--plan-id", "pln_missing", "--confirm"]) == 1
+    assert "unknown plan" in capsys.readouterr().err.lower()
+    assert StateStore(root).load()["approvals"] == before.get("approvals", [])
+
+
+def test_run_loop_auto_approves_dispatches_and_stops_at_reply_gate(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    _enable_autonomous(root, monkeypatch, capsys, ["planner"], 5)
+
+    plan_id = _seed_plan_with_pending_approval(root, agent_id="planner")
+
+    exit_code = cli.main(["run-loop", "--plan-id", plan_id, "--confirm"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "run_loop"
+    assert payload["plan_id"] == plan_id
+    assert payload["auto_approved"] == 1
+    assert payload["dispatched"][0]["agent_id"] == "planner"
+    assert payload["stopped_reason"] == "waiting_for_reply"
+    assert payload["next_command"].startswith("agentdeck capture-reply --agent planner")
+
+    types = [e["event_type"] for e in StateStore(root).list_events(limit=30)]
+    assert "approval_decided" in types
+    assert "approval_dispatched" in types
+    assert "run_loop_advanced" in types
+
+
+def test_run_loop_stops_at_human_approval_for_non_allowlisted(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    _enable_autonomous(root, monkeypatch, capsys, ["planner"], 5)  # planner allowed, reviewer not
+
+    plan_id = _seed_plan_with_pending_approval(root, agent_id="reviewer")
+
+    exit_code = cli.main(["run-loop", "--plan-id", plan_id, "--confirm"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["auto_approved"] == 0
+    assert payload["stopped_reason"] == "needs_human_approval"
+    assert payload["next_command"] == "agentdeck approval list"
+    assert any(s["agent_id"] == "reviewer" for s in payload["skipped"])

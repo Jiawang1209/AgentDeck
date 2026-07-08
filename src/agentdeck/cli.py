@@ -71,11 +71,12 @@ from .contracts import (
     validate_loop_once_contract,
     validate_release_contract,
     validate_project_view_contract,
+    validate_run_loop_contract,
     validate_run_start_contract,
     validate_trace_contract,
     validate_workbench_contract,
 )
-from .autonomy import select_auto_approvals
+from .autonomy import run_loop_gate, select_auto_approvals
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, utc_now
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
@@ -12660,6 +12661,119 @@ def approval_auto_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_loop_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("run-loop requires --confirm", file=sys.stderr)
+        return 1
+    if config.leader.approval_mode != "autonomous":
+        print(
+            "autonomous mode is not enabled; run agentdeck policy set-mode --mode autonomous "
+            "--confirm --allow-agent <id> --max-approvals <N>",
+            file=sys.stderr,
+        )
+        return 1
+    plan_id = args.plan_id
+    try:
+        store.plan_status(plan_id)
+    except KeyError:
+        print(f"unknown plan: {plan_id}", file=sys.stderr)
+        return 1
+
+    policy = config.autonomous
+    plan_approvals = [
+        a for a in store.load().get("approvals", [])
+        if isinstance(a, dict) and a.get("plan_id") == plan_id
+    ]
+    pending = [a for a in plan_approvals if a.get("status") == "pending"]
+    selected, skipped = select_auto_approvals(pending, policy.allowed_agents, policy.max_approvals)
+
+    # 1) auto-approve the allowlisted, budget-bounded pending approvals
+    for approval in selected:
+        approval_id = str(approval.get("approval_id", ""))
+        store.decide_approval(approval_id, "approved", reason="autonomous")
+        store.append_event(EventRecord.create("approval_decided", {
+            "approval_id": approval_id, "status": "approved", "source": "autonomous",
+        }))
+
+    # 2) dispatch every approved-and-ready approval for this plan (auto- or human-approved)
+    backend = TmuxBackend()
+    dispatched: list[dict[str, object]] = []
+    blocked: list[dict[str, object]] = []
+    has_error = False
+    approved_now = [
+        a for a in store.load().get("approvals", [])
+        if isinstance(a, dict) and a.get("plan_id") == plan_id and a.get("status") == "approved"
+    ]
+    for approval in approved_now:
+        approval_id = str(approval.get("approval_id", ""))
+        preview = _approval_dispatch_preview_card(approval, config, store)
+        if preview.get("blocker"):
+            blocked.append({
+                "approval_id": approval_id,
+                "agent_id": approval.get("agent_id"),
+                "blocker": preview.get("blocker"),
+            })
+            continue
+        try:
+            result = _dispatch_approved_approval(
+                approval, approval_id=approval_id, config=config, store=store, backend=backend
+            )
+            dispatched.append({
+                "approval_id": approval_id,
+                "agent_id": result["agent_id"],
+                "message_id": result["message_id"],
+                "trace_command": result["trace_command"],
+            })
+        except Exception as exc:  # dispatch failed -- stop at the error gate
+            has_error = True
+            store.append_event(EventRecord.create("run_loop_dispatch_failed", {
+                "approval_id": approval_id, "detail": str(exc),
+            }))
+
+    # 3) diagnose the resulting gate via leader review (single source of truth)
+    review = store.leader_review(plan_id)
+    stopped_reason, next_command = run_loop_gate(review, has_error, plan_id)
+
+    store.append_event(EventRecord.create("run_loop_advanced", {
+        "plan_id": plan_id,
+        "auto_approved": len(selected),
+        "dispatched": len(dispatched),
+        "blocked": len(blocked),
+        "skipped": len(skipped),
+        "stopped_reason": stopped_reason,
+    }))
+
+    payload = {
+        "ok": True,
+        "mode": "run_loop",
+        "plan_id": plan_id,
+        "requires_explicit_user": True,
+        "safety": "delegated",
+        "auto_approved": len(selected),
+        "dispatched": dispatched,
+        "blocked": blocked,
+        "skipped": [
+            {"approval_id": s.get("approval_id"), "agent_id": s.get("agent_id"), "reason": s.get("reason")}
+            for s in skipped
+        ],
+        "stopped_reason": stopped_reason,
+        "next_command": next_command,
+        "policy": {"allowed_agents": list(policy.allowed_agents), "max_approvals": policy.max_approvals},
+    }
+    validation = validate_run_loop_contract(payload)
+    if not validation["ok"]:
+        print("run-loop contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        store.append_event(EventRecord.create("run_loop_contract_failed", {"errors": validation["errors"]}))
+        return 1
+    _print_json(payload)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentdeck")
     subparsers = parser.add_subparsers(dest="command")
@@ -12682,6 +12796,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--provider", help="Leader provider to use; defaults to .agentdeck/config.toml")
     run.add_argument("--model", help="Provider model label recorded with the plan; defaults to config")
     run.set_defaults(func=run_command)
+
+    run_loop = subparsers.add_parser(
+        "run-loop",
+        help="Drive one plan forward within the autonomous policy, then stop at the next human gate",
+    )
+    run_loop.add_argument("--plan-id", required=True, help="Plan to drive forward")
+    run_loop.add_argument("--confirm", action="store_true", help="Explicitly confirm the autonomous wave")
+    run_loop.set_defaults(func=run_loop_command)
 
     release = subparsers.add_parser(
         "release", help="Explicitly record a round release once the review gate is ready"
