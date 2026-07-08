@@ -10194,3 +10194,55 @@ def test_agent_stop_kills_bound_pane_and_marks_stopped(tmp_path, monkeypatch, ca
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "agent_stopped"' in events
+
+
+def _seed_pending_approval(root, approval_id, agent_id):
+    store = StateStore(root)
+    state = store.load()
+    state.setdefault("approvals", []).append({
+        "approval_id": approval_id, "plan_id": "pln_x", "step": 1,
+        "agent_id": agent_id, "role": "planning", "task": "do work",
+        "risk": "low", "status": "pending", "created_at": "2026-07-04T00:00:00+00:00",
+    })
+    store.save(state)
+
+
+def test_approval_auto_requires_confirm_and_autonomous_mode(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _seed_pending_approval(root, "apv_1", "planner")
+    before = StateStore(root).load()
+    # no --confirm
+    assert cli.main(["approval", "auto"]) == 1
+    assert "confirm" in capsys.readouterr().err
+    # confirm but mode is not autonomous
+    assert cli.main(["approval", "auto", "--confirm"]) == 1
+    assert "autonomous mode is not enabled" in capsys.readouterr().err
+    assert StateStore(root).load() == before  # nothing written
+
+
+def test_approval_auto_approves_and_dispatches_within_policy(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")  # planner running
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    cli.main(["policy", "set-mode", "--mode", "autonomous", "--confirm", "--allow-agent", "planner", "--max-approvals", "5"])
+    capsys.readouterr()
+    _seed_pending_approval(root, "apv_ok", "planner")     # allowlisted + running -> dispatched
+    _seed_pending_approval(root, "apv_skip", "reviewer")  # not allowlisted -> skipped
+    _seed_pending_approval(root, "apv_block", "coder")    # not allowlisted -> skipped (coder not allowed)
+
+    exit_code = cli.main(["approval", "auto", "--confirm"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "approval_auto"
+    assert payload["auto_approved"] == 1
+    assert payload["dispatched"][0]["approval_id"] == "apv_ok"
+    skipped_ids = {s["approval_id"] for s in payload["skipped"]}
+    assert skipped_ids == {"apv_skip", "apv_block"}
+    # apv_ok is now dispatched; auto approval + dispatch are audited
+    state = StateStore(root).load()
+    apv = next(a for a in state["approvals"] if a["approval_id"] == "apv_ok")
+    assert apv["status"] == "dispatched"
+    types = [e["event_type"] for e in StateStore(root).list_events(limit=20)]
+    assert "approval_auto_completed" in types

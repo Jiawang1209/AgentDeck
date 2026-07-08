@@ -74,6 +74,7 @@ from .contracts import (
     validate_trace_contract,
     validate_workbench_contract,
 )
+from .autonomy import select_auto_approvals
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, utc_now
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
@@ -12582,6 +12583,60 @@ def approval_dispatch_ready_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def approval_auto_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("approval auto requires --confirm", file=sys.stderr)
+        return 1
+    if config.leader.approval_mode != "autonomous":
+        print(
+            "autonomous mode is not enabled; run agentdeck policy set-mode --mode autonomous "
+            "--confirm --allow-agent <id> --max-approvals <N>",
+            file=sys.stderr,
+        )
+        return 1
+    policy = config.autonomous
+    pending = [a for a in store.load().get("approvals", []) if isinstance(a, dict) and a.get("status") == "pending"]
+    selected, skipped = select_auto_approvals(pending, policy.allowed_agents, policy.max_approvals)
+    backend = TmuxBackend()
+    dispatched: list[dict[str, object]] = []
+    blocked: list[dict[str, object]] = []
+    for approval in selected:
+        approval_id = str(approval.get("approval_id", ""))
+        store.decide_approval(approval_id, "approved", reason="autonomous")
+        store.append_event(EventRecord.create("approval_decided", {
+            "approval_id": approval_id, "status": "approved", "source": "autonomous",
+        }))
+        approved = store.approval_by_id(approval_id)
+        preview = _approval_dispatch_preview_card(approved, config, store)
+        if preview.get("blocker"):
+            blocked.append({"approval_id": approval_id, "agent_id": approved.get("agent_id"), "blocker": preview.get("blocker")})
+            continue
+        result = _dispatch_approved_approval(approved, approval_id=approval_id, config=config, store=store, backend=backend)
+        dispatched.append({
+            "approval_id": approval_id, "agent_id": result["agent_id"],
+            "message_id": result["message_id"], "trace_command": result["trace_command"],
+        })
+    store.append_event(EventRecord.create("approval_auto_completed", {
+        "auto_approved": len(selected), "dispatched": len(dispatched),
+        "blocked": len(blocked), "skipped": len(skipped),
+    }))
+    _print_json({
+        "ok": True,
+        "mode": "approval_auto",
+        "requires_explicit_user": True,
+        "safety": "delegated",
+        "auto_approved": len(selected),
+        "dispatched": dispatched,
+        "blocked": blocked,
+        "skipped": [{"approval_id": s.get("approval_id"), "agent_id": s.get("agent_id"), "reason": s.get("reason")} for s in skipped],
+        "policy": {"allowed_agents": list(policy.allowed_agents), "max_approvals": policy.max_approvals},
+    })
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentdeck")
     subparsers = parser.add_subparsers(dest="command")
@@ -13124,6 +13179,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     approval_dispatch_ready.add_argument("--confirm", action="store_true", help="Explicitly confirm batch dispatch")
     approval_dispatch_ready.set_defaults(func=approval_dispatch_ready_command)
+    approval_auto = approval_subparsers.add_parser("auto", help="Auto-approve allowlisted pending approvals and dispatch them (autonomous mode)")
+    approval_auto.add_argument("--confirm", action="store_true", help="Explicitly confirm autonomous auto-approval")
+    approval_auto.set_defaults(func=approval_auto_command)
 
     dispatch = subparsers.add_parser("dispatch", help="Send a role-aware task to a running agent")
     dispatch.add_argument("--from-agent", default="user", help="Actor or agent id that submitted this task")
