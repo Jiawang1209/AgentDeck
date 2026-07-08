@@ -43,12 +43,19 @@ class LeaderConfig:
 
 
 @dataclass(frozen=True)
+class AutonomousPolicy:
+    allowed_agents: tuple[str, ...] = ()
+    max_approvals: int = 0
+
+
+@dataclass(frozen=True)
 class ProjectConfig:
     name: str
     root: str
     leader: LeaderConfig
     agents: tuple[AgentSpec, ...]
     runtime: RuntimeConfig
+    autonomous: AutonomousPolicy = AutonomousPolicy()
 
 
 @dataclass

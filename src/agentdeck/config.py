@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tomllib
 
-from .models import AgentSpec, LeaderConfig, ProjectConfig, RuntimeConfig
+from .models import AgentSpec, AutonomousPolicy, LeaderConfig, ProjectConfig, RuntimeConfig
 
 
 CONFIG_DIR = ".agentdeck"
@@ -126,6 +126,12 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         )
         for item in agents_raw
     )
+    autonomous_raw = raw.get("autonomous", {})
+    allowed = autonomous_raw.get("allowed_agents", []) if isinstance(autonomous_raw, dict) else []
+    autonomous = AutonomousPolicy(
+        allowed_agents=tuple(str(a) for a in allowed),
+        max_approvals=int(autonomous_raw.get("max_approvals", 0)) if isinstance(autonomous_raw, dict) else 0,
+    )
     project_raw = raw.get("project", {})
     return ProjectConfig(
         name=project_raw.get("name", base.name),
@@ -133,6 +139,7 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         leader=leader,
         agents=agents,
         runtime=runtime,
+        autonomous=autonomous,
     )
 
 
