@@ -4,6 +4,19 @@
 
 ## 2026-07-08
 
+### Current - Add bounded autonomous mode and `approval auto`（autonomous 子项目 2）
+
+- **类型**: feat
+- **动机**: 把此前的 autonomous 控制模式占位（一直被拒绝、`control_mode_card` 显示未实现）落地为北极星 autonomous 三块拆分的子项目 2：一个有界、可审计的授权梯度，让 AgentDeck 能在人类设定的 allowlist + 预算内自动批准并派发，而不放弃审批安全边界。
+- **What**:
+  - 新增 `AutonomousPolicy`（`models.py`）和 `[autonomous]` 配置段解析 + `update_autonomous_policy` 写入（`config.py`，含 `_dump_config` round-trip）。
+  - 新增纯决策模块 `src/agentdeck/autonomy.py::select_auto_approvals`（按 allowlist + count 预算过滤 pending approvals，返回 selected/skipped 及原因），供 `approval auto` 和未来执行循环复用。
+  - `agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>` 现在校验 `--confirm`/allowlist/预算/已知 agent 后写 `leader.approval_mode=autonomous` 和 `[autonomous]`，追加 `policy_mode_updated`；非法输入追加 `policy_mode_rejected` 且不改配置。
+  - 新增 `agentdeck approval auto --confirm`：仅在 autonomous 模式下复用现有 dispatch 内部件（`_dispatch_approved_approval` / `_approval_dispatch_preview_card`）自动批准 allowlist 内、预算内 approvals 并派发给已有 running pane 的 agent，停在 dispatch，逐项审计（`approval_decided source=autonomous` + `approval_auto_completed`）。
+  - `control_mode_card` autonomous available_mode 点亮为 enabled，其 `set_mode` 控件是 disabled 模板（blocker `requires --allow-agent and --max-approvals`）；自然语言 `mode=policy` autonomous 意图返回同一模板并保持 disabled；`history.py` humanize `approval_auto_completed`（Auto-approve run）与 autonomous `approval_decided`（Approval auto-approved）。
+- **Impact**: 新增 CLI 行为与配置段，不破坏既有契约；安全边界保持：只在 allowlist + 预算内自动批准，只派发给已 running 的 pane（不 force-spawn），停在 dispatch，全程审计。设计与计划见 `docs/superpowers/specs/2026-07-08-autonomous-mode-design.md` 和 `docs/superpowers/plans/2026-07-08-autonomous-mode.md`。
+- **Verification**: `conda run -n agentdeck pytest tests/test_autonomy.py tests/test_history.py -q` 通过；`conda run -n agentdeck pytest -q` 全量通过；`conda run -n agentdeck python -m compileall src tests -q` 和 `git diff --check` 通过。
+
 ### Current - Add agentdeck history timeline renderer
 
 - 新增 `agentdeck history`(北极星"审计/HISTORY 门",autonomous 三块拆分的子项目 1):从已有 `events.jsonl` 账本确定性渲染人类可读 Markdown 时间线,最新在上、按日期分组,每个里程碑事件一行,`leader_chat_turn` 等噪声与未知事件跳过。

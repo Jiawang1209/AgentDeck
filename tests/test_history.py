@@ -206,3 +206,27 @@ def test_history_command_write_custom_path(tmp_path, monkeypatch, capsys):
     assert "wrote" in out and str(custom) in out
     # read-only: the audit ledger is unchanged
     assert StateStore(root).all_events() == events_before
+
+
+def test_render_history_humanizes_autonomous_auto_run():
+    from agentdeck.history import render_history_markdown
+
+    events = [{
+        "event_type": "approval_auto_completed",
+        "created_at": "2026-07-08T12:00:00+00:00",
+        "payload": {"auto_approved": 2, "dispatched": 1, "blocked": 0, "skipped": 1},
+    }]
+    md = render_history_markdown(events, "demo")
+    assert "Auto-approve run · 2 approved, 1 dispatched" in md
+
+
+def test_render_history_distinguishes_autonomous_approval():
+    from agentdeck.history import render_history_markdown
+
+    events = [{
+        "event_type": "approval_decided",
+        "created_at": "2026-07-08T12:00:00+00:00",
+        "payload": {"approval_id": "apv_9", "status": "approved", "source": "autonomous"},
+    }]
+    md = render_history_markdown(events, "demo")
+    assert "Approval auto-approved · apv_9" in md

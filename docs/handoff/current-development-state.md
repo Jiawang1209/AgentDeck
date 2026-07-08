@@ -1,6 +1,6 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-07
+Updated: 2026-07-08
 
 ## Active Goal
 
@@ -356,9 +356,11 @@ All three optional TUI polish items are now committed: (1) the palette focuses t
 
 ## Next Best Step
 
-Sub-project 1 of 3 (the audit / HISTORY gate) is **done**: `agentdeck history` renders the `events.jsonl` ledger into a read-only, newest-first, date-grouped Markdown timeline (`src/agentdeck/history.py`, `StateStore.all_events()`, `tests/test_history.py`), with `--write` materializing `.agentdeck/HISTORY.md` and `--limit N` to cap. Design + plan: `docs/superpowers/specs/2026-07-08-agentdeck-history-timeline-design.md` and `docs/superpowers/plans/2026-07-08-agentdeck-history-timeline.md`. Remaining, in order:
-- **Sub-project 2**: autonomous policy switch + allowlist/budget guardrails (the `autonomous` control mode, still rejected today).
-- **Sub-project 3**: the executing round loop that consumes approved work.
+Sub-project 1 of 3 (the audit / HISTORY gate) is **done**: `agentdeck history` renders the `events.jsonl` ledger into a read-only, newest-first, date-grouped Markdown timeline (`src/agentdeck/history.py`, `StateStore.all_events()`, `tests/test_history.py`), with `--write` materializing `.agentdeck/HISTORY.md` and `--limit N` to cap. Design + plan: `docs/superpowers/specs/2026-07-08-agentdeck-history-timeline-design.md` and `docs/superpowers/plans/2026-07-08-agentdeck-history-timeline.md`.
+
+Sub-project 2 of 3 (bounded autonomous mode) is **done**: `AutonomousPolicy` + `[autonomous]` config (`models.py`/`config.py`), the pure `select_auto_approvals` decision (`src/agentdeck/autonomy.py`), `agentdeck policy set-mode --mode autonomous --confirm --allow-agent <id> --max-approvals <N>` (validated allowlist/budget writer), and `agentdeck approval auto --confirm` (auto-approve allowlisted, budget-bounded pending approvals and dispatch them to already-running panes — no force-spawn, stops at dispatch, fully audited into `agentdeck history`). `control_mode_card` autonomous is now enabled with a disabled `set_mode` template. Design + plan: `docs/superpowers/specs/2026-07-08-autonomous-mode-design.md` and `docs/superpowers/plans/2026-07-08-autonomous-mode.md`. Remaining, in order:
+- **Sub-project 3**: the executing round loop (plan → capture → review → release) that consumes approved work.
+- Candidate follow-up (deferred in the plan, Notes §Deferred): expose `agentdeck approval auto --confirm` as a `control_registry`/operator control so GUI/TUI can render it (touches the strict `control_registry` derivation + `validate_workbench_contract()` per-item rules).
 Both must preserve human approval and keep every read-only surface read-only.
 
 The interactive TUI is feature-complete (overview/palette/help, filter, refresh, focus, colors) and now fully tested — `run_tui` is covered end-to-end via a fake stdscr (`tests/test_tui.py`). The TUI/dashboard reference-client line is done.

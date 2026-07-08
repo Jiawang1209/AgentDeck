@@ -28,7 +28,11 @@ _MILESTONES = {
     "run_started": lambda p: ("Run started", _detail(p, "plan_id")),
     "approvals_created_from_plan": lambda p: ("Approvals created from plan", _detail(p, "plan_id")),
     "approval_created_from_chat": lambda p: ("Approval created (from chat)", ""),
-    "approval_decided": lambda p: (f"Approval {_detail(p, 'status') or 'decided'}", _detail(p, "approval_id")),
+    "approval_decided": lambda p: (
+        "Approval auto-approved" if _detail(p, "source") == "autonomous" else f"Approval {_detail(p, 'status') or 'decided'}",
+        _detail(p, "approval_id"),
+    ),
+    "approval_auto_completed": lambda p: ("Auto-approve run", f"{_detail(p, 'auto_approved') or 0} approved, {_detail(p, 'dispatched') or 0} dispatched"),
     "approval_dispatched": lambda p: ("Approval dispatched", _detail(p, "approval_id")),
     "approval_dispatch_ready_completed": lambda p: ("Batch dispatch completed", _detail(p, "dispatched_count", "count")),
     "task_dispatched": lambda p: ("Task dispatched", _detail(p, "agent_id", "to_agent")),
