@@ -227,8 +227,9 @@ def test_render_frame_fills_exact_height_with_title_and_footer() -> None:
     assert all(len(line) <= width for line in frame)
     assert "AgentDeck" in frame[0]
     # overview mode shows dashboard content and the footer hint
+    # (assert on an early section that stays within a 24-line viewport)
     joined = "\n".join(frame)
-    assert "Role topology" in joined
+    assert "Run progress" in joined
     assert "[tab] palette" in joined
 
 

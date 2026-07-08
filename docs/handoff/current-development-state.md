@@ -397,13 +397,14 @@ The human picked the multi-plan-parallel lane: see all active plans at once and 
 
 **Slice 2 of the multi-plan lane is done:** the board is now embedded in the one-screen `agentdeck workbench` snapshot as `plan_board_card` (always present, never `null`). A shared helper `_plan_board_payload(store)` (`src/agentdeck/cli.py`) builds the same payload for both `agentdeck plan board` and `_workbench_snapshot_payload`; `WORKBENCH_SNAPSHOT_FIELDS` carries `"plan_board_card"`, `validate_workbench_contract` runs `validate_plan_board_contract` on the embedded card (prefix `plan_board_card: `), `workbench_example()` embeds `plan_board_example()`, and the workbench contract discovery payload exposes `plan_board_card_fields`. Doc: `docs/contracts/workbench-schema.md`. Read-only.
 
+**Slice 3 of the multi-plan lane is done:** a read-only **Plans** section in `render_workbench_dashboard` (`_render_plans`, `src/agentdeck/dashboard.py`), derived from the `plan_board_card` — `<active>/<total> active` + one row per plan (`plan_id · active/done · gate · task`) with an indented `→ <next_command>`; shared by `agentdeck dashboard` and the TUI overview. Test: `tests/test_dashboard.py::test_render_workbench_dashboard_shows_plans_board` (a position-brittle TUI viewport assertion was repointed from "Role topology" to "Run progress"). Read-only.
+
 **Next Best Step:** continue the multi-plan lane, in order — the remaining read-only visibility slices first, then the scheduler:
 
-1. A dashboard **Plans** section in `render_workbench_dashboard` (`src/agentdeck/dashboard.py`), derived from the `plan_board_card`.
-2. A TUI plans view (`[p]`) in `src/agentdeck/tui.py`, mirroring the approvals/runtime views (rows = plan · gate · status; footer = per-plan `next_command`).
-3. Make `recovery` multi-plan aware (recommend across plans, not just the latest).
-4. A natural-language `leader chat --message "查看所有计划" / "计划看板"` intent (read-only `mode=plan_board`, embed the same card + filtered `control_registry_card`).
-5. **Then** the parallel scheduler (the bigger slice): auto-advance across plans + agent-contention logic — this is the first write-capable multi-plan slice and must stay approval-gated.
+1. A TUI plans view in `src/agentdeck/tui.py`, mirroring the approvals/runtime views (rows = plan · gate · status; footer = per-plan `next_command`). Note: `[p]` is taken by the palette — pick a free key (e.g. `[b]` for board or `[n]` for plans).
+2. Make `recovery` multi-plan aware (recommend across plans, not just the latest).
+3. A natural-language `leader chat --message "查看所有计划" / "计划看板"` intent (read-only `mode=plan_board`, embed the same card + filtered `control_registry_card`).
+4. **Then** the parallel scheduler (the bigger slice): auto-advance across plans + agent-contention logic — this is the first write-capable multi-plan slice and must stay approval-gated. ⚠️ This is a genuine product fork (core semantics) — the overnight loop must STOP here and leave a "⏸ 需要你决策" note rather than choose unilaterally.
 
 (Not yet wired: a `control_registry[]` `scope=plan_board` entry — deferred until a plan-board control surface is actually needed, e.g. the dashboard/TUI plans view or the NL intent.)
 

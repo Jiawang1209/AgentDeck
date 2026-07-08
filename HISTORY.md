@@ -4,7 +4,18 @@
 
 ## 2026-07-09
 
-### Current - Surface the plan board in the read-only workbench as `plan_board_card` (multi-plan lane slice 2)
+### Current - Show a Plans section in the text dashboard / TUI (multi-plan lane slice 3)
+
+- **类型**: feat
+- **动机**: 多计划并行 lane 第三刀。上一刀让 workbench 带上 `plan_board_card`,这一刀把它渲染进人类面向的一屏总览——一眼看到手上所有计划各自卡在哪、下一步敲什么。
+- **What**:
+  - `src/agentdeck/dashboard.py` 新增只读 `_render_plans(payload)`:从 `plan_board_card` 派生 "Plans" 区块,显示 `<active>/<total> active (agentdeck plan board)` 和每个计划一行(`plan_id · active/done · gate · task`)+ 缩进的 `→ <next_command>`;接进 `render_workbench_dashboard`(放在 Run progress 之后、Runtime 之前)。dashboard 与 TUI overview 共用渲染器,两处同时受益。
+  - 纯函数、只读:不改 payload、不调 provider、不碰 tmux、不写 state。
+  - 修:`tests/test_tui.py::test_render_frame_fills_exact_height_with_title_and_footer` 原断言 "Role topology" 因新增 Plans 段被挤出 24 行视口,改断言早段 "Run progress"(意图不变:overview 渲染 dashboard 内容)。
+- **Impact**: dashboard/TUI 一屏可见多计划看板;无行为变化、无破坏性改动。
+- **Verification**: `conda run -n agentdeck pytest tests/test_dashboard.py -q`(含新 `test_render_workbench_dashboard_shows_plans_board`,红→绿);全套 `pytest -q`(694 passed);`python -m compileall src tests`;`git diff --check`;并对 `workbench_example()` 实跑渲染确认 Plans 段正确。
+
+### Surface the plan board in the read-only workbench as `plan_board_card` (multi-plan lane slice 2)
 
 - **类型**: feat
 - **动机**: 多计划并行 lane 第二刀。`agentdeck plan board`（slice 1）已能只读列出每个计划的 gate 与下一步命令，但它是独立命令；GUI/TUI/dashboard 的主入口是一屏 `agentdeck workbench` 快照。把同一份看板 payload 作为 `workbench.plan_board_card` 嵌进快照，让主控制面无需另发命令即可同屏看见每个计划。

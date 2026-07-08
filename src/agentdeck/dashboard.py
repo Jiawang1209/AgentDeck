@@ -85,6 +85,28 @@ def _render_run_progress(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_plans(payload: dict[str, Any]) -> list[str]:
+    card = _as_dict(payload.get("plan_board_card"))
+    plans = _as_list(card.get("plans"))
+    if not plans:
+        return []
+    board_command = str(card.get("board_command") or "agentdeck plan board")
+    active = card.get("active_count", 0)
+    total = card.get("plan_count", len(plans))
+    lines = [_rule("Plans"), f"{active}/{total} active  ({board_command})"]
+    for plan in plans:
+        plan = _as_dict(plan)
+        plan_id = str(plan.get("plan_id") or "")
+        state = "active" if plan.get("active") else "done"
+        gate = str(plan.get("gate") or "")
+        task = str(plan.get("task") or "")
+        lines.append(f"  {plan_id:<18} {state:<6} {gate:<20} {task}".rstrip())
+        next_command = plan.get("next_command")
+        if next_command:
+            lines.append(f"      → {next_command}")
+    return lines
+
+
 def _render_runtime(payload: dict[str, Any]) -> list[str]:
     card = _as_dict(payload.get("runtime_card"))
     agents = _as_list(card.get("agents"))
@@ -350,6 +372,7 @@ def render_workbench_dashboard(payload: dict[str, Any]) -> str:
         _render_header(payload),
         _render_recovery(payload),
         _render_run_progress(payload),
+        _render_plans(payload),
         _render_runtime(payload),
         _render_role_topology(payload),
         _render_worker_activity(payload),

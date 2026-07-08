@@ -34,6 +34,23 @@ def test_render_workbench_dashboard_consumes_only_the_contract_payload() -> None
     assert payload == snapshot
 
 
+def test_render_workbench_dashboard_shows_plans_board() -> None:
+    payload = workbench_example()
+    snapshot = copy.deepcopy(payload)
+
+    text = render_workbench_dashboard(payload)
+
+    # the multi-plan board is visible in the cockpit, each plan with its gate + next command
+    assert "Plans" in text
+    block = [b for b in text.split("\n\n") if b.splitlines()[0].startswith("── Plans")][0]
+    assert "pln_a" in block
+    assert "demoA" in block
+    assert "needs_human_approval" in block
+    assert "agentdeck approval list" in block  # per-plan next command
+    # rendering is read-only
+    assert payload == snapshot
+
+
 def test_render_workbench_dashboard_shows_recent_activity_ledger_tail() -> None:
     payload = workbench_example()
     snapshot = copy.deepcopy(payload)
