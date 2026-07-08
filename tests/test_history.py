@@ -23,3 +23,26 @@ def test_all_events_returns_full_ledger(tmp_path):
     assert len(events) == 25
     assert events[0]["payload"]["agent_id"] == "a0"
     assert events[-1]["payload"]["agent_id"] == "a24"
+
+
+def test_humanize_event_maps_milestones_and_skips_noise():
+    from agentdeck.history import _humanize_event
+
+    assert (
+        _humanize_event({"event_type": "leader_plan_created", "payload": {"plan_id": "pln_1"}})
+        == "Plan created · pln_1"
+    )
+    assert (
+        _humanize_event(
+            {"event_type": "approval_decided", "payload": {"status": "approved", "approval_id": "apv_1"}}
+        )
+        == "Approval approved · apv_1"
+    )
+    assert _humanize_event({"event_type": "project_initialized", "payload": {}}) == "Project initialized"
+    assert (
+        _humanize_event({"event_type": "round_released", "payload": {"round": 1}})
+        == "Round released · round 1"
+    )
+    # noise (chat turns) and unknown event types are skipped
+    assert _humanize_event({"event_type": "leader_chat_turn", "payload": {}}) is None
+    assert _humanize_event({"event_type": "some_future_event", "payload": {}}) is None
