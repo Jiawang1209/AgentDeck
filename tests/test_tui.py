@@ -19,6 +19,68 @@ def test_tui_model_starts_in_overview_mode_reusing_dashboard_render() -> None:
     assert payload == snapshot
 
 
+def _payload_with_approvals() -> dict:
+    payload = copy.deepcopy(workbench_example())
+    payload["approval_card"] = {
+        "count": 2,
+        "approvals": [
+            {
+                "approval_id": "apv_1", "status": "pending", "agent_id": "planner", "task": "do A",
+                "approve_command": "agentdeck approval approve --approval-id apv_1",
+                "reject_command": "agentdeck approval reject --approval-id apv_1 --reason <reason>",
+                "dispatch_command": "agentdeck approval dispatch --approval-id apv_1",
+                "preview_command": "agentdeck approval list",
+            },
+            {
+                "approval_id": "apv_2", "status": "approved", "agent_id": "coder", "task": "do B",
+                "approve_command": "agentdeck approval approve --approval-id apv_2",
+                "reject_command": "agentdeck approval reject --approval-id apv_2 --reason <reason>",
+                "dispatch_command": "agentdeck approval dispatch --approval-id apv_2",
+                "preview_command": "agentdeck approval list",
+            },
+        ],
+    }
+    return payload
+
+
+def test_tui_model_approvals_view_navigates_and_shows_status_aware_command() -> None:
+    payload = _payload_with_approvals()
+    snapshot = copy.deepcopy(payload)
+
+    model = TuiModel(payload)
+    model.toggle_approvals()
+    assert model.mode == "approvals"
+
+    items = model.approval_items()
+    assert [i["approval_id"] for i in items] == ["apv_1", "apv_2"]
+
+    model.move_selection(-100)
+    assert model.selected_approval()["approval_id"] == "apv_1"
+    # pending -> the footer offers the approve command (read-only: shown, not run)
+    assert "agentdeck approval approve --approval-id apv_1" in model.footer_text()
+
+    model.move_selection(1)
+    assert model.selected_approval()["approval_id"] == "apv_2"
+    # approved -> the footer offers the dispatch command
+    assert "agentdeck approval dispatch --approval-id apv_2" in model.footer_text()
+
+    # the model only reads the payload; it never mutates it
+    assert payload == snapshot
+
+
+def test_tui_render_frame_approvals_lists_items() -> None:
+    payload = _payload_with_approvals()
+    model = TuiModel(payload)
+    model.toggle_approvals()
+
+    frame = render_frame(model, 12, 80)
+    text = "\n".join(frame)
+    assert "approvals" in frame[0]  # title reflects the mode
+    assert "planner" in text
+    assert "do A" in text
+    assert "pending" in text
+
+
 def test_tui_model_toggles_to_palette_and_navigates_controls() -> None:
     payload = workbench_example()
     model = TuiModel(payload)

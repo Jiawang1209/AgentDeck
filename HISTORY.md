@@ -4,7 +4,17 @@
 
 ## 2026-07-08
 
-### Current - Show the recent-activity ledger tail in the text dashboard / TUI
+### Current - Add a navigable approvals view to the interactive TUI
+
+- **类型**: feat
+- **动机**: "驾驶舱"方向第四刀，也是首个动 TUI 交互层的。命令面板（palette）会把所有 scope 的几十个 control 铺在一起；操作者最核心的循环是「现在有哪些审批要我拍板」（北极星优先级 #3 人类审批）。给 TUI 加一个专注的、可上下选的只读审批视图。
+- **What**:
+  - `src/agentdeck/tui.py` 新增只读 `approvals` mode（与 overview/palette/help 并列），消费 workbench 契约的 `approval_card.approvals[]`：`TuiModel.approval_items` / `selected_approval` / `selected_approval_command`（按 status 派生：pending→approve、approved→dispatch、否则 preview）/ `toggle_approvals`；`move_selection` 改为 mode-aware；`render_frame` 新增 approvals 分支；新增 `_approval_window` / `_approval_rows`；footer 显示选中项的 status-aware 命令；`_frame_row_attributes` 给选中行加 `A_REVERSE`；`run_tui` 新增 `[a]` 键并让 approvals mode 参与上下/翻页导航；help 列出 `[a]`。
+  - 命令直接来自契约字段（`approve_command`/`dispatch_command`/`preview_command`），不自造；纯只读：选中只展示「run: <命令>」，TUI 从不执行、不写 state、不碰 tmux。
+- **Impact**: TUI 里可专注浏览待办审批并看到该对哪条敲什么命令；无行为变化、无破坏性改动。
+- **Verification**: `conda run -n agentdeck pytest tests/test_tui.py -q`（含新 `test_tui_model_approvals_view_navigates_and_shows_status_aware_command` / `test_tui_render_frame_approvals_lists_items`，红→绿）；全套 `pytest -q`（683 passed）；`python -m compileall src tests`；`git diff --check`；并对合成 payload 实跑 `render_frame` 确认视图与 footer 命令正确。
+
+### Show the recent-activity ledger tail in the text dashboard / TUI
 
 - **类型**: feat
 - **动机**: "驾驶舱"方向第三刀，直接呼应用户最看重的「全程记账」。文字 dashboard（也是 TUI overview 数据源）里没有事件账本的入口——你得单独跑 `agentdeck history` 或 `agentdeck events` 才能看最近发生了啥。给一屏总览补上账本尾巴。

@@ -46,6 +46,11 @@ class TuiModel:
         self._controls = [
             item for item in _as_list(self._payload.get("control_registry")) if isinstance(item, dict)
         ]
+        self._approvals = [
+            item
+            for item in _as_list(_as_dict(self._payload.get("approval_card")).get("approvals"))
+            if isinstance(item, dict)
+        ]
         self._reclamp()
 
     def _filtered_controls(self) -> list[dict[str, Any]]:
@@ -92,8 +97,37 @@ class TuiModel:
         return controls[index]
 
     def move_selection(self, delta: int) -> None:
-        controls = self._filtered_controls()
-        self.selected_index = _clamp(self.selected_index + delta, 0, max(0, len(controls) - 1))
+        length = len(self._approvals) if self.mode == "approvals" else len(self._filtered_controls())
+        self.selected_index = _clamp(self.selected_index + delta, 0, max(0, length - 1))
+
+    # --- approvals mode ---
+
+    def approval_items(self) -> list[dict[str, Any]]:
+        return list(self._approvals)
+
+    def selected_approval(self) -> dict[str, Any] | None:
+        if not self._approvals:
+            return None
+        index = _clamp(self.selected_index, 0, len(self._approvals) - 1)
+        return self._approvals[index]
+
+    def selected_approval_command(self) -> str | None:
+        approval = self.selected_approval()
+        if approval is None:
+            return None
+        status = approval.get("status")
+        if status == "approved":
+            return approval.get("dispatch_command")
+        if status == "pending":
+            return approval.get("approve_command")
+        return approval.get("preview_command") or approval.get("approve_command")
+
+    def toggle_approvals(self) -> None:
+        if self.mode == "help":
+            self.mode = self._prev_mode
+        self.mode = "approvals" if self.mode != "approvals" else "overview"
+        if self.mode == "approvals":
+            self.selected_index = 0
 
     # --- shared ---
 
@@ -124,7 +158,8 @@ class TuiModel:
         return [
             "Keys",
             "  [tab] / [p]    toggle overview <-> command palette",
-            "  [up]/[down] ([k]/[j])   scroll overview or move palette selection",
+            "  [a]            toggle overview <-> approvals view",
+            "  [up]/[down] ([k]/[j])   scroll overview or move palette/approvals selection",
             "  [PgUp]/[PgDn] ([space]) jump by 10",
             "  [/]            filter the palette (Enter apply, Esc cancel)",
             "  [r]            refresh (re-fetch + validate workbench snapshot)",
@@ -141,6 +176,19 @@ class TuiModel:
     def footer_text(self) -> str:
         if self.mode == "help":
             return "help  |  [?] back  [q] quit"
+        if self.mode == "approvals":
+            approvals = self._approvals
+            if not approvals:
+                return "approvals: none pending  |  [a] overview  [r] refresh  [q] quit"
+            approval = self.selected_approval() or {}
+            command = self.selected_approval_command()
+            command_text = str(command) if command else "(no command)"
+            status = str(approval.get("status") or "")
+            agent = str(approval.get("agent_id") or "")
+            return (
+                f"{self.selected_index + 1}/{len(approvals)}  [{status}] {agent}\n"
+                f"run: {command_text}  |  [a] overview  [r] refresh  [q] quit"
+            )
         if self.mode == "palette":
             controls = self._filtered_controls()
             filter_hint = f"  filter:'{self.filter_text}'" if self.filter_text else ""
@@ -198,6 +246,30 @@ def _palette_rows(model: "TuiModel", body_height: int, width: int) -> list[str]:
     return rows
 
 
+def _approval_window(model: "TuiModel", body_height: int) -> list[int]:
+    approvals = model.approval_items()
+    if not approvals:
+        return []
+    top = _clamp(model.selected_index - body_height // 2, 0, max(0, len(approvals) - body_height))
+    return list(range(top, min(len(approvals), top + max(1, body_height))))
+
+
+def _approval_rows(model: "TuiModel", body_height: int, width: int) -> list[str]:
+    approvals = model.approval_items()
+    if not approvals:
+        return ["(no pending approvals in this snapshot)"]
+    rows: list[str] = []
+    for index in _approval_window(model, body_height):
+        approval = _as_dict(approvals[index])
+        marker = ">" if index == model.selected_index else " "
+        status = str(approval.get("status") or "")
+        agent = str(approval.get("agent_id") or "")
+        task = str(approval.get("task") or "")
+        row = f"{marker} {status:<10} {agent:<12} {task}"
+        rows.append(_fit(row, width))
+    return rows
+
+
 def palette_row_style(control: dict[str, Any], is_selected: bool) -> str:
     """Pure styling decision for a palette row: selected > enabled > disabled."""
     if is_selected:
@@ -227,6 +299,8 @@ def render_frame(model: "TuiModel", height: int, width: int) -> list[str]:
         body = [_fit(line, width) for line in model.help_lines()]
     elif model.mode == "palette":
         body = _palette_rows(model, body_height, width)
+    elif model.mode == "approvals":
+        body = _approval_rows(model, body_height, width)
     else:
         lines = model.overview_lines()
         body = [_fit(line, width) for line in lines[model.scroll : model.scroll + body_height]]
@@ -242,10 +316,16 @@ def _frame_row_attributes(model: "TuiModel", height: int, frame_len: int) -> lis
     import curses
 
     attrs = [0] * frame_len
-    if model.mode != "palette":
+    if model.mode not in ("palette", "approvals"):
         return attrs
     footer_count = len(model.footer_text().split("\n"))
     body_height = max(1, height - 1 - footer_count)
+    if model.mode == "approvals":
+        for offset, index in enumerate(_approval_window(model, body_height)):
+            row = 1 + offset
+            if row < frame_len and index == model.selected_index:
+                attrs[row] = curses.A_REVERSE
+        return attrs
     style_attr = {
         "selected": curses.A_REVERSE,
         "disabled": curses.A_DIM,
@@ -323,27 +403,29 @@ def run_tui(stdscr: Any, model: "TuiModel", fetch: Any) -> None:
             _read_filter(stdscr, model)
         elif key in (ord("\t"), ord("p"), ord("P")):
             model.toggle_palette()
+        elif key in (ord("a"), ord("A")):
+            model.toggle_approvals()
         elif key in (ord("r"), ord("R")):
             fresh = fetch()
             if isinstance(fresh, dict):
                 model.refresh(fresh)
         elif key in (curses.KEY_DOWN, ord("j")):
-            if model.mode == "palette":
+            if model.mode in ("palette", "approvals"):
                 model.move_selection(1)
             else:
                 model.scroll_by(1, max(1, stdscr.getmaxyx()[0] - 3))
         elif key in (curses.KEY_UP, ord("k")):
-            if model.mode == "palette":
+            if model.mode in ("palette", "approvals"):
                 model.move_selection(-1)
             else:
                 model.scroll_by(-1, max(1, stdscr.getmaxyx()[0] - 3))
         elif key in (curses.KEY_NPAGE, ord(" ")):
-            if model.mode == "palette":
+            if model.mode in ("palette", "approvals"):
                 model.move_selection(10)
             else:
                 model.scroll_by(10, max(1, stdscr.getmaxyx()[0] - 3))
         elif key == curses.KEY_PPAGE:
-            if model.mode == "palette":
+            if model.mode in ("palette", "approvals"):
                 model.move_selection(-10)
             else:
                 model.scroll_by(-10, max(1, stdscr.getmaxyx()[0] - 3))

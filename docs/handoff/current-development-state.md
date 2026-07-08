@@ -379,7 +379,9 @@ Two slices of that lane are **done** (both in `render_workbench_dashboard`, shar
 
 The dashboard/TUI overview now lays out: Header → Recovery → Run progress → Runtime → Role topology → Worker activity → Review gate → Release preview → Ledger → Queue → Control mode → Learning layer → Recent activity → Command palette.
 
-Candidate next slices in this lane (each a contained, pure-render cut): a navigable TUI approvals/queue view (select an approval → see its command, like the palette view); render the autonomous/run-loop state in the TUI. Larger forks still open (ask the human): a full standalone GUI client; Skill Registry marketplace/allowlist; multi-plan/parallel orchestration; remote/MCP transport. Whatever is chosen must preserve human approval and keep every read-only surface read-only.
+The interactive TUI (`src/agentdeck/tui.py`) also gained a fourth **`approvals`** mode (alongside overview/palette/help): a read-only navigable list of `approval_card.approvals[]` with `[a]` to toggle, arrow/paged navigation, selected-row highlight, and a footer showing the selected item's status-aware command (pending→approve, approved→dispatch, else preview) — commands come straight from contract fields; the TUI never executes. Tests: `tests/test_tui.py::test_tui_model_approvals_view_navigates_and_shows_status_aware_command` / `::test_tui_render_frame_approvals_lists_items`.
+
+Candidate next slices in this lane (each contained): render the autonomous/run-loop state or a queue view in the TUI; select-to-focus other card types. Larger forks still open (ask the human): a full standalone GUI client; Skill Registry marketplace/allowlist; multi-plan/parallel orchestration; remote/MCP transport. Whatever is chosen must preserve human approval and keep every read-only surface read-only.
 
 Already done, do NOT redo: `agentdeck dashboard --watch [--interval N] [--iterations N]` exists (`dashboard_command`, cli.py); `learning_review_card` is already a read-only workbench card (`_workbench_learning_review_card`, cli.py:1480).
 
