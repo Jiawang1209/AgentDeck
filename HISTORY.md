@@ -4,7 +4,20 @@
 
 ## 2026-07-08
 
-### Current - Light autonomous commands into the control registry（scope=autonomous）
+### Current - Natural-language run-loop preview intent（mode=run_loop_preview）
+
+- **类型**: feat
+- **动机**: `agentdeck run-loop --plan-id <id> --confirm` 及其 `scope=autonomous` 命令面板组已就绪，但自然语言壳还无法发现它。补最后一条 GUI 主线 slice：让人类输入“推进计划 pln_xxx”即可只读预览并拿到显式 run-loop 命令，且 chat 绝不执行它，保持 `leader chat` 永不触发 runtime/dispatch 的项目不变量。
+- **What**:
+  - `cli.py` 新增 `_chat_wants_run_loop_preview` / `_chat_run_loop_preview_plan_id` 检测器和 `_run_loop_preview_card(store, config, plan_id)` 只读卡片构造器（`command=agentdeck run-loop --plan-id <id> --confirm`，`safety=delegated`，autonomous 关闭时 blocker `autonomous mode is not enabled` + `enable_command`，controls 为 `run_loop` + `inspect`）。
+  - `leader chat` dispatch 在 `run_progress` 分支前新增 `mode=run_loop_preview` 路由：校验 plan 存在（未知/缺失 plan id → 报错不写 state），派生过滤到 `scope=autonomous` / `card=control_mode_card` 的 `control_registry_card`（selection 指向 disabled `run_loop` 模板），只记录 chat turn + `leader_chat_turn` 审计事件。
+  - `_leader_chat_explanation` 加 `run_loop_preview` 分支（`safety=explicit_runtime`、`requires_explicit_user=True`）；`_leader_chat_intent_card` 的 `card_names`、secondary-card 规则、`_leader_chat_intent_card_blocker`、`_leader_chat_intent_inspect_command`、`_leader_chat_next_control_label`（`Drive plan forward`）和 `_print_leader_chat_payload_or_error` setdefault 同步。
+  - `contracts.py`：`LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS`、`LEADER_CHAT_RESPONSE_FIELDS` 加 `run_loop_preview_card`、contract discovery `run_loop_preview_card_fields`、example fixture、`validate_leader_chat_contract` 的 `run_loop_preview` mode check（要求 card、`next_command==card.command`、`intent_card.embedded_card==run_loop_preview_card`）。
+  - 同步 `docs/contracts/leader-chat-schema.md`、`CLAUDE.md`、`README.md`、`docs/handoff/current-development-state.md`。
+- **Impact**: 新增只读自然语言入口；无 provider 调用、无 tmux、无 approval/runtime/plan 写入；autonomous 关闭时 next control disabled 带 blocker。leader-chat 契约为加法扩展（新增可选卡片 + discovery 字段）。这是 autonomous 目标的最后一条 GUI 主线 slice。
+- **Verification**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k "run_loop_preview" tests/test_contracts.py -k "leader_chat or run_loop_preview" -q`；全套 `pytest -q`；`python -m compileall src tests -q`；`git diff --check`。
+
+### Light autonomous commands into the control registry（scope=autonomous）
 
 - **类型**: feat
 - **动机**: autonomous 目标已收官，但 `agentdeck approval auto --confirm` 和 `agentdeck run-loop --plan-id <id> --confirm` 从未进入只读命令面板（`control_registry` / `agentdeck controls`），未来 GUI/TUI 无法发现它们。补这条 surfacing slice，把两条命令暴露为可渲染的 palette control，为后续 NL intent 打底。渲染不是授权。
