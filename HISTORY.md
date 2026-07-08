@@ -4,6 +4,14 @@
 
 ## 2026-07-08
 
+### Current - Add agentdeck history timeline renderer
+
+- 新增 `agentdeck history`(北极星"审计/HISTORY 门",autonomous 三块拆分的子项目 1):从已有 `events.jsonl` 账本确定性渲染人类可读 Markdown 时间线,最新在上、按日期分组,每个里程碑事件一行,`leader_chat_turn` 等噪声与未知事件跳过。
+- 新增纯模块 `src/agentdeck/history.py`(`render_history_markdown` + `_humanize_event`,约 30 种事件的 humanize 白名单)和只读 `StateStore.all_events()`(读全量账本,因为 `list_events(limit<=0)` 返回空)。
+- `agentdeck history` 打到 stdout(纯只读);`agentdeck history --write` 落成 `.agentdeck/HISTORY.md`(幂等投影,不改账本/state),`--write <path>` / `--limit N` 可调。不用 LLM、不加新 JSON 契约、不调 provider、不碰 tmux/审批。
+- 设计与实现计划见 `docs/superpowers/specs/2026-07-08-agentdeck-history-timeline-design.md` 与 `docs/superpowers/plans/2026-07-08-agentdeck-history-timeline.md`。
+- 验证记录:目标测试 `conda run -n agentdeck pytest tests/test_history.py -q` 通过;`conda run -n agentdeck python -m compileall src tests` 和 `git diff --check` 通过;`conda run -n agentdeck pytest -q` 全量通过。
+
 ### Current - Cover run_tui curses loop with a fake stdscr
 
 - 用假 stdscr 端到端覆盖 `agentdeck tui` 的 curses 主循环 `run_tui`(此前唯一未测的薄壳)。`tests/test_tui.py` 新增 `_FakeStdscr`(重放脚本化按键、记录绘制),驱动四条路径:palette 切换+导航+`r` 刷新(fetch 被调一次)+`q` 退出;`r` 刷新遇 fetch 返回 None 时不崩溃/不清空 model;`?` 切 help;`/` 过滤输入(喂 `role`+Enter,断言 filter 生效且结果都含 "role")。

@@ -356,6 +356,11 @@ All three optional TUI polish items are now committed: (1) the palette focuses t
 
 ## Next Best Step
 
+Sub-project 1 of 3 (the audit / HISTORY gate) is **done**: `agentdeck history` renders the `events.jsonl` ledger into a read-only, newest-first, date-grouped Markdown timeline (`src/agentdeck/history.py`, `StateStore.all_events()`, `tests/test_history.py`), with `--write` materializing `.agentdeck/HISTORY.md` and `--limit N` to cap. Design + plan: `docs/superpowers/specs/2026-07-08-agentdeck-history-timeline-design.md` and `docs/superpowers/plans/2026-07-08-agentdeck-history-timeline.md`. Remaining, in order:
+- **Sub-project 2**: autonomous policy switch + allowlist/budget guardrails (the `autonomous` control mode, still rejected today).
+- **Sub-project 3**: the executing round loop that consumes approved work.
+Both must preserve human approval and keep every read-only surface read-only.
+
 The interactive TUI is feature-complete (overview/palette/help, filter, refresh, focus, colors) and now fully tested — `run_tui` is covered end-to-end via a fake stdscr (`tests/test_tui.py`). The TUI/dashboard reference-client line is done.
 
 ## Next Best Step
