@@ -37,3 +37,30 @@ def test_update_autonomous_policy_writes_and_reloads(tmp_path):
     config = load_config(root)
     assert config.autonomous.allowed_agents == ("planner", "coder")
     assert config.autonomous.max_approvals == 5
+
+
+def test_select_auto_approvals_filters_by_allowlist_and_budget():
+    from agentdeck.autonomy import select_auto_approvals
+
+    pending = [
+        {"approval_id": "apv_1", "agent_id": "planner"},
+        {"approval_id": "apv_2", "agent_id": "reviewer"},
+        {"approval_id": "apv_3", "agent_id": "coder"},
+        {"approval_id": "apv_4", "agent_id": "planner"},
+    ]
+    selected, skipped = select_auto_approvals(pending, ("planner", "coder"), max_approvals=2)
+
+    # allowlisted in ledger order, capped at 2
+    assert [a["approval_id"] for a in selected] == ["apv_1", "apv_3"]
+    reasons = {s["approval_id"]: s["reason"] for s in skipped}
+    assert reasons["apv_2"] == "agent not in allowlist"
+    assert reasons["apv_4"] == "budget exhausted"
+
+
+def test_select_auto_approvals_empty_allowlist_selects_nothing():
+    from agentdeck.autonomy import select_auto_approvals
+
+    pending = [{"approval_id": "apv_1", "agent_id": "planner"}]
+    selected, skipped = select_auto_approvals(pending, (), max_approvals=5)
+    assert selected == []
+    assert skipped[0]["reason"] == "agent not in allowlist"
