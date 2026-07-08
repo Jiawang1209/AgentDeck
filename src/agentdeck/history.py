@@ -67,3 +67,36 @@ def _humanize_event(event: dict[str, Any]) -> str | None:
         return None
     action, detail = render(payload)
     return f"{action} · {detail}" if detail else action
+
+
+def _split_timestamp(created_at: str) -> tuple[str, str]:
+    if "T" in created_at:
+        date, _, rest = created_at.partition("T")
+        return date, rest[:8]
+    return created_at[:10], ""
+
+
+def render_history_markdown(events: list[dict[str, Any]], project: str) -> str:
+    header = [f"# AgentDeck History — {project}", ""]
+    rendered: list[tuple[str, str, str]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        text = _humanize_event(event)
+        if text is None:
+            continue
+        date, time = _split_timestamp(str(event.get("created_at") or ""))
+        rendered.append((date, time, text))
+    if not rendered:
+        return "\n".join(header + ["_No recorded activity yet._"]) + "\n"
+    rendered.reverse()  # ledger is oldest-first; reverse for newest-first
+    by_date: "OrderedDict[str, list[tuple[str, str]]]" = OrderedDict()
+    for date, time, text in rendered:
+        by_date.setdefault(date, []).append((time, text))
+    lines = list(header)
+    for date, entries in by_date.items():
+        lines.append(f"## {date}")
+        for time, text in entries:
+            lines.append(f"- {time} · {text}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
