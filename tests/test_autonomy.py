@@ -27,3 +27,13 @@ def test_load_config_parses_autonomous_section(tmp_path):
     config = load_config(root)
     assert config.autonomous.allowed_agents == ("planner", "coder")
     assert config.autonomous.max_approvals == 3
+
+
+def test_update_autonomous_policy_writes_and_reloads(tmp_path):
+    from agentdeck.config import update_autonomous_policy
+
+    root = _init(tmp_path)
+    update_autonomous_policy(root, ("planner", "coder"), 5)
+    config = load_config(root)
+    assert config.autonomous.allowed_agents == ("planner", "coder")
+    assert config.autonomous.max_approvals == 5

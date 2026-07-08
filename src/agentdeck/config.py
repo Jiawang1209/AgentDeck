@@ -182,6 +182,19 @@ def update_leader_approval_mode(root: Path, approval_mode: str) -> LeaderConfig:
     return load_config(root).leader
 
 
+def update_autonomous_policy(root: Path, allowed_agents: tuple[str, ...], max_approvals: int) -> AutonomousPolicy:
+    path = config_path(root)
+    if not path.exists():
+        raise FileNotFoundError(f"missing config: {path}")
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    raw["autonomous"] = {
+        "allowed_agents": list(allowed_agents),
+        "max_approvals": int(max_approvals),
+    }
+    path.write_text(_dump_config(raw), encoding="utf-8")
+    return load_config(root).autonomous
+
+
 def update_leader_provider(root: Path, provider: str, model: str | None = None) -> LeaderConfig:
     path = config_path(root)
     if not path.exists():
@@ -246,4 +259,14 @@ def _dump_config(raw: dict[str, object]) -> str:
                 f"socket_name = {_quote_toml(str(runtime.get('socket_name', 'agentdeck-local')))}",
             ]
         )
+    autonomous = raw.get("autonomous", {})
+    if isinstance(autonomous, dict) and (autonomous.get("allowed_agents") or autonomous.get("max_approvals")):
+        allowed = autonomous.get("allowed_agents", []) or []
+        allowed_toml = "[" + ", ".join(_quote_toml(str(a)) for a in allowed) + "]"
+        lines.extend([
+            "",
+            "[autonomous]",
+            f"allowed_agents = {allowed_toml}",
+            f"max_approvals = {int(autonomous.get('max_approvals', 0))}",
+        ])
     return "\n".join(lines) + "\n"
