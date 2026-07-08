@@ -64,3 +64,36 @@ def test_select_auto_approvals_empty_allowlist_selects_nothing():
     selected, skipped = select_auto_approvals(pending, (), max_approvals=5)
     assert selected == []
     assert skipped[0]["reason"] == "agent not in allowlist"
+
+
+def test_run_loop_gate_maps_review_next_action_to_stop_and_command():
+    from agentdeck.autonomy import run_loop_gate
+
+    # error takes priority over everything
+    assert run_loop_gate({"next_action": "wait_for_reply"}, True, "pln_1")[0] == "error"
+    assert run_loop_gate({"next_action": "wait_for_reply"}, True, "pln_1")[1] == "agentdeck plan status --plan-id pln_1"
+
+    # approved-but-undispatched after the wave == blocked on a non-running agent -> go spawn it
+    reason, cmd = run_loop_gate({"next_action": "dispatch_approved", "agent_id": "coder"}, False, "pln_1")
+    assert reason == "blocked"
+    assert cmd == "agentdeck agent spawn --agent coder"
+
+    # non-auto pending approval remains -> human approval
+    reason, cmd = run_loop_gate({"next_action": "wait_for_approval"}, False, "pln_1")
+    assert reason == "needs_human_approval"
+    assert cmd == "agentdeck approval list"
+
+    # dispatched, no reply yet -> stop and hand the explicit capture-reply command
+    reason, cmd = run_loop_gate({"next_action": "wait_for_reply", "agent_id": "planner", "message_id": "msg_7"}, False, "pln_1")
+    assert reason == "waiting_for_reply"
+    assert cmd == "agentdeck capture-reply --agent planner --message-id msg_7"
+
+    # all dispatched steps have replies -> complete
+    reason, cmd = run_loop_gate({"next_action": "summarize"}, False, "pln_1")
+    assert reason == "complete"
+    assert cmd == "agentdeck leader summary --plan-id pln_1"
+
+    # nothing actionable
+    reason, cmd = run_loop_gate({"next_action": "unknown"}, False, "pln_1")
+    assert reason == "idle"
+    assert cmd == "agentdeck run --plan-id pln_1"

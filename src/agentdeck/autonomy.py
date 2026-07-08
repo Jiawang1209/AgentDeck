@@ -29,3 +29,31 @@ def select_auto_approvals(
         else:
             selected.append(approval)
     return selected, skipped
+
+
+def run_loop_gate(
+    review: dict[str, Any],
+    has_error: bool,
+    plan_id: str,
+) -> tuple[str, str]:
+    """Diagnose where a plan is stuck after one run-loop wave.
+
+    Returns (stopped_reason, next_command) -- a read-only, explicit next step
+    for the human. Priority: error first, then the leader_review next_action.
+    """
+    if has_error:
+        return "error", f"agentdeck plan status --plan-id {plan_id}"
+    next_action = review.get("next_action")
+    if next_action == "dispatch_approved":
+        # an approved step survived the wave -> its agent has no running pane
+        return "blocked", f"agentdeck agent spawn --agent {review.get('agent_id')}"
+    if next_action == "wait_for_approval":
+        return "needs_human_approval", "agentdeck approval list"
+    if next_action == "wait_for_reply":
+        return (
+            "waiting_for_reply",
+            f"agentdeck capture-reply --agent {review.get('agent_id')} --message-id {review.get('message_id')}",
+        )
+    if next_action == "summarize":
+        return "complete", f"agentdeck leader summary --plan-id {plan_id}"
+    return "idle", f"agentdeck run --plan-id {plan_id}"
