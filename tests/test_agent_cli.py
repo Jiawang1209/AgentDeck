@@ -4615,6 +4615,8 @@ def test_demo_golden_blocks_dispatch_for_pending_approval(tmp_path, monkeypatch,
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
+    assert payload["current_status"] == "waiting_for_approval"
+    assert payload["next_command"] == f"agentdeck approval approve --approval-id {approval_id}"
     approval_step = next(step for step in payload["steps"] if step["step_id"] == "approval")
     assert approval_step["status"] == "ready"
     assert approval_step["enabled"] is True

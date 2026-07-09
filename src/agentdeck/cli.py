@@ -3051,9 +3051,6 @@ def _golden_demo_payload(config: ProjectConfig, store: StateStore) -> dict[str, 
     if releases:
         current_status = "released"
         next_command = "agentdeck workbench"
-    elif not provider_ready:
-        current_status = "provider_setup_required"
-        next_command = "agentdeck doctor"
     elif release_ready or replies:
         current_status = "ready_for_review_gate"
         next_command = "agentdeck workbench"
@@ -3075,6 +3072,9 @@ def _golden_demo_payload(config: ProjectConfig, store: StateStore) -> dict[str, 
     elif plans:
         current_status = "plan_ready"
         next_command = f"agentdeck approval create-from-plan --plan-id {plan_id}"
+    elif not provider_ready:
+        current_status = "provider_setup_required"
+        next_command = "agentdeck doctor"
 
     provider_blocker = None if provider_ready else str(provider_health.get("detail") or "leader provider is not ready")
     workers_ready = len(running_agents) > 0
