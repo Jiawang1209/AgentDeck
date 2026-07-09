@@ -69,6 +69,12 @@ CONTRACT_INDEX_SPECS = (
         "run-loop-schema.md",
     ),
     (
+        "run-loop-all",
+        "agentdeck contract run-loop-all",
+        "agentdeck contract run-loop-all --example",
+        "run-loop-all-schema.md",
+    ),
+    (
         "plans",
         "agentdeck contract plans",
         "agentdeck contract plans --example",
@@ -1934,6 +1940,16 @@ RUN_LOOP_STOP_REASONS = (
     "waiting_for_reply",
     "complete",
     "idle",
+)
+
+RUN_LOOP_ALL_RESPONSE_FIELDS = (
+    "ok", "mode", "requires_explicit_user", "safety",
+    "plan_count", "active_count", "budget", "totals", "plans",
+)
+
+RUN_LOOP_ALL_PLAN_FIELDS = (
+    "plan_id", "task", "auto_approved", "dispatched", "blocked",
+    "skipped", "skipped_contention", "gate", "next_command",
 )
 
 RUN_START_RESPONSE_FIELDS = (
@@ -3983,6 +3999,103 @@ def validate_run_loop_contract(payload: dict[str, object]) -> dict[str, object]:
     for list_field in ("dispatched", "blocked", "skipped"):
         if not isinstance(payload.get(list_field), list):
             errors.append(f"run_loop.{list_field} must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
+def run_loop_all_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "run_loop_all",
+        "requires_explicit_user": True,
+        "safety": "delegated",
+        "plan_count": 2,
+        "active_count": 2,
+        "budget": {"max_approvals": 5, "used": 1, "remaining": 4},
+        "totals": {"auto_approved": 1, "dispatched": 1, "blocked": 0, "skipped_contention": 1},
+        "plans": [
+            {
+                "plan_id": "pln_a", "task": "demoA", "auto_approved": 1,
+                "dispatched": [{"approval_id": "apv_a", "agent_id": "planner",
+                                "message_id": "msg_a", "trace_command": "agentdeck trace --id msg_a"}],
+                "blocked": [], "skipped": [], "skipped_contention": [],
+                "gate": "waiting_for_reply",
+                "next_command": "agentdeck capture-reply --agent planner --message-id msg_a",
+            },
+            {
+                "plan_id": "pln_b", "task": "demoB", "auto_approved": 0,
+                "dispatched": [], "blocked": [],
+                "skipped": [], "skipped_contention": [
+                    {"approval_id": "apv_b", "agent_id": "planner", "blocker": "agent busy this wave"}],
+                "gate": "needs_human_approval", "next_command": "agentdeck approval list",
+            },
+        ],
+    }
+
+
+def run_loop_all_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "run_loop_all_command": "agentdeck run-loop --all --confirm",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "run_loop_all_response_fields": list(RUN_LOOP_ALL_RESPONSE_FIELDS),
+        "run_loop_all_plan_fields": list(RUN_LOOP_ALL_PLAN_FIELDS),
+        "gates": list(RUN_LOOP_STOP_REASONS),
+        "run_loop_contract": "agentdeck contract run-loop",
+        "plans_contract": "agentdeck contract plans",
+    }
+
+
+def run_loop_all_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = run_loop_all_contract_payload(contract_path)
+    if include_example:
+        example = run_loop_all_example()
+        payload["example"] = True
+        payload["example_run_loop_all_response_fields"] = list(example)
+        payload["example_run_loop_all_plan_fields"] = list(example["plans"][0])
+        payload["example_run_loop_all"] = example
+    return payload
+
+
+def validate_run_loop_all_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in RUN_LOOP_ALL_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing run_loop_all field: {field}")
+    if payload.get("mode") != "run_loop_all":
+        errors.append(f"run_loop_all.mode must be run_loop_all, got {payload.get('mode')}")
+    if payload.get("safety") != "delegated":
+        errors.append("run_loop_all.safety must be delegated")
+    if payload.get("requires_explicit_user") is not True:
+        errors.append("run_loop_all.requires_explicit_user must be true")
+    budget = payload.get("budget")
+    if not isinstance(budget, dict) or any(k not in budget for k in ("max_approvals", "used", "remaining")):
+        errors.append("run_loop_all.budget must have max_approvals/used/remaining")
+    elif budget.get("used", 0) + budget.get("remaining", 0) != budget.get("max_approvals"):
+        errors.append("run_loop_all.budget used+remaining must equal max_approvals")
+    totals = payload.get("totals")
+    if not isinstance(totals, dict) or any(
+        k not in totals for k in ("auto_approved", "dispatched", "blocked", "skipped_contention")
+    ):
+        errors.append("run_loop_all.totals must have auto_approved/dispatched/blocked/skipped_contention")
+    plans = payload.get("plans")
+    if not isinstance(plans, list):
+        errors.append("run_loop_all.plans must be a list")
+        return {"ok": not errors, "errors": errors}
+    if payload.get("active_count") != len(plans):
+        errors.append("run_loop_all.active_count must equal len(plans)")
+    for index, item in enumerate(plans):
+        if not isinstance(item, dict):
+            errors.append(f"run_loop_all.plans[{index}] must be an object")
+            continue
+        for field in RUN_LOOP_ALL_PLAN_FIELDS:
+            if field not in item:
+                errors.append(f"run_loop_all.plans[{index}] missing field: {field}")
+        if item.get("gate") not in RUN_LOOP_STOP_REASONS:
+            errors.append(f"run_loop_all.plans[{index}].gate invalid")
+        for list_field in ("dispatched", "blocked", "skipped", "skipped_contention"):
+            if not isinstance(item.get(list_field), list):
+                errors.append(f"run_loop_all.plans[{index}].{list_field} must be a list")
     return {"ok": not errors, "errors": errors}
 
 

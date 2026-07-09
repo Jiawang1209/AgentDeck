@@ -5122,3 +5122,24 @@ def test_validate_plan_board_contract_rejects_bad_counts_and_gate():
     bad2["plans"] = [dict(bad2["plans"][0], gate="made_up")]
     bad2["plan_count"] = 1; bad2["active_count"] = 1
     assert not validate_plan_board_contract(bad2)["ok"]
+
+
+def test_run_loop_all_contract_and_validator_accept_example():
+    from pathlib import Path
+    from agentdeck.contracts import (
+        run_loop_all_contract_response, run_loop_all_example, validate_run_loop_all_contract,
+    )
+    path = Path("docs/contracts/run-loop-all-schema.md")
+    payload = run_loop_all_contract_response(path, include_example=True)
+    assert payload["run_loop_all_command"] == "agentdeck run-loop --all --confirm"
+    assert "run_loop_all_response_fields" in payload
+    assert payload["example_run_loop_all"]["mode"] == "run_loop_all"
+    assert validate_run_loop_all_contract(run_loop_all_example())["ok"]
+
+
+def test_validate_run_loop_all_contract_rejects_bad_budget_and_counts():
+    from agentdeck.contracts import run_loop_all_example, validate_run_loop_all_contract
+    bad = dict(run_loop_all_example()); bad["active_count"] = 99
+    assert not validate_run_loop_all_contract(bad)["ok"]
+    bad2 = dict(run_loop_all_example()); bad2["budget"] = {"max_approvals": 5, "used": 1, "remaining": 1}
+    assert not validate_run_loop_all_contract(bad2)["ok"]  # used+remaining != max
