@@ -4,7 +4,20 @@
 
 ## 2026-07-09
 
-### Current - Add dependency load plan + gated `skills load --with-deps` chain loading (skill ecosystem — decision "B-auto")
+### Current - Content-hash dependency version pinning + `version_mismatch` blocker (skill ecosystem — decision "B-ver")
+
+- **类型**: feat
+- **动机**: B-auto 的依赖链 load（preview + 显式确认）已完成。B-ver 加上**版本约束**——但坚持 local-first、确定性、无网络、无 semver registry：`depends_on` 条目可锁定内容 hash（`name@sha256:<hex>`）。锁定的依赖存在但 hash 不符 = 新 blocker 类别 `version_mismatch`，与 `missing`/cycle 一样硬阻断。纯 `name` 仍表示任意版本（行为不变）。
+- **What**:
+  - `skills.py`：新增纯 `_parse_dep(entry) -> (name, pin|None)`（首个 `@` 切分，空 pin 忽略）。`resolve_skill_dependencies` 新增 `version_mismatch: list[{name, expected, actual}]` + `seen_vm` 去重；visit 循环改用 `_parse_dep`，锁定依赖存在但 `content_hash != pin` 时记入 `version_mismatch` 并作为 blocker leaf 不递归；`resolved`/`missing`/`order`/cycle 语义其余不变。
+  - `cli.py`：`_skill_load_plan` 把 `version_mismatch` 加入返回 dict 和 `blockers`（`"version mismatch: <name> expected <pin>"`），`can_load` 因此在 mismatch 时为 false。`skills_deps_command` 通过 `**resolution` spread 自动带上 `version_mismatch`。`skills load --with-deps` 因 `not can_load` 已拒绝、零写，无额外逻辑。
+  - `contracts.py`：`version_mismatch` 加入 `SKILLS_DEPS_RESPONSE_FIELDS` / `SKILL_LOAD_PLAN_RESPONSE_FIELDS` 及两个 validator 的 list 校验。
+  - 文档：`docs/contracts/skills-schema.md`（pin 语法 + `version_mismatch` 字段/blocker）、`CLAUDE.md`（B-ver 规则）、`README.md`、`docs/handoff/current-development-state.md`（B-ver done，loop STOP）。
+- **影响**: `depends_on` 支持内容 hash pin；present-but-mismatched pinned dep 在 `skills deps` / `load-plan` / `load --with-deps --confirm` 一律硬阻断（load 零写）。安全边界：纯内容 hash 等值、确定性、本地、无网络；不 auto-fix、不 auto-import、不静默 load。未锁定依赖（`name`）行为逐字节不变。
+- **验证**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k skills tests/test_contracts.py -k skill -q` 全绿；全量 `pytest -q` 全绿（baseline 733 → 735）；`python -m compileall src tests -q` 干净；`git diff --check` 干净。
+- **偏差**: 计划里的字面 `_parse_dep`（`if "@" in entry ... return entry, None`）对 `"b@"` 返回 `("b@", None)`，与计划自带断言 `("b", None)` 冲突；按测试契约改用等价的 `partition` 版本。`test_contracts.py::test_validate_skill_load_plan_contract` 的 hardcoded good fixture 补上 `version_mismatch: []`（更新 example fixture，未弱化 validator）。Task 1 resolver 测试放在 `tests/test_agent_cli.py`（既有 resolver 测试同处）。
+
+### Add dependency load plan + gated `skills load --with-deps` chain loading (skill ecosystem — decision "B-auto")
 
 - **类型**: feat
 - **动机**: B 的只读依赖可见性（`skills deps`、`load-preview.unmet_dependencies`）已完成。B-auto 是第一片真正**作用于**依赖的切片：load 一个 skill 时顺带把它的依赖链一起 load——但坚持"依赖预览 + 显式确认，绝不静默"，绝不 auto-import。

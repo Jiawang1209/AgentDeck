@@ -11188,6 +11188,32 @@ def test_skills_load_with_deps_loads_chain_gated(tmp_path, monkeypatch, capsys):
     assert "nothing to load" in capsys.readouterr().err.lower() or "cannot load" in capsys.readouterr().err.lower()
 
 
+def test_skills_deps_and_load_plan_flag_version_mismatch(tmp_path, monkeypatch, capsys):
+    import hashlib
+    root = prepare_project(tmp_path, monkeypatch)
+    sk = root / ".agentdeck" / "skills"
+    (sk / "b").mkdir(parents=True)
+    (sk / "b" / "SKILL.md").write_text("---\nname: b\ndescription: b\n---\nb-body\n", encoding="utf-8")
+    (sk / "a").mkdir(parents=True)
+    (sk / "a" / "SKILL.md").write_text("---\nname: a\ndescription: a\ndepends_on: [b@sha256:deadbeef]\n---\nx\n", encoding="utf-8")
+
+    assert cli.main(["skills", "deps", "--name", "a"]) == 0
+    deps = json.loads(capsys.readouterr().out)
+    assert [m["name"] for m in deps["version_mismatch"]] == ["b"]
+
+    assert cli.main(["skills", "load-plan", "--name", "a", "--agent", "planner"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["can_load"] is False
+    assert [m["name"] for m in plan["version_mismatch"]] == ["b"]
+    assert any("version mismatch" in blk.lower() for blk in plan["blockers"])
+
+    # load --with-deps must reject a version mismatch, writing nothing
+    before = StateStore(root).load()
+    assert cli.main(["skills", "load", "--name", "a", "--agent", "planner", "--with-deps", "--confirm"]) == 1
+    assert "version mismatch" in capsys.readouterr().err.lower()
+    assert StateStore(root).load() == before
+
+
 def test_skills_load_with_deps_rejects_missing_dep(tmp_path, monkeypatch, capsys):
     root = prepare_project(tmp_path, monkeypatch)
     _put_project_skill(root, "a", ["z"])   # z missing

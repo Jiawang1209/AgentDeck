@@ -2,17 +2,21 @@
 
 Updated: 2026-07-09
 
-## Skill 生态 lane 进度 — A + B(只读/auto) 完成，B-ver 进行中
+## Skill 生态 lane 进度 — A + B(只读/auto/ver) 完成，⏸ loop STOP
 
-用户定了 "先 A 再 B"、"先 B-auto 再 B-ver"，loop 正在推进。已完成并提交：
+用户定了 "先 A 再 B"、"先 B-auto 再 B-ver"，loop 已推进到 B-ver 落地。已完成并提交：
 - **只读可见性 4 片**：`skills catalog --source <dir>` → `[skills] allowed_sources` + `skills sources` + `source_allowlisted` → workbench `skills_catalog_card` → 自然语言 `mode=skills_catalog`。
 - **A — allowlist 强制拦截**：`skills import` opt-in 强制（`--allow-unlisted` 逃生阀，空清单向后兼容，审计 `skill_imported.allowlisted`/`.allow_unlisted`，`import-preview` 只读回显）。
 - **B1/B2 — 依赖只读**：`skills deps --name <name>`（依赖树/missing/循环/拓扑序）；`skills load-preview` 回显 `unmet_dependencies`。
 - **B-auto — 依赖 load（preview + 显式确认）**：`skills load-plan`（只读预览）+ `skills load --with-deps --confirm`（deps-first 逐条 load，缺失/环拒绝零写，绝不 auto-import/静默；单 skill load 不变）。
+- **B-ver — 依赖版本约束（content-hash 锁定）done**：`depends_on: [name@sha256:<hex>]` 锁定内容 hash（纯 `name` = 任意版本，行为不变）。`skills.py` 新增纯 `_parse_dep`；`resolve_skill_dependencies` 新增 `version_mismatch: [{name,expected,actual}]` blocker 类别（pin 与实际 `content_hash` 不符，blocker leaf 不递归）。`skills deps` / `load-plan` 输出 `version_mismatch`（加入两个 contract 字段 + validator），`load-plan.blockers` 加 `"version mismatch: <name> expected <pin>"`，`can_load` 因此为 false，`skills load --with-deps --confirm` 像 missing/cycle 一样硬阻断、零写。纯 hash、本地、确定性、无网络。Design + plan: `docs/superpowers/specs/2026-07-09-skill-dep-version-pinning-design.md`、`docs/superpowers/plans/2026-07-09-skill-dep-version-pinning.md`。
 
-**进行中 = B-ver — 依赖版本约束（content-hash 锁定）**：`depends_on: [name@sha256:<hex>]` 锁定内容 hash;`resolve_skill_dependencies` 新增 `version_mismatch` blocker 类别(pin 与实际 hash 不符),`skills deps` / `load-plan` / `load --with-deps` 一律当硬阻断。纯 hash、本地、确定性、无网络。Design + plan: `docs/superpowers/specs/2026-07-09-skill-dep-version-pinning-design.md`。
+⏸ **loop STOP —— 剩余依赖项都是产品 fork，需先 STOP + 询问 human，不得单方面开工**：
+- **semver 范围 / 版本区间**（如 `name@>=1.2,<2`）——需要自己的 brainstorm→spec→plan。
+- **lockfile 生成 / 锁策略**——需要自己的设计。
+- **remote / marketplace 依赖（C）**——联网远程解析/抓取，local-first 边界外，需 human 显式 opt-in。
 
-**B-ver 完成后停 loop 的岔路**：semver 范围/版本区间、lockfile 生成/策略、联网远程依赖(C)。
+中文小结：B-ver（内容 hash 版本锁定）已实现并提交。`depends_on` 现在可写 `name@sha256:<hex>` 精确锁一个版本；被锁依赖存在但 hash 对不上 = `version_mismatch`，和"缺失依赖 / 循环"一样是硬阻断，`skills load --with-deps` 会拒绝且不写任何 state。未锁定的普通 `name` 依赖行为完全没变。到此 skill 依赖 lane 的本地确定性部分做完了，下一步（semver 区间、lockfile、联网远程依赖）都是需要你拍板的产品分叉，loop 在这里停。
 
 ## Active Goal
 
@@ -447,11 +451,13 @@ The human opened the **Skill Registry marketplace/ecosystem** lane (one of the f
 
 **Skill dependency auto-load (decision "B-auto") is done (preview + explicit confirm, never silent):** new pure `_skill_load_plan(config, store, name, agent)` (`src/agentdeck/cli.py`) reuses `resolve_skill_dependencies` + the agent's `skill_loads` to build a deps-first plan (`order` items `{name,status,source}`, `to_load` / `already_loaded` / `missing` / `has_cycle` / `cycle` / `blockers` / `can_load` / `confirm_command`). Read-only `agentdeck skills load-plan --name <name> --agent <id>` (`skills_load_plan_command`) wraps it as `mode=skill_load_plan` with inspect-only `skills show` controls, self-validated via `validate_skill_load_plan_contract` (`SKILL_LOAD_PLAN_RESPONSE_FIELDS`); it writes no state (a test asserts state unchanged). `agentdeck skills load --name <name> --agent <id> --with-deps --confirm` (`_skills_load_with_deps`, branched at the top of `skills_load_command`) loads each `to_load` skill deps-first via `store.record_skill_load` + a `skill_loaded` event each, then one `skill_deps_loaded` summary event (`mode=skill_deps_loaded`). GATED: `--with-deps` requires `--confirm` (else reject, no writes); a missing dep or cycle rejects writing nothing (never auto-imports — import stays the separate explicit allowlist-gated flow); single-skill `skills load` (no `--with-deps`) is unchanged. Exposed via `agentdeck contract skills` (`load_plan_command` / `skill_load_plan_response_fields`). Design + plan: `docs/superpowers/specs/2026-07-09-skill-dep-autoload-design.md`, `docs/superpowers/plans/2026-07-09-skill-dep-autoload.md`. Tests: `tests/test_agent_cli.py -k skills_load` + `tests/test_contracts.py::test_validate_skill_load_plan_contract`.
 
-**Read-only dependency VISIBILITY (B1+B2) + dependency LOAD (B-auto) are now complete.** The remaining B/C items are product forks needing the human.
+**Skill dependency version pinning (decision "B-ver") is done (content-hash pins, local + deterministic + no network):** a `depends_on` entry may pin a content hash — `name@sha256:<hex>` — while plain `name` still means "any version" (unchanged). New pure `_parse_dep(entry) -> (name, pin|None)` (`src/agentdeck/skills.py`) splits on the first `@` (empty suffix ignored); `SkillSnapshot.depends_on` keeps the raw entries. `resolve_skill_dependencies` gains `version_mismatch: list[{name, expected, actual}]` (deduped via `seen_vm`): when a pinned dep IS present but its `content_hash != pin` it is recorded and NOT recursed into (a blocker leaf, excluded from `resolved`/`order`); `resolved`/`missing`/cycle/`order` semantics are otherwise unchanged. `skills deps` surfaces `version_mismatch` (flows through the `**resolution` spread); `_skill_load_plan` adds `version_mismatch` to the payload and a `"version mismatch: <name> expected <pin>"` blocker, so `can_load` is false and `skills load --with-deps --confirm` rejects writing nothing (identical handling to `missing`/cycle). `version_mismatch` added to `SKILLS_DEPS_RESPONSE_FIELDS` / `SKILL_LOAD_PLAN_RESPONSE_FIELDS` + both validators. Design + plan: `docs/superpowers/specs/2026-07-09-skill-dep-version-pinning-design.md`, `docs/superpowers/plans/2026-07-09-skill-dep-version-pinning.md`. Tests: `tests/test_agent_cli.py::test_resolve_skill_dependencies_version_pinning`, `::test_skills_deps_and_load_plan_flag_version_mismatch`, `tests/test_contracts.py::test_validate_skill_load_plan_contract`.
+
+**Read-only dependency VISIBILITY (B1+B2) + dependency LOAD (B-auto) + version PINNING (B-ver) are now complete.** The remaining dependency items are product forks needing the human.
 
 **Remaining items are all product forks — STOP + ask the human first:**
 1. ⚠️ **FORK:** allowlist **ENFORCEMENT** (blocking imports from non-allowlisted sources) — already delivered as opt-in decision "A"; further tightening (default-on, hard block) stays a product fork.
-2. ⚠️ **NEXT (B-ver):** skill dependency **version constraints / lockfiles** — the next lane item after B-auto; needs its own brainstorm→spec→plan. Do NOT start it inside another slice.
+2. ⚠️ **FORK (post-B-ver):** semver **ranges / version intervals** (e.g. `name@>=1.2,<2`) and **lockfile generation / lock strategy** — content-hash pinning (B-ver) is done; these each need their own brainstorm→spec→plan. Do NOT start inside another slice.
 3. ⚠️ **FORK (C):** remote / marketplace skill sources or remote dependency fetch (over the network) is a product fork — local trusted sources only until a human explicitly opts in. Do NOT build it unilaterally.
 
 ## Required Verification Before Handoff

@@ -4460,6 +4460,7 @@ def _skill_load_plan(config: ProjectConfig, store: StateStore, name: str, agent:
         order_items.append({"name": node, "status": status,
                             "source": snapshots[node].source if node in snapshots else None})
     blockers = [f"missing dependency: {dep}" for dep in resolution["missing"]]
+    blockers += [f"version mismatch: {m['name']} expected {m['expected']}" for m in resolution["version_mismatch"]]
     if resolution["has_cycle"]:
         blockers.append("dependency cycle: " + " -> ".join(resolution["cycle"]))
     can_load = not blockers and bool(to_load)
@@ -4467,6 +4468,7 @@ def _skill_load_plan(config: ProjectConfig, store: StateStore, name: str, agent:
         "name": name, "agent": agent,
         "order": order_items, "to_load": to_load, "already_loaded": already_loaded,
         "missing": list(resolution["missing"]),
+        "version_mismatch": list(resolution["version_mismatch"]),
         "has_cycle": bool(resolution["has_cycle"]), "cycle": list(resolution["cycle"]),
         "blockers": blockers, "can_load": can_load,
         "confirm_command": f"agentdeck skills load --name {name} --agent {agent} --with-deps --confirm",

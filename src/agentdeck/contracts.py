@@ -674,7 +674,7 @@ SKILLS_CREATE_RESPONSE_FIELDS = (
 
 SKILLS_DEPS_RESPONSE_FIELDS = (
     "ok", "mode", "name", "depends_on", "resolved", "missing",
-    "has_cycle", "cycle", "order", "controls",
+    "version_mismatch", "has_cycle", "cycle", "order", "controls",
 )
 
 
@@ -687,7 +687,7 @@ def validate_skills_deps_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("skills_deps.mode must be skills_deps")
     if not isinstance(payload.get("has_cycle"), bool):
         errors.append("skills_deps.has_cycle must be a bool")
-    for list_field in ("depends_on", "resolved", "missing", "cycle", "order", "controls"):
+    for list_field in ("depends_on", "resolved", "missing", "version_mismatch", "cycle", "order", "controls"):
         if not isinstance(payload.get(list_field), list):
             errors.append(f"skills_deps.{list_field} must be a list")
     return {"ok": not errors, "errors": errors}
@@ -695,7 +695,7 @@ def validate_skills_deps_contract(payload: dict[str, object]) -> dict[str, objec
 
 SKILL_LOAD_PLAN_RESPONSE_FIELDS = (
     "ok", "mode", "name", "agent", "order", "to_load", "already_loaded",
-    "missing", "has_cycle", "cycle", "blockers", "can_load", "confirm_command", "controls",
+    "missing", "version_mismatch", "has_cycle", "cycle", "blockers", "can_load", "confirm_command", "controls",
 )
 
 
@@ -710,7 +710,7 @@ def validate_skill_load_plan_contract(payload: dict[str, object]) -> dict[str, o
         errors.append("skill_load_plan.can_load must be a bool")
     if not isinstance(payload.get("has_cycle"), bool):
         errors.append("skill_load_plan.has_cycle must be a bool")
-    for list_field in ("order", "to_load", "already_loaded", "missing", "cycle", "blockers", "controls"):
+    for list_field in ("order", "to_load", "already_loaded", "missing", "version_mismatch", "cycle", "blockers", "controls"):
         if not isinstance(payload.get(list_field), list):
             errors.append(f"skill_load_plan.{list_field} must be a list")
     return {"ok": not errors, "errors": errors}

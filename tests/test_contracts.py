@@ -5170,6 +5170,7 @@ def test_validate_skill_load_plan_contract():
     from agentdeck.contracts import validate_skill_load_plan_contract
     good = {"ok": True, "mode": "skill_load_plan", "name": "a", "agent": "planner",
             "order": [], "to_load": [], "already_loaded": [], "missing": [],
+            "version_mismatch": [],
             "has_cycle": False, "cycle": [], "blockers": [], "can_load": False,
             "confirm_command": "agentdeck skills load --name a --agent planner --with-deps --confirm",
             "controls": []}
