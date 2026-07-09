@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "conda run -n agentdeck pytest -q 2>&1 | tail -5",
+    "testCommand": "conda run -n agentdeck pytest tests/test_agent_cli.py -k skill tests/test_contracts.py -k skill -q 2>&1 | tail -8",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -85,38 +85,38 @@
   "hotPaths": [
     {
       "path": "src/agentdeck/cli.py",
-      "accessCount": 255,
-      "lastAccessed": 1783581785997,
+      "accessCount": 258,
+      "lastAccessed": 1783583608731,
       "type": "file"
     },
     {
       "path": "src/agentdeck/contracts.py",
-      "accessCount": 192,
-      "lastAccessed": 1783581687085,
+      "accessCount": 202,
+      "lastAccessed": 1783583697174,
       "type": "file"
     },
     {
       "path": "tests/test_agent_cli.py",
-      "accessCount": 108,
-      "lastAccessed": 1783581556970,
+      "accessCount": 117,
+      "lastAccessed": 1783583650126,
       "type": "file"
     },
     {
       "path": "docs/handoff/current-development-state.md",
-      "accessCount": 90,
-      "lastAccessed": 1783581947757,
+      "accessCount": 99,
+      "lastAccessed": 1783582766127,
       "type": "file"
     },
     {
       "path": "HISTORY.md",
-      "accessCount": 74,
-      "lastAccessed": 1783581874388,
+      "accessCount": 76,
+      "lastAccessed": 1783582699274,
       "type": "file"
     },
     {
       "path": "README.md",
-      "accessCount": 57,
-      "lastAccessed": 1783581853336,
+      "accessCount": 59,
+      "lastAccessed": 1783582640904,
       "type": "file"
     },
     {
@@ -133,8 +133,14 @@
     },
     {
       "path": "tests/test_contracts.py",
-      "accessCount": 31,
-      "lastAccessed": 1783572897731,
+      "accessCount": 33,
+      "lastAccessed": 1783582553844,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/skills-schema.md",
+      "accessCount": 29,
+      "lastAccessed": 1783582609293,
       "type": "file"
     },
     {
@@ -150,15 +156,15 @@
       "type": "file"
     },
     {
-      "path": "docs/contracts/skills-schema.md",
-      "accessCount": 24,
-      "lastAccessed": 1783581839494,
+      "path": "src/agentdeck/skills.py",
+      "accessCount": 21,
+      "lastAccessed": 1783583685576,
       "type": "file"
     },
     {
       "path": "CLAUDE.md",
-      "accessCount": 19,
-      "lastAccessed": 1783581900895,
+      "accessCount": 20,
+      "lastAccessed": 1783582666818,
       "type": "file"
     },
     {
@@ -183,12 +189,6 @@
       "path": "src/agentdeck/history.py",
       "accessCount": 11,
       "lastAccessed": 1783558275349,
-      "type": "file"
-    },
-    {
-      "path": "src/agentdeck/skills.py",
-      "accessCount": 11,
-      "lastAccessed": 1783581578731,
       "type": "file"
     },
     {

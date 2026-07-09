@@ -753,6 +753,7 @@ SKILLS_SKILL_ITEM_FIELDS = (
     "content_hash",
     "required_tools",
     "risk",
+    "version",
     "show_command",
     "load_command",
     "controls",
@@ -2393,6 +2394,7 @@ def skills_example() -> dict[str, object]:
         "content_hash": "sha256:example",
         "required_tools": ["leader-plan", "approval-list"],
         "risk": "inspect",
+        "version": "0.0.0",
         "show_command": show_command,
         "load_command": load_command,
         "controls": [

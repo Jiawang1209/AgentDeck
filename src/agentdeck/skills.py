@@ -64,6 +64,7 @@ class SkillSnapshot:
     risk: str
     content: str
     depends_on: tuple[str, ...] = ()
+    version: str = "0.0.0"
 
     def summary(self) -> dict[str, object]:
         show_command = f"agentdeck skills show --name {self.name}"
@@ -76,6 +77,7 @@ class SkillSnapshot:
             "content_hash": self.content_hash,
             "required_tools": self.required_tools,
             "risk": self.risk,
+            "version": self.version,
             "show_command": show_command,
             "load_command": load_command,
             "controls": [
@@ -130,6 +132,55 @@ def discover_skills(root: Path) -> list[SkillSnapshot]:
 def _parse_dep(entry: str) -> tuple[str, str | None]:
     name, _, pin = entry.partition("@")
     return name, (pin or None)
+
+
+def parse_version(text: str) -> tuple[int, int, int] | None:
+    parts = str(text).strip().split(".")
+    if not 1 <= len(parts) <= 3:
+        return None
+    nums: list[int] = []
+    for part in parts:
+        if not part.isdigit():
+            return None
+        nums.append(int(part))
+    while len(nums) < 3:
+        nums.append(0)
+    return (nums[0], nums[1], nums[2])
+
+
+def _comparator_holds(version: tuple[int, int, int], comparator: str) -> bool:
+    comparator = comparator.strip()
+    if comparator.startswith("^"):
+        base = parse_version(comparator[1:])
+        if base is None:
+            return False
+        return base <= version < (base[0] + 1, 0, 0)
+    for op in (">=", "<=", "==", ">", "<"):
+        if comparator.startswith(op):
+            operand = parse_version(comparator[len(op):])
+            if operand is None:
+                return False
+            if op == ">=":
+                return version >= operand
+            if op == "<=":
+                return version <= operand
+            if op == "==":
+                return version == operand
+            if op == ">":
+                return version > operand
+            return version < operand
+    operand = parse_version(comparator)      # bare version = exact
+    return operand is not None and version == operand
+
+
+def version_satisfies(version: str, spec: str) -> bool:
+    parsed = parse_version(version)
+    if parsed is None:
+        return False
+    comparators = [c for c in str(spec).split(",") if c.strip()]
+    if not comparators:
+        return False
+    return all(_comparator_holds(parsed, comparator) for comparator in comparators)
 
 
 def resolve_skill_dependencies(root: Path, name: str) -> dict[str, object]:
@@ -270,6 +321,7 @@ def _snapshot_from_content(
         risk=str(metadata.get("risk") or "inspect"),
         content=content,
         depends_on=tuple(_metadata_list(metadata.get("depends_on"))),
+        version=str(metadata.get("version") or "0.0.0"),
     )
 
 

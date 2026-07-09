@@ -11088,6 +11088,46 @@ def test_resolve_skill_dependencies_version_pinning(tmp_path):
     assert r2["version_mismatch"][0]["actual"] == b_hash
 
 
+def test_semver_parse_and_satisfies():
+    from agentdeck.skills import parse_version, version_satisfies
+    assert parse_version("1.2.3") == (1, 2, 3)
+    assert parse_version("1.2") == (1, 2, 0)
+    assert parse_version("1") == (1, 0, 0)
+    assert parse_version("x") is None
+    assert parse_version("1.2.3.4") is None
+
+    assert version_satisfies("1.2.0", ">=1.2.0")
+    assert version_satisfies("2.0.0", ">=1.2.0")
+    assert not version_satisfies("1.1.9", ">=1.2.0")
+    assert version_satisfies("1.9.9", "<2.0.0")
+    assert not version_satisfies("2.0.0", "<2.0.0")
+    assert version_satisfies("1.9.9", "^1.2.0")
+    assert not version_satisfies("2.0.0", "^1.2.0")
+    assert not version_satisfies("1.1.0", "^1.2.0")
+    assert version_satisfies("1.5.0", ">=1.2,<2.0")     # comma-AND
+    assert not version_satisfies("2.0.0", ">=1.2,<2.0")
+    assert version_satisfies("1.2.3", "1.2.3")          # bare = exact
+    assert version_satisfies("1.2.3", "==1.2.3")
+    assert not version_satisfies("1.2.4", "1.2.3")
+    assert not version_satisfies("1.0.0", "garbage")     # unparseable -> False
+    assert not version_satisfies("bad", ">=1.0.0")       # bad version -> False
+
+
+def test_skill_snapshot_parses_version(tmp_path):
+    from pathlib import Path
+    from agentdeck.config import write_default_config
+    from agentdeck.skills import discover_skills
+    root = tmp_path / "r"; root.mkdir(); (root / ".git").mkdir(); write_default_config(root)
+    d = root / ".agentdeck" / "skills" / "v"; d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: v\ndescription: v\nversion: 2.3.4\n---\nx\n", encoding="utf-8")
+    v = next(s for s in discover_skills(root) if s.name == "v")
+    assert v.version == "2.3.4"
+    d2 = root / ".agentdeck" / "skills" / "novers"; d2.mkdir(parents=True)
+    (d2 / "SKILL.md").write_text("---\nname: novers\ndescription: n\n---\nx\n", encoding="utf-8")
+    nv = next(s for s in discover_skills(root) if s.name == "novers")
+    assert nv.version == "0.0.0"
+
+
 def _put_project_skill(root, name, deps=()):
     d = root / ".agentdeck" / "skills" / name; d.mkdir(parents=True)
     dep_line = f"depends_on: [{', '.join(deps)}]\n" if deps else ""
