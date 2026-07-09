@@ -126,6 +126,21 @@ def discover_skills(root: Path) -> list[SkillSnapshot]:
     return [skills[name] for name in sorted(skills)]
 
 
+def browse_skill_source(source_dir: Path) -> list[SkillSnapshot]:
+    """Read-only catalog of a local skill source directory of <name>/SKILL.md."""
+    if not source_dir.exists() or not source_dir.is_dir():
+        raise FileNotFoundError(str(source_dir))
+    snapshots: list[SkillSnapshot] = []
+    for skill_path in sorted(source_dir.glob("*/SKILL.md")):
+        snapshots.append(_snapshot_from_content(
+            skill_path.read_text(encoding="utf-8"),
+            source="catalog",
+            path=skill_path,
+            fallback_name=skill_path.parent.name,
+        ))
+    return sorted(snapshots, key=lambda snap: snap.name)
+
+
 def find_skill(root: Path, name: str) -> SkillSnapshot | None:
     for skill in discover_skills(root):
         if skill.name == name:

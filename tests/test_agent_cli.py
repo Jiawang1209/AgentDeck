@@ -10741,3 +10741,73 @@ def test_run_loop_all_shares_budget_across_plans(tmp_path, monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["totals"]["auto_approved"] == 1
     assert payload["budget"] == {"max_approvals": 1, "used": 1, "remaining": 0}
+
+
+def _write_catalog_skill(source_dir, name, description, body="Do the thing.\n"):
+    d = source_dir / name
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n\n{body}", encoding="utf-8"
+    )
+    return d / "SKILL.md"
+
+
+def test_skills_catalog_browses_source_read_only(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    source = tmp_path / "catalog"
+    _write_catalog_skill(source, "alpha", "Alpha skill")
+    _write_catalog_skill(source, "beta", "Beta skill")
+    before = StateStore(root).load()
+
+    assert cli.main(["skills", "catalog", "--source", str(source)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skills_catalog"
+    assert payload["skill_count"] == 2
+    assert payload["imported_count"] == 0
+    names = {i["name"] for i in payload["items"]}
+    assert names == {"alpha", "beta"}
+    alpha = next(i for i in payload["items"] if i["name"] == "alpha")
+    assert alpha["import_status"] == "not_imported"
+    assert alpha["content_hash"].startswith("sha256:")
+    assert alpha["import_preview_command"] == f"agentdeck skills import-preview --path {source / 'alpha' / 'SKILL.md'}"
+    assert alpha["import_command"] == f"agentdeck skills import --path {source / 'alpha' / 'SKILL.md'}"
+    kinds = {c["kind"] for c in alpha["controls"]}
+    assert {"import_preview", "import"} <= kinds
+    # read-only: browsing imports nothing into the project skills dir
+    assert StateStore(root).load() == before
+    assert list((root / ".agentdeck" / "skills").glob("*/SKILL.md")) == []
+
+
+def test_skills_catalog_flags_imported_status(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    source = tmp_path / "catalog"
+    src_path = _write_catalog_skill(source, "alpha", "Alpha skill")
+    # import alpha into the project so it is "imported_identical"
+    assert cli.main(["skills", "import", "--path", str(src_path)]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["skills", "catalog", "--source", str(source)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    alpha = next(i for i in payload["items"] if i["name"] == "alpha")
+    assert alpha["import_status"] == "imported_identical"
+    assert payload["imported_count"] == 1
+
+    # change the source content -> now it differs from the imported copy
+    (source / "alpha" / "SKILL.md").write_text(
+        "---\nname: alpha\ndescription: Alpha skill\n---\n\nDo a DIFFERENT thing.\n", encoding="utf-8"
+    )
+    assert cli.main(["skills", "catalog", "--source", str(source)]) == 0
+    payload2 = json.loads(capsys.readouterr().out)
+    alpha2 = next(i for i in payload2["items"] if i["name"] == "alpha")
+    assert alpha2["import_status"] == "imported_differs"
+
+
+def test_skills_catalog_rejects_missing_source_and_handles_empty(tmp_path, monkeypatch, capsys):
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["skills", "catalog", "--source", str(tmp_path / "nope")]) == 1
+    assert "not found" in capsys.readouterr().err.lower()
+    empty = tmp_path / "empty"; empty.mkdir()
+    assert cli.main(["skills", "catalog", "--source", str(empty)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["skill_count"] == 0
+    assert payload["items"] == []

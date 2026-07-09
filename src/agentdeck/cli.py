@@ -88,7 +88,7 @@ from .dashboard import render_workbench_dashboard
 from .history import render_history_markdown
 from .runtime import TmuxBackend
 from .tui import TuiModel, run_tui
-from .skills import discover_skills, find_skill, import_project_skill, preview_project_skill_import
+from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 
 
@@ -4402,6 +4402,54 @@ def skills_list_command(_args: argparse.Namespace) -> int:
             "skills": skills,
         }
     )
+    return 0
+
+
+def skills_catalog_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    source_dir = Path(args.source)
+    try:
+        catalog = browse_skill_source(source_dir)
+    except FileNotFoundError:
+        print(f"skill source not found: {source_dir}", file=sys.stderr)
+        return 1
+    project = {
+        skill.name: skill.content_hash
+        for skill in discover_skills(Path(config.root))
+        if skill.source == "project"
+    }
+    items: list[dict[str, object]] = []
+    for snapshot in catalog:
+        item = snapshot.summary()
+        if snapshot.name in project:
+            status = "imported_identical" if project[snapshot.name] == snapshot.content_hash else "imported_differs"
+        else:
+            status = "not_imported"
+        preview_command = f"agentdeck skills import-preview --path {snapshot.path}"
+        import_command = f"agentdeck skills import --path {snapshot.path}"
+        item["import_status"] = status
+        item["import_preview_command"] = preview_command
+        item["import_command"] = import_command
+        item["controls"] = list(item.get("controls", [])) + [
+            _control(kind="import_preview", label="Preview import", command=preview_command, safety="inspect"),
+            _control(kind="import", label="Import skill", command=import_command, safety="explicit_user"),
+        ]
+        items.append(item)
+    _print_json({
+        "ok": True,
+        "mode": "skills_catalog",
+        "source": str(source_dir),
+        "skill_count": len(items),
+        "imported_count": sum(1 for item in items if item["import_status"] != "not_imported"),
+        "controls": [
+            _control(kind="import", label="Import skill",
+                     command="agentdeck skills import --path <SKILL.md>",
+                     safety="explicit_user", enabled=False, blocker="requires SKILL.md path"),
+        ],
+        "items": items,
+    })
     return 0
 
 
@@ -13324,6 +13372,9 @@ def build_parser() -> argparse.ArgumentParser:
     skills_subparsers = skills.add_subparsers(dest="skills_command")
     skills_list = skills_subparsers.add_parser("list", help="List builtin and project skills")
     skills_list.set_defaults(func=skills_list_command)
+    skills_catalog = skills_subparsers.add_parser("catalog", help="Read-only browse of a local skill source directory")
+    skills_catalog.add_argument("--source", required=True, help="Directory of <name>/SKILL.md skills to browse")
+    skills_catalog.set_defaults(func=skills_catalog_command)
     skills_show = skills_subparsers.add_parser("show", help="Show one skill snapshot")
     skills_show.add_argument("--name", required=True, help="Skill name")
     skills_show.set_defaults(func=skills_show_command)
