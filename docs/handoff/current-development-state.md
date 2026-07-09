@@ -2,6 +2,16 @@
 
 Updated: 2026-07-09
 
+## Golden demo guide slice — implemented
+
+The end-to-end golden demo lane now has its first guide slice implemented and committed:
+
+- `agentdeck demo golden` is a read-only, state-aware operator guide for the golden demo. It derives current status from existing project/workbench facts and recommends explicit next commands for provider/setup, approval, dispatch, review gate, release, and already-released states.
+- `agentdeck contract demo` / `agentdeck contract demo --example` expose the GUI-ready demo guide contract and stable example payload; `docs/contracts/demo-schema.md` documents the response fields, step fields, statuses, and safety values.
+- The implementation was covered by focused contract/CLI tests and read-only/no-runtime-mutation assertions in the implementation slices. The guide does not execute recommended commands, call providers, read tmux, or mutate runtime/state.
+
+Lane guidance: this supports the **end-to-end golden demo first**. Remote skill / marketplace work remains a later product fork/lane and should not be started as part of golden demo docs cleanup.
+
 ## Skill 生态 lane 进度 — A + B(只读/auto/ver/semver) + lockfile 完成，⏸ loop STOP（next remote/C）
 
 用户定了 "先 A 再 B"、"先 B-auto 再 B-ver"，选了 semver 范围，再选了 lockfile，loop 已推进到 lockfile 落地。已完成并提交：

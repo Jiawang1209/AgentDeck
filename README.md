@@ -46,6 +46,7 @@ agentdeck status
 agentdeck continue
 agentdeck loop once
 agentdeck workbench
+agentdeck demo golden
 agentdeck controls
 agentdeck skills list
 agentdeck skills deps --name planning
@@ -69,6 +70,8 @@ agentdeck memory apply --suggestion-id mem_xxx --confirm
 agentdeck leader chat --message "查看长期记忆"
 agentdeck learn review --plan-id pln_xxx
 agentdeck contract list
+agentdeck contract demo
+agentdeck contract demo --example
 agentdeck contract memory
 agentdeck contract memory --example
 agentdeck contract learning-review
@@ -181,6 +184,8 @@ agentdeck artifacts
 `agentdeck status`、`agentdeck leader status` 和 `agentdeck workbench` 现在都会暴露同源 `coordination_roles[]`：`frontdesk`、`planner`、`orchestrator`。它们是 Leader 侧的逻辑协调角色，不是 worker pane，也不会自动 dispatch；字段会固定标记 `runtime_kind=logical_role`、`pane_backed=false`、`pane_id=null`、`dispatch_ready=false`。`frontdesk` 使用本地规则做接待，`planner` / `orchestrator` 继承当前 Leader provider/model，并保持 approval-gated。这样后续 GUI 可以先渲染“前台接待 -> 计划 -> 编排”的北极星拓扑，再由用户显式进入 plan/review/dispatch。
 
 `agentdeck loop once` 是北极星 Phase G3 的只读程序化单步循环入口：它先校验 ProjectView，再嵌入同源 `continue_card`，返回 `next_command`、`recommended_action`、`stop_reason`、`will_execute=false` 和 GUI-ready controls。它只读取状态并推荐下一条显式命令，不调用 Leader provider、不读取或写 tmux、不 approve/reject/dispatch、不 capture reply、不 ack inbox、不写 state；当存在下一步时固定 `stop_reason=requires_human_command`，由人类或未来更高权限策略显式运行推荐命令。
+
+`agentdeck demo golden` 是端到端 golden demo 的只读、state-aware 指南：它根据当前 provider/setup、approval、dispatch、review gate、release/released 状态推荐下一条显式操作者命令，但不会执行推荐命令、调用 provider、读取 tmux 或写 runtime/state。GUI/外部集成可通过 `agentdeck contract demo --example` 发现稳定 payload、step 字段和示例。
 
 `agentdeck trace --id <id>` 和自然语言 `agentdeck leader chat --message "追踪 msg_xxx"` 都会返回同源通信链路卡；trace 卡片包含只读 `controls[]`，自然语言 trace 响应还会附带过滤到 `scope=trace` / `card=trace_card` 的 `control_registry_card`，方便 GUI/TUI 直接高亮“Inspect trace”命令。它们都只是检查入口，不会自动执行 trace、capture、ack、dispatch 或 tmux 输入。
 

@@ -4,6 +4,17 @@
 
 ## 2026-07-09
 
+### Current - Document golden demo guide implementation
+
+- **类型**: docs
+- **动机**: golden demo guide 的 contract、CLI guide 和 release 状态 refinement 已完成，需要把用户可见入口、发现方式和安全边界同步到 README / handoff / history，便于下一位 agent 或 GUI 消费方从文档知道这条 lane 已可用。
+- **What**:
+  - README：新增 `agentdeck demo golden` 能力入口，说明它是只读、state-aware 的 golden demo 指南，并提示 `agentdeck contract demo --example` 可发现 payload/step 示例。
+  - Handoff：记录 golden demo guide slice 已实现，服务 end-to-end golden demo first；remote skill/marketplace 仍是后续 product fork/lane。
+  - History：记录本次 docs 收尾。
+- **影响**: 文档现在覆盖 golden demo guide 的 contract shape + `agentdeck contract demo` / `--example` 发现入口、只读 `agentdeck demo golden`、provider/setup、approval、dispatch、review gate、release/released 状态导引，以及 focused tests/no runtime mutation 的实现边界。未修改 CLI/runtime 代码。
+- **验证**: `git diff --check -- README.md HISTORY.md docs/handoff/current-development-state.md docs/contracts/demo-schema.md` 通过。
+
 ### Current - Skill dependency lockfile: generate + read-only verify (skill ecosystem — decision "lockfile")
 
 - **类型**: feat
