@@ -4494,6 +4494,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "events",
         "run",
         "run-loop",
+        "run-loop-all",
         "plans",
         "release",
         "workbench",
@@ -10689,3 +10690,54 @@ def test_contract_run_loop_all_discovers_and_is_in_index(tmp_path, monkeypatch, 
     assert json.loads(capsys.readouterr().out)["example_run_loop_all"]["mode"] == "run_loop_all"
     assert cli.main(["contract", "list"]) == 0
     assert "run-loop-all" in {c["name"] for c in json.loads(capsys.readouterr().out)["contracts"]}
+
+
+def test_run_loop_all_requires_confirm_mode_and_one_of_plan_or_all(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["run-loop", "--all"]) == 1
+    assert "confirm" in capsys.readouterr().err
+    assert cli.main(["run-loop", "--all", "--confirm"]) == 1
+    assert "autonomous mode is not enabled" in capsys.readouterr().err
+    _enable_autonomous(root, monkeypatch, capsys, ["planner"], 5)
+    assert cli.main(["run-loop", "--confirm"]) == 1
+    assert "plan-id" in capsys.readouterr().err.lower()
+    assert cli.main(["run-loop", "--all", "--plan-id", "pln_x", "--confirm"]) == 1
+    err = capsys.readouterr().err.lower()
+    assert "not both" in err or "either" in err
+
+
+def test_run_loop_all_round_robin_dispatches_and_skips_on_contention(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    _enable_autonomous(root, monkeypatch, capsys, ["planner"], 5)
+    _seed_named_plan(root, "pln_a", "demoA", agent_id="planner")
+    _seed_named_plan(root, "pln_b", "demoB", agent_id="planner")
+
+    assert cli.main(["run-loop", "--all", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "run_loop_all"
+    assert payload["active_count"] == 2
+    assert payload["totals"]["dispatched"] == 1
+    assert payload["totals"]["skipped_contention"] == 1
+    a = next(p for p in payload["plans"] if p["plan_id"] == "pln_a")
+    b = next(p for p in payload["plans"] if p["plan_id"] == "pln_b")
+    assert len(a["dispatched"]) == 1
+    assert len(b["skipped_contention"]) == 1
+    assert len(fake.sent) == 1
+
+
+def test_run_loop_all_shares_budget_across_plans(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+    _enable_autonomous(root, monkeypatch, capsys, ["planner"], 1)
+    _seed_named_plan(root, "pln_a", "demoA", agent_id="planner")
+    _seed_named_plan(root, "pln_b", "demoB", agent_id="planner")
+
+    assert cli.main(["run-loop", "--all", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["totals"]["auto_approved"] == 1
+    assert payload["budget"] == {"max_approvals": 1, "used": 1, "remaining": 0}

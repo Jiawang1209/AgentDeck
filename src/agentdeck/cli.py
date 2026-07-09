@@ -12991,6 +12991,114 @@ def approval_auto_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _busy_agents(store: StateStore) -> set[str]:
+    """Agents occupied by a dispatched-but-unreplied step, across all plans."""
+    state = store.load()
+    replied = {r.get("message_id") for r in state.get("replies", []) if isinstance(r, dict)}
+    busy: set[str] = set()
+    for plan in store.list_plans():
+        if not isinstance(plan, dict):
+            continue
+        try:
+            status = store.plan_status(str(plan.get("plan_id", "")))
+        except KeyError:
+            continue
+        for step in status.get("steps", []):
+            if (
+                isinstance(step, dict)
+                and step.get("approval_status") == "dispatched"
+                and step.get("message_id")
+                and step.get("message_id") not in replied
+            ):
+                busy.add(step.get("agent_id"))
+    return busy
+
+
+def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
+    """Round-robin one wave over all active plans (shared budget, skip-on-contention)."""
+    policy = config.autonomous
+    backend = TmuxBackend()
+    busy = _busy_agents(store)
+    budget_remaining = policy.max_approvals
+    plan_results: list[dict[str, object]] = []
+    for plan in store.list_plans():
+        if not isinstance(plan, dict):
+            continue
+        plan_id = str(plan.get("plan_id", ""))
+        gate0, _ = run_loop_gate(store.leader_review(plan_id), False, plan_id)
+        if gate0 == "complete":
+            continue
+        pending = [
+            a for a in store.load().get("approvals", [])
+            if isinstance(a, dict) and a.get("plan_id") == plan_id and a.get("status") == "pending"
+        ]
+        selected, skipped = select_auto_approvals(pending, policy.allowed_agents, budget_remaining)
+        for approval in selected:
+            aid = str(approval.get("approval_id", ""))
+            store.decide_approval(aid, "approved", reason="autonomous")
+            store.append_event(EventRecord.create("approval_decided", {
+                "approval_id": aid, "status": "approved", "source": "autonomous"}))
+        budget_remaining -= len(selected)
+        dispatched: list[dict[str, object]] = []
+        blocked: list[dict[str, object]] = []
+        skipped_contention: list[dict[str, object]] = []
+        has_error = False
+        approved_now = [
+            a for a in store.load().get("approvals", [])
+            if isinstance(a, dict) and a.get("plan_id") == plan_id and a.get("status") == "approved"
+        ]
+        for approval in approved_now:
+            aid = str(approval.get("approval_id", ""))
+            agent_id = approval.get("agent_id")
+            if agent_id in busy:
+                skipped_contention.append({"approval_id": aid, "agent_id": agent_id, "blocker": "agent busy this wave"})
+                continue
+            preview = _approval_dispatch_preview_card(approval, config, store)
+            if preview.get("blocker"):
+                blocked.append({"approval_id": aid, "agent_id": agent_id, "blocker": preview.get("blocker")})
+                continue
+            try:
+                result = _dispatch_approved_approval(approval, approval_id=aid, config=config, store=store, backend=backend)
+                dispatched.append({"approval_id": aid, "agent_id": result["agent_id"],
+                                   "message_id": result["message_id"], "trace_command": result["trace_command"]})
+                busy.add(agent_id)
+            except Exception as exc:
+                has_error = True
+                store.append_event(EventRecord.create("run_loop_dispatch_failed", {"approval_id": aid, "detail": str(exc)}))
+        gate, next_command = run_loop_gate(store.leader_review(plan_id), has_error, plan_id)
+        plan_results.append({
+            "plan_id": plan_id, "task": plan.get("task"),
+            "auto_approved": len(selected), "dispatched": dispatched,
+            "blocked": blocked,
+            "skipped": [{"approval_id": s.get("approval_id"), "agent_id": s.get("agent_id"), "reason": s.get("reason")} for s in skipped],
+            "skipped_contention": skipped_contention,
+            "gate": gate, "next_command": next_command,
+        })
+    used = policy.max_approvals - budget_remaining
+    totals = {
+        "auto_approved": sum(int(p["auto_approved"]) for p in plan_results),
+        "dispatched": sum(len(p["dispatched"]) for p in plan_results),
+        "blocked": sum(len(p["blocked"]) for p in plan_results),
+        "skipped_contention": sum(len(p["skipped_contention"]) for p in plan_results),
+    }
+    store.append_event(EventRecord.create("run_loop_all_advanced", {"plans_advanced": len(plan_results), **totals}))
+    payload = {
+        "ok": True, "mode": "run_loop_all", "requires_explicit_user": True, "safety": "delegated",
+        "plan_count": len([p for p in store.list_plans() if isinstance(p, dict)]),
+        "active_count": len(plan_results),
+        "budget": {"max_approvals": policy.max_approvals, "used": used, "remaining": budget_remaining},
+        "totals": totals, "plans": plan_results,
+    }
+    validation = validate_run_loop_all_contract(payload)
+    if not validation["ok"]:
+        print("run-loop --all contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
 def run_loop_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
@@ -13004,6 +13112,14 @@ def run_loop_command(args: argparse.Namespace) -> int:
             "--confirm --allow-agent <id> --max-approvals <N>",
             file=sys.stderr,
         )
+        return 1
+    if getattr(args, "all", False) and args.plan_id:
+        print("run-loop takes either --plan-id or --all, not both", file=sys.stderr)
+        return 1
+    if getattr(args, "all", False):
+        return _run_loop_all(config, store)
+    if not args.plan_id:
+        print("run-loop requires --plan-id or --all", file=sys.stderr)
         return 1
     plan_id = args.plan_id
     try:
@@ -13131,7 +13247,8 @@ def build_parser() -> argparse.ArgumentParser:
         "run-loop",
         help="Drive one plan forward within the autonomous policy, then stop at the next human gate",
     )
-    run_loop.add_argument("--plan-id", required=True, help="Plan to drive forward")
+    run_loop.add_argument("--plan-id", required=False, default=None, help="Plan to drive forward")
+    run_loop.add_argument("--all", action="store_true", help="Drive every active plan one round-robin wave")
     run_loop.add_argument("--confirm", action="store_true", help="Explicitly confirm the autonomous wave")
     run_loop.set_defaults(func=run_loop_command)
 
