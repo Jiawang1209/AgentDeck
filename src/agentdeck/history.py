@@ -62,6 +62,10 @@ _MILESTONES = {
         "Run-loop advanced",
         f"{_detail(p, 'dispatched') or 0} dispatched, stopped: {_detail(p, 'stopped_reason') or 'unknown'}",
     ),
+    "run_loop_all_advanced": lambda p: (
+        "Parallel wave",
+        f"{_detail(p, 'plans_advanced') or 0} plans, {_detail(p, 'dispatched') or 0} dispatched",
+    ),
     "memory_suggested": lambda p: ("Memory suggested", ""),
     "memory_applied": lambda p: ("Memory applied", ""),
 }

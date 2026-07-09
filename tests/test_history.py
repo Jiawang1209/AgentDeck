@@ -243,3 +243,11 @@ def test_render_history_humanizes_run_loop_advance():
     }]
     md = render_history_markdown(events, "demo")
     assert "Run-loop advanced · 1 dispatched, stopped: waiting_for_reply" in md
+
+
+def test_render_history_humanizes_run_loop_all():
+    from agentdeck.history import render_history_markdown
+    events = [{"event_type": "run_loop_all_advanced", "created_at": "2026-07-09T12:00:00+00:00",
+               "payload": {"plans_advanced": 2, "auto_approved": 1, "dispatched": 1, "blocked": 0, "skipped_contention": 1}}]
+    md = render_history_markdown(events, "demo")
+    assert "Parallel wave · 2 plans, 1 dispatched" in md

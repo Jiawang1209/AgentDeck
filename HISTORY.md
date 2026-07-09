@@ -4,7 +4,19 @@
 
 ## 2026-07-09
 
-### Current - Add natural-language read-only `mode=plan_board` chat intent (multi-plan lane slice 5)
+### Current - Add `agentdeck run-loop --all` parallel scheduler (multi-plan lane final slice, 收官)
+
+- **类型**: feat
+- **动机**: 多计划并行 lane 的最后一块,也是第一个"写操作"多计划命令。用户拍板四个核心决策:轮转 / 跳过(agent 冲突)/ 一波 / 复用。把单计划 `run-loop --plan-id` 扩展成"对所有 active 计划跑一波"。
+- **What**:
+  - 新增 `src/agentdeck/cli.py::_run_loop_all`:按创建顺序遍历 active 计划(`run_loop_gate != complete`),每个复用 run-loop wave 原语(`select_auto_approvals` 自动批准 + `_dispatch_approved_approval` 派发 + `run_loop_gate` 诊断);**共享预算**(整波 auto-approve ≤ `max_approvals`);**跳过冲突**——`_busy_agents(store)` 收集"已派发未回收"的 agent,本波不再派它,记入每计划 `skipped_contention[]`;一波就停。输出 board 报告(`plan_count`/`active_count`/`budget`/`totals`/`plans[]`),自校验 `validate_run_loop_all_contract`,汇总事件 `run_loop_all_advanced`。
+  - `run-loop` subparser:`--plan-id` 改为非必填 + 新增 `--all`;`run_loop_command` 在 `--confirm`+autonomous 校验后分支到 `_run_loop_all`,校验二选一。**单计划 run-loop 行为一字节未改**(独立新增代码)。
+  - 契约:`RUN_LOOP_ALL_RESPONSE_FIELDS`/`RUN_LOOP_ALL_PLAN_FIELDS`/`run_loop_all_example`/`run_loop_all_contract_response`/`validate_run_loop_all_contract`(`contracts.py`),`agentdeck contract run-loop-all` 发现命令,`CONTRACT_INDEX_SPECS` 注册,`docs/contracts/run-loop-all-schema.md`。history 人性化 `run_loop_all_advanced` → "Parallel wave · N plans, M dispatched"。
+  - 安全边界与 `run-loop` 完全一致:必须 `--confirm`+autonomous、只白名单+共享预算、只派 running 且不忙的 pane、绝不 force-spawn、绝不自动回收、全程记账。
+- **Impact**: 多计划并行 lane 收官——从只读看板到真正的并行推进全部打通;无破坏性改动,单计划路径不变。
+- **Verification**: 逐 task 红→绿;含冲突跳过、共享预算、reject 路径、单计划不变测试;全套 `pytest -q`(704 passed);`compileall`;`git diff --check`。
+
+### Add natural-language read-only `mode=plan_board` chat intent (multi-plan lane slice 5)
 
 - **类型**: feat
 - **动机**: 多计划并行 lane 第五刀。plan board 命令、workbench 卡片、text dashboard Plans、TUI plans 视图都已交付,补上自然语言入口——让操作者在 Leader chat 里直接问「查看所有计划」就能看到多计划看板。
