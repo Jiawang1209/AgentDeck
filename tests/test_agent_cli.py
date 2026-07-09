@@ -10951,3 +10951,66 @@ def test_workbench_embeds_skills_catalog_card(tmp_path, monkeypatch, capsys):
     assert s["exists"] is True
     assert s["skill_count"] == 1
     assert s["catalog_command"] == f"agentdeck skills catalog --source {source}"
+
+
+def _set_allowed_sources(root, *dirs):
+    cfg = root / ".agentdeck" / "config.toml"
+    listing = ", ".join(f'"{d}"' for d in dirs)
+    cfg.write_text(cfg.read_text(encoding="utf-8") + f"\n[skills]\nallowed_sources = [{listing}]\n", encoding="utf-8")
+
+
+def test_skills_import_allowed_when_no_allowlist_configured(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    src = _write_catalog_skill(tmp_path / "src", "alpha", "A")
+    assert cli.main(["skills", "import", "--path", str(src)]) == 0  # empty allowlist -> backward compatible
+    events = [e for e in StateStore(root).list_events(limit=20) if e["event_type"] == "skill_imported"]
+    assert events and events[-1]["payload"]["allowlisted"] is False
+    assert events[-1]["payload"]["allow_unlisted"] is False
+
+
+def test_skills_import_blocks_unlisted_source_when_allowlist_set(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    trusted = tmp_path / "trusted"
+    other = tmp_path / "other"
+    _write_catalog_skill(trusted, "good", "G")
+    other_src = _write_catalog_skill(other, "bad", "B")
+    _set_allowed_sources(root, trusted)
+    before = StateStore(root).load()
+
+    # unlisted source -> rejected, nothing written
+    assert cli.main(["skills", "import", "--path", str(other_src)]) == 1
+    err = capsys.readouterr().err
+    assert "allowlist" in err.lower() and "--allow-unlisted" in err
+    assert StateStore(root).load() == before
+    assert not (root / ".agentdeck" / "skills" / "bad").exists()
+
+    # allowlisted source -> succeeds
+    good_src = trusted / "good" / "SKILL.md"
+    assert cli.main(["skills", "import", "--path", str(good_src)]) == 0
+    ev = [e for e in StateStore(root).list_events(limit=20) if e["event_type"] == "skill_imported"][-1]
+    assert ev["payload"]["allowlisted"] is True
+
+    # escape hatch imports the unlisted one, audited
+    capsys.readouterr()
+    assert cli.main(["skills", "import", "--path", str(other_src), "--allow-unlisted"]) == 0
+    ev2 = [e for e in StateStore(root).list_events(limit=20) if e["event_type"] == "skill_imported"][-1]
+    assert ev2["payload"]["allow_unlisted"] is True
+
+
+def test_skills_import_preview_surfaces_allowlist_status(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    trusted = tmp_path / "trusted"; other = tmp_path / "other"
+    good = _write_catalog_skill(trusted, "good", "G")
+    bad = _write_catalog_skill(other, "bad", "B")
+    _set_allowed_sources(root, trusted)
+
+    assert cli.main(["skills", "import-preview", "--path", str(bad)]) == 0
+    p = json.loads(capsys.readouterr().out)
+    assert p["source_allowlisted"] is False
+    assert p["enforcement_active"] is True
+    assert p["import_blocked"] is True
+
+    assert cli.main(["skills", "import-preview", "--path", str(good)]) == 0
+    p2 = json.loads(capsys.readouterr().out)
+    assert p2["source_allowlisted"] is True
+    assert p2["import_blocked"] is False

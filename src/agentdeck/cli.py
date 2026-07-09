@@ -5185,6 +5185,17 @@ def skills_import_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
+    source_path = Path(args.path)
+    allowed_sources = _allowed_skill_sources(config)
+    source_allowlisted = _source_is_allowlisted(source_path.parent, config)
+    if allowed_sources and not source_allowlisted and not args.allow_unlisted:
+        print(
+            f"skill source is not in the trusted allowlist: {source_path.parent}; "
+            "add its directory to [skills] allowed_sources, or rerun with --allow-unlisted",
+            file=sys.stderr,
+        )
+        return 1
+    allow_unlisted_used = bool(allowed_sources and not source_allowlisted and args.allow_unlisted)
     try:
         skill, overwritten = import_project_skill(Path(config.root), Path(args.path), force=args.force)
     except FileNotFoundError:
@@ -5205,6 +5216,8 @@ def skills_import_command(args: argparse.Namespace) -> int:
                 "project_path": skill.path,
                 "content_hash": skill.content_hash,
                 "overwritten": overwritten,
+                "allowlisted": source_allowlisted,
+                "allow_unlisted": allow_unlisted_used,
             },
         )
     )
@@ -13625,6 +13638,7 @@ def build_parser() -> argparse.ArgumentParser:
     skills_import = skills_subparsers.add_parser("import", help="Import an external SKILL.md into project skills")
     skills_import.add_argument("--path", required=True, help="Path to an external SKILL.md file")
     skills_import.add_argument("--force", action="store_true", help="Overwrite an existing project skill with the same name")
+    skills_import.add_argument("--allow-unlisted", action="store_true", help="Import even if the source is not in [skills] allowed_sources")
     skills_import.set_defaults(func=skills_import_command)
 
     memory = subparsers.add_parser("memory", help="Review approval-gated long-term memory suggestions")

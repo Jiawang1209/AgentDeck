@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "conda run -n agentdeck pytest tests/test_agent_cli.py -k \"skills_catalog or workbench\" tests/test_contracts.py -k workbench -q 2>&1 | tail -4; echo \"=== FULL ===\"; conda run -n agentdeck pytest -q 2>&1 | tail -3; echo \"=== COMPILE ===\"; conda run -n agentdeck python -m compileall src tests -q 2>&1 | tail -3; echo \"=== DIFF CHECK ===\"; git diff --check && echo \"diff-check-clean\"",
+    "testCommand": "conda run -n agentdeck pytest tests/test_agent_cli.py -k \"skills_import_allowed_when or skills_import_blocks\" -q 2>&1 | tail -8",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -85,44 +85,44 @@
   "hotPaths": [
     {
       "path": "src/agentdeck/cli.py",
-      "accessCount": 213,
-      "lastAccessed": 1783573510323,
+      "accessCount": 234,
+      "lastAccessed": 1783579502753,
       "type": "file"
     },
     {
       "path": "src/agentdeck/contracts.py",
-      "accessCount": 162,
-      "lastAccessed": 1783573544844,
+      "accessCount": 176,
+      "lastAccessed": 1783579403114,
       "type": "file"
     },
     {
       "path": "tests/test_agent_cli.py",
-      "accessCount": 90,
-      "lastAccessed": 1783573575175,
+      "accessCount": 97,
+      "lastAccessed": 1783579468121,
       "type": "file"
     },
     {
       "path": "docs/handoff/current-development-state.md",
-      "accessCount": 74,
-      "lastAccessed": 1783573699725,
+      "accessCount": 78,
+      "lastAccessed": 1783574556426,
       "type": "file"
     },
     {
       "path": "HISTORY.md",
-      "accessCount": 68,
-      "lastAccessed": 1783573669430,
+      "accessCount": 70,
+      "lastAccessed": 1783574346271,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 50,
+      "lastAccessed": 1783574293827,
       "type": "file"
     },
     {
       "path": "src/agentdeck/tui.py",
       "accessCount": 48,
       "lastAccessed": 1783528440908,
-      "type": "file"
-    },
-    {
-      "path": "README.md",
-      "accessCount": 47,
-      "lastAccessed": 1783573096129,
       "type": "file"
     },
     {
@@ -145,8 +145,14 @@
     },
     {
       "path": "docs/contracts/leader-chat-schema.md",
-      "accessCount": 18,
-      "lastAccessed": 1783530340426,
+      "accessCount": 25,
+      "lastAccessed": 1783574236013,
+      "type": "file"
+    },
+    {
+      "path": "CLAUDE.md",
+      "accessCount": 14,
+      "lastAccessed": 1783574255937,
       "type": "file"
     },
     {
@@ -165,12 +171,6 @@
       "path": "tests/test_dashboard.py",
       "accessCount": 12,
       "lastAccessed": 1783528110903,
-      "type": "file"
-    },
-    {
-      "path": "CLAUDE.md",
-      "accessCount": 12,
-      "lastAccessed": 1783558423925,
       "type": "file"
     },
     {
@@ -193,8 +193,8 @@
     },
     {
       "path": "src/agentdeck/config.py",
-      "accessCount": 9,
-      "lastAccessed": 1783572946301,
+      "accessCount": 10,
+      "lastAccessed": 1783579422059,
       "type": "file"
     },
     {
