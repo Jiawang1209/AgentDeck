@@ -10678,3 +10678,14 @@ def test_contract_plans_discovers_schema_and_is_in_index(tmp_path, monkeypatch, 
     assert cli.main(["contract", "list"]) == 0
     listing = json.loads(capsys.readouterr().out)
     assert "plans" in {c["name"] for c in listing["contracts"]}
+
+
+def test_contract_run_loop_all_discovers_and_is_in_index(tmp_path, monkeypatch, capsys):
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["contract", "run-loop-all"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run_loop_all_command"] == "agentdeck run-loop --all --confirm"
+    assert cli.main(["contract", "run-loop-all", "--example"]) == 0
+    assert json.loads(capsys.readouterr().out)["example_run_loop_all"]["mode"] == "run_loop_all"
+    assert cli.main(["contract", "list"]) == 0
+    assert "run-loop-all" in {c["name"] for c in json.loads(capsys.readouterr().out)["contracts"]}

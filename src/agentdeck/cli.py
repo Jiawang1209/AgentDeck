@@ -52,6 +52,8 @@ from .contracts import (
     project_view_contract_response,
     runtime_agent_controls,
     run_loop_contract_response,
+    run_loop_all_contract_response,
+    validate_run_loop_all_contract,
     run_start_contract_response,
     skills_contract_response,
     terminal_card_controls,
@@ -4251,6 +4253,12 @@ def contract_run_loop_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "run-loop-schema.md"
     payload = run_loop_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
+    return 0
+
+
+def contract_run_loop_all_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "run-loop-all-schema.md"
+    _print_json(run_loop_all_contract_response(contract_path, include_example=args.example))
     return 0
 
 
@@ -13389,6 +13397,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_run_loop.add_argument("--example", action="store_true", help="Include a GUI-ready run-loop example")
     contract_run_loop.set_defaults(func=contract_run_loop_command)
+    contract_run_loop_all = contract_subparsers.add_parser("run-loop-all", help="Show run-loop --all parallel-scheduler contract metadata")
+    contract_run_loop_all.add_argument("--example", action="store_true", help="Include a GUI-ready run-loop-all example")
+    contract_run_loop_all.set_defaults(func=contract_run_loop_all_command)
     contract_plans = contract_subparsers.add_parser("plans", help="Show plan board contract discovery metadata")
     contract_plans.add_argument("--example", action="store_true", help="Include a GUI-ready plan board example")
     contract_plans.set_defaults(func=contract_plans_command)
