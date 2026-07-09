@@ -4441,6 +4441,7 @@ def skills_catalog_command(args: argparse.Namespace) -> int:
         "ok": True,
         "mode": "skills_catalog",
         "source": str(source_dir),
+        "source_allowlisted": _source_is_allowlisted(source_dir, config),
         "skill_count": len(items),
         "imported_count": sum(1 for item in items if item["import_status"] != "not_imported"),
         "controls": [
@@ -4449,6 +4450,54 @@ def skills_catalog_command(args: argparse.Namespace) -> int:
                      safety="explicit_user", enabled=False, blocker="requires SKILL.md path"),
         ],
         "items": items,
+    })
+    return 0
+
+
+def _allowed_skill_sources(config) -> list[str]:
+    skills = getattr(config, "skills", None) or {}
+    sources = skills.get("allowed_sources", []) if isinstance(skills, dict) else []
+    return [str(src) for src in sources]
+
+
+def _source_is_allowlisted(source_dir: Path, config) -> bool:
+    """Non-enforcing marker: True when source_dir equals or sits under a configured allowed source."""
+    try:
+        resolved = Path(source_dir).resolve()
+    except OSError:
+        return False
+    for allowed in _allowed_skill_sources(config):
+        try:
+            allowed_resolved = Path(allowed).resolve()
+        except OSError:
+            continue
+        if resolved == allowed_resolved or resolved.is_relative_to(allowed_resolved):
+            return True
+    return False
+
+
+def skills_sources_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    sources: list[dict[str, object]] = []
+    controls: list[dict[str, object]] = []
+    for path in _allowed_skill_sources(config):
+        catalog_command = f"agentdeck skills catalog --source {path}"
+        sources.append({
+            "path": path,
+            "exists": Path(path).is_dir(),
+            "catalog_command": catalog_command,
+        })
+        controls.append(
+            _control(kind="inspect", label=f"Browse {path}", command=catalog_command, safety="inspect")
+        )
+    _print_json({
+        "ok": True,
+        "mode": "skills_sources",
+        "source_count": len(sources),
+        "sources": sources,
+        "controls": controls,
     })
     return 0
 
@@ -13375,6 +13424,11 @@ def build_parser() -> argparse.ArgumentParser:
     skills_catalog = skills_subparsers.add_parser("catalog", help="Read-only browse of a local skill source directory")
     skills_catalog.add_argument("--source", required=True, help="Directory of <name>/SKILL.md skills to browse")
     skills_catalog.set_defaults(func=skills_catalog_command)
+    skills_sources = skills_subparsers.add_parser(
+        "sources",
+        help="Read-only list of the configured trusted skill sources ([skills] allowed_sources)",
+    )
+    skills_sources.set_defaults(func=skills_sources_command)
     skills_show = skills_subparsers.add_parser("show", help="Show one skill snapshot")
     skills_show.add_argument("--name", required=True, help="Skill name")
     skills_show.set_defaults(func=skills_show_command)

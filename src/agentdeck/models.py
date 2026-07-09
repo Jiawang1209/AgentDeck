@@ -56,6 +56,7 @@ class ProjectConfig:
     agents: tuple[AgentSpec, ...]
     runtime: RuntimeConfig
     autonomous: AutonomousPolicy = AutonomousPolicy()
+    skills: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

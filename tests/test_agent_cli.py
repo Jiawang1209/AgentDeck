@@ -10811,3 +10811,100 @@ def test_skills_catalog_rejects_missing_source_and_handles_empty(tmp_path, monke
     payload = json.loads(capsys.readouterr().out)
     assert payload["skill_count"] == 0
     assert payload["items"] == []
+
+
+def test_config_skills_allowed_sources_round_trips_through_config_writer(tmp_path, monkeypatch):
+    from agentdeck.config import load_config, update_leader_approval_mode
+
+    root = prepare_project(tmp_path, monkeypatch)
+    cfg_path = root / ".agentdeck" / "config.toml"
+    src_a = tmp_path / "shop_a"
+    src_b = tmp_path / "shop_b"
+    with cfg_path.open("a", encoding="utf-8") as fh:
+        fh.write(f'\n[skills]\nallowed_sources = ["{src_a}", "{src_b}"]\n')
+
+    config = load_config(root)
+    assert config.skills.get("allowed_sources", []) == [str(src_a), str(src_b)]
+
+    # a config writer must NOT drop a hand-added [skills] section
+    update_leader_approval_mode(root, "approve")
+    reloaded = load_config(root)
+    assert reloaded.leader.approval_mode == "approve"
+    assert reloaded.skills.get("allowed_sources", []) == [str(src_a), str(src_b)]
+
+
+def test_config_skills_allowed_sources_defaults_empty(tmp_path, monkeypatch):
+    from agentdeck.config import load_config
+
+    root = prepare_project(tmp_path, monkeypatch)
+    config = load_config(root)
+    assert config.skills.get("allowed_sources", []) == []
+
+
+def test_skills_sources_lists_configured_allowed_sources_read_only(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    cfg_path = root / ".agentdeck" / "config.toml"
+    existing = tmp_path / "shop_a"; existing.mkdir()
+    missing = tmp_path / "shop_missing"
+    with cfg_path.open("a", encoding="utf-8") as fh:
+        fh.write(f'\n[skills]\nallowed_sources = ["{existing}", "{missing}"]\n')
+    before = StateStore(root).load()
+
+    assert cli.main(["skills", "sources"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skills_sources"
+    assert payload["source_count"] == 2
+    paths = [s["path"] for s in payload["sources"]]
+    assert paths == [str(existing), str(missing)]
+    first = payload["sources"][0]
+    assert first["exists"] is True
+    assert first["catalog_command"] == f"agentdeck skills catalog --source {existing}"
+    assert payload["sources"][1]["exists"] is False
+    kinds = {c["kind"] for c in payload["controls"]}
+    assert "inspect" in kinds
+    # read-only: listing sources writes no state
+    assert StateStore(root).load() == before
+
+
+def test_skills_sources_empty_when_no_allowlist(tmp_path, monkeypatch, capsys):
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["skills", "sources"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skills_sources"
+    assert payload["source_count"] == 0
+    assert payload["sources"] == []
+
+
+def test_skills_catalog_marks_source_allowlisted_non_enforcing(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    source = tmp_path / "catalog"
+    _write_catalog_skill(source, "alpha", "Alpha skill")
+
+    # not allowlisted yet -> flagged False, but still fully browsable
+    assert cli.main(["skills", "catalog", "--source", str(source)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source_allowlisted"] is False
+    assert payload["skill_count"] == 1
+
+    # exact allowlist match -> True
+    cfg_path = root / ".agentdeck" / "config.toml"
+    with cfg_path.open("a", encoding="utf-8") as fh:
+        fh.write(f'\n[skills]\nallowed_sources = ["{source}"]\n')
+    assert cli.main(["skills", "catalog", "--source", str(source)]) == 0
+    payload2 = json.loads(capsys.readouterr().out)
+    assert payload2["source_allowlisted"] is True
+    # still non-enforcing: everything is still listed
+    assert payload2["skill_count"] == 1
+
+
+def test_skills_catalog_source_allowlisted_true_when_under_allowed_parent(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    parent = tmp_path / "sources"
+    source = parent / "catalog"
+    _write_catalog_skill(source, "alpha", "Alpha skill")
+    cfg_path = root / ".agentdeck" / "config.toml"
+    with cfg_path.open("a", encoding="utf-8") as fh:
+        fh.write(f'\n[skills]\nallowed_sources = ["{parent}"]\n')
+    assert cli.main(["skills", "catalog", "--source", str(source)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source_allowlisted"] is True

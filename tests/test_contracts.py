@@ -5154,3 +5154,13 @@ def test_skills_contract_exposes_catalog_fields():
     assert payload["catalog_response_fields"] == list(SKILLS_CATALOG_RESPONSE_FIELDS)
     assert payload["catalog_item_fields"] == list(SKILLS_CATALOG_ITEM_FIELDS)
     assert payload["catalog_command"] == "agentdeck skills catalog --source <dir>"
+
+
+def test_skills_contract_exposes_sources_fields():
+    from pathlib import Path
+    from agentdeck.contracts import skills_contract_response, SKILLS_SOURCES_RESPONSE_FIELDS
+    payload = skills_contract_response(Path("docs/contracts/skills-schema.md"))
+    assert payload["sources_command"] == "agentdeck skills sources"
+    assert payload["sources_response_fields"] == list(SKILLS_SOURCES_RESPONSE_FIELDS)
+    # non-enforcing allowlist marker travels on the top-level catalog response
+    assert "source_allowlisted" in payload["catalog_response_fields"]

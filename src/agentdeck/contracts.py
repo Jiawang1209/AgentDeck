@@ -668,13 +668,17 @@ SKILLS_CREATE_RESPONSE_FIELDS = (
 )
 
 SKILLS_CATALOG_RESPONSE_FIELDS = (
-    "ok", "mode", "source", "skill_count", "imported_count", "controls", "items",
+    "ok", "mode", "source", "source_allowlisted", "skill_count", "imported_count", "controls", "items",
 )
 
 SKILLS_CATALOG_ITEM_FIELDS = (
     "name", "description", "source", "path", "content_hash", "required_tools", "risk",
     "show_command", "load_command", "controls",
     "import_status", "import_preview_command", "import_command",
+)
+
+SKILLS_SOURCES_RESPONSE_FIELDS = (
+    "ok", "mode", "source_count", "sources", "controls",
 )
 
 SKILLS_SUGGESTION_ITEM_FIELDS = (
@@ -2249,6 +2253,8 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "catalog_command": "agentdeck skills catalog --source <dir>",
         "catalog_response_fields": list(SKILLS_CATALOG_RESPONSE_FIELDS),
         "catalog_item_fields": list(SKILLS_CATALOG_ITEM_FIELDS),
+        "sources_command": "agentdeck skills sources",
+        "sources_response_fields": list(SKILLS_SOURCES_RESPONSE_FIELDS),
         "skills_show_command_template": "agentdeck skills show --name <name>",
         "skills_import_preview_command_template": "agentdeck skills import-preview --path <SKILL.md>",
         "skills_import_command_template": "agentdeck skills import --path <SKILL.md>",

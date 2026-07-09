@@ -4,7 +4,20 @@
 
 ## 2026-07-09
 
-### Current - Add `agentdeck skills catalog --source <dir>` read-only skill source browse (skill-marketplace lane slice 1)
+### Current - Add read-only trusted-source allowlist for the skill catalog (skill-marketplace lane slice 2, NON-ENFORCING)
+
+- **类型**: feat
+- **动机**: skill-marketplace lane 第二片。上一片的 `agentdeck skills catalog --source <dir>` 需要显式传 `--source`；本片先在 config 层沉淀一个可信 skill 源清单 `[skills] allowed_sources`，让后续 workbench/NL 界面可以无参数浏览"配置好的源"，并给 catalog 标注被浏览的源是否在清单内。REORDER 理由：先把 allowlist 落到 config，后面的 workbench `skills_catalog_card`（无参浏览 configured sources）和 NL "浏览技能源" intent 才能直接消费它。
+- **What**:
+  - Part A（config）：`ProjectConfig` 新增 `skills: dict` 字段（`models.py`）；`load_config` 解析 `[skills].allowed_sources` 为 `config.skills["allowed_sources"]`（默认空，字符串化，镜像 `[autonomous]` 解析）；**关键**：`_dump_config` 现在 round-trip `[skills]` 段（镜像 `[autonomous]` dump 块），否则 `update_leader_approval_mode` / `update_autonomous_policy` 等 config writer 会把手写的 `[skills]` 段丢掉。
+  - Part B：新增只读 `agentdeck skills sources` 子命令（`skills_sources_command`，`cli.py`）：输出 `mode=skills_sources`、`source_count`、`sources[]`（每项 `{path, exists, catalog_command}`）和 inspect-only `controls[]`；不写 config/state、不调 provider、不碰 tmux。
+  - Part C：`skills_catalog_command` 新增**顶层** `source_allowlisted`（bool）——被浏览的 `--source`（`Path.resolve()`）等于或位于某个配置 allowed_source（同样 resolve）之下时为 True。**非强制**：任何目录仍可浏览，catalog 仍列全部 skill。
+  - Part D（契约/文档）：`contracts.py` 新增 `SKILLS_SOURCES_RESPONSE_FIELDS`，`source_allowlisted` 加入 `SKILLS_CATALOG_RESPONSE_FIELDS`，`skills_contract_payload` 暴露 `sources_command` / `sources_response_fields`；`docs/contracts/skills-schema.md`、README、本文件同步。
+- **影响**: 新增只读发现入口 + config 层可信源清单。安全边界不变且**非强制**：allowlist 不拦截任何浏览/导入，只做标注；真正安装仍走既有预览门控且可审计的 `agentdeck skills import`。REORDER：slice 2 从"trusted-source allowlist"提到 workbench/NL 浏览之前，因为无参浏览要先有 config 清单。⚠️ 后续 fork（allowlist **强制**（阻断非清单源导入）、skill 依赖/组合）= STOP + 问人类，本片不建。
+- **验证**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k "skills_sources or skills_catalog or config_skills" tests/test_contracts.py -k "skills or config" -q`；含 `_dump_config` round-trip 测试（写 `[skills]` → 跑 `update_leader_approval_mode` → reload → allowlist 存活）；全量 `pytest -q` 全绿；`python -m compileall src tests -q` 干净；`git diff --check` 干净。
+- **偏差**: 计划称 `ProjectConfig` "already has a `skills: dict` field"——实际不然（`skills: dict` 在 `ProjectView` 上，`ProjectConfig` 没有），故本片给 `ProjectConfig` 新增该字段并解析 `[skills]`。`source_allowlisted` 放在**顶层** catalog response（不逐项），并加入 `SKILLS_CATALOG_RESPONSE_FIELDS`。
+
+### Add `agentdeck skills catalog --source <dir>` read-only skill source browse (skill-marketplace lane slice 1)
 
 - **类型**: feat
 - **动机**: 启动 skill marketplace/生态 lane 的第一片（人类拍板"浏览一个 skill 源/目录"）。此前 `discover_skills` 只发现内置 skill + 项目本地 `.agentdeck/skills/*/SKILL.md`，import 也只能从单个 `--path <SKILL.md>` 一次一个。没有"源/目录橱窗"的概念——一个装着多个"可用但未导入" skill、可在导入前只读浏览的目录。这一片补上它。

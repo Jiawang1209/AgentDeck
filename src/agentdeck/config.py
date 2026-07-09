@@ -132,6 +132,11 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         allowed_agents=tuple(str(a) for a in allowed),
         max_approvals=int(autonomous_raw.get("max_approvals", 0)) if isinstance(autonomous_raw, dict) else 0,
     )
+    skills_raw = raw.get("skills", {})
+    allowed_sources = (
+        skills_raw.get("allowed_sources", []) if isinstance(skills_raw, dict) else []
+    )
+    skills = {"allowed_sources": [str(src) for src in allowed_sources]}
     project_raw = raw.get("project", {})
     return ProjectConfig(
         name=project_raw.get("name", base.name),
@@ -140,6 +145,7 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         agents=agents,
         runtime=runtime,
         autonomous=autonomous,
+        skills=skills,
     )
 
 
@@ -268,5 +274,14 @@ def _dump_config(raw: dict[str, object]) -> str:
             "[autonomous]",
             f"allowed_agents = {allowed_toml}",
             f"max_approvals = {int(autonomous.get('max_approvals', 0))}",
+        ])
+    skills = raw.get("skills", {})
+    if isinstance(skills, dict) and skills.get("allowed_sources"):
+        sources = skills.get("allowed_sources", []) or []
+        sources_toml = "[" + ", ".join(_quote_toml(str(s)) for s in sources) + "]"
+        lines.extend([
+            "",
+            "[skills]",
+            f"allowed_sources = {sources_toml}",
         ])
     return "\n".join(lines) + "\n"
