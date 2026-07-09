@@ -11101,3 +11101,33 @@ def test_skills_load_preview_surfaces_unmet_dependencies(tmp_path, monkeypatch, 
     assert payload["has_dependency_cycle"] is False
     # read-only: no skill_loads / state mutation
     assert StateStore(root).load() == before
+
+
+def test_skills_load_plan_previews_deps_read_only(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _put_project_skill(root, "a", ["b"]); _put_project_skill(root, "b", [])
+    before = StateStore(root).load()
+
+    assert cli.main(["skills", "load-plan", "--name", "a", "--agent", "planner"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skill_load_plan"
+    assert payload["to_load"] == ["b", "a"]          # deps-first topo order
+    assert payload["can_load"] is True
+    assert payload["blockers"] == []
+    assert payload["confirm_command"] == "agentdeck skills load --name a --agent planner --with-deps --confirm"
+    assert StateStore(root).load() == before          # read-only
+
+
+def test_skills_load_plan_blocks_on_missing_and_cycle(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _put_project_skill(root, "a", ["b", "z"]); _put_project_skill(root, "b", [])   # z missing
+    _put_project_skill(root, "p", ["q"]); _put_project_skill(root, "q", ["p"])     # cycle
+
+    assert cli.main(["skills", "load-plan", "--name", "a", "--agent", "planner"]) == 0
+    p = json.loads(capsys.readouterr().out)
+    assert p["missing"] == ["z"] and p["can_load"] is False
+    assert any("z" in b for b in p["blockers"])
+
+    assert cli.main(["skills", "load-plan", "--name", "p", "--agent", "planner"]) == 0
+    p2 = json.loads(capsys.readouterr().out)
+    assert p2["has_cycle"] is True and p2["can_load"] is False

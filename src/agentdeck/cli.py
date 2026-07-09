@@ -57,6 +57,7 @@ from .contracts import (
     run_start_contract_response,
     skills_contract_response,
     validate_skills_deps_contract,
+    validate_skill_load_plan_contract,
     terminal_card_controls,
     trace_contract_response,
     workbench_contract_response,
@@ -4432,6 +4433,66 @@ def skills_deps_command(args: argparse.Namespace) -> int:
     validation = validate_skills_deps_contract(payload)
     if not validation["ok"]:
         print("skills deps contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def _skill_load_plan(config: ProjectConfig, store: StateStore, name: str, agent: str) -> dict[str, object]:
+    root = Path(config.root)
+    resolution = resolve_skill_dependencies(root, name)   # raises KeyError if name unknown
+    snapshots = {snap.name: snap for snap in discover_skills(root)}
+    loaded_names = {
+        record.get("name")
+        for record in store.load().get("skill_loads", [])
+        if isinstance(record, dict) and record.get("agent_id") == agent
+    }
+    order_items: list[dict[str, object]] = []
+    to_load: list[str] = []
+    already_loaded: list[str] = []
+    for node in resolution["order"]:                       # empty when cyclic; deps-first when acyclic
+        if node in loaded_names:
+            status = "already_loaded"; already_loaded.append(node)
+        else:
+            status = "to_load"; to_load.append(node)
+        order_items.append({"name": node, "status": status,
+                            "source": snapshots[node].source if node in snapshots else None})
+    blockers = [f"missing dependency: {dep}" for dep in resolution["missing"]]
+    if resolution["has_cycle"]:
+        blockers.append("dependency cycle: " + " -> ".join(resolution["cycle"]))
+    can_load = not blockers and bool(to_load)
+    return {
+        "name": name, "agent": agent,
+        "order": order_items, "to_load": to_load, "already_loaded": already_loaded,
+        "missing": list(resolution["missing"]),
+        "has_cycle": bool(resolution["has_cycle"]), "cycle": list(resolution["cycle"]),
+        "blockers": blockers, "can_load": can_load,
+        "confirm_command": f"agentdeck skills load --name {name} --agent {agent} --with-deps --confirm",
+    }
+
+
+def skills_load_plan_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not _is_known_mailbox_agent(config, args.agent):
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    try:
+        plan = _skill_load_plan(config, store, args.name, args.agent)
+    except KeyError:
+        print(f"unknown skill: {args.name}", file=sys.stderr)
+        return 1
+    controls = [
+        _control(kind="show", label=f"Show {item['name']}", command=f"agentdeck skills show --name {item['name']}", safety="inspect")
+        for item in plan["order"]
+    ]
+    payload = {"ok": True, "mode": "skill_load_plan", **plan, "controls": controls}
+    validation = validate_skill_load_plan_contract(payload)
+    if not validation["ok"]:
+        print("skill load plan contract validation failed", file=sys.stderr)
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
         return 1
@@ -13626,6 +13687,10 @@ def build_parser() -> argparse.ArgumentParser:
     skills_load.add_argument("--agent", default="leader", help="Agent id using this skill; defaults to leader")
     skills_load.add_argument("--purpose", default="", help="Why this skill is being loaded")
     skills_load.set_defaults(func=skills_load_command)
+    skills_load_plan = skills_subparsers.add_parser("load-plan", help="Read-only preview of a skill's dependency load plan")
+    skills_load_plan.add_argument("--name", required=True, help="Skill name")
+    skills_load_plan.add_argument("--agent", default="leader", help="Agent id; defaults to leader")
+    skills_load_plan.set_defaults(func=skills_load_plan_command)
     skills_load_preview = skills_subparsers.add_parser(
         "load-preview",
         help="Preview loading a skill for an agent without recording context",

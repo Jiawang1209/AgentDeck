@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "cd /Users/liuyue/Desktop/Github_repos/multi-agent-explore\nconda run -n agentdeck python -m pytest -q 2>&1 | tail -6",
+    "testCommand": "conda run -n agentdeck pytest tests/test_agent_cli.py -k skills_load_plan -q 2>&1 | tail -6; echo \"===CONTRACTS===\"; conda run -n agentdeck pytest tests/test_contracts.py -k skill_load_plan -q 2>&1 | tail -6",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -85,26 +85,26 @@
   "hotPaths": [
     {
       "path": "src/agentdeck/cli.py",
-      "accessCount": 246,
-      "lastAccessed": 1783580864768,
+      "accessCount": 253,
+      "lastAccessed": 1783581718191,
       "type": "file"
     },
     {
       "path": "src/agentdeck/contracts.py",
-      "accessCount": 187,
-      "lastAccessed": 1783580879911,
+      "accessCount": 192,
+      "lastAccessed": 1783581687085,
       "type": "file"
     },
     {
       "path": "tests/test_agent_cli.py",
-      "accessCount": 107,
-      "lastAccessed": 1783580838479,
+      "accessCount": 108,
+      "lastAccessed": 1783581556970,
       "type": "file"
     },
     {
       "path": "docs/handoff/current-development-state.md",
-      "accessCount": 84,
-      "lastAccessed": 1783581003858,
+      "accessCount": 86,
+      "lastAccessed": 1783581195084,
       "type": "file"
     },
     {
@@ -169,8 +169,8 @@
     },
     {
       "path": "src/agentdeck/state.py",
-      "accessCount": 12,
-      "lastAccessed": 1783494132809,
+      "accessCount": 13,
+      "lastAccessed": 1783581578090,
       "type": "file"
     },
     {
@@ -183,6 +183,12 @@
       "path": "src/agentdeck/history.py",
       "accessCount": 11,
       "lastAccessed": 1783558275349,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/skills.py",
+      "accessCount": 11,
+      "lastAccessed": 1783581578731,
       "type": "file"
     },
     {
@@ -201,12 +207,6 @@
       "path": "src/agentdeck/config.py",
       "accessCount": 10,
       "lastAccessed": 1783579422059,
-      "type": "file"
-    },
-    {
-      "path": "src/agentdeck/skills.py",
-      "accessCount": 9,
-      "lastAccessed": 1783580794694,
       "type": "file"
     },
     {

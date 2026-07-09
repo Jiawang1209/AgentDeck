@@ -5164,3 +5164,15 @@ def test_skills_contract_exposes_sources_fields():
     assert payload["sources_response_fields"] == list(SKILLS_SOURCES_RESPONSE_FIELDS)
     # non-enforcing allowlist marker travels on the top-level catalog response
     assert "source_allowlisted" in payload["catalog_response_fields"]
+
+
+def test_validate_skill_load_plan_contract():
+    from agentdeck.contracts import validate_skill_load_plan_contract
+    good = {"ok": True, "mode": "skill_load_plan", "name": "a", "agent": "planner",
+            "order": [], "to_load": [], "already_loaded": [], "missing": [],
+            "has_cycle": False, "cycle": [], "blockers": [], "can_load": False,
+            "confirm_command": "agentdeck skills load --name a --agent planner --with-deps --confirm",
+            "controls": []}
+    assert validate_skill_load_plan_contract(good)["ok"]
+    bad = dict(good); bad["mode"] = "x"
+    assert not validate_skill_load_plan_contract(bad)["ok"]

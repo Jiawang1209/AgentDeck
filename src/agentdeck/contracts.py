@@ -693,6 +693,29 @@ def validate_skills_deps_contract(payload: dict[str, object]) -> dict[str, objec
     return {"ok": not errors, "errors": errors}
 
 
+SKILL_LOAD_PLAN_RESPONSE_FIELDS = (
+    "ok", "mode", "name", "agent", "order", "to_load", "already_loaded",
+    "missing", "has_cycle", "cycle", "blockers", "can_load", "confirm_command", "controls",
+)
+
+
+def validate_skill_load_plan_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in SKILL_LOAD_PLAN_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing skill_load_plan field: {field}")
+    if payload.get("mode") != "skill_load_plan":
+        errors.append("skill_load_plan.mode must be skill_load_plan")
+    if not isinstance(payload.get("can_load"), bool):
+        errors.append("skill_load_plan.can_load must be a bool")
+    if not isinstance(payload.get("has_cycle"), bool):
+        errors.append("skill_load_plan.has_cycle must be a bool")
+    for list_field in ("order", "to_load", "already_loaded", "missing", "cycle", "blockers", "controls"):
+        if not isinstance(payload.get(list_field), list):
+            errors.append(f"skill_load_plan.{list_field} must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
 SKILLS_CATALOG_RESPONSE_FIELDS = (
     "ok", "mode", "source", "source_allowlisted", "skill_count", "imported_count", "controls", "items",
 )
@@ -2304,6 +2327,8 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "sources_response_fields": list(SKILLS_SOURCES_RESPONSE_FIELDS),
         "deps_command": "agentdeck skills deps --name <name>",
         "deps_response_fields": list(SKILLS_DEPS_RESPONSE_FIELDS),
+        "load_plan_command": "agentdeck skills load-plan --name <name> --agent <agent_id>",
+        "skill_load_plan_response_fields": list(SKILL_LOAD_PLAN_RESPONSE_FIELDS),
         "skills_show_command_template": "agentdeck skills show --name <name>",
         "skills_import_preview_command_template": "agentdeck skills import-preview --path <SKILL.md>",
         "skills_import_command_template": "agentdeck skills import --path <SKILL.md>",
