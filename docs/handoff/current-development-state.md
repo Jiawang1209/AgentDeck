@@ -8,11 +8,11 @@ Updated: 2026-07-09
 - **只读可见性 4 片**：`skills catalog --source <dir>` → `[skills] allowed_sources` + `skills sources` + `source_allowlisted` → workbench `skills_catalog_card` → 自然语言 `mode=skills_catalog`。
 - **决策 A — allowlist 强制拦截**：`skills import` 对非空 `[skills] allowed_sources` opt-in 强制——非清单源被拒，`--allow-unlisted` 逃生阀，空清单=向后兼容，两条路径审计（`skill_imported.allowlisted`/`.allow_unlisted`），`import-preview` 只读回显 `source_allowlisted`/`enforcement_active`/`import_blocked`。
 - **决策 B（只读部分）**：**B1** `agentdeck skills deps --name <name>`（`depends_on` frontmatter + 传递依赖解析 + `missing` + 循环检测 + 拓扑 `order`，纯只读）；**B2** `skills load-preview` 只读回显 `unmet_dependencies` / `has_dependency_cycle`（不阻断、不自动拉依赖）。
+- **决策 B-auto — 依赖 load（preview + 显式确认）DONE**：`skills load-plan --name <name> --agent <id>` 只读预览依赖 load 计划；`skills load --name <name> --agent <id> --with-deps --confirm` 按 deps-first 拓扑逐条 load 并审计（每条 `skill_loaded` + 一条 `skill_deps_loaded` 汇总）。`--with-deps` 需 `--confirm`，缺失依赖/环一律拒绝且零写，绝不 auto-import、绝不静默；单 skill `skills load` 不变。
 
-**为什么停在这里**：skill 依赖的**只读可见性齐了**，剩下的都是需要你拍板的产品/安全决策。请你三选一（或定顺序）：
+**为什么停在这里**：skill 依赖的只读可见性 + B-auto 依赖 load（preview + 显式确认）都齐了，剩下的都是需要你拍板的产品/安全决策。请你二选一（或定顺序）：
 
-- **B-auto. 自动 load/import 依赖**：现在依赖只"看得见"、必须逐个显式 load/import。是否让加载一个 skill 时**顺带拉起它的依赖**？*我的默认建议：做成"依赖预览 + 一键显式确认"（列出要 load/import 的依赖清单，人点头后一次性执行并逐条审计），**绝不静默自动拉**——守住"依赖必须显式"的边界。* 这是把"依赖"变"可组合包"的关键刀。
-- **B-ver. 依赖版本约束/锁定**：`depends_on` 支持版本、生成 lockfile。*我的默认建议：先不做，等 B-auto 落地、有真实需求再说。*
+- **B-ver. 依赖版本约束/锁定**：`depends_on` 支持版本、生成 lockfile。*我的默认建议：这是 B-auto 之后的下一刀——先走它自己的 brainstorm→spec→plan，别在别处顺手做。*
 - **C. 联网远程 marketplace / 远程依赖**：从网络拉 skill/依赖。*我的默认建议：最后做——离 local-first 最远、安全面最复杂（网络、签名、供应链）。*
 
 > 你回一句（比如 "B-auto"、"先 B-auto 再 B-ver"、"都先不做，换 GUI/别的方向"),我就据此走 brainstorm→spec→plan→实现。
@@ -448,13 +448,14 @@ The human opened the **Skill Registry marketplace/ecosystem** lane (one of the f
 
 **Skill dependencies (decision "B") slice 2 is done (read-only unmet-deps note on load-preview):** `agentdeck skills load-preview --name <name>` now also returns `unmet_dependencies` (`list(resolution["missing"])`) and `has_dependency_cycle` (`bool(resolution["has_cycle"])`), computed by reusing `resolve_skill_dependencies(Path(config.root), args.name)` in `skills_load_preview_command` (`src/agentdeck/cli.py`) just before printing (only when the skill exists; the existing preview error path handles unknown skills). Added to `SKILLS_LOAD_PREVIEW_RESPONSE_FIELDS` (`src/agentdeck/contracts.py`) and to the skills-contract example fixture `load_preview` (both `[]` / `False`). READ-ONLY + NON-BLOCKING: the note is informational only — it does not block the preview, does not auto-load or auto-import any dependency, writes no state (`skill_loads[]` untouched), appends no event, calls no provider, touches no tmux; `skills load` behavior unchanged. Tests: `tests/test_agent_cli.py::test_skills_load_preview_surfaces_unmet_dependencies`, `tests/test_contracts.py -k skills`.
 
-**Read-only dependency VISIBILITY (decision "B") is now complete** across `skills deps` (slice 1) + the `skills load-preview` unmet-deps note (slice 2). The remaining B items are product forks needing the human: auto-loading / auto-importing declared deps at load time, version constraints on `depends_on`, and remote/marketplace dependency resolution — none of these should be built without an explicit human decision (they change from *seeing* deps to *acting on* them).
+**Skill dependency auto-load (decision "B-auto") is done (preview + explicit confirm, never silent):** new pure `_skill_load_plan(config, store, name, agent)` (`src/agentdeck/cli.py`) reuses `resolve_skill_dependencies` + the agent's `skill_loads` to build a deps-first plan (`order` items `{name,status,source}`, `to_load` / `already_loaded` / `missing` / `has_cycle` / `cycle` / `blockers` / `can_load` / `confirm_command`). Read-only `agentdeck skills load-plan --name <name> --agent <id>` (`skills_load_plan_command`) wraps it as `mode=skill_load_plan` with inspect-only `skills show` controls, self-validated via `validate_skill_load_plan_contract` (`SKILL_LOAD_PLAN_RESPONSE_FIELDS`); it writes no state (a test asserts state unchanged). `agentdeck skills load --name <name> --agent <id> --with-deps --confirm` (`_skills_load_with_deps`, branched at the top of `skills_load_command`) loads each `to_load` skill deps-first via `store.record_skill_load` + a `skill_loaded` event each, then one `skill_deps_loaded` summary event (`mode=skill_deps_loaded`). GATED: `--with-deps` requires `--confirm` (else reject, no writes); a missing dep or cycle rejects writing nothing (never auto-imports — import stays the separate explicit allowlist-gated flow); single-skill `skills load` (no `--with-deps`) is unchanged. Exposed via `agentdeck contract skills` (`load_plan_command` / `skill_load_plan_response_fields`). Design + plan: `docs/superpowers/specs/2026-07-09-skill-dep-autoload-design.md`, `docs/superpowers/plans/2026-07-09-skill-dep-autoload.md`. Tests: `tests/test_agent_cli.py -k skills_load` + `tests/test_contracts.py::test_validate_skill_load_plan_contract`.
+
+**Read-only dependency VISIBILITY (B1+B2) + dependency LOAD (B-auto) are now complete.** The remaining B/C items are product forks needing the human.
 
 **Remaining items are all product forks — STOP + ask the human first:**
 1. ⚠️ **FORK:** allowlist **ENFORCEMENT** (blocking imports from non-allowlisted sources) — already delivered as opt-in decision "A"; further tightening (default-on, hard block) stays a product fork.
-2. ⚠️ **FORK:** **auto-loading / auto-importing** `depends_on` dependencies (acting on the declared deps, not just reporting them) reshapes the load/import model — do NOT build it unilaterally.
-3. ⚠️ **FORK:** skill dependency **version constraints / lockfiles** — do NOT build unilaterally.
-4. ⚠️ **FORK:** remote / marketplace skill sources or remote dependency fetch (over the network) is a product fork — local trusted sources only until a human explicitly opts in. Do NOT build it unilaterally.
+2. ⚠️ **NEXT (B-ver):** skill dependency **version constraints / lockfiles** — the next lane item after B-auto; needs its own brainstorm→spec→plan. Do NOT start it inside another slice.
+3. ⚠️ **FORK (C):** remote / marketplace skill sources or remote dependency fetch (over the network) is a product fork — local trusted sources only until a human explicitly opts in. Do NOT build it unilaterally.
 
 ## Required Verification Before Handoff
 

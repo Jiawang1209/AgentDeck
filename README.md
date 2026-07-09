@@ -55,7 +55,9 @@ agentdeck skills show --name planning
 agentdeck skills import-preview --path /path/to/SKILL.md
 agentdeck skills import --path /path/to/SKILL.md
 agentdeck skills load-preview --name planning --agent planner --purpose "decompose implementation work"
+agentdeck skills load-plan --name planning --agent planner
 agentdeck skills load --name planning --agent leader --purpose "plan decomposition"
+agentdeck skills load --name planning --agent planner --with-deps --confirm
 agentdeck skills suggest --name incident-review --summary "Review incident response evidence." --rationale "repeatable review checklist" --source human
 agentdeck skills suggestions
 agentdeck memory suggest --summary "Keep approval-gated worker dispatch." --rationale "project safety preference" --source human

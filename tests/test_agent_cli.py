@@ -11131,3 +11131,41 @@ def test_skills_load_plan_blocks_on_missing_and_cycle(tmp_path, monkeypatch, cap
     assert cli.main(["skills", "load-plan", "--name", "p", "--agent", "planner"]) == 0
     p2 = json.loads(capsys.readouterr().out)
     assert p2["has_cycle"] is True and p2["can_load"] is False
+
+
+def test_skills_load_with_deps_loads_chain_gated(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _put_project_skill(root, "a", ["b"]); _put_project_skill(root, "b", [])
+
+    # requires --confirm
+    assert cli.main(["skills", "load", "--name", "a", "--agent", "planner", "--with-deps"]) == 1
+    assert "confirm" in capsys.readouterr().err
+
+    # confirm -> loads b then a
+    assert cli.main(["skills", "load", "--name", "a", "--agent", "planner", "--with-deps", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skill_deps_loaded"
+    assert [x["name"] for x in payload["loaded"]] == ["b", "a"]
+    types = [e["event_type"] for e in StateStore(root).list_events(limit=30)]
+    assert types.count("skill_loaded") == 2 and "skill_deps_loaded" in types
+
+    # second run skips already-loaded
+    capsys.readouterr()
+    assert cli.main(["skills", "load", "--name", "a", "--agent", "planner", "--with-deps", "--confirm"]) == 1
+    assert "nothing to load" in capsys.readouterr().err.lower() or "cannot load" in capsys.readouterr().err.lower()
+
+
+def test_skills_load_with_deps_rejects_missing_dep(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _put_project_skill(root, "a", ["z"])   # z missing
+    before = StateStore(root).load()
+    assert cli.main(["skills", "load", "--name", "a", "--agent", "planner", "--with-deps", "--confirm"]) == 1
+    assert "z" in capsys.readouterr().err
+    assert StateStore(root).load() == before   # nothing written
+
+
+def test_skills_load_single_unchanged(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _put_project_skill(root, "solo", [])
+    assert cli.main(["skills", "load", "--name", "solo", "--agent", "planner"]) == 0
+    assert json.loads(capsys.readouterr().out)["mode"] == "skill_loaded"   # existing single-skill path

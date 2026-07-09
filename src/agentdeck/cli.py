@@ -4666,10 +4666,47 @@ def skills_show_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _skills_load_with_deps(config: ProjectConfig, store: StateStore, args: argparse.Namespace) -> int:
+    if not _is_known_mailbox_agent(config, args.agent):
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    if not args.confirm:
+        print("skills load --with-deps requires --confirm", file=sys.stderr)
+        return 1
+    try:
+        plan = _skill_load_plan(config, store, args.name, args.agent)
+    except KeyError:
+        print(f"unknown skill: {args.name}", file=sys.stderr)
+        return 1
+    if not plan["can_load"]:
+        reason = "; ".join(plan["blockers"]) if plan["blockers"] else "nothing to load (all dependencies already loaded)"
+        print(f"cannot load with deps: {reason}", file=sys.stderr)
+        return 1
+    root = Path(config.root)
+    loaded: list[dict[str, object]] = []
+    for node in plan["to_load"]:
+        skill = find_skill(root, node)
+        payload = skill.load_payload()
+        record = store.record_skill_load(agent_id=args.agent, purpose=args.purpose, skill=payload)
+        store.append_event(EventRecord.create("skill_loaded", {
+            "load_id": record["load_id"], "agent_id": args.agent, "name": skill.name,
+            "source": skill.source, "content_hash": skill.content_hash}))
+        loaded.append({"name": skill.name, "load_id": record["load_id"], "source": skill.source})
+    store.append_event(EventRecord.create("skill_deps_loaded", {
+        "agent_id": args.agent, "name": args.name, "loaded": [item["name"] for item in loaded]}))
+    _print_json({
+        "ok": True, "mode": "skill_deps_loaded", "agent_id": args.agent, "name": args.name,
+        "purpose": args.purpose, "loaded": loaded, "skipped_already_loaded": plan["already_loaded"], "plan": plan,
+    })
+    return 0
+
+
 def skills_load_command(args: argparse.Namespace) -> int:
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
+    if getattr(args, "with_deps", False):
+        return _skills_load_with_deps(config, store, args)
     if not _is_known_mailbox_agent(config, args.agent):
         print(f"unknown agent: {args.agent}", file=sys.stderr)
         return 1
@@ -13686,6 +13723,8 @@ def build_parser() -> argparse.ArgumentParser:
     skills_load.add_argument("--name", required=True, help="Skill name")
     skills_load.add_argument("--agent", default="leader", help="Agent id using this skill; defaults to leader")
     skills_load.add_argument("--purpose", default="", help="Why this skill is being loaded")
+    skills_load.add_argument("--with-deps", action="store_true", help="Also load the skill's dependency chain (requires --confirm)")
+    skills_load.add_argument("--confirm", action="store_true", help="Explicitly confirm loading the dependency chain")
     skills_load.set_defaults(func=skills_load_command)
     skills_load_plan = skills_subparsers.add_parser("load-plan", help="Read-only preview of a skill's dependency load plan")
     skills_load_plan.add_argument("--name", required=True, help="Skill name")

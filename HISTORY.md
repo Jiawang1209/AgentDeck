@@ -4,7 +4,20 @@
 
 ## 2026-07-09
 
-### Current - Surface read-only unmet-dependency note on `agentdeck skills load-preview` (skill ecosystem — decision "B" slice 2)
+### Current - Add dependency load plan + gated `skills load --with-deps` chain loading (skill ecosystem — decision "B-auto")
+
+- **类型**: feat
+- **动机**: B 的只读依赖可见性（`skills deps`、`load-preview.unmet_dependencies`）已完成。B-auto 是第一片真正**作用于**依赖的切片：load 一个 skill 时顺带把它的依赖链一起 load——但坚持"依赖预览 + 显式确认，绝不静默"，绝不 auto-import。
+- **What**:
+  - `cli.py`：新增纯 helper `_skill_load_plan(config, store, name, agent)`，复用 `resolve_skill_dependencies` + 该 agent 已有 `skill_loads`，产出 deps-first 拓扑 `order`（每项 `{name,status,source}`）、`to_load` / `already_loaded` / `missing` / `has_cycle` / `cycle` / `blockers` / `can_load` / `confirm_command`。只读命令 `skills load-plan --name <name> --agent <id>`（`skills_load_plan_command`）包装它为 `mode=skill_load_plan`，带 inspect-only `skills show` controls，经 `validate_skill_load_plan_contract` 自校验；未知 skill/agent 非 0 退出、无输出、不写 state。
+  - `cli.py`：`skills load` 子命令新增 `--with-deps` / `--confirm`；`skills_load_command` 顶部分支到新 `_skills_load_with_deps`（单 skill 既有分支**逐字节不变**）。`_skills_load_with_deps` 要求 `--confirm`（否则拒绝、不写），`can_load=false`（缺失依赖或环）时用 blockers 拒绝、不写任何 state，否则按 `to_load` deps-first 逐个 `store.record_skill_load` + `skill_loaded` 事件，末尾追加一条 `skill_deps_loaded` 汇总事件，输出 `mode=skill_deps_loaded`。
+  - `contracts.py`：新增 `SKILL_LOAD_PLAN_RESPONSE_FIELDS` + `validate_skill_load_plan_contract`；`skills_contract_payload` 暴露 `load_plan_command` / `skill_load_plan_response_fields`。
+  - 文档：`docs/contracts/skills-schema.md`（新 section + 命令 + 字段）、`CLAUDE.md`（B-auto 规则）、`README.md`、`docs/handoff/current-development-state.md`（B-auto done，next B-ver）。
+- **影响**: 新增只读 `skills load-plan` 依赖 load 预览与 gated `skills load --with-deps --confirm` 依赖链加载；后者是 B-auto 的落点。安全边界：load-plan 只读、零写；`--with-deps` 需 `--confirm`，缺失依赖/环一律拒绝且零写，绝不 auto-import；单 skill `skills load`（无 `--with-deps`）行为未变。
+- **验证**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k skills tests/test_contracts.py -k skill -q` 全绿；全量 `pytest -q` 全绿（baseline 726 → 733）；`python -m compileall src tests -q` 干净；`git diff --check` 干净。
+- **偏差**: 无 example-fixture 改动（skills contract 无 exact-key drift 断言，仅新增 discovery 字段）。`_put_project_skill` helper 已存在，直接复用。
+
+### Surface read-only unmet-dependency note on `agentdeck skills load-preview` (skill ecosystem — decision "B" slice 2)
 
 - **类型**: feat
 - **动机**: B slice 1 已让 skill 声明 `depends_on` 并提供只读 `skills deps` / 纯函数 `resolve_skill_dependencies`。本切片把同一份依赖事实带到 load 决策点：人在 `skills load-preview` 时能直接看到该 skill 哪些声明依赖尚未存在，避免 load 后才发现缺失。仍是**只读、非阻断**的可见性切片，不 auto-load/auto-import。

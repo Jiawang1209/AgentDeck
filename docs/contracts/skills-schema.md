@@ -11,6 +11,8 @@ agentdeck contract skills
 agentdeck contract skills --example
 agentdeck skills list
 agentdeck skills deps --name <name>
+agentdeck skills load-plan --name <name> --agent <agent_id>
+agentdeck skills load --name <name> --agent <agent_id> --with-deps --confirm
 agentdeck skills catalog --source <dir>
 agentdeck skills import-preview --path <SKILL.md>
 agentdeck skills import --path <SKILL.md>
@@ -34,6 +36,8 @@ agentdeck skills create --suggestion-id <id> --confirm
 - `sources_response_fields`: ordered fields returned by `agentdeck skills sources` (`SKILLS_SOURCES_RESPONSE_FIELDS`).
 - `deps_command`: read-only skill dependency resolution command (`agentdeck skills deps --name <name>`).
 - `deps_response_fields`: ordered fields returned by `agentdeck skills deps` (`SKILLS_DEPS_RESPONSE_FIELDS`).
+- `load_plan_command`: read-only dependency load-plan command template (`agentdeck skills load-plan --name <name> --agent <agent_id>`).
+- `skill_load_plan_response_fields`: ordered fields returned by `agentdeck skills load-plan` (`SKILL_LOAD_PLAN_RESPONSE_FIELDS`).
 - `skills_show_command_template`: read-only skill detail command template.
 - `skills_import_preview_command_template`: read-only external skill import preview command template.
 - `skills_import_command_template`: explicit external skill import command template.
@@ -114,6 +118,25 @@ A skill's `SKILL.md` frontmatter may declare a `depends_on` list of other skill 
 - `controls`: inspect-only `agentdeck skills show --name <dep>` controls for each resolved/missing dep.
 
 `depends_on` is metadata only in this slice: `skills deps` does **not** auto-load or auto-import dependencies. Cycle detection prevents pathological input from crashing; missing deps are reported, not resolved over the network.
+
+## Dependency load plan (`skills load-plan` + `skills load --with-deps --confirm`)
+
+This is the first slice (decision B-auto) that ACTS on dependencies — done as **preview + explicit confirm, never silent**.
+
+`agentdeck skills load-plan --name <name> --agent <agent_id>` is a **read-only** preview of the dependency load plan. It reuses `resolve_skill_dependencies` and the agent's existing `skill_loads` to compute, for a deps-first topological `order`, what would be loaded. It writes no state, appends no event, imports/loads nothing, calls no provider, and touches no tmux. Unknown skill/agent → non-zero exit, no output. Response (`mode=skill_load_plan`) fields (`SKILL_LOAD_PLAN_RESPONSE_FIELDS`):
+
+- `name` / `agent`: the queried skill and target agent.
+- `order`: deps-first topo order; each item `{name, status, source}` where `status` is `to_load` or `already_loaded` (`[]` when cyclic).
+- `to_load`: names not yet loaded for the agent, in load order.
+- `already_loaded`: names already in the agent's `skill_loads` (skipped on execute).
+- `missing`: declared deps not found among discovered skills — a hard blocker (never fetched, never auto-imported).
+- `has_cycle` (bool) + `cycle`: a dependency cycle is a hard blocker.
+- `blockers`: `"missing dependency: <x>"` per missing dep and/or `"dependency cycle: <path>"`.
+- `can_load` (bool): `true` only when there are no blockers AND at least one `to_load`.
+- `confirm_command`: the explicit `agentdeck skills load --name <name> --agent <agent_id> --with-deps --confirm`.
+- `controls`: inspect-only `agentdeck skills show --name <item>` controls per ordered item.
+
+`agentdeck skills load --name <name> --agent <agent_id> --with-deps --confirm` executes the plan (`mode=skill_deps_loaded`): it loads each `to_load` skill deps-first via the existing `store.record_skill_load` + a `skill_loaded` event per skill, then appends one `skill_deps_loaded` summary event. It is **gated**: without `--with-deps` it is the unchanged single-skill load; with `--with-deps` it requires `--confirm` (else reject, no writes) and rejects (writing nothing) on a missing dependency or a dependency cycle. It never auto-imports — a missing dep stays a hard blocker routed through the separate explicit, allowlist-gated `skills import`. Single-skill `skills load` (no `--with-deps`) behavior is unchanged.
 
 ## Safety
 
