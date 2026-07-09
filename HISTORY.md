@@ -4,7 +4,19 @@
 
 ## 2026-07-09
 
-### Current - Semver dependency ranges via `version` frontmatter (skill ecosystem — decision "semver")
+### Current - Skill dependency lockfile: generate + read-only verify (skill ecosystem — decision "lockfile")
+
+- **类型**: feat
+- **动机**: semver 范围切片后，skill 依赖解析已确定性（hash pin + semver range）。lockfile 切片把某个 skill 当前解析出的依赖树（每个依赖 name + content_hash + version）冻结成快照，从而**检测漂移**（依赖 hash/version 变了、或增删）。本切片只做 generate + read-only verify；在解析时 enforce lock 是更大的后续切片。本地、显式、无网络。
+- **What**:
+  - `cli.py`：`_skill_lock_path` / `_skill_lock_record`（复用 `resolve_skill_dependencies` + `discover_skills`，deps-first `order` 去掉 root，逐个 pin `content_hash`+`version`；有 missing/cycle/version_mismatch 返回 `(None, blockers)`）。`skills_lock_command`（显式写 `.agentdeck/skill-locks/<name>.json` + `skill_locked` 事件 `{name, dependency_count}`，`mode=skill_locked`，经 `validate_skill_lock_contract()`；不可解析树拒绝、零写；未知 skill 非 0）。`skills_lock_verify_command` + `_validate_and_print_lock_verify`（全只读 diff：`changed`/`added`/`removed`+`blockers`，`in_sync`，`mode=skill_lock_verify`，经 `validate_skill_lock_verify_contract()`；无 lockfile → `locked=false`+hint+退出 0；不写 state、不改 lockfile）。注册 `lock` / `lock-verify` 两个 subparser。
+  - `contracts.py`：`SKILL_LOCK_RESPONSE_FIELDS` + `validate_skill_lock_contract`、`SKILL_LOCK_VERIFY_RESPONSE_FIELDS` + `validate_skill_lock_verify_contract`；`skills_contract_payload` 暴露 `lock_command` / `skill_lock_response_fields` / `lock_verify_command` / `skill_lock_verify_response_fields`。
+  - 文档：`docs/contracts/skills-schema.md`（新增 lockfile 段 + 命令 + 发现字段）、`CLAUDE.md`（lockfile 规则）、`README.md`、`docs/handoff/current-development-state.md`（lockfile done，next remote/C STOP）。
+- **影响**: 新增 `agentdeck skills lock`（冻结依赖树 → lockfile + `skill_locked` 事件；不可解析树拒绝）与 `agentdeck skills lock-verify`（只读漂移报告 changed/added/removed/in_sync）。lockfile 位于专用 `.agentdeck/skill-locks/`（`discover_skills` 不拾取）。安全边界：`lock` 是显式写且拒绝不可解析树；`lock-verify` 全只读（测试断言 state 不变，且不改 lockfile）。lockfile 本切片是 **advisory** drift 检测，**不**改变 `deps`/`load` 解析行为；本地、无网络、无第三方库。既有命令逐字节不变。
+- **验证**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k skills tests/test_contracts.py -k skill -q` 全绿；全量 `pytest -q` 全绿（baseline 738 → 742）；`python -m compileall src tests -q` 干净；`git diff --check` 干净。覆盖：resolvable → 写 lockfile+事件+deps hash/version；unresolvable / 未知 skill → 拒绝零写；lock-verify 未锁 → `locked=false`；in-sync → 空 drift；改依赖内容 → `changed` 列出且 state 不变。
+- **偏差**: `_validate_and_print_lock_verify` 采用返回 int（0/1）由命令 `return` 的写法，而非 plan 的 `raise SystemExit(1)`（task 明确允许此等价 inline 变体）。测试 helper 命名 `_put_skill`（既有 `_put_project_skill` 无 `version` 参数，无冲突）。`utc_now` 已在 cli.py 导入（`from .models import ... utc_now`），无需新增 import。仅向 skills 发现 payload 追加键（无精确集 drift 测试），未改/弱化任何 validator，未改 example fixture。
+
+### Semver dependency ranges via `version` frontmatter (skill ecosystem — decision "semver")
 
 - **类型**: feat
 - **动机**: B-ver 的内容 hash pin 已完成。semver 切片加上**版本范围**——仍坚持 local-first、确定性、无网络、无第三方 semver 库：skill 声明 `version: X.Y.Z`，`depends_on` 条目 `name@<spec>`（`<spec>` 不以 `sha256:` 开头）是 semver 范围，与依赖声明的 `version` 比对。不满足或无法解析的范围复用 B-ver 的 `version_mismatch` 硬阻断。`sha256:` pin 和纯 `name` 逐字节不变。

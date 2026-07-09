@@ -2,21 +2,21 @@
 
 Updated: 2026-07-09
 
-## Skill 生态 lane 进度 — A + B(只读/auto/ver/semver) 完成，⏸ loop STOP
+## Skill 生态 lane 进度 — A + B(只读/auto/ver/semver) + lockfile 完成，⏸ loop STOP（next remote/C）
 
-用户定了 "先 A 再 B"、"先 B-auto 再 B-ver"，然后选了 semver 范围，loop 已推进到 semver 落地。已完成并提交：
+用户定了 "先 A 再 B"、"先 B-auto 再 B-ver"，选了 semver 范围，再选了 lockfile，loop 已推进到 lockfile 落地。已完成并提交：
 - **只读可见性 4 片**：`skills catalog --source <dir>` → `[skills] allowed_sources` + `skills sources` + `source_allowlisted` → workbench `skills_catalog_card` → 自然语言 `mode=skills_catalog`。
 - **A — allowlist 强制拦截**：`skills import` opt-in 强制（`--allow-unlisted` 逃生阀，空清单向后兼容，审计 `skill_imported.allowlisted`/`.allow_unlisted`，`import-preview` 只读回显）。
 - **B1/B2 — 依赖只读**：`skills deps --name <name>`（依赖树/missing/循环/拓扑序）；`skills load-preview` 回显 `unmet_dependencies`。
 - **B-auto — 依赖 load（preview + 显式确认）**：`skills load-plan`（只读预览）+ `skills load --with-deps --confirm`（deps-first 逐条 load，缺失/环拒绝零写，绝不 auto-import/静默；单 skill load 不变）。
 - **B-ver — 依赖版本约束（content-hash 锁定）done**：`depends_on: [name@sha256:<hex>]` 锁定内容 hash（纯 `name` = 任意版本，行为不变）。`skills.py` 新增纯 `_parse_dep`；`resolve_skill_dependencies` 新增 `version_mismatch: [{name,expected,actual}]` blocker 类别（pin 与实际 `content_hash` 不符，blocker leaf 不递归）。`skills deps` / `load-plan` 输出 `version_mismatch`（加入两个 contract 字段 + validator），`load-plan.blockers` 加 `"version mismatch: <name> expected <pin>"`，`can_load` 因此为 false，`skills load --with-deps --confirm` 像 missing/cycle 一样硬阻断、零写。纯 hash、本地、确定性、无网络。Design + plan: `docs/superpowers/specs/2026-07-09-skill-dep-version-pinning-design.md`、`docs/superpowers/plans/2026-07-09-skill-dep-version-pinning.md`。
 - **semver — 依赖 semver 范围 done**：skill `SKILL.md` frontmatter 声明 `version: X.Y.Z`（默认 `0.0.0`，加入 `SkillSnapshot.summary()` + `SKILLS_SKILL_ITEM_FIELDS` + example fixture）。`depends_on: [name@<spec>]` 中 `<spec>` 不以 `sha256:` 开头即为 semver 范围，与依赖 `version` 比对。`skills.py` 新增纯 stdlib `parse_version` + `version_satisfies`（支持 bare/`==` 精确、`>= > <= <`、caret `^`、逗号 AND；`MAJOR[.MINOR[.PATCH]]` 缺省补 0；不支持/无法解析一律 fail-safe False）。`resolve_skill_dependencies` 分类 spec：`sha256:` → 内容 hash，否则 → `version_satisfies`，不满足记入 `version_mismatch`（新增 `reason` 键，`name/expected/actual` 与 B-ver 兼容）作为 blocker leaf 不递归；`version_mismatch` 继续经 `skills deps` / `load-plan` blockers / `load --with-deps` 硬阻断、零写。`sha256:` pin 和纯 `name` 逐字节不变。纯 stdlib、本地、确定性、无网络、无第三方库。Design + plan: `docs/superpowers/specs/2026-07-09-skill-dep-semver-design.md`、`docs/superpowers/plans/2026-07-09-skill-dep-semver.md`。
+- **lockfile — 依赖锁文件 generate + read-only verify done**：`agentdeck skills lock --name <name>` 显式冻结已解析依赖树（复用 `resolve_skill_dependencies` + `discover_skills`，deps-first `order` 去 root，逐个 pin `content_hash`+`version`）到专用 `.agentdeck/skill-locks/<name>.json`（`discover_skills` 不拾取），写 lockfile + `skill_locked` 事件；有 missing/cycle/version_mismatch 拒绝零写，未知 skill 非 0。`agentdeck skills lock-verify --name <name>` 全只读 diff（`changed`/`added`/`removed`/`blockers`/`in_sync`），无 lockfile → `locked=false`+hint+退出 0，不写 state、不改 lockfile。lockfile 本切片是 **advisory** drift 检测，不改变 `deps`/`load` 解析（enforce 是后续切片）。contracts.py: `SKILL_LOCK_*_RESPONSE_FIELDS` + `validate_skill_lock*_contract` + 发现字段。本地、无网络、无第三方库。Design + plan: `docs/superpowers/specs/2026-07-09-skill-dep-lockfile-design.md`、`docs/superpowers/plans/2026-07-09-skill-dep-lockfile.md`。
 
-⏸ **loop STOP —— 剩余依赖项都是产品 fork，需先 STOP + 询问 human，不得单方面开工**：
-- **lockfile 生成 / 锁策略**——下一个切片，需要自己的 brainstorm→spec→plan。
-- **remote / marketplace 依赖（C）**——联网远程解析/抓取/签名/供应链，local-first 边界外，需 human 显式 opt-in 的专门设计对话，绝不在 loop 里开工。
+⏸ **loop STOP —— 剩余依赖项是产品 fork，需先 STOP + 询问 human，不得单方面开工**：
+- **remote / marketplace 依赖（C）**——联网远程解析/抓取/签名/供应链/registry 格式，local-first 边界外，需 human 显式 opt-in 的专门设计对话（自己的 brainstorm→spec→plan），绝不在 loop 里开工。lockfile enforce（让 `deps`/`load` 消费 lock 改变默认解析）也是后续独立切片，非本 loop。
 
-中文小结：semver 依赖范围已实现并提交。skill 现在可声明 `version: X.Y.Z`，`depends_on` 可写 `name@>=1.2,<2.0` / `name@^1.0.0` 等 semver 范围（与依赖 `version` 比对）；不满足或无法解析的范围 = `version_mismatch`，和"缺失依赖 / 循环 / hash 不符"一样是硬阻断，`skills load --with-deps` 会拒绝且不写任何 state。`sha256:` pin 和纯 `name`（任意版本）行为完全没变。到此 skill 依赖 lane 的本地确定性版本约束都做完了，下一步是 **lockfile 生成**（自己的 spec）；再往后的 **remote/marketplace 依赖** 必须 STOP + 问你，不在 loop 里做。
+中文小结：lockfile generate + read-only verify 已实现并提交。`agentdeck skills lock --name <name>` 把某 skill 当前解析出的依赖树冻结成 `.agentdeck/skill-locks/<name>.json`（每依赖 name+content_hash+version），并追加 `skill_locked` 审计事件；不可解析树（缺失/循环/版本不符）会被拒绝且不写任何文件或事件。`agentdeck skills lock-verify --name <name>` 全只读，报告 lockfile 与当前解析的漂移（changed/added/removed/in_sync），不改任何状态或 lockfile。lock 本切片是 advisory，不改变 `deps`/`load` 的解析行为。到此 skill 依赖 lane 的本地确定性约束（hash pin / semver range / lockfile）都做完了。**⏸ 下一步是 remote/C（联网/签名/供应链/registry），必须 STOP + 问你，绝不在 loop 里做**；lockfile enforce 亦是后续独立切片。
 
 ## Active Goal
 

@@ -59,6 +59,7 @@ from .contracts import (
     validate_skills_deps_contract,
     validate_skill_load_plan_contract,
     validate_skill_lock_contract,
+    validate_skill_lock_verify_contract,
     terminal_card_controls,
     trace_contract_response,
     workbench_contract_response,
@@ -4483,6 +4484,51 @@ def skills_lock_command(args: argparse.Namespace) -> int:
     validation = validate_skill_lock_contract(payload)
     if not validation["ok"]:
         print("skill lock contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def skills_lock_verify_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    root = Path(config.root)
+    try:
+        resolve_skill_dependencies(root, args.name)
+    except KeyError:
+        print(f"unknown skill: {args.name}", file=sys.stderr)
+        return 1
+    lock_path = _skill_lock_path(config, args.name)
+    if not lock_path.exists():
+        payload = {"ok": True, "mode": "skill_lock_verify", "name": args.name, "locked": False,
+                   "in_sync": False, "changed": [], "added": [], "removed": [], "blockers": [],
+                   "hint": f"agentdeck skills lock --name {args.name}"}
+        return _validate_and_print_lock_verify(payload)
+    locked = json.loads(lock_path.read_text(encoding="utf-8"))
+    locked_map = {d["name"]: d for d in locked.get("dependencies", [])}
+    record, blockers = _skill_lock_record(config, args.name)
+    current_map = {d["name"]: d for d in (record["dependencies"] if record else [])}
+    changed = [
+        {"name": name, "locked": locked_map[name], "current": current_map[name]}
+        for name in sorted(set(locked_map) & set(current_map))
+        if locked_map[name]["content_hash"] != current_map[name]["content_hash"]
+        or locked_map[name]["version"] != current_map[name]["version"]
+    ]
+    added = sorted(set(current_map) - set(locked_map))
+    removed = sorted(set(locked_map) - set(current_map))
+    in_sync = not changed and not added and not removed and not blockers
+    payload = {"ok": True, "mode": "skill_lock_verify", "name": args.name, "locked": True,
+               "in_sync": in_sync, "changed": changed, "added": added, "removed": removed, "blockers": blockers}
+    return _validate_and_print_lock_verify(payload)
+
+
+def _validate_and_print_lock_verify(payload: dict[str, object]) -> int:
+    validation = validate_skill_lock_verify_contract(payload)
+    if not validation["ok"]:
+        print("skill lock-verify contract validation failed", file=sys.stderr)
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
         return 1
@@ -13763,6 +13809,9 @@ def build_parser() -> argparse.ArgumentParser:
     skills_lock = skills_subparsers.add_parser("lock", help="Freeze a skill's resolved dependency tree to a lockfile")
     skills_lock.add_argument("--name", required=True, help="Skill name")
     skills_lock.set_defaults(func=skills_lock_command)
+    skills_lock_verify = skills_subparsers.add_parser("lock-verify", help="Read-only drift check of a skill's dependency lockfile")
+    skills_lock_verify.add_argument("--name", required=True, help="Skill name")
+    skills_lock_verify.set_defaults(func=skills_lock_verify_command)
     skills_catalog = skills_subparsers.add_parser("catalog", help="Read-only browse of a local skill source directory")
     skills_catalog.add_argument("--source", required=True, help="Directory of <name>/SKILL.md skills to browse")
     skills_catalog.set_defaults(func=skills_catalog_command)

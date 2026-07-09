@@ -13,6 +13,8 @@ agentdeck skills list
 agentdeck skills deps --name <name>
 agentdeck skills load-plan --name <name> --agent <agent_id>
 agentdeck skills load --name <name> --agent <agent_id> --with-deps --confirm
+agentdeck skills lock --name <name>
+agentdeck skills lock-verify --name <name>
 agentdeck skills catalog --source <dir>
 agentdeck skills import-preview --path <SKILL.md>
 agentdeck skills import --path <SKILL.md>
@@ -38,6 +40,10 @@ agentdeck skills create --suggestion-id <id> --confirm
 - `deps_response_fields`: ordered fields returned by `agentdeck skills deps` (`SKILLS_DEPS_RESPONSE_FIELDS`).
 - `load_plan_command`: read-only dependency load-plan command template (`agentdeck skills load-plan --name <name> --agent <agent_id>`).
 - `skill_load_plan_response_fields`: ordered fields returned by `agentdeck skills load-plan` (`SKILL_LOAD_PLAN_RESPONSE_FIELDS`).
+- `lock_command`: explicit dependency lockfile generate command template (`agentdeck skills lock --name <name>`).
+- `skill_lock_response_fields`: ordered fields returned by `agentdeck skills lock` (`SKILL_LOCK_RESPONSE_FIELDS`).
+- `lock_verify_command`: read-only dependency lockfile drift command template (`agentdeck skills lock-verify --name <name>`).
+- `skill_lock_verify_response_fields`: ordered fields returned by `agentdeck skills lock-verify` (`SKILL_LOCK_VERIFY_RESPONSE_FIELDS`).
 - `skills_show_command_template`: read-only skill detail command template.
 - `skills_import_preview_command_template`: read-only external skill import preview command template.
 - `skills_import_command_template`: explicit external skill import command template.
@@ -144,6 +150,20 @@ This is the first slice (decision B-auto) that ACTS on dependencies — done as 
 - `controls`: inspect-only `agentdeck skills show --name <item>` controls per ordered item.
 
 `agentdeck skills load --name <name> --agent <agent_id> --with-deps --confirm` executes the plan (`mode=skill_deps_loaded`): it loads each `to_load` skill deps-first via the existing `store.record_skill_load` + a `skill_loaded` event per skill, then appends one `skill_deps_loaded` summary event. It is **gated**: without `--with-deps` it is the unchanged single-skill load; with `--with-deps` it requires `--confirm` (else reject, no writes) and rejects (writing nothing) on a missing dependency, a version mismatch, or a dependency cycle. It never auto-imports — a missing dep stays a hard blocker routed through the separate explicit, allowlist-gated `skills import`. Single-skill `skills load` (no `--with-deps`) behavior is unchanged.
+
+## Dependency lockfile (`skills lock` + `skills lock-verify`)
+
+A **lockfile** freezes a skill's currently-resolved dependency tree so drift can be detected later. It lives at `.agentdeck/skill-locks/<name>.json` — a dedicated directory (NOT under `.agentdeck/skills/`), so `discover_skills` (which globs `.agentdeck/skills/*/SKILL.md`) never picks it up. Content:
+
+```json
+{"name": "<name>", "locked_at": "<utc>", "dependencies": [{"name": "b", "content_hash": "sha256:…", "version": "1.5.0"}, …]}
+```
+
+`dependencies` = each name in the resolver's deps-first `order` **excluding the root `<name>`**, each pinned to its current `content_hash` + `version` from `discover_skills`. The lock is **advisory** this slice: it is drift-detection only and does NOT change how `skills deps` / `load` resolve.
+
+`agentdeck skills lock --name <name>` is the **explicit write** path (`mode=skill_locked`, fields `SKILL_LOCK_RESPONSE_FIELDS` = `ok, mode, name, lock_path, dependencies`). It re-resolves via `resolve_skill_dependencies`; if the tree has any blocker (a missing dependency, a version mismatch, or a cycle) it **refuses** — writing no lockfile and no event, non-zero exit with the blockers on stderr. Unknown `--name` → error, no writes. On a fully-resolvable tree it writes `.agentdeck/skill-locks/<name>.json` and appends one `skill_locked` audit event `{name, dependency_count}`. Re-locking overwrites (that is how you update it; the event records each write). It calls no provider and touches no tmux.
+
+`agentdeck skills lock-verify --name <name>` is **fully read-only** (`mode=skill_lock_verify`, fields `SKILL_LOCK_VERIFY_RESPONSE_FIELDS` = `ok, mode, name, locked, in_sync, changed, added, removed, blockers`). No lockfile → `locked=false`, a `hint` to run `skills lock`, exit 0 (unlocked is not an error). Otherwise it re-resolves and diffs the current tree against the lock: `changed[]` (`{name, locked, current}`) for a dep present in both whose `content_hash` or `version` differs, `added[]` for a currently-resolved dep not in the lock, `removed[]` for a locked dep no longer resolved, plus current `blockers[]` if the tree no longer fully resolves. `in_sync` is true only when `changed`/`added`/`removed` and `blockers` are all empty. It writes no state, no event, and does not modify the lockfile; unknown `--name` → error.
 
 ## Safety
 

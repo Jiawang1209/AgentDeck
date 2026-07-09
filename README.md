@@ -58,6 +58,8 @@ agentdeck skills load-preview --name planning --agent planner --purpose "decompo
 agentdeck skills load-plan --name planning --agent planner
 agentdeck skills load --name planning --agent leader --purpose "plan decomposition"
 agentdeck skills load --name planning --agent planner --with-deps --confirm
+agentdeck skills lock --name planning
+agentdeck skills lock-verify --name planning
 agentdeck skills suggest --name incident-review --summary "Review incident response evidence." --rationale "repeatable review checklist" --source human
 agentdeck skills suggestions
 agentdeck memory suggest --summary "Keep approval-gated worker dispatch." --rationale "project safety preference" --source human

@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "conda run -n agentdeck pytest \"tests/test_agent_cli.py::test_skills_lock_writes_lockfile_for_resolvable_tree\" \"tests/test_agent_cli.py::test_skills_lock_refuses_unresolvable_tree\" \"tests/test_contracts.py::test_validate_skill_lock_contract\" -q 2>&1 | tail -8",
+    "testCommand": "conda run -n agentdeck pytest -q 2>&1 | tail -6; echo \"=== compileall ===\"; conda run -n agentdeck python -m compileall src tests -q 2>&1 | tail -5; echo \"=== git diff --check ===\"; git diff --check && echo \"diff-check-clean\"",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -85,8 +85,8 @@
   "hotPaths": [
     {
       "path": "src/agentdeck/cli.py",
-      "accessCount": 264,
-      "lastAccessed": 1783584524661,
+      "accessCount": 267,
+      "lastAccessed": 1783584594864,
       "type": "file"
     },
     {
@@ -103,26 +103,32 @@
     },
     {
       "path": "docs/handoff/current-development-state.md",
-      "accessCount": 102,
-      "lastAccessed": 1783583991908,
+      "accessCount": 105,
+      "lastAccessed": 1783584749900,
       "type": "file"
     },
     {
       "path": "HISTORY.md",
-      "accessCount": 78,
-      "lastAccessed": 1783583946876,
+      "accessCount": 79,
+      "lastAccessed": 1783584713126,
       "type": "file"
     },
     {
       "path": "README.md",
-      "accessCount": 60,
-      "lastAccessed": 1783583888536,
+      "accessCount": 62,
+      "lastAccessed": 1783584660613,
       "type": "file"
     },
     {
       "path": "src/agentdeck/tui.py",
       "accessCount": 48,
       "lastAccessed": 1783528440908,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/skills-schema.md",
+      "accessCount": 39,
+      "lastAccessed": 1783584652936,
       "type": "file"
     },
     {
@@ -138,12 +144,6 @@
       "type": "file"
     },
     {
-      "path": "docs/contracts/skills-schema.md",
-      "accessCount": 33,
-      "lastAccessed": 1783583848015,
-      "type": "file"
-    },
-    {
       "path": "src/agentdeck/dashboard.py",
       "accessCount": 25,
       "lastAccessed": 1783528133641,
@@ -156,15 +156,15 @@
       "type": "file"
     },
     {
-      "path": "src/agentdeck/skills.py",
-      "accessCount": 22,
-      "lastAccessed": 1783583781765,
+      "path": "CLAUDE.md",
+      "accessCount": 24,
+      "lastAccessed": 1783584687141,
       "type": "file"
     },
     {
-      "path": "CLAUDE.md",
+      "path": "src/agentdeck/skills.py",
       "accessCount": 22,
-      "lastAccessed": 1783583875372,
+      "lastAccessed": 1783583781765,
       "type": "file"
     },
     {

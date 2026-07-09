@@ -11338,3 +11338,30 @@ def test_skills_lock_refuses_unresolvable_tree(tmp_path, monkeypatch, capsys):
 
     assert cli.main(["skills", "lock", "--name", "ghost"]) == 1
     assert "ghost" in capsys.readouterr().err.lower()
+
+
+def test_skills_lock_verify_reports_drift_read_only(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _put_skill(root, "b", version="1.0.0"); _put_skill(root, "a", ["b"])
+
+    # before locking
+    assert cli.main(["skills", "lock-verify", "--name", "a"]) == 0
+    assert json.loads(capsys.readouterr().out)["locked"] is False
+
+    assert cli.main(["skills", "lock", "--name", "a"]) == 0
+    capsys.readouterr()
+
+    # in sync
+    assert cli.main(["skills", "lock-verify", "--name", "a"]) == 0
+    p = json.loads(capsys.readouterr().out)
+    assert p["locked"] is True and p["in_sync"] is True
+    assert p["changed"] == [] and p["added"] == [] and p["removed"] == []
+
+    # change b's content -> drift
+    (root / ".agentdeck" / "skills" / "b" / "SKILL.md").write_text("---\nname: b\ndescription: b\nversion: 2.0.0\n---\nCHANGED\n", encoding="utf-8")
+    before = StateStore(root).load()
+    assert cli.main(["skills", "lock-verify", "--name", "a"]) == 0
+    p2 = json.loads(capsys.readouterr().out)
+    assert p2["in_sync"] is False
+    assert [c["name"] for c in p2["changed"]] == ["b"]
+    assert StateStore(root).load() == before   # read-only
