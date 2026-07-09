@@ -2,13 +2,20 @@
 
 Updated: 2026-07-09
 
-## Skill 生态 lane 进度 — A 已建成，下一项 B
+## ⏸ 需要你决策 — Skill 依赖下一步（loop 停在这里）
 
-**只读可见性 4 片全部做完**（catalog → `[skills] allowed_sources` + `skills sources` + catalog `source_allowlisted` → workbench `skills_catalog_card` → 自然语言 `mode=skills_catalog`）。
+**Skill 生态这一轮做完并提交的（全套 726 passed，本地未 push）**：
+- **只读可见性 4 片**：`skills catalog --source <dir>` → `[skills] allowed_sources` + `skills sources` + `source_allowlisted` → workbench `skills_catalog_card` → 自然语言 `mode=skills_catalog`。
+- **决策 A — allowlist 强制拦截**：`skills import` 对非空 `[skills] allowed_sources` opt-in 强制——非清单源被拒，`--allow-unlisted` 逃生阀，空清单=向后兼容，两条路径审计（`skill_imported.allowlisted`/`.allow_unlisted`），`import-preview` 只读回显 `source_allowlisted`/`enforcement_active`/`import_blocked`。
+- **决策 B（只读部分）**：**B1** `agentdeck skills deps --name <name>`（`depends_on` frontmatter + 传递依赖解析 + `missing` + 循环检测 + 拓扑 `order`，纯只读）；**B2** `skills load-preview` 只读回显 `unmet_dependencies` / `has_dependency_cycle`（不阻断、不自动拉依赖）。
 
-**决策 A — allowlist 强制拦截（已实现并提交）**：`skills import` 现在对非空 `[skills] allowed_sources` 做 opt-in 强制——非清单源导入被拒绝，除非显式 `--allow-unlisted` 逃生阀；空 allowlist = 行为不变（向后兼容）；两条路径通过 `skill_imported.allowlisted` / `.allow_unlisted` 审计；`skills import-preview` 只读回显 `source_allowlisted` / `enforcement_active` / `import_blocked`。catalog/sources/import-preview 保持只读非阻断。详见 `HISTORY.md` 置顶条 + `docs/superpowers/specs/2026-07-09-skill-allowlist-enforcement-design.md`。
+**为什么停在这里**：skill 依赖的**只读可见性齐了**，剩下的都是需要你拍板的产品/安全决策。请你三选一（或定顺序）：
 
-**下一项 = B：skill 依赖/组合** —— 让一个 skill 声明依赖别的 skill、组合成包（依赖解析 / 版本 / 循环检测）。这是最大的一块，需要自己的 brainstorm → spec → plan，尚未开始。C（联网远程 marketplace）继续延后。
+- **B-auto. 自动 load/import 依赖**：现在依赖只"看得见"、必须逐个显式 load/import。是否让加载一个 skill 时**顺带拉起它的依赖**？*我的默认建议：做成"依赖预览 + 一键显式确认"（列出要 load/import 的依赖清单，人点头后一次性执行并逐条审计），**绝不静默自动拉**——守住"依赖必须显式"的边界。* 这是把"依赖"变"可组合包"的关键刀。
+- **B-ver. 依赖版本约束/锁定**：`depends_on` 支持版本、生成 lockfile。*我的默认建议：先不做，等 B-auto 落地、有真实需求再说。*
+- **C. 联网远程 marketplace / 远程依赖**：从网络拉 skill/依赖。*我的默认建议：最后做——离 local-first 最远、安全面最复杂（网络、签名、供应链）。*
+
+> 你回一句（比如 "B-auto"、"先 B-auto 再 B-ver"、"都先不做，换 GUI/别的方向"),我就据此走 brainstorm→spec→plan→实现。
 
 ## Active Goal
 
