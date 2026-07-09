@@ -210,15 +210,25 @@ def resolve_skill_dependencies(root: Path, name: str) -> dict[str, object]:
         state[node] = 0
         stack.append(node)
         for entry in snapshots[node].depends_on:
-            dep_name, pin = _parse_dep(entry)
-            if dep_name in snapshots and pin is not None and snapshots[dep_name].content_hash != pin:
-                if dep_name not in seen_vm:
-                    seen_vm.add(dep_name)
-                    version_mismatch.append({
-                        "name": dep_name, "expected": pin,
-                        "actual": snapshots[dep_name].content_hash,
-                    })
-                continue  # version mismatch is a blocker leaf; do not recurse
+            dep_name, spec = _parse_dep(entry)
+            if dep_name in snapshots and spec is not None:
+                dep_snap = snapshots[dep_name]
+                if spec.startswith("sha256:"):
+                    satisfied = dep_snap.content_hash == spec
+                    actual = dep_snap.content_hash
+                    reason = "content hash mismatch"
+                else:
+                    satisfied = version_satisfies(dep_snap.version, spec)
+                    actual = dep_snap.version
+                    reason = "version range not satisfied"
+                if not satisfied:
+                    if dep_name not in seen_vm:
+                        seen_vm.add(dep_name)
+                        version_mismatch.append({
+                            "name": dep_name, "expected": spec,
+                            "actual": actual, "reason": reason,
+                        })
+                    continue  # version mismatch is a blocker leaf; do not recurse
             if not visit(dep_name):
                 stack.pop()
                 return False

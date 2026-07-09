@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "conda run -n agentdeck pytest tests/test_agent_cli.py -k skill tests/test_contracts.py -k skill -q 2>&1 | tail -8",
+    "testCommand": "conda run -n agentdeck pytest tests/test_agent_cli.py -k skills tests/test_contracts.py -k skill -q 2>&1 | tail -4; echo \"=== full ===\"; conda run -n agentdeck pytest -q 2>&1 | tail -3; echo \"=== compileall ===\"; conda run -n agentdeck python -m compileall src tests -q 2>&1 | tail -3 && echo \"compileall-clean\"; echo \"=== diff-check ===\"; git diff --check && echo \"diff-check-clean\"",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -97,26 +97,26 @@
     },
     {
       "path": "tests/test_agent_cli.py",
-      "accessCount": 117,
-      "lastAccessed": 1783583650126,
+      "accessCount": 119,
+      "lastAccessed": 1783583757403,
       "type": "file"
     },
     {
       "path": "docs/handoff/current-development-state.md",
-      "accessCount": 99,
-      "lastAccessed": 1783582766127,
+      "accessCount": 102,
+      "lastAccessed": 1783583991908,
       "type": "file"
     },
     {
       "path": "HISTORY.md",
-      "accessCount": 76,
-      "lastAccessed": 1783582699274,
+      "accessCount": 78,
+      "lastAccessed": 1783583946876,
       "type": "file"
     },
     {
       "path": "README.md",
-      "accessCount": 59,
-      "lastAccessed": 1783582640904,
+      "accessCount": 60,
+      "lastAccessed": 1783583888536,
       "type": "file"
     },
     {
@@ -139,8 +139,8 @@
     },
     {
       "path": "docs/contracts/skills-schema.md",
-      "accessCount": 29,
-      "lastAccessed": 1783582609293,
+      "accessCount": 33,
+      "lastAccessed": 1783583848015,
       "type": "file"
     },
     {
@@ -157,14 +157,14 @@
     },
     {
       "path": "src/agentdeck/skills.py",
-      "accessCount": 21,
-      "lastAccessed": 1783583685576,
+      "accessCount": 22,
+      "lastAccessed": 1783583781765,
       "type": "file"
     },
     {
       "path": "CLAUDE.md",
-      "accessCount": 20,
-      "lastAccessed": 1783582666818,
+      "accessCount": 22,
+      "lastAccessed": 1783583875372,
       "type": "file"
     },
     {

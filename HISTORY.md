@@ -4,7 +4,19 @@
 
 ## 2026-07-09
 
-### Current - Content-hash dependency version pinning + `version_mismatch` blocker (skill ecosystem — decision "B-ver")
+### Current - Semver dependency ranges via `version` frontmatter (skill ecosystem — decision "semver")
+
+- **类型**: feat
+- **动机**: B-ver 的内容 hash pin 已完成。semver 切片加上**版本范围**——仍坚持 local-first、确定性、无网络、无第三方 semver 库：skill 声明 `version: X.Y.Z`，`depends_on` 条目 `name@<spec>`（`<spec>` 不以 `sha256:` 开头）是 semver 范围，与依赖声明的 `version` 比对。不满足或无法解析的范围复用 B-ver 的 `version_mismatch` 硬阻断。`sha256:` pin 和纯 `name` 逐字节不变。
+- **What**:
+  - `skills.py`：`SkillSnapshot` 新增 `version: str = "0.0.0"`（`_snapshot_from_content` 解析 `str(metadata.get("version") or "0.0.0")`，加入 `summary()`）。新增纯 stdlib comparator `parse_version(text) -> (M,m,p)|None`（`MAJOR[.MINOR[.PATCH]]`，缺省补 0，非法/超长返回 None）、`_comparator_holds`（caret `^` / `>= <= == > <` / bare 精确）、`version_satisfies(version, spec)`（逗号 AND，任一无法解析即 fail-safe False）。`resolve_skill_dependencies` 的 version-check 分支改为分类 spec：`sha256:` → 内容 hash（reason `content hash mismatch`），否则 → `version_satisfies(dep.version, spec)`（reason `version range not satisfied`）；不满足记入 `version_mismatch`（新增 `reason` 键，`name/expected/actual` 与 B-ver 兼容）并作为 blocker leaf 不递归。
+  - `contracts.py`：`version` 加入 `SKILLS_SKILL_ITEM_FIELDS` 和 `skills_example()` 的 skill_item fixture（保持顺序对齐，供 `example_skill_item_fields == skill_item_fields` 列表相等断言通过）。`version_mismatch` 的 `reason` 键是 additive，未改现有 validator。
+  - 文档：`docs/contracts/skills-schema.md`（`version` frontmatter + semver 范围语法 + 支持子集 + `reason` 键）、`CLAUDE.md`（semver 规则）、`README.md`、`docs/handoff/current-development-state.md`（semver done，next lockfile）。
+- **影响**: `depends_on` 支持 semver 范围（`name@>=1.2,<2.0`、`name@^1.0.0` 等）比对 `version` frontmatter；present-but-unsatisfied/unparseable 范围在 `skills deps` / `load-plan` / `load --with-deps --confirm` 一律硬阻断（load 零写）。安全边界：纯 stdlib、确定性、本地、无网络、无第三方库；不 auto-fix、不 auto-import、不静默通过。`sha256:` pin（B-ver）和纯 `name`（任意版本）行为逐字节不变；未声明 `version` 的 skill 默认 `0.0.0`（向后兼容）。
+- **验证**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k skills tests/test_contracts.py -k skill -q` 全绿；全量 `pytest -q` 全绿（baseline 734 → 738）；`python -m compileall src tests -q` 干净；`git diff --check` 干净。comparator 单测覆盖 `>= < <= == ^` / 逗号 AND / bare 精确 / unparseable→False。
+- **偏差**: Task 1/2 的 resolver + comparator 单测放在 `tests/test_agent_cli.py`（既有 `test_resolve_skill_dependencies_*` 同处，无独立 skills-unit 模块）。为 `summary()` 新增的 `version` 字段扩展了 `SKILLS_SKILL_ITEM_FIELDS` 和 `skills_example()` skill_item fixture（未 drop、未弱化 validator）；`SKILLS_CATALOG_ITEM_FIELDS` / `PROJECT_VIEW_SKILL_ITEM_FIELDS` 未改（前者无 live 精确集断言，后者来自 `skill_loads` 记录而非 `summary()`）。
+
+### Content-hash dependency version pinning + `version_mismatch` blocker (skill ecosystem — decision "B-ver")
 
 - **类型**: feat
 - **动机**: B-auto 的依赖链 load（preview + 显式确认）已完成。B-ver 加上**版本约束**——但坚持 local-first、确定性、无网络、无 semver registry：`depends_on` 条目可锁定内容 hash（`name@sha256:<hex>`）。锁定的依赖存在但 hash 不符 = 新 blocker 类别 `version_mismatch`，与 `missing`/cycle 一样硬阻断。纯 `name` 仍表示任意版本（行为不变）。

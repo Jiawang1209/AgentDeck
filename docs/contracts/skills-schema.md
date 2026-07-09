@@ -105,7 +105,12 @@ A source is "under" a listed directory when its resolved parent equals or `is_re
 
 ## Skill dependencies (`depends_on` + `skills deps --name <name>`)
 
-A skill's `SKILL.md` frontmatter may declare a `depends_on` list of other skill names (parsed with the same `_metadata_list` helper as `required_tools`; inline `depends_on: [a, b]` list syntax is tolerated). A dependency entry may optionally **pin a content hash** — `name@sha256:<hex>` (decision B-ver): plain `name` means "any version" (unchanged); `name@sha256:<hex>` requires the present dependency's `content_hash` to equal the pin exactly. Pins are pure content-hash equality — deterministic, local, no network. Each raw entry is interpreted by the resolver via the pure `_parse_dep(entry)` (splits on the first `@`; an empty suffix, e.g. `name@`, is ignored → no pin). `SkillSnapshot.depends_on` stays a tuple of the raw entries. This is **parsed but not acted on** as metadata; the deps command reads `snapshot.depends_on` directly.
+A skill's `SKILL.md` frontmatter may declare a `version: X.Y.Z` (default `0.0.0`; surfaced in `SkillSnapshot.summary()`, so it appears in `skills list`/`show`/`catalog`) and a `depends_on` list of other skill names (parsed with the same `_metadata_list` helper as `required_tools`; inline `depends_on: [a, b]` list syntax is tolerated). A dependency entry `name@<spec>` may pin the present dependency in one of two ways; plain `name` (no `@spec`) means "any version" (unchanged):
+
+- **Content-hash pin** — `name@sha256:<hex>` (decision B-ver): requires the present dependency's `content_hash` to equal the pin exactly.
+- **Semver range** — any `<spec>` that is not a `sha256:` pin (decision semver): matched against the dependency's declared `version` frontmatter. A range is one or more comma-separated comparators, ALL of which must hold (AND). Supported subset: bare `X.Y.Z` or `==X.Y.Z` (exact); `>=`, `>`, `<=`, `<`; caret `^X.Y.Z` (expands to `>=X.Y.Z` AND `< (X+1).0.0`); comma-AND like `>=1.2,<2.0`. Versions are `MAJOR[.MINOR[.PATCH]]` (missing parts default to 0). **Unsupported** (`.x`/`*` wildcards, `~`, pre-release tags, `||` OR) or any otherwise unparseable range is a **hard blocker** (fail-safe — never silently passes). Ranges are deterministic, local, no network, stdlib-only (`parse_version` + `version_satisfies` in `skills.py`).
+
+Each raw entry is interpreted by the resolver via the pure `_parse_dep(entry)` (splits on the first `@`; an empty suffix, e.g. `name@`, is ignored → no pin). `SkillSnapshot.depends_on` stays a tuple of the raw entries. This is **parsed but not acted on** as metadata; the deps command reads `snapshot.depends_on` directly.
 
 `agentdeck skills deps --name <name>` is a **read-only** dependency resolution over the discovered skills (built-in + project). It loads nothing, imports nothing, writes no state, calls no provider, and touches no tmux. Unknown `--name` → non-zero exit, no output. Response (`mode=skills_deps`) fields (`SKILLS_DEPS_RESPONSE_FIELDS`):
 
@@ -113,7 +118,7 @@ A skill's `SKILL.md` frontmatter may declare a `depends_on` list of other skill 
 - `depends_on`: its declared direct dependency names.
 - `resolved`: the transitive dependency names that exist among discovered skills (excluding `name`), sorted.
 - `missing`: declared deps (direct or transitive) not found among discovered skills — reported, never fetched.
-- `version_mismatch`: entries `{name, expected, actual}` for a pinned dep that IS present but whose `content_hash` differs from the pin (`expected` = the pin, `actual` = the present hash). A mismatched dep is neither `resolved` nor `missing`; it is a distinct blocker category (a blocker leaf — the resolver does not recurse into it).
+- `version_mismatch`: entries `{name, expected, actual, reason}` for a pinned/ranged dep that IS present but fails its spec — a content-hash pin whose `content_hash` differs (`reason="content hash mismatch"`, `actual` = the present hash) or a semver range the dep's `version` does not satisfy / an unparseable range (`reason="version range not satisfied"`, `actual` = the present version). `expected` is the raw spec. A mismatched dep is neither `resolved` nor `missing`; it is a distinct blocker category (a blocker leaf — the resolver does not recurse into it).
 - `has_cycle` (bool) + `cycle`: if the dependency graph has a cycle reachable from `name`, `has_cycle=true` and `cycle` is the offending path (it is a valid read-only report of a bad graph — no crash, exit 0).
 - `order`: a topological order (deps before dependents) of `name` + resolved deps when acyclic; `[]` when `has_cycle`.
 - `controls`: inspect-only `agentdeck skills show --name <dep>` controls for each resolved/missing dep.
@@ -131,7 +136,7 @@ This is the first slice (decision B-auto) that ACTS on dependencies — done as 
 - `to_load`: names not yet loaded for the agent, in load order.
 - `already_loaded`: names already in the agent's `skill_loads` (skipped on execute).
 - `missing`: declared deps not found among discovered skills — a hard blocker (never fetched, never auto-imported).
-- `version_mismatch`: entries `{name, expected, actual}` for a present-but-mismatched pinned dep — a hard blocker, identical handling to `missing`/cycle.
+- `version_mismatch`: entries `{name, expected, actual, reason}` for a present-but-mismatched content-hash pin or unsatisfied/unparseable semver range — a hard blocker, identical handling to `missing`/cycle.
 - `has_cycle` (bool) + `cycle`: a dependency cycle is a hard blocker.
 - `blockers`: `"missing dependency: <x>"` per missing dep, `"version mismatch: <name> expected <pin>"` per version mismatch, and/or `"dependency cycle: <path>"`.
 - `can_load` (bool): `true` only when there are no blockers AND at least one `to_load`.

@@ -11128,6 +11128,32 @@ def test_skill_snapshot_parses_version(tmp_path):
     assert nv.version == "0.0.0"
 
 
+def test_resolve_skill_dependencies_semver_ranges(tmp_path):
+    from pathlib import Path
+    from agentdeck.config import write_default_config
+    from agentdeck.skills import resolve_skill_dependencies
+    root = tmp_path / "r"; root.mkdir(); (root / ".git").mkdir(); write_default_config(root)
+    sk = root / ".agentdeck" / "skills"
+    def put(name, version, deps):
+        d = sk / name; d.mkdir(parents=True)
+        dl = f"depends_on: [{', '.join(deps)}]\n" if deps else ""
+        (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {name}\nversion: {version}\n{dl}---\nx\n", encoding="utf-8")
+
+    put("b", "1.5.0", [])
+    put("ok", "1.0.0", ["b@>=1.2,<2.0"])
+    r = resolve_skill_dependencies(root, "ok")
+    assert r["resolved"] == ["b"] and r["version_mismatch"] == []
+
+    put("bad", "1.0.0", ["b@>=2.0"])
+    r2 = resolve_skill_dependencies(root, "bad")
+    assert [m["name"] for m in r2["version_mismatch"]] == ["b"]
+    assert r2["version_mismatch"][0]["expected"] == ">=2.0"
+    assert r2["version_mismatch"][0]["actual"] == "1.5.0"
+
+    put("anyv", "1.0.0", ["b"])            # plain name = any
+    assert resolve_skill_dependencies(root, "anyv")["resolved"] == ["b"]
+
+
 def _put_project_skill(root, name, deps=()):
     d = root / ".agentdeck" / "skills" / name; d.mkdir(parents=True)
     dep_line = f"depends_on: [{', '.join(deps)}]\n" if deps else ""
@@ -11252,6 +11278,17 @@ def test_skills_deps_and_load_plan_flag_version_mismatch(tmp_path, monkeypatch, 
     assert cli.main(["skills", "load", "--name", "a", "--agent", "planner", "--with-deps", "--confirm"]) == 1
     assert "version mismatch" in capsys.readouterr().err.lower()
     assert StateStore(root).load() == before
+
+
+def test_skills_load_plan_blocks_on_semver_range(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    sk = root / ".agentdeck" / "skills"
+    (sk / "b").mkdir(parents=True); (sk / "b" / "SKILL.md").write_text("---\nname: b\ndescription: b\nversion: 1.0.0\n---\nx\n", encoding="utf-8")
+    (sk / "a").mkdir(parents=True); (sk / "a" / "SKILL.md").write_text("---\nname: a\ndescription: a\ndepends_on: [b@>=2.0]\n---\nx\n", encoding="utf-8")
+    assert cli.main(["skills", "load-plan", "--name", "a", "--agent", "planner"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["can_load"] is False
+    assert [m["name"] for m in plan["version_mismatch"]] == ["b"]
 
 
 def test_skills_load_with_deps_rejects_missing_dep(tmp_path, monkeypatch, capsys):

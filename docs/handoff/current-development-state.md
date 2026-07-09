@@ -2,21 +2,21 @@
 
 Updated: 2026-07-09
 
-## Skill 生态 lane 进度 — A + B(只读/auto/ver) 完成，⏸ loop STOP
+## Skill 生态 lane 进度 — A + B(只读/auto/ver/semver) 完成，⏸ loop STOP
 
-用户定了 "先 A 再 B"、"先 B-auto 再 B-ver"，loop 已推进到 B-ver 落地。已完成并提交：
+用户定了 "先 A 再 B"、"先 B-auto 再 B-ver"，然后选了 semver 范围，loop 已推进到 semver 落地。已完成并提交：
 - **只读可见性 4 片**：`skills catalog --source <dir>` → `[skills] allowed_sources` + `skills sources` + `source_allowlisted` → workbench `skills_catalog_card` → 自然语言 `mode=skills_catalog`。
 - **A — allowlist 强制拦截**：`skills import` opt-in 强制（`--allow-unlisted` 逃生阀，空清单向后兼容，审计 `skill_imported.allowlisted`/`.allow_unlisted`，`import-preview` 只读回显）。
 - **B1/B2 — 依赖只读**：`skills deps --name <name>`（依赖树/missing/循环/拓扑序）；`skills load-preview` 回显 `unmet_dependencies`。
 - **B-auto — 依赖 load（preview + 显式确认）**：`skills load-plan`（只读预览）+ `skills load --with-deps --confirm`（deps-first 逐条 load，缺失/环拒绝零写，绝不 auto-import/静默；单 skill load 不变）。
 - **B-ver — 依赖版本约束（content-hash 锁定）done**：`depends_on: [name@sha256:<hex>]` 锁定内容 hash（纯 `name` = 任意版本，行为不变）。`skills.py` 新增纯 `_parse_dep`；`resolve_skill_dependencies` 新增 `version_mismatch: [{name,expected,actual}]` blocker 类别（pin 与实际 `content_hash` 不符，blocker leaf 不递归）。`skills deps` / `load-plan` 输出 `version_mismatch`（加入两个 contract 字段 + validator），`load-plan.blockers` 加 `"version mismatch: <name> expected <pin>"`，`can_load` 因此为 false，`skills load --with-deps --confirm` 像 missing/cycle 一样硬阻断、零写。纯 hash、本地、确定性、无网络。Design + plan: `docs/superpowers/specs/2026-07-09-skill-dep-version-pinning-design.md`、`docs/superpowers/plans/2026-07-09-skill-dep-version-pinning.md`。
+- **semver — 依赖 semver 范围 done**：skill `SKILL.md` frontmatter 声明 `version: X.Y.Z`（默认 `0.0.0`，加入 `SkillSnapshot.summary()` + `SKILLS_SKILL_ITEM_FIELDS` + example fixture）。`depends_on: [name@<spec>]` 中 `<spec>` 不以 `sha256:` 开头即为 semver 范围，与依赖 `version` 比对。`skills.py` 新增纯 stdlib `parse_version` + `version_satisfies`（支持 bare/`==` 精确、`>= > <= <`、caret `^`、逗号 AND；`MAJOR[.MINOR[.PATCH]]` 缺省补 0；不支持/无法解析一律 fail-safe False）。`resolve_skill_dependencies` 分类 spec：`sha256:` → 内容 hash，否则 → `version_satisfies`，不满足记入 `version_mismatch`（新增 `reason` 键，`name/expected/actual` 与 B-ver 兼容）作为 blocker leaf 不递归；`version_mismatch` 继续经 `skills deps` / `load-plan` blockers / `load --with-deps` 硬阻断、零写。`sha256:` pin 和纯 `name` 逐字节不变。纯 stdlib、本地、确定性、无网络、无第三方库。Design + plan: `docs/superpowers/specs/2026-07-09-skill-dep-semver-design.md`、`docs/superpowers/plans/2026-07-09-skill-dep-semver.md`。
 
 ⏸ **loop STOP —— 剩余依赖项都是产品 fork，需先 STOP + 询问 human，不得单方面开工**：
-- **semver 范围 / 版本区间**（如 `name@>=1.2,<2`）——需要自己的 brainstorm→spec→plan。
-- **lockfile 生成 / 锁策略**——需要自己的设计。
-- **remote / marketplace 依赖（C）**——联网远程解析/抓取，local-first 边界外，需 human 显式 opt-in。
+- **lockfile 生成 / 锁策略**——下一个切片，需要自己的 brainstorm→spec→plan。
+- **remote / marketplace 依赖（C）**——联网远程解析/抓取/签名/供应链，local-first 边界外，需 human 显式 opt-in 的专门设计对话，绝不在 loop 里开工。
 
-中文小结：B-ver（内容 hash 版本锁定）已实现并提交。`depends_on` 现在可写 `name@sha256:<hex>` 精确锁一个版本；被锁依赖存在但 hash 对不上 = `version_mismatch`，和"缺失依赖 / 循环"一样是硬阻断，`skills load --with-deps` 会拒绝且不写任何 state。未锁定的普通 `name` 依赖行为完全没变。到此 skill 依赖 lane 的本地确定性部分做完了，下一步（semver 区间、lockfile、联网远程依赖）都是需要你拍板的产品分叉，loop 在这里停。
+中文小结：semver 依赖范围已实现并提交。skill 现在可声明 `version: X.Y.Z`，`depends_on` 可写 `name@>=1.2,<2.0` / `name@^1.0.0` 等 semver 范围（与依赖 `version` 比对）；不满足或无法解析的范围 = `version_mismatch`，和"缺失依赖 / 循环 / hash 不符"一样是硬阻断，`skills load --with-deps` 会拒绝且不写任何 state。`sha256:` pin 和纯 `name`（任意版本）行为完全没变。到此 skill 依赖 lane 的本地确定性版本约束都做完了，下一步是 **lockfile 生成**（自己的 spec）；再往后的 **remote/marketplace 依赖** 必须 STOP + 问你，不在 loop 里做。
 
 ## Active Goal
 
