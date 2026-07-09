@@ -998,6 +998,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "run_start_card",
     "run_progress_card",
     "plan_board_card",
+    "skills_catalog_card",
     "run_loop_preview_card",
     "capture_card",
     "terminal_card",
@@ -1963,6 +1964,9 @@ PLAN_BOARD_GATES = (
 
 # The natural-language plan_board chat card reuses the plan-board response shape.
 LEADER_CHAT_PLAN_BOARD_CARD_FIELDS = PLAN_BOARD_RESPONSE_FIELDS
+
+# The natural-language skills_catalog chat card reuses the workbench skills-catalog card shape.
+LEADER_CHAT_SKILLS_CATALOG_CARD_FIELDS = WORKBENCH_SKILLS_CATALOG_CARD_FIELDS
 
 RUN_LOOP_STOP_REASONS = (
     "error",
@@ -3027,6 +3031,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "run_start_card_fields": list(RUN_START_RESPONSE_FIELDS),
         "run_progress_card_fields": list(RUN_PROGRESS_RESPONSE_FIELDS),
         "plan_board_card_fields": list(LEADER_CHAT_PLAN_BOARD_CARD_FIELDS),
+        "skills_catalog_card_fields": list(LEADER_CHAT_SKILLS_CATALOG_CARD_FIELDS),
         "run_loop_preview_card_fields": list(LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS),
         "capture_card_fields": list(LEADER_CHAT_CAPTURE_CARD_FIELDS),
         "terminal_card_fields": list(LEADER_CHAT_TERMINAL_CARD_FIELDS),
@@ -6872,6 +6877,23 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
         intent_card = payload.get("intent_card")
         if isinstance(intent_card, dict) and intent_card.get("embedded_card") != "plan_board_card":
             errors.append("plan_board intent_card.embedded_card must be plan_board_card")
+    skills_catalog_card = payload.get("skills_catalog_card")
+    if isinstance(skills_catalog_card, dict):
+        for field in LEADER_CHAT_SKILLS_CATALOG_CARD_FIELDS:
+            if field not in skills_catalog_card:
+                errors.append(f"skills_catalog_card: missing field: {field}")
+        if skills_catalog_card.get("mode") != "skills_catalog":
+            errors.append("skills_catalog_card: mode must be skills_catalog")
+    elif "skills_catalog_card" in payload and skills_catalog_card is not None:
+        errors.append("skills_catalog_card must be an object")
+    if payload.get("mode") == "skills_catalog":
+        if not isinstance(skills_catalog_card, dict):
+            errors.append("skills_catalog mode requires skills_catalog_card")
+        if payload.get("next_command") != "agentdeck skills sources":
+            errors.append("skills_catalog.next_command must be agentdeck skills sources")
+        intent_card = payload.get("intent_card")
+        if isinstance(intent_card, dict) and intent_card.get("embedded_card") != "skills_catalog_card":
+            errors.append("skills_catalog intent_card.embedded_card must be skills_catalog_card")
     run_loop_preview_card = payload.get("run_loop_preview_card")
     if isinstance(run_loop_preview_card, dict):
         for field in LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS:
@@ -9949,6 +9971,7 @@ def leader_chat_example() -> dict[str, object]:
         "run_start_card": run_start_card,
         "run_progress_card": run_progress_card,
         "plan_board_card": None,
+        "skills_catalog_card": None,
         "run_loop_preview_card": None,
         "capture_card": None,
         "terminal_card": terminal_card,

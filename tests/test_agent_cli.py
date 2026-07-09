@@ -10666,6 +10666,30 @@ def test_leader_chat_plan_board_variants_route(tmp_path, monkeypatch, capsys):
     assert _chat_wants_plan_board("查看运行进度") is False
 
 
+def test_leader_chat_skills_catalog_is_read_only(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    before = StateStore(root).load()
+    assert cli.main(["leader", "chat", "--message", "浏览技能源"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skills_catalog"
+    assert payload["skills_catalog_card"]["mode"] == "skills_catalog"
+    assert payload["next_command"] == "agentdeck skills sources"
+    assert payload["intent_card"]["embedded_card"] == "skills_catalog_card"
+    assert payload["intent_card"]["requires_explicit_user"] is False
+    # read-only: no plan/approval/skill/state mutation beyond the chat turn + audit event
+    after = StateStore(root).load()
+    assert after.get("approvals", []) == before.get("approvals", [])
+    assert after.get("plans") == before.get("plans")
+
+
+def test_leader_chat_skills_catalog_variants_route(tmp_path, monkeypatch, capsys):
+    from agentdeck.cli import _chat_wants_skills_catalog
+    for message in ("浏览技能源", "查看技能源", "技能源", "技能市场", "技能目录", "skill sources", "skill catalog"):
+        assert _chat_wants_skills_catalog(message) is True
+    assert _chat_wants_skills_catalog("查看所有计划") is False
+    assert _chat_wants_skills_catalog("查看运行进度") is False
+
+
 def test_contract_plans_discovers_schema_and_is_in_index(tmp_path, monkeypatch, capsys):
     prepare_project(tmp_path, monkeypatch)
     assert cli.main(["contract", "plans"]) == 0

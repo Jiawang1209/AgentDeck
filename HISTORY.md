@@ -4,7 +4,19 @@
 
 ## 2026-07-09
 
-### Current - Embed read-only `skills_catalog_card` in the workbench snapshot (skill-marketplace lane slice 3)
+### Current - Add read-only natural-language `mode=skills_catalog` chat intent (skill-marketplace lane slice 4)
+
+- **类型**: feat
+- **动机**: skill-marketplace lane 第四片，也是只读可见性收尾。slice 3 把 configured skill sources 概览嵌进 `agentdeck workbench`；本片把同一张卡片经自然语言壳暴露出来，让 GUI/对话层用「浏览技能源」这类语句就能看到配置好的 skill 源。镜像已上线的只读 `mode=plan_board` chat intent。
+- **What**:
+  - `cli.py`：新增 `_chat_wants_skills_catalog(message)` 检测器（匹配 `技能源` / `技能市场` / `技能目录` / `skill sources|catalog|marketplace`，与 plan_board / run_progress / run_loop_preview 不冲突）；在 leader chat dispatch 加 `mode=skills_catalog` 路由块，嵌入无参 `_skills_catalog_card(config)`，`next_command="agentdeck skills sources"`；`_leader_chat_explanation` 加 `skills_catalog` 分支（`action_kind=skills_catalog`、`safety=inspect`、`requires_explicit_user=False`）；intent_card `card_names` 加 `skills_catalog_card`，`_leader_chat_intent_inspect_command` / `_leader_chat_next_control_label` 分别返回 `agentdeck skills sources` / `Browse skill sources`；`_print_leader_chat_payload_or_error` 加 `skills_catalog_card` setdefault。
+  - `contracts.py`：`LEADER_CHAT_RESPONSE_FIELDS` 加 `skills_catalog_card`；新增 `LEADER_CHAT_SKILLS_CATALOG_CARD_FIELDS = WORKBENCH_SKILLS_CATALOG_CARD_FIELDS`；`validate_leader_chat_contract` 加 `skills_catalog_card` 对象校验 + `mode=skills_catalog` 分支（要求 card、`next_command=agentdeck skills sources`、`intent_card.embedded_card=skills_catalog_card`）；leader-chat discovery payload 暴露 `skills_catalog_card_fields`；`leader_chat_example()` 加 `skills_catalog_card: None`。
+  - 文档：`docs/contracts/leader-chat-schema.md`、`CLAUDE.md`、`README.md`、`docs/handoff/current-development-state.md`（标记 slice 4 done、只读可见性 COMPLETE）。
+- **影响**: 自然语言壳新增只读 skill-source 概览入口。只读边界：只记录 chat turn + `leader_chat_turn` 审计事件，不调 provider、不碰 tmux、不 import/load skill、不写 plan/approval/skill/runtime state。
+- **验证**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k skills_catalog tests/test_contracts.py -k leader_chat -q` 全绿；全量 `pytest -q` 719 passed；`python -m compileall src tests -q` 干净；`git diff --check` 干净。
+- **偏差**: 无（`control_registry_card=None` 首选成功，validator 未要求 registry card）。⚠️ 剩余项全是 product fork（allowlist 强制 / skill 依赖 / remote marketplace）= STOP + 问人类。
+
+### Embed read-only `skills_catalog_card` in the workbench snapshot (skill-marketplace lane slice 3)
 
 - **类型**: feat
 - **动机**: skill-marketplace lane 第三片。slice 2 把可信 skill 源清单落到 config `[skills] allowed_sources` 并加了只读 `agentdeck skills sources` / `--source` allowlist 标注；本片把"配置好的源"无参数汇总进一屏 `agentdeck workbench` 快照，让 GUI/TUI 不用先跑 `skills catalog --source <dir>` 也能看到每个 configured 源有多少 skill、导入了多少。镜像 `plan_board_card` 的 workbench 嵌入方式。

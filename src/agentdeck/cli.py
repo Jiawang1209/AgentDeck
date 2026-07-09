@@ -123,6 +123,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "run_start_card",
         "run_progress_card",
         "plan_board_card",
+        "skills_catalog_card",
         "run_loop_preview_card",
         "learning_review_card",
         "leader_summary_card",
@@ -342,6 +343,8 @@ def _leader_chat_next_control_label(next_command: object) -> str:
         return "Dispatch ready approvals"
     if command == "agentdeck plan board":
         return "Open plan board"
+    if command == "agentdeck skills sources":
+        return "Browse skill sources"
     if command == "agentdeck agent spawn-ready --confirm":
         return "Spawn ready agents"
     if command == "agentdeck agent refresh":
@@ -430,6 +433,8 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return f"agentdeck run --plan-id {plan_id}" if plan_id else None
     if embedded_card == "plan_board_card":
         return "agentdeck plan board"
+    if embedded_card == "skills_catalog_card":
+        return "agentdeck skills sources"
     if embedded_card == "run_loop_preview_card":
         card = payload.get("run_loop_preview_card")
         plan_id = card.get("plan_id") if isinstance(card, dict) else None
@@ -641,6 +646,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("run_start_card", None)
     payload.setdefault("run_progress_card", None)
     payload.setdefault("plan_board_card", None)
+    payload.setdefault("skills_catalog_card", None)
     payload.setdefault("run_loop_preview_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
@@ -8346,6 +8352,19 @@ def _leader_chat_explanation(
             "safety": "inspect",
             "requires_explicit_user": False,
         }
+    if mode == "skills_catalog":
+        skills_catalog_card = result if isinstance(result, dict) else {}
+        return {
+            "mode": mode,
+            "summary": "Leader is showing the read-only overview of configured skill sources without importing or loading any skill.",
+            "reason": "human asked to browse the configured skill sources",
+            "next_command": next_command,
+            "recommended_action_id": None,
+            "action_kind": "skills_catalog",
+            "action_status": skills_catalog_card.get("mode"),
+            "safety": "inspect",
+            "requires_explicit_user": False,
+        }
     if mode == "artifacts":
         artifacts = project_view.get("artifacts") if isinstance(project_view.get("artifacts"), dict) else {}
         count = artifacts.get("count") if isinstance(artifacts, dict) else 0
@@ -9025,6 +9044,14 @@ def _chat_wants_plan_board(message: str) -> bool:
     )
 
 
+def _chat_wants_skills_catalog(message: str) -> bool:
+    text = message.strip()
+    return bool(
+        re.search(r"(技能源|技能市场|技能目录)", text, re.IGNORECASE)
+        or re.search(r"\bskill (sources?|catalog|marketplace)\b", text, re.IGNORECASE)
+    )
+
+
 def _chat_wants_run_loop_preview(message: str) -> bool:
     text = message.strip()
     return bool(
@@ -9329,6 +9356,63 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "leader_action": None,
             "continue_card": None,
             "plan_board_card": plan_board_card,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "control_registry_card": None,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if _chat_wants_skills_catalog(args.message):
+        skills_catalog_card = _skills_catalog_card(config)
+        next_command = "agentdeck skills sources"
+        turn = store.record_chat_turn(
+            mode="skills_catalog",
+            message=args.message,
+            plan_id=None,
+            next_command=next_command,
+            review=None,
+            action_id=None,
+            action_kind="skills_catalog",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "skills_catalog",
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "skills_catalog",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "skills_catalog",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                result=skills_catalog_card,
+            ),
+            "plan_id": None,
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "continue_card": None,
+            "skills_catalog_card": skills_catalog_card,
             "inbox_card": None,
             "approval_card": None,
             "runtime_card": None,
