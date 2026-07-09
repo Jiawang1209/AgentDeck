@@ -11014,3 +11014,42 @@ def test_skills_import_preview_surfaces_allowlist_status(tmp_path, monkeypatch, 
     p2 = json.loads(capsys.readouterr().out)
     assert p2["source_allowlisted"] is True
     assert p2["import_blocked"] is False
+
+
+def test_resolve_skill_dependencies_transitive_missing_and_cycle(tmp_path):
+    from pathlib import Path
+    from agentdeck.config import write_default_config
+    from agentdeck.skills import resolve_skill_dependencies
+
+    root = tmp_path / "repo"; root.mkdir(); (root / ".git").mkdir()
+    write_default_config(root)
+    sk = root / ".agentdeck" / "skills"
+
+    def put(name, deps):
+        d = sk / name; d.mkdir(parents=True)
+        dep_line = f"depends_on: [{', '.join(deps)}]\n" if deps else ""
+        (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {name}\n{dep_line}---\n\nbody\n", encoding="utf-8")
+
+    put("a", ["b"]); put("b", ["c"]); put("c", [])
+    r = resolve_skill_dependencies(root, "a")
+    assert r["depends_on"] == ["b"]
+    assert r["resolved"] == ["b", "c"]        # sorted transitive deps
+    assert r["missing"] == []
+    assert r["has_cycle"] is False
+    assert r["order"] == ["c", "b", "a"]       # deps before dependents
+
+    put("x", ["y"])                            # y is missing
+    r2 = resolve_skill_dependencies(root, "x")
+    assert r2["missing"] == ["y"]
+    assert r2["resolved"] == []
+    assert r2["has_cycle"] is False
+
+    # cycle p -> q -> p
+    put("p", ["q"]); put("q", ["p"])
+    r3 = resolve_skill_dependencies(root, "p")
+    assert r3["has_cycle"] is True
+    assert "p" in r3["cycle"] and "q" in r3["cycle"]
+
+    import pytest
+    with pytest.raises(KeyError):
+        resolve_skill_dependencies(root, "nope")

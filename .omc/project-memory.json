@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "conda run -n agentdeck pytest -q 2>&1 | tail -6; echo \"===COMPILE===\"; conda run -n agentdeck python -m compileall src tests -q 2>&1 | tail -5; echo \"===DIFFCHECK===\"; git diff --check && echo \"diff-check-clean\"",
+    "testCommand": "cd /Users/liuyue/Desktop/Github_repos/multi-agent-explore; conda run -n agentdeck pytest tests/test_agent_cli.py -k \"resolve_skill_dependencies or required_tools or skill\" -q 2>&1 | tail -15",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -97,8 +97,8 @@
     },
     {
       "path": "tests/test_agent_cli.py",
-      "accessCount": 97,
-      "lastAccessed": 1783579468121,
+      "accessCount": 100,
+      "lastAccessed": 1783580224195,
       "type": "file"
     },
     {
@@ -204,6 +204,12 @@
       "type": "file"
     },
     {
+      "path": "src/agentdeck/skills.py",
+      "accessCount": 8,
+      "lastAccessed": 1783580270912,
+      "type": "file"
+    },
+    {
       "path": "docs/superpowers/plans/2026-07-08-autonomous-mode.md",
       "accessCount": 7,
       "lastAccessed": 1783491932660,
@@ -261,12 +267,6 @@
       "path": "docs/superpowers/plans/2026-07-09-skill-catalog.md",
       "accessCount": 3,
       "lastAccessed": 1783572005874,
-      "type": "file"
-    },
-    {
-      "path": "src/agentdeck/skills.py",
-      "accessCount": 3,
-      "lastAccessed": 1783573386288,
       "type": "file"
     },
     {

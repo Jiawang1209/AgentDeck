@@ -63,6 +63,7 @@ class SkillSnapshot:
     required_tools: list[str]
     risk: str
     content: str
+    depends_on: tuple[str, ...] = ()
 
     def summary(self) -> dict[str, object]:
         show_command = f"agentdeck skills show --name {self.name}"
@@ -124,6 +125,53 @@ def discover_skills(root: Path) -> list[SkillSnapshot]:
             )
             skills[snapshot.name] = snapshot
     return [skills[name] for name in sorted(skills)]
+
+
+def resolve_skill_dependencies(root: Path, name: str) -> dict[str, object]:
+    snapshots = {snap.name: snap for snap in discover_skills(root)}
+    if name not in snapshots:
+        raise KeyError(name)
+    missing: list[str] = []
+    seen_missing: set[str] = set()
+    order: list[str] = []          # post-order topo: deps before dependents
+    state: dict[str, int] = {}     # 0 = visiting, 1 = done
+    stack: list[str] = []
+    cycle: list[str] = []
+
+    def visit(node: str) -> bool:  # returns False if a cycle was hit
+        if node not in snapshots:
+            if node not in seen_missing:
+                seen_missing.add(node)
+                missing.append(node)
+            return True
+        if state.get(node) == 1:
+            return True
+        if state.get(node) == 0:   # back-edge -> cycle
+            cycle[:] = stack[stack.index(node):] + [node]
+            return False
+        state[node] = 0
+        stack.append(node)
+        for dep in snapshots[node].depends_on:
+            if not visit(dep):
+                stack.pop()
+                return False
+        stack.pop()
+        state[node] = 1
+        order.append(node)
+        return True
+
+    has_cycle = not visit(name)
+    topo = order if not has_cycle else []
+    resolved = sorted(node for node in topo if node != name)
+    return {
+        "name": name,
+        "depends_on": list(snapshots[name].depends_on),
+        "resolved": resolved,
+        "missing": missing,
+        "has_cycle": has_cycle,
+        "cycle": list(cycle),
+        "order": topo,
+    }
 
 
 def browse_skill_source(source_dir: Path) -> list[SkillSnapshot]:
@@ -204,6 +252,7 @@ def _snapshot_from_content(
         required_tools=_metadata_list(metadata.get("required_tools")),
         risk=str(metadata.get("risk") or "inspect"),
         content=content,
+        depends_on=tuple(_metadata_list(metadata.get("depends_on"))),
     )
 
 
@@ -228,7 +277,16 @@ def _frontmatter(content: str) -> dict[str, object]:
 
 def _metadata_list(value: object) -> list[str]:
     if isinstance(value, list):
-        return [str(item) for item in value]
-    if isinstance(value, str) and value:
-        return [value]
-    return []
+        items = [str(item) for item in value]
+    elif isinstance(value, str) and value:
+        items = [value]
+    else:
+        return []
+    cleaned: list[str] = []
+    for item in items:
+        # Tolerate inline YAML-list syntax (``[a, b]``) and quoted items; the
+        # hand-rolled frontmatter parser leaves stray brackets/quotes behind.
+        normalized = item.strip().strip("[]").strip().strip("\"'").strip()
+        if normalized:
+            cleaned.append(normalized)
+    return cleaned
