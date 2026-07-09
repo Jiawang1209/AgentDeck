@@ -716,6 +716,42 @@ def validate_skill_load_plan_contract(payload: dict[str, object]) -> dict[str, o
     return {"ok": not errors, "errors": errors}
 
 
+SKILL_LOCK_RESPONSE_FIELDS = ("ok", "mode", "name", "lock_path", "dependencies")
+
+
+def validate_skill_lock_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in SKILL_LOCK_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing skill_lock field: {field}")
+    if payload.get("mode") != "skill_locked":
+        errors.append("skill_lock.mode must be skill_locked")
+    if not isinstance(payload.get("dependencies"), list):
+        errors.append("skill_lock.dependencies must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
+SKILL_LOCK_VERIFY_RESPONSE_FIELDS = (
+    "ok", "mode", "name", "locked", "in_sync", "changed", "added", "removed", "blockers",
+)
+
+
+def validate_skill_lock_verify_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in SKILL_LOCK_VERIFY_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing skill_lock_verify field: {field}")
+    if payload.get("mode") != "skill_lock_verify":
+        errors.append("skill_lock_verify.mode must be skill_lock_verify")
+    for bool_field in ("locked", "in_sync"):
+        if not isinstance(payload.get(bool_field), bool):
+            errors.append(f"skill_lock_verify.{bool_field} must be a bool")
+    for list_field in ("changed", "added", "removed", "blockers"):
+        if not isinstance(payload.get(list_field), list):
+            errors.append(f"skill_lock_verify.{list_field} must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
 SKILLS_CATALOG_RESPONSE_FIELDS = (
     "ok", "mode", "source", "source_allowlisted", "skill_count", "imported_count", "controls", "items",
 )
@@ -2330,6 +2366,10 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "deps_response_fields": list(SKILLS_DEPS_RESPONSE_FIELDS),
         "load_plan_command": "agentdeck skills load-plan --name <name> --agent <agent_id>",
         "skill_load_plan_response_fields": list(SKILL_LOAD_PLAN_RESPONSE_FIELDS),
+        "lock_command": "agentdeck skills lock --name <name>",
+        "skill_lock_response_fields": list(SKILL_LOCK_RESPONSE_FIELDS),
+        "lock_verify_command": "agentdeck skills lock-verify --name <name>",
+        "skill_lock_verify_response_fields": list(SKILL_LOCK_VERIFY_RESPONSE_FIELDS),
         "skills_show_command_template": "agentdeck skills show --name <name>",
         "skills_import_preview_command_template": "agentdeck skills import-preview --path <SKILL.md>",
         "skills_import_command_template": "agentdeck skills import --path <SKILL.md>",

@@ -11305,3 +11305,36 @@ def test_skills_load_single_unchanged(tmp_path, monkeypatch, capsys):
     _put_project_skill(root, "solo", [])
     assert cli.main(["skills", "load", "--name", "solo", "--agent", "planner"]) == 0
     assert json.loads(capsys.readouterr().out)["mode"] == "skill_loaded"   # existing single-skill path
+
+
+def _put_skill(root, name, deps=(), version="0.0.0"):
+    d = root / ".agentdeck" / "skills" / name; d.mkdir(parents=True)
+    dl = f"depends_on: [{', '.join(deps)}]\n" if deps else ""
+    (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {name}\nversion: {version}\n{dl}---\nbody\n", encoding="utf-8")
+
+
+def test_skills_lock_writes_lockfile_for_resolvable_tree(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _put_skill(root, "b", version="1.0.0"); _put_skill(root, "a", ["b"])
+    assert cli.main(["skills", "lock", "--name", "a"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skill_locked"
+    lock = root / ".agentdeck" / "skill-locks" / "a.json"
+    assert lock.exists()
+    data = json.loads(lock.read_text(encoding="utf-8"))
+    assert [d["name"] for d in data["dependencies"]] == ["b"]
+    assert data["dependencies"][0]["version"] == "1.0.0"
+    assert data["dependencies"][0]["content_hash"].startswith("sha256:")
+    assert "skill_locked" in [e["event_type"] for e in StateStore(root).list_events(limit=10)]
+
+
+def test_skills_lock_refuses_unresolvable_tree(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _put_skill(root, "a", ["missingdep"])
+    assert cli.main(["skills", "lock", "--name", "a"]) == 1
+    assert "missingdep" in capsys.readouterr().err
+    assert not (root / ".agentdeck" / "skill-locks" / "a.json").exists()
+    assert "skill_locked" not in [e["event_type"] for e in StateStore(root).list_events(limit=10)]
+
+    assert cli.main(["skills", "lock", "--name", "ghost"]) == 1
+    assert "ghost" in capsys.readouterr().err.lower()

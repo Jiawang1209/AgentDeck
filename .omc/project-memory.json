@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "conda run -n agentdeck pytest tests/test_agent_cli.py -k skills tests/test_contracts.py -k skill -q 2>&1 | tail -4; echo \"=== full ===\"; conda run -n agentdeck pytest -q 2>&1 | tail -3; echo \"=== compileall ===\"; conda run -n agentdeck python -m compileall src tests -q 2>&1 | tail -3 && echo \"compileall-clean\"; echo \"=== diff-check ===\"; git diff --check && echo \"diff-check-clean\"",
+    "testCommand": "conda run -n agentdeck pytest \"tests/test_agent_cli.py::test_skills_lock_writes_lockfile_for_resolvable_tree\" \"tests/test_agent_cli.py::test_skills_lock_refuses_unresolvable_tree\" \"tests/test_contracts.py::test_validate_skill_lock_contract\" -q 2>&1 | tail -8",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -85,14 +85,14 @@
   "hotPaths": [
     {
       "path": "src/agentdeck/cli.py",
-      "accessCount": 258,
-      "lastAccessed": 1783583608731,
+      "accessCount": 264,
+      "lastAccessed": 1783584524661,
       "type": "file"
     },
     {
       "path": "src/agentdeck/contracts.py",
-      "accessCount": 202,
-      "lastAccessed": 1783583697174,
+      "accessCount": 207,
+      "lastAccessed": 1783584496830,
       "type": "file"
     },
     {
@@ -133,8 +133,8 @@
     },
     {
       "path": "tests/test_contracts.py",
-      "accessCount": 33,
-      "lastAccessed": 1783582553844,
+      "accessCount": 34,
+      "lastAccessed": 1783584397309,
       "type": "file"
     },
     {

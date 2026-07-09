@@ -5177,3 +5177,11 @@ def test_validate_skill_load_plan_contract():
     assert validate_skill_load_plan_contract(good)["ok"]
     bad = dict(good); bad["mode"] = "x"
     assert not validate_skill_load_plan_contract(bad)["ok"]
+
+
+def test_validate_skill_lock_contract():
+    from agentdeck.contracts import validate_skill_lock_contract
+    good = {"ok": True, "mode": "skill_locked", "name": "a",
+            "lock_path": ".agentdeck/skill-locks/a.json", "dependencies": []}
+    assert validate_skill_lock_contract(good)["ok"]
+    assert not validate_skill_lock_contract(dict(good, mode="x"))["ok"]

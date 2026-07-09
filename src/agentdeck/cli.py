@@ -58,6 +58,7 @@ from .contracts import (
     skills_contract_response,
     validate_skills_deps_contract,
     validate_skill_load_plan_contract,
+    validate_skill_lock_contract,
     terminal_card_controls,
     trace_contract_response,
     workbench_contract_response,
@@ -4433,6 +4434,55 @@ def skills_deps_command(args: argparse.Namespace) -> int:
     validation = validate_skills_deps_contract(payload)
     if not validation["ok"]:
         print("skills deps contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def _skill_lock_path(config: ProjectConfig, name: str) -> Path:
+    return Path(config.root) / ".agentdeck" / "skill-locks" / f"{name}.json"
+
+
+def _skill_lock_record(config: ProjectConfig, name: str) -> tuple[dict[str, object] | None, list[str]]:
+    root = Path(config.root)
+    resolution = resolve_skill_dependencies(root, name)   # raises KeyError if unknown
+    blockers: list[str] = [f"missing dependency: {m}" for m in resolution["missing"]]
+    blockers += [f"version mismatch: {m['name']}" for m in resolution["version_mismatch"]]
+    if resolution["has_cycle"]:
+        blockers.append("dependency cycle: " + " -> ".join(resolution["cycle"]))
+    if blockers:
+        return None, blockers
+    snapshots = {snap.name: snap for snap in discover_skills(root)}
+    deps = [
+        {"name": dep, "content_hash": snapshots[dep].content_hash, "version": snapshots[dep].version}
+        for dep in resolution["order"] if dep != name
+    ]
+    return {"name": name, "locked_at": utc_now(), "dependencies": deps}, []
+
+
+def skills_lock_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        record, blockers = _skill_lock_record(config, args.name)
+    except KeyError:
+        print(f"unknown skill: {args.name}", file=sys.stderr)
+        return 1
+    if record is None:
+        print("cannot lock unresolvable tree: " + "; ".join(blockers), file=sys.stderr)
+        return 1
+    lock_path = _skill_lock_path(config, args.name)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    store.append_event(EventRecord.create("skill_locked", {"name": args.name, "dependency_count": len(record["dependencies"])}))
+    payload = {"ok": True, "mode": "skill_locked", "name": args.name,
+               "lock_path": str(lock_path), "dependencies": record["dependencies"]}
+    validation = validate_skill_lock_contract(payload)
+    if not validation["ok"]:
+        print("skill lock contract validation failed", file=sys.stderr)
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
         return 1
@@ -13710,6 +13760,9 @@ def build_parser() -> argparse.ArgumentParser:
     skills_deps = skills_subparsers.add_parser("deps", help="Read-only dependency resolution for a skill")
     skills_deps.add_argument("--name", required=True, help="Skill name")
     skills_deps.set_defaults(func=skills_deps_command)
+    skills_lock = skills_subparsers.add_parser("lock", help="Freeze a skill's resolved dependency tree to a lockfile")
+    skills_lock.add_argument("--name", required=True, help="Skill name")
+    skills_lock.set_defaults(func=skills_lock_command)
     skills_catalog = skills_subparsers.add_parser("catalog", help="Read-only browse of a local skill source directory")
     skills_catalog.add_argument("--source", required=True, help="Directory of <name>/SKILL.md skills to browse")
     skills_catalog.set_defaults(func=skills_catalog_command)
