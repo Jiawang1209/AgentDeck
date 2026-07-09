@@ -127,12 +127,19 @@ def discover_skills(root: Path) -> list[SkillSnapshot]:
     return [skills[name] for name in sorted(skills)]
 
 
+def _parse_dep(entry: str) -> tuple[str, str | None]:
+    name, _, pin = entry.partition("@")
+    return name, (pin or None)
+
+
 def resolve_skill_dependencies(root: Path, name: str) -> dict[str, object]:
     snapshots = {snap.name: snap for snap in discover_skills(root)}
     if name not in snapshots:
         raise KeyError(name)
     missing: list[str] = []
     seen_missing: set[str] = set()
+    version_mismatch: list[dict] = []
+    seen_vm: set[str] = set()
     order: list[str] = []          # post-order topo: deps before dependents
     state: dict[str, int] = {}     # 0 = visiting, 1 = done
     stack: list[str] = []
@@ -151,8 +158,17 @@ def resolve_skill_dependencies(root: Path, name: str) -> dict[str, object]:
             return False
         state[node] = 0
         stack.append(node)
-        for dep in snapshots[node].depends_on:
-            if not visit(dep):
+        for entry in snapshots[node].depends_on:
+            dep_name, pin = _parse_dep(entry)
+            if dep_name in snapshots and pin is not None and snapshots[dep_name].content_hash != pin:
+                if dep_name not in seen_vm:
+                    seen_vm.add(dep_name)
+                    version_mismatch.append({
+                        "name": dep_name, "expected": pin,
+                        "actual": snapshots[dep_name].content_hash,
+                    })
+                continue  # version mismatch is a blocker leaf; do not recurse
+            if not visit(dep_name):
                 stack.pop()
                 return False
         stack.pop()
@@ -171,6 +187,7 @@ def resolve_skill_dependencies(root: Path, name: str) -> dict[str, object]:
         "has_cycle": has_cycle,
         "cycle": list(cycle),
         "order": topo,
+        "version_mismatch": version_mismatch,
     }
 
 

@@ -11055,6 +11055,39 @@ def test_resolve_skill_dependencies_transitive_missing_and_cycle(tmp_path):
         resolve_skill_dependencies(root, "nope")
 
 
+def test_resolve_skill_dependencies_version_pinning(tmp_path):
+    from pathlib import Path
+    import hashlib
+    from agentdeck.config import write_default_config
+    from agentdeck.skills import resolve_skill_dependencies, _parse_dep
+
+    assert _parse_dep("b@sha256:ab") == ("b", "sha256:ab")
+    assert _parse_dep("b") == ("b", None)
+    assert _parse_dep("b@") == ("b", None)
+
+    root = tmp_path / "repo"; root.mkdir(); (root / ".git").mkdir(); write_default_config(root)
+    sk = root / ".agentdeck" / "skills"
+    def put(name, body, deps):
+        d = sk / name; d.mkdir(parents=True)
+        dep_line = f"depends_on: [{', '.join(deps)}]\n" if deps else ""
+        (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {name}\n{dep_line}---\n\n{body}", encoding="utf-8")
+
+    put("b", "b-body\n", [])
+    b_content = (sk / "b" / "SKILL.md").read_text(encoding="utf-8")
+    b_hash = "sha256:" + hashlib.sha256(b_content.encode("utf-8")).hexdigest()
+
+    put("a", "a\n", [f"b@{b_hash}"])           # correct pin -> resolved
+    r = resolve_skill_dependencies(root, "a")
+    assert r["resolved"] == ["b"] and r["version_mismatch"] == []
+
+    put("c", "c\n", ["b@sha256:deadbeef"])      # wrong pin -> version_mismatch
+    r2 = resolve_skill_dependencies(root, "c")
+    assert r2["resolved"] == []
+    assert [m["name"] for m in r2["version_mismatch"]] == ["b"]
+    assert r2["version_mismatch"][0]["expected"] == "sha256:deadbeef"
+    assert r2["version_mismatch"][0]["actual"] == b_hash
+
+
 def _put_project_skill(root, name, deps=()):
     d = root / ".agentdeck" / "skills" / name; d.mkdir(parents=True)
     dep_line = f"depends_on: [{', '.join(deps)}]\n" if deps else ""
