@@ -239,6 +239,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "run-schema.md",
         "run-loop-schema.md",
         "run-loop-all-schema.md",
+        "demo-schema.md",
         "plans-schema.md",
         "release-schema.md",
         "workbench-schema.md",
@@ -268,7 +269,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 26
+    assert payload["count"] == 27
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -279,6 +280,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "run",
         "run-loop",
         "run-loop-all",
+        "demo",
         "plans",
         "release",
         "workbench",
@@ -303,6 +305,44 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         assert contract["contract_exists"] is True
         assert contract["command"].startswith("agentdeck contract ")
         assert contract["example_command"].endswith(" --example")
+
+
+def test_demo_contract_payload_is_reusable_without_cli(tmp_path) -> None:
+    from agentdeck.contracts import demo_contract_response, validate_demo_golden_contract
+
+    contract_path = tmp_path / "demo-schema.md"
+    payload = demo_contract_response(contract_path, include_example=True)
+
+    assert payload["name"] == "demo"
+    assert payload["golden_demo_command"] == "agentdeck demo golden"
+    assert payload["contract_path"] == str(contract_path)
+    assert payload["response_fields"] == payload["example_response_fields"]
+    assert payload["step_fields"] == payload["example_step_fields"]
+    assert validate_demo_golden_contract(payload["example_golden_demo"])["ok"] is True
+
+
+def test_validate_demo_golden_contract_rejects_mutating_safety_claim() -> None:
+    from agentdeck.contracts import demo_golden_example, validate_demo_golden_contract
+
+    payload = demo_golden_example()
+    payload["safety"] = "delegated"
+
+    result = validate_demo_golden_contract(payload)
+
+    assert result["ok"] is False
+    assert "safety must be inspect" in result["errors"]
+
+
+def test_validate_demo_golden_contract_rejects_bad_step_shape() -> None:
+    from agentdeck.contracts import demo_golden_example, validate_demo_golden_contract
+
+    payload = demo_golden_example()
+    del payload["steps"][0]["checks"]
+
+    result = validate_demo_golden_contract(payload)
+
+    assert result["ok"] is False
+    assert "steps[0].checks is required" in result["errors"]
 
 
 def test_run_start_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:

@@ -75,6 +75,12 @@ CONTRACT_INDEX_SPECS = (
         "run-loop-all-schema.md",
     ),
     (
+        "demo",
+        "agentdeck contract demo",
+        "agentdeck contract demo --example",
+        "demo-schema.md",
+    ),
+    (
         "plans",
         "agentdeck contract plans",
         "agentdeck contract plans --example",
@@ -183,6 +189,36 @@ CONTRACT_INDEX_SPECS = (
         "artifacts-schema.md",
     ),
 )
+
+
+DEMO_GOLDEN_RESPONSE_FIELDS = (
+    "ok",
+    "mode",
+    "demo_name",
+    "summary",
+    "current_status",
+    "next_command",
+    "recommended_task",
+    "steps",
+    "inspection_commands",
+    "safety",
+    "source_command",
+)
+
+DEMO_GOLDEN_STEP_FIELDS = (
+    "step_id",
+    "title",
+    "status",
+    "command",
+    "enabled",
+    "blocker",
+    "safety",
+    "description",
+    "checks",
+)
+
+DEMO_GOLDEN_STEP_STATUSES = {"ready", "blocked", "waiting_for_input", "done", "inspect"}
+DEMO_GOLDEN_STEP_SAFETIES = {"inspect", "explicit_user", "explicit_runtime"}
 
 
 PROJECT_VIEW_TOP_LEVEL_FIELDS = (
@@ -4069,6 +4105,110 @@ def events_contract_response(contract_path: Path, include_example: bool = False)
         payload["example_response_fields"] = list(example)
         payload["example_event_item_fields"] = list(example["events"][0])
         payload["example_events"] = example
+    return payload
+
+
+def demo_golden_example() -> dict[str, object]:
+    return {
+        "ok": True,
+        "mode": "golden_demo",
+        "demo_name": "golden",
+        "summary": "Read-only guide for running the AgentDeck golden demo.",
+        "current_status": "provider_setup_required",
+        "next_command": "agentdeck doctor",
+        "recommended_task": (
+            "Add a tiny read-only dashboard or CLI affordance, update tests, "
+            "and report files changed plus verification."
+        ),
+        "steps": [
+            {
+                "step_id": "doctor",
+                "title": "Inspect environment",
+                "status": "ready",
+                "command": "agentdeck doctor",
+                "enabled": True,
+                "blocker": None,
+                "safety": "inspect",
+                "description": "Check tmux and configured Leader provider readiness.",
+                "checks": ["tmux available", "configured Leader readiness is visible"],
+            },
+            {
+                "step_id": "plan",
+                "title": "Create the demo plan",
+                "status": "waiting_for_input",
+                "command": "agentdeck leader plan --task <task>",
+                "enabled": False,
+                "blocker": "requires task text",
+                "safety": "explicit_user",
+                "description": "Ask the Leader to create a plan without dispatching workers.",
+                "checks": ["plan is recorded", "approval remains explicit"],
+            },
+        ],
+        "inspection_commands": [
+            "agentdeck status",
+            "agentdeck workbench",
+            "agentdeck dashboard",
+            "agentdeck tui",
+        ],
+        "safety": "inspect",
+        "source_command": "agentdeck demo golden",
+    }
+
+
+def validate_demo_golden_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in DEMO_GOLDEN_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"{field} is required")
+    if payload.get("mode") != "golden_demo":
+        errors.append("mode must be golden_demo")
+    if payload.get("demo_name") != "golden":
+        errors.append("demo_name must be golden")
+    if payload.get("safety") != "inspect":
+        errors.append("safety must be inspect")
+    if not isinstance(payload.get("steps"), list):
+        errors.append("steps must be a list")
+    else:
+        for index, step in enumerate(payload["steps"]):
+            if not isinstance(step, dict):
+                errors.append(f"steps[{index}] must be an object")
+                continue
+            for field in DEMO_GOLDEN_STEP_FIELDS:
+                if field not in step:
+                    errors.append(f"steps[{index}].{field} is required")
+            if step.get("status") not in DEMO_GOLDEN_STEP_STATUSES:
+                errors.append(f"steps[{index}].status is invalid")
+            if step.get("safety") not in DEMO_GOLDEN_STEP_SAFETIES:
+                errors.append(f"steps[{index}].safety is invalid")
+            if not isinstance(step.get("enabled"), bool):
+                errors.append(f"steps[{index}].enabled must be bool")
+            if step.get("enabled") is False and step.get("blocker") in {None, ""}:
+                errors.append(f"steps[{index}].blocker is required when disabled")
+            if not isinstance(step.get("checks"), list):
+                errors.append(f"steps[{index}].checks must be a list")
+    if not isinstance(payload.get("inspection_commands"), list):
+        errors.append("inspection_commands must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
+def demo_contract_payload(contract_path: Path) -> dict[str, object]:
+    example = demo_golden_example()
+    return {
+        "name": "demo",
+        "golden_demo_command": "agentdeck demo golden",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(DEMO_GOLDEN_RESPONSE_FIELDS),
+        "step_fields": list(DEMO_GOLDEN_STEP_FIELDS),
+        "example_response_fields": list(example.keys()),
+        "example_step_fields": list(example["steps"][0].keys()),
+    }
+
+
+def demo_contract_response(contract_path: Path, *, include_example: bool = False) -> dict[str, object]:
+    payload = demo_contract_payload(contract_path)
+    if include_example:
+        payload["example_golden_demo"] = demo_golden_example()
     return payload
 
 
