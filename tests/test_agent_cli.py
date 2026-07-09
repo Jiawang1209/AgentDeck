@@ -4558,6 +4558,51 @@ def test_contract_demo_example_exports_gui_ready_response(capsys) -> None:
     assert validate_demo_golden_contract(example) == {"ok": True, "errors": []}
 
 
+def test_demo_golden_reports_provider_setup_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    root = prepare_project(tmp_path, monkeypatch)
+    state_before = StateStore(root).load()
+
+    exit_code = cli.main(["demo", "golden"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "golden_demo"
+    assert payload["demo_name"] == "golden"
+    assert payload["current_status"] == "provider_setup_required"
+    assert payload["next_command"] == "agentdeck doctor"
+    assert payload["source_command"] == "agentdeck demo golden"
+    assert payload["safety"] == "inspect"
+    assert payload["recommended_task"] == cli.GOLDEN_DEMO_TASK
+    assert StateStore(root).load() == state_before
+    assert StateStore(root).load().get("plans", []) == []
+    assert StateStore(root).load().get("approvals", []) == []
+    assert StateStore(root).load().get("messages", []) == []
+    assert StateStore(root).load().get("replies", []) == []
+    assert StateStore(root).load().get("releases", []) == []
+
+
+def test_demo_golden_with_fake_leader_waits_for_task_input(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_text = config_text.replace('provider = "deepseek"', 'provider = "fake"', 1)
+    config_text = config_text.replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
+    config_path.write_text(config_text, encoding="utf-8")
+
+    exit_code = cli.main(["demo", "golden"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["current_status"] == "ready_to_plan"
+    assert payload["next_command"] == "agentdeck leader plan --task <task>"
+    plan_step = next(step for step in payload["steps"] if step["step_id"] == "plan")
+    assert plan_step["status"] == "waiting_for_input"
+    assert plan_step["enabled"] is False
+    assert plan_step["blocker"] == "requires task text"
+
+
 def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     exit_code = cli.main(["contract", "skills"])
 

@@ -69,6 +69,7 @@ from .contracts import (
     validate_artifacts_contract,
     validate_continue_contract,
     validate_control_registry_card_contract,
+    validate_demo_golden_contract,
     validate_inbox_contract,
     validate_leader_actions_contract,
     validate_leader_action_contract,
@@ -1640,6 +1641,11 @@ LEADER_PROVIDER_SWITCHES: tuple[tuple[str, str, str], ...] = (
     ("claude-cli", "claude-default", "Use Claude CLI"),
 )
 
+GOLDEN_DEMO_TASK = (
+    "Add a tiny read-only dashboard or CLI affordance, update tests, "
+    "and report files changed plus verification."
+)
+
 
 def _leader_provider_controls(current_provider: str) -> list[dict[str, object]]:
     controls: list[dict[str, object]] = []
@@ -2963,6 +2969,287 @@ def _workbench_release_preview_card(
                 blocker="requires goal text" if status in {"ready", "released"} else reason,
             ),
         ],
+    }
+
+
+def _golden_demo_step(
+    *,
+    step_id: str,
+    title: str,
+    status: str,
+    command: str,
+    enabled: bool,
+    blocker: str | None,
+    safety: str,
+    description: str,
+    checks: list[str],
+) -> dict[str, object]:
+    return {
+        "step_id": step_id,
+        "title": title,
+        "status": status,
+        "command": command,
+        "enabled": enabled,
+        "blocker": blocker,
+        "safety": safety,
+        "description": description,
+        "checks": checks,
+    }
+
+
+def _golden_demo_payload(config: ProjectConfig, store: StateStore) -> dict[str, object]:
+    project_view = asdict(store.project_view(config))
+    provider_health = _workbench_provider_health(project_view)
+    provider_ready = provider_health.get("ready") is True
+    review_gate_card = _workbench_review_gate_card(project_view)
+    release_ready = review_gate_card.get("can_release") is True
+
+    agents = project_view.get("agents") if isinstance(project_view.get("agents"), list) else []
+    running_agents = [
+        agent
+        for agent in agents
+        if isinstance(agent, dict)
+        and isinstance(agent.get("runtime"), dict)
+        and agent["runtime"].get("status") == "running"
+    ]
+    plans_summary = project_view.get("plans") if isinstance(project_view.get("plans"), dict) else {}
+    approvals_summary = project_view.get("approvals") if isinstance(project_view.get("approvals"), dict) else {}
+    messages_summary = project_view.get("messages") if isinstance(project_view.get("messages"), dict) else {}
+    replies_summary = project_view.get("replies") if isinstance(project_view.get("replies"), dict) else {}
+    releases_summary = project_view.get("releases") if isinstance(project_view.get("releases"), dict) else {}
+    plans = [item for item in _summary_items(plans_summary) if isinstance(item, dict)]
+    approvals = [item for item in _summary_items(approvals_summary) if isinstance(item, dict)]
+    messages = [item for item in _summary_items(messages_summary) if isinstance(item, dict)]
+    replies = [item for item in _summary_items(replies_summary) if isinstance(item, dict)]
+    releases = [item for item in _summary_items(releases_summary) if isinstance(item, dict)]
+
+    latest_plan = plans[-1] if plans else {}
+    latest_approval = approvals[-1] if approvals else {}
+    latest_message = messages[-1] if messages else {}
+    latest_reply = replies[-1] if replies else {}
+    latest_release = releases[-1] if releases else {}
+    plan_id = latest_plan.get("plan_id")
+    approval_id = latest_approval.get("approval_id")
+    message_id = latest_message.get("message_id")
+    message_agent_id = latest_message.get("to_agent")
+
+    current_status = "ready_to_plan"
+    next_command = "agentdeck leader plan --task <task>"
+    if not provider_ready:
+        current_status = "provider_setup_required"
+        next_command = "agentdeck doctor"
+    elif releases:
+        current_status = "released"
+        next_command = "agentdeck workbench"
+    elif release_ready or replies:
+        current_status = "ready_for_review_gate"
+        next_command = "agentdeck workbench"
+    elif messages:
+        current_status = "waiting_for_reply"
+        next_command = f"agentdeck capture-reply --agent {message_agent_id} --message-id {message_id}"
+    elif approvals:
+        current_status = "waiting_for_approval"
+        next_command = "agentdeck approval list"
+    elif plans:
+        current_status = "plan_ready"
+        next_command = f"agentdeck approval create-from-plan --plan-id {plan_id}"
+
+    provider_blocker = None if provider_ready else str(provider_health.get("detail") or "leader provider is not ready")
+    workers_ready = len(running_agents) > 0
+    plan_created = bool(plans)
+    approval_created = bool(approvals)
+    dispatched = bool(messages)
+    reply_recorded = bool(replies)
+    released = bool(releases)
+
+    approval_command = "agentdeck approval create-from-plan --plan-id <plan_id>"
+    if plan_id:
+        approval_command = f"agentdeck approval create-from-plan --plan-id {plan_id}"
+    dispatch_command = "agentdeck approval dispatch --approval-id <approval_id>"
+    if approval_id:
+        dispatch_command = f"agentdeck approval dispatch --approval-id {approval_id}"
+    reply_command = (
+        f"agentdeck capture-reply --agent {message_agent_id} --message-id {message_id}"
+        if message_agent_id and message_id
+        else "agentdeck capture-reply --agent <agent_id> --message-id <message_id>"
+    )
+
+    steps = [
+        _golden_demo_step(
+            step_id="doctor",
+            title="Inspect environment",
+            status="done" if provider_ready else "ready",
+            command="agentdeck doctor",
+            enabled=True,
+            blocker=None,
+            safety="inspect",
+            description="Check tmux and configured Leader provider readiness.",
+            checks=["tmux available", "configured Leader readiness is visible"],
+        ),
+        _golden_demo_step(
+            step_id="leader_provider",
+            title="Confirm Leader provider",
+            status="done" if provider_ready else "blocked",
+            command="agentdeck doctor",
+            enabled=provider_ready,
+            blocker=provider_blocker,
+            safety="inspect",
+            description="Ensure the configured Leader provider can create the demo plan.",
+            checks=[str(provider_health.get("provider")), str(provider_health.get("detail"))],
+        ),
+        _golden_demo_step(
+            step_id="workers",
+            title="Inspect worker panes",
+            status="done" if workers_ready else "inspect",
+            command="agentdeck agent ready",
+            enabled=True,
+            blocker=None,
+            safety="inspect",
+            description="Review worker startup readiness before dispatching approved work.",
+            checks=[f"{len(running_agents)} running agent(s)", f"{len(agents)} configured agent(s)"],
+        ),
+        _golden_demo_step(
+            step_id="plan",
+            title="Create the demo plan",
+            status="done" if plan_created else "waiting_for_input",
+            command="agentdeck leader plan --task <task>",
+            enabled=False,
+            blocker="plan already exists" if plan_created else "requires task text",
+            safety="explicit_user",
+            description="Ask the Leader to create a plan without dispatching workers.",
+            checks=["plan is recorded", "approval remains explicit"],
+        ),
+        _golden_demo_step(
+            step_id="approval",
+            title="Create approvals",
+            status=(
+                "done"
+                if approval_created or dispatched or reply_recorded or released
+                else "ready"
+                if plan_created
+                else "blocked"
+            ),
+            command=approval_command,
+            enabled=plan_created and not (approval_created or dispatched or reply_recorded or released),
+            blocker=(
+                "approval already exists"
+                if approval_created or dispatched or reply_recorded or released
+                else None
+                if plan_created
+                else "requires a plan"
+            ),
+            safety="explicit_user",
+            description="Convert the saved plan into explicit human approval items.",
+            checks=["approval queue is visible", "dispatch remains explicit"],
+        ),
+        _golden_demo_step(
+            step_id="dispatch",
+            title="Dispatch approved work",
+            status="done" if dispatched or reply_recorded or released else "ready" if approval_created else "blocked",
+            command=dispatch_command,
+            enabled=approval_created and not (dispatched or reply_recorded or released),
+            blocker=(
+                "work already dispatched"
+                if dispatched or reply_recorded or released
+                else None
+                if approval_created
+                else "requires an approval"
+            ),
+            safety="explicit_runtime",
+            description="Send an approved item to a worker pane.",
+            checks=["message is recorded", "worker prompt provenance is visible"],
+        ),
+        _golden_demo_step(
+            step_id="reply",
+            title="Capture worker reply",
+            status="done" if reply_recorded or released else "ready" if dispatched else "blocked",
+            command=reply_command,
+            enabled=dispatched and not (reply_recorded or released),
+            blocker=(
+                "reply already recorded"
+                if reply_recorded or released
+                else None
+                if dispatched
+                else "requires a dispatched message"
+            ),
+            safety="explicit_runtime",
+            description="Capture the worker response for the message ledger.",
+            checks=["reply is recorded", "trace links message, job, and reply"],
+        ),
+        _golden_demo_step(
+            step_id="review_gate",
+            title="Inspect review gate",
+            status="done" if release_ready else "ready" if reply_recorded else "blocked",
+            command="agentdeck workbench",
+            enabled=True,
+            blocker=None if reply_recorded or release_ready else "requires a worker reply",
+            safety="inspect",
+            description="Inspect artifacts and reviewer replies before release.",
+            checks=[str(review_gate_card.get("status")), str(review_gate_card.get("reason") or "review gate ready")],
+        ),
+        _golden_demo_step(
+            step_id="release",
+            title="Release the reviewed round",
+            status="done" if released else "ready" if release_ready else "blocked",
+            command="agentdeck release --confirm",
+            enabled=release_ready and not released,
+            blocker=(
+                f"release already recorded: {latest_release.get('release_id')}"
+                if released
+                else None
+                if release_ready
+                else str(review_gate_card.get("reason") or "review gate is not ready")
+            ),
+            safety="explicit_user",
+            description="Record the round release after the review gate is ready.",
+            checks=["review gate can_release is true", "release is explicit"],
+        ),
+        _golden_demo_step(
+            step_id="inspect",
+            title="Inspect demo state",
+            status="inspect",
+            command="agentdeck workbench",
+            enabled=True,
+            blocker=None,
+            safety="inspect",
+            description="Refresh the read-only workbench and contract-backed status surfaces.",
+            checks=["status is inspect-only", "workbench cards show provenance"],
+        ),
+    ]
+
+    return {
+        "ok": True,
+        "mode": "golden_demo",
+        "demo_name": "golden",
+        "summary": {
+            "project": project_view.get("project"),
+            "provider_ready": provider_ready,
+            "provider": provider_health.get("provider"),
+            "configured_agents": len(agents),
+            "running_agents": len(running_agents),
+            "plans": len(plans),
+            "approvals": len(approvals),
+            "messages": len(messages),
+            "replies": len(replies),
+            "releases": len(releases),
+            "latest_plan_id": plan_id,
+            "latest_approval_id": approval_id,
+            "latest_message_id": message_id,
+            "latest_reply_id": latest_reply.get("reply_id"),
+            "latest_release_id": latest_release.get("release_id"),
+        },
+        "current_status": current_status,
+        "next_command": next_command,
+        "recommended_task": GOLDEN_DEMO_TASK,
+        "steps": steps,
+        "inspection_commands": [
+            "agentdeck status",
+            "agentdeck workbench",
+            "agentdeck dashboard",
+            "agentdeck tui",
+        ],
+        "safety": "inspect",
+        "source_command": "agentdeck demo golden",
     }
 
 
@@ -4401,6 +4688,21 @@ def _load_project_or_error() -> tuple[ProjectConfig | None, StateStore | None, i
         print("Run: conda activate agentdeck && agentdeck project init", file=sys.stderr)
         return None, None, 1
     return config, StateStore(root), 0
+
+
+def demo_golden_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    payload = _golden_demo_payload(config, store)
+    validation = validate_demo_golden_contract(payload)
+    if not validation["ok"]:
+        print("Golden demo contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
 
 
 def skills_list_command(_args: argparse.Namespace) -> int:
@@ -14146,6 +14448,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_artifacts.add_argument("--example", action="store_true", help="Include a GUI-ready artifacts example")
     contract_artifacts.set_defaults(func=contract_artifacts_command)
+
+    demo = subparsers.add_parser("demo", help="Run read-only demo helpers")
+    demo_subparsers = demo.add_subparsers(dest="demo_command")
+    demo_golden = demo_subparsers.add_parser("golden", help="Show the read-only golden-demo guide")
+    demo_golden.set_defaults(func=demo_golden_command)
 
     project = subparsers.add_parser("project", help="Project management commands")
     project_subparsers = project.add_subparsers(dest="project_command")
