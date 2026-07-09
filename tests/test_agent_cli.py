@@ -11053,3 +11053,38 @@ def test_resolve_skill_dependencies_transitive_missing_and_cycle(tmp_path):
     import pytest
     with pytest.raises(KeyError):
         resolve_skill_dependencies(root, "nope")
+
+
+def _put_project_skill(root, name, deps=()):
+    d = root / ".agentdeck" / "skills" / name; d.mkdir(parents=True)
+    dep_line = f"depends_on: [{', '.join(deps)}]\n" if deps else ""
+    (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {name}\n{dep_line}---\n\nbody\n", encoding="utf-8")
+
+
+def test_skills_deps_reports_resolution_read_only(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _put_project_skill(root, "a", ["b"]); _put_project_skill(root, "b", [])
+    before = StateStore(root).load()
+
+    assert cli.main(["skills", "deps", "--name", "a"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "skills_deps"
+    assert payload["name"] == "a"
+    assert payload["resolved"] == ["b"]
+    assert payload["missing"] == []
+    assert payload["has_cycle"] is False
+    assert StateStore(root).load() == before  # read-only
+
+    assert cli.main(["skills", "deps", "--name", "ghost"]) == 1
+    assert "ghost" in capsys.readouterr().err.lower()
+
+
+def test_skills_deps_flags_missing_and_cycle(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    _put_project_skill(root, "x", ["y"])   # y missing
+    _put_project_skill(root, "p", ["q"]); _put_project_skill(root, "q", ["p"])  # cycle
+
+    assert cli.main(["skills", "deps", "--name", "x"]) == 0
+    assert json.loads(capsys.readouterr().out)["missing"] == ["y"]
+    assert cli.main(["skills", "deps", "--name", "p"]) == 0
+    assert json.loads(capsys.readouterr().out)["has_cycle"] is True

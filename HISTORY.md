@@ -4,7 +4,20 @@
 
 ## 2026-07-09
 
-### Current - Enforce `[skills] allowed_sources` allowlist on `skills import` (opt-in) + surface status in import-preview (skill-marketplace lane — decision "A")
+### Current - Add `depends_on` frontmatter + read-only `agentdeck skills deps` transitive dependency resolution (skill ecosystem — decision "B" slice 1)
+
+- **类型**: feat
+- **动机**: human 选了「先 A 再 B」，A（allowlist enforcement）已建成，B 是让 skill 之间可声明依赖。B 是最大的一块，所以从一个**只读**切片起步：解析 `depends_on` + 暴露只读依赖解析，不 load、不 import、不写任何东西，把 auto-load / 版本 / remote 留作后续显式 fork。
+- **What**:
+  - `skills.py`：`SkillSnapshot` 新增 `depends_on: tuple[str, ...] = ()`（在 `content` 之后，带默认值，`summary()` 不变以免动到所有 skill-summary validator）；`_snapshot_from_content` 用 `_metadata_list(metadata.get("depends_on"))` 解析。新增纯函数 `resolve_skill_dependencies(root, name)`：对 `discover_skills(root)` 做 DFS colouring，产出 `depends_on` / sorted `resolved` / `missing` / `has_cycle`(+ `cycle` 路径) / 拓扑 `order`；未知 name 抛 `KeyError`。`_metadata_list` 增加向后兼容的 bracket/quote 清洗（容忍 frontmatter 遗留的 `[a, b]` inline-list 语法），既有非 bracket 用法不变。
+  - `cli.py`：新增只读 `agentdeck skills deps --name <name>`（`skills_deps_command` + `deps` 子解析器 + import `resolve_skill_dependencies` / `validate_skills_deps_contract`），包成 `mode=skills_deps` + 每个 resolved/missing dep 的 inspect-only `show` control，打印前 `validate_skills_deps_contract()` 守门；未知 skill 非 0 且无输出。
+  - `contracts.py`：新增 `SKILLS_DEPS_RESPONSE_FIELDS` + `validate_skills_deps_contract`，并在 `skills_contract_payload` 暴露 `deps_command` / `deps_response_fields`。
+  - 文档：`docs/contracts/skills-schema.md`（新增「Skill dependencies」小节 + deps 命令/字段）、`CLAUDE.md`（decision B slice 1 read-only 规则）、`README.md`、`docs/handoff/current-development-state.md`。
+- **影响**: skill 现在可在 frontmatter 声明 `depends_on`（纯元数据，不触发任何行为）；新增只读 `skills deps` 展示传递依赖/缺失/环/拓扑序。read-only：不 load、不 import、不写 state、不调用 provider、不读 tmux，有测试断言 state 不变。`depends_on` 被解析但不被执行——无 auto-load、无 auto-import。
+- **验证**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k skills tests/test_contracts.py -k skills -q` 全绿；全量 `pytest -q` 全绿（baseline 722 → 726）；`python -m compileall src tests -q` 干净；`git diff --check` 干净。
+- **偏差**: 无 skills-unit 测试模块（`tests/test_skills*.py` 不存在），Task 1 纯函数测试放进 `tests/test_agent_cli.py`。计划假设 `_metadata_list` 直接吃 bracket YAML-list，但既有 hand-rolled `_frontmatter` 会把 `[b]` 留成 `['[b]']`，故对 `_metadata_list` 加了向后兼容的 bracket/quote 清洗（既有 `required_tools` 非 bracket 用法零影响，有测试守门）。skills contract example fixture 无需改动（无 drift 失败）。
+
+### Enforce `[skills] allowed_sources` allowlist on `skills import` (opt-in) + surface status in import-preview (skill-marketplace lane — decision "A")
 
 - **类型**: feat
 - **动机**: skill-marketplace lane 的只读可见性做完后，human 选了「先 A 再 B」——A 就是把 allowlist 从「只读标记」升级为「导入强制」。这把「生态」变成「可信生态」，同时保留一个显式逃生阀，不搞一刀切。

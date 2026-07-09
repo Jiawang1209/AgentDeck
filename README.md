@@ -48,6 +48,7 @@ agentdeck loop once
 agentdeck workbench
 agentdeck controls
 agentdeck skills list
+agentdeck skills deps --name planning
 agentdeck skills catalog --source /path/to/skill-source
 agentdeck skills sources
 agentdeck skills show --name planning

@@ -670,6 +670,27 @@ SKILLS_CREATE_RESPONSE_FIELDS = (
     "controls",
 )
 
+SKILLS_DEPS_RESPONSE_FIELDS = (
+    "ok", "mode", "name", "depends_on", "resolved", "missing",
+    "has_cycle", "cycle", "order", "controls",
+)
+
+
+def validate_skills_deps_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in SKILLS_DEPS_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing skills_deps field: {field}")
+    if payload.get("mode") != "skills_deps":
+        errors.append("skills_deps.mode must be skills_deps")
+    if not isinstance(payload.get("has_cycle"), bool):
+        errors.append("skills_deps.has_cycle must be a bool")
+    for list_field in ("depends_on", "resolved", "missing", "cycle", "order", "controls"):
+        if not isinstance(payload.get(list_field), list):
+            errors.append(f"skills_deps.{list_field} must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
 SKILLS_CATALOG_RESPONSE_FIELDS = (
     "ok", "mode", "source", "source_allowlisted", "skill_count", "imported_count", "controls", "items",
 )
@@ -2279,6 +2300,8 @@ def skills_contract_payload(contract_path: Path) -> dict[str, object]:
         "catalog_item_fields": list(SKILLS_CATALOG_ITEM_FIELDS),
         "sources_command": "agentdeck skills sources",
         "sources_response_fields": list(SKILLS_SOURCES_RESPONSE_FIELDS),
+        "deps_command": "agentdeck skills deps --name <name>",
+        "deps_response_fields": list(SKILLS_DEPS_RESPONSE_FIELDS),
         "skills_show_command_template": "agentdeck skills show --name <name>",
         "skills_import_preview_command_template": "agentdeck skills import-preview --path <SKILL.md>",
         "skills_import_command_template": "agentdeck skills import --path <SKILL.md>",

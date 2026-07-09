@@ -10,6 +10,7 @@ It does not read `.agentdeck/state`, does not inspect tmux panes, does not call 
 agentdeck contract skills
 agentdeck contract skills --example
 agentdeck skills list
+agentdeck skills deps --name <name>
 agentdeck skills catalog --source <dir>
 agentdeck skills import-preview --path <SKILL.md>
 agentdeck skills import --path <SKILL.md>
@@ -31,6 +32,8 @@ agentdeck skills create --suggestion-id <id> --confirm
 - `catalog_item_fields`: ordered fields on each catalog item (`SKILLS_CATALOG_ITEM_FIELDS`).
 - `sources_command`: read-only trusted-source listing command (`agentdeck skills sources`).
 - `sources_response_fields`: ordered fields returned by `agentdeck skills sources` (`SKILLS_SOURCES_RESPONSE_FIELDS`).
+- `deps_command`: read-only skill dependency resolution command (`agentdeck skills deps --name <name>`).
+- `deps_response_fields`: ordered fields returned by `agentdeck skills deps` (`SKILLS_DEPS_RESPONSE_FIELDS`).
 - `skills_show_command_template`: read-only skill detail command template.
 - `skills_import_preview_command_template`: read-only external skill import preview command template.
 - `skills_import_command_template`: explicit external skill import command template.
@@ -95,6 +98,22 @@ It is parsed into `config.skills["allowed_sources"]` (default empty) and round-t
 A source is "under" a listed directory when its resolved parent equals or `is_relative_to` a resolved `allowed_sources` entry (so `<root>/<name>/SKILL.md` counts as under `<root>`); this reuses `_source_is_allowlisted`. Both paths are audited: the `skill_imported` event gains `allowlisted` (bool: was the source under a trusted source) and `allow_unlisted` (bool: did `--allow-unlisted` override a block). On an allowlisted import → `allowlisted=true, allow_unlisted=false`; on an escape-hatch import → `allowlisted=false, allow_unlisted=true`; with no allowlist configured → `allowlisted=false, allow_unlisted=false` (enforcement inactive).
 
 `agentdeck skills import-preview --path <SKILL.md>` surfaces the gate read-only (it still imports nothing): it adds `source_allowlisted` (bool), `enforcement_active` (bool: is the allowlist non-empty), and `import_blocked` (bool: `enforcement_active and not source_allowlisted` — would `skills import` without `--allow-unlisted` reject it).
+
+## Skill dependencies (`depends_on` + `skills deps --name <name>`)
+
+A skill's `SKILL.md` frontmatter may declare a `depends_on` list of other skill names (parsed with the same `_metadata_list` helper as `required_tools`; inline `depends_on: [a, b]` list syntax is tolerated). This is **parsed but not acted on** — it is metadata only. It is NOT surfaced in `SkillSnapshot.summary()` in this slice; the deps command reads `snapshot.depends_on` directly.
+
+`agentdeck skills deps --name <name>` is a **read-only** dependency resolution over the discovered skills (built-in + project). It loads nothing, imports nothing, writes no state, calls no provider, and touches no tmux. Unknown `--name` → non-zero exit, no output. Response (`mode=skills_deps`) fields (`SKILLS_DEPS_RESPONSE_FIELDS`):
+
+- `name`: the queried skill.
+- `depends_on`: its declared direct dependency names.
+- `resolved`: the transitive dependency names that exist among discovered skills (excluding `name`), sorted.
+- `missing`: declared deps (direct or transitive) not found among discovered skills — reported, never fetched.
+- `has_cycle` (bool) + `cycle`: if the dependency graph has a cycle reachable from `name`, `has_cycle=true` and `cycle` is the offending path (it is a valid read-only report of a bad graph — no crash, exit 0).
+- `order`: a topological order (deps before dependents) of `name` + resolved deps when acyclic; `[]` when `has_cycle`.
+- `controls`: inspect-only `agentdeck skills show --name <dep>` controls for each resolved/missing dep.
+
+`depends_on` is metadata only in this slice: `skills deps` does **not** auto-load or auto-import dependencies. Cycle detection prevents pathological input from crashing; missing deps are reported, not resolved over the network.
 
 ## Safety
 

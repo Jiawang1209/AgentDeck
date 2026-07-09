@@ -437,10 +437,15 @@ The human opened the **Skill Registry marketplace/ecosystem** lane (one of the f
 
 **Read-only skill-source visibility is now fully delivered** by the catalog command (slice 1) + trusted-source allowlist + `agentdeck skills sources` (slice 2) + workbench `skills_catalog_card` (slice 3) + this NL `mode=skills_catalog` intent (slice 4). Nothing further is needed to *see* the configured skill sources.
 
+**Skill dependencies (decision "B") slice 1 is done (read-only resolution):** `SKILL.md` frontmatter may declare a `depends_on` list (parsed onto `SkillSnapshot.depends_on` via `_metadata_list`; `summary()` unchanged). New pure `resolve_skill_dependencies(root, name)` (`src/agentdeck/skills.py`) does a DFS over `discover_skills(root)` yielding `depends_on` / sorted `resolved` / `missing` / `has_cycle` (+ `cycle` path) / topological `order`. Read-only `agentdeck skills deps --name <name>` (`skills_deps_command`, `src/agentdeck/cli.py`) wraps it as `mode=skills_deps` with inspect-only `agentdeck skills show --name <dep>` controls, self-validated via `validate_skills_deps_contract` (`SKILLS_DEPS_RESPONSE_FIELDS`), exposed via `agentdeck contract skills` (`deps_command` / `deps_response_fields`). Read-only: loads nothing, imports nothing, writes no state, appends no event, calls no provider, touches no tmux; `depends_on` is **parsed but NOT acted on** (no auto-load, no auto-import). Design + plan: `docs/superpowers/specs/2026-07-09-skill-dependencies-design.md` and `docs/superpowers/plans/2026-07-09-skill-dependencies.md`. Tests: `tests/test_agent_cli.py -k skills_deps` + `test_resolve_skill_dependencies_transitive_missing_and_cycle`, `tests/test_contracts.py -k skills`.
+
+**Next B slice (still additive, read-only):** surface a read-only "unmet deps" note on `skills load-preview` (show which of a skill's `depends_on` are not yet loaded) — a visibility surface, NOT auto-loading.
+
 **Remaining items are all product forks — STOP + ask the human first:**
-1. ⚠️ **FORK:** allowlist **ENFORCEMENT** (blocking imports from non-allowlisted sources) is a deliberately deferred product fork — the allowlist stays a read-only marker until a human explicitly opts into enforcement. Do NOT build it unilaterally.
-2. ⚠️ **FORK:** skill dependencies / composition is a genuine product fork (it reshapes the skill model, not just adds a surface). Do NOT build it unilaterally.
-3. ⚠️ **FORK:** remote / marketplace skill sources (fetching skills over the network) is a product fork — local trusted sources only until a human explicitly opts in. Do NOT build it unilaterally.
+1. ⚠️ **FORK:** allowlist **ENFORCEMENT** (blocking imports from non-allowlisted sources) — already delivered as opt-in decision "A"; further tightening (default-on, hard block) stays a product fork.
+2. ⚠️ **FORK:** **auto-loading / auto-importing** `depends_on` dependencies (acting on the declared deps, not just reporting them) reshapes the load/import model — do NOT build it unilaterally.
+3. ⚠️ **FORK:** skill dependency **version constraints / lockfiles** — do NOT build unilaterally.
+4. ⚠️ **FORK:** remote / marketplace skill sources or remote dependency fetch (over the network) is a product fork — local trusted sources only until a human explicitly opts in. Do NOT build it unilaterally.
 
 ## Required Verification Before Handoff
 

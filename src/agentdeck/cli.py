@@ -56,6 +56,7 @@ from .contracts import (
     validate_run_loop_all_contract,
     run_start_contract_response,
     skills_contract_response,
+    validate_skills_deps_contract,
     terminal_card_controls,
     trace_contract_response,
     workbench_contract_response,
@@ -88,7 +89,7 @@ from .dashboard import render_workbench_dashboard
 from .history import render_history_markdown
 from .runtime import TmuxBackend
 from .tui import TuiModel, run_tui
-from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import
+from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import, resolve_skill_dependencies
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 
 
@@ -4411,6 +4412,30 @@ def skills_list_command(_args: argparse.Namespace) -> int:
             "skills": skills,
         }
     )
+    return 0
+
+
+def skills_deps_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        resolution = resolve_skill_dependencies(Path(config.root), args.name)
+    except KeyError:
+        print(f"unknown skill: {args.name}", file=sys.stderr)
+        return 1
+    controls = [
+        _control(kind="show", label=f"Show {dep}", command=f"agentdeck skills show --name {dep}", safety="inspect")
+        for dep in list(resolution["resolved"]) + list(resolution["missing"])
+    ]
+    payload = {"ok": True, "mode": "skills_deps", **resolution, "controls": controls}
+    validation = validate_skills_deps_contract(payload)
+    if not validation["ok"]:
+        print("skills deps contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
 
 
@@ -13579,6 +13604,9 @@ def build_parser() -> argparse.ArgumentParser:
     skills_subparsers = skills.add_subparsers(dest="skills_command")
     skills_list = skills_subparsers.add_parser("list", help="List builtin and project skills")
     skills_list.set_defaults(func=skills_list_command)
+    skills_deps = skills_subparsers.add_parser("deps", help="Read-only dependency resolution for a skill")
+    skills_deps.add_argument("--name", required=True, help="Skill name")
+    skills_deps.set_defaults(func=skills_deps_command)
     skills_catalog = skills_subparsers.add_parser("catalog", help="Read-only browse of a local skill source directory")
     skills_catalog.add_argument("--source", required=True, help="Directory of <name>/SKILL.md skills to browse")
     skills_catalog.set_defaults(func=skills_catalog_command)
