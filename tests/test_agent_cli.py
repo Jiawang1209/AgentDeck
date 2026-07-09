@@ -4495,6 +4495,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "run",
         "run-loop",
         "run-loop-all",
+        "demo",
         "plans",
         "release",
         "workbench",
@@ -4518,6 +4519,43 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
     assert payload["contracts"][0]["command"] == "agentdeck contract project-view"
     assert payload["contracts"][0]["example_command"] == "agentdeck contract project-view --example"
     assert payload["contracts"][0]["contract_path"].endswith("docs/contracts/project-view-schema.md")
+
+
+def test_contract_list_includes_demo(capsys) -> None:
+    exit_code = cli.main(["contract", "list"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    demo = next(item for item in payload["contracts"] if item["name"] == "demo")
+    assert demo["command"] == "agentdeck contract demo"
+    assert demo["example_command"] == "agentdeck contract demo --example"
+    assert demo["contract_path"].endswith("docs/contracts/demo-schema.md")
+    assert demo["contract_exists"] is True
+
+
+def test_contract_demo_discovers_schema_for_gui_clients(capsys) -> None:
+    exit_code = cli.main(["contract", "demo"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["name"] == "demo"
+    assert payload["golden_demo_command"] == "agentdeck demo golden"
+    assert payload["contract_path"].endswith("docs/contracts/demo-schema.md")
+    assert payload["contract_exists"] is True
+    assert "example_golden_demo" not in payload
+
+
+def test_contract_demo_example_exports_gui_ready_response(capsys) -> None:
+    from agentdeck.contracts import validate_demo_golden_contract
+
+    exit_code = cli.main(["contract", "demo", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    example = payload["example_golden_demo"]
+    assert example["mode"] == "golden_demo"
+    assert example["source_command"] == "agentdeck demo golden"
+    assert validate_demo_golden_contract(example) == {"ok": True, "errors": []}
 
 
 def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:

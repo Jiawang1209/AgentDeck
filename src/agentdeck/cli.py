@@ -30,6 +30,7 @@ from .contracts import (
     control_registry_item_id,
     continue_contract_response,
     controls_contract_response,
+    demo_contract_response,
     doctor_contract_response,
     events_contract_response,
     inbox_contract_response,
@@ -102,6 +103,10 @@ def _print_json(payload: object) -> None:
 
 def _print_json_line(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 def _trace_command(trace_id: object) -> str:
@@ -4272,6 +4277,13 @@ def contract_run_loop_command(args: argparse.Namespace) -> int:
 def contract_run_loop_all_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "run-loop-all-schema.md"
     _print_json(run_loop_all_contract_response(contract_path, include_example=args.example))
+    return 0
+
+
+def contract_demo_command(args: argparse.Namespace) -> int:
+    contract_path = _repo_root() / "docs" / "contracts" / "demo-schema.md"
+    payload = demo_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
     return 0
 
 
@@ -14020,6 +14032,9 @@ def build_parser() -> argparse.ArgumentParser:
     contract_run_loop_all = contract_subparsers.add_parser("run-loop-all", help="Show run-loop --all parallel-scheduler contract metadata")
     contract_run_loop_all.add_argument("--example", action="store_true", help="Include a GUI-ready run-loop-all example")
     contract_run_loop_all.set_defaults(func=contract_run_loop_all_command)
+    contract_demo = contract_subparsers.add_parser("demo", help="Show the golden demo contract")
+    contract_demo.add_argument("--example", action="store_true", help="Include a GUI-ready golden demo example")
+    contract_demo.set_defaults(func=contract_demo_command)
     contract_plans = contract_subparsers.add_parser("plans", help="Show plan board contract discovery metadata")
     contract_plans.add_argument("--example", action="store_true", help="Include a GUI-ready plan board example")
     contract_plans.set_defaults(func=contract_plans_command)
