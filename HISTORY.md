@@ -4,7 +4,19 @@
 
 ## 2026-07-09
 
-### Current - Add read-only trusted-source allowlist for the skill catalog (skill-marketplace lane slice 2, NON-ENFORCING)
+### Current - Embed read-only `skills_catalog_card` in the workbench snapshot (skill-marketplace lane slice 3)
+
+- **类型**: feat
+- **动机**: skill-marketplace lane 第三片。slice 2 把可信 skill 源清单落到 config `[skills] allowed_sources` 并加了只读 `agentdeck skills sources` / `--source` allowlist 标注；本片把"配置好的源"无参数汇总进一屏 `agentdeck workbench` 快照，让 GUI/TUI 不用先跑 `skills catalog --source <dir>` 也能看到每个 configured 源有多少 skill、导入了多少。镜像 `plan_board_card` 的 workbench 嵌入方式。
+- **What**:
+  - `cli.py`：抽出共享 helper `_project_skill_hashes(config)` 和 `_catalog_import_status(snapshot, project)`，`skills_catalog_command` 改用它们（去重，不再内联 import_status 比较）；新增 `_skills_catalog_card(config)`：从 config `[skills] allowed_sources` 派生 `{mode:"skills_catalog", source_count, total_skill_count, imported_count, sources[]}`，每个 source 为 `{path, exists, skill_count, imported_count, catalog_command}`，复用 `browse_skill_source` + `discover_skills`；`_workbench_snapshot_payload` 现在复用一次 `config = load_config(store.root)`（terminal_session_card 与新卡片共享），并加入 `skills_catalog_card`。
+  - `contracts.py`：`WORKBENCH_SNAPSHOT_FIELDS` 加 `skills_catalog_card`；新增 `WORKBENCH_SKILLS_CATALOG_CARD_FIELDS` / `WORKBENCH_SKILLS_CATALOG_SOURCE_FIELDS`；`validate_workbench_contract` 校验该卡片（ALWAYS present，never null）及每个 source item；`workbench_example()` 嵌入稳定 0-source 示例；discovery payload 暴露 `skills_catalog_card_fields` / `skills_catalog_source_fields`。
+  - 文档：`docs/contracts/workbench-schema.md` 记录 `skills_catalog_card`（configured skill sources 的只读概览）。
+- **影响**: 一屏 workbench 快照新增 configured skill sources 概览。只读边界不变：渲染卡片不复制文件、不 import/load skill、不调 provider、不碰 tmux、不写 state/事件。sources 来自 config，无需参数。
+- **验证**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k "skills_catalog or workbench" tests/test_contracts.py -k workbench -q` 全绿；全量 `pytest -q` 717 passed；`python -m compileall src tests -q` 干净；`git diff --check` 干净。
+- **偏差**: 抽出共享 helper `_project_skill_hashes` / `_catalog_import_status`（避免复制 import_status 逻辑）；更新 workbench snapshot_fields drift 测试 fixture（加 `skills_catalog_card`），未削弱 validator。⚠️ 后续 fork（allowlist 强制 / skill 依赖 / remote marketplace）= STOP + 问人类。
+
+### Add read-only trusted-source allowlist for the skill catalog (skill-marketplace lane slice 2, NON-ENFORCING)
 
 - **类型**: feat
 - **动机**: skill-marketplace lane 第二片。上一片的 `agentdeck skills catalog --source <dir>` 需要显式传 `--source`；本片先在 config 层沉淀一个可信 skill 源清单 `[skills] allowed_sources`，让后续 workbench/NL 界面可以无参数浏览"配置好的源"，并给 catalog 标注被浏览的源是否在清单内。REORDER 理由：先把 allowlist 落到 config，后面的 workbench `skills_catalog_card`（无参浏览 configured sources）和 NL "浏览技能源" intent 才能直接消费它。

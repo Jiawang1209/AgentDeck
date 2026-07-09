@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "conda run -n agentdeck pytest -q 2>&1 | tail -4; echo \"=== compileall ===\"; conda run -n agentdeck python -m compileall src tests -q 2>&1 | tail -4; echo \"=== diff check ===\"; git diff --check && echo \"diff-check-clean\"",
+    "testCommand": "conda run -n agentdeck pytest tests/test_agent_cli.py -k \"skills_catalog or workbench\" tests/test_contracts.py -k workbench -q 2>&1 | tail -4; echo \"=== FULL ===\"; conda run -n agentdeck pytest -q 2>&1 | tail -3; echo \"=== COMPILE ===\"; conda run -n agentdeck python -m compileall src tests -q 2>&1 | tail -3; echo \"=== DIFF CHECK ===\"; git diff --check && echo \"diff-check-clean\"",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -85,32 +85,32 @@
   "hotPaths": [
     {
       "path": "src/agentdeck/cli.py",
-      "accessCount": 180,
-      "lastAccessed": 1783530235162,
+      "accessCount": 213,
+      "lastAccessed": 1783573510323,
       "type": "file"
     },
     {
       "path": "src/agentdeck/contracts.py",
-      "accessCount": 137,
-      "lastAccessed": 1783530271924,
+      "accessCount": 162,
+      "lastAccessed": 1783573544844,
       "type": "file"
     },
     {
       "path": "tests/test_agent_cli.py",
-      "accessCount": 75,
-      "lastAccessed": 1783530159662,
+      "accessCount": 90,
+      "lastAccessed": 1783573575175,
       "type": "file"
     },
     {
       "path": "docs/handoff/current-development-state.md",
-      "accessCount": 65,
-      "lastAccessed": 1783530420022,
+      "accessCount": 74,
+      "lastAccessed": 1783573699725,
       "type": "file"
     },
     {
       "path": "HISTORY.md",
-      "accessCount": 60,
-      "lastAccessed": 1783530390211,
+      "accessCount": 68,
+      "lastAccessed": 1783573669430,
       "type": "file"
     },
     {
@@ -121,20 +121,20 @@
     },
     {
       "path": "README.md",
-      "accessCount": 39,
-      "lastAccessed": 1783530367039,
+      "accessCount": 47,
+      "lastAccessed": 1783573096129,
       "type": "file"
     },
     {
       "path": "docs/contracts/workbench-schema.md",
-      "accessCount": 32,
-      "lastAccessed": 1783527909941,
+      "accessCount": 34,
+      "lastAccessed": 1783573626067,
       "type": "file"
     },
     {
       "path": "tests/test_contracts.py",
-      "accessCount": 28,
-      "lastAccessed": 1783527528450,
+      "accessCount": 31,
+      "lastAccessed": 1783572897731,
       "type": "file"
     },
     {
@@ -168,6 +168,18 @@
       "type": "file"
     },
     {
+      "path": "CLAUDE.md",
+      "accessCount": 12,
+      "lastAccessed": 1783558423925,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/history.py",
+      "accessCount": 11,
+      "lastAccessed": 1783558275349,
+      "type": "file"
+    },
+    {
       "path": "docs/walkthroughs/tui-reference-client.md",
       "accessCount": 10,
       "lastAccessed": 1783474478054,
@@ -180,15 +192,9 @@
       "type": "file"
     },
     {
-      "path": "CLAUDE.md",
-      "accessCount": 10,
-      "lastAccessed": 1783530358094,
-      "type": "file"
-    },
-    {
-      "path": "src/agentdeck/history.py",
-      "accessCount": 8,
-      "lastAccessed": 1783494516221,
+      "path": "src/agentdeck/config.py",
+      "accessCount": 9,
+      "lastAccessed": 1783572946301,
       "type": "file"
     },
     {
@@ -198,9 +204,15 @@
       "type": "file"
     },
     {
-      "path": "src/agentdeck/config.py",
+      "path": "docs/contracts/skills-schema.md",
+      "accessCount": 7,
+      "lastAccessed": 1783573029323,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/models.py",
       "accessCount": 5,
-      "lastAccessed": 1783492018512,
+      "lastAccessed": 1783572929840,
       "type": "file"
     },
     {
@@ -228,12 +240,6 @@
       "type": "file"
     },
     {
-      "path": "src/agentdeck/models.py",
-      "accessCount": 3,
-      "lastAccessed": 1783491967665,
-      "type": "file"
-    },
-    {
       "path": "tests/test_autonomy.py",
       "accessCount": 3,
       "lastAccessed": 1783492040216,
@@ -249,6 +255,18 @@
       "path": "src/agentdeck/autonomy.py",
       "accessCount": 3,
       "lastAccessed": 1783527137761,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-09-skill-catalog.md",
+      "accessCount": 3,
+      "lastAccessed": 1783572005874,
+      "type": "file"
+    },
+    {
+      "path": "src/agentdeck/skills.py",
+      "accessCount": 3,
+      "lastAccessed": 1783573386288,
       "type": "file"
     },
     {
@@ -300,6 +318,24 @@
       "type": "file"
     },
     {
+      "path": "docs/superpowers/plans/2026-07-09-parallel-scheduler.md",
+      "accessCount": 2,
+      "lastAccessed": 1783552807581,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-09-parallel-scheduler-design.md",
+      "accessCount": 2,
+      "lastAccessed": 1783552808332,
+      "type": "file"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-09-skill-catalog-design.md",
+      "accessCount": 2,
+      "lastAccessed": 1783572006915,
+      "type": "file"
+    },
+    {
       "path": "docs/contracts/contract-index-schema.md",
       "accessCount": 1,
       "lastAccessed": 1783412809914,
@@ -339,6 +375,12 @@
       "path": "docs/contracts/plans-schema.md",
       "accessCount": 1,
       "lastAccessed": 1783527371811,
+      "type": "file"
+    },
+    {
+      "path": "docs/contracts/run-loop-all-schema.md",
+      "accessCount": 1,
+      "lastAccessed": 1783558198975,
       "type": "file"
     }
   ],

@@ -5475,6 +5475,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "active_queue_source",
         "run_progress_card",
         "plan_board_card",
+        "skills_catalog_card",
         "inbox_card",
         "leader_inbox_card",
         "approval_card",
@@ -10908,3 +10909,21 @@ def test_skills_catalog_source_allowlisted_true_when_under_allowed_parent(tmp_pa
     assert cli.main(["skills", "catalog", "--source", str(source)]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["source_allowlisted"] is True
+
+
+def test_workbench_embeds_skills_catalog_card(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    source = tmp_path / "src"
+    (source / "alpha").mkdir(parents=True)
+    (source / "alpha" / "SKILL.md").write_text("---\nname: alpha\ndescription: A\n---\nx\n", encoding="utf-8")
+    cfg = root / ".agentdeck" / "config.toml"
+    cfg.write_text(cfg.read_text(encoding="utf-8") + f'\n[skills]\nallowed_sources = ["{source}"]\n', encoding="utf-8")
+
+    assert cli.main(["workbench"]) == 0
+    card = json.loads(capsys.readouterr().out)["skills_catalog_card"]
+    assert card["mode"] == "skills_catalog"
+    assert card["source_count"] == 1
+    s = card["sources"][0]
+    assert s["exists"] is True
+    assert s["skill_count"] == 1
+    assert s["catalog_command"] == f"agentdeck skills catalog --source {source}"

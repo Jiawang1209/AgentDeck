@@ -1415,7 +1415,8 @@ def _workbench_snapshot_payload(
     provider_health = _workbench_provider_health(project_view)
     runtime_card = _workbench_runtime_card(project_view)
     agent_ready_card = _agent_ready_card_payload(project_view)
-    terminal_session_card = _workbench_terminal_session_card(load_config(store.root), runtime_card)
+    config = load_config(store.root)
+    terminal_session_card = _workbench_terminal_session_card(config, runtime_card)
     role_card = _workbench_role_card(project_view)
     worker_lifecycle_card = _workbench_worker_lifecycle_card(project_view)
     review_gate_card = _workbench_review_gate_card(project_view)
@@ -1437,6 +1438,7 @@ def _workbench_snapshot_payload(
     control_mode_card = _workbench_control_mode_card(project_view)
     run_progress_card = _workbench_run_progress_card(store)
     plan_board_card = _plan_board_payload(store)
+    skills_catalog_card = _skills_catalog_card(config)
     payload = {
         "ok": True,
         "mode": "workbench",
@@ -1473,6 +1475,7 @@ def _workbench_snapshot_payload(
         "active_queue_source": active_queue_source,
         "run_progress_card": run_progress_card,
         "plan_board_card": plan_board_card,
+        "skills_catalog_card": skills_catalog_card,
         "inbox_card": inbox_card,
         "leader_inbox_card": leader_inbox_card,
         "approval_card": approval_card,
@@ -4415,18 +4418,11 @@ def skills_catalog_command(args: argparse.Namespace) -> int:
     except FileNotFoundError:
         print(f"skill source not found: {source_dir}", file=sys.stderr)
         return 1
-    project = {
-        skill.name: skill.content_hash
-        for skill in discover_skills(Path(config.root))
-        if skill.source == "project"
-    }
+    project = _project_skill_hashes(config)
     items: list[dict[str, object]] = []
     for snapshot in catalog:
         item = snapshot.summary()
-        if snapshot.name in project:
-            status = "imported_identical" if project[snapshot.name] == snapshot.content_hash else "imported_differs"
-        else:
-            status = "not_imported"
+        status = _catalog_import_status(snapshot, project)
         preview_command = f"agentdeck skills import-preview --path {snapshot.path}"
         import_command = f"agentdeck skills import --path {snapshot.path}"
         item["import_status"] = status
@@ -4474,6 +4470,64 @@ def _source_is_allowlisted(source_dir: Path, config) -> bool:
         if resolved == allowed_resolved or resolved.is_relative_to(allowed_resolved):
             return True
     return False
+
+
+def _project_skill_hashes(config) -> dict[str, str]:
+    """Map of project-imported skill name -> content_hash for import_status compares."""
+    return {
+        skill.name: skill.content_hash
+        for skill in discover_skills(Path(config.root))
+        if skill.source == "project"
+    }
+
+
+def _catalog_import_status(snapshot, project: dict[str, str]) -> str:
+    if snapshot.name in project:
+        return "imported_identical" if project[snapshot.name] == snapshot.content_hash else "imported_differs"
+    return "not_imported"
+
+
+def _skills_catalog_card(config) -> dict[str, object]:
+    """Read-only overview of configured skill sources ([skills] allowed_sources).
+
+    No file copy, no state write, no event, no provider, no tmux.
+    """
+    project = _project_skill_hashes(config)
+    sources: list[dict[str, object]] = []
+    total_skill_count = 0
+    imported_total = 0
+    for path in _allowed_skill_sources(config):
+        source_dir = Path(path)
+        catalog_command = f"agentdeck skills catalog --source {path}"
+        exists = source_dir.exists() and source_dir.is_dir()
+        skill_count = 0
+        imported_count = 0
+        if exists:
+            try:
+                catalog = browse_skill_source(source_dir)
+            except FileNotFoundError:
+                catalog = []
+                exists = False
+            for snapshot in catalog:
+                skill_count += 1
+                if _catalog_import_status(snapshot, project) != "not_imported":
+                    imported_count += 1
+        sources.append({
+            "path": str(path),
+            "exists": exists,
+            "skill_count": skill_count,
+            "imported_count": imported_count,
+            "catalog_command": catalog_command,
+        })
+        total_skill_count += skill_count
+        imported_total += imported_count
+    return {
+        "mode": "skills_catalog",
+        "source_count": len(sources),
+        "total_skill_count": total_skill_count,
+        "imported_count": imported_total,
+        "sources": sources,
+    }
 
 
 def skills_sources_command(args: argparse.Namespace) -> int:

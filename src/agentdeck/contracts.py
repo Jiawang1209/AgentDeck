@@ -1338,12 +1338,29 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "active_queue_source",
     "run_progress_card",
     "plan_board_card",
+    "skills_catalog_card",
     "inbox_card",
     "leader_inbox_card",
     "approval_card",
     "leader_action",
     "control_registry",
     "change_summary",
+)
+
+WORKBENCH_SKILLS_CATALOG_CARD_FIELDS = (
+    "mode",
+    "source_count",
+    "total_skill_count",
+    "imported_count",
+    "sources",
+)
+
+WORKBENCH_SKILLS_CATALOG_SOURCE_FIELDS = (
+    "path",
+    "exists",
+    "skill_count",
+    "imported_count",
+    "catalog_command",
 )
 
 WORKBENCH_LEADER_CARD_FIELDS = (
@@ -4269,6 +4286,8 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "operator_card_fields": list(WORKBENCH_OPERATOR_CARD_FIELDS),
         "run_progress_card_fields": list(RUN_PROGRESS_RESPONSE_FIELDS),
         "plan_board_card_fields": list(PLAN_BOARD_RESPONSE_FIELDS),
+        "skills_catalog_card_fields": list(WORKBENCH_SKILLS_CATALOG_CARD_FIELDS),
+        "skills_catalog_source_fields": list(WORKBENCH_SKILLS_CATALOG_SOURCE_FIELDS),
         "audit_card_fields": list(WORKBENCH_AUDIT_CARD_FIELDS),
         "audit_event_fields": list(WORKBENCH_AUDIT_EVENT_FIELDS),
         "artifacts_card_fields": list(ARTIFACTS_RESPONSE_FIELDS),
@@ -8772,6 +8791,28 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append(f"plan_board_card: {error}")
     else:
         errors.append("plan_board_card must be an object")
+    skills_catalog_card = payload.get("skills_catalog_card")
+    if isinstance(skills_catalog_card, dict):
+        for field in WORKBENCH_SKILLS_CATALOG_CARD_FIELDS:
+            if field not in skills_catalog_card:
+                errors.append(f"skills_catalog_card missing field: {field}")
+        if skills_catalog_card.get("mode") != "skills_catalog":
+            errors.append("skills_catalog_card.mode must be skills_catalog")
+        sources = skills_catalog_card.get("sources")
+        if not isinstance(sources, list):
+            errors.append("skills_catalog_card.sources must be a list")
+        else:
+            if skills_catalog_card.get("source_count") != len(sources):
+                errors.append("skills_catalog_card.source_count must equal len(sources)")
+            for index, source in enumerate(sources):
+                if not isinstance(source, dict):
+                    errors.append(f"skills_catalog_card.sources[{index}] must be an object")
+                    continue
+                for field in WORKBENCH_SKILLS_CATALOG_SOURCE_FIELDS:
+                    if field not in source:
+                        errors.append(f"skills_catalog_card.sources[{index}] missing field: {field}")
+    else:
+        errors.append("skills_catalog_card must be an object")
     audit_card = payload.get("audit_card")
     if isinstance(audit_card, dict):
         _validate_audit_card_contract(errors, audit_card, prefix="audit_card")
@@ -12051,6 +12092,13 @@ def workbench_example() -> dict[str, object]:
         "active_queue_source": "leader_action",
         "run_progress_card": run_progress_example(),
         "plan_board_card": plan_board_example(),
+        "skills_catalog_card": {
+            "mode": "skills_catalog",
+            "source_count": 0,
+            "total_skill_count": 0,
+            "imported_count": 0,
+            "sources": [],
+        },
         "inbox_card": None,
         "leader_inbox_card": {
             "agent_id": "leader",
