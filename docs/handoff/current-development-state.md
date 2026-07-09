@@ -2,20 +2,17 @@
 
 Updated: 2026-07-09
 
-## ⏸ 需要你决策 — Skill 依赖下一步（loop 停在这里）
+## Skill 生态 lane 进度 — A + B(只读/auto) 完成，B-ver 进行中
 
-**Skill 生态这一轮做完并提交的（全套 726 passed，本地未 push）**：
+用户定了 "先 A 再 B"、"先 B-auto 再 B-ver"，loop 正在推进。已完成并提交：
 - **只读可见性 4 片**：`skills catalog --source <dir>` → `[skills] allowed_sources` + `skills sources` + `source_allowlisted` → workbench `skills_catalog_card` → 自然语言 `mode=skills_catalog`。
-- **决策 A — allowlist 强制拦截**：`skills import` 对非空 `[skills] allowed_sources` opt-in 强制——非清单源被拒，`--allow-unlisted` 逃生阀，空清单=向后兼容，两条路径审计（`skill_imported.allowlisted`/`.allow_unlisted`），`import-preview` 只读回显 `source_allowlisted`/`enforcement_active`/`import_blocked`。
-- **决策 B（只读部分）**：**B1** `agentdeck skills deps --name <name>`（`depends_on` frontmatter + 传递依赖解析 + `missing` + 循环检测 + 拓扑 `order`，纯只读）；**B2** `skills load-preview` 只读回显 `unmet_dependencies` / `has_dependency_cycle`（不阻断、不自动拉依赖）。
-- **决策 B-auto — 依赖 load（preview + 显式确认）DONE**：`skills load-plan --name <name> --agent <id>` 只读预览依赖 load 计划；`skills load --name <name> --agent <id> --with-deps --confirm` 按 deps-first 拓扑逐条 load 并审计（每条 `skill_loaded` + 一条 `skill_deps_loaded` 汇总）。`--with-deps` 需 `--confirm`，缺失依赖/环一律拒绝且零写，绝不 auto-import、绝不静默；单 skill `skills load` 不变。
+- **A — allowlist 强制拦截**：`skills import` opt-in 强制（`--allow-unlisted` 逃生阀，空清单向后兼容，审计 `skill_imported.allowlisted`/`.allow_unlisted`，`import-preview` 只读回显）。
+- **B1/B2 — 依赖只读**：`skills deps --name <name>`（依赖树/missing/循环/拓扑序）；`skills load-preview` 回显 `unmet_dependencies`。
+- **B-auto — 依赖 load（preview + 显式确认）**：`skills load-plan`（只读预览）+ `skills load --with-deps --confirm`（deps-first 逐条 load，缺失/环拒绝零写，绝不 auto-import/静默；单 skill load 不变）。
 
-**为什么停在这里**：skill 依赖的只读可见性 + B-auto 依赖 load（preview + 显式确认）都齐了，剩下的都是需要你拍板的产品/安全决策。请你二选一（或定顺序）：
+**进行中 = B-ver — 依赖版本约束（content-hash 锁定）**：`depends_on: [name@sha256:<hex>]` 锁定内容 hash;`resolve_skill_dependencies` 新增 `version_mismatch` blocker 类别(pin 与实际 hash 不符),`skills deps` / `load-plan` / `load --with-deps` 一律当硬阻断。纯 hash、本地、确定性、无网络。Design + plan: `docs/superpowers/specs/2026-07-09-skill-dep-version-pinning-design.md`。
 
-- **B-ver. 依赖版本约束/锁定**：`depends_on` 支持版本、生成 lockfile。*我的默认建议：这是 B-auto 之后的下一刀——先走它自己的 brainstorm→spec→plan，别在别处顺手做。*
-- **C. 联网远程 marketplace / 远程依赖**：从网络拉 skill/依赖。*我的默认建议：最后做——离 local-first 最远、安全面最复杂（网络、签名、供应链）。*
-
-> 你回一句（比如 "B-auto"、"先 B-auto 再 B-ver"、"都先不做，换 GUI/别的方向"),我就据此走 brainstorm→spec→plan→实现。
+**B-ver 完成后停 loop 的岔路**：semver 范围/版本区间、lockfile 生成/策略、联网远程依赖(C)。
 
 ## Active Goal
 
