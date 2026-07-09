@@ -4,7 +4,20 @@
 
 ## 2026-07-09
 
-### Current - Add `agentdeck run-loop --all` parallel scheduler (multi-plan lane final slice, 收官)
+### Current - Add `agentdeck skills catalog --source <dir>` read-only skill source browse (skill-marketplace lane slice 1)
+
+- **类型**: feat
+- **动机**: 启动 skill marketplace/生态 lane 的第一片（人类拍板"浏览一个 skill 源/目录"）。此前 `discover_skills` 只发现内置 skill + 项目本地 `.agentdeck/skills/*/SKILL.md`，import 也只能从单个 `--path <SKILL.md>` 一次一个。没有"源/目录橱窗"的概念——一个装着多个"可用但未导入" skill、可在导入前只读浏览的目录。这一片补上它。
+- **What**:
+  - 新增纯函数 `src/agentdeck/skills.py::browse_skill_source(source_dir)`：目录不存在则 `FileNotFoundError`；扫描 `sorted(source_dir.glob("*/SKILL.md"))`，复用现有 `_snapshot_from_content(source="catalog", ...)`（不重写 frontmatter 解析），按 name 排序返回 `SkillSnapshot` 列表。
+  - 新增 `src/agentdeck/cli.py::skills_catalog_command` + `skills catalog --source <dir>` 子命令：用 `discover_skills(root)` 的 project-sourced skill 派生 `{name: content_hash}`，为每个源 skill 计算三态 `import_status`（`not_imported` / `imported_identical` / `imported_differs`），附 `import_preview_command` / `import_command` 和 per-item `import_preview`(inspect) / `import`(explicit_user) controls；输出 `mode=skills_catalog`、`source`、`skill_count`、`imported_count`、顶层 import 模板 control 和 `items[]`。缺失 `--source` 目录非零退出无输出；空目录 `skill_count=0` / `items=[]` 退出 0。
+  - 契约：`contracts.py` 新增 `SKILLS_CATALOG_RESPONSE_FIELDS` / `SKILLS_CATALOG_ITEM_FIELDS`，并在 `skills_contract_payload` 暴露 `catalog_command` / `catalog_response_fields` / `catalog_item_fields`（复用既有 `agentdeck contract skills`，不新增 contract-index 条目）。
+  - 文档：`docs/contracts/skills-schema.md` 新增 catalog 命令、发现字段和三态 `import_status` 说明；README + 本文件同步。
+- **影响**: 新增只读发现入口，是 skill-marketplace lane 的第一片。安全边界不变：浏览只读——不复制文件、不写 state、不追加事件、不调用 provider、不读 tmux；真正安装仍走既有的、预览门控且可审计的 `agentdeck skills import --path <SKILL.md>`（默认仍不覆盖）。`import_status` 只与 **project-sourced** skill 比对（内置 skill 不算"已导入"）。
+- **验证**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k skills_catalog tests/test_contracts.py -k skills_contract -q`（新增 4 个测试全绿，含 read-only 断言）；全量 `pytest -q` 全绿；`python -m compileall src tests -q` 干净；`git diff --check` 干净。
+- **偏差**: 计划里 read-only 断言 `assert not (root / ".agentdeck" / "skills").exists()` 在本环境不成立——`prepare_project` → `write_default_config` → `ensure_project_layout` 总会预建 `.agentdeck/skills`。改为断言浏览后该目录内无导入 skill（`glob("*/SKILL.md") == []`），忠实保留"浏览不安装"的只读意图。
+
+### Add `agentdeck run-loop --all` parallel scheduler (multi-plan lane final slice, 收官)
 
 - **类型**: feat
 - **动机**: 多计划并行 lane 的最后一块,也是第一个"写操作"多计划命令。用户拍板四个核心决策:轮转 / 跳过(agent 冲突)/ 一波 / 复用。把单计划 `run-loop --plan-id` 扩展成"对所有 active 计划跑一波"。

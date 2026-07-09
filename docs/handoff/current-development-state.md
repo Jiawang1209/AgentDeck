@@ -415,6 +415,17 @@ Multi-plan **recovery arbitration** (making `recovery`/`agentdeck continue` reco
 
 Whatever is chosen next must preserve human approval and keep every read-only surface read-only.
 
+## Current Direction: skill marketplace lane
+
+The human opened the **Skill Registry marketplace/ecosystem** lane (one of the forks offered after the multi-plan lane closed). The north star: a browsable, importable, reviewable, auditable skill ecosystem — built-in + external sources — where nothing installs silently and every install stays preview-gated and audited.
+
+**Slice 1 of the skill-marketplace lane is done:** read-only `agentdeck skills catalog --source <dir>` — a "shop window" over a local skill source directory of `<name>/SKILL.md`. New pure `browse_skill_source(dir)` (`src/agentdeck/skills.py`, reuses `_snapshot_from_content`); `skills_catalog_command` (`src/agentdeck/cli.py`) compares each source skill against `discover_skills(root)` **project-sourced** skills for a three-state `import_status` (`not_imported` / `imported_identical` / `imported_differs` by name + content_hash) and surfaces per-item `import-preview` / `import` commands + controls. Response fields `SKILLS_CATALOG_RESPONSE_FIELDS` / item fields `SKILLS_CATALOG_ITEM_FIELDS`, exposed via the existing `agentdeck contract skills` (`catalog_command` / `catalog_response_fields` / `catalog_item_fields` — no new contract-index entry). Read-only: copies no files, writes no state, appends no event, calls no provider, touches no tmux; browsing never installs (install still goes through the explicit, preview-gated, audited `skills import --path <SKILL.md>`). Design + plan: `docs/superpowers/specs/2026-07-09-skill-catalog-design.md` and `docs/superpowers/plans/2026-07-09-skill-catalog.md`. Tests: `tests/test_agent_cli.py -k skills_catalog`, `tests/test_contracts.py::test_skills_contract_exposes_catalog_fields`.
+
+**Remaining slices in order:**
+1. Workbench `skills_catalog_card` + natural-language "浏览技能源" intent (surface the catalog on the one-screen workbench and via `agentdeck leader chat`, same read-only card).
+2. Trusted-source allowlist (gate which local dirs are browsable/importable; any local dir is browsable read-only today — the allowlist is deliberately deferred).
+3. ⚠️ Skill dependencies / composition is a genuine **product fork** — do NOT build it unilaterally; **stop and ask the human** before starting it (it reshapes the skill model, not just adds a surface).
+
 ## Required Verification Before Handoff
 
 At minimum, run:

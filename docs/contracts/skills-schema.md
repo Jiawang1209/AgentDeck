@@ -10,6 +10,7 @@ It does not read `.agentdeck/state`, does not inspect tmux panes, does not call 
 agentdeck contract skills
 agentdeck contract skills --example
 agentdeck skills list
+agentdeck skills catalog --source <dir>
 agentdeck skills import-preview --path <SKILL.md>
 agentdeck skills import --path <SKILL.md>
 agentdeck skills show --name <name>
@@ -25,6 +26,9 @@ agentdeck skills create --suggestion-id <id> --confirm
 
 - `schema_version`: current ProjectView schema version.
 - `skills_list_command`: read-only registry listing command.
+- `catalog_command`: read-only source-browse command (`agentdeck skills catalog --source <dir>`).
+- `catalog_response_fields`: ordered fields returned by `agentdeck skills catalog` (`SKILLS_CATALOG_RESPONSE_FIELDS`).
+- `catalog_item_fields`: ordered fields on each catalog item (`SKILLS_CATALOG_ITEM_FIELDS`).
 - `skills_show_command_template`: read-only skill detail command template.
 - `skills_import_preview_command_template`: read-only external skill import preview command template.
 - `skills_import_command_template`: explicit external skill import command template.
@@ -51,6 +55,16 @@ agentdeck skills create --suggestion-id <id> --confirm
 - `detail_skill_fields`: available skill summary fields plus `content`.
 - `load_skill_fields`: available skill summary fields plus `content_snapshot`.
 - `skill_control_fields`: ordered fields for GUI controls.
+
+## Source catalog (`skills catalog --source <dir>`)
+
+`agentdeck skills catalog --source <dir>` is a read-only browse ("shop window") of a local skill source directory of `<name>/SKILL.md`. It reuses the same frontmatter/name/hash snapshot logic as the rest of the registry (`_snapshot_from_content`) and compares each source skill against the project's imported skills (`discover_skills`, `source == "project"` only — built-ins are not "imported"). The response fields are `SKILLS_CATALOG_RESPONSE_FIELDS` (`ok`, `mode=skills_catalog`, `source`, `skill_count`, `imported_count`, `controls`, `items`); each item carries `SKILLS_CATALOG_ITEM_FIELDS` — the standard skill summary fields plus a three-state `import_status`, `import_preview_command`, and `import_command`. `import_status` is one of:
+
+- `not_imported`: no project skill with this name.
+- `imported_identical`: a project skill with the same name and identical `content_hash`.
+- `imported_differs`: a project skill with the same name but a different `content_hash`.
+
+Catalog is discovery only: it copies no files, writes no state, appends no event, calls no provider, and touches no tmux. A missing `--source` directory exits non-zero with no output; an empty source directory returns `skill_count=0`, `items=[]`, exit 0. Browsing never installs — installing still goes through the explicit, preview-gated, audited `skills import --path <SKILL.md>` (still no-overwrite by default). The per-item `import_preview`/`import` controls surface those commands but are not authorization.
 
 ## Safety
 

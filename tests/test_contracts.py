@@ -5145,3 +5145,12 @@ def test_validate_run_loop_all_contract_rejects_bad_budget_and_counts():
     assert not validate_run_loop_all_contract(bad)["ok"]
     bad2 = dict(run_loop_all_example()); bad2["budget"] = {"max_approvals": 5, "used": 1, "remaining": 1}
     assert not validate_run_loop_all_contract(bad2)["ok"]  # used+remaining != max
+
+
+def test_skills_contract_exposes_catalog_fields():
+    from pathlib import Path
+    from agentdeck.contracts import skills_contract_response, SKILLS_CATALOG_RESPONSE_FIELDS, SKILLS_CATALOG_ITEM_FIELDS
+    payload = skills_contract_response(Path("docs/contracts/skills-schema.md"))
+    assert payload["catalog_response_fields"] == list(SKILLS_CATALOG_RESPONSE_FIELDS)
+    assert payload["catalog_item_fields"] == list(SKILLS_CATALOG_ITEM_FIELDS)
+    assert payload["catalog_command"] == "agentdeck skills catalog --source <dir>"
