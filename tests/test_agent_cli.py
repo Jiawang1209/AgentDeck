@@ -4603,6 +4603,41 @@ def test_demo_golden_with_fake_leader_waits_for_task_input(tmp_path, monkeypatch
     assert plan_step["blocker"] == "requires task text"
 
 
+def test_demo_golden_blocks_dispatch_for_pending_approval(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%42")
+    cli.main(["leader", "plan", "--provider", "fake", "--model", "fake-plan", "--task", "demo approval gate"])
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    cli.main(["approval", "create-from-plan", "--plan-id", plan_id])
+    approval_id = json.loads(capsys.readouterr().out)["approvals"][0]["approval_id"]
+
+    exit_code = cli.main(["demo", "golden"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    approval_step = next(step for step in payload["steps"] if step["step_id"] == "approval")
+    assert approval_step["status"] == "ready"
+    assert approval_step["enabled"] is True
+    assert approval_step["command"] == f"agentdeck approval approve --approval-id {approval_id}"
+    dispatch_step = next(step for step in payload["steps"] if step["step_id"] == "dispatch")
+    assert dispatch_step["status"] == "blocked"
+    assert dispatch_step["enabled"] is False
+    assert dispatch_step["blocker"] == "approval is not approved"
+
+    cli.main(["approval", "approve", "--approval-id", approval_id])
+    capsys.readouterr()
+
+    exit_code = cli.main(["demo", "golden"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    dispatch_step = next(step for step in payload["steps"] if step["step_id"] == "dispatch")
+    assert dispatch_step["status"] == "ready"
+    assert dispatch_step["enabled"] is True
+    assert dispatch_step["command"] == f"agentdeck approval dispatch --approval-id {approval_id}"
+    assert dispatch_step["blocker"] is None
+
+
 def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     exit_code = cli.main(["contract", "skills"])
 

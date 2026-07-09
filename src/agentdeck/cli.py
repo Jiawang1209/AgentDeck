@@ -3019,17 +3019,30 @@ def _golden_demo_payload(config: ProjectConfig, store: StateStore) -> dict[str, 
     releases_summary = project_view.get("releases") if isinstance(project_view.get("releases"), dict) else {}
     plans = [item for item in _summary_items(plans_summary) if isinstance(item, dict)]
     approvals = [item for item in _summary_items(approvals_summary) if isinstance(item, dict)]
+    pending_approvals = [item for item in approvals if item.get("status") == "pending"]
+    approved_approvals = _workbench_approved_approval_items(project_view)
+    dispatchable_approval = next(
+        (
+            approval
+            for approval in approved_approvals
+            if _project_view_agent_is_running(project_view, approval.get("agent_id"))
+        ),
+        None,
+    )
     messages = [item for item in _summary_items(messages_summary) if isinstance(item, dict)]
     replies = [item for item in _summary_items(replies_summary) if isinstance(item, dict)]
     releases = [item for item in _summary_items(releases_summary) if isinstance(item, dict)]
 
     latest_plan = plans[-1] if plans else {}
     latest_approval = approvals[-1] if approvals else {}
+    pending_approval = pending_approvals[0] if pending_approvals else {}
     latest_message = messages[-1] if messages else {}
     latest_reply = replies[-1] if replies else {}
     latest_release = releases[-1] if releases else {}
     plan_id = latest_plan.get("plan_id")
     approval_id = latest_approval.get("approval_id")
+    pending_approval_id = pending_approval.get("approval_id")
+    dispatch_approval_id = dispatchable_approval.get("approval_id") if dispatchable_approval else None
     message_id = latest_message.get("message_id")
     message_agent_id = latest_message.get("to_agent")
 
@@ -3047,6 +3060,15 @@ def _golden_demo_payload(config: ProjectConfig, store: StateStore) -> dict[str, 
     elif messages:
         current_status = "waiting_for_reply"
         next_command = f"agentdeck capture-reply --agent {message_agent_id} --message-id {message_id}"
+    elif dispatchable_approval:
+        current_status = "ready_to_dispatch"
+        next_command = f"agentdeck approval dispatch --approval-id {dispatch_approval_id}"
+    elif approved_approvals:
+        current_status = "worker_setup_required"
+        next_command = "agentdeck agent ready"
+    elif pending_approvals:
+        current_status = "waiting_for_approval"
+        next_command = f"agentdeck approval approve --approval-id {pending_approval_id}"
     elif approvals:
         current_status = "waiting_for_approval"
         next_command = "agentdeck approval list"
@@ -3058,16 +3080,22 @@ def _golden_demo_payload(config: ProjectConfig, store: StateStore) -> dict[str, 
     workers_ready = len(running_agents) > 0
     plan_created = bool(plans)
     approval_created = bool(approvals)
+    approval_ready = bool(approved_approvals)
+    dispatch_ready = dispatchable_approval is not None
     dispatched = bool(messages)
     reply_recorded = bool(replies)
     released = bool(releases)
 
     approval_command = "agentdeck approval create-from-plan --plan-id <plan_id>"
-    if plan_id:
+    approval_step_safety = "explicit_user"
+    if pending_approval_id:
+        approval_command = f"agentdeck approval approve --approval-id {pending_approval_id}"
+        approval_step_safety = "explicit_runtime"
+    elif plan_id:
         approval_command = f"agentdeck approval create-from-plan --plan-id {plan_id}"
     dispatch_command = "agentdeck approval dispatch --approval-id <approval_id>"
-    if approval_id:
-        dispatch_command = f"agentdeck approval dispatch --approval-id {approval_id}"
+    if dispatch_approval_id:
+        dispatch_command = f"agentdeck approval dispatch --approval-id {dispatch_approval_id}"
     reply_command = (
         f"agentdeck capture-reply --agent {message_agent_id} --message-id {message_id}"
         if message_agent_id and message_id
@@ -3124,36 +3152,43 @@ def _golden_demo_payload(config: ProjectConfig, store: StateStore) -> dict[str, 
             title="Create approvals",
             status=(
                 "done"
-                if approval_created or dispatched or reply_recorded or released
+                if approval_ready or dispatched or reply_recorded or released
                 else "ready"
-                if plan_created
+                if pending_approvals or plan_created
                 else "blocked"
             ),
             command=approval_command,
-            enabled=plan_created and not (approval_created or dispatched or reply_recorded or released),
+            enabled=(bool(pending_approvals) or plan_created)
+            and not (approval_ready or dispatched or reply_recorded or released),
             blocker=(
-                "approval already exists"
-                if approval_created or dispatched or reply_recorded or released
+                "approval already approved"
+                if approval_ready
+                else "approval already dispatched"
+                if dispatched or reply_recorded or released
                 else None
-                if plan_created
+                if pending_approvals or plan_created
                 else "requires a plan"
             ),
-            safety="explicit_user",
+            safety=approval_step_safety,
             description="Convert the saved plan into explicit human approval items.",
             checks=["approval queue is visible", "dispatch remains explicit"],
         ),
         _golden_demo_step(
             step_id="dispatch",
             title="Dispatch approved work",
-            status="done" if dispatched or reply_recorded or released else "ready" if approval_created else "blocked",
+            status="done" if dispatched or reply_recorded or released else "ready" if dispatch_ready else "blocked",
             command=dispatch_command,
-            enabled=approval_created and not (dispatched or reply_recorded or released),
+            enabled=dispatch_ready and not (dispatched or reply_recorded or released),
             blocker=(
                 "work already dispatched"
                 if dispatched or reply_recorded or released
                 else None
+                if dispatch_ready
+                else "requires running worker pane"
+                if approval_ready
+                else "approval is not approved"
                 if approval_created
-                else "requires an approval"
+                else "requires approved work and running worker panes"
             ),
             safety="explicit_runtime",
             description="Send an approved item to a worker pane.",
