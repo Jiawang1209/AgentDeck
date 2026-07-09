@@ -4656,6 +4656,7 @@ def skills_load_preview_command(args: argparse.Namespace) -> int:
     except LookupError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    resolution = resolve_skill_dependencies(Path(config.root), args.name)
     _print_json(
         {
             "ok": True,
@@ -4664,6 +4665,8 @@ def skills_load_preview_command(args: argparse.Namespace) -> int:
             "purpose": card["purpose"],
             "skill": card["skill"],
             "load_command": card["load_command"],
+            "unmet_dependencies": list(resolution["missing"]),
+            "has_dependency_cycle": bool(resolution["has_cycle"]),
             "controls": card["controls"],
         }
     )

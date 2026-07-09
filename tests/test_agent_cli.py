@@ -11088,3 +11088,16 @@ def test_skills_deps_flags_missing_and_cycle(tmp_path, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["missing"] == ["y"]
     assert cli.main(["skills", "deps", "--name", "p"]) == 0
     assert json.loads(capsys.readouterr().out)["has_cycle"] is True
+
+
+def test_skills_load_preview_surfaces_unmet_dependencies(tmp_path, monkeypatch, capsys):
+    root = prepare_project(tmp_path, monkeypatch)
+    # skill "a" depends on "b" (present) and "z" (missing)
+    _put_project_skill(root, "a", ["b", "z"]); _put_project_skill(root, "b", [])
+    before = StateStore(root).load()
+    assert cli.main(["skills", "load-preview", "--name", "a"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["unmet_dependencies"] == ["z"]
+    assert payload["has_dependency_cycle"] is False
+    # read-only: no skill_loads / state mutation
+    assert StateStore(root).load() == before

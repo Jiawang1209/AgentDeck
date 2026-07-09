@@ -609,6 +609,8 @@ SKILLS_LOAD_PREVIEW_RESPONSE_FIELDS = (
     "purpose",
     "skill",
     "load_command",
+    "unmet_dependencies",
+    "has_dependency_cycle",
     "controls",
 )
 
@@ -2528,6 +2530,8 @@ planner repeatedly asked for the same incident review checklist
             "purpose": "plan decomposition",
             "skill": deepcopy(skill_item),
             "load_command": "agentdeck skills load --name planning --agent planner --purpose 'plan decomposition'",
+            "unmet_dependencies": [],
+            "has_dependency_cycle": False,
             "controls": [
                 {
                     "kind": "load",

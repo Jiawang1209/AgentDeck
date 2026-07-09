@@ -4,7 +4,19 @@
 
 ## 2026-07-09
 
-### Current - Add `depends_on` frontmatter + read-only `agentdeck skills deps` transitive dependency resolution (skill ecosystem — decision "B" slice 1)
+### Current - Surface read-only unmet-dependency note on `agentdeck skills load-preview` (skill ecosystem — decision "B" slice 2)
+
+- **类型**: feat
+- **动机**: B slice 1 已让 skill 声明 `depends_on` 并提供只读 `skills deps` / 纯函数 `resolve_skill_dependencies`。本切片把同一份依赖事实带到 load 决策点：人在 `skills load-preview` 时能直接看到该 skill 哪些声明依赖尚未存在，避免 load 后才发现缺失。仍是**只读、非阻断**的可见性切片，不 auto-load/auto-import。
+- **What**:
+  - `cli.py`：`skills_load_preview_command` 在打印前调用 `resolve_skill_dependencies(Path(config.root), args.name)`（skill 不存在时既有 preview 错误路径先返回，只有 skill 存在才解析），并在响应里新增 `unmet_dependencies`=`list(resolution["missing"])`、`has_dependency_cycle`=`bool(resolution["has_cycle"])`；其余字段不变，仍只读。`resolve_skill_dependencies` 之前已 import。
+  - `contracts.py`：`SKILLS_LOAD_PREVIEW_RESPONSE_FIELDS` 新增 `unmet_dependencies` / `has_dependency_cycle`（在 `load_command` 与 `controls` 之间），并同步 skills contract example fixture `load_preview`（`unmet_dependencies: []` / `has_dependency_cycle: False`），未弱化 validator。
+  - 文档：`docs/contracts/skills-schema.md`、`CLAUDE.md`（load-preview 规则扩展）、`README.md`、`docs/handoff/current-development-state.md`。
+- **影响**: `agentdeck skills load-preview` 现在多返回两个只读字段，让人在 load 前看到未满足的依赖与依赖环。read-only + 非阻断：不 load、不 import、不写 state、不调用 provider、不读 tmux（测试断言 state 不变）；`skills load` 行为本切片未变。
+- **验证**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k skills tests/test_contracts.py -k skills -q` 全绿；全量 `pytest -q` 全绿（baseline 725 → 726）；`python -m compileall src tests -q` 干净；`git diff --check` 干净。
+- **偏差**: `_put_project_skill` helper 已存在（B1 slice 加的，在 `tests/test_agent_cli.py`），直接复用。load-preview payload 里把两字段放在 `load_command` 之后、`controls` 之前。skills contract example fixture `load_preview` 需要同步补两键（否则 `set(example) == set(fields)` drift 断言会失败），已补。
+
+### Add `depends_on` frontmatter + read-only `agentdeck skills deps` transitive dependency resolution (skill ecosystem — decision "B" slice 1)
 
 - **类型**: feat
 - **动机**: human 选了「先 A 再 B」，A（allowlist enforcement）已建成，B 是让 skill 之间可声明依赖。B 是最大的一块，所以从一个**只读**切片起步：解析 `depends_on` + 暴露只读依赖解析，不 load、不 import、不写任何东西，把 auto-load / 版本 / remote 留作后续显式 fork。
