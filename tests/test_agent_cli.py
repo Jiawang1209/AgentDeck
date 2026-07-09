@@ -4638,6 +4638,72 @@ def test_demo_golden_blocks_dispatch_for_pending_approval(tmp_path, monkeypatch,
     assert dispatch_step["blocker"] is None
 
 
+def test_demo_golden_surfaces_release_when_review_gate_ready(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    assert (
+        cli.main(
+            [
+                "agent",
+                "assign-role",
+                "--agent",
+                "coder",
+                "--role",
+                "round_reviewer",
+                "--role-prompt",
+                "你负责整轮验收。",
+            ]
+        )
+        == 0
+    )
+    _seed_review_gate_ledger(root, include_round_review=True)
+    capsys.readouterr()
+
+    exit_code = cli.main(["demo", "golden"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    release_step = next(step for step in payload["steps"] if step["step_id"] == "release")
+    assert release_step["status"] == "ready"
+    assert release_step["command"] == "agentdeck release --confirm"
+    assert release_step["safety"] == "explicit_user"
+    assert release_step["enabled"] is True
+
+
+def test_demo_golden_marks_release_done_after_release(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    assert (
+        cli.main(
+            [
+                "agent",
+                "assign-role",
+                "--agent",
+                "coder",
+                "--role",
+                "round_reviewer",
+                "--role-prompt",
+                "你负责整轮验收。",
+            ]
+        )
+        == 0
+    )
+    _seed_review_gate_ledger(root, include_round_review=True)
+    capsys.readouterr()
+    assert cli.main(["release", "--confirm"]) == 0
+    capsys.readouterr()
+
+    exit_code = cli.main(["demo", "golden"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["current_status"] == "released"
+    assert payload["next_command"] == "agentdeck workbench"
+    release_step = next(step for step in payload["steps"] if step["step_id"] == "release")
+    assert release_step["status"] == "done"
+    assert release_step["enabled"] is False
+    inspect_step = next(step for step in payload["steps"] if step["step_id"] == "inspect")
+    assert inspect_step["command"] == "agentdeck workbench"
+
+
 def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     exit_code = cli.main(["contract", "skills"])
 

@@ -3048,12 +3048,12 @@ def _golden_demo_payload(config: ProjectConfig, store: StateStore) -> dict[str, 
 
     current_status = "ready_to_plan"
     next_command = "agentdeck leader plan --task <task>"
-    if not provider_ready:
-        current_status = "provider_setup_required"
-        next_command = "agentdeck doctor"
-    elif releases:
+    if releases:
         current_status = "released"
         next_command = "agentdeck workbench"
+    elif not provider_ready:
+        current_status = "provider_setup_required"
+        next_command = "agentdeck doctor"
     elif release_ready or replies:
         current_status = "ready_for_review_gate"
         next_command = "agentdeck workbench"
