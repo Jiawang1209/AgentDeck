@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "conda run -n agentdeck pytest tests/test_agent_cli.py -k \"skills_import_allowed_when or skills_import_blocks\" -q 2>&1 | tail -8",
+    "testCommand": "conda run -n agentdeck pytest -q 2>&1 | tail -6; echo \"===COMPILE===\"; conda run -n agentdeck python -m compileall src tests -q 2>&1 | tail -5; echo \"===DIFFCHECK===\"; git diff --check && echo \"diff-check-clean\"",
     "lintCommand": "ruff check",
     "devCommand": null,
     "scripts": {}
@@ -85,14 +85,14 @@
   "hotPaths": [
     {
       "path": "src/agentdeck/cli.py",
-      "accessCount": 234,
-      "lastAccessed": 1783579502753,
+      "accessCount": 235,
+      "lastAccessed": 1783579548440,
       "type": "file"
     },
     {
       "path": "src/agentdeck/contracts.py",
-      "accessCount": 176,
-      "lastAccessed": 1783579403114,
+      "accessCount": 179,
+      "lastAccessed": 1783579572620,
       "type": "file"
     },
     {
@@ -103,20 +103,20 @@
     },
     {
       "path": "docs/handoff/current-development-state.md",
-      "accessCount": 78,
-      "lastAccessed": 1783574556426,
+      "accessCount": 80,
+      "lastAccessed": 1783579732104,
       "type": "file"
     },
     {
       "path": "HISTORY.md",
-      "accessCount": 70,
-      "lastAccessed": 1783574346271,
+      "accessCount": 71,
+      "lastAccessed": 1783579707120,
       "type": "file"
     },
     {
       "path": "README.md",
-      "accessCount": 50,
-      "lastAccessed": 1783574293827,
+      "accessCount": 52,
+      "lastAccessed": 1783579681573,
       "type": "file"
     },
     {
@@ -151,8 +151,8 @@
     },
     {
       "path": "CLAUDE.md",
-      "accessCount": 14,
-      "lastAccessed": 1783574255937,
+      "accessCount": 15,
+      "lastAccessed": 1783579661639,
       "type": "file"
     },
     {
@@ -180,6 +180,12 @@
       "type": "file"
     },
     {
+      "path": "docs/contracts/skills-schema.md",
+      "accessCount": 11,
+      "lastAccessed": 1783579637481,
+      "type": "file"
+    },
+    {
       "path": "docs/walkthroughs/tui-reference-client.md",
       "accessCount": 10,
       "lastAccessed": 1783474478054,
@@ -201,12 +207,6 @@
       "path": "docs/superpowers/plans/2026-07-08-autonomous-mode.md",
       "accessCount": 7,
       "lastAccessed": 1783491932660,
-      "type": "file"
-    },
-    {
-      "path": "docs/contracts/skills-schema.md",
-      "accessCount": 7,
-      "lastAccessed": 1783573029323,
       "type": "file"
     },
     {

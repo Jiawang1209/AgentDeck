@@ -68,7 +68,7 @@ agentdeck skills create --suggestion-id <id> --confirm
 
 Catalog is discovery only: it copies no files, writes no state, appends no event, calls no provider, and touches no tmux. A missing `--source` directory exits non-zero with no output; an empty source directory returns `skill_count=0`, `items=[]`, exit 0. Browsing never installs — installing still goes through the explicit, preview-gated, audited `skills import --path <SKILL.md>` (still no-overwrite by default). The per-item `import_preview`/`import` controls surface those commands but are not authorization.
 
-The catalog response also carries a top-level `source_allowlisted` (bool). It is `True` when the resolved `--source` directory equals, or sits under, one of the configured trusted sources in `[skills] allowed_sources`. This marker is **non-enforcing**: any directory is still fully browsable regardless of the flag, and the catalog still lists every skill. (Enforcement — blocking imports from non-allowlisted sources — is a deliberately deferred product fork and is not implemented.)
+The catalog response also carries a top-level `source_allowlisted` (bool). It is `True` when the resolved `--source` directory equals, or sits under, one of the configured trusted sources in `[skills] allowed_sources`. This catalog marker is **non-enforcing**: any directory is still fully browsable regardless of the flag, and the catalog still lists every skill. Enforcement lives on `skills import` only (see "Allowlist enforcement on import" below); `catalog` and `sources` stay read-only, non-blocking browse.
 
 ## Trusted skill sources (`[skills] allowed_sources` + `skills sources`)
 
@@ -82,6 +82,19 @@ allowed_sources = ["/path/to/skill-source", "/another/source"]
 It is parsed into `config.skills["allowed_sources"]` (default empty) and round-trips through `_dump_config`, so config writers (`update_leader_approval_mode`, `update_autonomous_policy`, …) never drop a hand-added `[skills]` section. There is no mutation command this slice — the allowlist is hand-edited like the other config, so future workbench/NL surfaces can browse the configured sources with no argument.
 
 `agentdeck skills sources` is a read-only listing of the configured trusted sources. The response fields are `SKILLS_SOURCES_RESPONSE_FIELDS` (`ok`, `mode=skills_sources`, `source_count`, `sources`, `controls`); each `sources[]` item carries `{path, exists (bool), catalog_command}` where `catalog_command = agentdeck skills catalog --source <path>`, and each `controls[]` entry is an inspect-only control pointing at the same catalog command. It writes no state/config, appends no event, calls no provider, and touches no tmux. An empty/absent allowlist returns `source_count=0`, `sources=[]`.
+
+## Allowlist enforcement on import (opt-in) + `--allow-unlisted`
+
+`agentdeck skills import --path <SKILL.md>` enforces `[skills] allowed_sources` — but **only when the allowlist is non-empty** (opt-in, backward compatible):
+
+- Empty/absent `allowed_sources` → no enforcement; import behaves exactly as before.
+- Non-empty allowlist + source under a listed directory → import proceeds.
+- Non-empty allowlist + source **not** under any listed directory → import is **rejected** (writes nothing: no copy, no `skill_imported` event; exits non-zero). stderr reads `skill source is not in the trusted allowlist: <dir>; add its directory to [skills] allowed_sources, or rerun with --allow-unlisted`.
+- `--allow-unlisted` is the single explicit escape hatch: it overrides the block and imports anyway.
+
+A source is "under" a listed directory when its resolved parent equals or `is_relative_to` a resolved `allowed_sources` entry (so `<root>/<name>/SKILL.md` counts as under `<root>`); this reuses `_source_is_allowlisted`. Both paths are audited: the `skill_imported` event gains `allowlisted` (bool: was the source under a trusted source) and `allow_unlisted` (bool: did `--allow-unlisted` override a block). On an allowlisted import → `allowlisted=true, allow_unlisted=false`; on an escape-hatch import → `allowlisted=false, allow_unlisted=true`; with no allowlist configured → `allowlisted=false, allow_unlisted=false` (enforcement inactive).
+
+`agentdeck skills import-preview --path <SKILL.md>` surfaces the gate read-only (it still imports nothing): it adds `source_allowlisted` (bool), `enforcement_active` (bool: is the allowlist non-empty), and `import_blocked` (bool: `enforcement_active and not source_allowlisted` — would `skills import` without `--allow-unlisted` reject it).
 
 ## Safety
 

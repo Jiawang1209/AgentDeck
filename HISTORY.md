@@ -4,7 +4,19 @@
 
 ## 2026-07-09
 
-### Current - Add read-only natural-language `mode=skills_catalog` chat intent (skill-marketplace lane slice 4)
+### Current - Enforce `[skills] allowed_sources` allowlist on `skills import` (opt-in) + surface status in import-preview (skill-marketplace lane — decision "A")
+
+- **类型**: feat
+- **动机**: skill-marketplace lane 的只读可见性做完后，human 选了「先 A 再 B」——A 就是把 allowlist 从「只读标记」升级为「导入强制」。这把「生态」变成「可信生态」，同时保留一个显式逃生阀，不搞一刀切。
+- **What**:
+  - `cli.py`：`skills import` 子命令新增 `--allow-unlisted`；`skills_import_command` 在 `import_project_skill` 之前加 opt-in allowlist gate（复用现有 `_allowed_skill_sources` 读原始清单、`_source_is_allowlisted` 判定 equals-or-under；allowlist 非空且未 allowlisted 且未 `--allow-unlisted` 时拒绝导入、返回 1、不复制不写事件、stderr 提示 allowlist + `--allow-unlisted`）；`skill_imported` 事件 payload 新增 `allowlisted` / `allow_unlisted` 审计字段。`skills_import_preview_command` 只读新增 `source_allowlisted` / `enforcement_active` / `import_blocked`（预览不阻断、不导入）。
+  - `contracts.py`：`SKILLS_IMPORT_PREVIEW_RESPONSE_FIELDS` 加 `source_allowlisted` / `enforcement_active` / `import_blocked`；同步 skills example fixture `import_preview` 三个字段（保持字段顺序对齐）。
+  - 文档：`docs/contracts/skills-schema.md`（新增「Allowlist enforcement on import」小节 + catalog marker 改述）、`CLAUDE.md`（Skill Registry MVP import 规则）、`README.md`、`docs/handoff/current-development-state.md`（移除「⏸ 需要你决策」，A 已建成，下一项 B: skill 依赖）。
+- **影响**: `skills import` 现在对非空 `[skills] allowed_sources` 强制拦截非清单源导入，除非显式 `--allow-unlisted`；空 allowlist = 行为不变（向后兼容，有测试守门）。catalog/sources/import-preview 保持只读非阻断。审计增加 allowlisted/allow_unlisted 两字段。
+- **验证**: `conda run -n agentdeck pytest tests/test_agent_cli.py -k skills_import tests/test_contracts.py -k skills -q` 全绿；全量 `pytest -q` 全绿（baseline 719 → 722）；`python -m compileall src tests -q` 干净；`git diff --check` 干净。
+- **偏差**: `_source_is_allowlisted` 已内建 equals-or-under（`is_relative_to`），无需扩展；raw allowlist 用既有 `_allowed_skill_sources(config)` 而非 `config.skills.get(...)`（同源访问器）；默认 config 无 `[skills]` 段，测试 helper 直接 append 无重复段问题。
+
+### Add read-only natural-language `mode=skills_catalog` chat intent (skill-marketplace lane slice 4)
 
 - **类型**: feat
 - **动机**: skill-marketplace lane 第四片，也是只读可见性收尾。slice 3 把 configured skill sources 概览嵌进 `agentdeck workbench`；本片把同一张卡片经自然语言壳暴露出来，让 GUI/对话层用「浏览技能源」这类语句就能看到配置好的 skill 源。镜像已上线的只读 `mode=plan_board` chat intent。

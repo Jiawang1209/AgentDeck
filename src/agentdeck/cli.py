@@ -5165,6 +5165,10 @@ def skills_import_preview_command(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    source_path = Path(args.path)
+    allowed_sources = _allowed_skill_sources(config)
+    source_allowlisted = _source_is_allowlisted(source_path.parent, config)
+    enforcement_active = bool(allowed_sources)
     _print_json(
         {
             "ok": True,
@@ -5173,6 +5177,9 @@ def skills_import_preview_command(args: argparse.Namespace) -> int:
             "source_path": card["source_path"],
             "project_path": card["project_path"],
             "would_overwrite": card["would_overwrite"],
+            "source_allowlisted": source_allowlisted,
+            "enforcement_active": enforcement_active,
+            "import_blocked": enforcement_active and not source_allowlisted,
             "import_command": card["import_command"],
             "force_import_command": card["force_import_command"],
             "controls": card["controls"],
