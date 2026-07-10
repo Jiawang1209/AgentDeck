@@ -5431,6 +5431,8 @@ def _validate_project_view_mission_items(
     count = missions.get("count")
     if not isinstance(count, int) or isinstance(count, bool):
         errors.append("missions.count must be an integer")
+    elif count < 0:
+        errors.append("missions.count must be a non-negative integer")
     elif count != len(items):
         errors.append("missions.count must equal len(missions.items)")
     by_status = missions.get("by_status")
@@ -5699,6 +5701,10 @@ def _validate_project_view_mission_items(
                 f"missions.items[{index}].can_start requires at least two valid "
                 "selected agents and startup actions"
             )
+        if item.get("can_start") is True and isinstance(item.get("blockers"), list) and item[
+            "blockers"
+        ]:
+            errors.append(f"missions.items[{index}].can_start requires empty blockers")
 
 
 def _validate_project_view_skill_items(errors: list[str], payload: dict[str, object]) -> None:

@@ -182,6 +182,8 @@ class StateStore:
             isinstance(blocker, str) for blocker in blockers
         ):
             raise ValueError("blockers must be a list of strings")
+        if can_start and blockers:
+            raise ValueError("can_start requires empty blockers")
         if not isinstance(step_count, int) or isinstance(step_count, bool) or step_count < 1:
             raise ValueError("step_count must be a positive integer")
         if (
@@ -292,6 +294,10 @@ class StateStore:
             or not all(isinstance(blocker, str) for blocker in changes["blockers"])
         ):
             raise ValueError("blockers must be a list of strings")
+        effective_can_start = changes.get("can_start", record.get("can_start"))
+        effective_blockers = changes.get("blockers", record.get("blockers"))
+        if effective_can_start is True and effective_blockers:
+            raise ValueError("can_start requires empty blockers")
         if "workflow_run_id" in changes:
             workflow_run_id = changes["workflow_run_id"]
             if workflow_run_id is not None and not isinstance(workflow_run_id, str):
@@ -1453,7 +1459,7 @@ class StateStore:
     @staticmethod
     def _mission_summaries(missions: list[dict[str, Any]]) -> dict[str, Any]:
         items: list[dict[str, Any]] = []
-        source_count = len(missions) if isinstance(missions, list) else 0
+        source_count = len(missions) if isinstance(missions, list) else -1
         if not isinstance(missions, list):
             missions = []
         for mission in missions:
@@ -1512,7 +1518,7 @@ class StateStore:
                     "user_message": mission.get("user_message"),
                     "status": status,
                     "stop_reason": mission.get("stop_reason"),
-                    "can_start": raw_can_start and workers_ready,
+                    "can_start": raw_can_start and workers_ready and not blockers,
                     "can_resume": status in {MISSION_STATUSES[4], MISSION_STATUSES[5]},
                     "blockers": blockers,
                     "provider": provider,

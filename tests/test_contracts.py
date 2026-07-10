@@ -1285,6 +1285,16 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
             ),
             "missions.items[0].can_start requires at least two valid selected agents and startup actions",
         ),
+        (
+            lambda payload: payload["missions"]["items"][0].update(
+                {"can_start": True, "blockers": ["worker unavailable"]}
+            ),
+            "missions.items[0].can_start requires empty blockers",
+        ),
+        (
+            lambda payload: payload["missions"].update({"count": -1}),
+            "missions.count must be a non-negative integer",
+        ),
     ],
 )
 def test_validate_project_view_contract_rejects_mission_summary_drift(

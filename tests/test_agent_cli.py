@@ -10191,6 +10191,115 @@ def test_status_handles_malformed_mission_rows_without_empty_worker_sentinels(
     }
 
 
+def test_project_view_normalizes_startable_mission_with_legacy_blockers(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    mission = store.create_mission(
+        user_message="让 Codex 和 Claude 接龙",
+        can_start=True,
+        blockers=[],
+        provider="fake",
+        model="fake-plan",
+        leader_backend={
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
+        plan_id="pln_demo",
+        plan_hash="sha256:plan",
+        selected_agents=[
+            {
+                "agent_id": "planner",
+                "provider": "codex-cli",
+                "role": "planning",
+                "workspace_mode": "shared",
+                "runtime_status": "configured",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+            {
+                "agent_id": "reviewer",
+                "provider": "claude-cli",
+                "role": "review",
+                "workspace_mode": "shared",
+                "runtime_status": "configured",
+                "effective_model": "opus-4.8",
+                "model_source": "configured",
+            },
+        ],
+        startup_actions=[
+            {
+                "agent_id": "planner",
+                "action": "spawn",
+                "runtime_status": "configured",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+            {
+                "agent_id": "reviewer",
+                "action": "spawn",
+                "runtime_status": "configured",
+                "effective_model": "opus-4.8",
+                "model_source": "configured",
+            },
+        ],
+        step_count=2,
+        timeout_seconds=180,
+    )
+    state = store.load()
+    state["missions"][0]["blockers"] = ["legacy blocker"]
+    store.save(state)
+
+    payload = cli.asdict(store.project_view(cli.load_config(root)))
+    item = payload["missions"]["items"][0]
+
+    assert item["mission_id"] == mission["mission_id"]
+    assert item["can_start"] is False
+    assert item["blockers"] == ["legacy blocker"]
+    assert validate_project_view_contract(payload) == {"ok": True, "errors": []}
+
+
+def test_project_view_surfaces_non_list_missions_container_as_controlled_failure(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["missions"] = {"credentials": "container-secret"}
+    store.save(state)
+
+    payload = cli.asdict(store.project_view(cli.load_config(root)))
+
+    assert payload["missions"] == {
+        "count": -1,
+        "by_status": {},
+        "latest_id": None,
+        "items": [],
+    }
+    assert "container-secret" not in json.dumps(payload, ensure_ascii=False)
+    assert validate_project_view_contract(payload) == {
+        "ok": False,
+        "errors": ["missions.count must be a non-negative integer"],
+    }
+
+    exit_code = cli.main(["status"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "missions.count must be a non-negative integer" in captured.err
+
+
 def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

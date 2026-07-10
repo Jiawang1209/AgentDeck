@@ -4,6 +4,15 @@
 
 ## 2026-07-11
 
+### Close Mission projection invariants after quality re-review
+
+- **类型**: fix + test + contract
+- **审查问题**: create/update 分别校验了 `can_start` 与 `blockers` 类型，却允许 `can_start=true` 与非空 blockers 共存；legacy 矛盾记录仍投影为可启动，validator 也接受。顶层 `missions` 若不是 list 会被静默折叠为空 summary，隐藏 state corruption。
+- **What**: create/update 现在基于最终有效值联合检查 `can_start => blockers == []`，在 save 前 fail-closed；projection 保留 compact legacy blockers 并强制 `can_start=false`；validator 拒绝外部 startable/blocker 矛盾。非-list missions container 现在安全投影为 `count=-1/by_status={}/latest_id=null/items=[]`，不读取或泄漏原值，并通过明确 non-negative count validator error 让 ProjectView/status controlled-fail。
+- **TDD 证据**: 联合 create/update RED 为 3 failed，projection/container RED 为 2 failed，contract RED 为 2 failed；最小修复后分别为 3 passed、2 passed、19 passed。
+- **安全边界**: 不改变批准的 Mission 状态机、runner、provider/tmux、approval 或事件；非法 state write 零写，corrupt container 不生成 Mission command，`agentdeck status` 自校验失败时不打印半合法 JSON。
+- **验证**: Mission suite 124 项、ProjectView contract focused 38 项、三文件相关回归 668 项、全量 pytest 929 项通过；compileall 与 `git diff --check` 均通过。
+
 ### Enforce Mission state and ProjectView invariants after quality review
 
 - **类型**: fix + test + contract

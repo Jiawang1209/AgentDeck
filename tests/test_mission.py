@@ -316,6 +316,41 @@ def test_create_mission_rejects_incoherent_leader_backend_without_writes(tmp_pat
     assert store.load()["missions"] == []
 
 
+def test_create_mission_rejects_startable_state_with_blockers_without_writes(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    values = mission_values()
+    values["blockers"] = ["worker unavailable"]
+
+    with pytest.raises(ValueError, match="can_start requires empty blockers"):
+        store.create_mission(**values)
+
+    assert store.load()["missions"] == []
+
+
+@pytest.mark.parametrize("change_direction", ["add_blocker", "enable_start"])
+def test_update_mission_rejects_startable_blocker_conflicts_without_writes(
+    tmp_path, change_direction
+) -> None:
+    store = StateStore(tmp_path)
+    values = mission_values()
+    if change_direction == "enable_start":
+        values.update({"can_start": False, "blockers": ["worker unavailable"]})
+    mission = store.create_mission(**values)
+    state_before = store.state_path.read_bytes()
+    changes = (
+        {"blockers": ["worker unavailable"]}
+        if change_direction == "add_blocker"
+        else {"can_start": True}
+    )
+
+    with pytest.raises(ValueError, match="can_start requires empty blockers"):
+        store.update_mission(mission["mission_id"], **changes)
+
+    assert store.state_path.read_bytes() == state_before
+
+
 def test_mission_constants_and_provider_family_are_stable() -> None:
     assert MISSION_SCHEMA_VERSION == "mission/v1"
     assert MISSION_STATUSES == (
