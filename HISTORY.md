@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Reject late Worker readiness captures
+
+- **类型**: important fix + strict TDD + runtime safety
+- **问题**: deadline gate 已能阻止到期后开始下一轮 probe，但一次在 deadline 前开始、deadline 后才返回的慢 capture 仍会先 classify；迟到的 ready/setup/error TUI 内容可能被接受或泄漏，并可能继续读取后续 Worker pane。
+- **What**: 每次 `capture_output()` 成功返回后、classify 前，readiness 立即复用 `max(monotonic(), start + scheduled_sleep_total)` 检查 deadline。若已到期，不解析或投影 capture 内容：当前 Worker 与尚未 probe 的 Worker 先补为 generic starting evidence，再与此前所有 starting evidence 一起稳定转为 timeout；此前 deadline 前完成的 ready evidence 保留，结果顺序仍与 selected 一致，后续 pane 不再读取。
+- **TDD 证据**: 单 Worker capture side effect 把 fake clock 从 0 推到 2（timeout=1）先 RED，旧实现错误接受迟到 ready 为 `all_ready=true`；三 Worker 慢第二次 capture 先 RED，旧实现泄漏 trust/setup 分类并继续 capture 第三个 pane。最小 post-capture deadline gate 后新用例 2 项及 focused readiness 42 项、runtime/dispatch/workflow 相邻回归 300 项、全量 1106 项通过；compileall 与 diff 检查通过。
+- **安全边界**: 迟到 screen 无论 ready/setup/error 都不分类、不进入 reason；不 send/spawn/kill/create session、不调用 provider、不写 state，FakeBackend `sent` 保持空。
+
 ### Honor Worker readiness polling deadlines
 
 - **类型**: important fix + strict TDD + runtime safety

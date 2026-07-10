@@ -200,7 +200,7 @@ def wait_for_worker_readiness(
                 )
 
         current: list[WorkerReadiness] = []
-        for agent, pane_id in workers:
+        for worker_index, (agent, pane_id) in enumerate(workers):
             family = provider_family(agent.provider)
             try:
                 pane_exists = backend.pane_exists(runtime_config, pane_id)
@@ -226,9 +226,44 @@ def wait_for_worker_readiness(
                 continue
             try:
                 output = backend.capture_output(runtime_config, pane_id, lines=200)
-                evidence = classify_worker_readiness(agent.provider, output)
             except Exception:
                 evidence = WorkerReadinessEvidence("failed", "worker pane capture failed")
+            else:
+                captured_at = max(
+                    _validated_clock(monotonic),
+                    started_at + scheduled_sleep_total,
+                )
+                if captured_at >= deadline:
+                    current.append(
+                        WorkerReadiness(
+                            agent.agent_id,
+                            family,
+                            "starting",
+                            "worker capture completed after readiness deadline",
+                        )
+                    )
+                    current.extend(
+                        WorkerReadiness(
+                            remaining_agent.agent_id,
+                            provider_family(remaining_agent.provider),
+                            "starting",
+                            "worker was not probed before readiness deadline",
+                        )
+                        for remaining_agent, _remaining_pane_id in workers[
+                            worker_index + 1 :
+                        ]
+                    )
+                    return WorkerReadinessBatch(
+                        all_ready=False,
+                        results=_timeout_results(tuple(current)),
+                        timed_out=True,
+                    )
+                try:
+                    evidence = classify_worker_readiness(agent.provider, output)
+                except Exception:
+                    evidence = WorkerReadinessEvidence(
+                        "failed", "worker pane capture failed"
+                    )
             current.append(
                 WorkerReadiness(agent.agent_id, family, evidence.status, evidence.reason)
             )

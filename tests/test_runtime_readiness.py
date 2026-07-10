@@ -76,6 +76,7 @@ class FakeBackend:
         self.sent: list[tuple[str, str]] = []
         self.captured: list[str] = []
         self.checked: list[str] = []
+        self.capture_hook: Callable[[str], None] | None = None
 
     @staticmethod
     def _next(values: list[object], default: object) -> object:
@@ -97,6 +98,8 @@ class FakeBackend:
     ) -> str:
         assert lines == 200
         self.captured.append(pane_id)
+        if self.capture_hook is not None:
+            self.capture_hook(pane_id)
         value = self._next(self.outputs.setdefault(pane_id, [""]), "")
         if isinstance(value, Exception):
             raise value
@@ -154,7 +157,7 @@ def test_wait_for_selected_worker_polls_starting_until_ready(
         backend,
         ((codex_agent, "%1"),),
         poll_interval=0.25,
-        monotonic=iter((0.0, 0.1, 0.2)).__next__,
+        monotonic=iter((0.0, 0.1, 0.1, 0.2, 0.2)).__next__,
         sleeper=sleeps.append,
     )
 
@@ -239,7 +242,7 @@ def test_timeout_converts_only_starting_workers_and_preserves_order(
     backend = FakeBackend()
     backend.outputs["%1"] = [CODEX_READY_SCREEN]
     backend.outputs["%2"] = [""]
-    times = iter((0.0, 1.0))
+    times = iter((0.0, 0.2, 0.3, 1.0))
 
     result = _wait(
         runtime_config,
@@ -272,7 +275,7 @@ def test_multiple_workers_are_rechecked_in_stable_order_until_all_ready(
         runtime_config,
         backend,
         ((codex_agent, "%1"), (claude_agent, "%2")),
-        monotonic=iter((0.0, 0.1, 0.2)).__next__,
+        monotonic=iter((0.0, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2)).__next__,
     )
 
     assert result.all_ready is True
@@ -448,4 +451,63 @@ def test_real_monotonic_zero_poll_waits_until_short_deadline(
     assert result.timed_out is True
     assert 0.035 <= elapsed < 1.0
     assert 2 <= len(backend.captured) <= 8
+    assert backend.sent == []
+
+
+def test_capture_that_finishes_after_deadline_cannot_become_ready(
+    runtime_config: RuntimeConfig, codex_agent: AgentSpec
+) -> None:
+    backend = FakeBackend()
+    backend.outputs["%1"] = [CODEX_READY_SCREEN]
+    clock = {"now": 0.0}
+    backend.capture_hook = lambda _pane_id: clock.update(now=2.0)
+
+    result = _wait(
+        runtime_config,
+        backend,
+        ((codex_agent, "%1"),),
+        timeout_seconds=1,
+        poll_interval=0.1,
+        monotonic=lambda: clock["now"],
+    )
+
+    assert result.all_ready is False
+    assert result.timed_out is True
+    assert result.results[0].status == "timeout"
+    assert result.results[0].reason == "worker readiness timed out"
+    assert backend.captured == ["%1"]
+    assert backend.sent == []
+
+
+def test_late_capture_times_out_starting_current_and_unprobed_workers(
+    runtime_config: RuntimeConfig,
+    codex_agent: AgentSpec,
+    claude_agent: AgentSpec,
+) -> None:
+    third_agent = AgentSpec("coder", "coding", "codex", "codex")
+    backend = FakeBackend()
+    backend.outputs["%1"] = [CODEX_STARTING_MCP_SCREEN]
+    backend.outputs["%2"] = [CLAUDE_TRUST_SCREEN]
+    backend.outputs["%3"] = [CODEX_READY_SCREEN]
+    clock = {"now": 0.0}
+    backend.capture_hook = lambda pane_id: clock.update(now=2.0) if pane_id == "%2" else None
+
+    result = _wait(
+        runtime_config,
+        backend,
+        ((codex_agent, "%1"), (claude_agent, "%2"), (third_agent, "%3")),
+        timeout_seconds=1,
+        poll_interval=0.1,
+        monotonic=lambda: clock["now"],
+    )
+
+    assert result.all_ready is False
+    assert result.timed_out is True
+    assert [(item.agent_id, item.status) for item in result.results] == [
+        ("planner", "timeout"),
+        ("reviewer", "timeout"),
+        ("coder", "timeout"),
+    ]
+    assert all("trust" not in (item.reason or "").lower() for item in result.results)
+    assert backend.captured == ["%1", "%2"]
     assert backend.sent == []
