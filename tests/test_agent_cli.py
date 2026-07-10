@@ -4706,6 +4706,152 @@ def test_demo_golden_marks_release_done_after_release(tmp_path, monkeypatch, cap
     assert inspect_step["command"] == "agentdeck workbench"
 
 
+def test_golden_demo_rehearsal_drives_one_round_to_release(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_text = config_text.replace('provider = "deepseek"', 'provider = "fake"', 1)
+    config_text = config_text.replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
+    config_path.write_text(config_text, encoding="utf-8")
+    assert cli.main(
+        [
+            "agent",
+            "assign-role",
+            "--agent",
+            "reviewer",
+            "--role",
+            "code_reviewer",
+            "--role-prompt",
+            "Review the implementation evidence.",
+        ]
+    ) == 0
+    assert cli.main(
+        [
+            "agent",
+            "assign-role",
+            "--agent",
+            "coder",
+            "--role",
+            "round_reviewer",
+            "--role-prompt",
+            "Accept or reject the completed round.",
+        ]
+    ) == 0
+    capsys.readouterr()
+    bind_agent(root, "planner", "%42")
+    fake = FakeTmuxBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    assert cli.main(["demo", "golden"]) == 0
+    ready_to_plan = json.loads(capsys.readouterr().out)
+    assert ready_to_plan["current_status"] == "ready_to_plan"
+    assert ready_to_plan["next_command"] == "agentdeck leader plan --task <task>"
+
+    assert cli.main(["leader", "plan", "--task", "Rehearse one golden demo round"]) == 0
+    plan_id = json.loads(capsys.readouterr().out)["plan_id"]
+    assert cli.main(["demo", "golden"]) == 0
+    plan_ready = json.loads(capsys.readouterr().out)
+    assert plan_ready["current_status"] == "plan_ready"
+    assert plan_ready["next_command"] == (
+        f"agentdeck approval create-from-plan --plan-id {plan_id}"
+    )
+
+    assert cli.main(["approval", "create-from-plan", "--plan-id", plan_id]) == 0
+    approvals = json.loads(capsys.readouterr().out)["approvals"]
+    planner_approval = next(item for item in approvals if item["agent_id"] == "planner")
+    approval_id = planner_approval["approval_id"]
+    assert cli.main(["demo", "golden"]) == 0
+    waiting_for_approval = json.loads(capsys.readouterr().out)
+    assert waiting_for_approval["current_status"] == "waiting_for_approval"
+    assert waiting_for_approval["next_command"] == (
+        f"agentdeck approval approve --approval-id {approval_id}"
+    )
+    dispatch_step = next(
+        step for step in waiting_for_approval["steps"] if step["step_id"] == "dispatch"
+    )
+    assert dispatch_step["enabled"] is False
+    assert dispatch_step["blocker"] == "approval is not approved"
+
+    assert cli.main(["approval", "approve", "--approval-id", approval_id]) == 0
+    capsys.readouterr()
+    assert cli.main(["demo", "golden"]) == 0
+    ready_to_dispatch = json.loads(capsys.readouterr().out)
+    assert ready_to_dispatch["current_status"] == "ready_to_dispatch"
+    assert ready_to_dispatch["next_command"] == (
+        f"agentdeck approval dispatch --approval-id {approval_id}"
+    )
+
+    assert cli.main(["approval", "dispatch", "--approval-id", approval_id]) == 0
+    dispatch = json.loads(capsys.readouterr().out)
+    message_id = dispatch["message_id"]
+    assert fake.sent and fake.sent[0][0] == "%42"
+    assert cli.main(["demo", "golden"]) == 0
+    waiting_for_reply = json.loads(capsys.readouterr().out)
+    assert waiting_for_reply["current_status"] == "waiting_for_reply"
+    assert waiting_for_reply["next_command"] == (
+        f"agentdeck capture-reply --agent planner --message-id {message_id}"
+    )
+
+    fake.capture_output = lambda _config, _pane_id, lines=200: (
+        "status: completed\n"
+        "summary: golden demo implementation complete\n"
+        "full_output_path: docs/golden-demo-result.md"
+    )
+    assert cli.main(
+        ["capture-reply", "--agent", "planner", "--message-id", message_id]
+    ) == 0
+    captured_reply = json.loads(capsys.readouterr().out)
+    assert captured_reply["artifacts"]["items"][0]["path"] == "docs/golden-demo-result.md"
+    assert cli.main(["demo", "golden"]) == 0
+    waiting_for_reviews = json.loads(capsys.readouterr().out)
+    assert waiting_for_reviews["current_status"] == "ready_for_review_gate"
+    release_step = next(
+        step for step in waiting_for_reviews["steps"] if step["step_id"] == "release"
+    )
+    assert release_step["enabled"] is False
+
+    store = StateStore(root)
+    code_review = store.create_dispatch_records(
+        "leader", "reviewer", "Review golden demo evidence", "review", "%review"
+    )
+    store.record_reply(
+        "reviewer", code_review["message"]["message_id"], "code review: pass"
+    )
+    round_review = store.create_dispatch_records(
+        "leader", "coder", "Accept the golden demo round", "round review", "%round"
+    )
+    store.record_reply(
+        "coder", round_review["message"]["message_id"], "round review: accepted"
+    )
+
+    assert cli.main(["demo", "golden"]) == 0
+    ready_to_release = json.loads(capsys.readouterr().out)
+    release_step = next(
+        step for step in ready_to_release["steps"] if step["step_id"] == "release"
+    )
+    assert release_step["status"] == "ready"
+    assert release_step["command"] == "agentdeck release --confirm"
+    assert release_step["enabled"] is True
+
+    assert cli.main(["release", "--confirm"]) == 0
+    release = json.loads(capsys.readouterr().out)["release"]
+    assert release["status"] == "released"
+    assert cli.main(["demo", "golden"]) == 0
+    released = json.loads(capsys.readouterr().out)
+    assert released["current_status"] == "released"
+    assert released["next_command"] == "agentdeck workbench"
+    release_step = next(
+        step for step in released["steps"] if step["step_id"] == "release"
+    )
+    assert release_step["status"] == "done"
+    assert release_step["enabled"] is False
+    events = StateStore(root).all_events()
+    assert events[-1]["event_type"] == "round_released"
+    assert events[-1]["payload"]["release_id"] == release["release_id"]
+
+
 def test_contract_skills_discovers_schema_for_gui_clients(capsys) -> None:
     exit_code = cli.main(["contract", "skills"])
 

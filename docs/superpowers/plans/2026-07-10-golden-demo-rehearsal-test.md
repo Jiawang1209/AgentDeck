@@ -124,7 +124,7 @@ def test_golden_demo_rehearsal_drives_one_round_to_release(
         ["capture-reply", "--agent", "planner", "--message-id", message_id]
     ) == 0
     captured_reply = json.loads(capsys.readouterr().out)
-    assert captured_reply["artifacts"][0]["path"] == "docs/golden-demo-result.md"
+    assert captured_reply["artifacts"]["items"][0]["path"] == "docs/golden-demo-result.md"
     assert cli.main(["demo", "golden"]) == 0
     waiting_for_reviews = json.loads(capsys.readouterr().out)
     assert waiting_for_reviews["current_status"] == "ready_for_review_gate"
