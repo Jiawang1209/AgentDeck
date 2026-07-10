@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Run and resume confirmed natural-language Missions
+
+- **类型**: major feature + strict TDD + bounded runtime orchestration
+- **问题**: Mission 已能冻结自然语言预览、Worker 集合和串行 plan，但尚无一个明确确认后自动准备 Codex/Claude pane、等待 CLI readiness、执行完整 workflow，并在中断/失败后复用同一 run 恢复的产品路径。
+- **What**: 新增纯 ProjectView/state 投影的 `mission status`，以及显式 `mission run|resume --confirm`；runner 在任何 runtime mutation 前重验 schema/id、start gate、plan hash/步数/selected ids、Leader provenance、Worker role/provider/workspace/effective-model/startup provenance。确认后只 reuse/spawn frozen Workers，session 每次准备至多创建一次，全部 provider-aware ready 后才创建唯一 workflow，并复用现有 sequential engine 的 message/job/reply/correlated handoff；resume 复用同一 workflow/turns，completed/preparing/running 重复确认只返回状态。CLI KeyboardInterrupt 同步持久化 workflow/Mission interrupted。
+- **TDD 证据**: runner API 与 CLI route 缺失测试先 RED（collection ImportError；CLI argparse invalid choice）；最小 pipeline/routes 后 Mission focused 52 项通过，其中真实 correlated fake backend 完成 8 个交替 turn、8 条 message/reply；Mission/CLI/contracts/workflow/readiness 相邻回归 756 项通过，最终全量 1138 项通过，compileall、diff check 与 installed CLI 缺确认零输出 smoke 均通过。
+- **安全边界**: 缺少 `--confirm` 零写/零 runtime；plan/config drift 在 runtime 前停止且不可 resume；部分 spawn 保留已创建 pane/binding 但零 dispatch；readiness 未全绿零 workflow dispatch。Mission event/response 不保存 raw command、prompt、pane output、异常详情或 secret，login/trust 仍由人类处理。
+
 ### Ignore wrapped Worker readiness input
 
 - **类型**: important fix + strict TDD + runtime safety

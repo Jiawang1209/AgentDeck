@@ -393,6 +393,81 @@ def test_workflow_run_requires_confirm_without_writing_state(
     assert store.state_path.read_bytes() == before
 
 
+def test_mission_run_and_resume_require_confirm_without_writing_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.state_path.read_bytes() if store.state_path.exists() else None
+
+    assert cli.main(["mission", "run", "--mission-id", "mis_deadbeefcafe"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "mission run requires --confirm"
+    assert cli.main(["mission", "resume", "--mission-id", "mis_deadbeefcafe"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "mission resume requires --confirm"
+    assert (store.state_path.read_bytes() if store.state_path.exists() else None) == before
+
+
+def test_mission_status_rejects_unknown_id_without_json(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    assert cli.main(["mission", "status", "--mission-id", "mis_deadbeefcafe"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "unknown mission: mis_deadbeefcafe"
+
+
+def test_mission_cli_keyboard_interrupt_persists_mission_and_workflow(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    from agentdeck.state import leader_backend_identity
+    mission = store.create_mission(
+        user_message="two agents",
+        can_start=True,
+        blockers=[],
+        provider="deepseek",
+        model="deepseek-chat",
+        leader_backend=leader_backend_identity("deepseek", "deepseek-chat"),
+        plan_id="pln_deadbeefcafe",
+        plan_hash="sha256:" + "a" * 64,
+        selected_agents=[
+            {"agent_id": "planner", "provider": "codex", "role": "planning", "workspace_mode": "shared", "runtime_status": "configured", "effective_model": None, "model_source": "provider_default"},
+            {"agent_id": "reviewer", "provider": "claude", "role": "review", "workspace_mode": "shared", "runtime_status": "configured", "effective_model": None, "model_source": "provider_default"},
+        ],
+        startup_actions=[
+            {"agent_id": "planner", "action": "spawn", "runtime_status": "configured", "effective_model": None, "model_source": "provider_default"},
+            {"agent_id": "reviewer", "action": "spawn", "runtime_status": "configured", "effective_model": None, "model_source": "provider_default"},
+        ],
+        step_count=2,
+        timeout_seconds=30,
+    )
+
+    def interrupting_run(**kwargs):
+        from agentdeck.models import utc_now
+        store.update_mission(mission["mission_id"], status="preparing", confirmed_at=utc_now(), can_start=False)
+        run = store.create_workflow_run(
+            plan_id=mission["plan_id"],
+            plan_hash=mission["plan_hash"],
+            timeout_seconds=30,
+            authorized_steps=[{"step": 1}, {"step": 2}],
+        )
+        store.update_mission(mission["mission_id"], status="running", workflow_run_id=run["run_id"])
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "run_mission", interrupting_run)
+
+    assert cli.main(["mission", "run", "--mission-id", mission["mission_id"], "--confirm"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "interrupted"
+    assert store.mission_by_id(mission["mission_id"])["status"] == "interrupted"
+    assert store.workflow_run_by_id(payload["workflow_run_id"])["status"] == "interrupted"
+
+
 def test_workflow_run_completes_two_step_chain_with_one_confirmation(
     tmp_path, monkeypatch, capsys
 ) -> None:

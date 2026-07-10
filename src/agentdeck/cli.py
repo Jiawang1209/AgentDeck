@@ -97,7 +97,15 @@ from .contracts import (
 from .autonomy import run_loop_gate, select_auto_approvals
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, utc_now
 from .mission import mission_intent
-from .mission_orchestration import MissionPreviewError, create_mission_preview
+from .mission_orchestration import (
+    MissionPreviewError,
+    MissionRunError,
+    create_mission_preview,
+    interrupt_mission,
+    mission_status_payload,
+    resume_mission,
+    run_mission,
+)
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .dashboard import render_workbench_dashboard
@@ -14374,6 +14382,70 @@ def workflow_resume_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def mission_status_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        mission = store.mission_by_id(args.mission_id)
+        payload = mission_status_payload(config, store, mission)
+    except KeyError:
+        print(f"unknown mission: {args.mission_id}", file=sys.stderr)
+        return 1
+    except (MissionRunError, ValueError):
+        print("mission status invalid", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int:
+    action = "resume" if resume else "run"
+    if not args.confirm:
+        print(f"mission {action} requires --confirm", file=sys.stderr)
+        return 1
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    operation = resume_mission if resume else run_mission
+    try:
+        payload = operation(
+            config=config,
+            store=store,
+            backend=TmuxBackend(),
+            mission_id=args.mission_id,
+        )
+    except KeyboardInterrupt:
+        try:
+            mission = interrupt_mission(store, args.mission_id)
+            payload = mission_status_payload(
+                config,
+                store,
+                mission,
+                mode="mission_resume" if resume else "mission_run",
+                confirmed=True,
+            )
+        except (KeyError, MissionRunError, ValueError):
+            print("mission interrupted", file=sys.stderr)
+            return 1
+    except KeyError:
+        print(f"unknown mission: {args.mission_id}", file=sys.stderr)
+        return 1
+    except (MissionRunError, ValueError):
+        print(f"mission {action} failed", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def mission_run_command(args: argparse.Namespace) -> int:
+    return _mission_execution_command(args, resume=False)
+
+
+def mission_resume_command(args: argparse.Namespace) -> int:
+    return _mission_execution_command(args, resume=True)
+
+
 def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
     """Round-robin one wave over all active plans (shared budget, skip-on-contention)."""
     policy = config.autonomous
@@ -14649,6 +14721,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--confirm", action="store_true", help="Confirm resuming the frozen workflow"
     )
     workflow_resume.set_defaults(func=workflow_resume_command)
+
+    mission = subparsers.add_parser(
+        "mission", help="Inspect, run, and resume frozen natural-language missions"
+    )
+    mission_subparsers = mission.add_subparsers(dest="mission_command")
+    mission_status = mission_subparsers.add_parser("status", help="Show persisted mission status")
+    mission_status.add_argument("--mission-id", required=True, help="Mission id")
+    mission_status.set_defaults(func=mission_status_command)
+    mission_run = mission_subparsers.add_parser("run", help="Run a confirmed frozen mission")
+    mission_run.add_argument("--mission-id", required=True, help="Mission id")
+    mission_run.add_argument("--confirm", action="store_true", help="Confirm mission execution")
+    mission_run.set_defaults(func=mission_run_command)
+    mission_resume = mission_subparsers.add_parser("resume", help="Resume a stopped frozen mission")
+    mission_resume.add_argument("--mission-id", required=True, help="Mission id")
+    mission_resume.add_argument("--confirm", action="store_true", help="Confirm mission resume")
+    mission_resume.set_defaults(func=mission_resume_command)
 
     release = subparsers.add_parser(
         "release", help="Explicitly record a round release once the review gate is ready"

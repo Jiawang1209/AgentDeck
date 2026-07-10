@@ -6,7 +6,11 @@ import shlex
 import shutil
 from typing import Any
 
-from .contracts import validate_mission_preview_contract
+from .contracts import (
+    validate_mission_preview_contract,
+    validate_mission_run_contract,
+    validate_mission_status_contract,
+)
 from .mission import (
     MISSION_SCHEMA_VERSION,
     compact_mission_worker_entries,
@@ -14,20 +18,34 @@ from .mission import (
     mission_binding_reusable,
     mission_commands,
     mission_intent,
+    is_canonical_mission_id,
     select_mission_agents,
     selected_agent_summaries,
     startup_action_summaries,
     validate_mission_plan,
 )
-from .models import EventRecord, ProjectConfig
+from .models import (
+    AgentRuntimeBinding,
+    AgentSpec,
+    EventRecord,
+    ProjectConfig,
+    utc_now,
+)
 from .orchestration.leader import LeaderOrchestrator
 from .providers import LeaderProvider
 from .providers.base import validate_provider_plan_schema
 from .state import StateStore
-from .workflow import workflow_plan_hash
+from .state import leader_backend_identity
+from .runtime.base import RuntimeBackend
+from .runtime.readiness import WorkerReadinessBatch, wait_for_worker_readiness
+from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
 
 
 class MissionPreviewError(ValueError):
+    pass
+
+
+class MissionRunError(ValueError):
     pass
 
 
@@ -331,3 +349,387 @@ def create_mission_preview(
         )
     )
     return _mission_preview_payload(mission, plan_record)
+
+
+def _safe_attach_command(config: ProjectConfig) -> str:
+    session = config.runtime.session_name
+    if (
+        not isinstance(session, str)
+        or re.fullmatch(r"[A-Za-z0-9_.:-]+", session) is None
+    ):
+        raise MissionRunError("mission runtime configuration invalid")
+    return f"tmux attach -t {session}"
+
+
+def mission_status_payload(
+    config: ProjectConfig,
+    store: StateStore,
+    mission: dict[str, Any],
+    *,
+    mode: str = "mission_status",
+    confirmed: bool | None = None,
+) -> dict[str, object]:
+    del store  # status is a pure projection of the authoritative record
+    mission_id = str(mission.get("mission_id") or "")
+    commands = mission_commands(mission_id)
+    blockers = list(mission.get("blockers") or [])
+    can_resume = mission.get("status") in {"stopped", "interrupted"} and not blockers
+    resume_blocker = (
+        None
+        if can_resume
+        else blockers[0]
+        if blockers
+        else f"mission status is {mission.get('status')}"
+    )
+    attach = _safe_attach_command(config)
+    payload: dict[str, object] = {
+        "schema_version": MISSION_SCHEMA_VERSION,
+        "ok": True,
+        "mode": mode,
+        "mission_id": mission_id,
+        "status": mission.get("status"),
+        "user_message": mission.get("user_message"),
+        "plan_id": mission.get("plan_id"),
+        "plan_hash": mission.get("plan_hash"),
+        "workflow_run_id": mission.get("workflow_run_id"),
+        "current_step": mission.get("current_step", 0),
+        "step_count": mission.get("step_count"),
+        "timeout_seconds": mission.get("timeout_seconds"),
+        "selected_agents": mission.get("selected_agents"),
+        "blockers": blockers,
+        "stop_reason": mission.get("stop_reason"),
+        "created_at": mission.get("created_at"),
+        "updated_at": mission.get("updated_at"),
+        "confirmed_at": mission.get("confirmed_at"),
+        "completed_at": mission.get("completed_at"),
+        "can_resume": can_resume,
+        "status_command": commands["status_command"],
+        "resume_command": commands["resume_command"],
+        "attach_command": attach,
+        "workbench_command": "agentdeck workbench",
+        "controls": [
+            _mission_control(
+                "execute",
+                "Resume mission",
+                commands["resume_command"],
+                "delegated",
+                enabled=can_resume,
+                blocker=resume_blocker,
+            ),
+            _mission_control(
+                "inspect", "Inspect mission", commands["status_command"], "inspect"
+            ),
+            _mission_control("inspect", "Attach terminal", attach, "inspect"),
+            _mission_control("inspect", "Open workbench", "agentdeck workbench", "inspect"),
+        ],
+        "safety": "inspect" if mode == "mission_status" else "delegated",
+        "requires_explicit_user": True,
+    }
+    if mode != "mission_status":
+        payload["confirmed"] = True if confirmed is None else confirmed
+        validation = validate_mission_run_contract(payload)
+    else:
+        validation = validate_mission_status_contract(payload)
+    if not validation["ok"]:
+        raise MissionRunError("mission response contract validation failed")
+    return payload
+
+
+def _audit(store: StateStore, event_type: str, **payload: object) -> None:
+    store.append_event(EventRecord.create(event_type, dict(payload)))
+
+
+def _stop_mission(
+    store: StateStore,
+    mission: dict[str, Any],
+    *,
+    reason: str,
+    blockers: list[str] | None = None,
+) -> dict[str, Any]:
+    mission_id = str(mission["mission_id"])
+    changes: dict[str, Any] = {
+        "status": "stopped",
+        "stop_reason": reason,
+        "blockers": list(blockers or []),
+        "can_start": False,
+    }
+    if mission.get("confirmed_at") is None:
+        changes["confirmed_at"] = utc_now()
+    stopped = store.update_mission(mission_id, **changes)
+    _audit(store, "mission_stopped", mission_id=mission_id, reason=reason)
+    return stopped
+
+
+def _frozen_preflight(
+    config: ProjectConfig, store: StateStore, mission: dict[str, Any]
+) -> tuple[dict[str, Any], tuple[AgentSpec, ...]]:
+    mission_id = mission.get("mission_id")
+    if (
+        not is_canonical_mission_id(mission_id)
+        or mission.get("schema_version") != MISSION_SCHEMA_VERSION
+    ):
+        raise MissionRunError("mission identity invalid")
+    if mission.get("status") == "pending_confirmation" and (
+        mission.get("can_start") is not True or mission.get("blockers")
+    ):
+        raise MissionRunError("mission is blocked")
+    try:
+        plan = store.plan_by_id(str(mission.get("plan_id") or ""))
+    except KeyError:
+        raise MissionRunError("plan_drift") from None
+    if workflow_plan_hash(plan) != mission.get("plan_hash"):
+        raise MissionRunError("plan_drift")
+    selected = mission.get("selected_agents")
+    if not isinstance(selected, list) or len(selected) < 2:
+        raise MissionRunError("mission_config_drift")
+    selected_ids = [item.get("agent_id") for item in selected if isinstance(item, dict)]
+    if len(selected_ids) != len(selected) or len(set(selected_ids)) != len(selected_ids):
+        raise MissionRunError("mission_config_drift")
+    config_by_id = {agent.agent_id: agent for agent in config.agents}
+    if len(config_by_id) != len(config.agents):
+        raise MissionRunError("mission_config_drift")
+    agents: list[AgentSpec] = []
+    frozen_effective: list[tuple[object, object]] = []
+    for row in selected:
+        agent = config_by_id.get(str(row["agent_id"]))
+        if agent is None or any(
+            row.get(field) != getattr(agent, field)
+            for field in ("provider", "role", "workspace_mode")
+        ):
+            raise MissionRunError("mission_config_drift")
+        # Recreate the preview-time launch derivation, independent of current runtime state.
+        frozen_binding = None
+        if row.get("runtime_status") == "running":
+            frozen_binding = {"status": "running", "pane_id": "%frozen"}
+        effective = effective_mission_agent_for_binding(agent, config.leader, frozen_binding)
+        if (
+            row.get("effective_model") != effective.model
+            or row.get("model_source") != effective.model_source
+        ):
+            raise MissionRunError("mission_config_drift")
+        agents.append(effective.agent)
+        frozen_effective.append((effective.model, effective.model_source))
+    startup = mission.get("startup_actions")
+    if not isinstance(startup, list) or len(startup) != len(selected):
+        raise MissionRunError("mission_config_drift")
+    for index, row in enumerate(startup):
+        if not isinstance(row, dict) or row.get("agent_id") != selected_ids[index]:
+            raise MissionRunError("mission_config_drift")
+        expected_action = (
+            "reuse"
+            if selected[index].get("runtime_status") == "running"
+            else "spawn"
+        )
+        if (
+            row.get("action") != expected_action
+            or row.get("runtime_status") != selected[index].get("runtime_status")
+            or (row.get("effective_model"), row.get("model_source")) != frozen_effective[index]
+        ):
+            raise MissionRunError("mission_config_drift")
+    if (
+        mission.get("provider") != config.leader.provider.strip().lower()
+        or mission.get("model") != config.leader.model
+        or mission.get("leader_backend")
+        != leader_backend_identity(config.leader.provider, config.leader.model)
+        or plan.get("provider") != mission.get("provider")
+        or plan.get("model") != mission.get("model")
+        or plan.get("leader_backend") != mission.get("leader_backend")
+    ):
+        raise MissionRunError("mission_config_drift")
+    validate_mission_plan(plan.get("plan"), selected_ids, mission.get("timeout_seconds"))
+    steps = authorized_steps(plan)
+    if len(steps) != mission.get("step_count") or any(
+        step["agent_id"] not in selected_ids for step in steps
+    ):
+        raise MissionRunError("plan_drift")
+    return plan, tuple(agents)
+
+
+def _prepare_selected_workers(
+    *,
+    config: ProjectConfig,
+    store: StateStore,
+    backend: RuntimeBackend,
+    mission: dict[str, Any],
+    agents: tuple[AgentSpec, ...],
+) -> tuple[tuple[AgentSpec, str], ...]:
+    prepared: list[tuple[AgentSpec, str]] = []
+    session_created = False
+    for agent in agents:
+        binding = store.agent_binding(agent.agent_id)
+        reusable = False
+        try:
+            reusable = mission_binding_reusable(binding) and backend.pane_exists(
+                config.runtime, str(binding.get("pane_id"))
+            )
+        except Exception:
+            reusable = False
+        _audit(
+            store,
+            "mission_worker_preparing",
+            mission_id=mission["mission_id"],
+            agent_id=agent.agent_id,
+            action="reuse" if reusable else "spawn",
+        )
+        if reusable:
+            prepared.append((agent, str(binding["pane_id"])))
+            continue
+        try:
+            if not session_created:
+                backend.create_session(config.runtime)
+                session_created = True
+            pane_id = backend.spawn_agent(config.runtime, agent, config.root)
+            if not isinstance(pane_id, str) or not pane_id:
+                raise RuntimeError("invalid pane")
+            store.bind_agent(
+                AgentRuntimeBinding(
+                    agent.agent_id,
+                    pane_id,
+                    config.runtime.session_name,
+                    config.root,
+                    "running",
+                )
+            )
+            prepared.append((agent, pane_id))
+        except Exception:
+            _audit(
+                store,
+                "mission_worker_blocked",
+                mission_id=mission["mission_id"],
+                agent_id=agent.agent_id,
+                reason="worker_start_failed",
+            )
+            raise MissionRunError("worker_start_failed") from None
+    return tuple(prepared)
+
+
+def _readiness_reason(batch: WorkerReadinessBatch) -> str:
+    statuses = {item.status for item in batch.results}
+    if "setup_required" in statuses:
+        return "worker_setup_required"
+    if "pane_lost" in statuses:
+        return "worker_pane_lost"
+    if "timeout" in statuses or batch.timed_out:
+        return "worker_readiness_timeout"
+    return "worker_readiness_failed"
+
+
+def _execute_mission(
+    *, config: ProjectConfig, store: StateStore, backend: RuntimeBackend,
+    mission_id: str, readiness_timeout_seconds: int, resuming: bool,
+) -> dict[str, object]:
+    mission = store.mission_by_id(mission_id)
+    if mission.get("status") in {"preparing", "running", "completed"}:
+        return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
+    if resuming and mission.get("status") not in {"stopped", "interrupted"}:
+        raise MissionRunError("mission is not resumable")
+    if not resuming and mission.get("status") != "pending_confirmation":
+        raise MissionRunError("mission is not pending confirmation")
+    if resuming and mission.get("blockers"):
+        raise MissionRunError("mission is blocked")
+    try:
+        plan, selected_agents = _frozen_preflight(config, store, mission)
+    except Exception as exc:
+        reason = str(exc) if isinstance(exc, MissionRunError) else "mission_config_drift"
+        if reason in {"plan_drift", "mission_config_drift"}:
+            mission = _stop_mission(store, mission, reason=reason, blockers=[reason.replace("_", " ")])
+            return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
+        raise MissionRunError("mission validation failed") from None
+    now = mission.get("confirmed_at") or utc_now()
+    mission = store.update_mission(mission_id, status="preparing", stop_reason=None, blockers=[], can_start=False, confirmed_at=now)
+    _audit(store, "mission_resumed" if resuming else "mission_confirmed", mission_id=mission_id, plan_id=mission["plan_id"])
+    try:
+        prepared = _prepare_selected_workers(config=config, store=store, backend=backend, mission=mission, agents=selected_agents)
+    except MissionRunError:
+        mission = _stop_mission(store, store.mission_by_id(mission_id), reason="worker_start_failed")
+        return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
+    try:
+        batch = wait_for_worker_readiness(
+            runtime_config=config.runtime, backend=backend, selected=prepared,
+            timeout_seconds=readiness_timeout_seconds, poll_interval=0.25,
+        )
+    except Exception:
+        mission = _stop_mission(store, store.mission_by_id(mission_id), reason="worker_readiness_failed")
+        return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
+    expected_ready_ids = [agent.agent_id for agent, _pane_id in prepared]
+    if [item.agent_id for item in batch.results] != expected_ready_ids:
+        mission = _stop_mission(store, store.mission_by_id(mission_id), reason="worker_readiness_failed")
+        return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
+    if not batch.all_ready:
+        reason = _readiness_reason(batch)
+        for item in batch.results:
+            if item.status != "ready":
+                _audit(store, "mission_worker_blocked", mission_id=mission_id, agent_id=item.agent_id, reason=reason)
+        mission = _stop_mission(store, store.mission_by_id(mission_id), reason=reason)
+        return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
+    for item in batch.results:
+        _audit(store, "mission_worker_ready", mission_id=mission_id, agent_id=item.agent_id, status="ready")
+    run_id = mission.get("workflow_run_id")
+    if run_id:
+        workflow = store.workflow_run_by_id(str(run_id))
+        if workflow_plan_hash(plan) != workflow.get("plan_hash"):
+            mission = _stop_mission(store, mission, reason="plan_drift", blockers=["plan drift"])
+            return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
+        store.update_workflow_run(str(run_id), status="running", stop_reason=None)
+        _audit(
+            store,
+            "workflow_resumed",
+            run_id=run_id,
+            plan_id=mission["plan_id"],
+            current_step=workflow.get("current_step"),
+        )
+    else:
+        workflow = store.create_workflow_run(
+            plan_id=str(mission["plan_id"]), plan_hash=str(mission["plan_hash"]),
+            timeout_seconds=int(mission["timeout_seconds"]), authorized_steps=authorized_steps(plan),
+        )
+        run_id = workflow["run_id"]
+        mission = store.update_mission(mission_id, workflow_run_id=run_id)
+        _audit(
+            store,
+            "workflow_started",
+            run_id=run_id,
+            plan_id=mission["plan_id"],
+            plan_hash=mission["plan_hash"],
+            step_count=mission["step_count"],
+            timeout_seconds=mission["timeout_seconds"],
+        )
+    mission = store.update_mission(mission_id, status="running")
+    _audit(store, "mission_workflow_started", mission_id=mission_id, workflow_run_id=run_id, plan_id=mission["plan_id"])
+    selected_config = replace(config, agents=selected_agents)
+    try:
+        result = run_sequential_workflow(config=selected_config, store=store, backend=backend, run_id=str(run_id))
+    except KeyboardInterrupt:
+        raise
+    except Exception:
+        result = store.update_workflow_run(str(run_id), status="stopped", stop_reason="workflow_failed")
+    current_step = min(int(result.get("current_step") or 0), int(mission["step_count"]))
+    if result.get("status") == "completed":
+        mission = store.update_mission(mission_id, status="completed", current_step=int(mission["step_count"]), stop_reason=None)
+        _audit(store, "mission_completed", mission_id=mission_id, workflow_run_id=run_id)
+    elif result.get("status") == "interrupted":
+        mission = store.update_mission(mission_id, status="interrupted", current_step=current_step, stop_reason=str(result.get("stop_reason") or "interrupted"))
+        _audit(store, "mission_stopped", mission_id=mission_id, reason="interrupted")
+    else:
+        mission = _stop_mission(store, mission, reason=str(result.get("stop_reason") or "workflow_failed"))
+        if current_step > int(mission.get("current_step") or 0):
+            mission = store.update_mission(mission_id, current_step=current_step)
+    return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
+
+
+def run_mission(*, config: ProjectConfig, store: StateStore, backend: RuntimeBackend, mission_id: str, readiness_timeout_seconds: int = 60) -> dict[str, object]:
+    return _execute_mission(config=config, store=store, backend=backend, mission_id=mission_id, readiness_timeout_seconds=readiness_timeout_seconds, resuming=False)
+
+
+def resume_mission(*, config: ProjectConfig, store: StateStore, backend: RuntimeBackend, mission_id: str, readiness_timeout_seconds: int = 60) -> dict[str, object]:
+    return _execute_mission(config=config, store=store, backend=backend, mission_id=mission_id, readiness_timeout_seconds=readiness_timeout_seconds, resuming=True)
+
+
+def interrupt_mission(store: StateStore, mission_id: str) -> dict[str, Any]:
+    mission = store.mission_by_id(mission_id)
+    run_id = mission.get("workflow_run_id")
+    if run_id:
+        store.update_workflow_run(str(run_id), status="interrupted", stop_reason="interrupted")
+    mission = store.update_mission(mission_id, status="interrupted", stop_reason="interrupted")
+    _audit(store, "mission_stopped", mission_id=mission_id, reason="interrupted")
+    return mission

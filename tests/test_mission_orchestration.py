@@ -9,7 +9,13 @@ import pytest
 
 from agentdeck.config import load_config, write_default_config
 from agentdeck.contracts import validate_mission_preview_contract
-from agentdeck.mission_orchestration import create_mission_preview
+from agentdeck.mission_orchestration import (
+    create_mission_preview,
+    mission_status_payload,
+    resume_mission,
+    run_mission,
+)
+from agentdeck.runtime.readiness import WorkerReadiness, WorkerReadinessBatch
 from agentdeck.providers import LeaderPlanRequest
 from agentdeck.state import StateStore
 
@@ -75,6 +81,222 @@ def project(tmp_path: Path):
     text = text.replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
     config_path.write_text(text, encoding="utf-8")
     return root, load_config(root), StateStore(root), config_path
+
+
+class MissionBackend:
+    def __init__(self, *, fail_spawn_for: str | None = None) -> None:
+        self.fail_spawn_for = fail_spawn_for
+        self.created = 0
+        self.spawned: list[str] = []
+        self.panes: dict[str, str] = {}
+
+    def create_session(self, config) -> None:
+        self.created += 1
+
+    def spawn_agent(self, config, agent, cwd: str) -> str:
+        self.spawned.append(agent.agent_id)
+        if agent.agent_id == self.fail_spawn_for:
+            raise RuntimeError("SECRET spawn detail")
+        pane = f"%{len(self.panes) + 1}"
+        self.panes[agent.agent_id] = pane
+        return pane
+
+    def pane_exists(self, config, pane_id: str) -> bool:
+        return pane_id in self.panes.values()
+
+
+class CorrelatedMissionBackend(MissionBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent: list[tuple[str, str]] = []
+
+    def send_input(self, config, pane_id: str, text: str) -> None:
+        self.sent.append((pane_id, text))
+
+    def capture_output(self, config, pane_id: str, lines: int = 200) -> str:
+        prompts = [text for target, text in self.sent if target == pane_id]
+        if not prompts:
+            agent_id = next(agent for agent, pane in self.panes.items() if pane == pane_id)
+            if agent_id == "planner":
+                return "OpenAI Codex\nmodel: fake\n› Ask Codex anything"
+            return "Claude Code\n❯ Try a task\n100% context left"
+        token = next(
+            line.rsplit(":", 1)[1].strip()
+            for line in prompts[-1].splitlines()
+            if line.startswith("Complete only this task. Use this handoff token exactly:")
+        )
+        return (
+            f"handoff_token: {token}\n"
+            "status: completed\n"
+            f"summary: completed {pane_id}\n"
+            "verification: correlated fake\n"
+            "risks: none\n"
+            "next_steps: continue"
+        )
+
+
+def seeded_mission(tmp_path: Path, monkeypatch):
+    root, config, store, _ = project(tmp_path)
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+    preview = create_mission_preview(
+        config=config,
+        store=store,
+        provider=RecordingProvider(),
+        user_message=MESSAGE,
+        timeout_seconds=180,
+    )
+    return root, config, store, preview
+
+
+def ready_batch(*agent_ids: str) -> WorkerReadinessBatch:
+    return WorkerReadinessBatch(
+        True,
+        tuple(WorkerReadiness(agent_id, "codex", "ready", None) for agent_id in agent_ids),
+    )
+
+
+def test_run_mission_spawns_only_frozen_workers_and_completes(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend()
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.wait_for_worker_readiness",
+        lambda **kwargs: ready_batch("planner", "reviewer"),
+    )
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.run_sequential_workflow",
+        lambda **kwargs: store.update_workflow_run(
+            kwargs["run_id"], status="completed", current_step=8, turns=[]
+        ),
+    )
+
+    result = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+
+    assert result["status"] == "completed"
+    assert backend.spawned == ["planner", "reviewer"]
+    assert "coder" not in backend.spawned
+    assert len(store.load()["workflow_runs"]) == 1
+    assert result["workflow_run_id"].startswith("wfr_")
+
+
+def test_plan_drift_stops_before_runtime_and_is_not_resumable(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    state = store.load()
+    state["plans"][0]["plan"]["steps"][0]["task"] = "drifted"
+    store.save(state)
+    backend = MissionBackend()
+
+    result = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+
+    assert result["status"] == "stopped"
+    assert result["stop_reason"] == "plan_drift"
+    assert result["can_resume"] is False
+    assert backend.created == 0
+    assert backend.spawned == []
+    assert store.load().get("workflow_runs", []) == []
+
+
+def test_partial_spawn_failure_keeps_first_binding_and_dispatches_zero(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend(fail_spawn_for="reviewer")
+
+    result = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+
+    assert result["stop_reason"] == "worker_start_failed"
+    assert store.agent_binding("planner")["pane_id"] == "%1"
+    assert store.load().get("workflow_runs", []) == []
+    assert "SECRET" not in repr(result)
+    assert "SECRET" not in repr(store.all_events())
+
+
+def test_setup_required_stops_before_workflow_dispatch(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend()
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.wait_for_worker_readiness",
+        lambda **kwargs: WorkerReadinessBatch(
+            False,
+            (
+                WorkerReadiness("planner", "codex", "ready", None),
+                WorkerReadiness("reviewer", "claude", "setup_required", "SECRET login screen"),
+            ),
+        ),
+    )
+
+    result = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+
+    assert result["stop_reason"] == "worker_setup_required"
+    assert result["can_resume"] is True
+    assert store.load().get("workflow_runs", []) == []
+    assert "SECRET" not in repr(result)
+    assert "SECRET" not in repr(store.all_events())
+
+
+def test_resume_reuses_existing_workflow_and_duplicate_completion_is_idempotent(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend()
+    for agent_id, pane_id in (("planner", "%1"), ("reviewer", "%2")):
+        backend.panes[agent_id] = pane_id
+        from agentdeck.models import AgentRuntimeBinding
+        store.bind_agent(AgentRuntimeBinding(agent_id, pane_id, config.runtime.session_name, config.root, "running"))
+    run = store.create_workflow_run(
+        plan_id=preview["plan_id"],
+        plan_hash=preview["plan_hash"],
+        timeout_seconds=180,
+        authorized_steps=__import__("agentdeck.workflow", fromlist=["authorized_steps"]).authorized_steps(store.plan_by_id(preview["plan_id"])),
+    )
+    store.update_workflow_run(run["run_id"], status="interrupted", stop_reason="interrupted")
+    from agentdeck.models import utc_now
+    store.update_mission(preview["mission_id"], status="preparing", confirmed_at=utc_now())
+    store.update_mission(preview["mission_id"], status="running", workflow_run_id=run["run_id"])
+    store.update_mission(preview["mission_id"], status="interrupted", stop_reason="interrupted")
+    monkeypatch.setattr("agentdeck.mission_orchestration.wait_for_worker_readiness", lambda **kwargs: ready_batch("planner", "reviewer"))
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.run_sequential_workflow",
+        lambda **kwargs: store.update_workflow_run(kwargs["run_id"], status="completed", current_step=8, turns=[]),
+    )
+
+    result = resume_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+    again = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+
+    assert result["workflow_run_id"] == run["run_id"]
+    assert again["status"] == "completed"
+    assert len(store.load()["workflow_runs"]) == 1
+    assert backend.spawned == []
+
+
+def test_mission_status_payload_is_contract_valid_and_read_only(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    before = store.state_path.read_bytes()
+
+    payload = mission_status_payload(config, store, store.mission_by_id(preview["mission_id"]))
+
+    from agentdeck.contracts import validate_mission_status_contract
+    assert validate_mission_status_contract(payload) == {"ok": True, "errors": []}
+    assert store.state_path.read_bytes() == before
+
+
+def test_run_mission_executes_real_eight_turn_correlated_workflow(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = CorrelatedMissionBackend()
+
+    result = run_mission(
+        config=config,
+        store=store,
+        backend=backend,
+        mission_id=preview["mission_id"],
+        readiness_timeout_seconds=2,
+    )
+
+    workflow = store.workflow_run_by_id(result["workflow_run_id"])
+    assert result["status"] == "completed"
+    assert len(workflow["turns"]) == 8
+    assert len(backend.sent) == 8
+    assert [turn["agent_id"] for turn in workflow["turns"]] == [
+        "planner", "reviewer", "planner", "reviewer",
+        "planner", "reviewer", "planner", "reviewer",
+    ]
+    assert len(store.load()["messages"]) == 8
+    assert len(store.load()["replies"]) == 8
 
 
 def test_create_preview_selects_workers_freezes_serial_plan_and_never_touches_runtime(

@@ -2,7 +2,7 @@
 
 The Mission contract describes the GUI-ready, audit-friendly boundary for turning one natural-language multi-agent request into a frozen serial plan, one explicit confirmation, and a resumable status projection.
 
-The preview path is available through Leader Chat. Mission run/status/resume execution remains a later slice; preview does not inspect runtime/tmux, send input, or change approval state.
+The preview path is available through Leader Chat. Explicit Mission commands now inspect, run, and resume the same frozen record; preview itself still does not inspect runtime/tmux, send input, or change approval state.
 
 ## Discovery
 
@@ -19,6 +19,7 @@ Discovery is read-only. The `--example` response includes `example_preview`, `ex
 ```bash
 agentdeck leader chat --message "让 Codex 和 Claude 一人一句接龙，共8轮"
 agentdeck leader chat --message "批准执行 <id>"
+agentdeck mission run --mission-id <id> --confirm
 agentdeck mission status --mission-id <id>
 agentdeck mission resume --mission-id <id> --confirm
 ```
@@ -106,6 +107,16 @@ For `stopped`/`interrupted`, `can_resume` is true only when blockers are empty. 
 `MISSION_RUN_RESPONSE_FIELDS` is the exact status field set plus `confirmed`. A run response uses `mode=mission_run` (or `mission_resume` for resume), `safety=delegated`, `requires_explicit_user=true`, and `confirmed=true`. It must also remain a valid status projection after changing only mode/safety and removing `confirmed`.
 
 Run/resume responses cannot report `pending_confirmation`: confirmation must be the literal JSON boolean `true`, and `confirmed_at` must be present through the lifecycle rules above.
+
+## Confirmed runtime pipeline
+
+`mission run --confirm` revalidates the canonical Mission id/schema, start gate, saved plan hash, exact selected ids and step count, Leader provider/model/backend, configured Worker provider/role/workspace, frozen effective model source, and startup rows before any runtime mutation. Plan or configuration drift is persisted as a non-resumable stopped Mission and creates no pane or workflow. A blocked preview is rejected without pretending that it ran.
+
+Only frozen selected Workers may be reused or spawned. Reuse requires a running binding whose pane still exists; session creation happens at most once per preparation attempt, and a successful earlier pane/binding remains visible after a later spawn failure. No workflow is created or dispatched until provider-aware readiness reports every selected Worker ready. Setup/login/trust, pane loss, failure/model evidence, and timeout map to stable Mission stop reasons without embedding captured screen content.
+
+After readiness, AgentDeck creates exactly one normal sequential `workflow_runs[]` record, uses the selected-only config view, and delegates all eight-turn message/job/reply/handoff semantics to the existing workflow engine. Resume reuses the same workflow id and its persisted turns, so completed or already-dispatched prompts are not sent again. Repeating run for a preparing/running/completed Mission is an idempotent status projection.
+
+Foreground interruption is caught at the CLI boundary and persists both workflow and Mission as `interrupted`. Runtime exceptions are reduced to stable audited stop reasons; raw commands, prompts, pane output, exception details, credentials, and secrets are excluded from Mission responses and Mission audit events.
 
 ## Provenance and safety validation
 
