@@ -1188,6 +1188,8 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "skills_catalog_card",
     "run_loop_preview_card",
     "mission_preview_card",
+    "mission_status_card",
+    "mission_run_card",
     "capture_card",
     "terminal_card",
     "dispatch_preview_card",
@@ -1498,6 +1500,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "project_view",
     "leader_actions",
     "leader_card",
+    "mission_card",
     "provider_health",
     "runtime_card",
     "agent_ready_card",
@@ -2263,6 +2266,7 @@ MISSION_STATUS_RESPONSE_FIELDS = (
     "controls", "safety", "requires_explicit_user",
 )
 MISSION_RUN_RESPONSE_FIELDS = (*MISSION_STATUS_RESPONSE_FIELDS, "confirmed")
+WORKBENCH_MISSION_CARD_FIELDS = (*MISSION_STATUS_RESPONSE_FIELDS, "confirmation_command")
 MISSION_SELECTED_AGENT_FIELDS = (
     "agent_id", "provider", "role", "workspace_mode", "runtime_status",
     "effective_model", "model_source",
@@ -3363,6 +3367,8 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "skills_catalog_card_fields": list(LEADER_CHAT_SKILLS_CATALOG_CARD_FIELDS),
         "run_loop_preview_card_fields": list(LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS),
         "mission_preview_card_fields": list(MISSION_PREVIEW_RESPONSE_FIELDS),
+        "mission_status_card_fields": list(MISSION_STATUS_RESPONSE_FIELDS),
+        "mission_run_card_fields": list(MISSION_RUN_RESPONSE_FIELDS),
         "capture_card_fields": list(LEADER_CHAT_CAPTURE_CARD_FIELDS),
         "terminal_card_fields": list(LEADER_CHAT_TERMINAL_CARD_FIELDS),
         "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
@@ -3418,6 +3424,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "trace_artifact_fields": list(TRACE_ARTIFACT_FIELDS),
         "trace_inbox_item_fields": list(TRACE_INBOX_ITEM_FIELDS),
         "workbench_card_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
+        "mission_card_fields": list(WORKBENCH_MISSION_CARD_FIELDS),
         "control_mode_card_fields": list(WORKBENCH_CONTROL_MODE_CARD_FIELDS),
         "control_mode_option_fields": list(WORKBENCH_CONTROL_MODE_OPTION_FIELDS),
         "control_mode_control_fields": list(WORKBENCH_CONTROL_MODE_CONTROL_FIELDS),
@@ -8657,6 +8664,40 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             intent_card = payload.get("intent_card")
             if isinstance(intent_card, dict) and intent_card.get("embedded_card") != "mission_preview_card":
                 errors.append("mission_preview intent_card.embedded_card must be mission_preview_card")
+    mission_status_card = payload.get("mission_status_card")
+    if isinstance(mission_status_card, dict):
+        validation = validate_mission_status_contract(mission_status_card)
+        errors.extend(f"mission_status_card: {error}" for error in validation["errors"])
+    elif "mission_status_card" in payload and mission_status_card is not None:
+        errors.append("mission_status_card must be an object")
+    mission_run_card = payload.get("mission_run_card")
+    if isinstance(mission_run_card, dict):
+        validation = validate_mission_run_contract(mission_run_card)
+        errors.extend(f"mission_run_card: {error}" for error in validation["errors"])
+    elif "mission_run_card" in payload and mission_run_card is not None:
+        errors.append("mission_run_card must be an object")
+    mode = payload.get("mode")
+    if mode == "mission_status":
+        if not isinstance(mission_status_card, dict):
+            errors.append("mission_status mode requires mission_status_card")
+        else:
+            if payload.get("next_command") != mission_status_card.get("status_command"):
+                errors.append("mission_status.next_command must match status_command")
+            if isinstance(intent_card, dict) and intent_card.get("embedded_card") != "mission_status_card":
+                errors.append("mission_status intent_card.embedded_card must be mission_status_card")
+    if mode in ("mission_run", "mission_resume"):
+        if not isinstance(mission_run_card, dict):
+            errors.append("mission run mode requires mission_run_card")
+        else:
+            expected = (
+                mission_run_card.get("resume_command")
+                if mission_run_card.get("can_resume") is True
+                else mission_run_card.get("status_command")
+            )
+            if payload.get("next_command") != expected:
+                errors.append("mission run next_command must match enabled mission control")
+            if isinstance(intent_card, dict) and intent_card.get("embedded_card") != "mission_run_card":
+                errors.append("mission run intent_card.embedded_card must be mission_run_card")
     capture_card = payload.get("capture_card")
     if isinstance(capture_card, dict):
         _validate_leader_chat_capture_card_contract(errors, capture_card)
@@ -10248,6 +10289,44 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("leader_card.controls must be a list")
     elif "leader_card" in payload:
         errors.append("leader_card must be an object")
+    mission_card = payload.get("mission_card")
+    if isinstance(mission_card, dict):
+        status_projection = dict(mission_card)
+        confirmation_command = status_projection.pop("confirmation_command", None)
+        controls = status_projection.get("controls")
+        confirm_controls = [
+            item for item in controls
+            if isinstance(item, dict) and item.get("command") == confirmation_command
+        ] if isinstance(controls, list) else []
+        status_projection["controls"] = [
+            item for item in controls
+            if not (isinstance(item, dict) and item.get("command") == confirmation_command)
+        ] if isinstance(controls, list) else controls
+        mission_validation = validate_mission_status_contract(status_projection)
+        errors.extend(f"mission_card: {error}" for error in mission_validation["errors"])
+        mission_id = mission_card.get("mission_id")
+        expected_confirmation = (
+            mission_commands(str(mission_id))["confirmation_command"]
+            if is_canonical_mission_id(mission_id)
+            else None
+        )
+        if confirmation_command != expected_confirmation:
+            errors.append("mission_card.confirmation_command must match mission_id")
+        if len(confirm_controls) != 1:
+            errors.append("mission_card must expose exactly one confirmation control")
+        else:
+            control = confirm_controls[0]
+            expected_enabled = mission_card.get("status") == "pending_confirmation" and not mission_card.get("blockers")
+            if control.get("kind") != "execute" or control.get("safety") != "delegated":
+                errors.append("mission_card confirmation control must be delegated execute")
+            if control.get("enabled") is not expected_enabled:
+                errors.append("mission_card confirmation control enabled conflicts with status")
+            if expected_enabled and control.get("blocker") is not None:
+                errors.append("mission_card enabled confirmation control blocker must be null")
+            if not expected_enabled and not _mission_nonempty_string(control.get("blocker")):
+                errors.append("mission_card disabled confirmation control needs blocker")
+    elif "mission_card" in payload and mission_card is not None:
+        errors.append("mission_card must be an object or null")
     control_mode_card = payload.get("control_mode_card")
     if isinstance(control_mode_card, dict):
         for field in WORKBENCH_CONTROL_MODE_CARD_FIELDS:
@@ -11809,6 +11888,8 @@ def leader_chat_example() -> dict[str, object]:
         "skills_catalog_card": None,
         "run_loop_preview_card": None,
         "mission_preview_card": None,
+        "mission_status_card": None,
+        "mission_run_card": None,
         "capture_card": None,
         "terminal_card": terminal_card,
         "dispatch_preview_card": None,
@@ -12129,6 +12210,14 @@ def ledger_card_controls() -> list[dict[str, object]]:
 
 def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, object]]:
     registry: list[dict[str, object]] = []
+    mission_card = payload.get("mission_card") if isinstance(payload.get("mission_card"), dict) else {}
+    _append_control_registry_items(
+        registry,
+        scope="mission",
+        card="mission_card",
+        agent_id="leader",
+        controls=mission_card.get("controls"),
+    )
     leader_card = payload.get("leader_card") if isinstance(payload.get("leader_card"), dict) else {}
     _append_control_registry_items(
         registry,
@@ -12916,6 +13005,7 @@ def workbench_example() -> dict[str, object]:
                 },
             ],
         },
+        "mission_card": None,
         "provider_health": {
             "agent_id": "leader",
             "provider": "fake",

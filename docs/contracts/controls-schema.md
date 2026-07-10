@@ -1,5 +1,7 @@
 # Controls Contract
 
+Mission controls use `scope=mission`. Leader responses use `card=mission_preview_card`, `mission_status_card`, or `mission_run_card`; the workbench uses `card=mission_card`. Deterministic control ids preserve the Mission confirm/resume/status/attach/workbench affordances, while `selection.next_command` remains `null` for disabled confirmation or resume controls and never acts as authorization.
+
 `agentdeck controls` returns a GUI-ready command palette card derived from the same workbench snapshot used by `agentdeck workbench`.
 
 Discovery:

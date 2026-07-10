@@ -1,5 +1,7 @@
 # Workbench Snapshot Contract
 
+`mission_card` is `null` when ProjectView has no Mission; otherwise it is derived only from `project_view.missions.latest_id/items` plus the safe configured tmux session name. It reuses the Mission status projection and adds the canonical natural-language `confirmation_command`. Its five controls expose confirm, resume, status, attach, and workbench actions; confirm is enabled only for an unblocked pending Mission, resume only for an unblocked stopped/interrupted Mission. Rendering stays read-only: it does not inspect tmux, invoke a provider, execute a command, append an event, or mutate state.
+
 `agentdeck workbench` is the read-only, GUI-ready snapshot for the local AgentDeck control plane.
 
 It does not create plans, record chat turns, acknowledge inbox items, approve approvals, dispatch work, capture replies, or send tmux input. It composes already validated surfaces into one response so a terminal UI or GUI can render the current workspace without issuing several commands.

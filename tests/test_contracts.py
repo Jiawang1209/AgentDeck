@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from agentdeck.mission import mission_commands
+
 from agentdeck.contracts import (
     AGENT_RUNTIME_AGENT_ITEM_FIELDS,
     AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
@@ -132,6 +134,7 @@ from agentdeck.contracts import (
     loop_contract_payload,
     loop_contract_response,
     loop_once_example,
+    mission_example,
     learning_review_contract_payload,
     learning_review_contract_response,
     learning_review_example,
@@ -5834,3 +5837,43 @@ def test_validate_skill_lock_contract():
             "lock_path": ".agentdeck/skill-locks/a.json", "dependencies": []}
     assert validate_skill_lock_contract(good)["ok"]
     assert not validate_skill_lock_contract(dict(good, mode="x"))["ok"]
+
+
+def _workbench_mission_contract_card() -> dict[str, object]:
+    card = mission_example("status")
+    confirmation = mission_commands(str(card["mission_id"]))["confirmation_command"]
+    card["confirmation_command"] = confirmation
+    card["controls"] = [
+        {
+            "kind": "execute",
+            "label": "Confirm mission",
+            "command": confirmation,
+            "safety": "delegated",
+            "enabled": False,
+            "blocker": "mission status is stopped",
+        },
+        *card["controls"],
+    ]
+    return card
+
+
+def test_workbench_contract_rejects_mission_confirmation_control_status_drift() -> None:
+    payload = workbench_example()
+    payload["mission_card"] = _workbench_mission_contract_card()
+    payload["mission_card"]["controls"][0]["enabled"] = True
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result["ok"] is False
+    assert "mission_card confirmation control enabled conflicts with status" in result["errors"]
+
+
+def test_leader_chat_contract_rejects_status_payload_in_run_card() -> None:
+    payload = leader_chat_example()
+    payload["mission_run_card"] = mission_example("status")
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result["ok"] is False
+    assert any("mission_run_card" in error for error in result["errors"])

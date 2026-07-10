@@ -150,6 +150,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "workbench_card",
         "continue_card",
         "mission_preview_card",
+        "mission_status_card",
+        "mission_run_card",
         "run_start_card",
         "run_progress_card",
         "plan_board_card",
@@ -204,6 +206,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     if embedded_card == "continue_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "mission_preview_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card in ("mission_status_card", "mission_run_card") and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "agent_ready_card" and payload.get("startup_preview_card") is not None:
         secondary_embedded_cards.append("startup_preview_card")
@@ -297,7 +301,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         secondary_embedded_cards.append("terminal_session_card")
     route_source = "provider_plan" if mode in {"plan", "run_start", "mission_preview"} else "state_review" if mode in {"review", "summary"} else "local_rule"
     action_kind = explanation.get("action_kind")
-    read_only = mode not in {"plan", "run_start", "review", "apply_action", "mission_preview"} and action_kind != "approval_create"
+    read_only = mode not in {"plan", "run_start", "review", "apply_action", "mission_preview", "mission_run", "mission_resume"} and action_kind != "approval_create"
     next_command = payload.get("next_command")
     controls: list[dict[str, object]] = []
     if embedded_card == "leader_status_card":
@@ -459,6 +463,10 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck continue"
     if embedded_card == "mission_preview_card":
         card = payload.get("mission_preview_card")
+        command = card.get("status_command") if isinstance(card, dict) else None
+        return str(command) if command else None
+    if embedded_card in ("mission_status_card", "mission_run_card"):
+        card = payload.get(embedded_card)
         command = card.get("status_command") if isinstance(card, dict) else None
         return str(command) if command else None
     if embedded_card == "run_start_card":
@@ -685,6 +693,8 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("skills_catalog_card", None)
     payload.setdefault("run_loop_preview_card", None)
     payload.setdefault("mission_preview_card", None)
+    payload.setdefault("mission_status_card", None)
+    payload.setdefault("mission_run_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -1459,6 +1469,7 @@ def _workbench_snapshot_payload(
     runtime_card = _workbench_runtime_card(project_view)
     agent_ready_card = _agent_ready_card_payload(project_view)
     config = load_config(store.root)
+    mission_card = _workbench_mission_card(project_view, config, store)
     terminal_session_card = _workbench_terminal_session_card(config, runtime_card)
     role_card = _workbench_role_card(project_view)
     worker_lifecycle_card = _workbench_worker_lifecycle_card(project_view)
@@ -1489,6 +1500,7 @@ def _workbench_snapshot_payload(
         "project_view": project_view,
         "leader_actions": project_view.get("leader_actions"),
         "leader_card": leader_card,
+        "mission_card": mission_card,
         "provider_health": provider_health,
         "runtime_card": runtime_card,
         "agent_ready_card": agent_ready_card,
@@ -1528,6 +1540,48 @@ def _workbench_snapshot_payload(
     }
     payload["control_registry"] = _workbench_control_registry(payload)
     return payload
+
+
+def _workbench_mission_card(
+    project_view: dict[str, object], config: ProjectConfig, store: StateStore
+) -> dict[str, object] | None:
+    summary = project_view.get("missions")
+    if not isinstance(summary, dict):
+        return None
+    latest_id = summary.get("latest_id")
+    items = summary.get("items")
+    if not isinstance(latest_id, str) or not isinstance(items, list):
+        return None
+    latest = next(
+        (
+            item for item in reversed(items)
+            if isinstance(item, dict) and item.get("mission_id") == latest_id
+        ),
+        None,
+    )
+    if latest is None:
+        return None
+    try:
+        card = mission_status_payload(config, store, latest)
+    except (MissionRunError, ValueError):
+        return None
+    confirmation_command = latest.get("confirmation_command")
+    if not isinstance(confirmation_command, str):
+        return None
+    can_confirm = latest.get("status") == "pending_confirmation" and not latest.get("blockers")
+    card["confirmation_command"] = confirmation_command
+    card["controls"] = [
+        {
+            "kind": "execute",
+            "label": "Confirm mission",
+            "command": confirmation_command,
+            "safety": "delegated",
+            "enabled": can_confirm,
+            "blocker": None if can_confirm else f"mission status is {latest.get('status')}",
+        },
+        *card["controls"],
+    ]
+    return card
 
 
 def _workbench_run_progress_card(store: StateStore) -> dict[str, object] | None:
@@ -1729,6 +1783,19 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id="leader",
         controls=mission_preview_card.get("controls"),
     )
+    for mission_card_name in ("mission_status_card", "mission_run_card", "mission_card"):
+        mission_card = (
+            payload.get(mission_card_name)
+            if isinstance(payload.get(mission_card_name), dict)
+            else {}
+        )
+        _append_workbench_control_registry_items(
+            registry,
+            scope="mission",
+            card=mission_card_name,
+            agent_id="leader",
+            controls=mission_card.get("controls"),
+        )
     leader_card = payload.get("leader_card") if isinstance(payload.get("leader_card"), dict) else {}
     _append_workbench_control_registry_items(
         registry,
@@ -8751,6 +8818,167 @@ def _chat_wants_approval(message: str) -> bool:
     return any(token in normalized for token in ["approval", "approve", "审批", "批准"])
 
 
+_MISSION_ID_PATTERN = r"mis_[0-9a-f]{12}"
+
+
+def _chat_mission_route(message: str) -> tuple[str, str | None] | None:
+    text = message.strip()
+    match = re.fullmatch(rf"批准执行\s+({_MISSION_ID_PATTERN})", text, re.IGNORECASE)
+    if match:
+        return "run", match.group(1).lower()
+    if re.fullmatch(r"批准执行|批准当前\s*mission", text, re.IGNORECASE):
+        return "run", None
+    match = re.fullmatch(rf"查看\s*(?:当前\s*)?mission(?:\s+({_MISSION_ID_PATTERN}))?", text, re.IGNORECASE)
+    if match:
+        return "status", match.group(1).lower() if match.group(1) else None
+    match = re.fullmatch(rf"继续\s*mission(?:\s+({_MISSION_ID_PATTERN}))?", text, re.IGNORECASE)
+    if match:
+        return "resume", match.group(1).lower() if match.group(1) else None
+    return None
+
+
+def _select_chat_mission(store: StateStore, route: str, mission_id: str | None) -> dict[str, object]:
+    if mission_id is not None:
+        return store.mission_by_id(mission_id)
+    missions = store.list_missions()
+    if route == "status":
+        if not missions:
+            raise LookupError("no mission found")
+        return missions[-1]
+    wanted = (
+        [item for item in missions if item.get("status") == "pending_confirmation"]
+        if route == "run"
+        else [
+            item for item in missions
+            if item.get("status") in ("stopped", "interrupted") and not item.get("blockers")
+        ]
+    )
+    if not wanted:
+        raise LookupError("no matching mission")
+    if len(wanted) != 1:
+        raise RuntimeError("mission selection is ambiguous")
+    return wanted[0]
+
+
+def _leader_chat_mission_response(
+    *,
+    config: ProjectConfig,
+    store: StateStore,
+    message: str,
+    route: str,
+    mission: dict[str, object],
+) -> int:
+    mission_id = str(mission["mission_id"])
+    mode = "mission_status" if route == "status" else "mission_run" if route == "run" else "mission_resume"
+    card_name = "mission_status_card" if route == "status" else "mission_run_card"
+    try:
+        if route == "status":
+            card = mission_status_payload(config, store, mission)
+        elif route == "run":
+            if mission.get("status") == "completed":
+                card = mission_status_payload(
+                    config, store, mission, mode="mission_run", confirmed=True
+                )
+            else:
+                card = run_mission(
+                    config=config,
+                    store=store,
+                    backend=TmuxBackend(),
+                    mission_id=mission_id,
+                )
+        else:
+            card = resume_mission(
+                config=config,
+                store=store,
+                backend=TmuxBackend(),
+                mission_id=mission_id,
+            )
+    except KeyboardInterrupt:
+        try:
+            stopped = interrupt_mission(store, mission_id)
+            card = mission_status_payload(
+                config, store, stopped, mode=mode, confirmed=True
+            )
+        except (KeyError, MissionRunError, ValueError):
+            print("mission interrupted", file=sys.stderr)
+            return 1
+    except (KeyError, MissionRunError, ValueError):
+        print(f"mission {route} failed", file=sys.stderr)
+        return 1
+    except Exception:
+        print(f"mission {route} failed", file=sys.stderr)
+        return 1
+    next_command = (
+        card["resume_command"] if card.get("can_resume") is True else card["status_command"]
+    )
+    turn = store.record_chat_turn(
+        mode=mode,
+        message=message,
+        plan_id=str(card["plan_id"]),
+        next_command=str(next_command),
+        review=None,
+        action_id=None,
+        action_kind=mode,
+    )
+    store.append_event(
+        EventRecord.create(
+            "leader_chat_turn",
+            {
+                "turn_id": turn["turn_id"],
+                "mode": mode,
+                "plan_id": card["plan_id"],
+                "message_length": len(message),
+            },
+        )
+    )
+    refreshed = _project_view_payload_or_error(config, store)
+    if refreshed is None:
+        return 1
+    registry_items = _workbench_control_registry({card_name: card})
+    selected_id = next(
+        (
+            item.get("control_id")
+            for item in registry_items
+            if item.get("command") == next_command and item.get("enabled") is True
+        ),
+        None,
+    )
+    registry_card = leader_chat_control_registry_card(
+        {"control_registry": registry_items},
+        scope="mission",
+        card=card_name,
+        control_id=str(selected_id) if selected_id else None,
+    )
+    payload = {
+        "ok": True,
+        "turn_id": turn["turn_id"],
+        "mode": mode,
+        "message": message,
+        "project_view": refreshed,
+        "leader_actions": refreshed.get("leader_actions"),
+        "leader_explanation": _leader_chat_explanation(
+            mode, next_command=next_command, project_view=refreshed, result=card
+        ),
+        "plan_id": card["plan_id"],
+        "review": None,
+        "recovery": refreshed.get("recovery"),
+        "next_command": next_command,
+        "leader_action": None,
+        card_name: card,
+        "control_registry_card": registry_card,
+        "continue_card": None,
+        "inbox_card": None,
+        "approval_card": None,
+        "runtime_card": None,
+        "queue_card": None,
+        "operator_card": None,
+        "role_card": None,
+        "ledger_card": None,
+        "workbench_card": None,
+    }
+    return _print_leader_chat_payload_or_error(payload, store, task=message)
+
+
 def _chat_wants_approval_approve(message: str) -> bool:
     normalized = message.strip().lower()
     return any(token in normalized for token in ["approve", "批准", "同意", "通过审批"])
@@ -8979,6 +9207,20 @@ def _leader_chat_explanation(
             "action_status": card.get("status"),
             "safety": "delegated" if can_start else "inspect",
             "requires_explicit_user": can_start,
+        }
+    if mode in ("mission_status", "mission_run", "mission_resume"):
+        card = result if isinstance(result, dict) else {}
+        read_only = mode == "mission_status"
+        return {
+            "mode": mode,
+            "summary": "Leader is showing Mission status." if read_only else "Leader applied the explicit Mission control and is showing its persisted result.",
+            "reason": "human requested Mission inspection" if read_only else "human explicitly confirmed or resumed the Mission",
+            "next_command": next_command,
+            "recommended_action_id": card.get("mission_id"),
+            "action_kind": mode,
+            "action_status": card.get("status"),
+            "safety": "inspect" if read_only else "delegated",
+            "requires_explicit_user": not read_only,
         }
     if mode == "run_start":
         run_start_card = result if isinstance(result, dict) else {}
@@ -9770,6 +10012,27 @@ def leader_chat_command(args: argparse.Namespace) -> int:
     project_view = _project_view_payload_or_error(config, store)
     if project_view is None:
         return 1
+    mission_route = _chat_mission_route(args.message)
+    if mission_route is not None:
+        route, explicit_id = mission_route
+        try:
+            mission = _select_chat_mission(store, route, explicit_id)
+        except KeyError:
+            print(f"unknown mission: {explicit_id}", file=sys.stderr)
+            return 1
+        except LookupError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        return _leader_chat_mission_response(
+            config=config,
+            store=store,
+            message=args.message,
+            route=route,
+            mission=mission,
+        )
     if _chat_wants_frontdesk(args.message):
         frontdesk_card = _frontdesk_card(args.message)
         next_command = frontdesk_card["next_command"]

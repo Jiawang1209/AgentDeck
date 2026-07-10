@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Expose Mission orchestration across Leader chat and workbench
+
+- **类型**: major feature + strict TDD + natural-language control surface
+- **问题**: Mission preview/run/recovery APIs existed, but natural-language confirmation was still captured by the generic approval route, Mission inspection fell through to generic review, and workbench/controls did not expose the latest Mission.
+- **What**: exact Mission follow-up grammar now resolves named or uniquely selectable Missions for confirm, status, and resume before generic approval/continue routing. Leader responses embed validated `mission_status_card` / `mission_run_card` plus a filtered Mission control registry. Completed re-confirm is idempotent. Workbench derives `mission_card` solely from compact ProjectView Mission facts and exposes aligned confirm/resume/status/tmux-attach/workbench controls.
+- **TDD 证据**: named confirm, current status, and ambiguous id-less confirm first RED as approval/review misroutes; after the route/card implementation Mission-focused Leader tests are 14/14 GREEN and the Task surface suite is 804/804 GREEN. Contract negatives reject a status payload in a run card and confirmation-enabled/status drift; final full suite is 1163/1163 GREEN, with compileall and diff check clean.
+- **安全边界**: ambiguous or missing id-less mutation exits non-zero with zero runtime/state/audit writes; explicit `批准当前审批` remains the approval route. Status/workbench rendering does not call providers, inspect tmux, execute commands, or mutate state; card selection only projects enabled controls.
+
 ### Stop orphaned Mission workflows during preparing interruption
 
 - **类型**: important fix + strict TDD + interruption recovery

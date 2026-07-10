@@ -1,5 +1,9 @@
 # Leader Chat Contract
 
+Natural-language Mission follow-ups are first-class routes. `批准执行 mis_<id>` (or the id-less form when exactly one Mission is pending) returns `mode=mission_run` with a validated `mission_run_card`; `查看 mission [mis_<id>]` returns the read-only `mission_status_card`; and `继续 mission [mis_<id>]` returns `mode=mission_resume` with a `mission_run_card`. Id-less mutation is rejected when selection is ambiguous. These exact routes run before generic approval/continue matching but do not capture explicit approval phrases such as `批准当前审批`.
+
+Both Mission cards embed a Mission-scoped `control_registry_card`. Selection points only to an enabled control: resume for a resumable stopped/interrupted result, otherwise status inspection. Re-confirming a completed named Mission is idempotent and does not create another runtime or workflow.
+
 `agentdeck leader chat --message <text>` is the natural-language Leader entrypoint for AgentDeck.
 
 This contract describes the chat response surface. It does not replace ProjectView. Chat responses embed `project_view`, expose selected GUI-ready convenience fields, and preserve ProjectView as the state source of truth.
