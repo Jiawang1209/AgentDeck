@@ -38,6 +38,12 @@ The index currently lists these contract names in order:
 - `doctor`
 - `events`
 - `run`
+- `run-loop`
+- `run-loop-all`
+- `workflow`
+- `mission`
+- `demo`
+- `plans`
 - `release`
 - `workbench`
 - `controls`

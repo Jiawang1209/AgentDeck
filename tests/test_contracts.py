@@ -244,6 +244,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "run-loop-schema.md",
         "run-loop-all-schema.md",
         "workflow-schema.md",
+        "mission-schema.md",
         "demo-schema.md",
         "plans-schema.md",
         "release-schema.md",
@@ -274,7 +275,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 28
+    assert payload["count"] == 29
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -286,6 +287,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "run-loop",
         "run-loop-all",
         "workflow",
+        "mission",
         "demo",
         "plans",
         "release",
@@ -5284,6 +5286,99 @@ def test_workflow_contract_response_exposes_examples(tmp_path: Path) -> None:
     assert validate_workflow_run_contract(payload["example_run"])["ok"] is True
     assert payload["example_run"]["safety"] == "delegated"
     assert payload["example_run"]["confirmed"] is True
+
+
+def test_mission_contract_discovery_and_examples(tmp_path: Path) -> None:
+    from agentdeck.contracts import (
+        MISSION_PREVIEW_RESPONSE_FIELDS,
+        MISSION_RUN_RESPONSE_FIELDS,
+        MISSION_SELECTED_AGENT_FIELDS,
+        MISSION_STATUS_RESPONSE_FIELDS,
+        mission_contract_response,
+        validate_mission_preview_contract,
+        validate_mission_run_contract,
+        validate_mission_status_contract,
+    )
+
+    payload = mission_contract_response(
+        tmp_path / "mission-schema.md", include_example=True
+    )
+
+    assert payload["name"] == "mission"
+    assert payload["preview_response_fields"] == list(MISSION_PREVIEW_RESPONSE_FIELDS)
+    assert payload["status_response_fields"] == list(MISSION_STATUS_RESPONSE_FIELDS)
+    assert payload["run_response_fields"] == list(MISSION_RUN_RESPONSE_FIELDS)
+    assert payload["selected_agent_fields"] == list(MISSION_SELECTED_AGENT_FIELDS)
+    assert set(payload["example_preview"]) == set(payload["preview_response_fields"])
+    assert set(payload["example_status"]) == set(payload["status_response_fields"])
+    assert set(payload["example_run"]) == set(payload["run_response_fields"])
+    assert validate_mission_preview_contract(payload["example_preview"])["ok"] is True
+    assert validate_mission_status_contract(payload["example_status"])["ok"] is True
+    assert validate_mission_run_contract(payload["example_run"])["ok"] is True
+    assert len(payload["example_preview"]["plan"]["steps"]) == 8
+
+
+@pytest.mark.parametrize(
+    ("example_name", "mutation"),
+    [
+        ("preview", lambda value: value.update(status="running")),
+        ("preview", lambda value: value["selected_agents"].pop()),
+        ("preview", lambda value: value["plan"]["steps"].pop()),
+        ("preview", lambda value: value.update(blockers=["worker unavailable"], can_start=True)),
+        (
+            "preview",
+            lambda value: (
+                value.update(blockers=["worker unavailable"], can_start=False),
+                value["controls"][0].update(enabled=True, blocker=None),
+            ),
+        ),
+        ("preview", lambda value: value.update(mission_id="mis_bad")),
+        ("preview", lambda value: value.update(confirmation_command="agentdeck mission run --mission-id mis_deadbeefdead --confirm")),
+        ("preview", lambda value: value["leader_backend"].update(provider="claude-cli")),
+        ("preview", lambda value: value["leader_backend"].update(provider_backend="cli")),
+        ("preview", lambda value: value["selected_agents"][0].update(secret="unsafe")),
+        ("preview", lambda value: value["startup_actions"][0].update(action="shell")),
+        ("preview", lambda value: value["controls"][0].update(safety="unrestricted")),
+    ],
+)
+def test_mission_preview_validator_rejects_drift(example_name, mutation) -> None:
+    from copy import deepcopy
+
+    from agentdeck.contracts import mission_example, validate_mission_preview_contract
+
+    payload = deepcopy(mission_example(example_name))
+    mutation(payload)
+
+    assert validate_mission_preview_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize("status", ["unknown", "failed"])
+def test_mission_status_validator_rejects_unknown_status(status: str) -> None:
+    from agentdeck.contracts import mission_example, validate_mission_status_contract
+
+    payload = mission_example("status")
+    payload["status"] = status
+
+    assert validate_mission_status_contract(payload)["ok"] is False
+
+
+def test_mission_run_validator_requires_confirmed_true() -> None:
+    from agentdeck.contracts import mission_example, validate_mission_run_contract
+
+    payload = mission_example("run")
+    payload.pop("confirmed")
+
+    assert validate_mission_run_contract(payload)["ok"] is False
+
+
+def test_mission_status_validator_rejects_unsafe_attach_control() -> None:
+    from agentdeck.contracts import mission_example, validate_mission_status_contract
+
+    payload = mission_example("status")
+    payload["attach_command"] = "tmux attach -t agentdeck; rm -rf /"
+    payload["controls"][2]["command"] = payload["attach_command"]
+
+    assert validate_mission_status_contract(payload)["ok"] is False
 
 
 def test_skill_contracts_expose_and_validate_planning_guidance() -> None:

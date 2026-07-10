@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from copy import deepcopy
 from pathlib import Path
 
 from .mission import (
     MISSION_SCHEMA_VERSION,
-    MISSION_SELECTED_AGENT_FIELDS,
-    MISSION_SELECTED_AGENT_REQUIRED_FIELDS,
-    MISSION_STARTUP_ACTION_FIELDS,
-    MISSION_STARTUP_ACTION_REQUIRED_FIELDS,
+    MISSION_SELECTED_AGENT_FIELDS as MISSION_STATE_SELECTED_AGENT_FIELDS,
+    MISSION_SELECTED_AGENT_REQUIRED_FIELDS as MISSION_STATE_SELECTED_AGENT_REQUIRED_FIELDS,
+    MISSION_STARTUP_ACTION_FIELDS as MISSION_STATE_STARTUP_ACTION_FIELDS,
+    MISSION_STARTUP_ACTION_REQUIRED_FIELDS as MISSION_STATE_STARTUP_ACTION_REQUIRED_FIELDS,
     MISSION_STATUSES,
     MISSION_WORKER_NULLABLE_FIELDS,
     is_canonical_mission_id,
     mission_commands,
+    validate_mission_plan,
 )
 from .models import PROJECT_VIEW_SCHEMA_VERSION
+from .state import leader_backend_identity
 
 
 CONTRACT_INDEX_RESPONSE_FIELDS = (
@@ -90,6 +93,12 @@ CONTRACT_INDEX_SPECS = (
         "agentdeck contract workflow",
         "agentdeck contract workflow --example",
         "workflow-schema.md",
+    ),
+    (
+        "mission",
+        "agentdeck contract mission",
+        "agentdeck contract mission --example",
+        "mission-schema.md",
     ),
     (
         "demo",
@@ -2236,6 +2245,30 @@ WORKFLOW_TURN_FIELDS = (
     "started_at",
     "completed_at",
 )
+
+MISSION_PREVIEW_RESPONSE_FIELDS = (
+    "schema_version", "ok", "mode", "mission_id", "status", "user_message",
+    "provider", "model", "leader_backend", "plan_id", "plan_hash", "plan",
+    "selected_agents", "startup_actions", "step_count", "timeout_seconds",
+    "can_start", "blockers", "confirmation_command", "status_command",
+    "workbench_command", "controls", "safety", "requires_explicit_user",
+)
+MISSION_STATUS_RESPONSE_FIELDS = (
+    "schema_version", "ok", "mode", "mission_id", "status", "user_message",
+    "plan_id", "plan_hash", "workflow_run_id", "current_step", "step_count",
+    "timeout_seconds", "selected_agents", "blockers", "stop_reason",
+    "created_at", "updated_at", "confirmed_at", "completed_at", "can_resume",
+    "status_command", "resume_command", "attach_command", "workbench_command",
+    "controls", "safety", "requires_explicit_user",
+)
+MISSION_RUN_RESPONSE_FIELDS = (*MISSION_STATUS_RESPONSE_FIELDS, "confirmed")
+# Task 3 owns the worker summary schema. The contract exposes its required,
+# compact projection and intentionally excludes the optional state-only blocker.
+MISSION_SELECTED_AGENT_FIELDS = MISSION_STATE_SELECTED_AGENT_REQUIRED_FIELDS
+MISSION_STARTUP_ACTION_FIELDS = MISSION_STATE_STARTUP_ACTION_REQUIRED_FIELDS
+MISSION_PLAN_FIELDS = ("goal", "summary", "steps")
+MISSION_PLAN_STEP_FIELDS = ("step", "agent_id", "role", "task")
+MISSION_CONTROL_FIELDS = LEADER_REVIEW_CONTROL_FIELDS
 
 WORKFLOW_STATUSES = ("running", "completed", "stopped", "interrupted")
 WORKFLOW_TURN_STATUSES = (
@@ -4717,6 +4750,518 @@ def workflow_contract_response(
     return payload
 
 
+def _mission_leader_backend_example() -> dict[str, object]:
+    return {
+        "agent_id": "leader",
+        "provider": "fake",
+        "model": "mission-planner",
+        "provider_backend": "local",
+        "provider_transport": "local",
+        "reasoning_backend": "local-fake",
+        "runtime_kind": "logical_leader",
+        "pane_backed": False,
+        "pane_id": None,
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
+
+
+def _mission_selected_agents_example() -> list[dict[str, object]]:
+    return [
+        {
+            "agent_id": "planner",
+            "provider": "codex-cli",
+            "role": "planning",
+            "workspace_mode": "shared",
+            "runtime_status": "configured",
+            "effective_model": "gpt-5.5",
+            "model_source": "configured_command",
+        },
+        {
+            "agent_id": "reviewer",
+            "provider": "claude-cli",
+            "role": "review",
+            "workspace_mode": "shared",
+            "runtime_status": "running",
+            "effective_model": None,
+            "model_source": "provider_default",
+        },
+    ]
+
+
+def _mission_plan_example() -> dict[str, object]:
+    steps = []
+    for step in range(1, 9):
+        agent_id = "planner" if step % 2 else "reviewer"
+        steps.append(
+            {
+                "step": step,
+                "agent_id": agent_id,
+                "role": "planning" if agent_id == "planner" else "review",
+                "task": f"Complete fixed serial round {step}",
+            }
+        )
+    return {
+        "goal": "Complete an eight-round Codex and Claude handoff",
+        "summary": "A fixed serial plan with no dynamic or parallel steps.",
+        "steps": steps,
+    }
+
+
+def _mission_control(
+    kind: str,
+    label: str,
+    command: str,
+    safety: str,
+    *,
+    enabled: bool = True,
+    blocker: str | None = None,
+) -> dict[str, object]:
+    return {
+        "kind": kind,
+        "label": label,
+        "command": command,
+        "safety": safety,
+        "enabled": enabled,
+        "blocker": blocker,
+    }
+
+
+def mission_example(kind: str) -> dict[str, object]:
+    mission_id = "mis_deadbeefcafe"
+    commands = mission_commands(mission_id)
+    selected_agents = _mission_selected_agents_example()
+    if kind == "preview":
+        plan = _mission_plan_example()
+        return {
+            "schema_version": MISSION_SCHEMA_VERSION,
+            "ok": True,
+            "mode": "mission_preview",
+            "mission_id": mission_id,
+            "status": "pending_confirmation",
+            "user_message": "让 Codex 和 Claude 一人一句接龙，共8轮",
+            "provider": "fake",
+            "model": "mission-planner",
+            "leader_backend": _mission_leader_backend_example(),
+            "plan_id": "pln_deadbeefcafe",
+            "plan_hash": "sha256:" + "a" * 64,
+            "plan": plan,
+            "selected_agents": selected_agents,
+            "startup_actions": [
+                {
+                    "agent_id": "planner",
+                    "action": "spawn",
+                    "runtime_status": "configured",
+                    "effective_model": "gpt-5.5",
+                    "model_source": "configured_command",
+                },
+                {
+                    "agent_id": "reviewer",
+                    "action": "reuse",
+                    "runtime_status": "running",
+                    "effective_model": None,
+                    "model_source": "provider_default",
+                },
+            ],
+            "step_count": len(plan["steps"]),
+            "timeout_seconds": 300,
+            "can_start": True,
+            "blockers": [],
+            "confirmation_command": commands["confirmation_command"],
+            "status_command": commands["status_command"],
+            "workbench_command": "agentdeck workbench",
+            "controls": [
+                _mission_control(
+                    "execute", "Run mission", commands["confirmation_command"], "delegated"
+                ),
+                _mission_control(
+                    "inspect", "Inspect mission", commands["status_command"], "inspect"
+                ),
+                _mission_control(
+                    "inspect", "Open workbench", "agentdeck workbench", "inspect"
+                ),
+            ],
+            "safety": "inspect",
+            "requires_explicit_user": True,
+        }
+    if kind not in {"status", "run"}:
+        raise ValueError("mission example kind must be preview, status, or run")
+    payload: dict[str, object] = {
+        "schema_version": MISSION_SCHEMA_VERSION,
+        "ok": True,
+        "mode": "mission_status",
+        "mission_id": mission_id,
+        "status": "stopped",
+        "user_message": "让 Codex 和 Claude 一人一句接龙，共8轮",
+        "plan_id": "pln_deadbeefcafe",
+        "plan_hash": "sha256:" + "a" * 64,
+        "workflow_run_id": "wfr_deadbeefcafe",
+        "current_step": 4,
+        "step_count": 8,
+        "timeout_seconds": 300,
+        "selected_agents": selected_agents,
+        "blockers": [],
+        "stop_reason": "timed_out",
+        "created_at": "2026-07-11T00:00:00+00:00",
+        "updated_at": "2026-07-11T00:05:00+00:00",
+        "confirmed_at": "2026-07-11T00:00:01+00:00",
+        "completed_at": None,
+        "can_resume": True,
+        "status_command": commands["status_command"],
+        "resume_command": commands["resume_command"],
+        "attach_command": "tmux attach -t agentdeck",
+        "workbench_command": "agentdeck workbench",
+        "controls": [
+            _mission_control(
+                "execute", "Resume mission", commands["resume_command"], "delegated"
+            ),
+            _mission_control(
+                "inspect", "Inspect mission", commands["status_command"], "inspect"
+            ),
+            _mission_control(
+                "inspect", "Attach terminal", "tmux attach -t agentdeck", "inspect"
+            ),
+            _mission_control(
+                "inspect", "Open workbench", "agentdeck workbench", "inspect"
+            ),
+        ],
+        "safety": "inspect",
+        "requires_explicit_user": True,
+    }
+    if kind == "run":
+        payload.update(
+            {
+                "mode": "mission_run",
+                "status": "completed",
+                "current_step": 8,
+                "stop_reason": None,
+                "updated_at": "2026-07-11T00:08:00+00:00",
+                "completed_at": "2026-07-11T00:08:00+00:00",
+                "can_resume": False,
+                "controls": [
+                    _mission_control(
+                        "execute",
+                        "Resume mission",
+                        commands["resume_command"],
+                        "delegated",
+                        enabled=False,
+                        blocker="completed missions cannot resume",
+                    ),
+                    _mission_control(
+                        "inspect", "Inspect mission", commands["status_command"], "inspect"
+                    ),
+                    _mission_control(
+                        "inspect", "Attach terminal", "tmux attach -t agentdeck", "inspect"
+                    ),
+                    _mission_control(
+                        "inspect", "Open workbench", "agentdeck workbench", "inspect"
+                    ),
+                ],
+                "safety": "delegated",
+                "confirmed": True,
+            }
+        )
+    return payload
+
+
+def _mission_exact_fields(
+    errors: list[str], prefix: str, value: dict[str, object], fields: tuple[str, ...]
+) -> None:
+    missing = [field for field in fields if field not in value]
+    extra = [field for field in value if field not in fields]
+    if missing:
+        errors.append(f"{prefix} missing fields: {', '.join(missing)}")
+    if extra:
+        errors.append(f"{prefix} has unknown fields: {', '.join(extra)}")
+
+
+def _validate_mission_worker_rows(
+    errors: list[str], prefix: str, value: object, fields: tuple[str, ...]
+) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        errors.append(f"{prefix} must be a list")
+        return []
+    rows: list[dict[str, object]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            errors.append(f"{prefix}[{index}] must be an object")
+            continue
+        _mission_exact_fields(errors, f"{prefix}[{index}]", item, fields)
+        for field in fields:
+            field_value = item.get(field)
+            if field == "effective_model":
+                if field_value is not None and not isinstance(field_value, str):
+                    errors.append(f"{prefix}[{index}].{field} must be a string or null")
+            elif not isinstance(field_value, str) or not field_value:
+                errors.append(f"{prefix}[{index}].{field} must be a non-empty string")
+        if fields == MISSION_STARTUP_ACTION_FIELDS and item.get("action") not in {
+            "reuse",
+            "spawn",
+        }:
+            errors.append(f"{prefix}[{index}].action must be reuse or spawn")
+        rows.append(item)
+    return rows
+
+
+def _validate_mission_controls(
+    errors: list[str], prefix: str, payload: dict[str, object], *, preview: bool
+) -> None:
+    controls = payload.get("controls")
+    if not isinstance(controls, list):
+        errors.append(f"{prefix}.controls must be a list")
+        return
+    expected_commands = {
+        str(payload.get("status_command")): ("inspect", "inspect", True),
+        str(payload.get("workbench_command")): ("inspect", "inspect", True),
+    }
+    if preview:
+        expected_commands[str(payload.get("confirmation_command"))] = (
+            "execute",
+            "delegated",
+            payload.get("can_start") is True,
+        )
+    else:
+        expected_commands[str(payload.get("attach_command"))] = (
+            "inspect",
+            "inspect",
+            True,
+        )
+        expected_commands[str(payload.get("resume_command"))] = (
+            "execute",
+            "delegated",
+            payload.get("can_resume") is True,
+        )
+    seen: set[str] = set()
+    for index, control in enumerate(controls):
+        if not isinstance(control, dict):
+            errors.append(f"{prefix}.controls[{index}] must be an object")
+            continue
+        _mission_exact_fields(
+            errors, f"{prefix}.controls[{index}]", control, MISSION_CONTROL_FIELDS
+        )
+        command = control.get("command")
+        if not isinstance(command, str) or command not in expected_commands:
+            errors.append(f"{prefix}.controls[{index}].command must be a declared mission command")
+            continue
+        seen.add(command)
+        expected_kind, expected_safety, expected_enabled = expected_commands[command]
+        if control.get("kind") != expected_kind:
+            errors.append(f"{prefix}.controls[{index}].kind does not match command")
+        if control.get("safety") != expected_safety:
+            errors.append(f"{prefix}.controls[{index}].safety does not match command")
+        if control.get("enabled") is not expected_enabled:
+            errors.append(f"{prefix}.controls[{index}].enabled conflicts with blockers/status")
+        if expected_enabled and control.get("blocker") is not None:
+            errors.append(f"{prefix}.controls[{index}].blocker must be null when enabled")
+        if not expected_enabled and not isinstance(control.get("blocker"), str):
+            errors.append(f"{prefix}.controls[{index}].blocker must explain disabled control")
+    if seen != set(expected_commands):
+        errors.append(f"{prefix}.controls must expose every declared mission command")
+
+
+def _validate_mission_identity_and_commands(
+    errors: list[str], prefix: str, payload: dict[str, object], *, preview: bool
+) -> None:
+    mission_id = payload.get("mission_id")
+    if not is_canonical_mission_id(mission_id):
+        errors.append(f"{prefix}.mission_id must be canonical")
+        return
+    commands = mission_commands(str(mission_id))
+    expected = {"status_command": commands["status_command"]}
+    if preview:
+        expected["confirmation_command"] = commands["confirmation_command"]
+    else:
+        expected["resume_command"] = commands["resume_command"]
+    for field, command in expected.items():
+        if payload.get(field) != command:
+            errors.append(f"{prefix}.{field} must match mission_id")
+
+
+def validate_mission_preview_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    _mission_exact_fields(errors, "mission_preview", payload, MISSION_PREVIEW_RESPONSE_FIELDS)
+    if payload.get("schema_version") != MISSION_SCHEMA_VERSION:
+        errors.append("mission_preview.schema_version must be mission/v1")
+    if payload.get("ok") is not True or payload.get("mode") != "mission_preview":
+        errors.append("mission_preview mode must be a successful mission_preview")
+    if payload.get("status") != "pending_confirmation":
+        errors.append("mission_preview.status must be pending_confirmation")
+    if payload.get("safety") != "inspect" or payload.get("requires_explicit_user") is not True:
+        errors.append("mission_preview must be inspect-only and require an explicit user")
+    _validate_mission_identity_and_commands(errors, "mission_preview", payload, preview=True)
+    if not isinstance(payload.get("timeout_seconds"), int) or isinstance(
+        payload.get("timeout_seconds"), bool
+    ) or payload.get("timeout_seconds", 0) <= 0:
+        errors.append("mission_preview.timeout_seconds must be a positive integer")
+    selected = _validate_mission_worker_rows(
+        errors, "mission_preview.selected_agents", payload.get("selected_agents"), MISSION_SELECTED_AGENT_FIELDS
+    )
+    startup = _validate_mission_worker_rows(
+        errors, "mission_preview.startup_actions", payload.get("startup_actions"), MISSION_STARTUP_ACTION_FIELDS
+    )
+    selected_ids = [str(item.get("agent_id")) for item in selected]
+    startup_ids = [str(item.get("agent_id")) for item in startup]
+    if len(selected_ids) < 2 or len(set(selected_ids)) != len(selected_ids):
+        errors.append("mission_preview.selected_agents must contain at least two unique agents")
+    if startup_ids != selected_ids:
+        errors.append("mission_preview.startup_actions must match selected_agents")
+    plan = payload.get("plan")
+    if not isinstance(plan, dict):
+        errors.append("mission_preview.plan must be an object")
+        plan = {}
+    else:
+        _mission_exact_fields(errors, "mission_preview.plan", plan, MISSION_PLAN_FIELDS)
+        steps = plan.get("steps")
+        if isinstance(steps, list):
+            for index, step in enumerate(steps):
+                if isinstance(step, dict):
+                    _mission_exact_fields(
+                        errors, f"mission_preview.plan.steps[{index}]", step, MISSION_PLAN_STEP_FIELDS
+                    )
+                else:
+                    errors.append(f"mission_preview.plan.steps[{index}] must be an object")
+        try:
+            validate_mission_plan(plan, selected_ids, int(payload.get("timeout_seconds") or 0))
+        except (TypeError, ValueError) as exc:
+            errors.append(f"mission_preview.plan is invalid: {exc}")
+    steps = plan.get("steps") if isinstance(plan, dict) else None
+    if not isinstance(steps, list) or payload.get("step_count") != len(steps):
+        errors.append("mission_preview.step_count must equal len(plan.steps)")
+    blockers = payload.get("blockers")
+    if not isinstance(blockers, list) or any(not isinstance(item, str) for item in blockers):
+        errors.append("mission_preview.blockers must be a list of strings")
+        blockers = []
+    can_start = payload.get("can_start")
+    if can_start is not (not blockers):
+        errors.append("mission_preview.can_start must equal not blockers")
+    backend = payload.get("leader_backend")
+    if isinstance(backend, dict):
+        _validate_leader_backend(errors, "mission_preview", backend)
+        if backend.get("provider") != payload.get("provider") or backend.get("model") != payload.get("model"):
+            errors.append("mission_preview.leader_backend must match provider and model")
+        elif backend != leader_backend_identity(
+            str(payload.get("provider")), str(payload.get("model"))
+        ):
+            errors.append("mission_preview.leader_backend provenance fields must be coherent")
+    else:
+        errors.append("mission_preview.leader_backend must be an object")
+    if payload.get("workbench_command") != "agentdeck workbench":
+        errors.append("mission_preview.workbench_command must be agentdeck workbench")
+    _validate_mission_controls(errors, "mission_preview", payload, preview=True)
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_mission_status_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    _mission_exact_fields(errors, "mission_status", payload, MISSION_STATUS_RESPONSE_FIELDS)
+    if payload.get("schema_version") != MISSION_SCHEMA_VERSION:
+        errors.append("mission_status.schema_version must be mission/v1")
+    if payload.get("ok") is not True or payload.get("mode") != "mission_status":
+        errors.append("mission_status mode must be a successful mission_status")
+    status = payload.get("status")
+    if status not in MISSION_STATUSES:
+        errors.append(f"mission_status.status must be one of {MISSION_STATUSES}")
+    if payload.get("safety") != "inspect" or payload.get("requires_explicit_user") is not True:
+        errors.append("mission_status must be inspect-only and require an explicit user")
+    _validate_mission_identity_and_commands(errors, "mission_status", payload, preview=False)
+    selected = _validate_mission_worker_rows(
+        errors, "mission_status.selected_agents", payload.get("selected_agents"), MISSION_SELECTED_AGENT_FIELDS
+    )
+    selected_ids = [str(item.get("agent_id")) for item in selected]
+    if len(selected_ids) < 2 or len(set(selected_ids)) != len(selected_ids):
+        errors.append("mission_status.selected_agents must contain at least two unique agents")
+    step_count = payload.get("step_count")
+    current_step = payload.get("current_step")
+    if not isinstance(step_count, int) or isinstance(step_count, bool) or step_count < 2:
+        errors.append("mission_status.step_count must be an integer of at least two")
+    if not isinstance(current_step, int) or isinstance(current_step, bool) or not isinstance(step_count, int) or not 0 <= current_step <= step_count:
+        errors.append("mission_status.current_step must be between zero and step_count")
+    if not isinstance(payload.get("timeout_seconds"), int) or isinstance(payload.get("timeout_seconds"), bool) or payload.get("timeout_seconds", 0) <= 0:
+        errors.append("mission_status.timeout_seconds must be a positive integer")
+    blockers = payload.get("blockers")
+    if not isinstance(blockers, list) or any(not isinstance(item, str) for item in blockers):
+        errors.append("mission_status.blockers must be a list of strings")
+    can_resume = payload.get("can_resume")
+    if can_resume is not (status in {"stopped", "interrupted"}):
+        errors.append("mission_status.can_resume must match stopped/interrupted status")
+    for field in ("created_at", "updated_at"):
+        if not isinstance(payload.get(field), str):
+            errors.append(f"mission_status.{field} must be a string")
+    for field in ("workflow_run_id", "stop_reason", "confirmed_at", "completed_at"):
+        if payload.get(field) is not None and not isinstance(payload.get(field), str):
+            errors.append(f"mission_status.{field} must be a string or null")
+    if status == "completed" and payload.get("completed_at") is None:
+        errors.append("mission_status.completed_at is required for completed status")
+    if payload.get("workbench_command") != "agentdeck workbench":
+        errors.append("mission_status.workbench_command must be agentdeck workbench")
+    attach_command = payload.get("attach_command")
+    if not isinstance(attach_command, str) or re.fullmatch(
+        r"tmux attach -t [A-Za-z0-9_.:-]+", attach_command
+    ) is None:
+        errors.append("mission_status.attach_command must be a safe tmux attach command")
+    _validate_mission_controls(errors, "mission_status", payload, preview=False)
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_mission_run_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    _mission_exact_fields(errors, "mission_run", payload, MISSION_RUN_RESPONSE_FIELDS)
+    if payload.get("mode") not in {"mission_run", "mission_resume"}:
+        errors.append("mission_run.mode must be mission_run or mission_resume")
+    if payload.get("safety") != "delegated":
+        errors.append("mission_run.safety must be delegated")
+    if payload.get("requires_explicit_user") is not True:
+        errors.append("mission_run.requires_explicit_user must be true")
+    if payload.get("confirmed") is not True:
+        errors.append("mission_run.confirmed must be true")
+    status_projection = dict(payload)
+    status_projection.pop("confirmed", None)
+    status_projection["mode"] = "mission_status"
+    status_projection["safety"] = "inspect"
+    status_validation = validate_mission_status_contract(status_projection)
+    errors.extend(str(item) for item in status_validation["errors"])
+    return {"ok": not errors, "errors": errors}
+
+
+def mission_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": MISSION_SCHEMA_VERSION,
+        "name": "mission",
+        "preview_command": "agentdeck leader chat --message <mission>",
+        "run_command": "agentdeck mission run --mission-id <id> --confirm",
+        "status_command": "agentdeck mission status --mission-id <id>",
+        "resume_command": "agentdeck mission resume --mission-id <id> --confirm",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "preview_response_fields": list(MISSION_PREVIEW_RESPONSE_FIELDS),
+        "status_response_fields": list(MISSION_STATUS_RESPONSE_FIELDS),
+        "run_response_fields": list(MISSION_RUN_RESPONSE_FIELDS),
+        "selected_agent_fields": list(MISSION_SELECTED_AGENT_FIELDS),
+        "startup_action_fields": list(MISSION_STARTUP_ACTION_FIELDS),
+        "plan_fields": list(MISSION_PLAN_FIELDS),
+        "plan_step_fields": list(MISSION_PLAN_STEP_FIELDS),
+        "control_fields": list(MISSION_CONTROL_FIELDS),
+        "leader_backend_fields": list(LEADER_BACKEND_FIELDS),
+        "statuses": list(MISSION_STATUSES),
+    }
+
+
+def mission_contract_response(
+    contract_path: Path, include_example: bool = False
+) -> dict[str, object]:
+    payload = mission_contract_payload(contract_path)
+    if include_example:
+        payload.update(
+            {
+                "example": True,
+                "example_preview": mission_example("preview"),
+                "example_status": mission_example("status"),
+                "example_run": mission_example("run"),
+            }
+        )
+    return payload
+
+
 def run_loop_all_example() -> dict[str, object]:
     return {
         "ok": True,
@@ -5510,15 +6055,15 @@ def _validate_project_view_mission_items(
 
     selected_agent_types = {
         field: "nullable_string" if field in MISSION_WORKER_NULLABLE_FIELDS else "string"
-        for field in MISSION_SELECTED_AGENT_FIELDS
+        for field in MISSION_STATE_SELECTED_AGENT_FIELDS
     }
     startup_action_types = {
         field: "nullable_string" if field in MISSION_WORKER_NULLABLE_FIELDS else "string"
-        for field in MISSION_STARTUP_ACTION_FIELDS
+        for field in MISSION_STATE_STARTUP_ACTION_FIELDS
     }
     required_worker_fields = {
-        "selected_agents": MISSION_SELECTED_AGENT_REQUIRED_FIELDS,
-        "startup_actions": MISSION_STARTUP_ACTION_REQUIRED_FIELDS,
+        "selected_agents": MISSION_STATE_SELECTED_AGENT_REQUIRED_FIELDS,
+        "startup_actions": MISSION_STATE_STARTUP_ACTION_REQUIRED_FIELDS,
     }
     for index, item in enumerate(items):
         if not isinstance(item, dict):

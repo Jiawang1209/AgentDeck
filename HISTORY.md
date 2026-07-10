@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Add Mission contract discovery
+
+- **类型**: feat + test + contract
+- **What**: 新增 `agentdeck contract mission [--example]` 与 contract index 注册，公开 preview/status/run 精确字段、selected/startup/plan/control item 字段、六状态及固定 8 轮串行示例；三个 validator 复用 Mission v1 状态、canonical id/command 与固定 plan helper，拒绝状态/计数/命令/provenance/control 漂移，CLI 在打印前守门，失败时不输出半坏 JSON。
+- **TDD 证据**: focused RED 为 18 failed / 26 passed（缺 contract constants/helpers、index item 与 CLI route）；派生 Leader provenance、unsafe tmux attach 与 non-object example 又分别先 RED，再复用共享 identity 并 fail-closed；最终 focused 为 47 passed。
+- **安全边界**: 本切片仅提供只读 discovery/example，不实现 Mission preview/run/status 业务，不写 Mission state、不调用 provider/runtime/tmux、不发送输入、不改变 approval。
+- **验证**: contracts + agent CLI 回归、全量 pytest、compileall、真实 discovery smoke 与 `git diff --check` 均通过。
+
 ### Fail closed on malformed Mission blockers after final quality review
 
 - **类型**: fix + test

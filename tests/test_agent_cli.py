@@ -266,6 +266,55 @@ def test_contract_workflow_cli_exposes_valid_examples(capsys) -> None:
     assert payload["example_status"]["mode"] == "workflow_status"
 
 
+def test_contract_mission_cli_exposes_valid_examples(capsys) -> None:
+    exit_code = cli.main(["contract", "mission", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["name"] == "mission"
+    assert payload["contract_exists"] is True
+    assert payload["example_preview"]["mode"] == "mission_preview"
+    assert payload["example_status"]["mode"] == "mission_status"
+    assert payload["example_run"]["mode"] == "mission_run"
+    assert set(payload["example_preview"]) == set(payload["preview_response_fields"])
+
+
+def test_contract_mission_cli_refuses_invalid_example_before_printing(
+    monkeypatch, capsys
+) -> None:
+    original = cli.mission_contract_response
+
+    def invalid_response(contract_path, include_example=False):
+        payload = original(contract_path, include_example=include_example)
+        payload["example_preview"]["status"] = "running"
+        return payload
+
+    monkeypatch.setattr(cli, "mission_contract_response", invalid_response)
+
+    assert cli.main(["contract", "mission", "--example"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Mission contract validation failed" in captured.err
+
+
+def test_contract_mission_cli_refuses_non_object_example_before_printing(
+    monkeypatch, capsys
+) -> None:
+    original = cli.mission_contract_response
+
+    def invalid_response(contract_path, include_example=False):
+        payload = original(contract_path, include_example=include_example)
+        payload["example_preview"] = []
+        return payload
+
+    monkeypatch.setattr(cli, "mission_contract_response", invalid_response)
+
+    assert cli.main(["contract", "mission", "--example"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Mission contract validation failed" in captured.err
+
+
 def test_workflow_preview_surfaces_missing_runtime_binding_as_blocker(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -4894,6 +4943,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "run-loop",
         "run-loop-all",
         "workflow",
+        "mission",
         "demo",
         "plans",
         "release",

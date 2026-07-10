@@ -49,6 +49,7 @@ from .contracts import (
     loop_contract_response,
     release_contract_response,
     memory_contract_response,
+    mission_contract_response,
     plan_board_contract_response,
     project_view_contract_response,
     runtime_agent_controls,
@@ -78,6 +79,9 @@ from .contracts import (
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_loop_once_contract,
+    validate_mission_preview_contract,
+    validate_mission_run_contract,
+    validate_mission_status_contract,
     validate_plan_board_contract,
     validate_release_contract,
     validate_project_view_contract,
@@ -4612,6 +4616,32 @@ def contract_workflow_command(args: argparse.Namespace) -> int:
         Path(__file__).resolve().parents[2] / "docs" / "contracts" / "workflow-schema.md"
     )
     _print_json(workflow_contract_response(contract_path, include_example=args.example))
+    return 0
+
+
+def contract_mission_command(args: argparse.Namespace) -> int:
+    contract_path = _repo_root() / "docs" / "contracts" / "mission-schema.md"
+    payload = mission_contract_response(contract_path, include_example=args.example)
+    if args.example:
+        errors: list[str] = []
+        for name, validator in (
+            ("example_preview", validate_mission_preview_contract),
+            ("example_status", validate_mission_status_contract),
+            ("example_run", validate_mission_run_contract),
+        ):
+            example = payload.get(name)
+            if not isinstance(example, dict):
+                errors.append(f"{name} must be an object")
+                continue
+            result = validator(example)
+            errors.extend(str(error) for error in result["errors"])
+        if errors:
+            print(
+                "Mission contract validation failed: " + "; ".join(errors),
+                file=sys.stderr,
+            )
+            return 1
+    _print_json(payload)
     return 0
 
 
@@ -14773,6 +14803,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--example", action="store_true", help="Include GUI-ready workflow examples"
     )
     contract_workflow.set_defaults(func=contract_workflow_command)
+    contract_mission = contract_subparsers.add_parser(
+        "mission", help="Show natural-language mission contract discovery metadata"
+    )
+    contract_mission.add_argument(
+        "--example", action="store_true", help="Include GUI-ready mission examples"
+    )
+    contract_mission.set_defaults(func=contract_mission_command)
     contract_demo = contract_subparsers.add_parser("demo", help="Show the golden demo contract")
     contract_demo.add_argument("--example", action="store_true", help="Include a GUI-ready golden demo example")
     contract_demo.set_defaults(func=contract_demo_command)
