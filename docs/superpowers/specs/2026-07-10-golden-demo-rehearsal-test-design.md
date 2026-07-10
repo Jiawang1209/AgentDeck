@@ -95,7 +95,7 @@ conda run -n agentdeck python -m compileall src tests -q
 git diff --check
 ```
 
-The focused test must first fail for the expected missing contiguous behavior coverage, then pass after the test data/sequence is completed. Because this slice intentionally changes no production behavior, the TDD red phase is the new regression test exposing any mismatch between the assumed full sequence and current CLI semantics.
+This is a coverage-only test slice: the user explicitly chose not to add or change production behavior. The first complete run may therefore pass if the existing commands already compose correctly. If it fails, only a genuine mismatch in the existing golden flow justifies production changes; the test must not manufacture a failure merely to create a red phase.
 
 ## Resolved Decisions
 
