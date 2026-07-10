@@ -96,7 +96,7 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, utc_now
-from .mission import mission_intent
+from .mission import mission_intent, workbench_mission_card
 from .mission_orchestration import (
     MissionPreviewError,
     MissionRunError,
@@ -1562,31 +1562,9 @@ def _workbench_mission_card(
     if latest is None:
         return None
     try:
-        card = mission_status_payload(config, store, latest)
-    except (MissionRunError, ValueError):
+        return workbench_mission_card(latest, config.runtime.session_name)
+    except ValueError:
         return None
-    confirmation_command = latest.get("confirmation_command")
-    if not isinstance(confirmation_command, str):
-        return None
-    can_confirm = latest.get("status") == "pending_confirmation" and not latest.get("blockers")
-    blockers = latest.get("blockers") if isinstance(latest.get("blockers"), list) else []
-    confirm_blocker = next(
-        (item for item in blockers if isinstance(item, str) and item),
-        f"mission status is {latest.get('status')}",
-    )
-    card["confirmation_command"] = confirmation_command
-    card["controls"] = [
-        {
-            "kind": "execute",
-            "label": "Confirm mission",
-            "command": confirmation_command,
-            "safety": "delegated",
-            "enabled": can_confirm,
-            "blocker": None if can_confirm else confirm_blocker,
-        },
-        *card["controls"],
-    ]
-    return card
 
 
 def _workbench_run_progress_card(store: StateStore) -> dict[str, object] | None:

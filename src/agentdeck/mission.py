@@ -70,6 +70,58 @@ def mission_commands(mission_id: str) -> dict[str, str]:
     }
 
 
+def workbench_mission_card(item: Mapping[str, object], session_name: str) -> dict[str, object]:
+    """Purely project a compact ProjectView Mission item into its workbench card."""
+    mission_id = str(item.get("mission_id") or "")
+    commands = mission_commands(mission_id)
+    if re.fullmatch(r"[A-Za-z0-9_.:-]+", session_name) is None:
+        raise ValueError("invalid tmux session name")
+    blockers = [value for value in item.get("blockers", []) if isinstance(value, str)] if isinstance(item.get("blockers"), list) else []
+    can_resume = item.get("status") in {"stopped", "interrupted"} and not blockers
+    can_confirm = item.get("status") == "pending_confirmation" and not blockers
+    resume_blocker = None if can_resume else blockers[0] if blockers else f"mission status is {item.get('status')}"
+    confirm_blocker = None if can_confirm else blockers[0] if blockers else f"mission status is {item.get('status')}"
+    attach_command = f"tmux attach -t {session_name}"
+    def control(kind: str, label: str, command: str, safety: str, enabled: bool = True, blocker: str | None = None) -> dict[str, object]:
+        return {"kind": kind, "label": label, "command": command, "safety": safety, "enabled": enabled, "blocker": blocker}
+    return {
+        "schema_version": MISSION_SCHEMA_VERSION,
+        "ok": True,
+        "mode": "mission_status",
+        "mission_id": mission_id,
+        "status": item.get("status"),
+        "user_message": item.get("user_message"),
+        "plan_id": item.get("plan_id"),
+        "plan_hash": item.get("plan_hash"),
+        "workflow_run_id": item.get("workflow_run_id"),
+        "current_step": item.get("current_step", 0),
+        "step_count": item.get("step_count"),
+        "timeout_seconds": item.get("timeout_seconds"),
+        "selected_agents": item.get("selected_agents"),
+        "blockers": blockers,
+        "stop_reason": item.get("stop_reason"),
+        "created_at": item.get("created_at"),
+        "updated_at": item.get("updated_at"),
+        "confirmed_at": item.get("confirmed_at"),
+        "completed_at": item.get("completed_at"),
+        "can_resume": can_resume,
+        "status_command": commands["status_command"],
+        "resume_command": commands["resume_command"],
+        "attach_command": attach_command,
+        "workbench_command": "agentdeck workbench",
+        "controls": [
+            control("execute", "Confirm mission", commands["confirmation_command"], "delegated", can_confirm, confirm_blocker),
+            control("execute", "Resume mission", commands["resume_command"], "delegated", can_resume, resume_blocker),
+            control("inspect", "Inspect mission", commands["status_command"], "inspect"),
+            control("inspect", "Attach terminal", attach_command, "inspect"),
+            control("inspect", "Open workbench", "agentdeck workbench", "inspect"),
+        ],
+        "safety": "inspect",
+        "requires_explicit_user": True,
+        "confirmation_command": commands["confirmation_command"],
+    }
+
+
 def mission_status_transition_allowed(current: object, target: object) -> bool:
     if current not in MISSION_STATUSES or target not in MISSION_STATUSES:
         return False

@@ -15,6 +15,7 @@ from .mission import (
     MISSION_WORKER_NULLABLE_FIELDS,
     is_canonical_mission_id,
     mission_commands,
+    workbench_mission_card,
     validate_mission_plan,
 )
 from .models import PROJECT_VIEW_SCHEMA_VERSION
@@ -10328,6 +10329,33 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
                 errors.append("mission_card disabled confirmation control needs blocker")
     elif "mission_card" in payload and mission_card is not None:
         errors.append("mission_card must be an object or null")
+    missions_summary = project_view.get("missions") if isinstance(project_view, dict) else None
+    mission_items = missions_summary.get("items") if isinstance(missions_summary, dict) else None
+    latest_mission_id = missions_summary.get("latest_id") if isinstance(missions_summary, dict) else None
+    latest_mission = next(
+        (
+            item for item in mission_items
+            if isinstance(item, dict) and item.get("mission_id") == latest_mission_id
+        ),
+        None,
+    ) if isinstance(mission_items, list) and isinstance(latest_mission_id, str) else None
+    if isinstance(mission_items, list) and mission_items and latest_mission is None:
+        errors.append("project_view.missions.latest_id must identify an item")
+    if isinstance(mission_items, list) and not mission_items and mission_card is not None:
+        errors.append("mission_card must be null when project_view has no Missions")
+    if latest_mission is not None and not isinstance(mission_card, dict):
+        errors.append("mission_card is required for project_view latest Mission")
+    if latest_mission is not None and isinstance(mission_card, dict):
+        shared_fields = (
+            "mission_id", "schema_version", "user_message", "status", "stop_reason",
+            "blockers", "provider", "model", "leader_backend", "plan_id", "plan_hash",
+            "workflow_run_id", "current_step", "step_count", "timeout_seconds",
+            "selected_agents", "created_at", "updated_at", "confirmed_at", "completed_at",
+            "can_resume", "status_command", "resume_command", "confirmation_command",
+        )
+        for field in shared_fields:
+            if field in latest_mission and field in mission_card and mission_card.get(field) != latest_mission.get(field):
+                errors.append(f"mission_card.{field} must match project_view latest Mission")
     control_mode_card = payload.get("control_mode_card")
     if isinstance(control_mode_card, dict):
         for field in WORKBENCH_CONTROL_MODE_CARD_FIELDS:
@@ -14106,16 +14134,21 @@ def workbench_example() -> dict[str, object]:
             "new_events": [],
         },
     }
-    mission_card = mission_example("status")
-    confirmation_command = mission_commands(str(mission_card["mission_id"]))["confirmation_command"]
-    mission_card["confirmation_command"] = confirmation_command
-    mission_card["controls"] = [
-        _mission_control(
-            "execute", "Confirm mission", confirmation_command, "delegated",
-            enabled=False, blocker="mission status is stopped",
-        ),
-        *mission_card["controls"],
-    ]
+    status_example = mission_example("status")
+    mission_summary = project_view["missions"]
+    latest_item = mission_summary["items"][0]
+    for field in (
+        "mission_id", "schema_version", "user_message", "status", "stop_reason",
+        "blockers", "plan_id", "plan_hash", "workflow_run_id", "current_step",
+        "step_count", "timeout_seconds", "selected_agents", "created_at", "updated_at",
+        "confirmed_at", "completed_at", "can_resume", "status_command", "resume_command",
+    ):
+        latest_item[field] = deepcopy(status_example[field])
+    latest_item["confirmation_command"] = mission_commands(str(latest_item["mission_id"]))["confirmation_command"]
+    latest_item["can_start"] = False
+    mission_summary["latest_id"] = latest_item["mission_id"]
+    mission_summary["by_status"] = {str(latest_item["status"]): 1}
+    mission_card = workbench_mission_card(latest_item, "agentdeck")
     payload["mission_card"] = mission_card
     payload["agent_ready_card"] = _agent_ready_card_from_runtime_card(deepcopy(payload["runtime_card"]))
     payload["terminal_session_card"] = _terminal_session_card_from_runtime_card(payload["runtime_card"])

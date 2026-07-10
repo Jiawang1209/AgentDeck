@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Align workbench Mission projection with ProjectView
+
+- **类型**: contract fix + strict TDD + single-source projection
+- **问题**: workbench discovery example 手工创建 Mission card，却与同一 payload 的 `project_view.missions.latest_id/items` 指向不同 Mission；validator 也只校验 card 自身 shape，plan hash 等同源漂移可直接通过。
+- **What**: 新增共享纯 `workbench_mission_card()` projector；真实 CLI 和 discovery example 都先确定 ProjectView latest Mission item，再由该 item 派生 card。workbench validator 要求 latest id 命中 item，并逐字段比较双方共有的 identity、lifecycle、plan/workflow、progress、Workers、timestamps、resume 与 command facts。ProjectView 的 `can_resume` 同样按 stopped/interrupted 且 blockers 为空派生；无 Mission 必须 null，有 latest Mission 必须有 card。
+- **TDD 证据**: mission_id/status/selected_agents 漂移最初只产生间接 shape 错误，plan_hash 漂移错误通过；新增同源守门后四类均返回稳定 field-only error，control command drift 继续由 card validator 阻断。Projection focused 143/143、Task+state 949/949、全量 1181/1181 通过，compileall 与 diff check clean。
+- **安全边界**: drift error 不回显实际值；validator 不读取 raw state、provider、tmux 或文件内容，不执行 card commands，不改变 ProjectView/Mission 状态。
+
 ### Complete Mission surface contracts
 
 - **类型**: contract hardening + strict TDD + review follow-up

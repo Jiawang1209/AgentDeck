@@ -1572,7 +1572,7 @@ class StateStore:
                     "status": status,
                     "stop_reason": mission.get("stop_reason"),
                     "can_start": raw_can_start and workers_ready and not blockers,
-                    "can_resume": status in {MISSION_STATUSES[4], MISSION_STATUSES[5]},
+                    "can_resume": status in {MISSION_STATUSES[4], MISSION_STATUSES[5]} and not blockers,
                     "blockers": blockers,
                     "provider": provider,
                     "model": model,

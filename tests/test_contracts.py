@@ -5892,9 +5892,43 @@ def test_workbench_contract_rejects_mission_confirmation_control_status_drift() 
 def test_workbench_contract_allows_null_mission_card() -> None:
     payload = workbench_example()
     payload["mission_card"] = None
+    payload["project_view"]["missions"] = {
+        "count": 0, "by_status": {}, "latest_id": None, "items": []
+    }
     payload["control_registry"] = workbench_control_registry(payload)
 
     assert validate_workbench_contract(payload) == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("mission_id", "mis_aaaaaaaaaaaa"),
+        ("status", "completed"),
+        ("plan_hash", "sha256:" + "b" * 64),
+        ("selected_agents", []),
+    ],
+)
+def test_workbench_contract_rejects_mission_card_project_view_drift(field, replacement) -> None:
+    payload = workbench_example()
+    payload["mission_card"][field] = replacement
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result["ok"] is False
+    assert f"mission_card.{field} must match project_view latest Mission" in result["errors"]
+
+
+def test_workbench_contract_rejects_mission_control_command_drift() -> None:
+    payload = workbench_example()
+    payload["mission_card"]["controls"][0]["command"] = "agentdeck workbench"
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result["ok"] is False
+    assert any("mission_card" in error for error in result["errors"])
 
 
 def test_workbench_contract_rejects_mission_confirmation_blocker_drift() -> None:
