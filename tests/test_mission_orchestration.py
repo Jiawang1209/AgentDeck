@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import subprocess
+from urllib.error import URLError
 
 import pytest
 
@@ -48,6 +50,18 @@ class RecordingProvider:
     def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
         self.requests.append(request)
         return self.plan_result  # type: ignore[return-value]
+
+
+class ExplodingProvider:
+    name = "fake"
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.calls = 0
+
+    def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
+        self.calls += 1
+        raise self.error
 
 
 def project(tmp_path: Path):
@@ -240,6 +254,94 @@ def test_create_preview_reuses_running_bindings_without_claiming_derived_models(
     ]
 
 
+def test_running_binding_without_pane_uses_spawn_derivation(tmp_path, monkeypatch) -> None:
+    _root, config, store, _config_path = project(tmp_path)
+    config = replace(
+        config,
+        leader=replace(config.leader, provider="codex-cli", model="gpt-5.5"),
+    )
+    state = store.load()
+    state["agents"] = {
+        "planner": {"agent_id": "planner", "status": "running", "pane_id": None},
+        "reviewer": {"agent_id": "reviewer", "status": "configured", "pane_id": None},
+    }
+    store.save(state)
+    provider = RecordingProvider()
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+
+    result = create_mission_preview(
+        config=config, store=store, provider=provider, user_message=MESSAGE, timeout_seconds=180
+    )
+
+    planner = result["selected_agents"][0]
+    startup = result["startup_actions"][0]
+    assert (planner["effective_model"], planner["model_source"]) == (
+        "gpt-5.5",
+        "leader_inherited",
+    )
+    assert startup["action"] == "spawn"
+    assert provider.requests[0].config.agents[0].command == "codex --model gpt-5.5"
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        {"agent_id": "planner", "status": "corrupt", "pane_id": None},
+        {"agent_id": "planner", "status": "running", "pane_id": ""},
+        {"agent_id": "planner", "status": "running", "pane_id": {"secret": "BINDING_MARKER"}},
+    ],
+)
+def test_malformed_selected_binding_fails_before_provider_and_any_write(
+    tmp_path, monkeypatch, binding
+) -> None:
+    _root, config, store, config_path = project(tmp_path)
+    config_before = config_path.read_bytes()
+    state = store.load()
+    state["agents"] = {"planner": binding}
+    store.save(state)
+    state_before = store.state_path.read_bytes()
+    events_before = store.events_path.read_bytes()
+    provider = RecordingProvider()
+
+    with pytest.raises(ValueError, match="^mission preview binding invalid$") as exc_info:
+        create_mission_preview(
+            config=config, store=store, provider=provider, user_message=MESSAGE, timeout_seconds=180
+        )
+
+    assert "BINDING_MARKER" not in str(exc_info.value)
+    assert provider.requests == []
+    assert store.state_path.read_bytes() == state_before
+    assert store.events_path.read_bytes() == events_before
+    assert store.list_plans() == []
+    assert store.list_missions() == []
+    assert config_path.read_bytes() == config_before
+
+
+@pytest.mark.parametrize("case", ["duplicate", "fewer_than_two"])
+def test_selection_blockers_fail_before_provider_and_any_write(
+    tmp_path, monkeypatch, case
+) -> None:
+    _root, config, store, config_path = project(tmp_path)
+    config_before = config_path.read_bytes()
+    if case == "duplicate":
+        config = replace(config, agents=(config.agents[0], config.agents[0], config.agents[2]))
+    else:
+        config = replace(config, agents=(config.agents[0],))
+    provider = RecordingProvider()
+    events_before = store.events_path.read_bytes()
+
+    with pytest.raises(ValueError, match="^mission preview selection invalid$"):
+        create_mission_preview(
+            config=config, store=store, provider=provider, user_message=MESSAGE, timeout_seconds=180
+        )
+
+    assert provider.requests == []
+    assert store.list_plans() == []
+    assert store.list_missions() == []
+    assert store.events_path.read_bytes() == events_before
+    assert config_path.read_bytes() == config_before
+
+
 def test_create_preview_reports_missing_command_without_echoing_command(tmp_path, monkeypatch) -> None:
     _root, config, store, _config_path = project(tmp_path)
     provider = RecordingProvider()
@@ -300,7 +402,7 @@ def test_invalid_provider_plan_fails_closed_before_any_state_or_event_write(
     events_before = store.events_path.read_bytes()
     monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
 
-    with pytest.raises((RuntimeError, ValueError)):
+    with pytest.raises(ValueError, match="^mission preview plan invalid$"):
         create_mission_preview(
             config=config,
             store=store,
@@ -314,6 +416,59 @@ def test_invalid_provider_plan_fails_closed_before_any_state_or_event_write(
     assert store.events_path.read_bytes() == events_before
     if state_before is not None:
         assert store.state_path.read_bytes() == state_before
+
+
+def test_invalid_compact_summaries_fail_before_plan_record_write(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, _config_path = project(tmp_path)
+    provider = RecordingProvider()
+    events_before = store.events_path.read_bytes()
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.selected_agent_summaries",
+        lambda *_args: [{"agent_id": {"marker": "SUMMARY_MARKER"}}],
+    )
+
+    with pytest.raises(ValueError, match="^mission preview summaries invalid$") as exc_info:
+        create_mission_preview(
+            config=config, store=store, provider=provider, user_message=MESSAGE, timeout_seconds=180
+        )
+
+    assert "SUMMARY_MARKER" not in str(exc_info.value)
+    assert len(provider.requests) == 1
+    assert store.list_plans() == []
+    assert store.list_missions() == []
+    assert store.events_path.read_bytes() == events_before
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        URLError("URL_MARKER"),
+        subprocess.TimeoutExpired("TIMEOUT_MARKER", 1),
+        RuntimeError("RUNTIME_MARKER"),
+        ValueError("VALUE_MARKER"),
+    ],
+)
+def test_provider_exceptions_are_sanitized_and_write_nothing(
+    tmp_path, monkeypatch, error
+) -> None:
+    _root, config, store, _config_path = project(tmp_path)
+    provider = ExplodingProvider(error)
+    events_before = store.events_path.read_bytes()
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+
+    with pytest.raises(ValueError, match="^mission preview provider failed$") as exc_info:
+        create_mission_preview(
+            config=config, store=store, provider=provider, user_message=MESSAGE, timeout_seconds=180
+        )
+
+    assert "MARKER" not in str(exc_info.value)
+    assert provider.calls == 1
+    assert store.list_plans() == []
+    assert store.list_missions() == []
+    assert store.events_path.read_bytes() == events_before
 
 
 @pytest.mark.parametrize(
@@ -336,7 +491,7 @@ def test_forbidden_plan_metadata_presence_fails_closed_before_any_write(
     events_before = store.events_path.read_bytes()
     monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
 
-    with pytest.raises(ValueError, match="dynamic or parallel metadata"):
+    with pytest.raises(ValueError, match="^mission preview plan invalid$"):
         create_mission_preview(
             config=config,
             store=store,

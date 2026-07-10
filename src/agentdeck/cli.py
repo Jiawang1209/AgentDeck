@@ -97,7 +97,7 @@ from .contracts import (
 from .autonomy import run_loop_gate, select_auto_approvals
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, utc_now
 from .mission import mission_intent
-from .mission_orchestration import create_mission_preview
+from .mission_orchestration import MissionPreviewError, create_mission_preview
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .dashboard import render_workbench_dashboard
@@ -12690,8 +12690,11 @@ def leader_chat_command(args: argparse.Namespace) -> int:
                 user_message=args.message,
                 timeout_seconds=180,
             )
-        except (RuntimeError, ValueError) as exc:
-            print(f"mission preview failed: {exc}", file=sys.stderr)
+        except MissionPreviewError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        except Exception:
+            print("mission preview failed", file=sys.stderr)
             return 1
         next_command = (
             mission_preview_card["confirmation_command"]

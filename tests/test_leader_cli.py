@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+from urllib.error import URLError
+
+import pytest
 
 from agentdeck import cli
 from agentdeck.config import write_default_config
@@ -223,6 +226,44 @@ def test_leader_chat_blocked_mission_preview_has_no_executable_confirmation(
     assert payload["next_command"] == payload["mission_preview_card"]["status_command"]
     assert "批准执行" not in str(payload["control_registry_card"]["selection"]["next_command"])
     assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        URLError("CLI_URL_MARKER"),
+        subprocess.TimeoutExpired("CLI_TIMEOUT_MARKER", 1),
+        RuntimeError("CLI_RUNTIME_MARKER"),
+        ValueError("CLI_VALUE_MARKER"),
+    ],
+)
+def test_leader_chat_mission_provider_failures_are_sanitized_and_write_nothing(
+    tmp_path, monkeypatch, capsys, error
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    class FailingMissionProvider:
+        name = "fake"
+
+        def plan(self, _request):
+            raise error
+
+    monkeypatch.setattr(cli, "leader_provider", lambda _name: FailingMissionProvider())
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+
+    assert cli.main(
+        ["leader", "chat", "--message", "让 Codex 和 Claude 一人一句接龙百家姓，共8轮"]
+    ) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "mission preview provider failed"
+    assert "MARKER" not in captured.err
+    state = StateStore(root).load()
+    assert state["plans"] == []
+    assert state["missions"] == []
+    assert state["chat_turns"] == []
+    assert StateStore(root).list_events(limit=10) == []
 
 
 def test_leader_chat_explicit_help_route_is_not_hijacked_by_mission_preview(

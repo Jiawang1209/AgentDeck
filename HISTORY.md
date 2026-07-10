@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Harden Mission preview boundaries
+
+- **类型**: P1 fix + TDD + safety boundary
+- **问题**: malformed selected runtime binding、duplicate/不足两个 Worker selection 与 malformed compact summaries 可能在 provider 调用后才失败，造成不必要调用或 plan partial-write 风险；running-without-pane 与 reuse provenance 判定不一致；provider/plan exception 可能把 URL、命令或恶意 marker 原文带到 service/CLI error。
+- **What**: 新增共享纯 helper `mission_binding_reusable()`，统一校验 selected binding status/pane 类型，并仅将 `status=running` 且 non-empty string `pane_id` 视为可 reuse；service 在 provider 前拒绝 malformed binding 与 selection blocker，在 `record_plan` 前复用 compact domain projection 校验 selected/startup summaries、ID/数量/唯一性与 gate 关系。新增 `MissionPreviewError` 稳定分类，provider 与 plan validation 的任意普通 Exception 分别净化为固定 `mission preview provider failed` / `mission preview plan invalid`，CLI 对未知 Exception 也只输出固定文案。
+- **TDD 证据**: 边界目标集先 RED 16 failed（reuse、binding、selection、summary、provider/plan 与 CLI sanitization），最小实现后 16 passed；随后同步旧未净化 exception 断言。
+- **安全边界**: malformed binding/selection 在 provider 前 zero-call/zero-write；provider、plan 或 compact summary 失败时 plans/missions/events/chat 均为零，stdout 为空且 stderr/exception 不含 rejected marker；command-not-found 仍按既有设计保留 blocked preview。未捕获 `KeyboardInterrupt` / `SystemExit`。
+
 ### Fix Mission preview provenance
 
 - **类型**: P1 fix + TDD

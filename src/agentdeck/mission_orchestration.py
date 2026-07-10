@@ -9,7 +9,9 @@ from typing import Any
 from .contracts import validate_mission_preview_contract
 from .mission import (
     MISSION_SCHEMA_VERSION,
+    compact_mission_worker_entries,
     effective_mission_agent_for_binding,
+    mission_binding_reusable,
     mission_commands,
     mission_intent,
     select_mission_agents,
@@ -23,6 +25,10 @@ from .providers import LeaderProvider
 from .providers.base import validate_provider_plan_schema
 from .state import StateStore
 from .workflow import workflow_plan_hash
+
+
+class MissionPreviewError(ValueError):
+    pass
 
 
 def _requested_step_count(user_message: str) -> int:
@@ -183,6 +189,15 @@ def create_mission_preview(
         requested_providers=tuple(str(item) for item in intent["requested_providers"]),
         bindings=bindings,
     )
+    if selection.blockers or len(selection.agents) < 2 or len(
+        {agent.agent_id for agent in selection.agents}
+    ) < 2:
+        raise MissionPreviewError("mission preview selection invalid")
+    try:
+        for agent in selection.agents:
+            mission_binding_reusable(bindings.get(agent.agent_id))
+    except Exception:
+        raise MissionPreviewError("mission preview binding invalid") from None
     effective = tuple(
         effective_mission_agent_for_binding(
             agent,
@@ -204,19 +219,25 @@ def create_mission_preview(
     selected_agent_ids = tuple(item.agent.agent_id for item in effective)
     step_count = _requested_step_count(user_message)
     skill_context = _explicit_leader_skill_context(store, config)
-    plan = LeaderOrchestrator(selected_config, provider).plan(
-        mission_planning_task(
-            user_message,
-            selected_agent_ids=selected_agent_ids,
-            step_count=step_count,
-        ),
-        config.leader.model,
-        skill_context=skill_context,
-    )
-    validate_provider_plan_schema(plan, config=selected_config)
-    validate_mission_plan(plan, selected_agent_ids, timeout_seconds)
-    if len(plan["steps"]) != step_count:
-        raise ValueError(f"mission plan must contain exactly {step_count} steps")
+    try:
+        plan = LeaderOrchestrator(selected_config, provider).plan(
+            mission_planning_task(
+                user_message,
+                selected_agent_ids=selected_agent_ids,
+                step_count=step_count,
+            ),
+            config.leader.model,
+            skill_context=skill_context,
+        )
+    except Exception:
+        raise MissionPreviewError("mission preview provider failed") from None
+    try:
+        validate_provider_plan_schema(plan, config=selected_config)
+        validate_mission_plan(plan, selected_agent_ids, timeout_seconds)
+        if len(plan["steps"]) != step_count:
+            raise ValueError("unexpected mission step count")
+    except Exception:
+        raise MissionPreviewError("mission preview plan invalid") from None
 
     selected_agents = selected_agent_summaries(effective, bindings)
     startup_actions = startup_action_summaries(effective, bindings)
@@ -224,6 +245,29 @@ def create_mission_preview(
         item.pop("blocker", None)
     for item in startup_actions:
         item.pop("blocker", None)
+    try:
+        compact_agents, invalid_agents = compact_mission_worker_entries(
+            selected_agents, kind="selected_agents"
+        )
+        compact_actions, invalid_actions = compact_mission_worker_entries(
+            startup_actions, kind="startup_actions"
+        )
+        selected_ids = [item["agent_id"] for item in compact_agents]
+        action_ids = [item["agent_id"] for item in compact_actions]
+        if (
+            invalid_agents
+            or invalid_actions
+            or compact_agents != selected_agents
+            or compact_actions != startup_actions
+            or selected_ids != list(selected_agent_ids)
+            or action_ids != selected_ids
+            or len(selected_ids) < 2
+            or len(set(selected_ids)) != len(selected_ids)
+            or (not blockers and (not compact_agents or not compact_actions))
+        ):
+            raise ValueError("invalid mission summaries")
+    except Exception:
+        raise MissionPreviewError("mission preview summaries invalid") from None
 
     plan_record = store.record_plan(
         user_message,

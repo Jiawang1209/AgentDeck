@@ -49,6 +49,7 @@ MISSION_STARTUP_ACTION_FIELDS = (
 MISSION_STARTUP_ACTION_REQUIRED_FIELDS = MISSION_STARTUP_ACTION_FIELDS[:-1]
 MISSION_WORKER_NULLABLE_FIELDS = frozenset({"effective_model", "blocker"})
 MISSION_INVALID_BLOCKERS_BLOCKER = "invalid mission blockers"
+MISSION_BINDING_STATUSES = frozenset({"configured", "running", "stopped", "unknown"})
 
 
 def is_canonical_mission_id(value: object) -> bool:
@@ -498,20 +499,29 @@ def effective_mission_agent_for_binding(
     leader: LeaderConfig,
     binding: AgentRuntimeBinding | Mapping[str, Any] | None,
 ) -> EffectiveMissionAgent:
-    status = (
-        binding.get("status")
-        if isinstance(binding, Mapping)
-        else binding.status
-        if isinstance(binding, AgentRuntimeBinding)
-        else None
-    )
-    if status == "running":
+    if mission_binding_reusable(binding):
         return EffectiveMissionAgent(
             agent=agent,
             model=None,
             model_source="running_binding",
         )
     return effective_mission_agent(agent, leader)
+
+
+def mission_binding_reusable(
+    binding: AgentRuntimeBinding | Mapping[str, Any] | None,
+) -> bool:
+    if binding is None:
+        return False
+    status = binding.get("status") if isinstance(binding, Mapping) else binding.status
+    pane_id = binding.get("pane_id") if isinstance(binding, Mapping) else binding.pane_id
+    if not isinstance(status, str) or status not in MISSION_BINDING_STATUSES:
+        raise ValueError("invalid mission binding")
+    if pane_id is not None and (
+        not isinstance(pane_id, str) or not pane_id.strip()
+    ):
+        raise ValueError("invalid mission binding")
+    return status == "running" and pane_id is not None
 
 
 def validate_mission_plan(
@@ -581,11 +591,11 @@ def startup_action_summaries(
 ) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     for item in effective_agents:
+        binding = bindings.get(item.agent.agent_id)
         status = _binding_field(bindings, item.agent.agent_id, "status", "configured")
-        pane_id = _binding_field(bindings, item.agent.agent_id, "pane_id")
         summary = {
             "agent_id": item.agent.agent_id,
-            "action": "reuse" if status == "running" and pane_id else "spawn",
+            "action": "reuse" if mission_binding_reusable(binding) else "spawn",
             "runtime_status": status,
             "effective_model": item.model,
             "model_source": item.model_source,
