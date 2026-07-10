@@ -164,6 +164,9 @@ class StateStore:
             "content_snapshot": skill.get("content_snapshot"),
             "description": skill.get("description"),
             "required_tools": skill.get("required_tools") if isinstance(skill.get("required_tools"), list) else [],
+            "planning_guidance": skill.get("planning_guidance")
+            if isinstance(skill.get("planning_guidance"), list)
+            else [],
             "risk": skill.get("risk"),
             "created_at": utc_now(),
         }
@@ -1284,8 +1287,11 @@ class StateStore:
                     "path": raw_item.get("path"),
                     "content_hash": raw_item.get("content_hash"),
                     "description": raw_item.get("description"),
-                    "required_tools": raw_item.get("required_tools")
+                "required_tools": raw_item.get("required_tools")
                     if isinstance(raw_item.get("required_tools"), list)
+                    else [],
+                    "planning_guidance": raw_item.get("planning_guidance")
+                    if isinstance(raw_item.get("planning_guidance"), list)
                     else [],
                     "risk": raw_item.get("risk"),
                     "created_at": raw_item.get("created_at"),
@@ -1536,6 +1542,9 @@ class StateStore:
                 "content_hash": load.get("content_hash"),
                 "description": load.get("description"),
                 "required_tools": load.get("required_tools") if isinstance(load.get("required_tools"), list) else [],
+                "planning_guidance": load.get("planning_guidance")
+                if isinstance(load.get("planning_guidance"), list)
+                else [],
                 "risk": load.get("risk"),
                 "created_at": load.get("created_at"),
                 "show_command": f"agentdeck skills show --name {shlex.quote(name)}" if name else None,

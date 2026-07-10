@@ -644,6 +644,51 @@ def test_planning_guidance_is_bounded_and_legacy_skills_default_empty(
     assert legacy.summary()["planning_guidance"] == []
 
 
+def test_skill_load_persists_planning_guidance_into_project_view(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    skill_dir = root / ".agentdeck" / "skills" / "guided-planning"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: guided-planning\n"
+        "description: Use when a plan needs a fixed handoff.\n"
+        "planning_guidance: fixed chain, verified handoff\n"
+        "risk: inspect\n"
+        "---\n"
+        "# Guided Planning\n",
+        encoding="utf-8",
+    )
+
+    exit_code = cli.main(
+        [
+            "skills",
+            "load",
+            "--name",
+            "guided-planning",
+            "--agent",
+            "leader",
+            "--purpose",
+            "shape a sequential plan",
+        ]
+    )
+
+    assert exit_code == 0
+    capsys.readouterr()
+    store = StateStore(root)
+    assert store.load()["skill_loads"][0]["planning_guidance"] == [
+        "fixed chain",
+        "verified handoff",
+    ]
+    config = cli.load_config(root)
+    project_view = cli.asdict(store.project_view(config))
+    assert project_view["skills"]["items"][0]["planning_guidance"] == [
+        "fixed chain",
+        "verified handoff",
+    ]
+
+
 def test_skills_show_returns_snapshot_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     skill_dir = root / ".agentdeck" / "skills" / "release-check"

@@ -51,6 +51,12 @@ def leader_skill_context_prompt_lines(skill_context: dict[str, Any] | None) -> l
                 "content_hash": item.get("content_hash"),
                 "description": item.get("description"),
                 "required_tools": item.get("required_tools") if isinstance(item.get("required_tools"), list) else [],
+                "planning_guidance": (
+                    item.get("planning_guidance")
+                    if item.get("agent_id") == "leader"
+                    and isinstance(item.get("planning_guidance"), list)
+                    else []
+                ),
                 "risk": item.get("risk"),
             }
         )

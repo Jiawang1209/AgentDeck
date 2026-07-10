@@ -591,6 +591,45 @@ def test_api_and_cli_leader_prompts_include_loaded_skill_context(tmp_path, monke
         assert "content_snapshot" not in prompt
 
 
+def test_planning_guidance_enters_provider_prompt_only_for_leader_loads(
+    tmp_path, monkeypatch
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config = cli.load_config(root)
+    request = LeaderPlanRequest(
+        task="shape a sequential plan",
+        config=config,
+        model="fake-plan",
+        skill_context={
+            "count": 2,
+            "by_agent": {"leader": 1, "planner": 1},
+            "by_source": {"project": 2},
+            "items": [
+                {
+                    "agent_id": "leader",
+                    "name": "leader-guide",
+                    "planning_guidance": ["leader rule"],
+                },
+                {
+                    "agent_id": "planner",
+                    "name": "worker-guide",
+                    "planning_guidance": ["worker rule"],
+                },
+            ],
+        },
+    )
+
+    prompts = [
+        OpenAICompatibleProvider()._system_prompt(request),
+        CodexCliProvider()._prompt(request),
+    ]
+
+    for prompt in prompts:
+        assert '"planning_guidance": ["leader rule"]' in prompt
+        assert "worker rule" not in prompt
+        assert "content_snapshot" not in prompt
+
+
 def test_leader_plan_passes_model_to_codex_cli_backend_without_dispatching(
     tmp_path, monkeypatch, capsys
 ) -> None:
