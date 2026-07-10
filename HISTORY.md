@@ -4,6 +4,13 @@
 
 ## 2026-07-11
 
+### Create Missions from natural language
+
+- **类型**: feat + TDD + contract
+- **What**: 新增独立 `mission_orchestration.create_mission_preview()`；普通多 Agent 执行请求在既有显式只读 Leader Chat routes 之后进入 `mode=mission_preview`。服务冻结请求中的 Codex/Claude Worker、继承安全有效模型、要求 provider 返回精确 8 步固定串行 plan，并在完整校验后写入一个 plan、一个 `pending_confirmation` Mission 和一个 `mission_preview_created` 事件；CLI 再记录同源 chat turn/audit，并嵌入通过 Mission validator 的 `mission_preview_card`、intent card 与过滤后的 control registry。
+- **TDD 证据**: 首轮 RED 在收集期以 `ModuleNotFoundError: agentdeck.mission_orchestration` 失败；最小 service/route 接入后 focused Mission suite 为 8 passed，随后补充 malformed command 与 raising runtime backend 覆盖。
+- **安全边界**: preview 只调用配置 Leader planning provider，不读取/修改 tmux/runtime，不 send input，不创建 workflow/job/message/approval/inbox，不修改 config bytes，不自动 load skill。已显式 load 的 Leader skill 仅以既有 compact ProjectView context 进入 prompt 与 plan provenance，绝不包含 `content_snapshot` 或作为授权。provider plan 在任何 plan/Mission/event write 前校验；非法 plan 零写。缺失或 malformed Worker command 只生成不回显命令的 compact blocker，保留可 inspect preview 并禁用确认。
+
 ### Sanitize Mission contract validation errors
 
 - **类型**: security fix + test + contract

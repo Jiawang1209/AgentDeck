@@ -61,7 +61,7 @@ def mission_commands(mission_id: str) -> dict[str, str]:
     return {
         "status_command": f"agentdeck mission status --mission-id {mission_id}",
         "confirmation_command": (
-            f"agentdeck mission run --mission-id {mission_id} --confirm"
+            f'agentdeck leader chat --message "批准执行 {mission_id}"'
         ),
         "resume_command": (
             f"agentdeck mission resume --mission-id {mission_id} --confirm"

@@ -10177,7 +10177,7 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
         "confirmed_at": None,
         "completed_at": None,
         "status_command": f"agentdeck mission status --mission-id {mission['mission_id']}",
-        "confirmation_command": f"agentdeck mission run --mission-id {mission['mission_id']} --confirm",
+            "confirmation_command": f'agentdeck leader chat --message "批准执行 {mission["mission_id"]}"',
         "resume_command": f"agentdeck mission resume --mission-id {mission['mission_id']} --confirm",
     }
     assert "launch_command" not in summary["items"][0]

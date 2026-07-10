@@ -1187,6 +1187,7 @@ LEADER_CHAT_RESPONSE_FIELDS = (
     "plan_board_card",
     "skills_catalog_card",
     "run_loop_preview_card",
+    "mission_preview_card",
     "capture_card",
     "terminal_card",
     "dispatch_preview_card",
@@ -3361,6 +3362,7 @@ def leader_chat_contract_payload(contract_path: Path) -> dict[str, object]:
         "plan_board_card_fields": list(LEADER_CHAT_PLAN_BOARD_CARD_FIELDS),
         "skills_catalog_card_fields": list(LEADER_CHAT_SKILLS_CATALOG_CARD_FIELDS),
         "run_loop_preview_card_fields": list(LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS),
+        "mission_preview_card_fields": list(MISSION_PREVIEW_RESPONSE_FIELDS),
         "capture_card_fields": list(LEADER_CHAT_CAPTURE_CARD_FIELDS),
         "terminal_card_fields": list(LEADER_CHAT_TERMINAL_CARD_FIELDS),
         "dispatch_preview_card_fields": list(LEADER_CHAT_DISPATCH_PREVIEW_CARD_FIELDS),
@@ -8291,6 +8293,11 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             ):
                 errors.append("intent_card.secondary_embedded_cards references missing control_registry_card")
             if (
+                "mission_preview_card" in secondary_embedded_cards
+                and payload.get("mission_preview_card") is None
+            ):
+                errors.append("intent_card.secondary_embedded_cards references missing mission_preview_card")
+            if (
                 "inbox_card" in secondary_embedded_cards
                 and payload.get("inbox_card") is None
             ):
@@ -8366,6 +8373,14 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             ):
                 errors.append(
                     "intent_card.secondary_embedded_cards must include control_registry_card for run_progress responses"
+                )
+            if (
+                explanation_action_kind == "mission_preview"
+                and payload.get("mission_preview_card") is not None
+                and "control_registry_card" not in secondary_embedded_cards
+            ):
+                errors.append(
+                    "intent_card.secondary_embedded_cards must include control_registry_card for mission_preview responses"
                 )
             if (
                 explanation_action_kind == "learning_review"
@@ -8621,6 +8636,27 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             intent_card = payload.get("intent_card")
             if isinstance(intent_card, dict) and intent_card.get("embedded_card") != "run_loop_preview_card":
                 errors.append("run_loop_preview intent_card.embedded_card must be run_loop_preview_card")
+    mission_preview_card = payload.get("mission_preview_card")
+    if isinstance(mission_preview_card, dict):
+        mission_preview_validation = validate_mission_preview_contract(mission_preview_card)
+        for error in mission_preview_validation["errors"]:
+            errors.append(f"mission_preview_card: {error}")
+    elif "mission_preview_card" in payload and mission_preview_card is not None:
+        errors.append("mission_preview_card must be an object")
+    if payload.get("mode") == "mission_preview":
+        if not isinstance(mission_preview_card, dict):
+            errors.append("mission_preview mode requires mission_preview_card")
+        else:
+            expected_next = (
+                mission_preview_card.get("confirmation_command")
+                if mission_preview_card.get("can_start") is True
+                else mission_preview_card.get("status_command")
+            )
+            if payload.get("next_command") != expected_next:
+                errors.append("mission_preview.next_command must match safe Mission control")
+            intent_card = payload.get("intent_card")
+            if isinstance(intent_card, dict) and intent_card.get("embedded_card") != "mission_preview_card":
+                errors.append("mission_preview intent_card.embedded_card must be mission_preview_card")
     capture_card = payload.get("capture_card")
     if isinstance(capture_card, dict):
         _validate_leader_chat_capture_card_contract(errors, capture_card)
@@ -10809,7 +10845,7 @@ def project_view_example() -> dict[str, object]:
                         "agentdeck mission status --mission-id mis_0123456789ab"
                     ),
                     "confirmation_command": (
-                        "agentdeck mission run --mission-id mis_0123456789ab --confirm"
+                        'agentdeck leader chat --message "批准执行 mis_0123456789ab"'
                     ),
                     "resume_command": (
                         "agentdeck mission resume --mission-id mis_0123456789ab --confirm"
@@ -11772,6 +11808,7 @@ def leader_chat_example() -> dict[str, object]:
         "plan_board_card": None,
         "skills_catalog_card": None,
         "run_loop_preview_card": None,
+        "mission_preview_card": None,
         "capture_card": None,
         "terminal_card": terminal_card,
         "dispatch_preview_card": None,

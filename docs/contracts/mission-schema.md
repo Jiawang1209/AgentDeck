@@ -2,7 +2,7 @@
 
 The Mission contract describes the GUI-ready, audit-friendly boundary for turning one natural-language multi-agent request into a frozen serial plan, one explicit confirmation, and a resumable status projection.
 
-Task 4 provides discovery and examples only. It does not implement `mission run`, `mission status`, or `mission resume`, create Mission state, call a provider, inspect runtime/tmux, send input, or change approval state.
+The preview path is available through Leader Chat. Mission run/status/resume execution remains a later slice; preview does not inspect runtime/tmux, send input, or change approval state.
 
 ## Discovery
 
@@ -18,12 +18,12 @@ Discovery is read-only. The `--example` response includes `example_preview`, `ex
 
 ```bash
 agentdeck leader chat --message "让 Codex 和 Claude 一人一句接龙，共8轮"
-agentdeck mission run --mission-id <id> --confirm
+agentdeck leader chat --message "批准执行 <id>"
 agentdeck mission status --mission-id <id>
 agentdeck mission resume --mission-id <id> --confirm
 ```
 
-Mission ids use `mis_<12 lowercase hex>`. Status, confirmation, and resume commands must contain the same canonical id. Confirmation and resume always require `--confirm`.
+Mission ids use `mis_<12 lowercase hex>`. Status, confirmation, and resume commands must contain the same canonical id. Preview confirmation is expressed as the natural-language Leader Chat command; resume retains explicit `--confirm`.
 
 Plan ids use `pln_<12 lowercase hex>`. Plan hashes use exactly `sha256:<64 lowercase hex>`. These values are validated before a command or plan reference can be accepted.
 
@@ -111,4 +111,4 @@ Run/resume responses cannot report `pending_confirmation`: confirmation must be 
 
 Preview `leader_backend` uses the shared logical-Leader field shape. Its provider/model must match the top-level provider/model; it must remain pane-less, approval-required, and non-dispatch-ready. The contract rejects non-object roots without raising, unknown/extra top-level or compact item fields, invalid Mission/plan ids or plan hashes, command/id drift, status/lifecycle drift, selected/startup count or provenance drift, step-count drift, bool-as-int values, unsafe controls, nested sensitive objects, or a start/resume control that contradicts blockers/status.
 
-Discovery never writes `.agentdeck/`, creates a plan/Mission/workflow, calls a Leader provider, reads a pane, starts a worker, attaches tmux, sends input, or grants execution authority. The command strings and controls are discoverable affordances, not authorization tokens.
+Contract discovery never writes `.agentdeck/` or calls a provider. The separate Leader Chat preview may call the configured Leader provider and write only a validated plan, pending Mission, chat turn, and audit events; it never creates a workflow, reads a pane, starts a worker, attaches tmux, sends input, or grants execution authority. Command strings and controls are discoverable affordances, not authorization tokens.

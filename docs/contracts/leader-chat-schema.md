@@ -36,6 +36,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "plan_board_card_fields": [],
   "skills_catalog_card_fields": [],
   "run_loop_preview_card_fields": [],
+  "mission_preview_card_fields": [],
   "capture_card_fields": [],
   "dispatch_preview_card_fields": [],
   "dispatch_batch_preview_card_fields": [],
@@ -123,6 +124,7 @@ The review-mode response shape is:
   "plan_board_card": null,
   "skills_catalog_card": null,
   "run_loop_preview_card": null,
+  "mission_preview_card": null,
   "capture_card": null,
   "dispatch_preview_card": null,
   "dispatch_batch_preview_card": null,
@@ -147,6 +149,10 @@ The review-mode response shape is:
 ```
 
 `leader_actions` is identical to `project_view.leader_actions`. It is provided so a chat surface can render the queue without issuing a second status call.
+
+`mission_preview_card` is the validated `mission/v1` preview produced for ordinary execution requests such as `让 Codex 和 Claude 一人一句接龙百家姓，共8轮`. This route is evaluated only after explicit help/status/skill/memory/trace and other inspection routes, and before role/task/generic plan fallbacks. It selects only the requested configured Workers, gives the Leader provider a temporary config containing only that frozen selection, requires an exact fixed serial plan, and records the validated plan, one pending-confirmation Mission, one `mission_preview_created` event, plus the normal chat turn/audit event. The persisted config remains byte-identical.
+
+The card's `selected_agents[]`, `startup_actions[]`, plan, commands, blockers, and controls use the exact Mission contract projections. A startable preview sets top-level `next_command` to `agentdeck leader chat --message "批准执行 <mis_id>"`; a blocked preview selects its safe status command instead and keeps the confirmation control disabled. `intent_card.embedded_card=mission_preview_card`, and `control_registry_card` is filtered to `scope=mission` / `card=mission_preview_card` with selection matching that safe next command. Preview may call only the configured Leader planning provider and may write plan/Mission/chat/audit state. It must not create a workflow run, approval, job, message, reply, artifact, or inbox item; load a skill; inspect or modify tmux/runtime; send input; or treat loaded skills as authority. Explicitly loaded Leader skills enter planning and plan provenance only through the existing compact ProjectView skill context, never through `content_snapshot`.
 
 `leader_action_card` is a GUI-ready projection of the top-level `leader_action` when one is present:
 

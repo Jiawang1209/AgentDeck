@@ -72,6 +72,36 @@ def bind_agent(root: Path, agent_id: str, pane_id: str = "%42") -> None:
     store.save(state)
 
 
+class FakeMissionProvider:
+    name = "fake"
+
+    def __init__(self) -> None:
+        self.requests: list[LeaderPlanRequest] = []
+
+    def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
+        self.requests.append(request)
+        steps = []
+        for step in range(1, 9):
+            agent_id, role = ("planner", "planning") if step % 2 else ("reviewer", "review")
+            steps.append(
+                {
+                    "step": step,
+                    "agent_id": agent_id,
+                    "role": role,
+                    "task": f"完成接龙第 {step} 轮",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                }
+            )
+        return {
+            "goal": "完成八轮接龙",
+            "summary": "Codex 与 Claude 严格串行交替执行。",
+            "steps": steps,
+            "approval_required": True,
+            "dispatch_ready": False,
+        }
+
+
 def break_project_view_recovery(monkeypatch) -> None:
     original_asdict = cli.asdict
 
@@ -129,6 +159,85 @@ def test_leader_plan_creates_structured_plan_without_dispatching(tmp_path, monke
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "leader_plan_created"' in events
+
+
+def test_leader_chat_plain_language_creates_mission_preview(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    provider = FakeMissionProvider()
+    monkeypatch.setattr(cli, "leader_provider", lambda _name: provider)
+    monkeypatch.setattr(
+        cli,
+        "TmuxBackend",
+        lambda: (_ for _ in ()).throw(AssertionError("mission preview must not touch runtime")),
+    )
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+    config_before = (root / ".agentdeck" / "config.toml").read_bytes()
+
+    assert cli.main(
+        ["leader", "chat", "--message", "让 Codex 和 Claude 一人一句接龙百家姓，共8轮"]
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "mission_preview"
+    card = payload["mission_preview_card"]
+    assert card["mission_id"].startswith("mis_")
+    assert payload["intent_card"]["embedded_card"] == "mission_preview_card"
+    assert payload["control_registry_card"]["filters"]["card"] == "mission_preview_card"
+    assert payload["next_command"] == card["confirmation_command"]
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+    state = StateStore(root).load()
+    assert len(state["missions"]) == 1
+    assert len(state["plans"]) == 1
+    assert len(state["chat_turns"]) == 1
+    assert state.get("workflow_runs", []) == []
+    assert state["jobs"] == []
+    assert state["messages"] == []
+    assert state["approvals"] == []
+    assert state["skill_loads"] == []
+    assert (root / ".agentdeck" / "config.toml").read_bytes() == config_before
+    assert [event["event_type"] for event in StateStore(root).list_events(limit=10)] == [
+        "mission_preview_created",
+        "leader_chat_turn",
+    ]
+
+
+def test_leader_chat_blocked_mission_preview_has_no_executable_confirmation(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli, "leader_provider", lambda _name: FakeMissionProvider())
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: "/bin/codex" if command == "codex" else None,
+    )
+
+    assert cli.main(
+        ["leader", "chat", "--message", "让 Codex 和 Claude 一人一句接龙百家姓，共8轮"]
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mission_preview_card"]["can_start"] is False
+    assert payload["next_command"] == payload["mission_preview_card"]["status_command"]
+    assert "批准执行" not in str(payload["control_registry_card"]["selection"]["next_command"])
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+
+
+def test_leader_chat_explicit_help_route_is_not_hijacked_by_mission_preview(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    def fail_provider(_name):
+        raise AssertionError("explicit help route must not invoke mission planning")
+
+    monkeypatch.setattr(cli, "leader_provider", fail_provider)
+    assert cli.main(["leader", "chat", "--message", "帮助"] ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "help"
+    assert payload["mission_preview_card"] is None
 
 
 def test_run_task_creates_plan_and_pending_approvals_without_dispatching(

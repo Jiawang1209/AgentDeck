@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import argparse
 import hashlib
 import json
@@ -96,6 +96,8 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, utc_now
+from .mission import mission_intent
+from .mission_orchestration import create_mission_preview
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .dashboard import render_workbench_dashboard
@@ -139,6 +141,7 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "frontdesk_card",
         "workbench_card",
         "continue_card",
+        "mission_preview_card",
         "run_start_card",
         "run_progress_card",
         "plan_board_card",
@@ -191,6 +194,8 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     if embedded_card == "continue_card" and payload.get("inbox_card") is not None:
         secondary_embedded_cards.append("inbox_card")
     if embedded_card == "continue_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "mission_preview_card" and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "agent_ready_card" and payload.get("startup_preview_card") is not None:
         secondary_embedded_cards.append("startup_preview_card")
@@ -282,9 +287,9 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         and payload.get("terminal_session_card") is not None
     ):
         secondary_embedded_cards.append("terminal_session_card")
-    route_source = "provider_plan" if mode in {"plan", "run_start"} else "state_review" if mode in {"review", "summary"} else "local_rule"
+    route_source = "provider_plan" if mode in {"plan", "run_start", "mission_preview"} else "state_review" if mode in {"review", "summary"} else "local_rule"
     action_kind = explanation.get("action_kind")
-    read_only = mode not in {"plan", "run_start", "review", "apply_action"} and action_kind != "approval_create"
+    read_only = mode not in {"plan", "run_start", "review", "apply_action", "mission_preview"} and action_kind != "approval_create"
     next_command = payload.get("next_command")
     controls: list[dict[str, object]] = []
     if embedded_card == "leader_status_card":
@@ -444,6 +449,10 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck workbench"
     if embedded_card == "continue_card":
         return "agentdeck continue"
+    if embedded_card == "mission_preview_card":
+        card = payload.get("mission_preview_card")
+        command = card.get("status_command") if isinstance(card, dict) else None
+        return str(command) if command else None
     if embedded_card == "run_start_card":
         return "agentdeck approval list"
     if embedded_card == "run_progress_card":
@@ -667,6 +676,7 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("plan_board_card", None)
     payload.setdefault("skills_catalog_card", None)
     payload.setdefault("run_loop_preview_card", None)
+    payload.setdefault("mission_preview_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -1699,6 +1709,18 @@ def _leader_provider_controls(current_provider: str) -> list[dict[str, object]]:
 
 def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, object]]:
     registry: list[dict[str, object]] = []
+    mission_preview_card = (
+        payload.get("mission_preview_card")
+        if isinstance(payload.get("mission_preview_card"), dict)
+        else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="mission",
+        card="mission_preview_card",
+        agent_id="leader",
+        controls=mission_preview_card.get("controls"),
+    )
     leader_card = payload.get("leader_card") if isinstance(payload.get("leader_card"), dict) else {}
     _append_workbench_control_registry_items(
         registry,
@@ -8936,6 +8958,20 @@ def _leader_chat_explanation(
             if isinstance(recovery_action, dict)
             else True,
         }
+    if mode == "mission_preview":
+        card = result if isinstance(result, dict) else {}
+        can_start = card.get("can_start") is True
+        return {
+            "mode": mode,
+            "summary": "Leader created a bounded Mission preview without touching Worker runtime.",
+            "reason": "human requested a fixed multi-agent Mission",
+            "next_command": next_command,
+            "recommended_action_id": card.get("mission_id"),
+            "action_kind": "mission_preview",
+            "action_status": card.get("status"),
+            "safety": "delegated" if can_start else "inspect",
+            "requires_explicit_user": can_start,
+        }
     if mode == "run_start":
         run_start_card = result if isinstance(result, dict) else {}
         return {
@@ -12630,6 +12666,110 @@ def leader_chat_command(args: argparse.Namespace) -> int:
             "ledger_card": ledger_card,
             "lineage_card": lineage_card,
             "control_registry_card": control_registry_card,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
+    if mission_intent(args.message, config) is not None:
+        try:
+            provider_name = _leader_provider_name(config, args.provider)
+            model_label = _leader_model_label(config, args.model)
+            provider = leader_provider(provider_name)
+            mission_config = replace(
+                config,
+                leader=replace(
+                    config.leader,
+                    provider=provider_name,
+                    model=model_label,
+                ),
+            )
+            mission_preview_card = create_mission_preview(
+                config=mission_config,
+                store=store,
+                provider=provider,
+                user_message=args.message,
+                timeout_seconds=180,
+            )
+        except (RuntimeError, ValueError) as exc:
+            print(f"mission preview failed: {exc}", file=sys.stderr)
+            return 1
+        next_command = (
+            mission_preview_card["confirmation_command"]
+            if mission_preview_card["can_start"] is True
+            else mission_preview_card["status_command"]
+        )
+        turn = store.record_chat_turn(
+            mode="mission_preview",
+            message=args.message,
+            plan_id=str(mission_preview_card["plan_id"]),
+            next_command=str(next_command),
+            provider=str(mission_preview_card["provider"]),
+            model=str(mission_preview_card["model"]),
+            review=None,
+            action_id=None,
+            action_kind="mission_preview",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "mission_preview",
+                    "plan_id": mission_preview_card["plan_id"],
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        registry_items = _workbench_control_registry(
+            {"mission_preview_card": mission_preview_card}
+        )
+        next_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("card") == "mission_preview_card"
+                and item.get("command") == next_command
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="mission",
+            card="mission_preview_card",
+            control_id=str(next_control_id) if next_control_id else None,
+        )
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "mission_preview",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "mission_preview",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                result=mission_preview_card,
+            ),
+            "plan_id": mission_preview_card["plan_id"],
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "mission_preview_card": mission_preview_card,
+            "control_registry_card": control_registry_card,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
             "workbench_card": None,
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
