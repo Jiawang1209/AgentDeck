@@ -689,6 +689,26 @@ def test_skill_load_persists_planning_guidance_into_project_view(
     ]
 
 
+def test_sequential_handoff_builtin_exposes_generic_planning_guidance(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    exit_code = cli.main(["skills", "show", "--name", "sequential-handoff"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    skill = payload["skill"]
+    assert skill["name"] == "sequential-handoff"
+    assert skill["source"] == "builtin"
+    assert skill["version"] == "1.0.0"
+    assert skill["risk"] == "inspect"
+    assert len(skill["planning_guidance"]) == 6
+    assert "百家姓" not in skill["content"]
+    assert "agentdeck workflow preview" in skill["content"]
+    assert "agentdeck workflow run" in skill["content"]
+
+
 def test_skills_show_returns_snapshot_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     skill_dir = root / ".agentdeck" / "skills" / "release-check"

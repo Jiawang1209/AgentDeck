@@ -54,6 +54,57 @@ risk: inspect
 
 Run the commands that prove the claim, read the output, and record evidence before reporting completion.
 """,
+    "sequential-handoff": """---
+name: sequential-handoff
+description: Use when a fixed ordered worker chain must advance only after each upstream result is validated.
+version: 1.0.0
+planning_guidance: Produce a fixed linear chain with consecutive step numbers, Assign exactly one configured Agent per step and copy its configured role, Make every later step explicitly consume the previous compact handoff, State the expected deliverable and verification and failure condition in each task, Do not introduce parallel branches or DAG edges or cycles or repeats or dynamic steps, In the plan summary recommend agentdeck workflow preview then human-confirmed agentdeck workflow run --confirm
+required_tools: leader-plan, workflow-preview, workflow-run
+risk: inspect
+---
+# Sequential Handoff
+
+## Overview
+
+Shape a goal into one fixed A → B → C chain. Each downstream Worker starts only after AgentDeck validates the upstream correlated reply.
+
+## Core Pattern
+
+Use consecutive steps. Assign one configured Agent and its exact configured role to every step. Make each task name its deliverable, verification, failure condition, and dependency on the previous compact handoff.
+
+Keep the chain frozen. Do not add parallel branches, DAG edges, cycles, repeats, or dynamic steps.
+
+## Operator Handoff
+
+In the plan summary, recommend:
+
+```bash
+agentdeck workflow preview --plan-id <id>
+agentdeck workflow run --plan-id <id> --confirm
+```
+
+These commands are operator guidance, not permission. Loading this skill does not approve, dispatch, read tmux, or execute the workflow.
+
+## Not Applicable
+
+Do not use this skill when the goal requires parallel work, fan-out/fan-in, cycles, convergence loops, or runtime-created steps. Use ordinary planning or request a dedicated workflow design.
+
+## Quick Reference
+
+| Need | Requirement |
+|---|---|
+| Ordering | Fixed consecutive steps |
+| Assignment | One configured Agent and matching role per step |
+| Handoff | Explicitly consume the previous compact handoff |
+| Evidence | Deliverable, verification, and failure condition |
+| Execution | Preview first; human-confirmed run second |
+
+## Common Mistakes
+
+- Treating skill provenance as dispatch authorization.
+- Omitting verification or failure conditions from later steps.
+- Hiding a parallel or cyclic workflow inside a nominally linear plan.
+""",
 }
 
 
