@@ -186,12 +186,14 @@ def create_mission_preview(
         configured_provider = config.leader.provider
     except Exception:
         raise MissionPreviewError("mission preview provider invalid") from None
+    if not isinstance(provider_name, str) or not isinstance(configured_provider, str):
+        raise MissionPreviewError("mission preview provider invalid")
+    candidate_provider = provider_name.strip().lower()
+    canonical_provider = configured_provider.strip().lower()
     if (
-        not isinstance(provider_name, str)
-        or not provider_name.strip()
-        or not isinstance(configured_provider, str)
-        or not configured_provider.strip()
-        or provider_name.strip().lower() != configured_provider.strip().lower()
+        not candidate_provider
+        or not canonical_provider
+        or candidate_provider != canonical_provider
     ):
         raise MissionPreviewError("mission preview provider invalid")
 
@@ -234,7 +236,11 @@ def create_mission_preview(
         if blocker is not None:
             blockers.append(blocker)
 
-    selected_config = replace(config, agents=tuple(item.agent for item in effective))
+    selected_config = replace(
+        config,
+        leader=replace(config.leader, provider=canonical_provider),
+        agents=tuple(item.agent for item in effective),
+    )
     selected_agent_ids = tuple(item.agent.agent_id for item in effective)
     step_count = _requested_step_count(user_message)
     try:
@@ -293,7 +299,7 @@ def create_mission_preview(
 
     plan_record = store.record_plan(
         user_message,
-        provider.name,
+        canonical_provider,
         config.leader.model,
         plan,
         skill_context=skill_context,
@@ -301,7 +307,7 @@ def create_mission_preview(
     plan_hash = workflow_plan_hash(plan_record)
     mission = store.create_mission(
         user_message=user_message,
-        provider=provider.name,
+        provider=canonical_provider,
         model=config.leader.model,
         leader_backend=plan_record["leader_backend"],
         plan_id=plan_record["plan_id"],

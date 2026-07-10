@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Canonicalize Mission preview provider
+
+- **类型**: important fix + TDD + provenance
+- **问题**: provider identity preflight 虽按 strip/lower 比较同源性，后续仍把 adapter 的 raw `provider.name` 写入 plan/Mission/payload，允许空白/大小写漂移污染 `leader_backend` 与审计 provenance。
+- **What**: 以 `config.leader.provider.strip().lower()` 作为唯一 `canonical_provider`；adapter candidate 只用于同源比较。selected provider config、`record_plan()`、`create_mission()` 及其 payload/backend 投影全部使用 canonical provider，不再使用 raw adapter name。
+- **TDD 证据**: fake、codex-cli、claude-cli、deepseek 四种合法 provider 的 uppercase/outer-whitespace adapter name 先 RED 4 failed，最小 canonical write-path 修复后 4 passed。
+- **安全边界**: 不新增 provider alias；`codex` 与 `codex-cli` 等不同 backend 仍不相等。仅规范化已确认同源的大小写/外部空白，不改变 provider 调用、runtime、approval 或 Mission 执行边界。
+
 ### Validate Mission preview provenance
 
 - **类型**: important fix + TDD + provenance

@@ -369,6 +369,37 @@ def test_provider_identity_invalid_fails_before_provider_and_any_write(
     assert config_path.read_bytes() == config_before
 
 
+@pytest.mark.parametrize(
+    "configured_provider",
+    ["fake", "codex-cli", "claude-cli", "deepseek"],
+)
+def test_provider_identity_is_canonicalized_for_payload_and_state(
+    tmp_path, monkeypatch, configured_provider
+) -> None:
+    _root, config, store, _config_path = project(tmp_path)
+    config = replace(
+        config,
+        leader=replace(config.leader, provider=configured_provider),
+    )
+    provider = RecordingProvider()
+    provider.name = f" {configured_provider.upper()} "
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+
+    result = create_mission_preview(
+        config=config, store=store, provider=provider, user_message=MESSAGE, timeout_seconds=180
+    )
+
+    assert validate_mission_preview_contract(result) == {"ok": True, "errors": []}
+    assert result["provider"] == configured_provider
+    assert result["leader_backend"]["provider"] == configured_provider
+    plan = store.plan_by_id(result["plan_id"])
+    mission = store.mission_by_id(result["mission_id"])
+    assert plan["provider"] == configured_provider
+    assert plan["leader_backend"]["provider"] == configured_provider
+    assert mission["provider"] == configured_provider
+    assert mission["leader_backend"]["provider"] == configured_provider
+
+
 def test_non_object_agents_state_fails_before_provider_and_any_business_write(
     tmp_path, monkeypatch
 ) -> None:
