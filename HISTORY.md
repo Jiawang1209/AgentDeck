@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Harden Worker readiness evidence
+
+- **类型**: important fix + strict TDD + runtime safety
+- **问题**: 全屏 substring/提示符扫描会把旧 scrollback、文档示例和用户对话误判为当前 Codex/Claude ready、setup 或 failure；重复 agent/pane selection 直到 backend probe 后才暴露；`pane_exists()` 在 deadline 后返回或抛错时仍可能投影迟到结果并继续 probe。
+- **What**: classifier 只检查最近 40 行 active frame，以 CLI header + 行首 prompt + context 的结构化组合识别 ready，并从 setup/failure state evidence 中排除 `User:` 对话行；selection 在任何 backend read 前拒绝重复 agent id 或规范化 pane id，使用不回显输入的固定错误；每次 `pane_exists()` 返回或异常后立即执行 deadline gate，迟到结果不分类、不泄漏、不继续 probe，当前及未 probe Worker 稳定转为 timeout。真实时钟测试只保留最小等待下界，移除受调度噪声影响的脆弱上界。
+- **TDD 证据**: 质量用例先 RED 为 8 failed / 42 passed，分别覆盖 active-frame 误判 4 项、duplicate selection 2 项与 post-pane-check deadline 2 项；最小实现及新增 clock observation 对齐后 focused readiness 50 项、runtime/tmux/dispatch/workflow 相邻回归 74 项、全量 1114 项通过；compileall 与 diff 检查通过。
+- **安全边界**: classifier 仍为纯函数；readiness 不 send/spawn/kill/create session、不调用 provider、不写 state。backend exception 和 duplicate marker 均不回显，deadline 到期后不读取后续 pane。
+
 ### Reject late Worker readiness captures
 
 - **类型**: important fix + strict TDD + runtime safety

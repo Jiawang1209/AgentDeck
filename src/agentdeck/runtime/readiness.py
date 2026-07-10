@@ -24,6 +24,7 @@ WorkerReadinessStatus = Literal[
 
 _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 _TERMINAL_STATUSES = frozenset({"setup_required", "failed", "pane_lost"})
+_ACTIVE_FRAME_LINE_COUNT = 40
 
 
 @dataclass(frozen=True)
@@ -54,44 +55,57 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
         raise TypeError("output must be a string")
 
     family = provider_family(provider)
-    normalized = _ANSI_ESCAPE.sub("", output).lower()
+    normalized_lines = _ANSI_ESCAPE.sub("", output).lower().splitlines()
+    active_lines = normalized_lines[-_ACTIVE_FRAME_LINE_COUNT:]
+    active_frame = "\n".join(active_lines)
+    # Conversation text is untrusted content, not CLI state evidence.  The
+    # terminal adapters currently label captured user turns this way.
+    state_frame = "\n".join(
+        line for line in active_lines if not line.lstrip().startswith("user:")
+    )
 
     if family == "codex":
         if (
-            "requires a newer version of codex" in normalized
-            or "model incompatible" in normalized
-            or ("model" in normalized and "not supported" in normalized)
+            "requires a newer version of codex" in state_frame
+            or "model incompatible" in state_frame
+            or ("model" in state_frame and "not supported" in state_frame)
         ):
             return WorkerReadinessEvidence(
                 "failed", "configured model is incompatible with Codex CLI"
             )
-        if "starting mcp servers" in normalized:
+        if "starting mcp servers" in state_frame:
             return WorkerReadinessEvidence(
                 "starting", "CLI startup is still in progress"
             )
-        if "›" in normalized:
+        if "openai codex" in active_frame and any(
+            re.match(r"^\s*›\s+ask codex\b", line) for line in active_lines
+        ):
             return WorkerReadinessEvidence("ready", None)
         return WorkerReadinessEvidence("starting", "Codex CLI prompt is not ready")
 
     if family == "claude":
         if (
-            "yes, i trust this folder" in normalized
-            or "do you trust the files in this folder" in normalized
-            or "trust this folder" in normalized
+            "yes, i trust this folder" in state_frame
+            or "do you trust the files in this folder" in state_frame
+            or "trust this folder" in state_frame
         ):
             return WorkerReadinessEvidence("setup_required", "directory trust required")
         if (
-            "not logged in" in normalized
-            or "authentication required" in normalized
-            or "please log in" in normalized
-            or "run /login" in normalized
+            "not logged in" in state_frame
+            or "authentication required" in state_frame
+            or "please log in" in state_frame
+            or "run /login" in state_frame
         ):
             return WorkerReadinessEvidence("setup_required", "Claude login required")
-        if "starting mcp servers" in normalized:
+        if "starting mcp servers" in state_frame:
             return WorkerReadinessEvidence(
                 "starting", "CLI startup is still in progress"
             )
-        if "❯" in normalized and "context" in normalized:
+        if (
+            "claude code" in active_frame
+            and any(re.match(r"^\s*❯\s+", line) for line in active_lines)
+            and any("context" in line for line in active_lines)
+        ):
             return WorkerReadinessEvidence("ready", None)
         return WorkerReadinessEvidence("starting", "Claude CLI prompt is not ready")
 
@@ -128,6 +142,8 @@ def _validate_selected(
         raise ValueError("selected must contain at least one worker")
 
     validated: list[tuple[AgentSpec, str]] = []
+    agent_ids: set[str] = set()
+    pane_ids: set[str] = set()
     for item in selected:
         if not isinstance(item, (tuple, list)) or len(item) != 2:
             raise TypeError("each selected item must be an (AgentSpec, pane_id) pair")
@@ -138,6 +154,13 @@ def _validate_selected(
             raise TypeError("pane_id must be a string")
         if not pane_id.strip():
             raise ValueError("pane_id must not be empty")
+        if agent.agent_id in agent_ids:
+            raise ValueError("selected contains duplicate agent ids")
+        normalized_pane_id = pane_id.strip()
+        if normalized_pane_id in pane_ids:
+            raise ValueError("selected contains duplicate pane ids")
+        agent_ids.add(agent.agent_id)
+        pane_ids.add(normalized_pane_id)
         validated.append((agent, pane_id))
     return tuple(validated)
 
@@ -202,9 +225,42 @@ def wait_for_worker_readiness(
         current: list[WorkerReadiness] = []
         for worker_index, (agent, pane_id) in enumerate(workers):
             family = provider_family(agent.provider)
+            pane_error = False
             try:
                 pane_exists = backend.pane_exists(runtime_config, pane_id)
             except Exception:
+                pane_error = True
+                pane_exists = False
+            pane_checked_at = max(
+                _validated_clock(monotonic),
+                started_at + scheduled_sleep_total,
+            )
+            if pane_checked_at >= deadline:
+                current.append(
+                    WorkerReadiness(
+                        agent.agent_id,
+                        family,
+                        "starting",
+                        "worker pane check completed after readiness deadline",
+                    )
+                )
+                current.extend(
+                    WorkerReadiness(
+                        remaining_agent.agent_id,
+                        provider_family(remaining_agent.provider),
+                        "starting",
+                        "worker was not probed before readiness deadline",
+                    )
+                    for remaining_agent, _remaining_pane_id in workers[
+                        worker_index + 1 :
+                    ]
+                )
+                return WorkerReadinessBatch(
+                    all_ready=False,
+                    results=_timeout_results(tuple(current)),
+                    timed_out=True,
+                )
+            if pane_error:
                 current.append(
                     WorkerReadiness(
                         agent.agent_id,

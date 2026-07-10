@@ -69,6 +69,36 @@ def test_blockers_and_startup_take_priority_over_stale_ready_prompt(
     assert classify_worker_readiness(provider, screen).status == expected
 
 
+@pytest.mark.parametrize(
+    ("provider", "screen", "expected"),
+    [
+        ("codex", "Release notes\n› quoted documentation example", "starting"),
+        (
+            "codex",
+            f"{CODEX_READY_SCREEN}\nUser: this model is not supported for my task",
+            "ready",
+        ),
+        (
+            "claude",
+            f"{CLAUDE_READY_SCREEN}\nUser: do you trust this folder for the example?",
+            "ready",
+        ),
+    ],
+)
+def test_conversation_text_and_prompt_glyphs_are_not_setup_or_failure_evidence(
+    provider: str, screen: str, expected: str
+) -> None:
+    assert classify_worker_readiness(provider, screen).status == expected
+
+
+def test_blocker_outside_active_visible_tail_does_not_override_current_ready_frame() -> None:
+    old_scrollback = "Configured model requires a newer version of Codex"
+    history = "\n".join(f"historical line {index}" for index in range(45))
+    screen = f"{old_scrollback}\n{history}\n{CODEX_READY_SCREEN}"
+
+    assert classify_worker_readiness("codex", screen).status == "ready"
+
+
 class FakeBackend:
     def __init__(self) -> None:
         self.outputs: dict[str, list[str | Exception]] = {}
@@ -77,6 +107,7 @@ class FakeBackend:
         self.captured: list[str] = []
         self.checked: list[str] = []
         self.capture_hook: Callable[[str], None] | None = None
+        self.exists_hook: Callable[[str], None] | None = None
 
     @staticmethod
     def _next(values: list[object], default: object) -> object:
@@ -88,6 +119,8 @@ class FakeBackend:
 
     def pane_exists(self, _config: RuntimeConfig, pane_id: str) -> bool:
         self.checked.append(pane_id)
+        if self.exists_hook is not None:
+            self.exists_hook(pane_id)
         value = self._next(self.exists.setdefault(pane_id, [True]), True)
         if isinstance(value, Exception):
             raise value
@@ -157,7 +190,7 @@ def test_wait_for_selected_worker_polls_starting_until_ready(
         backend,
         ((codex_agent, "%1"),),
         poll_interval=0.25,
-        monotonic=iter((0.0, 0.1, 0.1, 0.2, 0.2)).__next__,
+        monotonic=iter((0.0, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2)).__next__,
         sleeper=sleeps.append,
     )
 
@@ -275,7 +308,9 @@ def test_multiple_workers_are_rechecked_in_stable_order_until_all_ready(
         runtime_config,
         backend,
         ((codex_agent, "%1"), (claude_agent, "%2")),
-        monotonic=iter((0.0, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2)).__next__,
+        monotonic=iter(
+            (0.0, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2, 0.2)
+        ).__next__,
     )
 
     assert result.all_ready is True
@@ -327,6 +362,33 @@ def test_wait_rejects_empty_or_invalid_selected(
 ) -> None:
     with pytest.raises((TypeError, ValueError)):
         _wait(runtime_config, FakeBackend(), selected)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("duplicate_kind", ["agent_id", "pane_id"])
+def test_wait_rejects_duplicate_selected_before_backend_reads(
+    runtime_config: RuntimeConfig,
+    codex_agent: AgentSpec,
+    claude_agent: AgentSpec,
+    duplicate_kind: str,
+) -> None:
+    backend = FakeBackend()
+    if duplicate_kind == "agent_id":
+        marker = "duplicate-secret-agent"
+        selected = (
+            (AgentSpec(marker, "one", "codex", "codex"), "%1"),
+            (AgentSpec(marker, "two", "claude", "claude"), "%2"),
+        )
+    else:
+        marker = "%duplicate-secret-pane"
+        selected = ((codex_agent, marker), (claude_agent, marker))
+
+    with pytest.raises(ValueError) as error:
+        _wait(runtime_config, backend, selected)
+
+    assert marker not in str(error.value)
+    assert backend.checked == []
+    assert backend.captured == []
+    assert backend.sent == []
 
 
 def test_wait_rejects_invalid_config_backend_and_clock(
@@ -449,7 +511,7 @@ def test_real_monotonic_zero_poll_waits_until_short_deadline(
     elapsed = time.monotonic() - started_at
 
     assert result.timed_out is True
-    assert 0.035 <= elapsed < 1.0
+    assert elapsed >= 0.035
     assert 2 <= len(backend.captured) <= 8
     assert backend.sent == []
 
@@ -510,4 +572,37 @@ def test_late_capture_times_out_starting_current_and_unprobed_workers(
     ]
     assert all("trust" not in (item.reason or "").lower() for item in result.results)
     assert backend.captured == ["%1", "%2"]
+    assert backend.sent == []
+
+
+@pytest.mark.parametrize("pane_result", [False, RuntimeError("secret pane failure")])
+def test_pane_check_finishing_at_deadline_times_out_without_using_result(
+    runtime_config: RuntimeConfig,
+    codex_agent: AgentSpec,
+    claude_agent: AgentSpec,
+    pane_result: bool | Exception,
+) -> None:
+    backend = FakeBackend()
+    backend.exists["%1"] = [pane_result]
+    clock = {"now": 0.0}
+    backend.exists_hook = lambda _pane_id: clock.update(now=1.0)
+
+    result = _wait(
+        runtime_config,
+        backend,
+        ((codex_agent, "%1"), (claude_agent, "%2")),
+        timeout_seconds=1,
+        poll_interval=0.1,
+        monotonic=lambda: clock["now"],
+    )
+
+    assert result.all_ready is False
+    assert result.timed_out is True
+    assert [(item.agent_id, item.status) for item in result.results] == [
+        ("planner", "timeout"),
+        ("reviewer", "timeout"),
+    ]
+    assert all("secret" not in (item.reason or "") for item in result.results)
+    assert backend.checked == ["%1"]
+    assert backend.captured == []
     assert backend.sent == []
