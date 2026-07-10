@@ -121,6 +121,162 @@ def bind_agent(root: Path, agent_id: str, pane_id: str = "%42") -> None:
     store.save(state)
 
 
+def record_two_step_workflow_plan(root: Path) -> dict[str, object]:
+    return StateStore(root).record_plan(
+        "Prepare and review evidence",
+        "fake",
+        "fake-plan",
+        {
+            "dispatch_ready": True,
+            "steps": [
+                {
+                    "step": 1,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "Prepare evidence",
+                    "requires_approval": True,
+                },
+                {
+                    "step": 2,
+                    "agent_id": "reviewer",
+                    "role": "review",
+                    "task": "Review evidence",
+                    "requires_approval": True,
+                },
+            ],
+        },
+    )
+
+
+def test_workflow_preview_is_read_only_and_uses_stored_bindings(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%1")
+    bind_agent(root, "reviewer", "%2")
+    plan = record_two_step_workflow_plan(root)
+    store = StateStore(root)
+    state_before = store.state_path.read_bytes()
+    events_before = store.events_path.read_bytes()
+    monkeypatch.setattr(
+        cli,
+        "TmuxBackend",
+        lambda: (_ for _ in ()).throw(AssertionError("preview touched runtime")),
+    )
+
+    exit_code = cli.main(
+        [
+            "workflow",
+            "preview",
+            "--plan-id",
+            str(plan["plan_id"]),
+            "--timeout",
+            "30",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "workflow_preview"
+    assert payload["safety"] == "inspect"
+    assert payload["can_run"] is True
+    assert [item["pane_id"] for item in payload["steps"]] == ["%1", "%2"]
+    assert "--confirm" in payload["confirm_command"]
+    assert store.state_path.read_bytes() == state_before
+    assert store.events_path.read_bytes() == events_before
+
+
+def test_workflow_status_projects_saved_record_without_runtime_access(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    plan = record_two_step_workflow_plan(root)
+    store = StateStore(root)
+    record = store.create_workflow_run(
+        plan_id=str(plan["plan_id"]),
+        plan_hash="sha256:" + "a" * 64,
+        timeout_seconds=30,
+        authorized_steps=[
+            {
+                "step": 1,
+                "agent_id": "planner",
+                "role": "planning",
+                "task": "Prepare evidence",
+                "task_hash": "sha256:" + "b" * 64,
+            }
+        ],
+    )
+    store.update_workflow_run(
+        str(record["run_id"]),
+        status="stopped",
+        stop_reason="timed_out",
+        current_step=1,
+    )
+    monkeypatch.setattr(
+        cli,
+        "TmuxBackend",
+        lambda: (_ for _ in ()).throw(AssertionError("status touched runtime")),
+    )
+
+    exit_code = cli.main(
+        ["workflow", "status", "--run-id", str(record["run_id"])]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "workflow_status"
+    assert payload["status"] == "stopped"
+    assert payload["can_resume"] is True
+    assert "--confirm" in payload["resume_command"]
+
+
+def test_contract_workflow_cli_exposes_valid_examples(capsys) -> None:
+    exit_code = cli.main(["contract", "workflow", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["name"] == "workflow"
+    assert payload["contract_exists"] is True
+    assert payload["example_preview"]["mode"] == "workflow_preview"
+    assert payload["example_status"]["mode"] == "workflow_status"
+
+
+def test_workflow_preview_surfaces_missing_runtime_binding_as_blocker(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    plan = record_two_step_workflow_plan(root)
+
+    exit_code = cli.main(
+        ["workflow", "preview", "--plan-id", str(plan["plan_id"])]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["can_run"] is False
+    assert payload["blockers"] == [
+        "agent is not running: planner",
+        "agent is not running: reviewer",
+    ]
+    assert payload["controls"][1]["enabled"] is False
+
+
+def test_workflow_preview_and_status_reject_unknown_ids_without_json(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    assert cli.main(["workflow", "preview", "--plan-id", "pln_missing"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "unknown plan: pln_missing"
+
+    assert cli.main(["workflow", "status", "--run-id", "wfr_missing"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "unknown workflow run: wfr_missing"
+
+
 def test_dispatch_prompt_requests_full_output_path_for_artifact_recovery(tmp_path, monkeypatch) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     config = cli.load_config(root)

@@ -85,6 +85,9 @@ from .contracts import (
     validate_run_start_contract,
     validate_trace_contract,
     validate_workbench_contract,
+    validate_workflow_preview_contract,
+    validate_workflow_status_contract,
+    workflow_contract_response,
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, utc_now
@@ -96,6 +99,7 @@ from .runtime import TmuxBackend
 from .tui import TuiModel, run_tui
 from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import, resolve_skill_dependencies
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
+from .workflow import authorized_steps, workflow_plan_hash
 
 
 def _print_json(payload: object) -> None:
@@ -4599,6 +4603,14 @@ def contract_run_loop_command(args: argparse.Namespace) -> int:
 def contract_run_loop_all_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "run-loop-all-schema.md"
     _print_json(run_loop_all_contract_response(contract_path, include_example=args.example))
+    return 0
+
+
+def contract_workflow_command(args: argparse.Namespace) -> int:
+    contract_path = (
+        Path(__file__).resolve().parents[2] / "docs" / "contracts" / "workflow-schema.md"
+    )
+    _print_json(workflow_contract_response(contract_path, include_example=args.example))
     return 0
 
 
@@ -13842,6 +13854,180 @@ def _busy_agents(store: StateStore) -> set[str]:
     return busy
 
 
+def _workflow_preview_payload(
+    config: ProjectConfig,
+    store: StateStore,
+    plan_record: dict[str, object],
+    timeout_seconds: int,
+) -> dict[str, object]:
+    plan_id = str(plan_record.get("plan_id") or "")
+    steps = authorized_steps(plan_record)
+    configured_agents = {agent.agent_id for agent in config.agents}
+    blockers: list[str] = []
+    projected_steps: list[dict[str, object]] = []
+    if not steps:
+        blockers.append("plan has no workflow steps")
+    expected_steps = list(range(1, len(steps) + 1))
+    actual_steps = [int(item["step"]) for item in steps]
+    if actual_steps != expected_steps:
+        blockers.append("plan steps must be a contiguous sequence starting at 1")
+    for item in steps:
+        agent_id = str(item["agent_id"])
+        task = str(item["task"])
+        binding = store.agent_binding(agent_id) if agent_id else None
+        runtime_status = str(binding.get("status") or "configured") if binding else "configured"
+        pane_id = str(binding.get("pane_id")) if binding and binding.get("pane_id") else None
+        step_blocker = None
+        if not agent_id or agent_id not in configured_agents:
+            step_blocker = f"unknown agent: {agent_id or '<empty>'}"
+        elif not task:
+            step_blocker = f"step {item['step']} has an empty task"
+        elif not binding or runtime_status != "running" or pane_id is None:
+            step_blocker = f"agent is not running: {agent_id}"
+        if step_blocker:
+            blockers.append(step_blocker)
+        projected_steps.append(
+            {
+                **item,
+                "runtime_status": runtime_status,
+                "pane_id": pane_id,
+                "ready": step_blocker is None,
+                "blocker": step_blocker,
+            }
+        )
+    confirm_command = (
+        f"agentdeck workflow run --plan-id {plan_id} "
+        f"--timeout {timeout_seconds} --confirm"
+    )
+    can_run = not blockers
+    payload = {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "ok": True,
+        "mode": "workflow_preview",
+        "safety": "inspect",
+        "plan_id": plan_id,
+        "plan_hash": workflow_plan_hash(plan_record),
+        "timeout_seconds": timeout_seconds,
+        "step_count": len(projected_steps),
+        "steps": projected_steps,
+        "blockers": blockers,
+        "can_run": can_run,
+        "confirm_command": confirm_command,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Show plan",
+                "command": f"agentdeck plan show --plan-id {plan_id}",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "execute",
+                "label": "Run workflow",
+                "command": confirm_command,
+                "safety": "delegated",
+                "enabled": can_run,
+                "blocker": blockers[0] if blockers else None,
+            },
+        ],
+    }
+    validation = validate_workflow_preview_contract(payload)
+    if not validation["ok"]:
+        raise ValueError("; ".join(str(item) for item in validation["errors"]))
+    return payload
+
+
+def _workflow_status_payload(record: dict[str, object]) -> dict[str, object]:
+    run_id = str(record.get("run_id") or "")
+    status = str(record.get("status") or "")
+    can_resume = status in {"stopped", "interrupted"}
+    status_command = f"agentdeck workflow status --run-id {run_id}"
+    resume_command = f"agentdeck workflow resume --run-id {run_id} --confirm"
+    payload = {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "ok": True,
+        "mode": "workflow_status",
+        "safety": "inspect",
+        "run_id": run_id,
+        "plan_id": record.get("plan_id"),
+        "plan_hash": record.get("plan_hash"),
+        "status": status,
+        "current_step": record.get("current_step"),
+        "step_count": record.get("step_count"),
+        "timeout_seconds": record.get("timeout_seconds"),
+        "turns": list(record.get("turns") or []),
+        "stop_reason": record.get("stop_reason"),
+        "created_at": record.get("created_at"),
+        "updated_at": record.get("updated_at"),
+        "completed_at": record.get("completed_at"),
+        "can_resume": can_resume,
+        "status_command": status_command,
+        "resume_command": resume_command,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Show workflow status",
+                "command": status_command,
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "execute",
+                "label": "Resume workflow",
+                "command": resume_command,
+                "safety": "delegated",
+                "enabled": can_resume,
+                "blocker": None if can_resume else f"workflow status is {status}",
+            },
+        ],
+    }
+    validation = validate_workflow_status_contract(payload)
+    if not validation["ok"]:
+        raise ValueError("; ".join(str(item) for item in validation["errors"]))
+    return payload
+
+
+def workflow_preview_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if args.timeout <= 0:
+        print("workflow timeout must be a positive integer", file=sys.stderr)
+        return 1
+    try:
+        plan_record = store.plan_by_id(args.plan_id)
+    except KeyError:
+        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    try:
+        payload = _workflow_preview_payload(config, store, plan_record, args.timeout)
+    except ValueError as exc:
+        print(f"workflow preview contract validation failed: {exc}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def workflow_status_command(args: argparse.Namespace) -> int:
+    _config, store, exit_code = _load_project_or_error()
+    if store is None:
+        return exit_code
+    try:
+        record = store.workflow_run_by_id(args.run_id)
+    except KeyError:
+        print(f"unknown workflow run: {args.run_id}", file=sys.stderr)
+        return 1
+    try:
+        payload = _workflow_status_payload(record)
+    except ValueError as exc:
+        print(f"workflow status contract validation failed: {exc}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
 def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
     """Round-robin one wave over all active plans (shared budget, skip-on-contention)."""
     policy = config.autonomous
@@ -14079,6 +14265,25 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--all", action="store_true", help="Drive every active plan one round-robin wave")
     run_loop.add_argument("--confirm", action="store_true", help="Explicitly confirm the autonomous wave")
     run_loop.set_defaults(func=run_loop_command)
+
+    workflow = subparsers.add_parser(
+        "workflow",
+        help="Preview and inspect explicitly authorized sequential workflows",
+    )
+    workflow_subparsers = workflow.add_subparsers(dest="workflow_command")
+    workflow_preview = workflow_subparsers.add_parser(
+        "preview", help="Preview a plan as a read-only linear workflow"
+    )
+    workflow_preview.add_argument("--plan-id", required=True, help="Existing Leader plan id")
+    workflow_preview.add_argument(
+        "--timeout", type=int, default=300, help="Per-step timeout in seconds"
+    )
+    workflow_preview.set_defaults(func=workflow_preview_command)
+    workflow_status = workflow_subparsers.add_parser(
+        "status", help="Show persisted sequential workflow status"
+    )
+    workflow_status.add_argument("--run-id", required=True, help="Workflow run id")
+    workflow_status.set_defaults(func=workflow_status_command)
 
     release = subparsers.add_parser(
         "release", help="Explicitly record a round release once the review gate is ready"
@@ -14369,6 +14574,13 @@ def build_parser() -> argparse.ArgumentParser:
     contract_run_loop_all = contract_subparsers.add_parser("run-loop-all", help="Show run-loop --all parallel-scheduler contract metadata")
     contract_run_loop_all.add_argument("--example", action="store_true", help="Include a GUI-ready run-loop-all example")
     contract_run_loop_all.set_defaults(func=contract_run_loop_all_command)
+    contract_workflow = contract_subparsers.add_parser(
+        "workflow", help="Show sequential workflow contract discovery metadata"
+    )
+    contract_workflow.add_argument(
+        "--example", action="store_true", help="Include GUI-ready workflow examples"
+    )
+    contract_workflow.set_defaults(func=contract_workflow_command)
     contract_demo = contract_subparsers.add_parser("demo", help="Show the golden demo contract")
     contract_demo.add_argument("--example", action="store_true", help="Include a GUI-ready golden demo example")
     contract_demo.set_defaults(func=contract_demo_command)
