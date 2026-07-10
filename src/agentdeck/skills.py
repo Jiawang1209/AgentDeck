@@ -58,7 +58,7 @@ Run the commands that prove the claim, read the output, and record evidence befo
 name: sequential-handoff
 description: Use when a fixed ordered worker chain must advance only after each upstream result is validated.
 version: 1.0.0
-planning_guidance: Produce a fixed linear chain with consecutive step numbers, Assign exactly one configured Agent per step and copy its configured role, Make every later step explicitly consume the previous compact handoff, State the expected deliverable and verification and failure condition in each task, Do not introduce parallel branches or DAG edges or cycles or repeats or dynamic steps, In the plan summary recommend agentdeck workflow preview then human-confirmed agentdeck workflow run --confirm
+planning_guidance: Produce a fixed linear chain with consecutive step numbers, Assign exactly one configured Agent per step and copy its configured role, Make every later step explicitly consume the previous compact handoff, State the expected deliverable and verification and failure condition in each task, Do not introduce parallel branches or DAG edges or cycles or repeats or dynamic steps, In the plan summary recommend agentdeck workflow preview then human-confirmed agentdeck workflow run --confirm, For incompatible workloads do not recommend workflow commands and return to ordinary Leader planning for a dedicated design
 required_tools: leader-plan, workflow-preview, workflow-run
 risk: inspect
 ---
@@ -87,7 +87,7 @@ These commands are operator guidance, not permission. Loading this skill does no
 
 ## Not Applicable
 
-Do not use this skill when the goal requires parallel work, fan-out/fan-in, cycles, convergence loops, or runtime-created steps. Use ordinary planning or request a dedicated workflow design.
+Do not use this skill when the goal requires parallel work, fan-out/fan-in, cycles, convergence loops, or runtime-created steps. Do not recommend existing `agentdeck workflow` commands for those incompatible workloads; use ordinary Leader planning and stop for a dedicated workflow design.
 
 ## Quick Reference
 

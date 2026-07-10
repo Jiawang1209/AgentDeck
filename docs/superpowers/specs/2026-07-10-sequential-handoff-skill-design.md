@@ -42,7 +42,7 @@ The built-in skill is named `sequential-handoff`, uses version `1.0.0`, and has 
 
 The body remains concise and human-readable for `agentdeck skills show`. It explains the fixed-chain planning pattern, operator sequence, non-applicable cases, and common mistakes. It does not contain recitation-specific content.
 
-Frontmatter includes compact guidance equivalent to these six rules:
+Frontmatter includes compact guidance equivalent to these seven rules:
 
 1. Produce a fixed linear chain with consecutive step numbers.
 2. Assign exactly one configured Agent per step and copy its configured role.
@@ -50,6 +50,7 @@ Frontmatter includes compact guidance equivalent to these six rules:
 4. State the expected deliverable, verification, and failure condition in each task.
 5. Do not introduce parallel branches, DAG edges, cycles, repeats, or dynamic steps.
 6. In the plan summary, recommend `agentdeck workflow preview --plan-id <id>` followed by human-confirmed `agentdeck workflow run --plan-id <id> --confirm`.
+7. For incompatible workloads, do not recommend existing workflow commands; return to ordinary Leader planning and stop for a dedicated design.
 
 The skill itself does not add reply tokens or the structured Worker reply schema. The workflow engine owns those runtime details and injects them into each Worker prompt.
 

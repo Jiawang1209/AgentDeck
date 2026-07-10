@@ -204,7 +204,7 @@ assert skill["name"] == "sequential-handoff"
 assert skill["source"] == "builtin"
 assert skill["version"] == "1.0.0"
 assert skill["risk"] == "inspect"
-assert len(skill["planning_guidance"]) == 6
+assert len(skill["planning_guidance"]) == 7
 assert "百家姓" not in skill["content"]
 assert "agentdeck workflow preview" in skill["content"]
 assert "agentdeck workflow run" in skill["content"]
@@ -226,7 +226,7 @@ Add a `BUILTIN_SKILLS["sequential-handoff"]` entry with:
 name: sequential-handoff
 description: Use when a fixed ordered worker chain must advance only after each upstream result is validated.
 version: 1.0.0
-planning_guidance: Produce a fixed linear chain with consecutive step numbers, Assign exactly one configured Agent per step and copy its configured role, Make every later step explicitly consume the previous compact handoff, State the expected deliverable and verification and failure condition in each task, Do not introduce parallel branches or DAG edges or cycles or repeats or dynamic steps, In the plan summary recommend agentdeck workflow preview then human-confirmed agentdeck workflow run --confirm
+planning_guidance: Produce a fixed linear chain with consecutive step numbers, Assign exactly one configured Agent per step and copy its configured role, Make every later step explicitly consume the previous compact handoff, State the expected deliverable and verification and failure condition in each task, Do not introduce parallel branches or DAG edges or cycles or repeats or dynamic steps, In the plan summary recommend agentdeck workflow preview then human-confirmed agentdeck workflow run --confirm, For incompatible workloads do not recommend workflow commands and return to ordinary Leader planning for a dedicated design
 required_tools: leader-plan, workflow-preview, workflow-run
 risk: inspect
 ```

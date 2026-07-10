@@ -703,7 +703,11 @@ def test_sequential_handoff_builtin_exposes_generic_planning_guidance(
     assert skill["source"] == "builtin"
     assert skill["version"] == "1.0.0"
     assert skill["risk"] == "inspect"
-    assert len(skill["planning_guidance"]) == 6
+    assert len(skill["planning_guidance"]) == 7
+    assert any(
+        "incompatible workloads" in item and "ordinary Leader planning" in item
+        for item in skill["planning_guidance"]
+    )
     assert "百家姓" not in skill["content"]
     assert "agentdeck workflow preview" in skill["content"]
     assert "agentdeck workflow run" in skill["content"]
