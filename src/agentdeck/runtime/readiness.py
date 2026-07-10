@@ -181,12 +181,24 @@ def wait_for_worker_readiness(
     started_at = _validated_clock(monotonic)
     deadline = started_at + timeout
 
-    effective_interval = interval if interval > 0 else 1.0
-    max_polls = max(1, math.ceil(timeout / effective_interval) + 1)
+    effective_interval = interval if interval > 0 else min(0.01, timeout)
     latest: tuple[WorkerReadiness, ...] = ()
-    last_clock = started_at
+    scheduled_sleep_total = 0.0
+    poll_index = 0
 
-    for poll_index in range(max_polls):
+    while True:
+        if poll_index > 0:
+            now = max(
+                _validated_clock(monotonic),
+                started_at + scheduled_sleep_total,
+            )
+            if now >= deadline:
+                return WorkerReadinessBatch(
+                    all_ready=False,
+                    results=_timeout_results(latest),
+                    timed_out=True,
+                )
+
         current: list[WorkerReadiness] = []
         for agent, pane_id in workers:
             family = provider_family(agent.provider)
@@ -227,20 +239,28 @@ def wait_for_worker_readiness(
         if all(item.status == "ready" for item in latest):
             return WorkerReadinessBatch(all_ready=True, results=latest)
 
-        now = _validated_clock(monotonic)
-        if now < last_clock:
-            now = last_clock
-        last_clock = now
-        if now >= deadline or poll_index + 1 >= max_polls:
+        now = max(
+            _validated_clock(monotonic),
+            started_at + scheduled_sleep_total,
+        )
+        if now >= deadline:
             return WorkerReadinessBatch(
                 all_ready=False,
                 results=_timeout_results(latest),
                 timed_out=True,
             )
-        sleeper(min(interval, max(0.0, deadline - now)))
-
-    return WorkerReadinessBatch(
-        all_ready=False,
-        results=_timeout_results(latest),
-        timed_out=True,
-    )
+        sleep_for = min(effective_interval, max(0.0, deadline - now))
+        if sleep_for <= 0:
+            return WorkerReadinessBatch(
+                all_ready=False,
+                results=_timeout_results(latest),
+                timed_out=True,
+            )
+        sleeper(sleep_for)
+        advanced_sleep = scheduled_sleep_total + sleep_for
+        scheduled_sleep_total = (
+            timeout
+            if advanced_sleep <= scheduled_sleep_total
+            else min(timeout, advanced_sleep)
+        )
+        poll_index += 1

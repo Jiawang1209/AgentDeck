@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Honor Worker readiness polling deadlines
+
+- **类型**: important fix + strict TDD + runtime safety
+- **问题**: 首版 readiness 在第二轮 capture 后才检查 deadline，因此恰好到期的 Worker 仍可能凭 deadline 后的 ready screen 通过；`poll_interval=0` 又用 synthetic 1 秒 poll budget，使真实短 timeout 在没有实际等待时提前结束。
+- **What**: zero poll 现在使用 `min(0.01, timeout)` 作为 effective interval；每次 sleep 不超过 remaining deadline，并累计 scheduled sleep 形成 logical elapsed。第二轮及后续轮次必须在 `pane_exists` / `capture_output` 前以 `max(monotonic(), start + scheduled_sleep_total)` 守住 deadline，因此到期即把已有 starting evidence 转为 timeout，绝不读取 deadline 后输出。constant、倒退 monotonic 与 no-op sleeper 仍会由 logical time 有限终止，真实 monotonic/default sleeper 不会在 deadline 前提前 timeout。
+- **TDD 证据**: deadline equality fixture 先 RED，旧实现进行了第二次 capture 并错误返回 ready；真实 monotonic `timeout=0.05/poll=0` 先 RED，旧实现约 30µs 即 timeout。最小 logical-time 修复后目标 6 项及 focused readiness 40 项、runtime/dispatch/workflow 相邻回归 300 项、全量 1104 项通过；compileall 与 diff 检查通过。
+- **安全边界**: 不改变 provider classifier、selected Worker 集合或终态优先级；不 send/spawn/kill/create session、不调用 provider、不写 state，FakeBackend `sent` 保持空。
+
 ### Probe Codex and Claude Worker readiness
 
 - **类型**: feat + strict TDD + runtime safety

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from math import inf, nan
 
@@ -153,7 +154,7 @@ def test_wait_for_selected_worker_polls_starting_until_ready(
         backend,
         ((codex_agent, "%1"),),
         poll_interval=0.25,
-        monotonic=iter((0.0, 0.1)).__next__,
+        monotonic=iter((0.0, 0.1, 0.2)).__next__,
         sleeper=sleeps.append,
     )
 
@@ -271,7 +272,7 @@ def test_multiple_workers_are_rechecked_in_stable_order_until_all_ready(
         runtime_config,
         backend,
         ((codex_agent, "%1"), (claude_agent, "%2")),
-        monotonic=iter((0.0, 0.1)).__next__,
+        monotonic=iter((0.0, 0.1, 0.2)).__next__,
     )
 
     assert result.all_ready is True
@@ -353,7 +354,7 @@ def test_constant_monotonic_and_zero_poll_are_still_bounded(
         runtime_config,
         backend,
         ((codex_agent, "%1"),),
-        timeout_seconds=2,
+        timeout_seconds=0.03,
         poll_interval=0,
         monotonic=lambda: 5.0,
         sleeper=sleeps.append,
@@ -362,7 +363,7 @@ def test_constant_monotonic_and_zero_poll_are_still_bounded(
     assert result.timed_out is True
     assert result.results[0].status == "timeout"
     assert 1 <= len(backend.captured) <= 3
-    assert len(sleeps) <= 2
+    assert len(sleeps) <= 3
     assert backend.sent == []
 
 
@@ -370,19 +371,20 @@ def test_decreasing_monotonic_is_still_bounded(
     runtime_config: RuntimeConfig, codex_agent: AgentSpec
 ) -> None:
     backend = FakeBackend()
-    times = iter((5.0, 4.0, 3.0, 2.0))
+    times = iter((5.0, 4.0))
 
     result = _wait(
         runtime_config,
         backend,
         ((codex_agent, "%1"),),
-        timeout_seconds=2,
+        timeout_seconds=0.03,
         poll_interval=0,
-        monotonic=times.__next__,
+        monotonic=lambda: next(times, 3.0),
+        sleeper=lambda _seconds: None,
     )
 
     assert result.timed_out is True
-    assert len(backend.captured) == 3
+    assert 1 <= len(backend.captured) <= 3
     assert backend.sent == []
 
 
@@ -404,4 +406,46 @@ def test_poll_sleep_never_exceeds_remaining_deadline(
 
     assert result.timed_out is True
     assert sleeps == [1.0]
+    assert backend.sent == []
+
+
+def test_deadline_equality_stops_before_second_capture(
+    runtime_config: RuntimeConfig, codex_agent: AgentSpec
+) -> None:
+    backend = FakeBackend()
+    backend.outputs["%1"] = [CODEX_STARTING_MCP_SCREEN, CODEX_READY_SCREEN]
+    times = iter((0.0, 0.0, 1.0))
+
+    result = _wait(
+        runtime_config,
+        backend,
+        ((codex_agent, "%1"),),
+        timeout_seconds=1,
+        poll_interval=100,
+        monotonic=times.__next__,
+    )
+
+    assert result.timed_out is True
+    assert result.results[0].status == "timeout"
+    assert backend.captured == ["%1"]
+
+
+def test_real_monotonic_zero_poll_waits_until_short_deadline(
+    runtime_config: RuntimeConfig, codex_agent: AgentSpec
+) -> None:
+    backend = FakeBackend()
+    started_at = time.monotonic()
+
+    result = wait_for_worker_readiness(
+        runtime_config=runtime_config,
+        backend=backend,
+        selected=((codex_agent, "%1"),),
+        timeout_seconds=0.05,
+        poll_interval=0,
+    )
+    elapsed = time.monotonic() - started_at
+
+    assert result.timed_out is True
+    assert 0.035 <= elapsed < 1.0
+    assert 2 <= len(backend.captured) <= 8
     assert backend.sent == []
