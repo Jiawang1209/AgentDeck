@@ -465,6 +465,7 @@ PROJECT_VIEW_SKILL_ITEM_FIELDS = (
     "content_hash",
     "description",
     "required_tools",
+    "planning_guidance",
     "risk",
     "created_at",
     "show_command",
@@ -830,6 +831,7 @@ SKILLS_SKILL_ITEM_FIELDS = (
     "path",
     "content_hash",
     "required_tools",
+    "planning_guidance",
     "risk",
     "version",
     "show_command",
@@ -2568,6 +2570,7 @@ def skills_example() -> dict[str, object]:
         "path": None,
         "content_hash": "sha256:example",
         "required_tools": ["leader-plan", "approval-list"],
+        "planning_guidance": [],
         "risk": "inspect",
         "version": "0.0.0",
         "show_command": show_command,
@@ -5383,6 +5386,13 @@ def _validate_project_view_skill_items(errors: list[str], payload: dict[str, obj
                     errors.append(f"missing skill item field: {field}")
                 else:
                     errors.append(f"missing skill item field at index {index}: {field}")
+        guidance = item.get("planning_guidance")
+        if not isinstance(guidance, list) or not all(
+            isinstance(entry, str) for entry in guidance
+        ):
+            errors.append(
+                f"skills.items[{index}].planning_guidance must be a list of strings"
+            )
 
 
 def _validate_project_view_memory_items(errors: list[str], payload: dict[str, object]) -> None:
@@ -9865,6 +9875,7 @@ def project_view_example() -> dict[str, object]:
                     "content_hash": "sha256:example",
                     "description": "Break broad goals into reviewable steps.",
                     "required_tools": [],
+                    "planning_guidance": [],
                     "risk": "inspect",
                     "created_at": "2026-07-04T00:00:00+00:00",
                     "show_command": "agentdeck skills show --name planning",

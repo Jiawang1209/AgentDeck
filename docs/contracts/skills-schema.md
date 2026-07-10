@@ -71,6 +71,12 @@ agentdeck skills create --suggestion-id <id> --confirm
 - `load_skill_fields`: available skill summary fields plus `content_snapshot`.
 - `skill_control_fields`: ordered fields for GUI controls.
 
+Every skill summary/detail/load item also exposes `planning_guidance`, a bounded ordered list parsed from optional comma-separated `SKILL.md` frontmatter. The compact projection keeps at most eight non-empty entries and at most 240 characters per entry. Missing guidance is `[]`.
+
+`planning_guidance` is planning context, not permission. It is persisted only after explicit `skills load`, remains covered by the skill content hash/snapshot, and enters the Leader provider prompt only for a load whose `agent_id=leader`. Worker-owned loads keep the field as provenance but do not inject their guidance into Leader planning. Provider prompts still exclude the complete `content_snapshot`.
+
+The built-in `sequential-handoff` skill (`version=1.0.0`) uses this field to shape fixed A→B→C plans and to recommend read-only workflow preview followed by human-confirmed workflow run. It must be explicitly loaded for Leader and is not applicable to parallel, DAG, cyclic, repeat, or dynamic-step workflows.
+
 ## Source catalog (`skills catalog --source <dir>`)
 
 `agentdeck skills catalog --source <dir>` is a read-only browse ("shop window") of a local skill source directory of `<name>/SKILL.md`. It reuses the same frontmatter/name/hash snapshot logic as the rest of the registry (`_snapshot_from_content`) and compares each source skill against the project's imported skills (`discover_skills`, `source == "project"` only — built-ins are not "imported"). The response fields are `SKILLS_CATALOG_RESPONSE_FIELDS` (`ok`, `mode=skills_catalog`, `source`, `skill_count`, `imported_count`, `controls`, `items`); each item carries `SKILLS_CATALOG_ITEM_FIELDS` — the standard skill summary fields plus a three-state `import_status`, `import_preview_command`, and `import_command`. `import_status` is one of:

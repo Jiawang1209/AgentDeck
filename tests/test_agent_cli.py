@@ -768,9 +768,10 @@ def test_skills_load_records_replayable_snapshot_and_event(tmp_path, monkeypatch
             "path": payload["skill"]["path"],
             "content_hash": payload["skill"]["content_hash"],
             "content_snapshot": payload["skill"]["content_snapshot"],
-            "description": "Verify release readiness.",
-            "required_tools": [],
-            "risk": "inspect",
+                "description": "Verify release readiness.",
+                "required_tools": [],
+                "planning_guidance": [],
+                "risk": "inspect",
             "created_at": payload["created_at"],
         }
     ]

@@ -58,6 +58,7 @@ agentdeck skills import --path /path/to/SKILL.md
 agentdeck skills load-preview --name planning --agent planner --purpose "decompose implementation work"
 agentdeck skills load-plan --name planning --agent planner
 agentdeck skills load --name planning --agent leader --purpose "plan decomposition"
+agentdeck skills load --name sequential-handoff --agent leader --purpose "plan a fixed sequential handoff"
 agentdeck skills load --name planning --agent planner --with-deps --confirm
 agentdeck skills lock --name planning
 agentdeck skills lock-verify --name planning
@@ -190,6 +191,8 @@ agentdeck workflow resume --run-id wfr_xxx --confirm
 `agentdeck workflow` 把一个既有 Leader plan 的有序 `steps[]` 显式解释为固定的 A→B→C 线性链。先用 `preview` 检查 plan hash、步骤和已存 runtime binding；只有 `run --confirm` 才创建 workflow run，并在前台逐步等待当前 Worker 的 token-correlated 结构化回复。完成回复会被压缩成 summary/verification/risks/next_steps/artifact trace，再交给下一 Worker，不会转发完整 pane 历史。
 
 运行中遇到 blocked、failed、结构错误、timeout、pane 丢失或 plan drift 会立刻停止，之后可用 `status` 检查、用 `resume --confirm` 恢复；恢复不会重复发送已经派发或完成的 step。该命令不 spawn agent、不调用 Leader provider、不自动 ack inbox、不扩大原计划或 worker 权限，也不改变普通 approval/dispatch/capture-reply/run-loop 的行为。机器契约通过 `agentdeck contract workflow --example` 发现，详见 `docs/contracts/workflow-schema.md`。
+
+生成这类 plan 前可以显式把内置 `sequential-handoff` skill 加载给 Leader：`agentdeck skills load --name sequential-handoff --agent leader --purpose "plan a fixed sequential handoff"`。它通过最多 8 条、每条最多 240 字符的 compact `planning_guidance` 指导真实 Codex/Claude Leader 生成连续固定步骤、明确上游 handoff、产物/验证/失败条件，并在 summary 中建议 preview → confirmed run。完整 `content_snapshot` 仍不会进入 Leader prompt；Worker load 不会把 guidance 注入 Leader；skill 本身不审批、不派发，也不适用于并行、DAG 或循环工作流。
 
 `agentdeck leader chat --message "frontdesk <goal>"` 是北极星 Phase G1 的只读前台接待入口：它会进入 `mode=frontdesk`，返回 `frontdesk_card`、`intent_card` 和显式下一步 `agentdeck leader plan --task <goal>`，但不调用 Leader provider、不创建 plan/action/approval/message/job/inbox、不读取 tmux，也不发送 tmux 输入。这个入口用于把用户交互层和 planner/orchestrator 深度推理层分开，未来 GUI 可以先渲染 frontdesk intake，再由人类决定是否进入 plan。
 

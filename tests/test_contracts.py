@@ -5157,6 +5157,32 @@ def test_workflow_contract_response_exposes_examples(tmp_path: Path) -> None:
     assert payload["example_run"]["confirmed"] is True
 
 
+def test_skill_contracts_expose_and_validate_planning_guidance() -> None:
+    from copy import deepcopy
+
+    from agentdeck.contracts import (
+        PROJECT_VIEW_SKILL_ITEM_FIELDS,
+        SKILLS_SKILL_ITEM_FIELDS,
+        project_view_example,
+        validate_project_view_contract,
+    )
+
+    assert "planning_guidance" in SKILLS_SKILL_ITEM_FIELDS
+    assert "planning_guidance" in PROJECT_VIEW_SKILL_ITEM_FIELDS
+
+    payload = project_view_example()
+    payload["skills"]["items"][0]["planning_guidance"] = ["fixed chain"]
+    assert validate_project_view_contract(payload)["ok"] is True
+
+    bad = deepcopy(payload)
+    bad["skills"]["items"][0]["planning_guidance"] = "fixed chain"
+    result = validate_project_view_contract(bad)
+    assert result["ok"] is False
+    assert "skills.items[0].planning_guidance must be a list of strings" in result[
+        "errors"
+    ]
+
+
 def test_leader_chat_contract_exposes_run_loop_preview_card_fields():
     from pathlib import Path
     from agentdeck.contracts import leader_chat_contract_response, LEADER_CHAT_RUN_LOOP_PREVIEW_CARD_FIELDS

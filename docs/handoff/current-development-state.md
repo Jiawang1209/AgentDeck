@@ -4,6 +4,14 @@ Updated: 2026-07-10
 
 ## Sequential workflow core — implemented
 
+### Built-in sequential-handoff planning skill — implemented, acceptance pending
+
+`planning_guidance[]` is now a bounded audited skill field (maximum eight entries, 240 characters each) that follows explicit load records into ProjectView and plan provenance. Only guidance from an `agent_id=leader` load enters API/CLI Leader prompts; full `content_snapshot` remains excluded. Existing skills default to an empty list.
+
+The generic built-in `sequential-handoff` skill (`version=1.0.0`) shapes fixed consecutive plans, explicit compact handoffs, per-step evidence/failure conditions, and a workflow preview → human-confirmed run summary. It is never auto-loaded, never injected into Workers, grants no execution permission, and rejects parallel/DAG/cycle/dynamic-step workloads.
+
+The current next action is GREEN/counterexample skill evaluation, full regression, then the isolated real Codex/Claude eight-turn 百家姓 acceptance run requested by the user.
+
 The generic A→B→C handoff engine is implemented and committed. It is intentionally separate from ordinary `run-loop`:
 
 - `agentdeck workflow preview --plan-id <id> [--timeout <seconds>]` is read-only and derives a hash-pinned ordered chain plus stored-runtime blockers without inspecting tmux.

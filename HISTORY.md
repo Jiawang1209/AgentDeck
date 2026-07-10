@@ -4,6 +4,14 @@
 
 ## 2026-07-10
 
+### Current - Built-in sequential-handoff planning skill
+
+- **类型**: feat
+- **动机**: 顺序 workflow core 能自动接力，但真实 Codex/Claude Leader 只接收 compact loaded-skill metadata，若只写 skill 正文则无法影响规划。
+- **What**: 新增 bounded `planning_guidance[]`（最多 8×240 字符）并贯通 SkillSnapshot、显式 load record、ProjectView、plan provenance 和 provider prompt；只有 Leader-owned load 注入 guidance，完整 `content_snapshot` 继续排除。新增通用 built-in `sequential-handoff`（1.0.0），指导固定线性步骤、compact handoff、逐步产物/验证/失败条件和 preview→confirmed run。
+- **影响**: 人类显式 load 后，真实 Leader provider 能获得可审计且 bounded 的规划指导；skill 不 auto-load、不注入 Worker、不授权执行，也拒绝 parallel/DAG/cycle/dynamic-step 需求。百家姓不在 skill/core 中，只作为后续真实验收数据。
+- **验证**: RED baseline 为 2/6；metadata/provider/skill/contract focused tests 已通过。GREEN forward test、全量 pytest 和真实 Codex/Claude 验收将在本轮后续完成。
+
 ### Current - Foreground resumable sequential workflow engine
 
 - **类型**: feat
