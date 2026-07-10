@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Probe Codex and Claude Worker readiness
+
+- **类型**: feat + strict TDD + runtime safety
+- **What**: 新增纯 `classify_worker_readiness()` 与 immutable `WorkerReadinessEvidence` / `WorkerReadiness` / compact batch result，复用 `provider_family()` 区分 Codex 与 Claude 短 TUI 信号；明确输出 `starting`、`ready`、`setup_required`、`failed`、`pane_lost`、`timeout` 六种状态。Codex 识别 ready prompt、MCP startup 和 model incompatibility；Claude 识别 ready prompt、directory trust 与 login blocker；ANSI/大小写被规范化，未知 provider fail-closed。
+- **轮询边界**: `wait_for_worker_readiness()` 只对显式 selected `(AgentSpec, pane_id)` 顺序执行 `pane_exists` → `capture_output`，所有 Worker ready 才成功；setup/failed/pane loss/capture failure 均为稳定终态，starting 仅在 finite deadline 内轮询并最终转为 timeout。timeout/poll/config/backend/selected/pane/clock/sleeper 输入严格校验并拒绝 bool-as-number；单次 sleep 不超过剩余 deadline，额外 poll budget 保证 constant、倒退 monotonic 或 `poll_interval=0` 也不会无限循环。
+- **安全边界**: pane 存在绝不等于 ready；fail/setup/startup 信号优先于 scrollback 中的旧 prompt marker。readiness 不调用 provider，不 spawn/kill/create session，不 send input，不改 state；backend exception 只投影固定短 reason，不回显原异常。
+- **TDD 证据**: 首轮 RED 在收集阶段因缺少 `agentdeck.runtime.readiness` 得到预期 `ModuleNotFoundError`；最小实现后 focused readiness 37 项通过。审查再以 `timeout=1/poll=100` 精确 RED 证明 sleep 可突破 deadline，限制为 remaining deadline 后 focused readiness 38 项通过；runtime/dispatch/workflow 相邻回归 300 项、全量 1102 项通过；compileall 与 diff 检查通过。
+
 ### Canonicalize Mission preview provider
 
 - **类型**: important fix + TDD + provenance
