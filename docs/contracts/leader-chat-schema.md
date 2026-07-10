@@ -156,6 +156,8 @@ The card's `selected_agents[]`, `startup_actions[]`, plan, commands, blockers, a
 
 Selected runtime bindings are validated before provider invocation. Only statuses `configured`, `running`, `stopped`, and `unknown` are accepted, and a non-null pane id must be a non-empty string. A Worker is reusable only when it is `running` with such a pane id; otherwise preview derives the normal spawn model/command. Local selection blockers and malformed bindings make zero provider calls. Provider failures and plan-validation failures are returned only through stable `mission preview provider failed` / `mission preview plan invalid` classifications; raw URLs, commands, exception details, and rejected payload markers are not copied to service or CLI errors. Compact selected/startup projections are validated before the first plan write, so invalid summaries cannot leave a partial plan.
 
+The provider adapter name must be a non-empty string and must exactly match the configured Leader provider after case/outer-whitespace normalization; backend-distinguishing names such as `codex` and `codex-cli` are not aliases on this boundary. Empty/mismatched provider provenance fails before provider invocation or state write. The loaded state and top-level `agents` value must be objects, and compact ProjectView skill-context derivation must complete safely; corruption is reduced to fixed `mission preview state invalid` without copying rejected values.
+
 `leader_action_card` is a GUI-ready projection of the top-level `leader_action` when one is present:
 
 ```json

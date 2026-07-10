@@ -183,6 +183,7 @@ def test_create_preview_passes_selected_effective_models_without_rewriting_confi
     )
     config_before = config_path.read_bytes()
     provider = RecordingProvider()
+    provider.name = "codex-cli"
     monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
 
     result = create_mission_preview(
@@ -224,6 +225,7 @@ def test_create_preview_reuses_running_bindings_without_claiming_derived_models(
     }
     store.save(state)
     provider = RecordingProvider()
+    provider.name = "codex-cli"
     monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
 
     result = create_mission_preview(
@@ -267,6 +269,7 @@ def test_running_binding_without_pane_uses_spawn_derivation(tmp_path, monkeypatc
     }
     store.save(state)
     provider = RecordingProvider()
+    provider.name = "codex-cli"
     monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
 
     result = create_mission_preview(
@@ -335,6 +338,80 @@ def test_selection_blockers_fail_before_provider_and_any_write(
             config=config, store=store, provider=provider, user_message=MESSAGE, timeout_seconds=180
         )
 
+    assert provider.requests == []
+    assert store.list_plans() == []
+    assert store.list_missions() == []
+    assert store.events_path.read_bytes() == events_before
+    assert config_path.read_bytes() == config_before
+
+
+@pytest.mark.parametrize("provider_name", ["", "codex-cli"])
+def test_provider_identity_invalid_fails_before_provider_and_any_write(
+    tmp_path, monkeypatch, provider_name
+) -> None:
+    _root, config, store, config_path = project(tmp_path)
+    config_before = config_path.read_bytes()
+    provider = RecordingProvider()
+    provider.name = provider_name
+    events_before = store.events_path.read_bytes()
+
+    with pytest.raises(ValueError, match="^mission preview provider invalid$") as exc_info:
+        create_mission_preview(
+            config=config, store=store, provider=provider, user_message=MESSAGE, timeout_seconds=180
+        )
+
+    if provider_name:
+        assert provider_name not in str(exc_info.value)
+    assert provider.requests == []
+    assert store.list_plans() == []
+    assert store.list_missions() == []
+    assert store.events_path.read_bytes() == events_before
+    assert config_path.read_bytes() == config_before
+
+
+def test_non_object_agents_state_fails_before_provider_and_any_business_write(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, config_path = project(tmp_path)
+    config_before = config_path.read_bytes()
+    state = store.load()
+    state["agents"] = ["STATE_MARKER"]
+    store.save(state)
+    state_before = store.state_path.read_bytes()
+    events_before = store.events_path.read_bytes()
+    provider = RecordingProvider()
+
+    with pytest.raises(ValueError, match="^mission preview state invalid$") as exc_info:
+        create_mission_preview(
+            config=config, store=store, provider=provider, user_message=MESSAGE, timeout_seconds=180
+        )
+
+    assert "STATE_MARKER" not in str(exc_info.value)
+    assert provider.requests == []
+    assert store.state_path.read_bytes() == state_before
+    assert store.events_path.read_bytes() == events_before
+    assert config_path.read_bytes() == config_before
+
+
+def test_project_view_state_failure_is_sanitized_before_provider_and_any_write(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, config_path = project(tmp_path)
+    config_before = config_path.read_bytes()
+    events_before = store.events_path.read_bytes()
+    provider = RecordingProvider()
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration._explicit_leader_skill_context",
+        lambda *_args: (_ for _ in ()).throw(ValueError("PROJECT_VIEW_MARKER")),
+    )
+
+    with pytest.raises(ValueError, match="^mission preview state invalid$") as exc_info:
+        create_mission_preview(
+            config=config, store=store, provider=provider, user_message=MESSAGE, timeout_seconds=180
+        )
+
+    assert "PROJECT_VIEW_MARKER" not in str(exc_info.value)
     assert provider.requests == []
     assert store.list_plans() == []
     assert store.list_missions() == []

@@ -181,8 +181,27 @@ def create_mission_preview(
     if type(timeout_seconds) is not int or timeout_seconds <= 0:
         raise ValueError("mission timeout must be positive")
 
-    state = store.load()
-    bindings = state.get("agents") if isinstance(state.get("agents"), dict) else {}
+    try:
+        provider_name = provider.name
+        configured_provider = config.leader.provider
+    except Exception:
+        raise MissionPreviewError("mission preview provider invalid") from None
+    if (
+        not isinstance(provider_name, str)
+        or not provider_name.strip()
+        or not isinstance(configured_provider, str)
+        or not configured_provider.strip()
+        or provider_name.strip().lower() != configured_provider.strip().lower()
+    ):
+        raise MissionPreviewError("mission preview provider invalid")
+
+    try:
+        state = store.load()
+        if not isinstance(state, dict) or not isinstance(state.get("agents"), dict):
+            raise ValueError("invalid state")
+        bindings = state["agents"]
+    except Exception:
+        raise MissionPreviewError("mission preview state invalid") from None
     selection = select_mission_agents(
         config,
         requested_agent_ids=tuple(str(item) for item in intent["requested_agent_ids"]),
@@ -218,7 +237,10 @@ def create_mission_preview(
     selected_config = replace(config, agents=tuple(item.agent for item in effective))
     selected_agent_ids = tuple(item.agent.agent_id for item in effective)
     step_count = _requested_step_count(user_message)
-    skill_context = _explicit_leader_skill_context(store, config)
+    try:
+        skill_context = _explicit_leader_skill_context(store, config)
+    except Exception:
+        raise MissionPreviewError("mission preview state invalid") from None
     try:
         plan = LeaderOrchestrator(selected_config, provider).plan(
             mission_planning_task(

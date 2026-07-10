@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Validate Mission preview provenance
+
+- **类型**: important fix + TDD + provenance
+- **问题**: preview 未在 provider call/plan write 前验证 provider adapter identity，空 name 会到 Mission create 才失败并可能留下 partial plan，不同 backend name 也可能写入与配置 Leader 不同源的 provenance；top-level `state.agents` corruption 或 ProjectView skill-context 异常会泄漏内部 exception/marker。
+- **What**: `create_mission_preview()` 现在首先要求 `provider.name` 与 `config.leader.provider` 都是 non-empty string，且按 strip/lower 后精确相等；不合并 `codex`/`codex-cli` 等实际不同 backend。首次 state 使用前要求 state object 与 `agents` object，ProjectView compact skill-context 构建也包裹在同一稳定 state gate。
+- **TDD 证据**: provider empty/mismatch、`agents=list` 与 ProjectView marker 四项先 RED 4 failed；最小 preflight 后 4 passed。
+- **安全边界**: provider provenance/state 无效时 provider calls、plans、missions、events、chat 均为零，config bytes 不变；service exception 固定为 `mission preview provider invalid` 或 `mission preview state invalid`，不回显 rejected provider/state/ProjectView 值。
+
 ### Harden Mission preview boundaries
 
 - **类型**: P1 fix + TDD + safety boundary
