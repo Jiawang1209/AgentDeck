@@ -11,6 +11,7 @@ from agentdeck.config import load_config, write_default_config
 from agentdeck.contracts import validate_mission_preview_contract
 from agentdeck.mission_orchestration import (
     create_mission_preview,
+    interrupt_mission,
     mission_status_payload,
     resume_mission,
     run_mission,
@@ -106,16 +107,18 @@ class MissionBackend:
 
 
 class CorrelatedMissionBackend(MissionBackend):
-    def __init__(self) -> None:
+    def __init__(self, *, interrupt_step2: bool = False) -> None:
         super().__init__()
         self.sent: list[tuple[str, str]] = []
+        self.interrupt_step2 = interrupt_step2
+        self.did_interrupt = False
 
     def send_input(self, config, pane_id: str, text: str) -> None:
         self.sent.append((pane_id, text))
 
     def capture_output(self, config, pane_id: str, lines: int = 200) -> str:
         prompts = [text for target, text in self.sent if target == pane_id]
-        if not prompts:
+        if lines < 400:
             agent_id = next(agent for agent, pane in self.panes.items() if pane == pane_id)
             if agent_id == "planner":
                 return "OpenAI Codex\nmodel: fake\n› Ask Codex anything"
@@ -125,6 +128,9 @@ class CorrelatedMissionBackend(MissionBackend):
             for line in prompts[-1].splitlines()
             if line.startswith("Complete only this task. Use this handoff token exactly:")
         )
+        if self.interrupt_step2 and token.endswith("_step_2") and not self.did_interrupt:
+            self.did_interrupt = True
+            raise KeyboardInterrupt
         return (
             f"handoff_token: {token}\n"
             "status: completed\n"
@@ -195,6 +201,41 @@ def test_plan_drift_stops_before_runtime_and_is_not_resumable(tmp_path, monkeypa
     assert store.load().get("workflow_runs", []) == []
 
 
+def test_frozen_spawn_rejects_external_running_pane(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend()
+    backend.panes["planner"] = "%9"
+    from agentdeck.models import AgentRuntimeBinding
+    store.bind_agent(AgentRuntimeBinding("planner", "%9", config.runtime.session_name, config.root, "running"))
+
+    result = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+
+    assert result["stop_reason"] == "worker_runtime_drift"
+    assert result["can_resume"] is False
+    assert backend.spawned == []
+    assert store.load().get("workflow_runs", []) == []
+
+
+def test_frozen_reuse_rejects_lost_pane_without_spawning(tmp_path, monkeypatch) -> None:
+    root, config, store, _ = project(tmp_path)
+    backend = MissionBackend()
+    backend.panes.update({"planner": "%1", "reviewer": "%2"})
+    from agentdeck.models import AgentRuntimeBinding
+    for agent_id, pane_id in backend.panes.items():
+        store.bind_agent(AgentRuntimeBinding(agent_id, pane_id, config.runtime.session_name, config.root, "running"))
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+    preview = create_mission_preview(config=config, store=store, provider=RecordingProvider(), user_message=MESSAGE, timeout_seconds=180)
+    backend.panes.pop("reviewer")
+
+    result = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+
+    assert result["stop_reason"] == "worker_runtime_drift"
+    assert result["can_resume"] is False
+    assert backend.spawned == []
+    assert store.load().get("workflow_runs", []) == []
+    assert root.exists()
+
+
 def test_partial_spawn_failure_keeps_first_binding_and_dispatches_zero(tmp_path, monkeypatch) -> None:
     _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
     backend = MissionBackend(fail_spawn_for="reviewer")
@@ -206,6 +247,23 @@ def test_partial_spawn_failure_keeps_first_binding_and_dispatches_zero(tmp_path,
     assert store.load().get("workflow_runs", []) == []
     assert "SECRET" not in repr(result)
     assert "SECRET" not in repr(store.all_events())
+
+    backend.fail_spawn_for = None
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.wait_for_worker_readiness",
+        lambda **kwargs: ready_batch("planner", "reviewer"),
+    )
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.run_sequential_workflow",
+        lambda **kwargs: store.update_workflow_run(
+            kwargs["run_id"], status="completed", current_step=8, turns=[]
+        ),
+    )
+    resumed = resume_mission(
+        config=config, store=store, backend=backend, mission_id=preview["mission_id"]
+    )
+    assert resumed["status"] == "completed"
+    assert backend.spawned == ["planner", "reviewer", "reviewer"]
 
 
 def test_setup_required_stops_before_workflow_dispatch(tmp_path, monkeypatch) -> None:
@@ -229,6 +287,56 @@ def test_setup_required_stops_before_workflow_dispatch(tmp_path, monkeypatch) ->
     assert store.load().get("workflow_runs", []) == []
     assert "SECRET" not in repr(result)
     assert "SECRET" not in repr(store.all_events())
+    assert [
+        event["event_type"]
+        for event in store.all_events()
+        if event["event_type"].startswith("mission_")
+    ][-6:] == [
+        "mission_confirmed",
+        "mission_worker_preparing",
+        "mission_worker_preparing",
+        "mission_worker_ready",
+        "mission_worker_blocked",
+        "mission_stopped",
+    ]
+
+
+def test_readiness_exception_is_bounded_and_redacted(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend()
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.wait_for_worker_readiness",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("SECRET readiness")),
+    )
+
+    result = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+
+    assert result["stop_reason"] == "worker_readiness_failed"
+    assert store.load().get("workflow_runs", []) == []
+    assert "SECRET" not in repr(result)
+    assert "SECRET" not in repr(store.all_events())
+
+
+def test_workflow_exception_stops_both_records_without_secret(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend()
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.wait_for_worker_readiness",
+        lambda **kwargs: ready_batch("planner", "reviewer"),
+    )
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.run_sequential_workflow",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("SECRET workflow")),
+    )
+
+    result = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+
+    assert result["stop_reason"] == "workflow_failed"
+    workflow = store.workflow_run_by_id(result["workflow_run_id"])
+    assert workflow["status"] == "stopped"
+    assert workflow["stop_reason"] == "workflow_failed"
+    assert "SECRET" not in repr(result)
+    assert "SECRET" not in repr(store.all_events())
 
 
 def test_resume_reuses_existing_workflow_and_duplicate_completion_is_idempotent(tmp_path, monkeypatch) -> None:
@@ -238,6 +346,12 @@ def test_resume_reuses_existing_workflow_and_duplicate_completion_is_idempotent(
         backend.panes[agent_id] = pane_id
         from agentdeck.models import AgentRuntimeBinding
         store.bind_agent(AgentRuntimeBinding(agent_id, pane_id, config.runtime.session_name, config.root, "running"))
+        from agentdeck.models import EventRecord
+        store.append_event(EventRecord.create("agent_spawned", {
+            "mission_id": preview["mission_id"], "agent_id": agent_id,
+            "pane_id": pane_id, "session_name": config.runtime.session_name,
+            "cwd": config.root,
+        }))
     run = store.create_workflow_run(
         plan_id=preview["plan_id"],
         plan_hash=preview["plan_hash"],
@@ -297,6 +411,50 @@ def test_run_mission_executes_real_eight_turn_correlated_workflow(tmp_path, monk
     ]
     assert len(store.load()["messages"]) == 8
     assert len(store.load()["replies"]) == 8
+    mission_events = [event for event in store.all_events() if event["event_type"].startswith("mission_")]
+    assert [event["event_type"] for event in mission_events] == [
+        "mission_preview_created", "mission_confirmed",
+        "mission_worker_preparing", "mission_worker_preparing",
+        "mission_worker_ready", "mission_worker_ready",
+        "mission_workflow_started", "mission_completed",
+    ]
+    allowed = {
+        "mission_preview_created": {"mission_id", "plan_id", "selected_agent_ids", "step_count"},
+        "mission_confirmed": {"mission_id", "plan_id"},
+        "mission_worker_preparing": {"mission_id", "agent_id", "action"},
+        "mission_worker_ready": {"mission_id", "agent_id", "status"},
+        "mission_workflow_started": {"mission_id", "workflow_run_id", "plan_id"},
+        "mission_completed": {"mission_id", "workflow_run_id"},
+    }
+    assert all(set(event["payload"]) == allowed[event["event_type"]] for event in mission_events)
+    assert not any(token in repr(mission_events).lower() for token in ("prompt", "command", "output", "credential", "secret"))
+
+
+def test_real_interrupted_step_two_resumes_without_duplicate_dispatch(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = CorrelatedMissionBackend(interrupt_step2=True)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"], readiness_timeout_seconds=2)
+    interrupted = interrupt_mission(store, preview["mission_id"])
+    before = store.workflow_run_by_id(interrupted["workflow_run_id"])
+    assert [turn["status"] for turn in before["turns"]] == ["completed", "dispatched"]
+
+    result = resume_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"], readiness_timeout_seconds=2)
+
+    workflow = store.workflow_run_by_id(result["workflow_run_id"])
+    assert result["status"] == "completed"
+    assert len(store.load()["workflow_runs"]) == 1
+    assert len(workflow["turns"]) == 8
+    assert len(store.load()["messages"]) == 8
+    assert len(store.load()["replies"]) == 8
+    assert len(backend.sent) == 8
+    first_two_tokens = [
+        next(line for line in prompt.splitlines() if "handoff token exactly" in line)
+        for _pane, prompt in backend.sent[:2]
+    ]
+    assert sum("_step_1" in token for token in first_two_tokens) == 1
+    assert sum("_step_2" in token for token in first_two_tokens) == 1
 
 
 def test_create_preview_selects_workers_freezes_serial_plan_and_never_touches_runtime(

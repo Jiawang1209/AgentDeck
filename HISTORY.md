@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Prove Mission runner recovery and frozen runtime provenance
+
+- **类型**: important fix + strict TDD + authorization/recovery safety
+- **问题**: 首版 runner 虽冻结 Worker 摘要，却仍按确认时的当前 binding 自由选择 reuse/spawn；这会让预览后出现的外部进程被静默复用，或让 frozen reuse pane 丢失后按未知 model 重启。恢复和 KeyboardInterrupt 也需要由真实 workflow engine 证明不重复 dispatch，而不能只靠 mock。
+- **What**: startup 现在逐项执行 frozen action。`reuse` 必须仍有 live pane；`spawn` 若遇到外部 running pane 则 fail closed；只有 binding/live pane 与同 Mission compact `agent_spawned` audit 完全匹配时，partial retry/resume 才能复用 Mission 自己启动的进程。runtime drift 写 blocker 禁止隐式 resume。Readiness mixed batch 为 ready Worker 和 blocked Worker 分别审计；所有 wait/workflow exception 只投影固定 stop reason。真实 CLI interruption 在第2步已 dispatch 后持久化双 interrupted，resume 复用同 run/turns。
+- **TDD 证据**: frozen spawn 外部 pane 与 frozen reuse pane-lost 两项先 RED（旧代码继续到 readiness），修复后 Mission focused 57 项通过；真实 correlated workflow 在 step2 capture 中断后保持 step1 completed + step2 dispatched，CLI/direct resume 最终严格 8 turns、8 messages/replies/sends、1 workflow，step1/2 prompt 不重复。Mission/CLI/contracts/workflow/readiness 相邻回归 763 项、全量 1143 项通过，compileall 与 diff check 通过。
+- **安全边界**: `agent_spawned` 仅含 mission/agent/pane/session/cwd；Mission audit 使用字段 allowlist，禁止 command/prompt/output/credential/secret。外部 runtime drift 不 spawn、不 workflow，partial Mission-owned pane 保留且可显式恢复。
+
 ### Run and resume confirmed natural-language Missions
 
 - **类型**: major feature + strict TDD + bounded runtime orchestration

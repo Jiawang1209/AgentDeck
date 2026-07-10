@@ -423,49 +423,62 @@ def test_mission_status_rejects_unknown_id_without_json(tmp_path, monkeypatch, c
 
 def test_mission_cli_keyboard_interrupt_persists_mission_and_workflow(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    text = config_path.read_text(encoding="utf-8").replace('provider = "deepseek"', 'provider = "fake"', 1).replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
+    config_path.write_text(text, encoding="utf-8")
+    from agentdeck.config import load_config
+    from agentdeck.mission_orchestration import create_mission_preview
+    from agentdeck.providers import LeaderPlanRequest
+
+    class Provider:
+        name = "fake"
+        def plan(self, request: LeaderPlanRequest):
+            return {
+                "goal": "chain", "summary": "serial", "approval_required": True,
+                "dispatch_ready": False,
+                "steps": [
+                    {"step": step, "agent_id": "planner" if step % 2 else "reviewer", "role": "planning" if step % 2 else "review", "task": f"turn {step}", "risk": "review", "requires_approval": True}
+                    for step in range(1, 9)
+                ],
+            }
+
+    class InterruptingBackend(FakeTmuxBackend):
+        def __init__(self):
+            super().__init__()
+            self.by_agent = {}
+            self.did_interrupt = False
+        def spawn_agent(self, _config, agent, cwd):
+            pane = f"%{len(self.by_agent) + 1}"
+            self.by_agent[agent.agent_id] = pane
+            self.existing_panes.add(pane)
+            return pane
+        def capture_output(self, _config, pane_id, lines=200):
+            if lines < 400:
+                return "OpenAI Codex\nmodel: fake\n› Ask Codex anything" if pane_id == "%1" else "Claude Code\n❯ Try a task\n100% context left"
+            prompt = next(text for target, text in reversed(self.sent) if target == pane_id)
+            token = next(line.rsplit(":", 1)[1].strip() for line in prompt.splitlines() if "handoff token exactly" in line)
+            if token.endswith("_step_2") and not self.did_interrupt:
+                self.did_interrupt = True
+                raise KeyboardInterrupt
+            return f"handoff_token: {token}\nstatus: completed\nsummary: done\nverification: fake\nrisks: none\nnext_steps: continue"
+
     store = StateStore(root)
-    from agentdeck.state import leader_backend_identity
-    mission = store.create_mission(
-        user_message="two agents",
-        can_start=True,
-        blockers=[],
-        provider="deepseek",
-        model="deepseek-chat",
-        leader_backend=leader_backend_identity("deepseek", "deepseek-chat"),
-        plan_id="pln_deadbeefcafe",
-        plan_hash="sha256:" + "a" * 64,
-        selected_agents=[
-            {"agent_id": "planner", "provider": "codex", "role": "planning", "workspace_mode": "shared", "runtime_status": "configured", "effective_model": None, "model_source": "provider_default"},
-            {"agent_id": "reviewer", "provider": "claude", "role": "review", "workspace_mode": "shared", "runtime_status": "configured", "effective_model": None, "model_source": "provider_default"},
-        ],
-        startup_actions=[
-            {"agent_id": "planner", "action": "spawn", "runtime_status": "configured", "effective_model": None, "model_source": "provider_default"},
-            {"agent_id": "reviewer", "action": "spawn", "runtime_status": "configured", "effective_model": None, "model_source": "provider_default"},
-        ],
-        step_count=2,
-        timeout_seconds=30,
-    )
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+    preview = create_mission_preview(config=load_config(root), store=store, provider=Provider(), user_message="让 Codex 和 Claude 接龙，共8轮", timeout_seconds=30)
+    backend = InterruptingBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: backend)
 
-    def interrupting_run(**kwargs):
-        from agentdeck.models import utc_now
-        store.update_mission(mission["mission_id"], status="preparing", confirmed_at=utc_now(), can_start=False)
-        run = store.create_workflow_run(
-            plan_id=mission["plan_id"],
-            plan_hash=mission["plan_hash"],
-            timeout_seconds=30,
-            authorized_steps=[{"step": 1}, {"step": 2}],
-        )
-        store.update_mission(mission["mission_id"], status="running", workflow_run_id=run["run_id"])
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(cli, "run_mission", interrupting_run)
-
-    assert cli.main(["mission", "run", "--mission-id", mission["mission_id"], "--confirm"]) == 0
+    assert cli.main(["mission", "run", "--mission-id", preview["mission_id"], "--confirm"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "interrupted"
-    assert store.mission_by_id(mission["mission_id"])["status"] == "interrupted"
+    assert store.mission_by_id(preview["mission_id"])["status"] == "interrupted"
     assert store.workflow_run_by_id(payload["workflow_run_id"])["status"] == "interrupted"
+    assert cli.main(["mission", "resume", "--mission-id", preview["mission_id"], "--confirm"]) == 0
+    resumed = json.loads(capsys.readouterr().out)
+    assert resumed["status"] == "completed"
+    assert len(backend.sent) == 8
+    assert len(store.load()["workflow_runs"]) == 1
 
 
 def test_workflow_run_completes_two_step_chain_with_one_confirmation(

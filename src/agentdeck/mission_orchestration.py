@@ -439,6 +439,30 @@ def _audit(store: StateStore, event_type: str, **payload: object) -> None:
     store.append_event(EventRecord.create(event_type, dict(payload)))
 
 
+def _mission_owns_spawn(
+    events: list[dict[str, Any]],
+    *,
+    mission_id: str,
+    agent_id: str,
+    pane_id: str,
+    session_name: str,
+    cwd: str,
+) -> bool:
+    expected = {
+        "mission_id": mission_id,
+        "agent_id": agent_id,
+        "pane_id": pane_id,
+        "session_name": session_name,
+        "cwd": cwd,
+    }
+    return any(
+        event.get("event_type") == "agent_spawned"
+        and isinstance(event.get("payload"), dict)
+        and event["payload"] == expected
+        for event in events
+    )
+
+
 def _stop_mission(
     store: StateStore,
     mission: dict[str, Any],
@@ -552,10 +576,12 @@ def _prepare_selected_workers(
     backend: RuntimeBackend,
     mission: dict[str, Any],
     agents: tuple[AgentSpec, ...],
+    resuming: bool,
 ) -> tuple[tuple[AgentSpec, str], ...]:
     prepared: list[tuple[AgentSpec, str]] = []
     session_created = False
-    for agent in agents:
+    actions = mission["startup_actions"]
+    for agent, frozen_action in zip(agents, actions):
         binding = store.agent_binding(agent.agent_id)
         reusable = False
         try:
@@ -564,16 +590,47 @@ def _prepare_selected_workers(
             )
         except Exception:
             reusable = False
+        requested_action = frozen_action["action"]
         _audit(
             store,
             "mission_worker_preparing",
             mission_id=mission["mission_id"],
             agent_id=agent.agent_id,
-            action="reuse" if reusable else "spawn",
+            action=requested_action,
         )
-        if reusable:
+        if requested_action == "reuse":
+            if not reusable:
+                _audit(
+                    store,
+                    "mission_worker_blocked",
+                    mission_id=mission["mission_id"],
+                    agent_id=agent.agent_id,
+                    reason="worker_runtime_drift",
+                )
+                raise MissionRunError("worker_runtime_drift")
             prepared.append((agent, str(binding["pane_id"])))
             continue
+        if reusable:
+            pane_id = str(binding["pane_id"])
+            owned = _mission_owns_spawn(
+                store.all_events(),
+                mission_id=str(mission["mission_id"]),
+                agent_id=agent.agent_id,
+                pane_id=pane_id,
+                session_name=config.runtime.session_name,
+                cwd=config.root,
+            )
+            if resuming and owned:
+                prepared.append((agent, pane_id))
+                continue
+            _audit(
+                store,
+                "mission_worker_blocked",
+                mission_id=mission["mission_id"],
+                agent_id=agent.agent_id,
+                reason="worker_runtime_drift",
+            )
+            raise MissionRunError("worker_runtime_drift")
         try:
             if not session_created:
                 backend.create_session(config.runtime)
@@ -589,6 +646,15 @@ def _prepare_selected_workers(
                     config.root,
                     "running",
                 )
+            )
+            _audit(
+                store,
+                "agent_spawned",
+                mission_id=mission["mission_id"],
+                agent_id=agent.agent_id,
+                pane_id=pane_id,
+                session_name=config.runtime.session_name,
+                cwd=config.root,
             )
             prepared.append((agent, pane_id))
         except Exception:
@@ -639,9 +705,23 @@ def _execute_mission(
     mission = store.update_mission(mission_id, status="preparing", stop_reason=None, blockers=[], can_start=False, confirmed_at=now)
     _audit(store, "mission_resumed" if resuming else "mission_confirmed", mission_id=mission_id, plan_id=mission["plan_id"])
     try:
-        prepared = _prepare_selected_workers(config=config, store=store, backend=backend, mission=mission, agents=selected_agents)
-    except MissionRunError:
-        mission = _stop_mission(store, store.mission_by_id(mission_id), reason="worker_start_failed")
+        prepared = _prepare_selected_workers(
+            config=config,
+            store=store,
+            backend=backend,
+            mission=mission,
+            agents=selected_agents,
+            resuming=resuming,
+        )
+    except MissionRunError as exc:
+        reason = str(exc)
+        blockers = ["worker runtime drift"] if reason == "worker_runtime_drift" else None
+        mission = _stop_mission(
+            store,
+            store.mission_by_id(mission_id),
+            reason=reason,
+            blockers=blockers,
+        )
         return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
     try:
         batch = wait_for_worker_readiness(
@@ -658,7 +738,15 @@ def _execute_mission(
     if not batch.all_ready:
         reason = _readiness_reason(batch)
         for item in batch.results:
-            if item.status != "ready":
+            if item.status == "ready":
+                _audit(
+                    store,
+                    "mission_worker_ready",
+                    mission_id=mission_id,
+                    agent_id=item.agent_id,
+                    status="ready",
+                )
+            else:
                 _audit(store, "mission_worker_blocked", mission_id=mission_id, agent_id=item.agent_id, reason=reason)
         mission = _stop_mission(store, store.mission_by_id(mission_id), reason=reason)
         return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
