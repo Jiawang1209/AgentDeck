@@ -493,6 +493,27 @@ def effective_mission_agent(agent: AgentSpec, leader: LeaderConfig) -> Effective
     return EffectiveMissionAgent(agent=agent, model=None, model_source="provider_default")
 
 
+def effective_mission_agent_for_binding(
+    agent: AgentSpec,
+    leader: LeaderConfig,
+    binding: AgentRuntimeBinding | Mapping[str, Any] | None,
+) -> EffectiveMissionAgent:
+    status = (
+        binding.get("status")
+        if isinstance(binding, Mapping)
+        else binding.status
+        if isinstance(binding, AgentRuntimeBinding)
+        else None
+    )
+    if status == "running":
+        return EffectiveMissionAgent(
+            agent=agent,
+            model=None,
+            model_source="running_binding",
+        )
+    return effective_mission_agent(agent, leader)
+
+
 def validate_mission_plan(
     plan: dict[str, Any],
     selected_agent_ids: Sequence[str],
@@ -504,7 +525,7 @@ def validate_mission_plan(
         raise ValueError("mission timeout must be positive")
 
     forbidden_metadata = ("parallel", "dag", "cycle", "dynamic_steps")
-    if any(plan.get(key) for key in forbidden_metadata):
+    if any(key in plan for key in forbidden_metadata):
         raise ValueError("mission plan cannot contain dynamic or parallel metadata")
 
     steps = plan.get("steps")

@@ -191,6 +191,55 @@ def test_create_preview_passes_selected_effective_models_without_rewriting_confi
     assert config_path.read_bytes() == config_before
 
 
+def test_create_preview_reuses_running_bindings_without_claiming_derived_models(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, _config_path = project(tmp_path)
+    config = replace(
+        config,
+        leader=replace(config.leader, provider="codex-cli", model="gpt-5.5"),
+    )
+    state = store.load()
+    state["agents"] = {
+        agent_id: {
+            "agent_id": agent_id,
+            "status": "running",
+            "pane_id": pane_id,
+        }
+        for agent_id, pane_id in (("planner", "%1"), ("reviewer", "%2"))
+    }
+    store.save(state)
+    provider = RecordingProvider()
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+
+    result = create_mission_preview(
+        config=config,
+        store=store,
+        provider=provider,
+        user_message=MESSAGE,
+        timeout_seconds=180,
+    )
+
+    assert [
+        (item["runtime_status"], item["effective_model"], item["model_source"])
+        for item in result["selected_agents"]
+    ] == [
+        ("running", None, "running_binding"),
+        ("running", None, "running_binding"),
+    ]
+    assert [
+        (item["action"], item["effective_model"], item["model_source"])
+        for item in result["startup_actions"]
+    ] == [
+        ("reuse", None, "running_binding"),
+        ("reuse", None, "running_binding"),
+    ]
+    assert [item.command for item in provider.requests[0].config.agents] == [
+        "codex",
+        "claude",
+    ]
+
+
 def test_create_preview_reports_missing_command_without_echoing_command(tmp_path, monkeypatch) -> None:
     _root, config, store, _config_path = project(tmp_path)
     provider = RecordingProvider()
@@ -252,6 +301,42 @@ def test_invalid_provider_plan_fails_closed_before_any_state_or_event_write(
     monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
 
     with pytest.raises((RuntimeError, ValueError)):
+        create_mission_preview(
+            config=config,
+            store=store,
+            provider=provider,
+            user_message=MESSAGE,
+            timeout_seconds=180,
+        )
+
+    assert store.list_plans() == []
+    assert store.list_missions() == []
+    assert store.events_path.read_bytes() == events_before
+    if state_before is not None:
+        assert store.state_path.read_bytes() == state_before
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("parallel", False),
+        ("dynamic_steps", []),
+        ("dag", None),
+        ("cycle", False),
+    ],
+)
+def test_forbidden_plan_metadata_presence_fails_closed_before_any_write(
+    tmp_path, monkeypatch, field, value
+) -> None:
+    _root, config, store, _config_path = project(tmp_path)
+    plan = eight_step_plan()
+    plan[field] = value
+    provider = RecordingProvider(plan)
+    state_before = store.state_path.read_bytes() if store.state_path.exists() else None
+    events_before = store.events_path.read_bytes()
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+
+    with pytest.raises(ValueError, match="dynamic or parallel metadata"):
         create_mission_preview(
             config=config,
             store=store,

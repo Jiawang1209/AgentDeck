@@ -9,7 +9,7 @@ from typing import Any
 from .contracts import validate_mission_preview_contract
 from .mission import (
     MISSION_SCHEMA_VERSION,
-    effective_mission_agent,
+    effective_mission_agent_for_binding,
     mission_commands,
     mission_intent,
     select_mission_agents,
@@ -184,7 +184,12 @@ def create_mission_preview(
         bindings=bindings,
     )
     effective = tuple(
-        effective_mission_agent(agent, config.leader) for agent in selection.agents
+        effective_mission_agent_for_binding(
+            agent,
+            config.leader,
+            bindings.get(agent.agent_id),
+        )
+        for agent in selection.agents
     )
     blockers = list(selection.blockers)
     for item in effective:

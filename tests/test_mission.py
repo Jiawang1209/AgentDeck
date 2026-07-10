@@ -906,10 +906,11 @@ def test_validate_mission_plan_rejects_bool_step_numbers() -> None:
 
 
 @pytest.mark.parametrize("key", ["parallel", "dag", "cycle", "dynamic_steps"])
-def test_validate_mission_plan_allows_false_fixed_sequence_metadata(key: str) -> None:
+def test_validate_mission_plan_rejects_forbidden_metadata_even_when_false(key: str) -> None:
     plan = {**valid_plan(), key: False}
 
-    assert validate_mission_plan(plan, ("planner", "reviewer"), 30) is plan
+    with pytest.raises(ValueError, match="dynamic or parallel metadata"):
+        validate_mission_plan(plan, ("planner", "reviewer"), 30)
 
 
 def test_validate_mission_plan_allows_unrelated_parallelism_metadata() -> None:

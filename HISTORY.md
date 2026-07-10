@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Fix Mission preview provenance
+
+- **类型**: P1 fix + TDD
+- **问题**: preview 对已 running 的 Worker 仍按 launch command 派生/继承模型，错误暗示后续会使用改写后的 spawn command；固定串行 plan validator 只拒绝 truthy forbidden metadata，允许 `parallel=false`、`dynamic_steps=[]`、`dag=null` 或 `cycle=false` 穿透。
+- **What**: 新增纯 helper `effective_mission_agent_for_binding()`，running binding 优先保留原始 `AgentSpec.command`，以 `effective_model=null` / `model_source=running_binding` 投影 selected/startup provenance，并保持 `action=reuse`；非 running Worker 继续复用既有安全模型推导。`validate_mission_plan()` 现在按 key presence 拒绝四类 forbidden metadata，值真假不影响 fail-closed 结果。
+- **TDD 证据**: 新增 service RED 为 5 failed（1 个 running-binding provenance、4 个 falsy forbidden metadata）；最小修复后 5 passed。旧“falsy metadata 可接受”领域测试同步改为新安全契约。
+- **安全边界**: 不读取 pane、不探测 running Worker 实际模型、不改写持久配置、不创建额外 runtime/workflow/approval/message/job/inbox；非法 provider plan 在 plan/Mission/event write 前拒绝且零写。
+
 ### Create Missions from natural language
 
 - **类型**: feat + TDD + contract
