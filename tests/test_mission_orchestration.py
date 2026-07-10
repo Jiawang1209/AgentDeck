@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
+import threading
 from urllib.error import URLError
 
 import pytest
@@ -184,6 +186,46 @@ def test_run_mission_spawns_only_frozen_workers_and_completes(tmp_path, monkeypa
     assert result["workflow_run_id"].startswith("wfr_")
 
 
+def test_concurrent_confirm_creates_one_runtime_and_one_workflow(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend()
+    barrier = threading.Barrier(2)
+    import agentdeck.mission_orchestration as orchestration
+    original_preflight = orchestration._frozen_preflight
+    def synchronized_preflight(*args, **kwargs):
+        result = original_preflight(*args, **kwargs)
+        barrier.wait(timeout=5)
+        return result
+    monkeypatch.setattr(orchestration, "_frozen_preflight", synchronized_preflight)
+    monkeypatch.setattr(orchestration, "wait_for_worker_readiness", lambda **kwargs: ready_batch("planner", "reviewer"))
+    monkeypatch.setattr(
+        orchestration,
+        "run_sequential_workflow",
+        lambda **kwargs: store.update_workflow_run(
+            kwargs["run_id"], status="completed", current_step=8, turns=[]
+        ),
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda _index: run_mission(
+                    config=config,
+                    store=store,
+                    backend=backend,
+                    mission_id=preview["mission_id"],
+                ),
+                range(2),
+            )
+        )
+
+    assert all(result["status"] in {"preparing", "running", "completed"} for result in results)
+    assert store.mission_by_id(preview["mission_id"])["status"] == "completed"
+    assert backend.spawned == ["planner", "reviewer"]
+    assert len(store.load()["workflow_runs"]) == 1
+    assert sum(event["event_type"] == "mission_confirmed" for event in store.all_events()) == 1
+
+
 def test_plan_drift_stops_before_runtime_and_is_not_resumable(tmp_path, monkeypatch) -> None:
     _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
     state = store.load()
@@ -317,6 +359,72 @@ def test_readiness_exception_is_bounded_and_redacted(tmp_path, monkeypatch) -> N
     assert "SECRET" not in repr(store.all_events())
 
 
+@pytest.mark.parametrize("phase", ["spawn", "readiness"])
+def test_preparing_keyboard_interrupt_stops_and_can_resume(
+    tmp_path, monkeypatch, phase
+) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend()
+    if phase == "spawn":
+        original = backend.spawn_agent
+        calls = 0
+        def interrupt_once(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise KeyboardInterrupt
+            return original(*args, **kwargs)
+        backend.spawn_agent = interrupt_once
+    else:
+        monkeypatch.setattr(
+            "agentdeck.mission_orchestration.wait_for_worker_readiness",
+            lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+        )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+    stopped = interrupt_mission(store, preview["mission_id"])
+
+    assert stopped["status"] == "stopped"
+    assert stopped["stop_reason"] == "interrupted"
+    assert stopped["blockers"] == []
+
+
+def test_corrupt_spawn_audit_stops_partial_resume_without_extra_spawn(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend(fail_spawn_for="reviewer")
+    first = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+    assert first["stop_reason"] == "worker_start_failed"
+    store.events_path.write_text('{"broken":', encoding="utf-8")
+    backend.fail_spawn_for = None
+    before = list(backend.spawned)
+
+    result = resume_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+
+    assert result["stop_reason"] == "mission_audit_invalid"
+    assert result["can_resume"] is False
+    assert backend.spawned == before
+    assert store.load().get("workflow_runs", []) == []
+
+
+def test_missing_workflow_reference_stops_as_state_drift(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = CorrelatedMissionBackend(interrupt_step2=True)
+    with pytest.raises(KeyboardInterrupt):
+        run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"], readiness_timeout_seconds=2)
+    interrupted = interrupt_mission(store, preview["mission_id"])
+    state = store.load()
+    state["workflow_runs"] = []
+    store.save(state)
+
+    result = resume_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"], readiness_timeout_seconds=2)
+
+    assert result["stop_reason"] == "workflow_state_drift"
+    assert result["can_resume"] is False
+    assert result["workflow_run_id"] == interrupted["workflow_run_id"]
+    assert len(backend.sent) == 2
+
+
 def test_workflow_exception_stops_both_records_without_secret(tmp_path, monkeypatch) -> None:
     _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
     backend = MissionBackend()
@@ -337,6 +445,22 @@ def test_workflow_exception_stops_both_records_without_secret(tmp_path, monkeypa
     assert workflow["stop_reason"] == "workflow_failed"
     assert "SECRET" not in repr(result)
     assert "SECRET" not in repr(store.all_events())
+
+
+def test_confirmation_audit_failure_does_not_leave_preparing(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend()
+    monkeypatch.setattr(
+        store,
+        "append_event",
+        lambda event: (_ for _ in ()).throw(OSError("SECRET audit")),
+    )
+
+    result = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+
+    assert result["status"] == "stopped"
+    assert result["stop_reason"] == "mission_audit_failed"
+    assert backend.spawned == []
 
 
 def test_resume_reuses_existing_workflow_and_duplicate_completion_is_idempotent(tmp_path, monkeypatch) -> None:

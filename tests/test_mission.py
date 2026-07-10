@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+import multiprocessing
+from pathlib import Path
 
 import pytest
 
@@ -64,6 +66,16 @@ def binding(
 
 def effective(spec: AgentSpec, model: str | None, source: str) -> EffectiveMissionAgent:
     return EffectiveMissionAgent(agent=spec, model=model, model_source=source)
+
+
+def _claim_in_process(root: str, mission_id: str, start, queue) -> None:
+    start.wait()
+    result = StateStore(Path(root)).claim_mission_execution(
+        mission_id,
+        resuming=False,
+        confirmed_at="2026-07-11T00:00:00+00:00",
+    )
+    queue.put(result["claimed"])
 
 
 def mission_values() -> dict[str, object]:
@@ -989,3 +1001,44 @@ def test_blocked_effective_agent_projects_blocker_without_raw_command() -> None:
     assert startup[0]["blocker"] == "unsupported worker command: planner"
     assert "command" not in selected[0]
     assert "command" not in startup[0]
+
+
+def test_claim_mission_execution_is_atomic_and_idempotent(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    mission = store.create_mission(**mission_values())
+
+    first = store.claim_mission_execution(
+        mission["mission_id"], resuming=False, confirmed_at="2026-07-11T00:00:00+00:00"
+    )
+    second = store.claim_mission_execution(
+        mission["mission_id"], resuming=False, confirmed_at="2026-07-11T00:00:01+00:00"
+    )
+
+    assert first["claimed"] is True
+    assert second["claimed"] is False
+    assert first["mission"]["status"] == second["mission"]["status"] == "preparing"
+    assert second["mission"]["confirmed_at"] == "2026-07-11T00:00:00+00:00"
+
+
+def test_claim_mission_execution_is_exclusive_across_processes(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    mission = store.create_mission(**mission_values())
+    context = multiprocessing.get_context("spawn")
+    start = context.Event()
+    queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_claim_in_process,
+            args=(str(tmp_path), mission["mission_id"], start, queue),
+        )
+        for _ in range(2)
+    ]
+    for process in processes:
+        process.start()
+    start.set()
+    results = [queue.get(timeout=10) for _ in processes]
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+
+    assert sorted(results) == [False, True]

@@ -112,6 +112,8 @@ Run/resume responses cannot report `pending_confirmation`: confirmation must be 
 
 `mission run --confirm` revalidates the canonical Mission id/schema, start gate, saved plan hash, exact selected ids and step count, Leader provider/model/backend, configured Worker provider/role/workspace, frozen effective model source, and startup rows before any runtime mutation. Plan or configuration drift is persisted as a non-resumable stopped Mission and creates no pane or workflow. A blocked preview is rejected without pretending that it ran.
 
+After preflight, run/resume uses a cross-process exclusive Mission claim. The state lock, eligibility check, and transition to `preparing` occur in one critical section; only the claimant may audit confirmation, prepare runtime, or create a workflow. Concurrent losers receive the current preparing/running/completed projection and cannot duplicate confirmation events, panes, or workflow records.
+
 Only frozen selected Workers may be reused or spawned. Reuse requires a running binding whose pane still exists; session creation happens at most once per preparation attempt, and a successful earlier pane/binding remains visible after a later spawn failure. No workflow is created or dispatched until provider-aware readiness reports every selected Worker ready. Setup/login/trust, pane loss, failure/model evidence, and timeout map to stable Mission stop reasons without embedding captured screen content.
 
 The frozen startup action is authoritative. A frozen `reuse` whose pane disappeared and a frozen `spawn` that unexpectedly finds an externally-created running pane both stop as `worker_runtime_drift`; this drift is a blocker and cannot be resumed implicitly. A partial Mission spawn is recoverable only when the current binding and live pane exactly match that Mission's compact `agent_spawned` audit event (`mission_id`, `agent_id`, `pane_id`, `session_name`, `cwd`). This permits retrying the remaining Worker while preventing reuse of an unknown process or model.
@@ -119,6 +121,8 @@ The frozen startup action is authoritative. A frozen `reuse` whose pane disappea
 After readiness, AgentDeck creates exactly one normal sequential `workflow_runs[]` record, uses the selected-only config view, and delegates all eight-turn message/job/reply/handoff semantics to the existing workflow engine. Resume reuses the same workflow id and its persisted turns, so completed or already-dispatched prompts are not sent again. Repeating run for a preparing/running/completed Mission is an idempotent status projection.
 
 Foreground interruption is caught at the CLI boundary and persists both workflow and Mission as `interrupted`. Runtime exceptions are reduced to stable audited stop reasons; raw commands, prompts, pane output, exception details, credentials, and secrets are excluded from Mission responses and Mission audit events.
+
+An interruption while still `preparing` follows the approved state graph and becomes recoverable `stopped(interrupted)`; only an interruption after the workflow is running becomes Mission/workflow `interrupted`. Failure to append the confirmation/resume audit leaves the claim in recoverable `stopped(mission_audit_failed)`, never `preparing`. Corrupt or unreadable spawn audit provenance stops as non-resumable `mission_audit_invalid`. A missing, malformed, hash-drifted, plan-drifted, or authorized-step-drifted referenced workflow stops as non-resumable `workflow_state_drift`; existing panes are retained for inspection.
 
 ## Provenance and safety validation
 

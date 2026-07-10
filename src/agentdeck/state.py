@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import copy
+import fcntl
 import hashlib
 import json
 import os
@@ -249,6 +251,54 @@ class StateStore:
 
     def list_missions(self) -> list[dict[str, Any]]:
         return list(self.load().get("missions", []))
+
+    def claim_mission_execution(
+        self,
+        mission_id: str,
+        *,
+        resuming: bool,
+        confirmed_at: str,
+    ) -> dict[str, Any]:
+        if not isinstance(resuming, bool):
+            raise TypeError("resuming must be a boolean")
+        if not isinstance(confirmed_at, str) or not confirmed_at:
+            raise ValueError("confirmed_at must be a non-empty string")
+        lock_path = self.state_path.parent / "mission-execution.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                state = self.load()
+                record = next(
+                    (
+                        item
+                        for item in state.setdefault("missions", [])
+                        if isinstance(item, dict) and item.get("mission_id") == mission_id
+                    ),
+                    None,
+                )
+                if record is None:
+                    raise KeyError(mission_id)
+                status = record.get("status")
+                if status in {"preparing", "running", "completed"}:
+                    return {"claimed": False, "mission": copy.deepcopy(record)}
+                allowed = {"stopped", "interrupted"} if resuming else {"pending_confirmation"}
+                if status not in allowed:
+                    raise ValueError("mission is not claimable")
+                record.update(
+                    {
+                        "status": "preparing",
+                        "confirmed_at": record.get("confirmed_at") or confirmed_at,
+                        "stop_reason": None,
+                        "blockers": [],
+                        "can_start": False,
+                        "updated_at": utc_now(),
+                    }
+                )
+                self.save(state)
+                return {"claimed": True, "mission": copy.deepcopy(record)}
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     def update_mission(self, mission_id: str, /, **changes: Any) -> dict[str, Any]:
         state = self.load()

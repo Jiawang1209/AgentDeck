@@ -14434,6 +14434,19 @@ def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int
     except (MissionRunError, ValueError):
         print(f"mission {action} failed", file=sys.stderr)
         return 1
+    except Exception:
+        try:
+            mission = interrupt_mission(store, args.mission_id)
+            payload = mission_status_payload(
+                config,
+                store,
+                mission,
+                mode="mission_resume" if resume else "mission_run",
+                confirmed=True,
+            )
+        except Exception:
+            print(f"mission {action} failed", file=sys.stderr)
+            return 1
     _print_json(payload)
     return 0
 

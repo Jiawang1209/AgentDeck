@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Make Mission execution claims and recovery atomic
+
+- **类型**: important fix + strict TDD + concurrency/recovery safety
+- **问题**: preflight 与 `pending -> preparing` 原为普通 load/update，两个进程可能同时通过并重复确认、spawn 和创建 workflow；preparing 阶段 Ctrl-C 又试图走非法 `preparing -> interrupted`。损坏 events 或 dangling workflow 引用也可能冒泡为 traceback/unknown Mission，留下不可解释状态。
+- **What**: StateStore 新增 stdlib `fcntl.flock` 跨进程独占 claim，在同一锁内检查 run/resume eligibility、原子写 preparing/confirmed gate 并返回 deep copy；只有 claimant 能继续 runtime，loser只投影当前状态。preparing 中断改为 recoverable `stopped(interrupted)`，running 中断才同步 workflow/Mission interrupted。Mission-owned spawn 审计读取损坏时 fail closed 为 `mission_audit_invalid`；已有 workflow 引用现在严格重验 id/plan/hash/authorized steps，漂移统一为 `workflow_state_drift`。
+- **TDD 证据**: claim API 缺失先 RED 为 AttributeError；单进程重复 claim 与 spawn-context 双进程竞争均 GREEN，精确一真一假。同步双确认 runner 只产生一条 `mission_confirmed`、一个 workflow 和每个 selected Worker 一次 spawn。preparing spawn/readiness Ctrl-C、截断 audit、缺失 workflow 引用用例均 GREEN；确认 audit append failure 先 RED 为 OSError + stuck preparing，修复后稳定 stopped/零 spawn。Mission focused 189 项、Mission/state/CLI/contracts/workflow/readiness 相邻回归 895 项、全量 1151 项通过，compileall 与 diff check 通过。
+- **安全边界**: lock file 不承载授权内容；unlock 在 finally，返回记录为 deep copy。audit/workflow corruption 只输出固定 reason/blocker，不回显损坏 JSON、异常、prompt、command 或 credentials；已创建 pane 保留，非 claimant 不触碰 runtime。
+
 ### Prove Mission runner recovery and frozen runtime provenance
 
 - **类型**: important fix + strict TDD + authorization/recovery safety

@@ -480,7 +480,10 @@ def _stop_mission(
     if mission.get("confirmed_at") is None:
         changes["confirmed_at"] = utc_now()
     stopped = store.update_mission(mission_id, **changes)
-    _audit(store, "mission_stopped", mission_id=mission_id, reason=reason)
+    try:
+        _audit(store, "mission_stopped", mission_id=mission_id, reason=reason)
+    except Exception:
+        pass
     return stopped
 
 
@@ -612,14 +615,22 @@ def _prepare_selected_workers(
             continue
         if reusable:
             pane_id = str(binding["pane_id"])
-            owned = _mission_owns_spawn(
-                store.all_events(),
-                mission_id=str(mission["mission_id"]),
-                agent_id=agent.agent_id,
-                pane_id=pane_id,
-                session_name=config.runtime.session_name,
-                cwd=config.root,
-            )
+            try:
+                events = store.all_events()
+                if not isinstance(events, list) or any(
+                    not isinstance(event, dict) for event in events
+                ):
+                    raise ValueError("invalid audit")
+                owned = _mission_owns_spawn(
+                    events,
+                    mission_id=str(mission["mission_id"]),
+                    agent_id=agent.agent_id,
+                    pane_id=pane_id,
+                    session_name=config.runtime.session_name,
+                    cwd=config.root,
+                )
+            except Exception:
+                raise MissionRunError("mission_audit_invalid") from None
             if resuming and owned:
                 prepared.append((agent, pane_id))
                 continue
@@ -702,8 +713,34 @@ def _execute_mission(
             return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
         raise MissionRunError("mission validation failed") from None
     now = mission.get("confirmed_at") or utc_now()
-    mission = store.update_mission(mission_id, status="preparing", stop_reason=None, blockers=[], can_start=False, confirmed_at=now)
-    _audit(store, "mission_resumed" if resuming else "mission_confirmed", mission_id=mission_id, plan_id=mission["plan_id"])
+    claim = store.claim_mission_execution(
+        mission_id, resuming=resuming, confirmed_at=str(now)
+    )
+    mission = claim["mission"]
+    if claim["claimed"] is not True:
+        return mission_status_payload(
+            config,
+            store,
+            mission,
+            mode="mission_resume" if resuming else "mission_run",
+        )
+    try:
+        _audit(
+            store,
+            "mission_resumed" if resuming else "mission_confirmed",
+            mission_id=mission_id,
+            plan_id=mission["plan_id"],
+        )
+    except Exception:
+        mission = _stop_mission(
+            store, mission, reason="mission_audit_failed"
+        )
+        return mission_status_payload(
+            config,
+            store,
+            mission,
+            mode="mission_resume" if resuming else "mission_run",
+        )
     try:
         prepared = _prepare_selected_workers(
             config=config,
@@ -715,7 +752,11 @@ def _execute_mission(
         )
     except MissionRunError as exc:
         reason = str(exc)
-        blockers = ["worker runtime drift"] if reason == "worker_runtime_drift" else None
+        blockers = (
+            [reason.replace("_", " ")]
+            if reason in {"worker_runtime_drift", "mission_audit_invalid"}
+            else None
+        )
         mission = _stop_mission(
             store,
             store.mission_by_id(mission_id),
@@ -754,9 +795,24 @@ def _execute_mission(
         _audit(store, "mission_worker_ready", mission_id=mission_id, agent_id=item.agent_id, status="ready")
     run_id = mission.get("workflow_run_id")
     if run_id:
-        workflow = store.workflow_run_by_id(str(run_id))
-        if workflow_plan_hash(plan) != workflow.get("plan_hash"):
-            mission = _stop_mission(store, mission, reason="plan_drift", blockers=["plan drift"])
+        try:
+            workflow = store.workflow_run_by_id(str(run_id))
+            expected_steps = authorized_steps(plan)
+            if (
+                not isinstance(workflow, dict)
+                or workflow.get("run_id") != run_id
+                or workflow.get("plan_id") != mission.get("plan_id")
+                or workflow.get("plan_hash") != mission.get("plan_hash")
+                or workflow.get("authorized_steps") != expected_steps
+            ):
+                raise ValueError("workflow drift")
+        except Exception:
+            mission = _stop_mission(
+                store,
+                mission,
+                reason="workflow_state_drift",
+                blockers=["workflow state drift"],
+            )
             return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
         store.update_workflow_run(str(run_id), status="running", stop_reason=None)
         _audit(
@@ -815,6 +871,8 @@ def resume_mission(*, config: ProjectConfig, store: StateStore, backend: Runtime
 
 def interrupt_mission(store: StateStore, mission_id: str) -> dict[str, Any]:
     mission = store.mission_by_id(mission_id)
+    if mission.get("status") == "preparing":
+        return _stop_mission(store, mission, reason="interrupted")
     run_id = mission.get("workflow_run_id")
     if run_id:
         store.update_workflow_run(str(run_id), status="interrupted", stop_reason="interrupted")
