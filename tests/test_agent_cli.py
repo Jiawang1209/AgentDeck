@@ -315,6 +315,27 @@ def test_contract_mission_cli_refuses_non_object_example_before_printing(
     assert "Mission contract validation failed" in captured.err
 
 
+def test_contract_mission_cli_sanitizes_invalid_example_errors(
+    monkeypatch, capsys
+) -> None:
+    original = cli.mission_contract_response
+
+    def invalid_response(contract_path, include_example=False):
+        payload = original(contract_path, include_example=include_example)
+        payload["example_preview"]["plan"]["steps"][0]["agent_id"] = (
+            "TOPSECRET_AGENT_ID"
+        )
+        return payload
+
+    monkeypatch.setattr(cli, "mission_contract_response", invalid_response)
+
+    assert cli.main(["contract", "mission", "--example"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Mission contract validation failed" in captured.err
+    assert "TOPSECRET_AGENT_ID" not in captured.err
+
+
 def test_workflow_preview_surfaces_missing_runtime_binding_as_blocker(
     tmp_path, monkeypatch, capsys
 ) -> None:

@@ -5651,6 +5651,72 @@ def test_mission_contract_item_field_tuples_are_stable_and_mission_owned() -> No
     )
 
 
+@pytest.mark.parametrize(
+    ("kind", "mutate", "marker"),
+    [
+        (
+            "status",
+            lambda payload: payload.update(
+                status={"TOPSECRET_STATUS": "hidden"},
+                completed_at="TOPSECRET_COMPLETED_AT",
+            ),
+            "TOPSECRET",
+        ),
+        (
+            "preview",
+            lambda payload: payload["plan"]["steps"][0].update(
+                agent_id="TOPSECRET_AGENT_ID"
+            ),
+            "TOPSECRET_AGENT_ID",
+        ),
+        (
+            "preview",
+            lambda payload: payload["plan"]["steps"][0].update(
+                role={"TOPSECRET_ROLE": "hidden"}
+            ),
+            "TOPSECRET_ROLE",
+        ),
+        (
+            "preview",
+            lambda payload: payload["plan"]["steps"][0].update(
+                task=["TOPSECRET_TASK"]
+            ),
+            "TOPSECRET_TASK",
+        ),
+        (
+            "preview",
+            lambda payload: payload["controls"][0].update(
+                TOPSECRET_CONTROL="hidden"
+            ),
+            "TOPSECRET_CONTROL",
+        ),
+    ],
+)
+def test_mission_validation_errors_never_echo_rejected_payload_values(
+    kind, mutate, marker
+) -> None:
+    import json
+
+    from agentdeck.contracts import (
+        mission_example,
+        validate_mission_preview_contract,
+        validate_mission_status_contract,
+    )
+
+    payload = mission_example(kind)
+    mutate(payload)
+    validator = (
+        validate_mission_preview_contract
+        if kind == "preview"
+        else validate_mission_status_contract
+    )
+
+    result = validator(payload)
+
+    assert result["ok"] is False
+    assert marker not in json.dumps(result["errors"], ensure_ascii=False)
+
+
 def test_skill_contracts_expose_and_validate_planning_guidance() -> None:
     from copy import deepcopy
 

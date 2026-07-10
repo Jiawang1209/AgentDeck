@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Sanitize Mission contract validation errors
+
+- **类型**: security fix + test + contract
+- **审查问题**: Mission validator 虽已拒绝恶意 nested payload，但 shared plan exception、未知字段名与非法 status lifecycle error 会把被拒绝的 agent id、字段 key 或 status object 回显进 `errors[]`，CLI 还会把同一错误写入 stderr。
+- **What**: lifecycle-specific 校验只在 status 是已知六状态字符串后运行，并使用固定错误文案；未知字段错误不列出不可信 key；`validate_mission_plan` 的 ValueError/TypeError 统一翻译为固定 `mission_preview.plan is invalid`，不附原 exception。所有 Mission validator error f-string 仅包含内部 prefix/schema field/index，不插入 rejected payload value。
+- **TDD 证据**: status dict+completed_at、plan agent id、role/task/control marker 与 CLI stderr sanitization 先 RED（4 failed / 2 passed），最小修复后 6 passed。
+- **安全边界**: 只净化 contract validation error，不放宽或改变 Mission 状态、runner、provider/runtime/tmux、state 或 approval；CLI invalid example 继续 exit 1、stdout 为空。
+
 ### Harden Mission contract validation
 
 - **类型**: fix + test + contract

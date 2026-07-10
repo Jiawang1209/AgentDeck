@@ -4977,7 +4977,7 @@ def _mission_exact_fields(
     if missing:
         errors.append(f"{prefix} missing fields: {', '.join(missing)}")
     if extra:
-        errors.append(f"{prefix} has unknown fields: {', '.join(extra)}")
+        errors.append(f"{prefix} has unknown fields")
 
 
 def _mission_nonempty_string(value: object) -> bool:
@@ -5248,8 +5248,8 @@ def validate_mission_preview_contract(payload: object) -> dict[str, object]:
         try:
             timeout = payload.get("timeout_seconds")
             validate_mission_plan(plan, selected_ids, timeout if _mission_exact_int(timeout) else 0)
-        except (TypeError, ValueError) as exc:
-            errors.append(f"mission_preview.plan is invalid: {exc}")
+        except (TypeError, ValueError):
+            errors.append("mission_preview.plan is invalid")
         selected_roles = {
             row["agent_id"]: row.get("role")
             for row in selected
@@ -5299,21 +5299,23 @@ def _validate_mission_status_lifecycle(
     stop_reason = payload.get("stop_reason")
     confirmed_at = payload.get("confirmed_at")
     completed_at = payload.get("completed_at")
+    if not isinstance(status, str) or status not in MISSION_STATUSES:
+        return
     if status == "pending_confirmation":
         if any(value is not None for value in (workflow_run_id, confirmed_at, completed_at)):
             errors.append("mission_status.pending_confirmation cannot be confirmed, run, or completed")
         if stop_reason is not None:
             errors.append("mission_status.pending_confirmation.stop_reason must be null")
     if status in ("preparing", "running", "completed", "stopped", "interrupted") and not _mission_nonempty_string(confirmed_at):
-        errors.append(f"mission_status.{status}.confirmed_at must be a non-empty string")
+        errors.append("mission_status.confirmed_at must be non-empty after confirmation")
     if status in ("running", "completed", "interrupted") and not _mission_nonempty_string(workflow_run_id):
-        errors.append(f"mission_status.{status}.workflow_run_id must be a non-empty string")
+        errors.append("mission_status.workflow_run_id is required for an active workflow")
     if status in ("stopped", "interrupted") and not _mission_nonempty_string(stop_reason):
-        errors.append(f"mission_status.{status}.stop_reason must be a non-empty string")
+        errors.append("mission_status.stop_reason is required for a stopped mission")
     if status in ("preparing", "running") and stop_reason is not None:
-        errors.append(f"mission_status.{status}.stop_reason must be null")
+        errors.append("mission_status.stop_reason must be null while active")
     if status != "completed" and completed_at is not None:
-        errors.append(f"mission_status.{status}.completed_at must be null")
+        errors.append("mission_status.completed_at must be null before completion")
     if status == "completed":
         if payload.get("current_step") != payload.get("step_count"):
             errors.append("mission_status.completed current_step must equal step_count")
