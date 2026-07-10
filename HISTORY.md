@@ -4,6 +4,15 @@
 
 ## 2026-07-11
 
+### Persist natural-language Mission state in ProjectView
+
+- **类型**: feat + test + contract
+- **动机**: Mission 纯领域规则已经冻结，但自然语言 Mission 尚无权威持久记录，也无法从 canonical `agentdeck status` / ProjectView 安全恢复或渲染当前进度。
+- **What**: StateStore 默认 state 新增 `missions[]`，并提供显式 create/get/list/update 方法；Mission 记录保存 `mission/v1`、用户请求、状态/阻塞、Leader provenance、冻结 plan/agent/startup/timeout、workflow progress 与时间戳。ProjectView 新增 compact `missions` summary（count/by_status/latest_id/items）和 status/run/resume controls；ProjectView discovery payload、example、validator 与 schema 文档同步新增 Mission summary/item 字段。
+- **TDD 证据**: 首轮 state/status RED 为 5 failed, 87 passed（缺默认 key、StateStore API 和 ProjectView 投影）；contract RED 在收集期因缺 `PROJECT_VIEW_MISSIONS_FIELDS` 失败。最小实现后 mission/status focused 101 passed、ProjectView contract focused 25 passed、三文件相关回归 619 passed。安全复查再以 3 个预期失败证明 completed timestamp 可被覆盖、nested raw command 未压缩/未校验，最小修复后该组 9 passed。
+- **安全边界**: 本切片只写显式 Mission state，不发事件、不调用 provider、不读取或操作 tmux，也不创建独立 Mission contract/CLI；`agentdeck status` 保持只读。ProjectView 仅投影 allowlisted selected-agent/startup-action 字段，排除 raw launch command、完整 prompt、credentials/env；completed timestamp 只能由首次 `status=completed` 自动设置，后续 update 不可覆盖。
+- **验证**: mission/status focused 101 项、ProjectView contract focused 27 项、三文件相关回归 621 项、全量 pytest 882 项通过；`python -m compileall src tests -q` 与 `git diff --check` 均通过。
+
 ### Fail-closed direct CLI grammar for Mission model resolution
 
 - **类型**: fix + test

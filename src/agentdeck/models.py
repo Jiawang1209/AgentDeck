@@ -94,6 +94,7 @@ class ProjectView:
     leader: dict[str, Any]
     agents: list[dict[str, Any]]
     state_path: str
+    missions: dict[str, Any] = field(default_factory=dict)
     plans: dict[str, Any] = field(default_factory=dict)
     approvals: dict[str, Any] = field(default_factory=dict)
     messages: dict[str, Any] = field(default_factory=dict)

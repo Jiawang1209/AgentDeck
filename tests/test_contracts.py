@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from agentdeck.contracts import (
     AGENT_RUNTIME_AGENT_ITEM_FIELDS,
     AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
@@ -48,6 +50,8 @@ from agentdeck.contracts import (
     PROJECT_VIEW_PLAN_ITEM_FIELDS,
     PROJECT_VIEW_JOB_ITEM_FIELDS,
     PROJECT_VIEW_MESSAGE_ITEM_FIELDS,
+    PROJECT_VIEW_MISSIONS_FIELDS,
+    PROJECT_VIEW_MISSION_ITEM_FIELDS,
     PROJECT_VIEW_ARTIFACT_ITEM_FIELDS,
     PROJECT_VIEW_RECOVERY_PENDING_FIELDS,
     PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS,
@@ -1046,6 +1050,8 @@ def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -
     assert payload["job_item_fields"] == list(PROJECT_VIEW_JOB_ITEM_FIELDS)
     assert payload["reply_item_fields"] == list(PROJECT_VIEW_REPLY_ITEM_FIELDS)
     assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
+    assert payload["missions_fields"] == list(PROJECT_VIEW_MISSIONS_FIELDS)
+    assert payload["mission_item_fields"] == list(PROJECT_VIEW_MISSION_ITEM_FIELDS)
 
 
 def test_artifacts_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
@@ -1113,6 +1119,8 @@ def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> No
     assert set(payload["job_item_fields"]) == set(example["jobs"]["items"][0])
     assert set(payload["reply_item_fields"]) == set(example["replies"]["items"][0])
     assert set(payload["artifact_item_fields"]) == set(example["artifacts"]["items"][0])
+    assert set(payload["missions_fields"]) == set(example["missions"])
+    assert set(payload["mission_item_fields"]) == set(example["missions"]["items"][0])
     assert example["leader_actions"]["recommended_action_id"] == "act_example"
     assert example["leader_actions"]["items"][0]["is_recommended"] is True
     assert example["recovery"]["recommended_action"]["target_id"] == "act_example"
@@ -1178,6 +1186,63 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
     assert set(payload["example_reply_item_fields"]) == set(example["replies"]["items"][0])
     assert payload["example_artifact_item_fields"] == payload["artifact_item_fields"]
     assert set(payload["example_artifact_item_fields"]) == set(example["artifacts"]["items"][0])
+    assert payload["example_missions_fields"] == payload["missions_fields"]
+    assert set(payload["example_missions_fields"]) == set(example["missions"])
+    assert payload["example_mission_item_fields"] == payload["mission_item_fields"]
+    assert set(payload["example_mission_item_fields"]) == set(example["missions"]["items"][0])
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_error"),
+    [
+        (
+            lambda payload: payload["missions"].pop("latest_id"),
+            "missing missions field: latest_id",
+        ),
+        (
+            lambda payload: payload["missions"].update({"count": 2}),
+            "missions.count must equal len(missions.items)",
+        ),
+        (
+            lambda payload: payload["missions"].update({"by_status": {"running": 1}}),
+            "missions.by_status must match mission item statuses",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update(
+                {"schema_version": "mission/v0"}
+            ),
+            "missions.items[0].schema_version must be mission/v1",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update({"selected_agents": {}}),
+            "missions.items[0].selected_agents must be a list",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update({"startup_actions": {}}),
+            "missions.items[0].startup_actions must be a list",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update({"command": "raw secret"}),
+            "missions.items[0] must not contain raw field: command",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0]["selected_agents"][0].update(
+                {"command": "raw secret"}
+            ),
+            "missions.items[0].selected_agents[0] must not contain raw field: command",
+        ),
+    ],
+)
+def test_validate_project_view_contract_rejects_mission_summary_drift(
+    mutate, expected_error
+) -> None:
+    payload = project_view_example()
+    mutate(payload)
+
+    result = validate_project_view_contract(payload)
+
+    assert result["ok"] is False
+    assert expected_error in result["errors"]
 
 
 def test_validate_project_view_contract_accepts_example() -> None:

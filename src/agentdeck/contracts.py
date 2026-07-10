@@ -4,6 +4,7 @@ import hashlib
 from copy import deepcopy
 from pathlib import Path
 
+from .mission import MISSION_SCHEMA_VERSION, MISSION_STATUSES
 from .models import PROJECT_VIEW_SCHEMA_VERSION
 
 
@@ -235,6 +236,7 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "leader",
     "agents",
     "state_path",
+    "missions",
     "plans",
     "approvals",
     "messages",
@@ -289,6 +291,42 @@ PROJECT_VIEW_PLAN_ITEM_FIELDS = (
     "skill_context",
     "step_count",
     "created_at",
+)
+
+PROJECT_VIEW_MISSIONS_FIELDS = (
+    "count",
+    "by_status",
+    "latest_id",
+    "items",
+)
+
+PROJECT_VIEW_MISSION_ITEM_FIELDS = (
+    "mission_id",
+    "schema_version",
+    "user_message",
+    "status",
+    "stop_reason",
+    "can_start",
+    "can_resume",
+    "blockers",
+    "provider",
+    "model",
+    "leader_backend",
+    "plan_id",
+    "plan_hash",
+    "workflow_run_id",
+    "current_step",
+    "step_count",
+    "timeout_seconds",
+    "selected_agents",
+    "startup_actions",
+    "created_at",
+    "updated_at",
+    "confirmed_at",
+    "completed_at",
+    "status_command",
+    "confirmation_command",
+    "resume_command",
 )
 
 PROJECT_VIEW_RECOVERY_FIELDS = (
@@ -2445,6 +2483,8 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "top_level_fields": list(PROJECT_VIEW_TOP_LEVEL_FIELDS),
         "leader_fields": list(PROJECT_VIEW_LEADER_FIELDS),
         "coordination_role_fields": list(PROJECT_VIEW_COORDINATION_ROLE_FIELDS),
+        "missions_fields": list(PROJECT_VIEW_MISSIONS_FIELDS),
+        "mission_item_fields": list(PROJECT_VIEW_MISSION_ITEM_FIELDS),
         "plan_item_fields": list(PROJECT_VIEW_PLAN_ITEM_FIELDS),
         "recovery_fields": list(PROJECT_VIEW_RECOVERY_FIELDS),
         "recovery_pending_fields": list(PROJECT_VIEW_RECOVERY_PENDING_FIELDS),
@@ -2471,6 +2511,8 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_top_level_fields"] = list(example)
         payload["example_leader_fields"] = list(example["leader"])
         payload["example_coordination_role_fields"] = list(example["leader"]["coordination_roles"][0])
+        payload["example_missions_fields"] = list(example["missions"])
+        payload["example_mission_item_fields"] = list(example["missions"]["items"][0])
         payload["example_plan_item_fields"] = list(example["plans"]["items"][0])
         payload["example_recovery_fields"] = list(example["recovery"])
         payload["example_recovery_pending_fields"] = list(example["recovery"]["pending"])
@@ -5349,6 +5391,7 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     elif "leader_actions" in payload:
         errors.append("leader_actions must be an object")
     _validate_project_view_plan_items(errors, payload)
+    _validate_project_view_mission_items(errors, payload)
     _validate_project_view_skill_items(errors, payload)
     _validate_project_view_memory_items(errors, payload)
     _validate_project_view_summary_items(errors, payload, "messages", PROJECT_VIEW_MESSAGE_ITEM_FIELDS, "message")
@@ -5357,6 +5400,130 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     _validate_project_view_summary_items(errors, payload, "artifacts", PROJECT_VIEW_ARTIFACT_ITEM_FIELDS, "artifact")
     _validate_project_view_summary_items(errors, payload, "releases", PROJECT_VIEW_RELEASE_ITEM_FIELDS, "release")
     return {"ok": not errors, "errors": errors}
+
+
+def _validate_project_view_mission_items(
+    errors: list[str], payload: dict[str, object]
+) -> None:
+    missions = payload.get("missions")
+    if not isinstance(missions, dict):
+        if "missions" in payload:
+            errors.append("missions must be an object")
+        return
+    for field in PROJECT_VIEW_MISSIONS_FIELDS:
+        if field not in missions:
+            errors.append(f"missing missions field: {field}")
+    items = missions.get("items")
+    if not isinstance(items, list):
+        if "items" in missions:
+            errors.append("missions.items must be a list")
+        return
+    count = missions.get("count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        errors.append("missions.count must be an integer")
+    elif count != len(items):
+        errors.append("missions.count must equal len(missions.items)")
+    by_status = missions.get("by_status")
+    if not isinstance(by_status, dict) or not all(
+        isinstance(key, str)
+        and isinstance(value, int)
+        and not isinstance(value, bool)
+        for key, value in by_status.items()
+    ):
+        errors.append("missions.by_status must be an object of integer counts")
+    expected_statuses: dict[str, int] = {}
+    for item in items:
+        if isinstance(item, dict):
+            status = item.get("status")
+            if isinstance(status, str):
+                expected_statuses[status] = expected_statuses.get(status, 0) + 1
+    if isinstance(by_status, dict) and by_status != expected_statuses:
+        errors.append("missions.by_status must match mission item statuses")
+    latest_id = missions.get("latest_id")
+    expected_latest_id = items[-1].get("mission_id") if items and isinstance(items[-1], dict) else None
+    if latest_id != expected_latest_id:
+        errors.append("missions.latest_id must match the final mission item")
+
+    string_fields = {
+        "mission_id",
+        "schema_version",
+        "user_message",
+        "status",
+        "provider",
+        "model",
+        "plan_id",
+        "plan_hash",
+        "created_at",
+        "updated_at",
+        "status_command",
+        "confirmation_command",
+        "resume_command",
+    }
+    nullable_string_fields = {
+        "stop_reason",
+        "workflow_run_id",
+        "confirmed_at",
+        "completed_at",
+    }
+    forbidden_fields = {
+        "command",
+        "launch_command",
+        "prompt",
+        "full_prompt",
+        "credentials",
+        "credential",
+        "env",
+        "environment",
+    }
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            errors.append(f"missions.items[{index}] must be an object")
+            continue
+        for field in PROJECT_VIEW_MISSION_ITEM_FIELDS:
+            if field not in item:
+                errors.append(f"missing mission item field at index {index}: {field}")
+        for field in sorted(forbidden_fields.intersection(item)):
+            errors.append(f"missions.items[{index}] must not contain raw field: {field}")
+        for field in string_fields:
+            if field in item and not isinstance(item[field], str):
+                errors.append(f"missions.items[{index}].{field} must be a string")
+        for field in nullable_string_fields:
+            if field in item and item[field] is not None and not isinstance(item[field], str):
+                errors.append(f"missions.items[{index}].{field} must be a string or null")
+        for field in ("can_start", "can_resume"):
+            if field in item and not isinstance(item[field], bool):
+                errors.append(f"missions.items[{index}].{field} must be a boolean")
+        for field in ("current_step", "step_count", "timeout_seconds"):
+            if field in item and (
+                not isinstance(item[field], int) or isinstance(item[field], bool)
+            ):
+                errors.append(f"missions.items[{index}].{field} must be an integer")
+        for field in ("blockers", "selected_agents", "startup_actions"):
+            if field in item and not isinstance(item[field], list):
+                errors.append(f"missions.items[{index}].{field} must be a list")
+        for field in ("selected_agents", "startup_actions"):
+            entries = item.get(field)
+            if not isinstance(entries, list):
+                continue
+            for entry_index, entry in enumerate(entries):
+                if not isinstance(entry, dict):
+                    errors.append(
+                        f"missions.items[{index}].{field}[{entry_index}] must be an object"
+                    )
+                    continue
+                for raw_field in sorted(forbidden_fields.intersection(entry)):
+                    errors.append(
+                        f"missions.items[{index}].{field}[{entry_index}] "
+                        f"must not contain raw field: {raw_field}"
+                    )
+        if "leader_backend" in item and not isinstance(item["leader_backend"], dict):
+            errors.append(f"missions.items[{index}].leader_backend must be an object")
+        if item.get("schema_version") != MISSION_SCHEMA_VERSION:
+            errors.append(
+                f"missions.items[{index}].schema_version must be {MISSION_SCHEMA_VERSION}"
+            )
+        if item.get("status") not in MISSION_STATUSES:
+            errors.append(f"missions.items[{index}].status must be a known mission status")
 
 
 def _validate_project_view_skill_items(errors: list[str], payload: dict[str, object]) -> None:
@@ -9648,6 +9815,63 @@ def project_view_example() -> dict[str, object]:
             }
         ],
         "state_path": "/workspace/agentdeck-example/.agentdeck/state/state.json",
+        "missions": {
+            "count": 1,
+            "by_status": {"pending_confirmation": 1},
+            "latest_id": "mis_example",
+            "items": [
+                {
+                    "mission_id": "mis_example",
+                    "schema_version": MISSION_SCHEMA_VERSION,
+                    "user_message": "让 Codex 和 Claude 接龙",
+                    "status": "pending_confirmation",
+                    "stop_reason": None,
+                    "can_start": True,
+                    "can_resume": False,
+                    "blockers": [],
+                    "provider": "fake",
+                    "model": "fake-plan",
+                    "leader_backend": {
+                        "agent_id": "leader",
+                        "provider": "fake",
+                        "model": "fake-plan",
+                        "provider_backend": "local",
+                        "provider_transport": "local",
+                        "reasoning_backend": "local-fake",
+                        "runtime_kind": "logical_leader",
+                        "pane_backed": False,
+                        "pane_id": None,
+                        "approval_required": True,
+                        "dispatch_ready": False,
+                    },
+                    "plan_id": "pln_example",
+                    "plan_hash": "sha256:plan-example",
+                    "workflow_run_id": None,
+                    "current_step": 0,
+                    "step_count": 2,
+                    "timeout_seconds": 180,
+                    "selected_agents": [
+                        {"agent_id": "planner"},
+                        {"agent_id": "reviewer"},
+                    ],
+                    "startup_actions": [
+                        {"agent_id": "planner", "action": "reuse"},
+                        {"agent_id": "reviewer", "action": "spawn"},
+                    ],
+                    "created_at": "2026-07-11T00:00:00+00:00",
+                    "updated_at": "2026-07-11T00:00:00+00:00",
+                    "confirmed_at": None,
+                    "completed_at": None,
+                    "status_command": "agentdeck mission status --mission-id mis_example",
+                    "confirmation_command": (
+                        "agentdeck mission run --mission-id mis_example --confirm"
+                    ),
+                    "resume_command": (
+                        "agentdeck mission resume --mission-id mis_example --confirm"
+                    ),
+                }
+            ],
+        },
         "plans": {
             "count": 1,
             "items": [

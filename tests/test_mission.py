@@ -24,6 +24,7 @@ from agentdeck.models import (
     ProjectConfig,
     RuntimeConfig,
 )
+from agentdeck.state import StateStore, leader_backend_identity
 
 
 def agent(
@@ -63,6 +64,90 @@ def binding(
 
 def effective(spec: AgentSpec, model: str | None, source: str) -> EffectiveMissionAgent:
     return EffectiveMissionAgent(agent=spec, model=model, model_source=source)
+
+
+def mission_values() -> dict[str, object]:
+    return {
+        "user_message": "让 Codex 和 Claude 接龙",
+        "can_start": True,
+        "blockers": [],
+        "provider": "fake",
+        "model": "fake-plan",
+        "leader_backend": leader_backend_identity("fake", "fake-plan"),
+        "plan_id": "pln_demo",
+        "plan_hash": "sha256:plan",
+        "selected_agents": [{"agent_id": "planner"}, {"agent_id": "reviewer"}],
+        "startup_actions": [{"agent_id": "planner"}, {"agent_id": "reviewer"}],
+        "step_count": 2,
+        "timeout_seconds": 180,
+    }
+
+
+def test_state_store_default_and_legacy_state_are_mission_compatible(tmp_path) -> None:
+    store = StateStore(tmp_path)
+
+    assert store.load()["missions"] == []
+    store.save({"agents": {}, "plans": []})
+    assert store.list_missions() == []
+
+
+def test_state_store_creates_updates_gets_and_lists_mission_without_events(tmp_path) -> None:
+    store = StateStore(tmp_path)
+
+    created = store.create_mission(**mission_values())
+
+    assert created["mission_id"].startswith("mis_")
+    assert created["schema_version"] == MISSION_SCHEMA_VERSION
+    assert created["status"] == "pending_confirmation"
+    assert created["stop_reason"] is None
+    assert created["workflow_run_id"] is None
+    assert created["current_step"] == 0
+    assert created["confirmed_at"] is None
+    assert created["completed_at"] is None
+    assert created["created_at"] == created["updated_at"]
+    assert store.mission_by_id(created["mission_id"]) == created
+    assert store.list_missions() == [created]
+    assert store.list_events(limit=10) == []
+
+    updated = store.update_mission(
+        created["mission_id"],
+        status="running",
+        workflow_run_id="wfr_demo",
+        current_step=1,
+        confirmed_at="2026-07-11T00:00:00+00:00",
+    )
+
+    assert updated["status"] == "running"
+    assert updated["workflow_run_id"] == "wfr_demo"
+    assert updated["current_step"] == 1
+    assert updated["updated_at"] >= created["updated_at"]
+    assert store.mission_by_id(created["mission_id"]) == updated
+    assert store.list_events(limit=10) == []
+
+
+def test_state_store_mission_unknown_ids_raise_key_error(tmp_path) -> None:
+    store = StateStore(tmp_path)
+
+    with pytest.raises(KeyError, match="mis_missing"):
+        store.mission_by_id("mis_missing")
+    with pytest.raises(KeyError, match="mis_missing"):
+        store.update_mission("mis_missing", status="running")
+
+
+def test_state_store_sets_mission_completion_timestamp_only_once(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    created = store.create_mission(**mission_values())
+
+    completed = store.update_mission(created["mission_id"], status="completed")
+    completed_at = completed["completed_at"]
+    completed_again = store.update_mission(
+        created["mission_id"],
+        status="completed",
+        completed_at="2020-01-01T00:00:00+00:00",
+    )
+
+    assert completed_at is not None
+    assert completed_again["completed_at"] == completed_at
 
 
 def test_mission_constants_and_provider_family_are_stable() -> None:

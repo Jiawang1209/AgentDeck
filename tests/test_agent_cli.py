@@ -9952,6 +9952,100 @@ def test_artifacts_outputs_project_view_artifact_summary_without_mutating_state(
     assert StateStore(root).load() == state
 
 
+def test_status_projects_compact_mission_summary_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    mission = store.create_mission(
+        user_message="让 Codex 和 Claude 接龙",
+        can_start=True,
+        blockers=[],
+        provider="fake",
+        model="fake-plan",
+        leader_backend={
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
+        plan_id="pln_demo",
+        plan_hash="sha256:plan",
+        selected_agents=[
+            {"agent_id": "planner", "command": "codex --secret token"},
+            {"agent_id": "reviewer", "prompt": "full worker prompt"},
+        ],
+        startup_actions=[
+            {"agent_id": "planner", "launch_command": "codex --secret token"},
+            {"agent_id": "reviewer", "credentials": {"token": "secret"}},
+        ],
+        step_count=2,
+        timeout_seconds=180,
+        launch_command="codex --dangerously-use-secret token",
+        prompt="full secret prompt",
+        credentials={"api_key": "secret"},
+    )
+    state_before = store.state_path.read_bytes()
+    events_before = store.events_path.read_bytes()
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    summary = payload["missions"]
+    assert summary["count"] == 1
+    assert summary["by_status"] == {"pending_confirmation": 1}
+    assert summary["latest_id"] == mission["mission_id"]
+    assert summary["items"][0] == {
+        "mission_id": mission["mission_id"],
+        "schema_version": "mission/v1",
+        "user_message": "让 Codex 和 Claude 接龙",
+        "status": "pending_confirmation",
+        "stop_reason": None,
+        "can_start": True,
+        "can_resume": False,
+        "blockers": [],
+        "provider": "fake",
+        "model": "fake-plan",
+        "leader_backend": mission["leader_backend"],
+        "plan_id": "pln_demo",
+        "plan_hash": "sha256:plan",
+        "workflow_run_id": None,
+        "current_step": 0,
+        "step_count": 2,
+        "timeout_seconds": 180,
+        "selected_agents": [{"agent_id": "planner"}, {"agent_id": "reviewer"}],
+        "startup_actions": [{"agent_id": "planner"}, {"agent_id": "reviewer"}],
+        "created_at": mission["created_at"],
+        "updated_at": mission["updated_at"],
+        "confirmed_at": None,
+        "completed_at": None,
+        "status_command": f"agentdeck mission status --mission-id {mission['mission_id']}",
+        "confirmation_command": f"agentdeck mission run --mission-id {mission['mission_id']} --confirm",
+        "resume_command": f"agentdeck mission resume --mission-id {mission['mission_id']} --confirm",
+    }
+    assert "launch_command" not in summary["items"][0]
+    assert "prompt" not in summary["items"][0]
+    assert "credentials" not in summary["items"][0]
+    assert all("command" not in item for item in summary["items"][0]["selected_agents"])
+    assert all("prompt" not in item for item in summary["items"][0]["selected_agents"])
+    assert all(
+        "launch_command" not in item for item in summary["items"][0]["startup_actions"]
+    )
+    assert all(
+        "credentials" not in item for item in summary["items"][0]["startup_actions"]
+    )
+    assert store.state_path.read_bytes() == state_before
+    assert store.events_path.read_bytes() == events_before
+
+
 def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

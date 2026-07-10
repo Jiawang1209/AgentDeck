@@ -8,7 +8,7 @@ The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in 
 
 Reusable contract response, payload, and example fixture helpers live in `src/agentdeck/contracts.py`. The CLI discovery command uses `project_view_contract_response()` directly so command output and reusable module output stay identical.
 
-Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_LEADER_FIELDS`, `PROJECT_VIEW_COORDINATION_ROLE_FIELDS`, `PROJECT_VIEW_PLAN_ITEM_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_SKILLS_FIELDS`, `PROJECT_VIEW_SKILL_ITEM_FIELDS`, `PROJECT_VIEW_MEMORY_FIELDS`, `PROJECT_VIEW_MEMORY_ITEM_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
+Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_LEADER_FIELDS`, `PROJECT_VIEW_COORDINATION_ROLE_FIELDS`, `PROJECT_VIEW_MISSIONS_FIELDS`, `PROJECT_VIEW_MISSION_ITEM_FIELDS`, `PROJECT_VIEW_PLAN_ITEM_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_SKILLS_FIELDS`, `PROJECT_VIEW_SKILL_ITEM_FIELDS`, `PROJECT_VIEW_MEMORY_FIELDS`, `PROJECT_VIEW_MEMORY_ITEM_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
 
 Use `validate_project_view_contract(payload)` from `src/agentdeck/contracts.py` to check any ProjectView-like payload against the v1 baseline contract.
 
@@ -68,6 +68,7 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
   },
   "agents": [],
   "state_path": "/absolute/project/root/.agentdeck/state/state.json",
+  "missions": {},
   "plans": {},
   "approvals": {},
   "messages": {},
@@ -95,6 +96,14 @@ All ProjectView fields are read-only summaries. Commands that mutate state, send
 
 `messages.items[]` includes `prompt_skill_context`, the compact worker skill provenance snapshot captured when `agentdeck dispatch` or `agentdeck approval dispatch` injected loaded skill content into the worker prompt. It uses the same compact shape as `plans.items[].skill_context`, intentionally excludes full `content_snapshot`, and exists so GUI clients can show worker skill context without parsing prompt text. Old or manually seeded messages without skill provenance are normalized to an empty summary.
 
+## Missions
+
+`missions` is the compact, read-only projection of persisted natural-language Mission records. It has the summary fields `count`, `by_status`, `latest_id`, and `items`. Item order follows persisted state order and `latest_id` is the final item id, or `null` when no Mission exists.
+
+Each `missions.items[]` row contains `mission_id`, `schema_version`, `user_message`, `status`, `stop_reason`, `can_start`, `can_resume`, `blockers`, `provider`, `model`, `leader_backend`, `plan_id`, `plan_hash`, `workflow_run_id`, `current_step`, `step_count`, `timeout_seconds`, compact `selected_agents` and `startup_actions`, timestamps, and deterministic status/confirmation/resume commands. `can_resume` is true only for `stopped` or `interrupted` Mission state; commands are affordances and do not authorize execution.
+
+The projection uses allowlisted fields for nested selected-agent and startup-action rows. It excludes raw Worker launch commands, full prompts, credentials, environment values, and other execution secrets even if a legacy or manually seeded state record contains them. `validate_project_view_contract()` verifies summary counts/statuses/latest id, required item fields and types, list-shaped nested rows, known Mission status values, and rejects raw command/prompt/credential fields. Rendering `agentdeck status` neither changes Mission state nor appends events.
+
 ## Recovery
 
 `recovery` is the canonical next-step surface for humans, natural-language shells, and GUI clients. It prioritizes pending Leader actions, approved approvals, pending approvals, stale runtime bindings, pending inbox items, waiting dispatched replies, and Leader errors before returning idle.
@@ -114,6 +123,8 @@ Use `agentdeck contract project-view` to discover this contract from tools or GU
   "top_level_fields": [],
   "leader_fields": [],
   "coordination_role_fields": [],
+  "missions_fields": [],
+  "mission_item_fields": [],
   "plan_item_fields": [],
   "recovery_fields": [],
   "recovery_pending_fields": [],
@@ -142,6 +153,8 @@ Use `agentdeck contract project-view --example` to include a stable GUI-ready Pr
   "example_top_level_fields": [],
   "example_leader_fields": [],
   "example_coordination_role_fields": [],
+  "example_missions_fields": [],
+  "example_mission_item_fields": [],
   "example_plan_item_fields": [],
   "example_recovery_fields": [],
   "example_recommended_action_fields": [],

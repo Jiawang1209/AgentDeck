@@ -10,6 +10,7 @@ import shutil
 from typing import Any
 
 from .config import CONFIG_DIR, ensure_project_layout, project_root
+from .mission import MISSION_SCHEMA_VERSION, MISSION_STATUSES
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
 
 
@@ -124,6 +125,7 @@ class StateStore:
                 "jobs": [],
                 "replies": [],
                 "artifacts": [],
+                "missions": [],
                 "plans": [],
                 "approvals": [],
                 "chat_turns": [],
@@ -144,6 +146,83 @@ class StateStore:
     def append_event(self, event: EventRecord) -> None:
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
+
+    def create_mission(
+        self,
+        *,
+        user_message: str,
+        can_start: bool,
+        blockers: list[str],
+        provider: str,
+        model: str,
+        leader_backend: dict[str, Any],
+        plan_id: str,
+        plan_hash: str,
+        selected_agents: list[dict[str, Any]],
+        startup_actions: list[dict[str, Any]],
+        step_count: int,
+        timeout_seconds: int,
+        **values: Any,
+    ) -> dict[str, Any]:
+        state = self.load()
+        now = utc_now()
+        record = {
+            **values,
+            "mission_id": new_id("mis"),
+            "schema_version": MISSION_SCHEMA_VERSION,
+            "user_message": user_message,
+            "status": MISSION_STATUSES[0],
+            "stop_reason": None,
+            "can_start": can_start,
+            "blockers": list(blockers),
+            "provider": provider,
+            "model": model,
+            "leader_backend": dict(leader_backend),
+            "plan_id": plan_id,
+            "plan_hash": plan_hash,
+            "selected_agents": list(selected_agents),
+            "startup_actions": list(startup_actions),
+            "step_count": step_count,
+            "timeout_seconds": timeout_seconds,
+            "workflow_run_id": None,
+            "current_step": 0,
+            "confirmed_at": None,
+            "completed_at": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        state.setdefault("missions", []).append(record)
+        self.save(state)
+        return record
+
+    def mission_by_id(self, mission_id: str) -> dict[str, Any]:
+        for item in self.load().get("missions", []):
+            if item.get("mission_id") == mission_id:
+                return item
+        raise KeyError(mission_id)
+
+    def list_missions(self) -> list[dict[str, Any]]:
+        return list(self.load().get("missions", []))
+
+    def update_mission(self, mission_id: str, **changes: Any) -> dict[str, Any]:
+        state = self.load()
+        record = next(
+            (
+                item
+                for item in state.setdefault("missions", [])
+                if item.get("mission_id") == mission_id
+            ),
+            None,
+        )
+        if record is None:
+            raise KeyError(mission_id)
+        changes.pop("completed_at", None)
+        record.update(changes)
+        record["updated_at"] = utc_now()
+        if changes.get("status") == MISSION_STATUSES[3] and not record.get("completed_at"):
+            record["completed_at"] = record["updated_at"]
+        self.save(state)
+        return record
 
     def record_skill_load(
         self,
@@ -1270,6 +1349,85 @@ class StateStore:
         return {"count": len(items), "items": items}
 
     @staticmethod
+    def _mission_summaries(missions: list[dict[str, Any]]) -> dict[str, Any]:
+        selected_agent_fields = (
+            "agent_id",
+            "provider",
+            "role",
+            "workspace_mode",
+            "runtime_status",
+            "effective_model",
+            "model_source",
+            "blocker",
+        )
+        startup_action_fields = (
+            "agent_id",
+            "action",
+            "runtime_status",
+            "effective_model",
+            "model_source",
+            "blocker",
+        )
+
+        def compact_entries(value: Any, fields: tuple[str, ...]) -> list[dict[str, Any]]:
+            if not isinstance(value, list):
+                return []
+            return [
+                {field: entry.get(field) for field in fields if field in entry}
+                for entry in value
+                if isinstance(entry, dict)
+            ]
+
+        items = []
+        for mission in missions:
+            mission_id = mission.get("mission_id")
+            status = mission.get("status")
+            items.append(
+                {
+                    "mission_id": mission_id,
+                    "schema_version": mission.get("schema_version"),
+                    "user_message": mission.get("user_message"),
+                    "status": status,
+                    "stop_reason": mission.get("stop_reason"),
+                    "can_start": mission.get("can_start"),
+                    "can_resume": status in {MISSION_STATUSES[4], MISSION_STATUSES[5]},
+                    "blockers": mission.get("blockers", []),
+                    "provider": mission.get("provider"),
+                    "model": mission.get("model"),
+                    "leader_backend": mission.get("leader_backend"),
+                    "plan_id": mission.get("plan_id"),
+                    "plan_hash": mission.get("plan_hash"),
+                    "workflow_run_id": mission.get("workflow_run_id"),
+                    "current_step": mission.get("current_step", 0),
+                    "step_count": mission.get("step_count"),
+                    "timeout_seconds": mission.get("timeout_seconds"),
+                    "selected_agents": compact_entries(
+                        mission.get("selected_agents"), selected_agent_fields
+                    ),
+                    "startup_actions": compact_entries(
+                        mission.get("startup_actions"), startup_action_fields
+                    ),
+                    "created_at": mission.get("created_at"),
+                    "updated_at": mission.get("updated_at"),
+                    "confirmed_at": mission.get("confirmed_at"),
+                    "completed_at": mission.get("completed_at"),
+                    "status_command": f"agentdeck mission status --mission-id {mission_id}",
+                    "confirmation_command": (
+                        f"agentdeck mission run --mission-id {mission_id} --confirm"
+                    ),
+                    "resume_command": (
+                        f"agentdeck mission resume --mission-id {mission_id} --confirm"
+                    ),
+                }
+            )
+        return {
+            "count": len(items),
+            "by_status": StateStore._status_counts(items),
+            "latest_id": items[-1]["mission_id"] if items else None,
+            "items": items,
+        }
+
+    @staticmethod
     def _plan_skill_context(skill_context: Any) -> dict[str, Any]:
         if not isinstance(skill_context, dict):
             return {"count": 0, "by_agent": {}, "by_source": {}, "items": []}
@@ -1920,6 +2078,7 @@ class StateStore:
             leader=leader,
             agents=agents,
             state_path=str(self.state_path),
+            missions=self._mission_summaries(state.get("missions", [])),
             plans=self._plan_summaries(state.get("plans", [])),
             approvals=self._approval_summaries(state.get("approvals", [])),
             messages=self._message_summaries(state.get("messages", [])),
