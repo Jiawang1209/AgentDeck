@@ -24,6 +24,8 @@ agentdeck workflow resume --run-id <id> --confirm
 
 `run` and `resume` require `--confirm`. That confirmation delegates only the frozen plan id/hash, ordered step and agent set, original tasks, timeout, and step-count bound. It does not grant new tool permissions or authorize new agents, tasks, steps, plans, or timeouts.
 
+Their final responses use `mode=workflow_run` or `mode=workflow_resume`, `safety=delegated`, `requires_explicit_user=true`, and `confirmed=true`. The remaining status/turn/control fields are the same persisted projection returned by `workflow status`.
+
 ## Preview response
 
 The response uses `mode=workflow_preview` and contains:

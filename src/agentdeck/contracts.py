@@ -2166,6 +2166,12 @@ WORKFLOW_STATUS_RESPONSE_FIELDS = (
     "controls",
 )
 
+WORKFLOW_RUN_RESPONSE_FIELDS = (
+    *WORKFLOW_STATUS_RESPONSE_FIELDS,
+    "requires_explicit_user",
+    "confirmed",
+)
+
 WORKFLOW_TURN_FIELDS = (
     "step",
     "agent_id",
@@ -4482,6 +4488,24 @@ def workflow_status_example() -> dict[str, object]:
     }
 
 
+def workflow_run_example() -> dict[str, object]:
+    payload = deepcopy(workflow_status_example())
+    payload.update(
+        {
+            "mode": "workflow_run",
+            "safety": "delegated",
+            "status": "completed",
+            "current_step": 3,
+            "stop_reason": None,
+            "completed_at": "2026-07-10T00:00:02+00:00",
+            "can_resume": False,
+            "requires_explicit_user": True,
+            "confirmed": True,
+        }
+    )
+    return payload
+
+
 def validate_workflow_preview_contract(
     payload: dict[str, object],
 ) -> dict[str, object]:
@@ -4576,6 +4600,27 @@ def validate_workflow_status_contract(
     return {"ok": not errors, "errors": errors}
 
 
+def validate_workflow_run_contract(payload: dict[str, object]) -> dict[str, object]:
+    errors: list[str] = []
+    for field in WORKFLOW_RUN_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing workflow_run field: {field}")
+    if payload.get("mode") not in {"workflow_run", "workflow_resume"}:
+        errors.append("workflow_run.mode must be workflow_run or workflow_resume")
+    if payload.get("safety") != "delegated":
+        errors.append("workflow_run.safety must be delegated")
+    if payload.get("requires_explicit_user") is not True:
+        errors.append("workflow_run.requires_explicit_user must be true")
+    if payload.get("confirmed") is not True:
+        errors.append("workflow_run.confirmed must be true")
+    status_projection = dict(payload)
+    status_projection["mode"] = "workflow_status"
+    status_projection["safety"] = "inspect"
+    status_validation = validate_workflow_status_contract(status_projection)
+    errors.extend(str(item) for item in status_validation["errors"])
+    return {"ok": not errors, "errors": errors}
+
+
 def workflow_contract_payload(contract_path: Path) -> dict[str, object]:
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
@@ -4589,6 +4634,7 @@ def workflow_contract_payload(contract_path: Path) -> dict[str, object]:
         "preview_response_fields": list(WORKFLOW_PREVIEW_RESPONSE_FIELDS),
         "step_fields": list(WORKFLOW_STEP_FIELDS),
         "status_response_fields": list(WORKFLOW_STATUS_RESPONSE_FIELDS),
+        "run_response_fields": list(WORKFLOW_RUN_RESPONSE_FIELDS),
         "turn_fields": list(WORKFLOW_TURN_FIELDS),
         "statuses": list(WORKFLOW_STATUSES),
         "turn_statuses": list(WORKFLOW_TURN_STATUSES),
@@ -4604,11 +4650,13 @@ def workflow_contract_response(
     if include_example:
         preview = workflow_preview_example()
         status = workflow_status_example()
+        run = workflow_run_example()
         payload.update(
             {
                 "example": True,
                 "example_preview": preview,
                 "example_status": status,
+                "example_run": run,
             }
         )
     return payload

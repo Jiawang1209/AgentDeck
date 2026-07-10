@@ -5139,6 +5139,7 @@ def test_validate_run_loop_contract_rejects_bad_mode_and_reason():
 def test_workflow_contract_response_exposes_examples(tmp_path: Path) -> None:
     from agentdeck.contracts import (
         validate_workflow_preview_contract,
+        validate_workflow_run_contract,
         validate_workflow_status_contract,
         workflow_contract_response,
     )
@@ -5151,6 +5152,9 @@ def test_workflow_contract_response_exposes_examples(tmp_path: Path) -> None:
     assert payload["preview_command"] == "agentdeck workflow preview --plan-id <id>"
     assert validate_workflow_preview_contract(payload["example_preview"])["ok"] is True
     assert validate_workflow_status_contract(payload["example_status"])["ok"] is True
+    assert validate_workflow_run_contract(payload["example_run"])["ok"] is True
+    assert payload["example_run"]["safety"] == "delegated"
+    assert payload["example_run"]["confirmed"] is True
 
 
 def test_leader_chat_contract_exposes_run_loop_preview_card_fields():

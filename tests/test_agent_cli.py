@@ -99,6 +99,29 @@ class FakeTmuxBackend:
         return pane_id in self.existing_panes
 
 
+class WorkflowFakeBackend(FakeTmuxBackend):
+    def __init__(self, reply_status: str = "completed") -> None:
+        super().__init__()
+        self.reply_status = reply_status
+
+    def capture_output(self, _config, pane_id: str, lines: int = 200) -> str:
+        self.captured.append((pane_id, lines))
+        prompt = next(text for sent_pane, text in reversed(self.sent) if sent_pane == pane_id)
+        token = next(
+            line.split(":", 1)[1].strip()
+            for line in prompt.splitlines()
+            if line.startswith("handoff_token:")
+        )
+        return (
+            f"handoff_token: {token}\n"
+            f"status: {self.reply_status}\n"
+            f"summary: {self.reply_status} {pane_id}\n"
+            "verification: fake backend\n"
+            "risks: none\n"
+            "next_steps: continue"
+        )
+
+
 def prepare_project(tmp_path: Path, monkeypatch) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
@@ -275,6 +298,121 @@ def test_workflow_preview_and_status_reject_unknown_ids_without_json(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.strip() == "unknown workflow run: wfr_missing"
+
+
+def test_workflow_run_requires_confirm_without_writing_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%1")
+    bind_agent(root, "reviewer", "%2")
+    plan = record_two_step_workflow_plan(root)
+    store = StateStore(root)
+    before = store.state_path.read_bytes()
+
+    exit_code = cli.main(
+        ["workflow", "run", "--plan-id", str(plan["plan_id"])]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "workflow run requires --confirm"
+    assert store.state_path.read_bytes() == before
+
+
+def test_workflow_run_completes_two_step_chain_with_one_confirmation(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%1")
+    bind_agent(root, "reviewer", "%2")
+    plan = record_two_step_workflow_plan(root)
+    fake = WorkflowFakeBackend()
+    fake.existing_panes.update({"%1", "%2"})
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(
+        [
+            "workflow",
+            "run",
+            "--plan-id",
+            str(plan["plan_id"]),
+            "--timeout",
+            "30",
+            "--confirm",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "workflow_run"
+    assert payload["safety"] == "delegated"
+    assert payload["confirmed"] is True
+    assert payload["status"] == "completed"
+    assert len(fake.sent) == 2
+    assert '"summary": "completed %1"' in fake.sent[1][1]
+    assert [event["event_type"] for event in StateStore(root).all_events()] == [
+        "workflow_started",
+        "workflow_step_dispatched",
+        "workflow_step_completed",
+        "workflow_step_dispatched",
+        "workflow_step_completed",
+        "workflow_completed",
+    ]
+
+
+def test_workflow_run_stops_after_blocked_reply_without_dispatching_next_step(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    bind_agent(root, "planner", "%1")
+    bind_agent(root, "reviewer", "%2")
+    plan = record_two_step_workflow_plan(root)
+    fake = WorkflowFakeBackend(reply_status="blocked")
+    fake.existing_panes.update({"%1", "%2"})
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    exit_code = cli.main(
+        ["workflow", "run", "--plan-id", str(plan["plan_id"]), "--confirm"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "stopped"
+    assert payload["stop_reason"] == "worker_blocked"
+    assert len(fake.sent) == 1
+
+
+def test_workflow_resume_rejects_plan_drift_before_runtime_access(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    plan = record_two_step_workflow_plan(root)
+    store = StateStore(root)
+    run = store.create_workflow_run(
+        plan_id=str(plan["plan_id"]),
+        plan_hash="sha256:" + "0" * 64,
+        timeout_seconds=30,
+        authorized_steps=[],
+    )
+    store.update_workflow_run(
+        str(run["run_id"]), status="stopped", stop_reason="interrupted"
+    )
+    monkeypatch.setattr(
+        cli,
+        "TmuxBackend",
+        lambda: (_ for _ in ()).throw(AssertionError("drift touched runtime")),
+    )
+
+    exit_code = cli.main(
+        ["workflow", "resume", "--run-id", str(run["run_id"]), "--confirm"]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "workflow plan drift detected"
 
 
 def test_dispatch_prompt_requests_full_output_path_for_artifact_recovery(tmp_path, monkeypatch) -> None:

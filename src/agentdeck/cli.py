@@ -86,6 +86,7 @@ from .contracts import (
     validate_trace_contract,
     validate_workbench_contract,
     validate_workflow_preview_contract,
+    validate_workflow_run_contract,
     validate_workflow_status_contract,
     workflow_contract_response,
 )
@@ -99,7 +100,7 @@ from .runtime import TmuxBackend
 from .tui import TuiModel, run_tui
 from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import, resolve_skill_dependencies
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
-from .workflow import authorized_steps, workflow_plan_hash
+from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
 
 
 def _print_json(payload: object) -> None:
@@ -14028,6 +14029,178 @@ def workflow_status_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _workflow_execution_payload(
+    record: dict[str, object], *, mode: str
+) -> dict[str, object]:
+    payload = _workflow_status_payload(record)
+    payload.update(
+        {
+            "mode": mode,
+            "safety": "delegated",
+            "requires_explicit_user": True,
+            "confirmed": True,
+        }
+    )
+    validation = validate_workflow_run_contract(payload)
+    if not validation["ok"]:
+        raise ValueError("; ".join(str(item) for item in validation["errors"]))
+    return payload
+
+
+def workflow_run_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("workflow run requires --confirm", file=sys.stderr)
+        return 1
+    if args.timeout <= 0:
+        print("workflow timeout must be a positive integer", file=sys.stderr)
+        return 1
+    try:
+        plan_record = store.plan_by_id(args.plan_id)
+    except KeyError:
+        print(f"unknown plan: {args.plan_id}", file=sys.stderr)
+        return 1
+    try:
+        preview = _workflow_preview_payload(config, store, plan_record, args.timeout)
+    except ValueError as exc:
+        print(f"workflow preview contract validation failed: {exc}", file=sys.stderr)
+        return 1
+    if not preview["can_run"]:
+        print(
+            "workflow cannot run: " + "; ".join(str(item) for item in preview["blockers"]),
+            file=sys.stderr,
+        )
+        return 1
+    record = store.create_workflow_run(
+        plan_id=str(preview["plan_id"]),
+        plan_hash=str(preview["plan_hash"]),
+        timeout_seconds=int(preview["timeout_seconds"]),
+        authorized_steps=authorized_steps(plan_record),
+    )
+    run_id = str(record["run_id"])
+    store.append_event(
+        EventRecord.create(
+            "workflow_started",
+            {
+                "run_id": run_id,
+                "plan_id": record["plan_id"],
+                "plan_hash": record["plan_hash"],
+                "step_count": record["step_count"],
+                "timeout_seconds": record["timeout_seconds"],
+            },
+        )
+    )
+    try:
+        result = run_sequential_workflow(
+            config=config,
+            store=store,
+            backend=TmuxBackend(),
+            run_id=run_id,
+        )
+        payload = _workflow_execution_payload(result, mode="workflow_run")
+    except KeyboardInterrupt:
+        result = store.update_workflow_run(
+            run_id, status="interrupted", stop_reason="interrupted"
+        )
+        store.append_event(
+            EventRecord.create(
+                "workflow_stopped", {"run_id": run_id, "reason": "interrupted"}
+            )
+        )
+        payload = _workflow_execution_payload(result, mode="workflow_run")
+    except ValueError as exc:
+        store.append_event(
+            EventRecord.create(
+                "workflow_contract_failed", {"run_id": run_id, "detail": str(exc)}
+            )
+        )
+        print(f"workflow contract validation failed: {exc}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def workflow_resume_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    if not args.confirm:
+        print("workflow resume requires --confirm", file=sys.stderr)
+        return 1
+    try:
+        record = store.workflow_run_by_id(args.run_id)
+    except KeyError:
+        print(f"unknown workflow run: {args.run_id}", file=sys.stderr)
+        return 1
+    if record.get("status") not in {"stopped", "interrupted"}:
+        print(f"workflow is not resumable: {record.get('status')}", file=sys.stderr)
+        return 1
+    try:
+        plan_record = store.plan_by_id(str(record.get("plan_id") or ""))
+    except KeyError:
+        print(f"unknown plan: {record.get('plan_id')}", file=sys.stderr)
+        return 1
+    if workflow_plan_hash(plan_record) != record.get("plan_hash"):
+        print("workflow plan drift detected", file=sys.stderr)
+        return 1
+    try:
+        preview = _workflow_preview_payload(
+            config, store, plan_record, int(record.get("timeout_seconds") or 0)
+        )
+    except ValueError as exc:
+        print(f"workflow preview contract validation failed: {exc}", file=sys.stderr)
+        return 1
+    if not preview["can_run"]:
+        print(
+            "workflow cannot resume: "
+            + "; ".join(str(item) for item in preview["blockers"]),
+            file=sys.stderr,
+        )
+        return 1
+    store.update_workflow_run(args.run_id, status="running", stop_reason=None)
+    store.append_event(
+        EventRecord.create(
+            "workflow_resumed",
+            {
+                "run_id": args.run_id,
+                "plan_id": record.get("plan_id"),
+                "current_step": record.get("current_step"),
+            },
+        )
+    )
+    try:
+        result = run_sequential_workflow(
+            config=config,
+            store=store,
+            backend=TmuxBackend(),
+            run_id=args.run_id,
+        )
+        payload = _workflow_execution_payload(result, mode="workflow_resume")
+    except KeyboardInterrupt:
+        result = store.update_workflow_run(
+            args.run_id, status="interrupted", stop_reason="interrupted"
+        )
+        store.append_event(
+            EventRecord.create(
+                "workflow_stopped", {"run_id": args.run_id, "reason": "interrupted"}
+            )
+        )
+        payload = _workflow_execution_payload(result, mode="workflow_resume")
+    except ValueError as exc:
+        store.append_event(
+            EventRecord.create(
+                "workflow_contract_failed",
+                {"run_id": args.run_id, "detail": str(exc)},
+            )
+        )
+        print(f"workflow contract validation failed: {exc}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
 def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
     """Round-robin one wave over all active plans (shared budget, skip-on-contention)."""
     policy = config.autonomous
@@ -14279,11 +14452,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--timeout", type=int, default=300, help="Per-step timeout in seconds"
     )
     workflow_preview.set_defaults(func=workflow_preview_command)
+    workflow_run = workflow_subparsers.add_parser(
+        "run", help="Run a confirmed linear workflow in the foreground"
+    )
+    workflow_run.add_argument("--plan-id", required=True, help="Existing Leader plan id")
+    workflow_run.add_argument(
+        "--timeout", type=int, default=300, help="Per-step timeout in seconds"
+    )
+    workflow_run.add_argument(
+        "--confirm", action="store_true", help="Confirm the frozen linear workflow"
+    )
+    workflow_run.set_defaults(func=workflow_run_command)
     workflow_status = workflow_subparsers.add_parser(
         "status", help="Show persisted sequential workflow status"
     )
     workflow_status.add_argument("--run-id", required=True, help="Workflow run id")
     workflow_status.set_defaults(func=workflow_status_command)
+    workflow_resume = workflow_subparsers.add_parser(
+        "resume", help="Resume a stopped workflow without repeating completed dispatches"
+    )
+    workflow_resume.add_argument("--run-id", required=True, help="Workflow run id")
+    workflow_resume.add_argument(
+        "--confirm", action="store_true", help="Confirm resuming the frozen workflow"
+    )
+    workflow_resume.set_defaults(func=workflow_resume_command)
 
     release = subparsers.add_parser(
         "release", help="Explicitly record a round release once the review gate is ready"
