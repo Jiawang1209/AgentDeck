@@ -392,6 +392,60 @@ class StateStore:
                 return plan
         raise KeyError(plan_id)
 
+    def create_workflow_run(
+        self,
+        *,
+        plan_id: str,
+        plan_hash: str,
+        timeout_seconds: int,
+        authorized_steps: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        state = self.load()
+        now = utc_now()
+        record = {
+            "run_id": new_id("wfr"),
+            "plan_id": plan_id,
+            "plan_hash": plan_hash,
+            "status": "running",
+            "current_step": 1,
+            "step_count": len(authorized_steps),
+            "timeout_seconds": timeout_seconds,
+            "authorized_steps": authorized_steps,
+            "turns": [],
+            "stop_reason": None,
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": None,
+        }
+        state.setdefault("workflow_runs", []).append(record)
+        self.save(state)
+        return record
+
+    def workflow_run_by_id(self, run_id: str) -> dict[str, Any]:
+        for item in self.load().get("workflow_runs", []):
+            if item.get("run_id") == run_id:
+                return item
+        raise KeyError(run_id)
+
+    def update_workflow_run(self, run_id: str, **changes: Any) -> dict[str, Any]:
+        state = self.load()
+        record = next(
+            (
+                item
+                for item in state.setdefault("workflow_runs", [])
+                if item.get("run_id") == run_id
+            ),
+            None,
+        )
+        if record is None:
+            raise KeyError(run_id)
+        record.update(changes)
+        record["updated_at"] = utc_now()
+        if changes.get("status") == "completed" and not record.get("completed_at"):
+            record["completed_at"] = record["updated_at"]
+        self.save(state)
+        return record
+
     def plan_status(self, plan_id: str) -> dict[str, Any]:
         state = self.load()
         plan_record = next((plan for plan in state.get("plans", []) if plan.get("plan_id") == plan_id), None)

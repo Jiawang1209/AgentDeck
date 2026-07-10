@@ -8,6 +8,7 @@ from agentdeck.workflow import (
     parse_correlated_reply,
     workflow_plan_hash,
 )
+from agentdeck.state import StateStore
 
 
 PLAN = {
@@ -112,3 +113,29 @@ def test_build_compact_handoff_excludes_full_reply_text() -> None:
         "trace_command": "agentdeck trace --id rep_demo",
     }
     assert "text" not in handoff
+
+
+def test_state_store_records_and_updates_workflow_run(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    record = store.create_workflow_run(
+        plan_id="pln_demo",
+        plan_hash="sha256:plan",
+        timeout_seconds=30,
+        authorized_steps=[
+            {
+                "step": 1,
+                "agent_id": "planner",
+                "role": "planning",
+                "task": "Do",
+                "task_hash": "sha256:task",
+            }
+        ],
+    )
+
+    assert record["run_id"].startswith("wfr_")
+    assert record["status"] == "running"
+    updated = store.update_workflow_run(
+        record["run_id"], status="stopped", stop_reason="timed_out"
+    )
+    assert updated["status"] == "stopped"
+    assert store.workflow_run_by_id(record["run_id"])["stop_reason"] == "timed_out"
