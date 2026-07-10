@@ -105,25 +105,25 @@ def test_blocker_outside_active_visible_tail_does_not_override_current_ready_fra
         (
             "codex",
             f"{CODEX_READY_SCREEN}\n› explain why model not supported",
-            "ready",
+            "starting",
         ),
         (
             "claude",
             f"{CLAUDE_READY_SCREEN}\n❯ explain please log in and run /login",
-            "ready",
+            "starting",
         ),
         (
             "codex",
             f"{CODEX_READY_SCREEN}\nUser: explain the error\n"
             "› configured model requires a newer version of codex",
-            "ready",
+            "starting",
         ),
         (
             "claude",
             f"{CLAUDE_READY_SCREEN}\nUser: quote the setup screen\n"
             "❯ do you trust the files in this folder?\n"
             "❯ yes, i trust this folder",
-            "ready",
+            "starting",
         ),
     ],
 )
@@ -147,6 +147,37 @@ def test_structured_cli_state_fixtures_remain_classified(
     provider: str, screen: str, expected: str
 ) -> None:
     assert classify_worker_readiness(provider, screen).status == expected
+
+
+@pytest.mark.parametrize(
+    ("provider", "screen"),
+    [
+        (
+            "codex",
+            f"{CODEX_READY_SCREEN}\n› explain this diagnostic\n"
+            "Configured model requires a newer version of Codex",
+        ),
+        (
+            "codex",
+            f"{CODEX_READY_SCREEN}\n› explain this diagnostic\n"
+            "    Configured model requires a newer version of Codex",
+        ),
+        (
+            "claude",
+            f"{CLAUDE_READY_SCREEN}\n❯ explain this setup screen\n"
+            "Do you trust the files in this folder?\nYes, I trust this folder",
+        ),
+        (
+            "claude",
+            f"{CLAUDE_READY_SCREEN}\n❯ explain this login screen\n"
+            "    Not logged in. Run /login to continue.",
+        ),
+    ],
+)
+def test_wrapped_current_input_cannot_be_readiness_evidence(
+    provider: str, screen: str
+) -> None:
+    assert classify_worker_readiness(provider, screen).status == "starting"
 
 
 class FakeBackend:

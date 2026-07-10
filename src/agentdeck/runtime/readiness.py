@@ -58,11 +58,44 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
     normalized_lines = _ANSI_ESCAPE.sub("", output).lower().splitlines()
     active_lines = normalized_lines[-_ACTIVE_FRAME_LINE_COUNT:]
     active_frame = "\n".join(active_lines)
+    if family == "codex":
+        prompt_glyph = "›"
+        has_normal_chrome = "openai codex" in active_frame and any(
+            "model:" in line or "status:" in line for line in active_lines
+        )
+        idle_prompt = re.compile(r"^\s*›\s+ask codex\b")
+    elif family == "claude":
+        prompt_glyph = "❯"
+        has_normal_chrome = "claude code" in active_frame and any(
+            "context" in line for line in active_lines
+        )
+        idle_prompt = re.compile(r"^\s*❯\s+try\b")
+    else:
+        prompt_glyph = ""
+        has_normal_chrome = False
+        idle_prompt = re.compile(r"(?!)")
+
+    prompt_indexes = tuple(
+        index
+        for index, line in enumerate(active_lines)
+        if prompt_glyph and line.lstrip().startswith(prompt_glyph)
+    )
+    last_prompt_index = prompt_indexes[-1] if prompt_indexes else None
+    has_current_input = bool(
+        has_normal_chrome
+        and last_prompt_index is not None
+        and not idle_prompt.match(active_lines[last_prompt_index])
+    )
+    trusted_lines = (
+        active_lines[:last_prompt_index]
+        if has_current_input and last_prompt_index is not None
+        else active_lines
+    )
     # Conversation text is untrusted content, not CLI state evidence.  The
     # terminal adapters currently label captured user turns this way.
     state_lines = tuple(
         line.strip()
-        for line in active_lines
+        for line in trusted_lines
         if not line.lstrip().startswith(("user:", "›", "❯"))
     )
 
@@ -81,7 +114,7 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
             return WorkerReadinessEvidence(
                 "starting", "CLI startup is still in progress"
             )
-        if "openai codex" in active_frame and any(
+        if not has_current_input and "openai codex" in active_frame and any(
             re.match(r"^\s*›\s+ask codex\b", line) for line in active_lines
         ):
             return WorkerReadinessEvidence("ready", None)
@@ -109,7 +142,8 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
                 "starting", "CLI startup is still in progress"
             )
         if (
-            "claude code" in active_frame
+            not has_current_input
+            and "claude code" in active_frame
             and any(re.match(r"^\s*❯\s+", line) for line in active_lines)
             and any("context" in line for line in active_lines)
         ):

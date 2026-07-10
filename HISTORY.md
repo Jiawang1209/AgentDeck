@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Ignore wrapped Worker readiness input
+
+- **类型**: important fix + strict TDD + runtime safety
+- **问题**: 只排除以 prompt glyph 开头的首行仍会让当前多行输入的无 glyph/缩进续行落入 state grammar；用户粘贴完整 Codex diagnostic、Claude trust pair 或 login line 时会被误判为 failure/setup，旧 idle placeholder 又可能使 busy pane 误报 ready。
+- **What**: classifier 先识别 normal Codex chrome（OpenAI Codex + model/status）或 Claude chrome（Claude Code + context footer），再定位最后一个 provider prompt。若最后 prompt 不是已知 idle placeholder（Codex `Ask Codex...`、Claude `Try ...`），从该 prompt 到 active frame 末尾全部视为 untrusted current input，包括所有缩进或无缩进 wrapped continuation；该 pane 返回 starting，不能复用更早 idle prompt。无 normal chrome 的真实 setup/error-only fixture 继续走严格 system grammar。
+- **TDD 证据**: ready chrome + non-idle prompt、Codex diagnostic continuation、Claude trust/login continuation 用例先 RED 为 8 failed / 56 passed；最小 active-input trim 后 focused readiness 64 项、全量 1128 项通过；compileall 与 diff 检查通过。
+- **安全边界**: 不解析或回显 current input，不改变 provider/runtime/state，不 send/spawn/kill/create session；真实 ready、Codex model failure、Claude trust/login fixtures 保持原目标分类。
+
 ### Finalize Worker readiness safety gates
 
 - **类型**: important fix + strict TDD + runtime safety
