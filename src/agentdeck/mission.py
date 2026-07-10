@@ -145,12 +145,27 @@ def _ranked_provider_candidate(
     return selected
 
 
+def _duplicate_agent_id(agents: Sequence[AgentSpec]) -> str | None:
+    seen: set[str] = set()
+    for agent in agents:
+        if agent.agent_id in seen:
+            return agent.agent_id
+        seen.add(agent.agent_id)
+    return None
+
+
 def select_mission_agents(
     config: ProjectConfig,
     requested_agent_ids: Sequence[str],
     requested_providers: Sequence[str],
     bindings: Mapping[str, AgentRuntimeBinding | Mapping[str, Any]],
 ) -> MissionSelection:
+    if duplicate_id := _duplicate_agent_id(config.agents):
+        return MissionSelection(
+            agents=(),
+            blockers=(f"duplicate configured agent_id: {duplicate_id}",),
+        )
+
     workers = [agent for agent in config.agents if agent.agent_id != config.leader.agent_id]
     worker_by_id = {agent.agent_id: agent for agent in workers}
 
@@ -172,6 +187,11 @@ def select_mission_agents(
             return MissionSelection(agents=(), blockers=tuple(blockers))
         if len(selected) < 2:
             return MissionSelection(agents=(), blockers=("mission requires at least two workers",))
+        if duplicate_id := _duplicate_agent_id(selected):
+            return MissionSelection(
+                agents=(),
+                blockers=(f"duplicate configured agent_id: {duplicate_id}",),
+            )
         return MissionSelection(agents=tuple(selected), blockers=())
 
     indexed_by_family: dict[str, list[tuple[int, AgentSpec]]] = {}
@@ -200,6 +220,11 @@ def select_mission_agents(
     ]
     if len(selected) < 2:
         return MissionSelection(agents=(), blockers=("mission requires at least two workers",))
+    if duplicate_id := _duplicate_agent_id(selected):
+        return MissionSelection(
+            agents=(),
+            blockers=(f"duplicate configured agent_id: {duplicate_id}",),
+        )
     return MissionSelection(agents=tuple(selected), blockers=())
 
 
@@ -208,20 +233,66 @@ class EffectiveMissionAgent:
     agent: AgentSpec
     model: str | None
     model_source: str
+    blocker: str | None = None
 
 
-def _configured_model(command: str) -> str | None:
-    tokens = shlex.split(command)
+def _configured_model(tokens: Sequence[str]) -> tuple[str | None, bool]:
+    configured_model: str | None = None
     for index, token in enumerate(tokens):
-        if token in {"--model", "-m"} and index + 1 < len(tokens):
-            return tokens[index + 1]
+        if token in {"--model", "-m"}:
+            if (
+                index + 1 >= len(tokens)
+                or not tokens[index + 1]
+                or tokens[index + 1].startswith("-")
+            ):
+                return None, True
+            if configured_model is None:
+                configured_model = tokens[index + 1]
         if token.startswith("--model="):
-            return token.partition("=")[2]
-    return None
+            value = token.partition("=")[2]
+            if not value:
+                return None, True
+            if configured_model is None:
+                configured_model = value
+    return configured_model, False
+
+
+def _unsupported_worker_command(command: str, tokens: Sequence[str]) -> bool:
+    if "\n" in command or "\r" in command:
+        return True
+    shell_sensitive = ("&&", "||", ";", "|", "<", ">", "`", "$")
+    if any(operator in command for operator in shell_sensitive):
+        return True
+    return bool(tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]))
 
 
 def effective_mission_agent(agent: AgentSpec, leader: LeaderConfig) -> EffectiveMissionAgent:
-    configured_model = _configured_model(agent.command)
+    try:
+        tokens = shlex.split(agent.command)
+    except ValueError:
+        return EffectiveMissionAgent(
+            agent=agent,
+            model=None,
+            model_source="provider_default",
+            blocker=f"invalid worker command: {agent.agent_id}",
+        )
+
+    if not tokens or _unsupported_worker_command(agent.command, tokens):
+        return EffectiveMissionAgent(
+            agent=agent,
+            model=None,
+            model_source="provider_default",
+            blocker=f"unsupported worker command: {agent.agent_id}",
+        )
+
+    configured_model, invalid_model_flag = _configured_model(tokens)
+    if invalid_model_flag:
+        return EffectiveMissionAgent(
+            agent=agent,
+            model=None,
+            model_source="provider_default",
+            blocker=f"invalid worker model flag: {agent.agent_id}",
+        )
     if configured_model is not None:
         return EffectiveMissionAgent(
             agent=agent,
@@ -230,13 +301,14 @@ def effective_mission_agent(agent: AgentSpec, leader: LeaderConfig) -> Effective
         )
 
     family = provider_family(agent.provider)
-    leader_family = provider_family(leader.provider)
+    normalized_leader_provider = leader.provider.strip().lower()
+    leader_family = provider_family(normalized_leader_provider)
     if (
-        leader.provider in {"codex-cli", "claude-cli"}
+        normalized_leader_provider in {"codex-cli", "claude-cli"}
         and family == leader_family
         and leader.model
     ):
-        command = shlex.join([*shlex.split(agent.command), "--model", leader.model])
+        command = shlex.join([*tokens, "--model", leader.model])
         return EffectiveMissionAgent(
             agent=replace(agent, command=command),
             model=leader.model,
@@ -288,8 +360,9 @@ def selected_agent_summaries(
     effective_agents: Sequence[EffectiveMissionAgent],
     bindings: Mapping[str, AgentRuntimeBinding | Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    return [
-        {
+    summaries: list[dict[str, Any]] = []
+    for item in effective_agents:
+        summary = {
             "agent_id": item.agent.agent_id,
             "provider": item.agent.provider,
             "role": item.agent.role,
@@ -300,8 +373,10 @@ def selected_agent_summaries(
             "effective_model": item.model,
             "model_source": item.model_source,
         }
-        for item in effective_agents
-    ]
+        if item.blocker is not None:
+            summary["blocker"] = item.blocker
+        summaries.append(summary)
+    return summaries
 
 
 def startup_action_summaries(
@@ -312,13 +387,14 @@ def startup_action_summaries(
     for item in effective_agents:
         status = _binding_field(bindings, item.agent.agent_id, "status", "configured")
         pane_id = _binding_field(bindings, item.agent.agent_id, "pane_id")
-        summaries.append(
-            {
-                "agent_id": item.agent.agent_id,
-                "action": "reuse" if status == "running" and pane_id else "spawn",
-                "runtime_status": status,
-                "effective_model": item.model,
-                "model_source": item.model_source,
-            }
-        )
+        summary = {
+            "agent_id": item.agent.agent_id,
+            "action": "reuse" if status == "running" and pane_id else "spawn",
+            "runtime_status": status,
+            "effective_model": item.model,
+            "model_source": item.model_source,
+        }
+        if item.blocker is not None:
+            summary["blocker"] = item.blocker
+        summaries.append(summary)
     return summaries

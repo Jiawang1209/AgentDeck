@@ -289,6 +289,30 @@ def test_unknown_explicit_id_and_single_worker_both_return_no_agents() -> None:
     assert too_few.blockers == ("mission requires at least two workers",)
 
 
+@pytest.mark.parametrize(
+    "project",
+    [
+        config(agent("worker", "codex"), agent("worker", "claude")),
+        config(
+            agent("worker", "codex", workspace_mode="shared"),
+            agent("worker", "codex", workspace_mode="worktree"),
+            agent("reviewer", "claude"),
+        ),
+    ],
+    ids=["across-provider-families", "within-provider-family"],
+)
+def test_duplicate_configured_agent_ids_fail_closed(project: ProjectConfig) -> None:
+    selection = select_mission_agents(
+        project,
+        requested_agent_ids=[],
+        requested_providers=[],
+        bindings={},
+    )
+
+    assert selection.agents == ()
+    assert selection.blockers == ("duplicate configured agent_id: worker",)
+
+
 def test_mission_selection_is_frozen() -> None:
     selection = MissionSelection(agents=(), blockers=())
 
@@ -305,6 +329,7 @@ def test_codex_worker_inherits_matching_cli_leader_model_without_mutating_origin
     assert result.agent.command == "codex exec --full-auto --model gpt-5.5"
     assert result.model == "gpt-5.5"
     assert result.model_source == "leader_inherited"
+    assert result.blocker is None
     assert worker.command == "codex exec --full-auto"
 
 
@@ -313,6 +338,7 @@ def test_codex_worker_inherits_matching_cli_leader_model_without_mutating_origin
     [
         ("codex exec --model gpt-worker --full-auto", "gpt-worker"),
         ("codex exec -m 'gpt worker'", "gpt worker"),
+        ("codex exec --model=gpt-worker", "gpt-worker"),
     ],
 )
 def test_explicit_worker_model_is_preserved(command: str, expected_model: str) -> None:
@@ -327,6 +353,7 @@ def test_explicit_worker_model_is_preserved(command: str, expected_model: str) -
     assert result.agent.command == command
     assert result.model == expected_model
     assert result.model_source == "configured_command"
+    assert result.blocker is None
 
 
 def test_worker_uses_provider_default_when_family_differs_from_leader() -> None:
@@ -340,6 +367,7 @@ def test_worker_uses_provider_default_when_family_differs_from_leader() -> None:
     assert result.agent is worker
     assert result.model is None
     assert result.model_source == "provider_default"
+    assert result.blocker is None
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude"])
@@ -355,6 +383,90 @@ def test_non_cli_leader_provider_does_not_supply_worker_model(provider: str) -> 
     assert result.agent.command == f"{provider} run"
     assert result.model is None
     assert result.model_source == "provider_default"
+    assert result.blocker is None
+
+
+def test_matching_cli_leader_provider_is_normalized_before_model_inheritance() -> None:
+    worker = agent("planner", "codex", command="codex exec")
+
+    result = effective_mission_agent(
+        worker,
+        LeaderConfig(provider=" Codex-CLI ", model="gpt-5.5"),
+    )
+
+    assert result.agent.command == "codex exec --model gpt-5.5"
+    assert result.model == "gpt-5.5"
+    assert result.model_source == "leader_inherited"
+    assert result.blocker is None
+
+
+def test_invalid_shell_quoting_blocks_model_resolution_without_mutating_command() -> None:
+    worker = agent("planner", "codex", command="codex exec 'unterminated")
+
+    result = effective_mission_agent(
+        worker,
+        LeaderConfig(provider="codex-cli", model="gpt-5.5"),
+    )
+
+    assert result.agent is worker
+    assert result.model is None
+    assert result.model_source == "provider_default"
+    assert result.blocker == "invalid worker command: planner"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "codex exec\necho unsafe",
+        "codex exec && echo unsafe",
+        "codex exec || echo unsafe",
+        "codex exec; echo unsafe",
+        "codex exec | tee output",
+        "codex exec < input",
+        "codex exec > output",
+        "codex exec `whoami`",
+        "codex exec $(whoami)",
+        "codex exec $HOME",
+        "MODEL=gpt-5.5 codex exec",
+    ],
+)
+def test_shell_sensitive_worker_commands_are_blocked_unchanged(command: str) -> None:
+    worker = agent("planner", "codex", command=command)
+
+    result = effective_mission_agent(
+        worker,
+        LeaderConfig(provider="codex-cli", model="gpt-5.5"),
+    )
+
+    assert result.agent is worker
+    assert result.agent.command == command
+    assert result.model is None
+    assert result.model_source == "provider_default"
+    assert result.blocker == "unsupported worker command: planner"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "codex exec --model",
+        "codex exec -m --full-auto",
+        "codex exec --model=",
+        "codex exec --model ''",
+    ],
+)
+def test_missing_or_empty_explicit_model_value_blocks_without_appending(command: str) -> None:
+    worker = agent("planner", "codex", command=command)
+
+    result = effective_mission_agent(
+        worker,
+        LeaderConfig(provider="codex-cli", model="gpt-5.5"),
+    )
+
+    assert result.agent is worker
+    assert result.agent.command == command
+    assert result.model is None
+    assert result.model_source == "provider_default"
+    assert result.blocker == "invalid worker model flag: planner"
 
 
 def test_effective_mission_agent_is_frozen() -> None:
@@ -510,3 +622,21 @@ def test_summaries_are_compact_and_startup_actions_distinguish_reuse_from_spawn(
         },
     ]
     assert all("command" not in item and "env" not in item for item in selected + startup)
+
+
+def test_blocked_effective_agent_projects_blocker_without_raw_command() -> None:
+    planner = agent("planner", "codex", command="TOKEN=secret codex exec")
+    blocked = EffectiveMissionAgent(
+        agent=planner,
+        model=None,
+        model_source="provider_default",
+        blocker="unsupported worker command: planner",
+    )
+
+    selected = selected_agent_summaries((blocked,), {})
+    startup = startup_action_summaries((blocked,), {})
+
+    assert selected[0]["blocker"] == "unsupported worker command: planner"
+    assert startup[0]["blocker"] == "unsupported worker command: planner"
+    assert "command" not in selected[0]
+    assert "command" not in startup[0]
