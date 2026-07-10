@@ -59,7 +59,7 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-设计并实现自然语言 Mission 编排闭环：用户一句多智能体目标生成冻结 `mission_preview`，一次整体确认后自动选择并准备配置中的 Codex/Claude Worker、通过 provider-aware readiness gate、执行完整 sequential workflow，并把状态/恢复/ProjectView/contract/audit 闭环。用户不再手工 assign-role、编辑 TOML、load skill、spawn Worker、提取 plan id 或拼接 workflow preview/run。设计已获 human 批准并固化到 `docs/superpowers/specs/2026-07-10-natural-language-mission-orchestration-design.md`；下一步是用户复核书面 spec，随后写详细实施计划并按 TDD 开发。并行/DAG/循环、自动 login/trust、GUI、remote/marketplace 和无界自治不在本目标。
+设计并实现自然语言 Mission 编排闭环：用户一句多智能体目标生成冻结 `mission_preview`，一次整体确认后自动选择并准备配置中的 Codex/Claude Worker、通过 provider-aware readiness gate、执行完整 sequential workflow，并把状态/恢复/ProjectView/contract/audit 闭环。用户不再手工 assign-role、编辑 TOML、load skill、spawn Worker、提取 plan id 或拼接 workflow preview/run。设计已获 human 批准并固化到 `docs/superpowers/specs/2026-07-10-natural-language-mission-orchestration-design.md`，详细 TDD 实施计划已写入 `docs/superpowers/plans/2026-07-10-natural-language-mission-orchestration.md`；下一步是在隔离 worktree 中按任务实施。并行/DAG/循环、自动 login/trust、GUI、remote/marketplace 和无界自治不在本目标。
 
 ## Canonical Handoff Inputs
 

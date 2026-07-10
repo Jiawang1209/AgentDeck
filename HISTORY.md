@@ -9,6 +9,7 @@
 - **类型**: design
 - **动机**: AgentDeck 已具备 Leader plan、Codex/Claude Worker、tmux、可恢复 sequential workflow 和审计底座，但用户仍需手工配置/加载/提取 id/拼接命令，产品入口尚未形成“一句自然语言 + 一次整体确认”的多智能体闭环。
 - **What**: 新增 `docs/superpowers/specs/2026-07-10-natural-language-mission-orchestration-design.md`，确定有状态 Mission 编排层：自然语言生成冻结 preview，确定性选择配置中的 Codex/Claude Worker；一次确认后只准备选中 Worker、provider-aware readiness gate、复用现有 workflow；Mission 进入 state/ProjectView/workbench/Leader Chat/contract/audit，并支持幂等确认与恢复。
+- **实施计划**: `docs/superpowers/plans/2026-07-10-natural-language-mission-orchestration.md` 已把目标拆成隔离 worktree、Mission domain、state/ProjectView、contract、自然语言 preview、CLI readiness、run/resume、chat/workbench/controls、确定性 E2E 和真实 CLI 验收十个 TDD 任务，每个用户可见切片独立更新 HISTORY 并本地提交。
 - **安全边界**: preview 不操作 tmux；登录/目录信任仍由人处理；Mission 不静默 load skill、不改写项目配置、不扩大冻结 Agent/step/timeout/tool 集合；本切片只设计固定顺序 Mission，不包含并行/DAG/循环、GUI、remote 或无界自治。
 - **验证计划**: 后续实施严格 TDD，覆盖纯函数、state/contract、Leader Chat、runtime readiness、fake E2E、全量回归和真实 Codex/Claude 八轮百家姓验收。
 
