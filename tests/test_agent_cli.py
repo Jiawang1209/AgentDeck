@@ -612,6 +612,38 @@ def test_skills_list_surfaces_builtin_and_project_skills_without_mutating_state(
     assert StateStore(root).load() == state_before
 
 
+def test_planning_guidance_is_bounded_and_legacy_skills_default_empty(
+    tmp_path, monkeypatch
+) -> None:
+    from agentdeck.skills import find_skill
+
+    root = prepare_project(tmp_path, monkeypatch)
+    skill_dir = root / ".agentdeck" / "skills" / "guided-planning"
+    skill_dir.mkdir(parents=True)
+    long_entry = "x" * 300
+    guidance = ", ".join([long_entry, *[f"rule-{index}" for index in range(2, 11)]])
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: guided-planning\n"
+        "description: Use when a plan needs bounded guidance.\n"
+        f"planning_guidance: {guidance}\n"
+        "risk: inspect\n"
+        "---\n"
+        "# Guided Planning\n",
+        encoding="utf-8",
+    )
+
+    skill = find_skill(root, "guided-planning")
+    legacy = find_skill(root, "planning")
+
+    assert skill is not None
+    assert legacy is not None
+    assert len(skill.planning_guidance) == 8
+    assert all(len(item) <= 240 for item in skill.planning_guidance)
+    assert skill.summary()["planning_guidance"] == list(skill.planning_guidance)
+    assert legacy.summary()["planning_guidance"] == []
+
+
 def test_skills_show_returns_snapshot_without_mutating_state(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     skill_dir = root / ".agentdeck" / "skills" / "release-check"

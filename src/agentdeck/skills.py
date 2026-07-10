@@ -9,6 +9,10 @@ import shutil
 from .config import CONFIG_DIR
 
 
+MAX_PLANNING_GUIDANCE_ITEMS = 8
+MAX_PLANNING_GUIDANCE_CHARS = 240
+
+
 BUILTIN_SKILLS: dict[str, str] = {
     "planning": """---
 name: planning
@@ -65,6 +69,7 @@ class SkillSnapshot:
     content: str
     depends_on: tuple[str, ...] = ()
     version: str = "0.0.0"
+    planning_guidance: tuple[str, ...] = ()
 
     def summary(self) -> dict[str, object]:
         show_command = f"agentdeck skills show --name {self.name}"
@@ -76,6 +81,7 @@ class SkillSnapshot:
             "path": self.path,
             "content_hash": self.content_hash,
             "required_tools": self.required_tools,
+            "planning_guidance": list(self.planning_guidance),
             "risk": self.risk,
             "version": self.version,
             "show_command": show_command,
@@ -332,6 +338,7 @@ def _snapshot_from_content(
         content=content,
         depends_on=tuple(_metadata_list(metadata.get("depends_on"))),
         version=str(metadata.get("version") or "0.0.0"),
+        planning_guidance=_planning_guidance(metadata.get("planning_guidance")),
     )
 
 
@@ -369,3 +376,10 @@ def _metadata_list(value: object) -> list[str]:
         if normalized:
             cleaned.append(normalized)
     return cleaned
+
+
+def _planning_guidance(value: object) -> tuple[str, ...]:
+    return tuple(
+        item[:MAX_PLANNING_GUIDANCE_CHARS]
+        for item in _metadata_list(value)[:MAX_PLANNING_GUIDANCE_ITEMS]
+    )
