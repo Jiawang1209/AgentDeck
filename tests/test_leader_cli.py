@@ -259,6 +259,45 @@ def test_leader_chat_named_mission_confirmation_embeds_run_card(tmp_path, monkey
     assert payload["control_registry_card"]["selection"]["next_command"] == payload["mission_run_card"]["status_command"]
 
 
+def test_leader_chat_idless_confirmation_runs_the_only_pending_mission(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    calls: list[str] = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs["mission_id"])
+        kwargs["store"].update_mission(kwargs["mission_id"], status="preparing", confirmed_at="2026-07-11T00:00:00+00:00")
+        kwargs["store"].update_mission(kwargs["mission_id"], status="running", workflow_run_id="wfr_deadbeefcafe")
+        mission = kwargs["store"].update_mission(kwargs["mission_id"], status="completed", current_step=8)
+        return cli.mission_status_payload(kwargs["config"], kwargs["store"], mission, mode="mission_run", confirmed=True)
+
+    monkeypatch.setattr(cli, "run_mission", fake_run)
+    assert cli.main(["leader", "chat", "--message", "批准执行"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert calls == [mission_id]
+    assert payload["mission_run_card"]["mission_id"] == mission_id
+    assert [turn["mode"] for turn in StateStore(root).load()["chat_turns"]] == ["mission_preview", "mission_run"]
+
+
+@pytest.mark.parametrize("message", ["查看 mission", "查看当前 mission"])
+def test_leader_chat_exact_current_mission_status_forms(tmp_path, monkeypatch, capsys, message) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    before = StateStore(root).mission_by_id(mission_id)
+    assert cli.main(["leader", "chat", "--message", message]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mission_status_card"]["mission_id"] == mission_id
+    assert StateStore(root).mission_by_id(mission_id) == before
+
+
+def test_leader_chat_named_mission_status_selects_exact_record(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    first = _seed_chat_mission(root, monkeypatch, capsys)
+    _seed_chat_mission(root, monkeypatch, capsys)
+    assert cli.main(["leader", "chat", "--message", f"查看 mission {first}"]) == 0
+    assert json.loads(capsys.readouterr().out)["mission_status_card"]["mission_id"] == first
+
+
 def test_leader_chat_mission_status_is_read_only_and_idless_uses_latest(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     mission_id = _seed_chat_mission(root, monkeypatch, capsys)
@@ -304,6 +343,99 @@ def test_workbench_projects_latest_mission_and_registers_controls_read_only(tmp_
     assert mission_controls[1]["enabled"] is False
     assert StateStore(root).state_path.read_bytes() == state_before
     assert StateStore(root).events_path.read_bytes() == events_before
+
+
+def test_workbench_has_null_mission_card_without_missions(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["workbench"]) == 0
+    assert json.loads(capsys.readouterr().out)["mission_card"] is None
+
+
+def test_workbench_blocked_pending_mission_uses_first_compact_blocker(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    StateStore(root).update_mission(
+        mission_id, can_start=False, blockers=["claude executable is unavailable"]
+    )
+
+    assert cli.main(["workbench"]) == 0
+    card = json.loads(capsys.readouterr().out)["mission_card"]
+
+    assert card["controls"][0] == {
+        "kind": "execute",
+        "label": "Confirm mission",
+        "command": card["confirmation_command"],
+        "safety": "delegated",
+        "enabled": False,
+        "blocker": "claude executable is unavailable",
+    }
+
+
+@pytest.mark.parametrize(
+    ("status", "blockers", "confirm_enabled", "resume_enabled", "resume_blocker"),
+    [
+        ("pending_confirmation", [], True, False, "mission status is pending_confirmation"),
+        ("stopped", [], False, True, None),
+        ("stopped", ["worker runtime drift"], False, False, "worker runtime drift"),
+        ("completed", [], False, False, "mission status is completed"),
+    ],
+)
+def test_workbench_mission_controls_follow_lifecycle(
+    tmp_path, monkeypatch, capsys, status, blockers, confirm_enabled, resume_enabled, resume_blocker
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    store = StateStore(root)
+    if status != "pending_confirmation":
+        store.update_mission(mission_id, status="preparing", confirmed_at="2026-07-11T00:00:00+00:00")
+        if status == "stopped":
+            store.update_mission(
+                mission_id, status="stopped", stop_reason="timed_out",
+                can_start=not blockers, blockers=blockers,
+            )
+        else:
+            store.update_mission(mission_id, status="running", workflow_run_id="wfr_deadbeefcafe")
+            store.update_mission(mission_id, status="completed", current_step=8)
+    assert cli.main(["workbench"]) == 0
+    card = json.loads(capsys.readouterr().out)["mission_card"]
+    controls = card["controls"]
+    assert [item["kind"] for item in controls] == ["execute", "execute", "inspect", "inspect", "inspect"]
+    assert [item["command"] for item in controls] == [
+        card["confirmation_command"], card["resume_command"], card["status_command"],
+        card["attach_command"], card["workbench_command"],
+    ]
+    assert controls[0]["enabled"] is confirm_enabled
+    assert controls[1]["enabled"] is resume_enabled
+    assert controls[1]["blocker"] == resume_blocker
+    assert all(item["blocker"] is None for item in controls[2:])
+    assert [item["safety"] for item in controls] == ["delegated", "delegated", "inspect", "inspect", "inspect"]
+
+
+def test_controls_filters_and_selects_mission_controls_without_mutation(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _seed_chat_mission(root, monkeypatch, capsys)
+    assert cli.main(["workbench"]) == 0
+    workbench = json.loads(capsys.readouterr().out)
+    mission_items = [item for item in workbench["control_registry"] if item["scope"] == "mission"]
+    assert len(mission_items) == 5
+    assert all(item["card"] == "mission_card" for item in mission_items)
+    assert all(item["control_id"] == cli.control_registry_item_id(item) for item in mission_items)
+    selected = mission_items[0]
+    before = StateStore(root).state_path.read_bytes(), StateStore(root).events_path.read_bytes()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: (_ for _ in ()).throw(AssertionError("controls is read only")))
+    monkeypatch.setattr(cli, "leader_provider", lambda _name: (_ for _ in ()).throw(AssertionError("controls is read only")))
+
+    assert cli.main(["controls", "--scope", "mission", "--card", "mission_card"]) == 0
+    scoped = json.loads(capsys.readouterr().out)
+    assert scoped["items"] == mission_items
+    assert cli.main(["controls", "--scope", "mission", "--query", "Confirm mission"]) == 0
+    queried = json.loads(capsys.readouterr().out)
+    assert [item["control_id"] for item in queried["items"]] == [selected["control_id"]]
+    assert cli.main(["controls", "--control-id", selected["control_id"], "--enabled-only"]) == 0
+    selection = json.loads(capsys.readouterr().out)["selection"]
+    assert selection["selected_control"] == selected
+    assert selection["next_command"] == selected["command"]
+    assert (StateStore(root).state_path.read_bytes(), StateStore(root).events_path.read_bytes()) == before
 
 
 def test_leader_chat_resumes_unique_stopped_mission_and_selects_status_after_completion(tmp_path, monkeypatch, capsys) -> None:

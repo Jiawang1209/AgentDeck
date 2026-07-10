@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Complete Mission surface contracts
+
+- **类型**: contract hardening + strict TDD + review follow-up
+- **问题**: 首版 Mission surface 缺少完整无 ID/named route 证据，workbench disabled confirmation 丢失真实 blocker，discovery example 仍未携带 Mission card，controls filters 也未端到端证明。
+- **What**: workbench confirmation blocker 现在优先使用第一个 compact Mission blocker；workbench contract 公开独立 `WORKBENCH_MISSION_CARD_FIELDS` 并提供 non-null example，controls discovery example 包含五项 Mission group。补齐无 Mission、latest、多生命周期 controls，以及 controls scope/card/query/id/enabled-only selection 契约。
+- **TDD 证据**: blocked pending confirmation 先 RED 为 `mission status is pending_confirmation`，最小修复后使用真实 compact blocker。Task surface 三文件 818/818、全量 1176/1176 通过，compileall 与 diff check clean。
+- **安全边界**: blocker 只接受 compact 字符串，不投影 nested 值；workbench/controls provider 与 tmux raising backend 均不触发，state/events bytes 保持不变；disabled control 永不产生 `selection.next_command`。
+
 ### Expose Mission orchestration across Leader chat and workbench
 
 - **类型**: major feature + strict TDD + natural-language control surface

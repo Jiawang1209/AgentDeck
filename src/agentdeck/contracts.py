@@ -5679,6 +5679,7 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_exists": contract_path.exists(),
         "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
         "leader_card_fields": list(WORKBENCH_LEADER_CARD_FIELDS),
+        "mission_card_fields": list(WORKBENCH_MISSION_CARD_FIELDS),
         "coordination_role_fields": list(PROJECT_VIEW_COORDINATION_ROLE_FIELDS),
         "leader_control_fields": list(WORKBENCH_LEADER_CONTROL_FIELDS),
         "control_mode_card_fields": list(WORKBENCH_CONTROL_MODE_CARD_FIELDS),
@@ -14105,6 +14106,17 @@ def workbench_example() -> dict[str, object]:
             "new_events": [],
         },
     }
+    mission_card = mission_example("status")
+    confirmation_command = mission_commands(str(mission_card["mission_id"]))["confirmation_command"]
+    mission_card["confirmation_command"] = confirmation_command
+    mission_card["controls"] = [
+        _mission_control(
+            "execute", "Confirm mission", confirmation_command, "delegated",
+            enabled=False, blocker="mission status is stopped",
+        ),
+        *mission_card["controls"],
+    ]
+    payload["mission_card"] = mission_card
     payload["agent_ready_card"] = _agent_ready_card_from_runtime_card(deepcopy(payload["runtime_card"]))
     payload["terminal_session_card"] = _terminal_session_card_from_runtime_card(payload["runtime_card"])
     payload = {field: payload[field] for field in WORKBENCH_SNAPSHOT_FIELDS}

@@ -528,6 +528,9 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
     }
     assert example["item_count"] == len(example["items"])
     assert example["group_count"] == len(example["groups"])
+    mission_items = [item for item in example["items"] if item["scope"] == "mission"]
+    assert len(mission_items) == 5
+    assert all(item["card"] == "mission_card" for item in mission_items)
     assert example["selection"] == {
         "requested_control_id": None,
         "matched": False,
@@ -536,9 +539,15 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
         "blocker": None,
         "next_command": None,
     }
-    assert example["items"][0]["control_id"].startswith("leader:leader_card:chat:leader:")
+    leader_chat_item = next(
+        item for item in example["items"]
+        if item["scope"] == "leader" and item["card"] == "leader_card" and item["kind"] == "chat"
+    )
+    assert leader_chat_item["control_id"].startswith("leader:leader_card:chat:leader:")
     assert example["groups"][0]["items"][0]["control_id"] == example["items"][0]["control_id"]
-    assert example["groups"][0] == {
+    leader_group = next(group for group in example["groups"] if group["group_id"] == "leader:leader_card")
+    leader_items = [item for item in example["items"] if item["scope"] == "leader" and item["card"] == "leader_card"]
+    assert leader_group == {
         "group_id": "leader:leader_card",
         "scope": "leader",
         "card": "leader_card",
@@ -546,7 +555,7 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
         "item_count": 7,
         "enabled_count": 5,
         "disabled_count": 2,
-        "items": example["items"][:7],
+        "items": leader_items,
     }
     terminal_group = next(group for group in example["groups"] if group["group_id"] == "terminal_session:terminal_session_card")
     assert terminal_group["label"] == "Terminal session"
@@ -1521,6 +1530,9 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["contract_path"] == str(contract_path)
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == list(LEADER_CHAT_RESPONSE_FIELDS)
+    from agentdeck.contracts import MISSION_STATUS_RESPONSE_FIELDS, MISSION_RUN_RESPONSE_FIELDS
+    assert payload["mission_status_card_fields"] == list(MISSION_STATUS_RESPONSE_FIELDS)
+    assert payload["mission_run_card_fields"] == list(MISSION_RUN_RESPONSE_FIELDS)
     assert payload["explanation_fields"] == list(LEADER_CHAT_EXPLANATION_FIELDS)
     assert payload["intent_card_fields"] == list(LEADER_CHAT_INTENT_CARD_FIELDS)
     assert payload["intent_control_fields"] == list(LEADER_CHAT_INTENT_CONTROL_FIELDS)
@@ -1900,6 +1912,10 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
 
     payload = workbench_contract_response(contract_path, include_example=True)
     example = workbench_example()
+    from agentdeck.contracts import WORKBENCH_MISSION_CARD_FIELDS
+    assert payload["mission_card_fields"] == list(WORKBENCH_MISSION_CARD_FIELDS)
+    assert isinstance(example["mission_card"], dict)
+    assert validate_workbench_contract(example) == {"ok": True, "errors": []}
     lineage_card_fields = [
         "mode",
         "title",
@@ -2095,7 +2111,11 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["control_mode_card"]["available_modes"][2]["enabled"] is True
     assert example["control_mode_card"]["available_modes"][2]["blocker"] is None
     assert set(example["control_registry"][0]) == set(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
-    assert example["control_registry"][0] == {
+    leader_chat_control = next(
+        item for item in example["control_registry"]
+        if item["scope"] == "leader" and item["card"] == "leader_card" and item["kind"] == "chat"
+    )
+    assert leader_chat_control == {
         "scope": "leader",
         "card": "leader_card",
         "kind": "chat",
@@ -2105,9 +2125,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         "enabled": False,
         "blocker": "requires message text",
         "agent_id": "leader",
-        "control_id": example["control_registry"][0]["control_id"],
+        "control_id": leader_chat_control["control_id"],
     }
-    assert example["control_registry"][0]["control_id"].startswith("leader:leader_card:chat:leader:")
+    assert leader_chat_control["control_id"].startswith("leader:leader_card:chat:leader:")
     assert {
         (item["scope"], item["card"], item["kind"], item["agent_id"])
         for item in example["control_registry"]
@@ -5867,6 +5887,25 @@ def test_workbench_contract_rejects_mission_confirmation_control_status_drift() 
 
     assert result["ok"] is False
     assert "mission_card confirmation control enabled conflicts with status" in result["errors"]
+
+
+def test_workbench_contract_allows_null_mission_card() -> None:
+    payload = workbench_example()
+    payload["mission_card"] = None
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    assert validate_workbench_contract(payload) == {"ok": True, "errors": []}
+
+
+def test_workbench_contract_rejects_mission_confirmation_blocker_drift() -> None:
+    payload = workbench_example()
+    payload["mission_card"]["controls"][0]["blocker"] = None
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result["ok"] is False
+    assert "mission_card disabled confirmation control needs blocker" in result["errors"]
 
 
 def test_leader_chat_contract_rejects_status_payload_in_run_card() -> None:

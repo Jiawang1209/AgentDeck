@@ -5748,8 +5748,9 @@ def test_contract_controls_example_exports_gui_ready_response(capsys) -> None:
     assert example["mode"] == "control_registry"
     assert example["item_count"] == len(example["items"])
     assert example["group_count"] == len(example["groups"])
-    assert example["groups"][0]["group_id"] == "leader:leader_card"
-    assert example["groups"][0]["label"] == "Leader"
+    assert any(group["group_id"] == "leader:leader_card" for group in example["groups"])
+    assert example["groups"][0]["group_id"] == "mission:mission_card"
+    assert example["groups"][0]["label"] == "Mission Card"
     assert example["groups"][0]["items"][0] == example["items"][0]
     assert payload["example_control_registry_card_fields"] == payload["control_registry_card_fields"]
     assert set(payload["example_control_registry_item_fields"]) == set(payload["control_registry_item_fields"])

@@ -1569,6 +1569,11 @@ def _workbench_mission_card(
     if not isinstance(confirmation_command, str):
         return None
     can_confirm = latest.get("status") == "pending_confirmation" and not latest.get("blockers")
+    blockers = latest.get("blockers") if isinstance(latest.get("blockers"), list) else []
+    confirm_blocker = next(
+        (item for item in blockers if isinstance(item, str) and item),
+        f"mission status is {latest.get('status')}",
+    )
     card["confirmation_command"] = confirmation_command
     card["controls"] = [
         {
@@ -1577,7 +1582,7 @@ def _workbench_mission_card(
             "command": confirmation_command,
             "safety": "delegated",
             "enabled": can_confirm,
-            "blocker": None if can_confirm else f"mission status is {latest.get('status')}",
+            "blocker": None if can_confirm else confirm_blocker,
         },
         *card["controls"],
     ]
