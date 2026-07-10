@@ -4,6 +4,8 @@ Natural-language Mission follow-ups are first-class routes. `批准执行 mis_<i
 
 Both Mission cards embed a Mission-scoped `control_registry_card`. Selection points only to an enabled control: resume for a resumable stopped/interrupted result, otherwise status inspection. Re-confirming a completed named Mission is idempotent and does not create another runtime or workflow.
 
+Explicit Mission CLI execution and Leader-chat execution share the same active-execution recovery projection. A KeyboardInterrupt or unexpected runtime exception after the Mission reached `preparing`/`running` first persists the workflow and Mission interruption, then returns the validated sanitized run card. Unknown Missions, ordinary `MissionRunError`, and failures before the active claim do not enter this recovery mutation path. If recovery itself fails, the command returns stable non-zero output without exception details.
+
 `agentdeck leader chat --message <text>` is the natural-language Leader entrypoint for AgentDeck.
 
 This contract describes the chat response surface. It does not replace ProjectView. Chat responses embed `project_view`, expose selected GUI-ready convenience fields, and preserve ProjectView as the state source of truth.

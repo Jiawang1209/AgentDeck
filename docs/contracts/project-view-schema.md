@@ -1,5 +1,7 @@
 # ProjectView Contract
 
+`missions.items[].mission_id` values must be unique. Duplicate ids are invalid split-brain state: ProjectView validation returns a stable field-only error, and workbench/status refuse to print a partial snapshot rather than silently selecting one duplicate.
+
 `agentdeck status` is the canonical read-only ProjectView for CLI, natural-language Leader chat, recovery tooling, and future GUI clients.
 
 GUI clients should consume ProjectView first. They should not scan `.agentdeck/state/state.json`, parse tmux panes, or infer workflow state from command strings when ProjectView already exposes the same fact.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
 
 import pytest
 
@@ -5929,6 +5930,20 @@ def test_workbench_contract_rejects_mission_control_command_drift() -> None:
 
     assert result["ok"] is False
     assert any("mission_card" in error for error in result["errors"])
+
+
+def test_project_view_and_workbench_contracts_reject_duplicate_mission_ids() -> None:
+    payload = workbench_example()
+    duplicate = deepcopy(payload["project_view"]["missions"]["items"][0])
+    payload["project_view"]["missions"]["items"].append(duplicate)
+    payload["project_view"]["missions"]["count"] = 2
+    payload["project_view"]["missions"]["by_status"] = {duplicate["status"]: 2}
+
+    project_result = validate_project_view_contract(payload["project_view"])
+    workbench_result = validate_workbench_contract(payload)
+
+    assert "missions.items mission_id must be unique" in project_result["errors"]
+    assert "project_view: missions.items mission_id must be unique" in workbench_result["errors"]
 
 
 def test_workbench_contract_rejects_mission_confirmation_blocker_drift() -> None:

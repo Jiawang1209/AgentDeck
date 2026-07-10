@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Harden Mission surface recovery
+
+- **类型**: important fix + strict TDD + state-integrity hardening
+- **问题**: Leader chat 的 generic runtime exception 未复用显式 Mission CLI 的 interruption recovery，可能在 claim 后留下 running workflow/ghost Mission；ProjectView 又未拒绝 duplicate Mission ids，workbench 可能面对 split-brain latest state。
+- **What**: 显式 CLI 与 Leader chat 现在共用 active Mission recovery helper，仅对 preparing/running 状态调用 `interrupt_mission` 并返回 persisted contract-valid run card；恢复失败稳定 nonzero。ProjectView 强制 Mission id 唯一，workbench 同源拒绝 duplicate。Mission workbench projector 保持 provider/model/backend provenance 只在 ProjectView，不在 card 建立 dead conditional。
+- **TDD 证据**: fake Leader operation 先创建 running workflow 后抛 `SECRET` RuntimeError，最终 Mission/workflow 均 interrupted、run card 有效、chat audit 精确一次且无 secret；recovery failure 稳定空 stdout。duplicate raw state 的 workbench 非零且 bytes 不变，ProjectView/workbench contract 同时拒绝。Task+Mission surface 1004/1004、全量 1185/1185 通过，compileall 与 diff check clean。
+- **安全边界**: unknown/普通 MissionRunError/claim 前失败不触发错误 mutation；所有 exception detail 均不进入 stdout、stderr、state 或 events。duplicate error 只命名字段，不回显记录内容。
+
 ### Align workbench Mission projection with ProjectView
 
 - **类型**: contract fix + strict TDD + single-source projection

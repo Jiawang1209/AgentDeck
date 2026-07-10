@@ -6200,6 +6200,9 @@ def _validate_project_view_mission_items(
     expected_latest_id = items[-1].get("mission_id") if items and isinstance(items[-1], dict) else None
     if latest_id != expected_latest_id:
         errors.append("missions.latest_id must match the final mission item")
+    mission_ids = [item.get("mission_id") for item in items if isinstance(item, dict)]
+    if len(mission_ids) != len(set(mission_ids)):
+        errors.append("missions.items mission_id must be unique")
 
     string_fields = {
         "mission_id",
@@ -10348,7 +10351,7 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
     if latest_mission is not None and isinstance(mission_card, dict):
         shared_fields = (
             "mission_id", "schema_version", "user_message", "status", "stop_reason",
-            "blockers", "provider", "model", "leader_backend", "plan_id", "plan_hash",
+            "blockers", "plan_id", "plan_hash",
             "workflow_run_id", "current_step", "step_count", "timeout_seconds",
             "selected_agents", "created_at", "updated_at", "confirmed_at", "completed_at",
             "can_resume", "status_command", "resume_command", "confirmation_command",

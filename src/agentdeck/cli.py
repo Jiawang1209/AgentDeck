@@ -8877,20 +8877,18 @@ def _leader_chat_mission_response(
                 mission_id=mission_id,
             )
     except KeyboardInterrupt:
-        try:
-            stopped = interrupt_mission(store, mission_id)
-            card = mission_status_payload(
-                config, store, stopped, mode=mode, confirmed=True
-            )
-        except (KeyError, MissionRunError, ValueError):
+        card = _mission_execution_recovery_payload(config, store, mission_id, mode)
+        if card is None:
             print("mission interrupted", file=sys.stderr)
             return 1
     except (KeyError, MissionRunError, ValueError):
         print(f"mission {route} failed", file=sys.stderr)
         return 1
     except Exception:
-        print(f"mission {route} failed", file=sys.stderr)
-        return 1
+        card = _mission_execution_recovery_payload(config, store, mission_id, mode)
+        if card is None:
+            print(f"mission {route} failed", file=sys.stderr)
+            return 1
     next_command = (
         card["resume_command"] if card.get("can_resume") is True else card["status_command"]
     )
@@ -14645,6 +14643,25 @@ def mission_status_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _mission_execution_recovery_payload(
+    config: ProjectConfig,
+    store: StateStore,
+    mission_id: str,
+    mode: str,
+) -> dict[str, object] | None:
+    """Persist an active Mission interruption and return its sanitized run projection."""
+    try:
+        current = store.mission_by_id(mission_id)
+        if current.get("status") not in {"preparing", "running"}:
+            return None
+        stopped = interrupt_mission(store, mission_id)
+        return mission_status_payload(
+            config, store, stopped, mode=mode, confirmed=True
+        )
+    except Exception:
+        return None
+
+
 def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int:
     action = "resume" if resume else "run"
     if not args.confirm:
@@ -14662,16 +14679,11 @@ def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int
             mission_id=args.mission_id,
         )
     except KeyboardInterrupt:
-        try:
-            mission = interrupt_mission(store, args.mission_id)
-            payload = mission_status_payload(
-                config,
-                store,
-                mission,
-                mode="mission_resume" if resume else "mission_run",
-                confirmed=True,
-            )
-        except (KeyError, MissionRunError, ValueError):
+        payload = _mission_execution_recovery_payload(
+            config, store, args.mission_id,
+            "mission_resume" if resume else "mission_run",
+        )
+        if payload is None:
             print("mission interrupted", file=sys.stderr)
             return 1
     except KeyError:
@@ -14681,16 +14693,11 @@ def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int
         print(f"mission {action} failed", file=sys.stderr)
         return 1
     except Exception:
-        try:
-            mission = interrupt_mission(store, args.mission_id)
-            payload = mission_status_payload(
-                config,
-                store,
-                mission,
-                mode="mission_resume" if resume else "mission_run",
-                confirmed=True,
-            )
-        except Exception:
+        payload = _mission_execution_recovery_payload(
+            config, store, args.mission_id,
+            "mission_resume" if resume else "mission_run",
+        )
+        if payload is None:
             print(f"mission {action} failed", file=sys.stderr)
             return 1
     _print_json(payload)

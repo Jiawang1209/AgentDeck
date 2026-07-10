@@ -438,6 +438,22 @@ def test_controls_filters_and_selects_mission_controls_without_mutation(tmp_path
     assert (StateStore(root).state_path.read_bytes(), StateStore(root).events_path.read_bytes()) == before
 
 
+def test_workbench_rejects_duplicate_mission_ids_without_mutation(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _seed_chat_mission(root, monkeypatch, capsys)
+    store = StateStore(root)
+    state = store.load()
+    state["missions"].append(dict(state["missions"][0]))
+    store.save(state)
+    before = store.state_path.read_bytes(), store.events_path.read_bytes()
+
+    assert cli.main(["workbench"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "missions.items mission_id must be unique" in captured.err
+    assert (store.state_path.read_bytes(), store.events_path.read_bytes()) == before
+
+
 def test_leader_chat_resumes_unique_stopped_mission_and_selects_status_after_completion(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     mission_id = _seed_chat_mission(root, monkeypatch, capsys)
@@ -473,6 +489,57 @@ def test_leader_chat_completed_reconfirmation_is_idempotent(tmp_path, monkeypatc
     assert payload["mission_run_card"]["status"] == "completed"
     events_after = [event for event in store.list_events(limit=100) if event["event_type"] != "leader_chat_turn"]
     assert events_after == events_before
+
+
+def test_leader_chat_runtime_exception_recovers_active_mission_and_workflow(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+
+    def exploding_run(**kwargs):
+        store = kwargs["store"]
+        mission = store.update_mission(
+            kwargs["mission_id"], status="preparing", confirmed_at="2026-07-11T00:00:00+00:00"
+        )
+        plan = store.plan_by_id(mission["plan_id"])
+        workflow = store.create_workflow_run(
+            plan_id=mission["plan_id"], plan_hash=mission["plan_hash"],
+            timeout_seconds=mission["timeout_seconds"], authorized_steps=plan["plan"]["steps"],
+        )
+        store.update_mission(
+            kwargs["mission_id"], status="running", workflow_run_id=workflow["run_id"]
+        )
+        raise RuntimeError("SECRET runtime detail")
+
+    monkeypatch.setattr(cli, "run_mission", exploding_run)
+    assert cli.main(["leader", "chat", "--message", f"批准执行 {mission_id}"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mission_run_card"]["status"] == "interrupted"
+    store = StateStore(root)
+    assert store.mission_by_id(mission_id)["status"] == "interrupted"
+    assert store.workflow_run_by_id(payload["mission_run_card"]["workflow_run_id"])["status"] == "interrupted"
+    assert [turn["mode"] for turn in store.load()["chat_turns"]].count("mission_run") == 1
+    assert [event["event_type"] for event in store.list_events(limit=100)].count("leader_chat_turn") == 2
+    assert "SECRET" not in json.dumps(store.load(), ensure_ascii=False)
+    assert "SECRET" not in (store.events_path.read_text(encoding="utf-8"))
+
+
+def test_leader_chat_recovery_failure_is_stable_and_sanitized(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+
+    def exploding_run(**kwargs):
+        kwargs["store"].update_mission(
+            kwargs["mission_id"], status="preparing", confirmed_at="2026-07-11T00:00:00+00:00"
+        )
+        raise RuntimeError("SECRET operation")
+
+    monkeypatch.setattr(cli, "run_mission", exploding_run)
+    monkeypatch.setattr(cli, "interrupt_mission", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("SECRET recovery")))
+    assert cli.main(["leader", "chat", "--message", f"批准执行 {mission_id}"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "mission run failed"
+    assert "SECRET" not in captured.err
 
 
 def test_leader_chat_explicit_current_approval_is_not_mission_confirmation(tmp_path, monkeypatch, capsys) -> None:
