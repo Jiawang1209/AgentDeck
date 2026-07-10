@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Finalize Worker readiness safety gates
+
+- **类型**: important fix + strict TDD + runtime safety
+- **问题**: active-frame 初版仍允许以 prompt glyph 开头的用户输入成为 setup/failure substring evidence，Codex 的 `model` + `not supported` 与 Claude 的裸 `/login`/trust 短语过宽；capture 抛错路径又绕过 post-call deadline gate，可能把已迟到异常投影为 failed 后继续 probe。
+- **What**: state evidence 现在排除以 `User:`、`›`、`❯` 开头的行；Codex failure 只接受独立完整的 configured-model/newer-version 或 exact model-incompatible 行，startup 只接受独立 MCP-starting 行；Claude trust 必须同时出现独立 question 与 choice 行，login 必须是独立的 not-logged-in/authentication-required + `/login` 结构。capture 成功或异常统一先做 post-call monotonic deadline gate，到期一律 timeout 并停止后续 pane probe，未到期才把异常投影为固定 failed reason。
+- **TDD 证据**: prompt input、multiline continuation 与 late capture exception 用例先 RED 为 5 failed / 55 passed；最小 grammar/gate 修复后 focused readiness 60 项、runtime/tmux/dispatch/workflow 相邻回归 84 项、全量 1124 项通过；compileall 与 diff 检查通过。
+- **安全边界**: 不解析或泄漏迟到异常，不把用户输入当 CLI 状态；不 send/spawn/kill/create session、不调用 provider、不写 state。
+
 ### Harden Worker readiness evidence
 
 - **类型**: important fix + strict TDD + runtime safety

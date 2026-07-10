@@ -60,20 +60,24 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
     active_frame = "\n".join(active_lines)
     # Conversation text is untrusted content, not CLI state evidence.  The
     # terminal adapters currently label captured user turns this way.
-    state_frame = "\n".join(
-        line for line in active_lines if not line.lstrip().startswith("user:")
+    state_lines = tuple(
+        line.strip()
+        for line in active_lines
+        if not line.lstrip().startswith(("user:", "›", "❯"))
     )
 
     if family == "codex":
         if (
-            "requires a newer version of codex" in state_frame
-            or "model incompatible" in state_frame
-            or ("model" in state_frame and "not supported" in state_frame)
+            "configured model requires a newer version of codex" in state_lines
+            or "model incompatible" in state_lines
         ):
             return WorkerReadinessEvidence(
                 "failed", "configured model is incompatible with Codex CLI"
             )
-        if "starting mcp servers" in state_frame:
+        if any(
+            re.fullmatch(r"starting mcp servers(?:\s*\([^\r\n]*\))?", line)
+            for line in state_lines
+        ):
             return WorkerReadinessEvidence(
                 "starting", "CLI startup is still in progress"
             )
@@ -85,19 +89,22 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
 
     if family == "claude":
         if (
-            "yes, i trust this folder" in state_frame
-            or "do you trust the files in this folder" in state_frame
-            or "trust this folder" in state_frame
+            "do you trust the files in this folder?" in state_lines
+            and "yes, i trust this folder" in state_lines
         ):
             return WorkerReadinessEvidence("setup_required", "directory trust required")
-        if (
-            "not logged in" in state_frame
-            or "authentication required" in state_frame
-            or "please log in" in state_frame
-            or "run /login" in state_frame
+        if any(
+            re.fullmatch(
+                r"(?:not logged in|authentication required)\.[^\r\n]*/login[^\r\n]*",
+                line,
+            )
+            for line in state_lines
         ):
             return WorkerReadinessEvidence("setup_required", "Claude login required")
-        if "starting mcp servers" in state_frame:
+        if any(
+            re.fullmatch(r"starting mcp servers(?:\s*\([^\r\n]*\))?", line)
+            for line in state_lines
+        ):
             return WorkerReadinessEvidence(
                 "starting", "CLI startup is still in progress"
             )
@@ -280,40 +287,44 @@ def wait_for_worker_readiness(
                     )
                 )
                 continue
+            capture_error = False
             try:
                 output = backend.capture_output(runtime_config, pane_id, lines=200)
             except Exception:
+                capture_error = True
+                output = ""
+            captured_at = max(
+                _validated_clock(monotonic),
+                started_at + scheduled_sleep_total,
+            )
+            if captured_at >= deadline:
+                current.append(
+                    WorkerReadiness(
+                        agent.agent_id,
+                        family,
+                        "starting",
+                        "worker capture completed after readiness deadline",
+                    )
+                )
+                current.extend(
+                    WorkerReadiness(
+                        remaining_agent.agent_id,
+                        provider_family(remaining_agent.provider),
+                        "starting",
+                        "worker was not probed before readiness deadline",
+                    )
+                    for remaining_agent, _remaining_pane_id in workers[
+                        worker_index + 1 :
+                    ]
+                )
+                return WorkerReadinessBatch(
+                    all_ready=False,
+                    results=_timeout_results(tuple(current)),
+                    timed_out=True,
+                )
+            if capture_error:
                 evidence = WorkerReadinessEvidence("failed", "worker pane capture failed")
             else:
-                captured_at = max(
-                    _validated_clock(monotonic),
-                    started_at + scheduled_sleep_total,
-                )
-                if captured_at >= deadline:
-                    current.append(
-                        WorkerReadiness(
-                            agent.agent_id,
-                            family,
-                            "starting",
-                            "worker capture completed after readiness deadline",
-                        )
-                    )
-                    current.extend(
-                        WorkerReadiness(
-                            remaining_agent.agent_id,
-                            provider_family(remaining_agent.provider),
-                            "starting",
-                            "worker was not probed before readiness deadline",
-                        )
-                        for remaining_agent, _remaining_pane_id in workers[
-                            worker_index + 1 :
-                        ]
-                    )
-                    return WorkerReadinessBatch(
-                        all_ready=False,
-                        results=_timeout_results(tuple(current)),
-                        timed_out=True,
-                    )
                 try:
                     evidence = classify_worker_readiness(agent.provider, output)
                 except Exception:

@@ -99,6 +99,56 @@ def test_blocker_outside_active_visible_tail_does_not_override_current_ready_fra
     assert classify_worker_readiness("codex", screen).status == "ready"
 
 
+@pytest.mark.parametrize(
+    ("provider", "screen", "expected"),
+    [
+        (
+            "codex",
+            f"{CODEX_READY_SCREEN}\n› explain why model not supported",
+            "ready",
+        ),
+        (
+            "claude",
+            f"{CLAUDE_READY_SCREEN}\n❯ explain please log in and run /login",
+            "ready",
+        ),
+        (
+            "codex",
+            f"{CODEX_READY_SCREEN}\nUser: explain the error\n"
+            "› configured model requires a newer version of codex",
+            "ready",
+        ),
+        (
+            "claude",
+            f"{CLAUDE_READY_SCREEN}\nUser: quote the setup screen\n"
+            "❯ do you trust the files in this folder?\n"
+            "❯ yes, i trust this folder",
+            "ready",
+        ),
+    ],
+)
+def test_prompt_input_and_multiline_conversation_cannot_be_state_evidence(
+    provider: str, screen: str, expected: str
+) -> None:
+    assert classify_worker_readiness(provider, screen).status == expected
+
+
+@pytest.mark.parametrize(
+    ("provider", "screen", "expected"),
+    [
+        ("codex", "Configured model requires a newer version of Codex", "failed"),
+        ("codex", "model incompatible", "failed"),
+        ("codex", CODEX_STARTING_MCP_SCREEN, "starting"),
+        ("claude", CLAUDE_TRUST_SCREEN, "setup_required"),
+        ("claude", CLAUDE_LOGIN_SCREEN, "setup_required"),
+    ],
+)
+def test_structured_cli_state_fixtures_remain_classified(
+    provider: str, screen: str, expected: str
+) -> None:
+    assert classify_worker_readiness(provider, screen).status == expected
+
+
 class FakeBackend:
     def __init__(self) -> None:
         self.outputs: dict[str, list[str | Exception]] = {}
@@ -537,6 +587,36 @@ def test_capture_that_finishes_after_deadline_cannot_become_ready(
     assert result.timed_out is True
     assert result.results[0].status == "timeout"
     assert result.results[0].reason == "worker readiness timed out"
+    assert backend.captured == ["%1"]
+    assert backend.sent == []
+
+
+def test_capture_error_finishing_after_deadline_times_out_without_next_probe(
+    runtime_config: RuntimeConfig,
+    codex_agent: AgentSpec,
+    claude_agent: AgentSpec,
+) -> None:
+    backend = FakeBackend()
+    backend.outputs["%1"] = [RuntimeError("secret late capture")]
+    clock = {"now": 0.0}
+    backend.capture_hook = lambda _pane_id: clock.update(now=2.0)
+
+    result = _wait(
+        runtime_config,
+        backend,
+        ((codex_agent, "%1"), (claude_agent, "%2")),
+        timeout_seconds=1,
+        poll_interval=0.1,
+        monotonic=lambda: clock["now"],
+    )
+
+    assert result.timed_out is True
+    assert [(item.agent_id, item.status) for item in result.results] == [
+        ("planner", "timeout"),
+        ("reviewer", "timeout"),
+    ]
+    assert all("secret" not in (item.reason or "") for item in result.results)
+    assert backend.checked == ["%1"]
     assert backend.captured == ["%1"]
     assert backend.sent == []
 
