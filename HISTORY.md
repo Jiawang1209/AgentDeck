@@ -10,8 +10,10 @@
 - **动机**: 自然语言 Mission 编排需要先冻结一组可独立验证、无副作用的领域规则，供后续 preview/state/CLI 切片复用，避免选人、模型继承和固定顺序约束散落到入口层。
 - **What**: 新增 `src/agentdeck/mission.py`：定义 `mission/v1` 与状态集合；识别同时具备执行意图和多 Agent 证据的请求并保护 help/status/skill/memory/trace 既有入口；按显式 ID、显式 provider 或 provider 配置顺序确定性选择至少两个 Worker，provider 内按 running → shared → config order 排序且永不选择 logical Leader；生成不修改原始 `AgentSpec` 的有效模型配置；附加固定顺序 plan 验证和不含 command/env/secrets 的 compact Worker/startup 摘要。
 - **TDD 证据**: 首个 RED 为 `tests/test_mission.py` 收集时 `ModuleNotFoundError: No module named 'agentdeck.mission'`；首轮 GREEN 为 32 项通过。自审新增非法 timeout 类型测试后再次 RED（2 failed, 33 passed），最小修复后 focused suite 为 35 项通过。
+- **Spec review 修复**: intent 的英文 `run`、provider 和 agent id 均使用安全 token 边界，`codex-coder` 不再冒充 Codex provider；inspection 保护改为保守的 verb/route shape，不再因任务正文出现 skill/memory/status/trace 裸名词而拒绝合法 Mission。plan timeout 现在只接受正有限整数，step number 只接受非 bool 的精确 int，动态元数据只拒绝 truthy 的 `parallel` / `dag` / `cycle` / `dynamic_steps` 精确顶层键。Leader 模型继承只允许精确 `codex-cli` / `claude-cli` provider。补充 `EffectiveMissionAgent` frozen mutation 覆盖。
+- **Review-fix TDD 证据**: intent 边界先 RED（2 failed, 39 passed）再 GREEN（41 passed）；plan 类型/metadata 先 RED（5 failed, 45 passed）再 GREEN（50 passed）；非 CLI Leader 继承先 RED（2 failed, 50 passed）再 GREEN（52 passed）。frozen mutation 属于既有正确实现的缺失覆盖，新增测试即通过；最终 focused suite 53 项通过。
 - **安全边界**: 本切片仅包含纯 domain helper/dataclass；不写 state、不注册 CLI、不调用 provider、不读取或操作 tmux、不生成 contract/ProjectView，也不支持 parallel/DAG/cycle/dynamic steps。选人遇到未知 ID、缺失 provider 或不足两个 Worker 时返回空选择，绝不部分执行；模型摘要不暴露原始 command 或环境变量。
-- **验证**: `pytest tests/test_mission.py -q` 35 项通过；provider regression、compileall 与 `git diff --check` 在提交前执行。
+- **验证**: `pytest tests/test_mission.py -q` 53 项通过；`tests/test_provider_openai_compatible.py` 31 项通过；compileall 与 `git diff --check` 均通过。
 
 ### Current - Design natural-language Mission orchestration
 

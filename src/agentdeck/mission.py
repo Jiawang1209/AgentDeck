@@ -42,7 +42,7 @@ def _provider_positions(message: str) -> list[tuple[int, str]]:
     positions: list[tuple[int, str]] = []
     for family in ("codex", "claude"):
         match = re.search(
-            rf"(?<![A-Za-z0-9_]){family}(?:-cli)?(?![A-Za-z0-9_])",
+            rf"(?<![A-Za-z0-9_-]){family}(?:-cli)?(?![A-Za-z0-9_-])",
             message,
             flags=re.IGNORECASE,
         )
@@ -51,30 +51,33 @@ def _provider_positions(message: str) -> list[tuple[int, str]]:
     return sorted(positions)
 
 
+def _is_inspection_route(message: str) -> bool:
+    if "怎么" in message or "如何" in message:
+        return True
+    if re.match(r"^(?:请(?:帮我)?|帮我)?\s*(?:查看|检查|显示|列出|追踪)", message):
+        return True
+    return bool(
+        re.match(
+            r"^(?:please\s+)?(?:help\b|status\b|trace\b|"
+            r"skill\s+(?:list|show|suggestions)\b|"
+            r"memory\s+(?:list|show|suggestions)\b)",
+            message,
+        )
+    )
+
+
 def mission_intent(message: str, config: ProjectConfig) -> dict[str, Any] | None:
     normalized = message.strip().lower()
     if not normalized:
         return None
 
-    inspection_signals = (
-        "怎么",
-        "如何",
-        "帮助",
-        "help",
-        "状态",
-        "status",
-        "skill",
-        "技能",
-        "memory",
-        "记忆",
-        "trace",
-        "追踪",
-    )
-    if any(signal in normalized for signal in inspection_signals):
+    if _is_inspection_route(normalized):
         return None
 
-    execution_signals = ("让", "执行", "开始", "协作", "完成", "run")
-    if not any(signal in normalized for signal in execution_signals):
+    execution_requested = any(
+        signal in normalized for signal in ("让", "执行", "开始", "协作", "完成")
+    ) or bool(re.search(r"(?<![A-Za-z0-9_-])run(?![A-Za-z0-9_-])", normalized))
+    if not execution_requested:
         return None
 
     requested_ids = [
@@ -223,7 +226,11 @@ def effective_mission_agent(agent: AgentSpec, leader: LeaderConfig) -> Effective
 
     family = provider_family(agent.provider)
     leader_family = provider_family(leader.provider)
-    if family in {"codex", "claude"} and family == leader_family and leader.model:
+    if (
+        leader.provider in {"codex-cli", "claude-cli"}
+        and family == leader_family
+        and leader.model
+    ):
         command = shlex.join([*shlex.split(agent.command), "--model", leader.model])
         return EffectiveMissionAgent(
             agent=replace(agent, command=command),
@@ -237,22 +244,15 @@ def effective_mission_agent(agent: AgentSpec, leader: LeaderConfig) -> Effective
 def validate_mission_plan(
     plan: dict[str, Any],
     selected_agent_ids: Sequence[str],
-    timeout_seconds: int | float,
+    timeout_seconds: int,
 ) -> dict[str, Any]:
     if not isinstance(plan, dict):
         raise ValueError("mission plan must be a dict")
-    if (
-        isinstance(timeout_seconds, bool)
-        or not isinstance(timeout_seconds, (int, float))
-        or timeout_seconds <= 0
-    ):
+    if type(timeout_seconds) is not int or timeout_seconds <= 0:
         raise ValueError("mission timeout must be positive")
 
-    forbidden_metadata = ("parallel", "dag", "cycle", "dynamic")
-    if any(
-        value and any(marker in str(key).lower() for marker in forbidden_metadata)
-        for key, value in plan.items()
-    ):
+    forbidden_metadata = ("parallel", "dag", "cycle", "dynamic_steps")
+    if any(plan.get(key) for key in forbidden_metadata):
         raise ValueError("mission plan cannot contain dynamic or parallel metadata")
 
     steps = plan.get("steps")
@@ -264,7 +264,11 @@ def validate_mission_plan(
     selected = frozenset(selected_agent_ids)
     represented: set[str] = set()
     for expected_step, step in enumerate(steps, start=1):
-        if not isinstance(step, dict) or step.get("step") != expected_step:
+        if (
+            not isinstance(step, dict)
+            or type(step.get("step")) is not int
+            or step.get("step") != expected_step
+        ):
             raise ValueError("mission plan steps must be numbered 1 through n")
         agent_id = step.get("agent_id")
         if agent_id not in selected:

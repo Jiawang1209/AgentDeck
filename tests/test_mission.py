@@ -91,6 +91,13 @@ def test_chinese_codex_claude_handoff_request_has_exact_intent() -> None:
     }
 
 
+def test_english_run_and_provider_mentions_require_standalone_tokens() -> None:
+    project = config(agent("planner", "codex"), agent("reviewer", "claude"))
+
+    assert mission_intent("brunch codex claude", project) is None
+    assert mission_intent("run codex-coder and claude", project) is None
+
+
 @pytest.mark.parametrize(
     "message",
     [
@@ -105,6 +112,27 @@ def test_non_mission_help_and_inspection_sentences_are_not_hijacked(message: str
     project = config(agent("planner", "codex"), agent("reviewer", "claude"))
 
     assert mission_intent(message, project) is None
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["查看 memory", "skill list", "trace msg_x", "status"],
+)
+def test_explicit_inspection_route_shapes_are_not_missions(message: str) -> None:
+    project = config(agent("planner", "codex"), agent("reviewer", "claude"))
+
+    assert mission_intent(message, project) is None
+
+
+def test_execution_request_may_name_memory_as_its_task_subject() -> None:
+    project = config(agent("planner", "codex"), agent("reviewer", "claude"))
+
+    assert mission_intent("让 Codex 和 Claude 协作完成 memory 模块", project) == {
+        "execution_requested": True,
+        "requested_agent_ids": [],
+        "requested_providers": ["codex", "claude"],
+        "multi_agent": True,
+    }
 
 
 def test_mission_intent_detects_explicit_ids_in_message_order_with_safe_boundaries() -> None:
@@ -300,6 +328,32 @@ def test_worker_uses_provider_default_when_family_differs_from_leader() -> None:
     assert result.model_source == "provider_default"
 
 
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_non_cli_leader_provider_does_not_supply_worker_model(provider: str) -> None:
+    worker = agent("worker", provider, command=f"{provider} run")
+
+    result = effective_mission_agent(
+        worker,
+        LeaderConfig(provider=provider, model="leader-model"),
+    )
+
+    assert result.agent is worker
+    assert result.agent.command == f"{provider} run"
+    assert result.model is None
+    assert result.model_source == "provider_default"
+
+
+def test_effective_mission_agent_is_frozen() -> None:
+    result = effective(
+        agent("planner", "codex"),
+        model="gpt-5.5",
+        source="leader_inherited",
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        result.model_source = "changed"  # type: ignore[misc]
+
+
 def valid_plan() -> dict:
     return {
         "goal": "fixed handoff",
@@ -361,6 +415,33 @@ def test_validate_mission_plan_rejects_invalid_or_non_sequential_plans(
 def test_validate_mission_plan_rejects_non_numeric_timeouts(timeout: object) -> None:
     with pytest.raises(ValueError, match="timeout must be positive"):
         validate_mission_plan(valid_plan(), ("planner", "reviewer"), timeout)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("timeout", [1.5, float("inf"), float("nan")])
+def test_validate_mission_plan_requires_a_finite_integer_timeout(timeout: float) -> None:
+    with pytest.raises(ValueError, match="timeout must be positive"):
+        validate_mission_plan(valid_plan(), ("planner", "reviewer"), timeout)
+
+
+def test_validate_mission_plan_rejects_bool_step_numbers() -> None:
+    plan = valid_plan()
+    plan["steps"][0]["step"] = True
+
+    with pytest.raises(ValueError, match="numbered 1 through n"):
+        validate_mission_plan(plan, ("planner", "reviewer"), 30)
+
+
+@pytest.mark.parametrize("key", ["parallel", "dag", "cycle", "dynamic_steps"])
+def test_validate_mission_plan_allows_false_fixed_sequence_metadata(key: str) -> None:
+    plan = {**valid_plan(), key: False}
+
+    assert validate_mission_plan(plan, ("planner", "reviewer"), 30) is plan
+
+
+def test_validate_mission_plan_allows_unrelated_parallelism_metadata() -> None:
+    plan = {**valid_plan(), "parallelism": "disabled"}
+
+    assert validate_mission_plan(plan, ("planner", "reviewer"), 30) is plan
 
 
 def test_summaries_are_compact_and_startup_actions_distinguish_reuse_from_spawn() -> None:
