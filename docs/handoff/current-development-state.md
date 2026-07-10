@@ -10,6 +10,10 @@ The end-to-end golden demo lane now has its first guide slice implemented and co
 - `agentdeck contract demo` / `agentdeck contract demo --example` expose the GUI-ready demo guide contract and stable example payload; `docs/contracts/demo-schema.md` documents the response fields, step fields, statuses, and safety values.
 - The implementation was covered by focused contract/CLI tests and read-only/no-runtime-mutation assertions in the implementation slices. The guide does not execute recommended commands, call providers, read tmux, or mutate runtime/state.
 
+### Deterministic golden-demo rehearsal — covered
+
+The golden path now has one contiguous pytest rehearsal in addition to focused state tests. It drives a single temporary project through fake-Leader planning, explicit approval, fake-runtime dispatch, captured reply/artifact, code review, round review, and explicit release while checking `agentdeck demo golden` at every checkpoint. This is test-only coverage: no production command, function, runtime backend, or contract was added.
+
 Lane guidance: this supports the **end-to-end golden demo first**. Remote skill / marketplace work remains a later product fork/lane and should not be started as part of golden demo docs cleanup.
 
 ## Skill 生态 lane 进度 — A + B(只读/auto/ver/semver) + lockfile 完成，⏸ loop STOP（next remote/C）

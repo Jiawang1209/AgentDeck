@@ -2,6 +2,16 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-10
+
+### Current - Golden demo deterministic end-to-end rehearsal
+
+- **类型**: test
+- **动机**: `agentdeck demo golden` 已有逐状态测试，但缺少一条在同一临时项目中连续覆盖 plan、approval、dispatch、reply/artifact、review gate 和 release 的回归演练。
+- **What**: 新增单条 pytest 端到端演练，使用 fake Leader、FakeTmuxBackend、现有 CLI 命令和 StateStore 测试数据，在每个检查点断言 golden guide 的 `current_status`、`next_command` 和关键 step；不修改任何 `src/agentdeck/` 生产代码、CLI 或 contract。
+- **影响**: golden demo 现在既有各状态 focused coverage，也有一条确定性、无网络、无真实 tmux 的完整 round-to-release 回归链。测试运行在 pytest 临时项目内，不触碰开发者当前 `.agentdeck/` 状态。
+- **验证**: focused rehearsal 1 项通过；全部 golden-demo tests 6 项通过；全量 pytest 754 项通过；`python -m compileall src tests -q` 与 `git diff --check` 通过。
+
 ## 2026-07-09
 
 ### Current - Document golden demo guide implementation
