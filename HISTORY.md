@@ -12,8 +12,9 @@
 - **TDD 证据**: 首个 RED 为 `tests/test_mission.py` 收集时 `ModuleNotFoundError: No module named 'agentdeck.mission'`；首轮 GREEN 为 32 项通过。自审新增非法 timeout 类型测试后再次 RED（2 failed, 33 passed），最小修复后 focused suite 为 35 项通过。
 - **Spec review 修复**: intent 的英文 `run`、provider 和 agent id 均使用安全 token 边界，`codex-coder` 不再冒充 Codex provider；inspection 保护改为保守的 verb/route shape，不再因任务正文出现 skill/memory/status/trace 裸名词而拒绝合法 Mission。plan timeout 现在只接受正有限整数，step number 只接受非 bool 的精确 int，动态元数据只拒绝 truthy 的 `parallel` / `dag` / `cycle` / `dynamic_steps` 精确顶层键。Leader 模型继承只允许精确 `codex-cli` / `claude-cli` provider。补充 `EffectiveMissionAgent` frozen mutation 覆盖。
 - **Review-fix TDD 证据**: intent 边界先 RED（2 failed, 39 passed）再 GREEN（41 passed）；plan 类型/metadata 先 RED（5 failed, 45 passed）再 GREEN（50 passed）；非 CLI Leader 继承先 RED（2 failed, 50 passed）再 GREEN（52 passed）。frozen mutation 属于既有正确实现的缺失覆盖，新增测试即通过；最终 focused suite 53 项通过。
+- **Final route-shape review fix**: 新增三条精确回归，覆盖句首 `状态：...`、`请帮助我查看...`、`帮助我查看...` 即使同时包含 Codex/Claude 与“协作”也必须保留在 inspection/help/status 路由。测试先 RED（3 failed, 53 passed），最小扩展句首 shape 后 GREEN（56 passed）；合法 memory 模块执行请求继续命中 Mission，未恢复裸名词拦截。
 - **安全边界**: 本切片仅包含纯 domain helper/dataclass；不写 state、不注册 CLI、不调用 provider、不读取或操作 tmux、不生成 contract/ProjectView，也不支持 parallel/DAG/cycle/dynamic steps。选人遇到未知 ID、缺失 provider 或不足两个 Worker 时返回空选择，绝不部分执行；模型摘要不暴露原始 command 或环境变量。
-- **验证**: `pytest tests/test_mission.py -q` 53 项通过；`tests/test_provider_openai_compatible.py` 31 项通过；compileall 与 `git diff --check` 均通过。
+- **验证**: `pytest tests/test_mission.py -q` 56 项通过；`tests/test_provider_openai_compatible.py` 31 项通过；compileall 与 `git diff --check` 均通过。
 
 ### Current - Design natural-language Mission orchestration
 

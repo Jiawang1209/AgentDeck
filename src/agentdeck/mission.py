@@ -54,7 +54,12 @@ def _provider_positions(message: str) -> list[tuple[int, str]]:
 def _is_inspection_route(message: str) -> bool:
     if "怎么" in message or "如何" in message:
         return True
-    if re.match(r"^(?:请(?:帮我)?|帮我)?\s*(?:查看|检查|显示|列出|追踪)", message):
+    if re.match(r"^状态(?:\s|[:：]|$)", message):
+        return True
+    if re.match(
+        r"^(?:(?:请)?(?:帮我|帮助我)|请)?\s*(?:查看|检查|显示|列出|追踪)",
+        message,
+    ):
         return True
     return bool(
         re.match(

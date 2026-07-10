@@ -124,6 +124,20 @@ def test_explicit_inspection_route_shapes_are_not_missions(message: str) -> None
     assert mission_intent(message, project) is None
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "状态：Codex 和 Claude 协作情况",
+        "请帮助我查看 Codex 和 Claude 协作状态",
+        "帮助我查看 Codex 和 Claude 协作状态",
+    ],
+)
+def test_chinese_status_and_help_route_shapes_are_not_missions(message: str) -> None:
+    project = config(agent("planner", "codex"), agent("reviewer", "claude"))
+
+    assert mission_intent(message, project) is None
+
+
 def test_execution_request_may_name_memory_as_its_task_subject() -> None:
     project = config(agent("planner", "codex"), agent("reviewer", "claude"))
 
