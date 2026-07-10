@@ -4,6 +4,15 @@
 
 ## 2026-07-10
 
+### Current - Foreground resumable sequential workflow engine
+
+- **类型**: feat
+- **动机**: 普通 `run-loop` 会在 Worker 回复前停住，无法满足一次确认后由 Worker 1 完成自动触发 Worker 2 的通用线性交接；百家姓接龙只是验收示例，核心必须是任务无关的顺序工作流。
+- **What**: 新增 `agentdeck workflow preview|run|status|resume`、`src/agentdeck/workflow.py`、`workflow_runs[]` 持久化、token-correlated 结构化回复、compact handoff、foreground timeout/stop/resume、workflow audit events，以及 `agentdeck contract workflow` / `docs/contracts/workflow-schema.md`。`run`/`resume` 要求 `--confirm`，plan id/hash、agent、task、step count 和 timeout 被冻结；resume 复用已派发 turn，不重复发送。
+- **影响**: 现有 Leader plan 的有序 steps 现在可以在显式 workflow 命令下成为 A→B→C 线性链。引擎复用现有 message/attempt/job/inbox/reply/artifact 账本，只读取当前 step pane；错误 token 不推进，blocked/failed/invalid/timeout/pane loss/plan drift 会停止后续派发。它不 spawn、不调用 provider、不 auto-ack，也不改变普通 approval/dispatch/capture-reply/run-loop 语义。
+- **验证**: helper/state/contract/CLI/fake runtime workflow focused tests 17 项通过；既有 run-loop/capture-reply 回归 17 项通过；全量 pytest 771 项通过；`python -m compileall src tests -q`、`agentdeck contract workflow --example` smoke 与 `git diff --check` 通过。
+- **后续**: 本切片不含 built-in `sequential-handoff` skill、真实 Codex/Claude 百家姓接龙、DAG 或循环；这些需要独立后续 slice。
+
 ### Current - Golden demo deterministic end-to-end rehearsal
 
 - **类型**: test

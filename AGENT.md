@@ -245,6 +245,8 @@ Worker 不应该：
 
 ## 审批规则
 
+`agentdeck workflow preview|status` 是只读顺序工作流入口；不得读取 pane、发送输入或写 state。`agentdeck workflow run|resume` 必须要求 `--confirm`，授权范围只能是已冻结的 plan hash、有序 steps、agent/task、step count 和 timeout。每步只能读取目标 running pane，并只接受精确 `handoff_token` 的结构化回复；完成后只把 compact handoff 交给下一步。resume 不得重复派发已有或已完成 turn。引擎不得 spawn、调用 Leader provider、auto-ack inbox、扩大 worker 权限或改变普通 run-loop/approval/capture-reply 语义；blocked/failed/invalid/timeout/pane loss/plan drift 必须停止后续派发。
+
 - `agentdeck approval create-from-plan --plan-id <id>` 会从 plan steps 创建 `approvals[]`。
 - `agentdeck approval list` 可查看审批项。
 - `agentdeck approval approve --approval-id <id>` 将审批项标记为 `approved`。

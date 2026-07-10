@@ -1,6 +1,21 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-09
+Updated: 2026-07-10
+
+## Sequential workflow core — implemented
+
+The generic A→B→C handoff engine is implemented and committed. It is intentionally separate from ordinary `run-loop`:
+
+- `agentdeck workflow preview --plan-id <id> [--timeout <seconds>]` is read-only and derives a hash-pinned ordered chain plus stored-runtime blockers without inspecting tmux.
+- `agentdeck workflow run --plan-id <id> [--timeout <seconds>] --confirm` performs one foreground, bounded run after a single explicit confirmation.
+- `agentdeck workflow status --run-id <id>` is read-only; `agentdeck workflow resume --run-id <id> --confirm` resumes the frozen chain and does not repeat a dispatched or completed step.
+- Every active Worker reply must carry the exact `handoff_token` and structured status/summary/verification/risks/next_steps fields. Only compact validated handoff data reaches the next Worker.
+- State is persisted under `workflow_runs[]`; existing message/reply/artifact lineage and workflow audit events remain inspectable.
+- Contract discovery is `agentdeck contract workflow --example`; the durable contract is `docs/contracts/workflow-schema.md`.
+
+Safety boundary: workflow execution never expands the plan, spawns agents, calls a Leader provider, auto-acks inbox items, or grants worker permissions. Plan drift, unavailable runtime, pane loss, invalid reply, timeout, blocked, and failed stop the chain. Ordinary approval/dispatch/capture-reply/run-loop behavior is unchanged.
+
+Deferred: the built-in `sequential-handoff` skill, the real Codex/Claude 百家姓 acceptance run, and DAG/cycle semantics are not part of this core slice.
 
 ## Golden demo guide slice — implemented
 
@@ -34,7 +49,7 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-按照 AgentDeck 北极星目标持续开发本地多智能体终端工作台：保持 API-backed Leader LLM、角色化多 Agent、可见 tmux runtime、人类审批、可恢复状态、通信账本和未来 GUI 可消费的主线；每轮开发都更新 `HISTORY.md`、运行验证并提交。
+在已交付的顺序工作流 core 上完成下一独立 slice：设计并实现可审计的 built-in `sequential-handoff` skill，用它指导 Leader 生成适合 A→B→C handoff 的计划；之后再运行真实 Codex/Claude 百家姓接龙验收。不得把 demo 文本写进 core，不得顺带扩展 DAG/cycle。
 
 ## Canonical Handoff Inputs
 

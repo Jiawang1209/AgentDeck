@@ -72,6 +72,8 @@ agentdeck learn review --plan-id pln_xxx
 agentdeck contract list
 agentdeck contract demo
 agentdeck contract demo --example
+agentdeck contract workflow
+agentdeck contract workflow --example
 agentdeck contract memory
 agentdeck contract memory --example
 agentdeck contract learning-review
@@ -177,7 +179,17 @@ agentdeck ack --agent planner --inbox-id inb_xxx
 agentdeck trace --id msg_xxx
 agentdeck events --limit 20
 agentdeck artifacts
+agentdeck workflow preview --plan-id pln_xxx --timeout 300
+agentdeck workflow run --plan-id pln_xxx --timeout 300 --confirm
+agentdeck workflow status --run-id wfr_xxx
+agentdeck workflow resume --run-id wfr_xxx --confirm
 ```
+
+## Sequential Workflow
+
+`agentdeck workflow` 把一个既有 Leader plan 的有序 `steps[]` 显式解释为固定的 A→B→C 线性链。先用 `preview` 检查 plan hash、步骤和已存 runtime binding；只有 `run --confirm` 才创建 workflow run，并在前台逐步等待当前 Worker 的 token-correlated 结构化回复。完成回复会被压缩成 summary/verification/risks/next_steps/artifact trace，再交给下一 Worker，不会转发完整 pane 历史。
+
+运行中遇到 blocked、failed、结构错误、timeout、pane 丢失或 plan drift 会立刻停止，之后可用 `status` 检查、用 `resume --confirm` 恢复；恢复不会重复发送已经派发或完成的 step。该命令不 spawn agent、不调用 Leader provider、不自动 ack inbox、不扩大原计划或 worker 权限，也不改变普通 approval/dispatch/capture-reply/run-loop 的行为。机器契约通过 `agentdeck contract workflow --example` 发现，详见 `docs/contracts/workflow-schema.md`。
 
 `agentdeck leader chat --message "frontdesk <goal>"` 是北极星 Phase G1 的只读前台接待入口：它会进入 `mode=frontdesk`，返回 `frontdesk_card`、`intent_card` 和显式下一步 `agentdeck leader plan --task <goal>`，但不调用 Leader provider、不创建 plan/action/approval/message/job/inbox、不读取 tmux，也不发送 tmux 输入。这个入口用于把用户交互层和 planner/orchestrator 深度推理层分开，未来 GUI 可以先渲染 frontdesk intake，再由人类决定是否进入 plan。
 
