@@ -9975,16 +9975,53 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
             "pane_id": None,
             "approval_required": True,
             "dispatch_ready": False,
+            "credentials": {"api_key": "leader-secret"},
         },
         plan_id="pln_demo",
         plan_hash="sha256:plan",
         selected_agents=[
-            {"agent_id": "planner", "command": "codex --secret token"},
-            {"agent_id": "reviewer", "prompt": "full worker prompt"},
+            {
+                "agent_id": "planner",
+                "provider": "codex-cli",
+                "role": "planning",
+                "workspace_mode": "shared",
+                "runtime_status": "running",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+                "command": "codex --secret token",
+                "blocker": {"full_prompt": "selected-secret"},
+            },
+            {
+                "agent_id": "reviewer",
+                "provider": "claude-cli",
+                "role": "review",
+                "workspace_mode": "shared",
+                "runtime_status": "configured",
+                "model_source": "leader",
+                "blocker": "safe blocker text mentioning credentials",
+                "prompt": "full worker prompt",
+                "effective_model": [{"credentials": "selected-model-secret"}],
+            },
         ],
         startup_actions=[
-            {"agent_id": "planner", "launch_command": "codex --secret token"},
-            {"agent_id": "reviewer", "credentials": {"token": "secret"}},
+            {
+                "agent_id": "planner",
+                "action": "reuse",
+                "runtime_status": "running",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+                "launch_command": "codex --secret token",
+                "blocker": {"command": "startup-secret"},
+            },
+            {
+                "agent_id": "reviewer",
+                "action": "spawn",
+                "runtime_status": "configured",
+                "model_source": "leader",
+                "blocker": None,
+                "credentials": {"token": "secret"},
+                "effective_model": {"credentials": "startup-model-secret"},
+            },
         ],
         step_count=2,
         timeout_seconds=180,
@@ -10014,15 +10051,53 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
         "blockers": [],
         "provider": "fake",
         "model": "fake-plan",
-        "leader_backend": mission["leader_backend"],
+        "leader_backend": {
+            key: value
+            for key, value in mission["leader_backend"].items()
+            if key != "credentials"
+        },
         "plan_id": "pln_demo",
         "plan_hash": "sha256:plan",
         "workflow_run_id": None,
         "current_step": 0,
         "step_count": 2,
         "timeout_seconds": 180,
-        "selected_agents": [{"agent_id": "planner"}, {"agent_id": "reviewer"}],
-        "startup_actions": [{"agent_id": "planner"}, {"agent_id": "reviewer"}],
+        "selected_agents": [
+            {
+                "agent_id": "planner",
+                "provider": "codex-cli",
+                "role": "planning",
+                "workspace_mode": "shared",
+                "runtime_status": "running",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+            {
+                "agent_id": "reviewer",
+                "provider": "claude-cli",
+                "role": "review",
+                "workspace_mode": "shared",
+                "runtime_status": "configured",
+                "model_source": "leader",
+                "blocker": "safe blocker text mentioning credentials",
+            },
+        ],
+        "startup_actions": [
+            {
+                "agent_id": "planner",
+                "action": "reuse",
+                "runtime_status": "running",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+            {
+                "agent_id": "reviewer",
+                "action": "spawn",
+                "runtime_status": "configured",
+                "model_source": "leader",
+                "blocker": None,
+            },
+        ],
         "created_at": mission["created_at"],
         "updated_at": mission["updated_at"],
         "confirmed_at": None,
@@ -10042,6 +10117,15 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
     assert all(
         "credentials" not in item for item in summary["items"][0]["startup_actions"]
     )
+    serialized_summary = json.dumps(summary, ensure_ascii=False)
+    for secret in (
+        "leader-secret",
+        "selected-secret",
+        "selected-model-secret",
+        "startup-secret",
+        "startup-model-secret",
+    ):
+        assert secret not in serialized_summary
     assert store.state_path.read_bytes() == state_before
     assert store.events_path.read_bytes() == events_before
 

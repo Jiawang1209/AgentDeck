@@ -4,6 +4,15 @@
 
 ## 2026-07-11
 
+### Harden Mission ProjectView projection after specification review
+
+- **类型**: fix + test + contract
+- **审查问题**: 首版 Mission projection 只 allowlist nested row 的键，却原样保留 allowlisted 键的任意 dict/list 值，并直接复制 `leader_backend`；validator 也只检查第一层禁用键和 backend 容器类型。因此 `leader_backend.credentials`、`selected_agents[].blocker.full_prompt` 或 `startup_actions[].effective_model.credentials` 可穿透 compact ProjectView。
+- **What**: Mission summary 现在从既有 logical Leader identity 字段重建 `leader_backend`，selected-agent/startup-action 按字段级 string/null 类型投影，blockers 仅保留字符串；合法 Task 2 compact provider/role/runtime/model/source/blocker 字段保持可用。ProjectView validator 复用 `_validate_leader_backend()`，校验 nested compact allowlist 和标量类型，并递归拒绝 dict/list 中的 command/prompt/full_prompt/credentials/env 等语义键，但不扫描或误拒绝普通字符串内容。
+- **Review TDD 证据**: 恶意嵌套 status + validator focused 测试先 RED（4 failed, 8 passed），明确复现 projection 泄漏与三个 validator 漏检；最小修复后同组含 example acceptance 为 13 passed。
+- **安全边界**: 仍为纯 ProjectView 投影/校验加固，不改 Mission 执行、provider、tmux、approval 或事件语义；`agentdeck status` 保持只读。输出构建和外部 payload validation 均独立 fail-closed，避免只依赖单层检查。
+- **验证**: mission/status focused 101 项、ProjectView contract focused 30 项、三文件相关回归 624 项、全量 pytest 885 项通过；compileall 与 `git diff --check` 均通过。
+
 ### Persist natural-language Mission state in ProjectView
 
 - **类型**: feat + test + contract

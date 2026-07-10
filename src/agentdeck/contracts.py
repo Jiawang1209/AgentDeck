@@ -5474,6 +5474,45 @@ def _validate_project_view_mission_items(
         "credential",
         "env",
         "environment",
+        "api_key",
+        "password",
+        "access_token",
+    }
+
+    def forbidden_semantic_paths(value: object, prefix: str) -> list[str]:
+        paths: list[str] = []
+        if isinstance(value, dict):
+            for raw_key, nested in value.items():
+                key = str(raw_key)
+                path = f"{prefix}.{key}"
+                normalized = key.strip().lower().replace("-", "_")
+                if normalized in forbidden_fields:
+                    paths.append(path)
+                paths.extend(forbidden_semantic_paths(nested, path))
+        elif isinstance(value, list):
+            for nested_index, nested in enumerate(value):
+                paths.extend(
+                    forbidden_semantic_paths(nested, f"{prefix}[{nested_index}]")
+                )
+        return paths
+
+    selected_agent_types = {
+        "agent_id": "string",
+        "provider": "string",
+        "role": "string",
+        "workspace_mode": "string",
+        "runtime_status": "string",
+        "effective_model": "nullable_string",
+        "model_source": "string",
+        "blocker": "nullable_string",
+    }
+    startup_action_types = {
+        "agent_id": "string",
+        "action": "string",
+        "runtime_status": "string",
+        "effective_model": "nullable_string",
+        "model_source": "string",
+        "blocker": "nullable_string",
     }
     for index, item in enumerate(items):
         if not isinstance(item, dict):
@@ -5484,6 +5523,8 @@ def _validate_project_view_mission_items(
                 errors.append(f"missing mission item field at index {index}: {field}")
         for field in sorted(forbidden_fields.intersection(item)):
             errors.append(f"missions.items[{index}] must not contain raw field: {field}")
+        for path in forbidden_semantic_paths(item, f"missions.items[{index}]"):
+            errors.append(f"{path} is forbidden")
         for field in string_fields:
             if field in item and not isinstance(item[field], str):
                 errors.append(f"missions.items[{index}].{field} must be a string")
@@ -5501,10 +5542,18 @@ def _validate_project_view_mission_items(
         for field in ("blockers", "selected_agents", "startup_actions"):
             if field in item and not isinstance(item[field], list):
                 errors.append(f"missions.items[{index}].{field} must be a list")
+        blockers = item.get("blockers")
+        if isinstance(blockers, list) and not all(
+            isinstance(blocker, str) for blocker in blockers
+        ):
+            errors.append(f"missions.items[{index}].blockers must contain only strings")
         for field in ("selected_agents", "startup_actions"):
             entries = item.get(field)
             if not isinstance(entries, list):
                 continue
+            field_types = (
+                selected_agent_types if field == "selected_agents" else startup_action_types
+            )
             for entry_index, entry in enumerate(entries):
                 if not isinstance(entry, dict):
                     errors.append(
@@ -5516,7 +5565,71 @@ def _validate_project_view_mission_items(
                         f"missions.items[{index}].{field}[{entry_index}] "
                         f"must not contain raw field: {raw_field}"
                     )
-        if "leader_backend" in item and not isinstance(item["leader_backend"], dict):
+                for entry_field in entry:
+                    if entry_field not in field_types and entry_field not in forbidden_fields:
+                        errors.append(
+                            f"missions.items[{index}].{field}[{entry_index}].{entry_field} "
+                            "is not an allowed compact field"
+                        )
+                for entry_field, expected_type in field_types.items():
+                    if entry_field not in entry:
+                        continue
+                    entry_value = entry[entry_field]
+                    if expected_type == "string" and not isinstance(entry_value, str):
+                        errors.append(
+                            f"missions.items[{index}].{field}[{entry_index}].{entry_field} "
+                            "must be a string"
+                        )
+                    if expected_type == "nullable_string" and (
+                        entry_value is not None and not isinstance(entry_value, str)
+                    ):
+                        errors.append(
+                            f"missions.items[{index}].{field}[{entry_index}].{entry_field} "
+                            "must be a string or null"
+                        )
+        leader_backend = item.get("leader_backend")
+        if isinstance(leader_backend, dict):
+            _validate_leader_backend(
+                errors, f"missions.items[{index}]", leader_backend
+            )
+            for backend_field in leader_backend:
+                if (
+                    backend_field not in LEADER_BACKEND_FIELDS
+                    and backend_field not in forbidden_fields
+                ):
+                    errors.append(
+                        f"missions.items[{index}].leader_backend.{backend_field} "
+                        "is not an allowed compact field"
+                    )
+            for backend_field in (
+                "agent_id",
+                "provider",
+                "model",
+                "provider_backend",
+                "provider_transport",
+                "reasoning_backend",
+                "runtime_kind",
+            ):
+                if backend_field in leader_backend and not isinstance(
+                    leader_backend[backend_field], str
+                ):
+                    errors.append(
+                        f"missions.items[{index}].leader_backend.{backend_field} "
+                        "must be a string"
+                    )
+            for backend_field in (
+                "pane_backed",
+                "approval_required",
+                "dispatch_ready",
+            ):
+                if backend_field in leader_backend and not isinstance(
+                    leader_backend[backend_field], bool
+                ):
+                    errors.append(
+                        f"missions.items[{index}].leader_backend.{backend_field} "
+                        "must be a boolean"
+                    )
+        elif "leader_backend" in item:
             errors.append(f"missions.items[{index}].leader_backend must be an object")
         if item.get("schema_version") != MISSION_SCHEMA_VERSION:
             errors.append(

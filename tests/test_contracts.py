@@ -1231,6 +1231,24 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
             ),
             "missions.items[0].selected_agents[0] must not contain raw field: command",
         ),
+        (
+            lambda payload: payload["missions"]["items"][0]["leader_backend"].update(
+                {"credentials": {"api_key": "leader-secret"}}
+            ),
+            "missions.items[0].leader_backend.credentials is forbidden",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0]["selected_agents"][0].update(
+                {"blocker": {"full_prompt": "selected-secret"}}
+            ),
+            "missions.items[0].selected_agents[0].blocker must be a string or null",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0]["startup_actions"][0].update(
+                {"effective_model": {"credentials": "startup-secret"}}
+            ),
+            "missions.items[0].startup_actions[0].effective_model must be a string or null",
+        ),
     ],
 )
 def test_validate_project_view_contract_rejects_mission_summary_drift(

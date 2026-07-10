@@ -1350,33 +1350,62 @@ class StateStore:
 
     @staticmethod
     def _mission_summaries(missions: list[dict[str, Any]]) -> dict[str, Any]:
-        selected_agent_fields = (
-            "agent_id",
-            "provider",
-            "role",
-            "workspace_mode",
-            "runtime_status",
-            "effective_model",
-            "model_source",
-            "blocker",
-        )
-        startup_action_fields = (
-            "agent_id",
-            "action",
-            "runtime_status",
-            "effective_model",
-            "model_source",
-            "blocker",
-        )
+        selected_agent_fields = {
+            "agent_id": False,
+            "provider": False,
+            "role": False,
+            "workspace_mode": False,
+            "runtime_status": False,
+            "effective_model": True,
+            "model_source": False,
+            "blocker": True,
+        }
+        startup_action_fields = {
+            "agent_id": False,
+            "action": False,
+            "runtime_status": False,
+            "effective_model": True,
+            "model_source": False,
+            "blocker": True,
+        }
 
-        def compact_entries(value: Any, fields: tuple[str, ...]) -> list[dict[str, Any]]:
+        def compact_entries(
+            value: Any, fields: dict[str, bool]
+        ) -> list[dict[str, Any]]:
             if not isinstance(value, list):
                 return []
-            return [
-                {field: entry.get(field) for field in fields if field in entry}
-                for entry in value
-                if isinstance(entry, dict)
-            ]
+            items: list[dict[str, Any]] = []
+            for entry in value:
+                if not isinstance(entry, dict):
+                    continue
+                compact: dict[str, Any] = {}
+                for field, nullable in fields.items():
+                    if field not in entry:
+                        continue
+                    field_value = entry[field]
+                    if isinstance(field_value, str) or (nullable and field_value is None):
+                        compact[field] = field_value
+                items.append(compact)
+            return items
+
+        def compact_leader_backend(mission: dict[str, Any]) -> dict[str, Any]:
+            fallback = leader_backend_identity(
+                mission.get("provider") if isinstance(mission.get("provider"), str) else None,
+                mission.get("model") if isinstance(mission.get("model"), str) else None,
+            )
+            source = mission.get("leader_backend")
+            if not isinstance(source, dict):
+                return fallback
+            compact: dict[str, Any] = {}
+            for field, fallback_value in fallback.items():
+                value = source.get(field, fallback_value)
+                if isinstance(fallback_value, bool):
+                    compact[field] = value if isinstance(value, bool) else fallback_value
+                elif fallback_value is None:
+                    compact[field] = value if value is None or isinstance(value, str) else None
+                else:
+                    compact[field] = value if isinstance(value, str) else fallback_value
+            return compact
 
         items = []
         for mission in missions:
@@ -1391,10 +1420,16 @@ class StateStore:
                     "stop_reason": mission.get("stop_reason"),
                     "can_start": mission.get("can_start"),
                     "can_resume": status in {MISSION_STATUSES[4], MISSION_STATUSES[5]},
-                    "blockers": mission.get("blockers", []),
+                    "blockers": [
+                        blocker
+                        for blocker in mission.get("blockers", [])
+                        if isinstance(blocker, str)
+                    ]
+                    if isinstance(mission.get("blockers"), list)
+                    else [],
                     "provider": mission.get("provider"),
                     "model": mission.get("model"),
-                    "leader_backend": mission.get("leader_backend"),
+                    "leader_backend": compact_leader_backend(mission),
                     "plan_id": mission.get("plan_id"),
                     "plan_hash": mission.get("plan_hash"),
                     "workflow_run_id": mission.get("workflow_run_id"),
