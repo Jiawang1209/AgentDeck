@@ -239,6 +239,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "run-schema.md",
         "run-loop-schema.md",
         "run-loop-all-schema.md",
+        "workflow-schema.md",
         "demo-schema.md",
         "plans-schema.md",
         "release-schema.md",
@@ -269,7 +270,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 27
+    assert payload["count"] == 28
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -280,6 +281,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "run",
         "run-loop",
         "run-loop-all",
+        "workflow",
         "demo",
         "plans",
         "release",
@@ -5132,6 +5134,23 @@ def test_validate_run_loop_contract_rejects_bad_mode_and_reason():
     bad3 = dict(run_loop_example())
     bad3["safety"] = "inspect"
     assert not validate_run_loop_contract(bad3)["ok"]
+
+
+def test_workflow_contract_response_exposes_examples(tmp_path: Path) -> None:
+    from agentdeck.contracts import (
+        validate_workflow_preview_contract,
+        validate_workflow_status_contract,
+        workflow_contract_response,
+    )
+
+    payload = workflow_contract_response(
+        tmp_path / "workflow-schema.md", include_example=True
+    )
+
+    assert payload["name"] == "workflow"
+    assert payload["preview_command"] == "agentdeck workflow preview --plan-id <id>"
+    assert validate_workflow_preview_contract(payload["example_preview"])["ok"] is True
+    assert validate_workflow_status_contract(payload["example_status"])["ok"] is True
 
 
 def test_leader_chat_contract_exposes_run_loop_preview_card_fields():

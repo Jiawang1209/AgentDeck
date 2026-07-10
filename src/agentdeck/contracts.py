@@ -75,6 +75,12 @@ CONTRACT_INDEX_SPECS = (
         "run-loop-all-schema.md",
     ),
     (
+        "workflow",
+        "agentdeck contract workflow",
+        "agentdeck contract workflow --example",
+        "workflow-schema.md",
+    ),
+    (
         "demo",
         "agentdeck contract demo",
         "agentdeck contract demo --example",
@@ -2107,6 +2113,93 @@ RUN_LOOP_ALL_RESPONSE_FIELDS = (
 RUN_LOOP_ALL_PLAN_FIELDS = (
     "plan_id", "task", "auto_approved", "dispatched", "blocked",
     "skipped", "skipped_contention", "gate", "next_command",
+)
+
+WORKFLOW_PREVIEW_RESPONSE_FIELDS = (
+    "schema_version",
+    "ok",
+    "mode",
+    "safety",
+    "plan_id",
+    "plan_hash",
+    "timeout_seconds",
+    "step_count",
+    "steps",
+    "blockers",
+    "can_run",
+    "confirm_command",
+    "controls",
+)
+
+WORKFLOW_STEP_FIELDS = (
+    "step",
+    "agent_id",
+    "role",
+    "task",
+    "task_hash",
+    "runtime_status",
+    "pane_id",
+    "ready",
+    "blocker",
+)
+
+WORKFLOW_STATUS_RESPONSE_FIELDS = (
+    "schema_version",
+    "ok",
+    "mode",
+    "safety",
+    "run_id",
+    "plan_id",
+    "plan_hash",
+    "status",
+    "current_step",
+    "step_count",
+    "timeout_seconds",
+    "turns",
+    "stop_reason",
+    "created_at",
+    "updated_at",
+    "completed_at",
+    "can_resume",
+    "status_command",
+    "resume_command",
+    "controls",
+)
+
+WORKFLOW_TURN_FIELDS = (
+    "step",
+    "agent_id",
+    "handoff_token",
+    "status",
+    "message_id",
+    "job_id",
+    "reply_id",
+    "handoff",
+    "artifact_paths",
+    "trace_command",
+    "started_at",
+    "completed_at",
+)
+
+WORKFLOW_STATUSES = ("running", "completed", "stopped", "interrupted")
+WORKFLOW_TURN_STATUSES = (
+    "pending",
+    "dispatched",
+    "completed",
+    "blocked",
+    "failed",
+    "timed_out",
+)
+WORKFLOW_STOP_REASONS = (
+    "agent_unavailable",
+    "pane_lost",
+    "timed_out",
+    "invalid_reply",
+    "worker_blocked",
+    "worker_failed",
+    "plan_drift",
+    "contract_failed",
+    "interrupted",
 )
 
 RUN_START_RESPONSE_FIELDS = (
@@ -4281,6 +4374,244 @@ def validate_run_loop_contract(payload: dict[str, object]) -> dict[str, object]:
         if not isinstance(payload.get(list_field), list):
             errors.append(f"run_loop.{list_field} must be a list")
     return {"ok": not errors, "errors": errors}
+
+
+def workflow_preview_example() -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "ok": True,
+        "mode": "workflow_preview",
+        "safety": "inspect",
+        "plan_id": "pln_example",
+        "plan_hash": "sha256:" + "a" * 64,
+        "timeout_seconds": 300,
+        "step_count": 2,
+        "steps": [
+            {
+                "step": 1,
+                "agent_id": "planner",
+                "role": "planning",
+                "task": "Prepare evidence",
+                "task_hash": "sha256:" + "b" * 64,
+                "runtime_status": "running",
+                "pane_id": "%1",
+                "ready": True,
+                "blocker": None,
+            },
+            {
+                "step": 2,
+                "agent_id": "reviewer",
+                "role": "review",
+                "task": "Review evidence",
+                "task_hash": "sha256:" + "c" * 64,
+                "runtime_status": "running",
+                "pane_id": "%2",
+                "ready": True,
+                "blocker": None,
+            },
+        ],
+        "blockers": [],
+        "can_run": True,
+        "confirm_command": (
+            "agentdeck workflow run --plan-id pln_example --timeout 300 --confirm"
+        ),
+        "controls": [
+            {
+                "kind": "execute",
+                "label": "Run workflow",
+                "command": (
+                    "agentdeck workflow run --plan-id pln_example --timeout 300 --confirm"
+                ),
+                "safety": "delegated",
+                "enabled": True,
+                "blocker": None,
+            }
+        ],
+    }
+
+
+def workflow_status_example() -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "ok": True,
+        "mode": "workflow_status",
+        "safety": "inspect",
+        "run_id": "wfr_example",
+        "plan_id": "pln_example",
+        "plan_hash": "sha256:" + "a" * 64,
+        "status": "stopped",
+        "current_step": 2,
+        "step_count": 2,
+        "timeout_seconds": 300,
+        "turns": [
+            {
+                "step": 1,
+                "agent_id": "planner",
+                "handoff_token": "wfr_example_step_1",
+                "status": "completed",
+                "message_id": "msg_example",
+                "job_id": "job_example",
+                "reply_id": "rep_example",
+                "handoff": {
+                    "summary": "Evidence prepared",
+                    "verification": "pytest",
+                },
+                "artifact_paths": ["docs/result.md"],
+                "trace_command": "agentdeck trace --id rep_example",
+                "started_at": "2026-07-10T00:00:00+00:00",
+                "completed_at": "2026-07-10T00:00:01+00:00",
+            }
+        ],
+        "stop_reason": "timed_out",
+        "created_at": "2026-07-10T00:00:00+00:00",
+        "updated_at": "2026-07-10T00:05:00+00:00",
+        "completed_at": None,
+        "can_resume": True,
+        "status_command": "agentdeck workflow status --run-id wfr_example",
+        "resume_command": "agentdeck workflow resume --run-id wfr_example --confirm",
+        "controls": [
+            {
+                "kind": "execute",
+                "label": "Resume workflow",
+                "command": "agentdeck workflow resume --run-id wfr_example --confirm",
+                "safety": "delegated",
+                "enabled": True,
+                "blocker": None,
+            }
+        ],
+    }
+
+
+def validate_workflow_preview_contract(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    errors: list[str] = []
+    for field in WORKFLOW_PREVIEW_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing workflow_preview field: {field}")
+    if payload.get("mode") != "workflow_preview":
+        errors.append("workflow_preview.mode must be workflow_preview")
+    if payload.get("safety") != "inspect":
+        errors.append("workflow_preview.safety must be inspect")
+    if not isinstance(payload.get("timeout_seconds"), int) or payload.get(
+        "timeout_seconds", 0
+    ) <= 0:
+        errors.append("workflow_preview.timeout_seconds must be a positive integer")
+    steps = payload.get("steps")
+    if not isinstance(steps, list):
+        errors.append("workflow_preview.steps must be a list")
+        steps = []
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            errors.append(f"workflow_preview.steps[{index}] must be an object")
+            continue
+        missing = [field for field in WORKFLOW_STEP_FIELDS if field not in step]
+        if missing:
+            errors.append(
+                f"workflow_preview.steps[{index}] missing fields: {', '.join(missing)}"
+            )
+    blockers = payload.get("blockers")
+    if not isinstance(blockers, list):
+        errors.append("workflow_preview.blockers must be a list")
+        blockers = []
+    if payload.get("step_count") != len(steps):
+        errors.append("workflow_preview.step_count must equal len(steps)")
+    if blockers and payload.get("can_run") is not False:
+        errors.append("workflow_preview.can_run must be false when blockers exist")
+    if not blockers and payload.get("can_run") is not True:
+        errors.append("workflow_preview.can_run must be true when blockers are empty")
+    if not isinstance(payload.get("confirm_command"), str) or "--confirm" not in str(
+        payload.get("confirm_command")
+    ):
+        errors.append("workflow_preview.confirm_command must require --confirm")
+    if not isinstance(payload.get("controls"), list):
+        errors.append("workflow_preview.controls must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_workflow_status_contract(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    errors: list[str] = []
+    for field in WORKFLOW_STATUS_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing workflow_status field: {field}")
+    if payload.get("mode") != "workflow_status":
+        errors.append("workflow_status.mode must be workflow_status")
+    if payload.get("safety") != "inspect":
+        errors.append("workflow_status.safety must be inspect")
+    if payload.get("status") not in WORKFLOW_STATUSES:
+        errors.append(f"workflow_status.status must be one of {WORKFLOW_STATUSES}")
+    if not isinstance(payload.get("timeout_seconds"), int) or payload.get(
+        "timeout_seconds", 0
+    ) <= 0:
+        errors.append("workflow_status.timeout_seconds must be a positive integer")
+    turns = payload.get("turns")
+    if not isinstance(turns, list):
+        errors.append("workflow_status.turns must be a list")
+        turns = []
+    for index, turn in enumerate(turns):
+        if not isinstance(turn, dict):
+            errors.append(f"workflow_status.turns[{index}] must be an object")
+            continue
+        missing = [field for field in WORKFLOW_TURN_FIELDS if field not in turn]
+        if missing:
+            errors.append(
+                f"workflow_status.turns[{index}] missing fields: {', '.join(missing)}"
+            )
+        if turn.get("status") not in WORKFLOW_TURN_STATUSES:
+            errors.append(
+                f"workflow_status.turns[{index}].status must be a workflow turn status"
+            )
+    can_resume = payload.get("can_resume")
+    expected_can_resume = payload.get("status") in {"stopped", "interrupted"}
+    if can_resume is not expected_can_resume:
+        errors.append(
+            "workflow_status.can_resume must be true only for stopped/interrupted runs"
+        )
+    if can_resume and "--confirm" not in str(payload.get("resume_command") or ""):
+        errors.append("workflow_status.resume_command must require --confirm")
+    if not isinstance(payload.get("controls"), list):
+        errors.append("workflow_status.controls must be a list")
+    return {"ok": not errors, "errors": errors}
+
+
+def workflow_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "name": "workflow",
+        "preview_command": "agentdeck workflow preview --plan-id <id>",
+        "run_command": "agentdeck workflow run --plan-id <id> --confirm",
+        "status_command": "agentdeck workflow status --run-id <id>",
+        "resume_command": "agentdeck workflow resume --run-id <id> --confirm",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "preview_response_fields": list(WORKFLOW_PREVIEW_RESPONSE_FIELDS),
+        "step_fields": list(WORKFLOW_STEP_FIELDS),
+        "status_response_fields": list(WORKFLOW_STATUS_RESPONSE_FIELDS),
+        "turn_fields": list(WORKFLOW_TURN_FIELDS),
+        "statuses": list(WORKFLOW_STATUSES),
+        "turn_statuses": list(WORKFLOW_TURN_STATUSES),
+        "stop_reasons": list(WORKFLOW_STOP_REASONS),
+        "run_loop_contract": "agentdeck contract run-loop",
+    }
+
+
+def workflow_contract_response(
+    contract_path: Path, include_example: bool = False
+) -> dict[str, object]:
+    payload = workflow_contract_payload(contract_path)
+    if include_example:
+        preview = workflow_preview_example()
+        status = workflow_status_example()
+        payload.update(
+            {
+                "example": True,
+                "example_preview": preview,
+                "example_status": status,
+            }
+        )
+    return payload
 
 
 def run_loop_all_example() -> dict[str, object]:
