@@ -190,7 +190,7 @@ agentdeck workflow resume --run-id wfr_xxx --confirm
 
 `agentdeck workflow` 把一个既有 Leader plan 的有序 `steps[]` 显式解释为固定的 A→B→C 线性链。先用 `preview` 检查 plan hash、步骤和已存 runtime binding；只有 `run --confirm` 才创建 workflow run，并在前台逐步等待当前 Worker 的 token-correlated 结构化回复。完成回复会被压缩成 summary/verification/risks/next_steps/artifact trace，再交给下一 Worker，不会转发完整 pane 历史。
 
-运行中遇到 blocked、failed、结构错误、timeout、pane 丢失或 plan drift 会立刻停止，之后可用 `status` 检查、用 `resume --confirm` 恢复；恢复不会重复发送已经派发或完成的 step。该命令不 spawn agent、不调用 Leader provider、不自动 ack inbox、不扩大原计划或 worker 权限，也不改变普通 approval/dispatch/capture-reply/run-loop 的行为。机器契约通过 `agentdeck contract workflow --example` 发现，详见 `docs/contracts/workflow-schema.md`。
+运行中遇到 blocked、failed、完整但非法的结构化回复、timeout、pane 丢失或 plan drift 会立刻停止，之后可用 `status` 检查、用 `resume --confirm` 恢复；恢复不会重复发送已经派发或完成的 step。流式回复字段尚未齐全时会继续等待；Codex/Claude TUI 的已知首行图标会被规范化，提示词回显不会被误认作回复，tmux 发送失败会安全落盘为 `stopped/pane_lost`。该命令不 spawn agent、不调用 Leader provider、不自动 ack inbox、不扩大原计划或 worker 权限，也不改变普通 approval/dispatch/capture-reply/run-loop 的行为。机器契约通过 `agentdeck contract workflow --example` 发现，详见 `docs/contracts/workflow-schema.md`。
 
 生成这类 plan 前可以显式把内置 `sequential-handoff` skill 加载给 Leader：`agentdeck skills load --name sequential-handoff --agent leader --purpose "plan a fixed sequential handoff"`。它通过最多 8 条、每条最多 240 字符的 compact `planning_guidance` 指导真实 Codex/Claude Leader 生成连续固定步骤、明确上游 handoff、产物/验证/失败条件，并在 summary 中建议 preview → confirmed run。完整 `content_snapshot` 仍不会进入 Leader prompt；Worker load 不会把 guidance 注入 Leader；skill 本身不审批、不派发，也不适用于并行、DAG 或循环工作流。
 

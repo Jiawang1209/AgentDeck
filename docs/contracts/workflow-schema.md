@@ -54,7 +54,7 @@ pending | dispatched | completed | blocked | failed | timed_out
 
 ## Correlated worker reply
 
-Each dispatched prompt contains a unique token derived from workflow run id and step number. Only the newest block with the exact active token is accepted:
+Each dispatched prompt contains a unique token derived from workflow run id and step number. The prompt names the token separately from the response template so echoed prompt text cannot correlate as a reply. Only the newest complete block with the exact active token is accepted:
 
 ```text
 handoff_token: <token>
@@ -66,7 +66,7 @@ next_steps: <text>
 full_output_path: <optional path>
 ```
 
-Stale or unrelated pane text cannot advance the chain. A matching malformed block stops the workflow. A completed reply produces a compact handoff for the next step; full pane history is never forwarded.
+Stale or unrelated pane text cannot advance the chain. Known Codex/Claude TUI bullet prefixes are presentation-only and ignored. A matching partial streaming block keeps waiting; a complete block with an invalid status stops the workflow. A completed reply produces a compact handoff for the next step; full pane history is never forwarded.
 
 ## Stop and audit semantics
 
@@ -74,4 +74,4 @@ The engine stops before dispatching any later step on agent/runtime loss, timeou
 
 Audit events include `workflow_started`, `workflow_step_dispatched`, `workflow_step_completed`, `workflow_stopped`, `workflow_resumed`, `workflow_completed`, and `workflow_contract_failed`. Events store compact provenance, not full prompts or secrets.
 
-The foreground runner never spawns agents, calls the Leader provider, acknowledges inbox items, or changes worker tool/file permissions.
+The foreground runner never spawns agents, calls the Leader provider, acknowledges inbox items, or changes worker tool/file permissions. A tmux send failure is persisted as `stopped` with `pane_lost`; the CLI does not leave the workflow in a false `running` state.

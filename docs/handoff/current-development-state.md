@@ -4,13 +4,15 @@ Updated: 2026-07-10
 
 ## Sequential workflow core — implemented
 
-### Built-in sequential-handoff planning skill — implemented, acceptance pending
+### Built-in sequential-handoff planning skill — implemented and accepted
 
 `planning_guidance[]` is now a bounded audited skill field (maximum eight entries, 240 characters each) that follows explicit load records into ProjectView and plan provenance. Only guidance from an `agent_id=leader` load enters API/CLI Leader prompts; full `content_snapshot` remains excluded. Existing skills default to an empty list.
 
 The generic built-in `sequential-handoff` skill (`version=1.0.0`) shapes fixed consecutive plans, explicit compact handoffs, per-step evidence/failure conditions, and a workflow preview → human-confirmed run summary. It is never auto-loaded, never injected into Workers, grants no execution permission, and rejects parallel/DAG/cycle/dynamic-step workloads.
 
-The current next action is GREEN/counterexample skill evaluation, full regression, then the isolated real Codex/Claude eight-turn 百家姓 acceptance run requested by the user.
+GREEN/counterexample evaluation and full regression are complete. The isolated real acceptance used Codex and Claude Workers in one resumable run (`wfr_d1bd55232a66`): all eight alternating turns completed and produced the expected opening 32 surnames. The durable evidence is `docs/validation/2026-07-10-codex-claude-baijiaxing-handoff.md`.
+
+The real run also hardened terminal interoperability: echoed prompt templates no longer correlate as replies; known Codex/Claude TUI bullets are normalized; partial streaming blocks wait instead of failing early; tmux multiline paste pauses briefly before submit; and send failures persist `stopped/pane_lost` instead of leaving a crashing `running` workflow. Operator setup still must clear first-run trust prompts and provide panes large enough to retain the structured reply token.
 
 The generic A→B→C handoff engine is implemented and committed. It is intentionally separate from ordinary `run-loop`:
 
@@ -23,7 +25,7 @@ The generic A→B→C handoff engine is implemented and committed. It is intenti
 
 Safety boundary: workflow execution never expands the plan, spawns agents, calls a Leader provider, auto-acks inbox items, or grants worker permissions. Plan drift, unavailable runtime, pane loss, invalid reply, timeout, blocked, and failed stop the chain. Ordinary approval/dispatch/capture-reply/run-loop behavior is unchanged.
 
-Deferred: the built-in `sequential-handoff` skill, the real Codex/Claude 百家姓 acceptance run, and DAG/cycle semantics are not part of this core slice.
+Deferred: DAG/cycle semantics are not part of this linear workflow core.
 
 ## Golden demo guide slice — implemented
 
@@ -57,7 +59,7 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-在已交付的顺序工作流 core 上完成下一独立 slice：设计并实现可审计的 built-in `sequential-handoff` skill，用它指导 Leader 生成适合 A→B→C handoff 的计划；之后再运行真实 Codex/Claude 百家姓接龙验收。不得把 demo 文本写进 core，不得顺带扩展 DAG/cycle。
+已完成：可审计 built-in `sequential-handoff` skill、真实 Codex/Claude 八轮百家姓接龙和终端兼容修复均已落地并验证。下一开发目标应由 human 重新选择；不得顺带扩展 DAG/cycle 或 remote marketplace。
 
 ## Canonical Handoff Inputs
 

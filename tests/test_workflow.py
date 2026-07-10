@@ -6,6 +6,7 @@ from agentdeck.config import load_config, write_default_config
 from agentdeck.workflow import (
     authorized_steps,
     build_compact_handoff,
+    build_workflow_prompt,
     parse_correlated_reply,
     run_sequential_workflow,
     workflow_plan_hash,
@@ -79,12 +80,68 @@ full_output_path: docs/result.md"""
     assert reply["full_output_path"] == "docs/result.md"
 
 
-def test_parse_correlated_reply_rejects_matching_invalid_block() -> None:
-    with pytest.raises(ValueError, match="missing workflow reply field: verification"):
+def test_parse_correlated_reply_accepts_codex_tui_bullet_prefix() -> None:
+    output = """• handoff_token: wfr_demo_step_1
+  status: completed
+  summary: 赵钱孙李
+  verification: 赵钱孙李
+  risks: none
+  next_steps: continue"""
+
+    reply = parse_correlated_reply(output, "wfr_demo_step_1")
+
+    assert reply is not None
+    assert reply["summary"] == "赵钱孙李"
+
+
+def test_parse_correlated_reply_accepts_claude_tui_bullet_prefix() -> None:
+    output = """⏺ handoff_token: wfr_demo_step_2
+  status: completed
+  summary: 周吴郑王
+  verification: 周吴郑王
+  risks: none
+  next_steps: continue"""
+
+    reply = parse_correlated_reply(output, "wfr_demo_step_2")
+
+    assert reply is not None
+    assert reply["summary"] == "周吴郑王"
+
+
+def test_parse_correlated_reply_waits_for_matching_partial_block() -> None:
+    assert (
         parse_correlated_reply(
             "handoff_token: wfr_demo_step_1\nstatus: completed\nsummary: incomplete",
             "wfr_demo_step_1",
         )
+        is None
+    )
+
+
+def test_parse_correlated_reply_rejects_matching_invalid_status() -> None:
+    with pytest.raises(ValueError, match="invalid workflow reply status: unknown"):
+        parse_correlated_reply(
+            """handoff_token: wfr_demo_step_1
+status: unknown
+summary: invalid
+verification: invalid
+risks: none
+next_steps: none""",
+            "wfr_demo_step_1",
+        )
+
+
+def test_workflow_prompt_echo_is_not_a_correlated_reply() -> None:
+    token = "wfr_demo_step_1"
+    prompt = build_workflow_prompt(
+        role="planning",
+        role_prompt="Plan carefully.",
+        task="Prepare evidence",
+        handoff_token=token,
+        previous_handoff=None,
+    )
+
+    assert parse_correlated_reply(prompt, token) is None
 
 
 def test_build_compact_handoff_excludes_full_reply_text() -> None:
@@ -153,9 +210,9 @@ class CorrelatedFakeBackend:
     def capture_output(self, _config, pane_id: str, lines: int = 200) -> str:
         prompt = next(text for sent_pane, text in reversed(self.sent) if sent_pane == pane_id)
         token = next(
-            line.split(":", 1)[1].strip()
+            line.rsplit(":", 1)[1].strip()
             for line in prompt.splitlines()
-            if line.startswith("handoff_token:")
+            if line.startswith("Complete only this task. Use this handoff token exactly:")
         )
         return (
             "unrelated pane history that must not be forwarded\n"
@@ -181,6 +238,11 @@ class ToggleReplyBackend(CorrelatedFakeBackend):
         if not self.respond:
             return "still working"
         return super().capture_output(config, pane_id, lines)
+
+
+class SendFailureBackend(CorrelatedFakeBackend):
+    def send_input(self, _config, pane_id: str, text: str) -> None:
+        raise RuntimeError(f"pane disappeared while sending to {pane_id}")
 
 
 def test_runner_completes_two_steps_with_compact_correlated_handoff(tmp_path) -> None:
@@ -243,6 +305,49 @@ def test_runner_completes_two_steps_with_compact_correlated_handoff(tmp_path) ->
         "workflow_step_dispatched",
         "workflow_step_completed",
         "workflow_completed",
+    ]
+
+
+def test_runner_stops_and_persists_when_send_input_fails(tmp_path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    config = load_config(root)
+    store = StateStore(root)
+    state = store.load()
+    state["agents"]["planner"] = {
+        "agent_id": "planner",
+        "pane_id": "%1",
+        "session_name": "agentdeck",
+        "cwd": str(root),
+        "status": "running",
+    }
+    store.save(state)
+    plan = store.record_plan(
+        "Prepare and review evidence", "fake", "fake-plan", PLAN["plan"]
+    )
+    run = store.create_workflow_run(
+        plan_id=str(plan["plan_id"]),
+        plan_hash=workflow_plan_hash(plan),
+        timeout_seconds=30,
+        authorized_steps=authorized_steps(plan),
+    )
+
+    result = run_sequential_workflow(
+        config=config,
+        store=store,
+        backend=SendFailureBackend(),
+        run_id=str(run["run_id"]),
+        poll_interval=0,
+    )
+
+    assert result["status"] == "stopped"
+    assert result["stop_reason"] == "pane_lost"
+    assert result["turns"][0]["status"] == "failed"
+    assert store.workflow_run_by_id(str(run["run_id"])) == result
+    assert [event["event_type"] for event in store.all_events()] == [
+        "workflow_stopped"
     ]
 
 

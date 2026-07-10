@@ -4,13 +4,21 @@
 
 ## 2026-07-10
 
-### Current - Built-in sequential-handoff planning skill
+### Current - Real Codex/Claude sequential handoff acceptance and TUI hardening
+
+- **类型**: fix + test
+- **动机**: 真实八轮百家姓验收暴露出 fake runtime 无法覆盖的 tmux/TUI 边界：首次启动信任页、极小 pane、Codex 多行粘贴提交竞态、提示词回显、Codex/Claude 回复首行图标，以及流式回复尚未完整时的过早判错。
+- **What**: workflow prompt 不再把真实 token 放在可被回显误判的 `handoff_token:` 模板行；parser 接受 Codex/Claude 已知 TUI 前缀，并把字段未齐视为“继续等待”、只对字段齐全但 status 非法的回复报错；tmux 多行输入与 Enter 之间增加 150ms 提交间隔；`send_input` 异常会把 turn/workflow 安全落盘为 `failed/stopped` + `pane_lost`，不再 traceback 后留下悬空 `running`。
+- **真实验收**: 临时项目中 Leader=`codex-cli/gpt-5.5`，Worker 按 `planner(Codex gpt-5.5)` / `reviewer(Claude Opus 4.8)` 交替执行。plan `pln_eda9ac689677`、workflow `wfr_d1bd55232a66` 最终 `completed` / `current_step=9`，八轮 summary 依次为 `赵钱孙李 / 周吴郑王 / 冯陈褚卫 / 蒋沈韩杨 / 朱秦尤许 / 何吕施张 / 孔曹严华 / 金魏陶姜`，所有 turn 均 `completed`。
+- **验证**: runtime/workflow focused tests 13 项通过；完整回归、compileall 和验收报告在本轮收尾验证。
+
+### Built-in sequential-handoff planning skill
 
 - **类型**: feat
 - **动机**: 顺序 workflow core 能自动接力，但真实 Codex/Claude Leader 只接收 compact loaded-skill metadata，若只写 skill 正文则无法影响规划。
 - **What**: 新增 bounded `planning_guidance[]`（最多 8×240 字符）并贯通 SkillSnapshot、显式 load record、ProjectView、plan provenance 和 provider prompt；只有 Leader-owned load 注入 guidance，完整 `content_snapshot` 继续排除。新增通用 built-in `sequential-handoff`（1.0.0），指导固定线性步骤、compact handoff、逐步产物/验证/失败条件和 preview→confirmed run。
 - **影响**: 人类显式 load 后，真实 Leader provider 能获得可审计且 bounded 的规划指导；skill 不 auto-load、不注入 Worker、不授权执行，也拒绝 parallel/DAG/cycle/dynamic-step 需求。百家姓不在 skill/core 中，只作为后续真实验收数据。
-- **验证**: RED baseline 为 2/6；metadata/provider/skill/contract focused tests 已通过。GREEN forward test、全量 pytest 和真实 Codex/Claude 验收将在本轮后续完成。
+- **验证**: RED baseline 为 2/6，GREEN fresh-agent evaluation 为 6/6，incompatible counterexample 正确拒绝 workflow guidance；全量 pytest 776 项通过。真实 Codex/Claude 八轮验收已完成，详见 `docs/validation/2026-07-10-codex-claude-baijiaxing-handoff.md`。
 
 ### Current - Foreground resumable sequential workflow engine
 

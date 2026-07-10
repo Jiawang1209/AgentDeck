@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import time
 
 from agentdeck.models import AgentSpec, RuntimeConfig
 
 from .base import RuntimeDoctorResult
+
+
+INPUT_SUBMIT_DELAY_SECONDS = 0.15
 
 
 class TmuxBackend:
@@ -79,6 +83,7 @@ class TmuxBackend:
             ["tmux", "-L", config.socket_name, "send-keys", "-t", pane_id, "-l", text],
             check=True,
         )
+        time.sleep(INPUT_SUBMIT_DELAY_SECONDS)
         subprocess.run(
             ["tmux", "-L", config.socket_name, "send-keys", "-t", pane_id, "Enter"],
             check=True,

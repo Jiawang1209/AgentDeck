@@ -108,9 +108,9 @@ class WorkflowFakeBackend(FakeTmuxBackend):
         self.captured.append((pane_id, lines))
         prompt = next(text for sent_pane, text in reversed(self.sent) if sent_pane == pane_id)
         token = next(
-            line.split(":", 1)[1].strip()
+            line.rsplit(":", 1)[1].strip()
             for line in prompt.splitlines()
-            if line.startswith("handoff_token:")
+            if line.startswith("Complete only this task. Use this handoff token exactly:")
         )
         return (
             f"handoff_token: {token}\n"

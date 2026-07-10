@@ -61,6 +61,10 @@ def _reply_blocks(output: str) -> list[dict[str, str]]:
     current: dict[str, str] | None = None
     for raw_line in output.splitlines():
         line = raw_line.strip()
+        for tui_prefix in ("• ", "› ", "⏺ "):
+            if line.startswith(tui_prefix):
+                line = line.removeprefix(tui_prefix).lstrip()
+                break
         if line.startswith("handoff_token:"):
             if current is not None:
                 blocks.append(current)
@@ -85,7 +89,7 @@ def parse_correlated_reply(output: str, token: str) -> dict[str, str] | None:
     reply = matching[-1]
     for field in REPLY_FIELDS:
         if not reply.get(field):
-            raise ValueError(f"missing workflow reply field: {field}")
+            return None
     if reply["status"] not in REPLY_STATUSES:
         raise ValueError(f"invalid workflow reply status: {reply['status']}")
     return reply
@@ -132,8 +136,10 @@ def build_workflow_prompt(
         f"Task: {task}\n"
         "Previous compact handoff:\n"
         f"{handoff}\n\n"
-        "Complete only this task. Return exactly one structured block using this token:\n"
-        f"handoff_token: {handoff_token}\n"
+        "Complete only this task. "
+        f"Use this handoff token exactly: {handoff_token}\n"
+        "Return exactly one structured block:\n"
+        "handoff_token: <provided token>\n"
         "status: completed | blocked | failed\n"
         "summary: <text>\n"
         "verification: <text>\n"
@@ -303,7 +309,17 @@ def run_sequential_workflow(
                 turns=turns,
                 stop_reason=None,
             )
-            backend.send_input(config.runtime, pane_id, prompt)
+            try:
+                backend.send_input(config.runtime, pane_id, prompt)
+            except Exception:
+                return _stop_workflow(
+                    store,
+                    run_id=run_id,
+                    turns=turns,
+                    turn=turn,
+                    turn_status="failed",
+                    reason="pane_lost",
+                )
             store.append_event(
                 EventRecord.create(
                     "workflow_step_dispatched",
