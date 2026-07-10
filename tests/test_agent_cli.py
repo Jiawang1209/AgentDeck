@@ -9975,7 +9975,6 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
             "pane_id": None,
             "approval_required": True,
             "dispatch_ready": False,
-            "credentials": {"api_key": "leader-secret"},
         },
         plan_id="pln_demo",
         plan_hash="sha256:plan",
@@ -9988,8 +9987,6 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
                 "runtime_status": "running",
                 "effective_model": "gpt-5.5",
                 "model_source": "configured",
-                "command": "codex --secret token",
-                "blocker": {"full_prompt": "selected-secret"},
             },
             {
                 "agent_id": "reviewer",
@@ -9997,10 +9994,9 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
                 "role": "review",
                 "workspace_mode": "shared",
                 "runtime_status": "configured",
+                "effective_model": "opus-4.8",
                 "model_source": "leader",
                 "blocker": "safe blocker text mentioning credentials",
-                "prompt": "full worker prompt",
-                "effective_model": [{"credentials": "selected-model-secret"}],
             },
         ],
         startup_actions=[
@@ -10010,25 +10006,50 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
                 "runtime_status": "running",
                 "effective_model": "gpt-5.5",
                 "model_source": "configured",
-                "launch_command": "codex --secret token",
-                "blocker": {"command": "startup-secret"},
             },
             {
                 "agent_id": "reviewer",
                 "action": "spawn",
                 "runtime_status": "configured",
+                "effective_model": "opus-4.8",
                 "model_source": "leader",
                 "blocker": None,
-                "credentials": {"token": "secret"},
-                "effective_model": {"credentials": "startup-model-secret"},
             },
         ],
         step_count=2,
         timeout_seconds=180,
-        launch_command="codex --dangerously-use-secret token",
-        prompt="full secret prompt",
-        credentials={"api_key": "secret"},
     )
+    state = store.load()
+    raw_mission = state["missions"][-1]
+    raw_mission["leader_backend"]["credentials"] = {"api_key": "leader-secret"}
+    raw_mission["selected_agents"][0].update(
+        {
+            "command": "codex --secret token",
+            "blocker": {"full_prompt": "selected-secret"},
+        }
+    )
+    raw_mission["selected_agents"][1].update(
+        {
+            "prompt": "full worker prompt",
+            "effective_model": [{"credentials": "selected-model-secret"}],
+        }
+    )
+    raw_mission["startup_actions"][0].update(
+        {
+            "launch_command": "codex --secret token",
+            "blocker": {"command": "startup-secret"},
+        }
+    )
+    raw_mission["startup_actions"][1].update(
+        {
+            "credentials": {"token": "secret"},
+            "effective_model": {"credentials": "startup-model-secret"},
+        }
+    )
+    raw_mission["launch_command"] = "codex --dangerously-use-secret token"
+    raw_mission["prompt"] = "full secret prompt"
+    raw_mission["credentials"] = {"api_key": "secret"}
+    store.save(state)
     state_before = store.state_path.read_bytes()
     events_before = store.events_path.read_bytes()
 
@@ -10046,16 +10067,12 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
         "user_message": "让 Codex 和 Claude 接龙",
         "status": "pending_confirmation",
         "stop_reason": None,
-        "can_start": True,
+        "can_start": False,
         "can_resume": False,
-        "blockers": [],
+        "blockers": ["invalid mission worker summaries"],
         "provider": "fake",
         "model": "fake-plan",
-        "leader_backend": {
-            key: value
-            for key, value in mission["leader_backend"].items()
-            if key != "credentials"
-        },
+        "leader_backend": mission["leader_backend"],
         "plan_id": "pln_demo",
         "plan_hash": "sha256:plan",
         "workflow_run_id": None,
@@ -10072,15 +10089,6 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
                 "effective_model": "gpt-5.5",
                 "model_source": "configured",
             },
-            {
-                "agent_id": "reviewer",
-                "provider": "claude-cli",
-                "role": "review",
-                "workspace_mode": "shared",
-                "runtime_status": "configured",
-                "model_source": "leader",
-                "blocker": "safe blocker text mentioning credentials",
-            },
         ],
         "startup_actions": [
             {
@@ -10089,13 +10097,6 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
                 "runtime_status": "running",
                 "effective_model": "gpt-5.5",
                 "model_source": "configured",
-            },
-            {
-                "agent_id": "reviewer",
-                "action": "spawn",
-                "runtime_status": "configured",
-                "model_source": "leader",
-                "blocker": None,
             },
         ],
         "created_at": mission["created_at"],
@@ -10128,6 +10129,66 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
         assert secret not in serialized_summary
     assert store.state_path.read_bytes() == state_before
     assert store.events_path.read_bytes() == events_before
+
+
+def test_status_handles_malformed_mission_rows_without_empty_worker_sentinels(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    mission = store.create_mission(
+        user_message="让 Codex 和 Claude 接龙",
+        can_start=False,
+        blockers=["no workers selected"],
+        provider="fake",
+        model="fake-plan",
+        leader_backend={
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
+        plan_id="pln_demo",
+        plan_hash="sha256:plan",
+        selected_agents=[],
+        startup_actions=[],
+        step_count=2,
+        timeout_seconds=180,
+    )
+    state = store.load()
+    state["missions"].insert(0, "not-a-mission")
+    unsafe_id_row = dict(state["missions"][-1])
+    unsafe_id_row["mission_id"] = "mis_bad; rm -rf /"
+    state["missions"].insert(1, unsafe_id_row)
+    state["missions"][-1]["can_start"] = True
+    state["missions"][-1]["blockers"] = []
+    state["missions"][-1]["selected_agents"] = [None, {"agent_id": "planner"}]
+    state["missions"][-1]["startup_actions"] = [{"agent_id": "planner"}]
+    store.save(state)
+
+    payload = cli.asdict(store.project_view(cli.load_config(root)))
+
+    summary = payload["missions"]
+    assert summary["count"] == 3
+    assert summary["latest_id"] == mission["mission_id"]
+    assert summary["by_status"] == {"pending_confirmation": 1}
+    assert len(summary["items"]) == 1
+    assert summary["items"][0]["selected_agents"] == []
+    assert summary["items"][0]["startup_actions"] == []
+    assert summary["items"][0]["can_start"] is False
+    assert "invalid mission worker summaries" in summary["items"][0]["blockers"]
+    assert "rm -rf" not in json.dumps(summary, ensure_ascii=False)
+    assert validate_project_view_contract(payload) == {
+        "ok": False,
+        "errors": ["missions.count must equal len(missions.items)"],
+    }
 
 
 def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:

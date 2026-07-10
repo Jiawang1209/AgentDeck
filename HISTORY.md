@@ -4,6 +4,15 @@
 
 ## 2026-07-11
 
+### Enforce Mission state and ProjectView invariants after quality review
+
+- **类型**: fix + test + contract
+- **审查问题**: `update_mission()` 可覆盖 identity/schema/frozen plan/timestamps、写入未知 status/非法 progress 并 reopen completed；ProjectView command 直接插值未验证 mission id；Leader backend 可与顶层 provider/model 矛盾；non-dict Mission row 会 crash，incomplete nested rows 会被压成 `{}` 且仍可能保持 `can_start=true`。
+- **What**: Mission domain 新增 canonical `mis_<12 lowercase hex>` grammar、精确六状态 transition map、共享 selected-agent/startup-action compact 字段与 required schema、canonical command helper。State create 现在校验冻结 identity、provider/model/backend coherence、step/timeout 与 worker/action summaries；update 仅允许显式 mutable 字段，校验类型、单向/恢复迁移、workflow/confirmation 一次性、progress 单调且位于 `0..step_count`，completed terminal。ProjectView 只为 safe id 生成 exact commands；non-dict/unsafe-id row 不生成 item/command，但 raw count 保留以让 validator controlled-fail；nested invalid rows不生成 `{}`，并降级 `can_start=false` + compact blocker。contract 同步验证 coherence、canonical command、required nested fields 和 start gate。
+- **TDD 证据**: State/invariant RED 为 19 failed（经状态规格纠正后 `failed` 保持非法），malformed ProjectView RED 为 non-dict row `AttributeError`，contract adversarial RED 为 6 failed；顶层 corruption count 语义追加测试再次 RED（expected 2, got 1）。最小实现后 Mission suite 112 项、malformed/security ProjectView 2 项、contract adversarial+example 18 项、ProjectView focused 36 项通过。
+- **安全边界**: 不新增 `failed` 状态，不进入 Mission CLI/独立 contract/runner；不调用 provider/tmux，不写事件，不扩大 approval。非法 update 在 record mutation/save 前拒绝且零写；ProjectView corruption 只以 safe compact facts 和 validator error 呈现，绝不从不可信 id 生成 shell command。
+- **验证**: Mission suite 121 项、ProjectView contract focused 36 项、三文件相关回归 661 项、全量 pytest 922 项通过；compileall 与 `git diff --check` 均通过。
+
 ### Harden Mission ProjectView projection after specification review
 
 - **类型**: fix + test + contract

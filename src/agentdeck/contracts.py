@@ -4,7 +4,17 @@ import hashlib
 from copy import deepcopy
 from pathlib import Path
 
-from .mission import MISSION_SCHEMA_VERSION, MISSION_STATUSES
+from .mission import (
+    MISSION_SCHEMA_VERSION,
+    MISSION_SELECTED_AGENT_FIELDS,
+    MISSION_SELECTED_AGENT_REQUIRED_FIELDS,
+    MISSION_STARTUP_ACTION_FIELDS,
+    MISSION_STARTUP_ACTION_REQUIRED_FIELDS,
+    MISSION_STATUSES,
+    MISSION_WORKER_NULLABLE_FIELDS,
+    is_canonical_mission_id,
+    mission_commands,
+)
 from .models import PROJECT_VIEW_SCHEMA_VERSION
 
 
@@ -5497,22 +5507,16 @@ def _validate_project_view_mission_items(
         return paths
 
     selected_agent_types = {
-        "agent_id": "string",
-        "provider": "string",
-        "role": "string",
-        "workspace_mode": "string",
-        "runtime_status": "string",
-        "effective_model": "nullable_string",
-        "model_source": "string",
-        "blocker": "nullable_string",
+        field: "nullable_string" if field in MISSION_WORKER_NULLABLE_FIELDS else "string"
+        for field in MISSION_SELECTED_AGENT_FIELDS
     }
     startup_action_types = {
-        "agent_id": "string",
-        "action": "string",
-        "runtime_status": "string",
-        "effective_model": "nullable_string",
-        "model_source": "string",
-        "blocker": "nullable_string",
+        field: "nullable_string" if field in MISSION_WORKER_NULLABLE_FIELDS else "string"
+        for field in MISSION_STARTUP_ACTION_FIELDS
+    }
+    required_worker_fields = {
+        "selected_agents": MISSION_SELECTED_AGENT_REQUIRED_FIELDS,
+        "startup_actions": MISSION_STARTUP_ACTION_REQUIRED_FIELDS,
     }
     for index, item in enumerate(items):
         if not isinstance(item, dict):
@@ -5539,6 +5543,16 @@ def _validate_project_view_mission_items(
                 not isinstance(item[field], int) or isinstance(item[field], bool)
             ):
                 errors.append(f"missions.items[{index}].{field} must be an integer")
+        current_step = item.get("current_step")
+        step_count = item.get("step_count")
+        if (
+            isinstance(current_step, int)
+            and not isinstance(current_step, bool)
+            and isinstance(step_count, int)
+            and not isinstance(step_count, bool)
+            and (current_step < 0 or current_step > step_count)
+        ):
+            errors.append(f"missions.items[{index}].current_step must be within 0..step_count")
         for field in ("blockers", "selected_agents", "startup_actions"):
             if field in item and not isinstance(item[field], list):
                 errors.append(f"missions.items[{index}].{field} must be a list")
@@ -5587,6 +5601,20 @@ def _validate_project_view_mission_items(
                             f"missions.items[{index}].{field}[{entry_index}].{entry_field} "
                             "must be a string or null"
                         )
+                for required_field in required_worker_fields[field]:
+                    if required_field not in entry:
+                        errors.append(
+                            f"missions.items[{index}].{field}[{entry_index}] "
+                            f"missing required compact field: {required_field}"
+                        )
+                if field == "startup_actions" and entry.get("action") not in {
+                    "reuse",
+                    "spawn",
+                }:
+                    errors.append(
+                        f"missions.items[{index}].startup_actions[{entry_index}].action "
+                        "must be reuse or spawn"
+                    )
         leader_backend = item.get("leader_backend")
         if isinstance(leader_backend, dict):
             _validate_leader_backend(
@@ -5629,6 +5657,14 @@ def _validate_project_view_mission_items(
                         f"missions.items[{index}].leader_backend.{backend_field} "
                         "must be a boolean"
                     )
+            if (
+                leader_backend.get("provider") != item.get("provider")
+                or leader_backend.get("model") != item.get("model")
+            ):
+                errors.append(
+                    f"missions.items[{index}].leader_backend provider/model "
+                    "must match mission provider/model"
+                )
         elif "leader_backend" in item:
             errors.append(f"missions.items[{index}].leader_backend must be an object")
         if item.get("schema_version") != MISSION_SCHEMA_VERSION:
@@ -5637,6 +5673,32 @@ def _validate_project_view_mission_items(
             )
         if item.get("status") not in MISSION_STATUSES:
             errors.append(f"missions.items[{index}].status must be a known mission status")
+        mission_id = item.get("mission_id")
+        if not is_canonical_mission_id(mission_id):
+            errors.append(
+                f"missions.items[{index}].mission_id must match canonical mission id grammar"
+            )
+        else:
+            for command_field, expected_command in mission_commands(mission_id).items():
+                if item.get(command_field) != expected_command:
+                    errors.append(
+                        f"missions.items[{index}].{command_field} "
+                        "must match canonical mission command"
+                    )
+        selected_agents = item.get("selected_agents")
+        startup_actions = item.get("startup_actions")
+        if item.get("can_start") is True and (
+            not isinstance(selected_agents, list)
+            or not isinstance(startup_actions, list)
+            or len(selected_agents) < 2
+            or len(startup_actions) < 2
+            or [entry.get("agent_id") for entry in selected_agents if isinstance(entry, dict)]
+            != [entry.get("agent_id") for entry in startup_actions if isinstance(entry, dict)]
+        ):
+            errors.append(
+                f"missions.items[{index}].can_start requires at least two valid "
+                "selected agents and startup actions"
+            )
 
 
 def _validate_project_view_skill_items(errors: list[str], payload: dict[str, object]) -> None:
@@ -9931,10 +9993,10 @@ def project_view_example() -> dict[str, object]:
         "missions": {
             "count": 1,
             "by_status": {"pending_confirmation": 1},
-            "latest_id": "mis_example",
+            "latest_id": "mis_0123456789ab",
             "items": [
                 {
-                    "mission_id": "mis_example",
+                    "mission_id": "mis_0123456789ab",
                     "schema_version": MISSION_SCHEMA_VERSION,
                     "user_message": "让 Codex 和 Claude 接龙",
                     "status": "pending_confirmation",
@@ -9964,23 +10026,53 @@ def project_view_example() -> dict[str, object]:
                     "step_count": 2,
                     "timeout_seconds": 180,
                     "selected_agents": [
-                        {"agent_id": "planner"},
-                        {"agent_id": "reviewer"},
+                        {
+                            "agent_id": "planner",
+                            "provider": "codex-cli",
+                            "role": "planning",
+                            "workspace_mode": "shared",
+                            "runtime_status": "running",
+                            "effective_model": "gpt-5.5",
+                            "model_source": "configured",
+                        },
+                        {
+                            "agent_id": "reviewer",
+                            "provider": "claude-cli",
+                            "role": "review",
+                            "workspace_mode": "shared",
+                            "runtime_status": "configured",
+                            "effective_model": "opus-4.8",
+                            "model_source": "configured",
+                        },
                     ],
                     "startup_actions": [
-                        {"agent_id": "planner", "action": "reuse"},
-                        {"agent_id": "reviewer", "action": "spawn"},
+                        {
+                            "agent_id": "planner",
+                            "action": "reuse",
+                            "runtime_status": "running",
+                            "effective_model": "gpt-5.5",
+                            "model_source": "configured",
+                        },
+                        {
+                            "agent_id": "reviewer",
+                            "action": "spawn",
+                            "runtime_status": "configured",
+                            "effective_model": "opus-4.8",
+                            "model_source": "configured",
+                        },
                     ],
                     "created_at": "2026-07-11T00:00:00+00:00",
                     "updated_at": "2026-07-11T00:00:00+00:00",
                     "confirmed_at": None,
                     "completed_at": None,
-                    "status_command": "agentdeck mission status --mission-id mis_example",
+                    "status_command": (
+                        "agentdeck mission status --mission-id mis_0123456789ab"
+                    ),
                     "confirmation_command": (
-                        "agentdeck mission run --mission-id mis_example --confirm"
+                        "agentdeck mission run --mission-id mis_0123456789ab --confirm"
                     ),
                     "resume_command": (
-                        "agentdeck mission resume --mission-id mis_example --confirm"
+                        "agentdeck mission resume --mission-id mis_0123456789ab --confirm"
                     ),
                 }
             ],

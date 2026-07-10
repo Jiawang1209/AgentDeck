@@ -18,6 +18,104 @@ MISSION_STATUSES = (
     "stopped",
     "interrupted",
 )
+MISSION_ID_PATTERN = re.compile(r"^mis_[0-9a-f]{12}$")
+MISSION_STATUS_TRANSITIONS = {
+    "pending_confirmation": frozenset({"preparing", "stopped"}),
+    "preparing": frozenset({"running", "stopped"}),
+    "running": frozenset({"completed", "stopped", "interrupted"}),
+    "completed": frozenset(),
+    "stopped": frozenset({"preparing", "running"}),
+    "interrupted": frozenset({"preparing", "running"}),
+}
+MISSION_SELECTED_AGENT_FIELDS = (
+    "agent_id",
+    "provider",
+    "role",
+    "workspace_mode",
+    "runtime_status",
+    "effective_model",
+    "model_source",
+    "blocker",
+)
+MISSION_SELECTED_AGENT_REQUIRED_FIELDS = MISSION_SELECTED_AGENT_FIELDS[:-1]
+MISSION_STARTUP_ACTION_FIELDS = (
+    "agent_id",
+    "action",
+    "runtime_status",
+    "effective_model",
+    "model_source",
+    "blocker",
+)
+MISSION_STARTUP_ACTION_REQUIRED_FIELDS = MISSION_STARTUP_ACTION_FIELDS[:-1]
+MISSION_WORKER_NULLABLE_FIELDS = frozenset({"effective_model", "blocker"})
+
+
+def is_canonical_mission_id(value: object) -> bool:
+    return isinstance(value, str) and MISSION_ID_PATTERN.fullmatch(value) is not None
+
+
+def mission_commands(mission_id: str) -> dict[str, str]:
+    if not is_canonical_mission_id(mission_id):
+        raise ValueError("mission_id must match canonical mission id grammar")
+    return {
+        "status_command": f"agentdeck mission status --mission-id {mission_id}",
+        "confirmation_command": (
+            f"agentdeck mission run --mission-id {mission_id} --confirm"
+        ),
+        "resume_command": (
+            f"agentdeck mission resume --mission-id {mission_id} --confirm"
+        ),
+    }
+
+
+def mission_status_transition_allowed(current: object, target: object) -> bool:
+    if current not in MISSION_STATUSES or target not in MISSION_STATUSES:
+        return False
+    return current == target or target in MISSION_STATUS_TRANSITIONS[current]
+
+
+def compact_mission_worker_entries(
+    value: object,
+    *,
+    kind: str,
+) -> tuple[list[dict[str, Any]], int]:
+    if kind == "selected_agents":
+        fields = MISSION_SELECTED_AGENT_FIELDS
+        required = MISSION_SELECTED_AGENT_REQUIRED_FIELDS
+    elif kind == "startup_actions":
+        fields = MISSION_STARTUP_ACTION_FIELDS
+        required = MISSION_STARTUP_ACTION_REQUIRED_FIELDS
+    else:
+        raise ValueError(f"unknown mission worker summary kind: {kind}")
+    if not isinstance(value, list):
+        return [], 1
+
+    compact_items: list[dict[str, Any]] = []
+    invalid_count = 0
+    for raw_item in value:
+        if not isinstance(raw_item, Mapping):
+            invalid_count += 1
+            continue
+        item: dict[str, Any] = {}
+        valid = True
+        for field in fields:
+            if field not in raw_item:
+                continue
+            field_value = raw_item[field]
+            if isinstance(field_value, str) or (
+                field in MISSION_WORKER_NULLABLE_FIELDS and field_value is None
+            ):
+                item[field] = field_value
+            else:
+                valid = False
+        has_required_fields = all(field in item for field in required)
+        if kind == "startup_actions" and item.get("action") not in {"reuse", "spawn"}:
+            has_required_fields = False
+        if has_required_fields:
+            compact_items.append(item)
+        if not valid or not has_required_fields:
+            invalid_count += 1
+    return compact_items, invalid_count
 
 
 def provider_family(value: str) -> str:

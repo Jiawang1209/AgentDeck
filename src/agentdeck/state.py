@@ -10,7 +10,14 @@ import shutil
 from typing import Any
 
 from .config import CONFIG_DIR, ensure_project_layout, project_root
-from .mission import MISSION_SCHEMA_VERSION, MISSION_STATUSES
+from .mission import (
+    MISSION_SCHEMA_VERSION,
+    MISSION_STATUSES,
+    compact_mission_worker_entries,
+    is_canonical_mission_id,
+    mission_commands,
+    mission_status_transition_allowed,
+)
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
 
 
@@ -162,12 +169,48 @@ class StateStore:
         startup_actions: list[dict[str, Any]],
         step_count: int,
         timeout_seconds: int,
-        **values: Any,
     ) -> dict[str, Any]:
         state = self.load()
+        if not all(
+            isinstance(value, str) and value
+            for value in (user_message, provider, model, plan_id, plan_hash)
+        ):
+            raise ValueError("mission identity fields must be non-empty strings")
+        if not isinstance(can_start, bool):
+            raise ValueError("can_start must be a boolean")
+        if not isinstance(blockers, list) or not all(
+            isinstance(blocker, str) for blocker in blockers
+        ):
+            raise ValueError("blockers must be a list of strings")
+        if not isinstance(step_count, int) or isinstance(step_count, bool) or step_count < 1:
+            raise ValueError("step_count must be a positive integer")
+        if (
+            not isinstance(timeout_seconds, int)
+            or isinstance(timeout_seconds, bool)
+            or timeout_seconds < 1
+        ):
+            raise ValueError("timeout_seconds must be a positive integer")
+        expected_backend = leader_backend_identity(provider, model)
+        if leader_backend != expected_backend:
+            raise ValueError("leader_backend must match provider and model")
+        compact_agents, invalid_agents = compact_mission_worker_entries(
+            selected_agents, kind="selected_agents"
+        )
+        compact_actions, invalid_actions = compact_mission_worker_entries(
+            startup_actions, kind="startup_actions"
+        )
+        if invalid_agents or invalid_actions:
+            raise ValueError("mission worker summaries must use compact domain fields")
+        selected_ids = [item["agent_id"] for item in compact_agents]
+        action_ids = [item["agent_id"] for item in compact_actions]
+        if can_start and (
+            len(compact_agents) < 2
+            or len(compact_actions) < 2
+            or selected_ids != action_ids
+        ):
+            raise ValueError("startable mission requires matching worker and startup summaries")
         now = utc_now()
         record = {
-            **values,
             "mission_id": new_id("mis"),
             "schema_version": MISSION_SCHEMA_VERSION,
             "user_message": user_message,
@@ -177,11 +220,11 @@ class StateStore:
             "blockers": list(blockers),
             "provider": provider,
             "model": model,
-            "leader_backend": dict(leader_backend),
+            "leader_backend": expected_backend,
             "plan_id": plan_id,
             "plan_hash": plan_hash,
-            "selected_agents": list(selected_agents),
-            "startup_actions": list(startup_actions),
+            "selected_agents": compact_agents,
+            "startup_actions": compact_actions,
             "step_count": step_count,
             "timeout_seconds": timeout_seconds,
             "workflow_run_id": None,
@@ -197,29 +240,88 @@ class StateStore:
 
     def mission_by_id(self, mission_id: str) -> dict[str, Any]:
         for item in self.load().get("missions", []):
-            if item.get("mission_id") == mission_id:
+            if isinstance(item, dict) and item.get("mission_id") == mission_id:
                 return item
         raise KeyError(mission_id)
 
     def list_missions(self) -> list[dict[str, Any]]:
         return list(self.load().get("missions", []))
 
-    def update_mission(self, mission_id: str, **changes: Any) -> dict[str, Any]:
+    def update_mission(self, mission_id: str, /, **changes: Any) -> dict[str, Any]:
         state = self.load()
         record = next(
             (
                 item
                 for item in state.setdefault("missions", [])
-                if item.get("mission_id") == mission_id
+                if isinstance(item, dict) and item.get("mission_id") == mission_id
             ),
             None,
         )
         if record is None:
             raise KeyError(mission_id)
-        changes.pop("completed_at", None)
+        mutable_fields = {
+            "status",
+            "stop_reason",
+            "can_start",
+            "blockers",
+            "workflow_run_id",
+            "current_step",
+            "confirmed_at",
+        }
+        unknown_fields = set(changes) - mutable_fields
+        if unknown_fields:
+            raise ValueError(
+                f"immutable or unknown mission fields: {', '.join(sorted(unknown_fields))}"
+            )
+        current_status = record.get("status")
+        target_status = changes.get("status", current_status)
+        if current_status == "completed":
+            if changes == {"status": "completed"}:
+                return record
+            raise ValueError("completed mission is terminal")
+        if not mission_status_transition_allowed(current_status, target_status):
+            raise ValueError(f"invalid mission status transition: {current_status} -> {target_status}")
+        if "stop_reason" in changes and changes["stop_reason"] is not None and not isinstance(
+            changes["stop_reason"], str
+        ):
+            raise ValueError("stop_reason must be a string or null")
+        if "can_start" in changes and not isinstance(changes["can_start"], bool):
+            raise ValueError("can_start must be a boolean")
+        if "blockers" in changes and (
+            not isinstance(changes["blockers"], list)
+            or not all(isinstance(blocker, str) for blocker in changes["blockers"])
+        ):
+            raise ValueError("blockers must be a list of strings")
+        if "workflow_run_id" in changes:
+            workflow_run_id = changes["workflow_run_id"]
+            if workflow_run_id is not None and not isinstance(workflow_run_id, str):
+                raise ValueError("workflow_run_id must be a string or null")
+            existing_run_id = record.get("workflow_run_id")
+            if existing_run_id is not None and workflow_run_id != existing_run_id:
+                raise ValueError("workflow_run_id cannot change once set")
+        if "confirmed_at" in changes:
+            confirmed_at = changes["confirmed_at"]
+            if confirmed_at is not None and not isinstance(confirmed_at, str):
+                raise ValueError("confirmed_at must be a string or null")
+            existing_confirmed_at = record.get("confirmed_at")
+            if existing_confirmed_at is not None and confirmed_at != existing_confirmed_at:
+                raise ValueError("confirmed_at cannot change once set")
+        if "current_step" in changes:
+            current_step = changes["current_step"]
+            step_count = record.get("step_count")
+            if (
+                not isinstance(current_step, int)
+                or isinstance(current_step, bool)
+                or not isinstance(step_count, int)
+                or isinstance(step_count, bool)
+                or current_step < record.get("current_step", 0)
+                or current_step < 0
+                or current_step > step_count
+            ):
+                raise ValueError("current_step must advance within 0..step_count")
         record.update(changes)
         record["updated_at"] = utc_now()
-        if changes.get("status") == MISSION_STATUSES[3] and not record.get("completed_at"):
+        if changes.get("status") == "completed" and not record.get("completed_at"):
             record["completed_at"] = record["updated_at"]
         self.save(state)
         return record
@@ -1350,67 +1452,59 @@ class StateStore:
 
     @staticmethod
     def _mission_summaries(missions: list[dict[str, Any]]) -> dict[str, Any]:
-        selected_agent_fields = {
-            "agent_id": False,
-            "provider": False,
-            "role": False,
-            "workspace_mode": False,
-            "runtime_status": False,
-            "effective_model": True,
-            "model_source": False,
-            "blocker": True,
-        }
-        startup_action_fields = {
-            "agent_id": False,
-            "action": False,
-            "runtime_status": False,
-            "effective_model": True,
-            "model_source": False,
-            "blocker": True,
-        }
-
-        def compact_entries(
-            value: Any, fields: dict[str, bool]
-        ) -> list[dict[str, Any]]:
-            if not isinstance(value, list):
-                return []
-            items: list[dict[str, Any]] = []
-            for entry in value:
-                if not isinstance(entry, dict):
-                    continue
-                compact: dict[str, Any] = {}
-                for field, nullable in fields.items():
-                    if field not in entry:
-                        continue
-                    field_value = entry[field]
-                    if isinstance(field_value, str) or (nullable and field_value is None):
-                        compact[field] = field_value
-                items.append(compact)
-            return items
-
-        def compact_leader_backend(mission: dict[str, Any]) -> dict[str, Any]:
-            fallback = leader_backend_identity(
-                mission.get("provider") if isinstance(mission.get("provider"), str) else None,
-                mission.get("model") if isinstance(mission.get("model"), str) else None,
-            )
-            source = mission.get("leader_backend")
-            if not isinstance(source, dict):
-                return fallback
-            compact: dict[str, Any] = {}
-            for field, fallback_value in fallback.items():
-                value = source.get(field, fallback_value)
-                if isinstance(fallback_value, bool):
-                    compact[field] = value if isinstance(value, bool) else fallback_value
-                elif fallback_value is None:
-                    compact[field] = value if value is None or isinstance(value, str) else None
-                else:
-                    compact[field] = value if isinstance(value, str) else fallback_value
-            return compact
-
-        items = []
+        items: list[dict[str, Any]] = []
+        source_count = len(missions) if isinstance(missions, list) else 0
+        if not isinstance(missions, list):
+            missions = []
         for mission in missions:
+            if not isinstance(mission, dict):
+                continue
             mission_id = mission.get("mission_id")
+            if not is_canonical_mission_id(mission_id):
+                continue
             status = mission.get("status")
+            provider = mission.get("provider")
+            model = mission.get("model")
+            step_count = mission.get("step_count")
+            current_step = mission.get("current_step", 0)
+            if (
+                mission.get("schema_version") != MISSION_SCHEMA_VERSION
+                or status not in MISSION_STATUSES
+                or not isinstance(provider, str)
+                or not isinstance(model, str)
+                or not isinstance(step_count, int)
+                or isinstance(step_count, bool)
+                or not isinstance(current_step, int)
+                or isinstance(current_step, bool)
+                or current_step < 0
+                or current_step > step_count
+            ):
+                continue
+            selected_agents, invalid_agents = compact_mission_worker_entries(
+                mission.get("selected_agents"), kind="selected_agents"
+            )
+            startup_actions, invalid_actions = compact_mission_worker_entries(
+                mission.get("startup_actions"), kind="startup_actions"
+            )
+            selected_ids = [item["agent_id"] for item in selected_agents]
+            action_ids = [item["agent_id"] for item in startup_actions]
+            workers_ready = (
+                not invalid_agents
+                and not invalid_actions
+                and len(selected_agents) >= 2
+                and len(startup_actions) >= 2
+                and selected_ids == action_ids
+            )
+            raw_can_start = mission.get("can_start") is True
+            blockers = [
+                blocker
+                for blocker in mission.get("blockers", [])
+                if isinstance(blocker, str)
+            ] if isinstance(mission.get("blockers"), list) else []
+            if (invalid_agents or invalid_actions or raw_can_start) and not workers_ready:
+                if "invalid mission worker summaries" not in blockers:
+                    blockers.append("invalid mission worker summaries")
+            commands = mission_commands(mission_id)
             items.append(
                 {
                     "mission_id": mission_id,
@@ -1418,45 +1512,29 @@ class StateStore:
                     "user_message": mission.get("user_message"),
                     "status": status,
                     "stop_reason": mission.get("stop_reason"),
-                    "can_start": mission.get("can_start"),
+                    "can_start": raw_can_start and workers_ready,
                     "can_resume": status in {MISSION_STATUSES[4], MISSION_STATUSES[5]},
-                    "blockers": [
-                        blocker
-                        for blocker in mission.get("blockers", [])
-                        if isinstance(blocker, str)
-                    ]
-                    if isinstance(mission.get("blockers"), list)
-                    else [],
-                    "provider": mission.get("provider"),
-                    "model": mission.get("model"),
-                    "leader_backend": compact_leader_backend(mission),
+                    "blockers": blockers,
+                    "provider": provider,
+                    "model": model,
+                    "leader_backend": leader_backend_identity(provider, model),
                     "plan_id": mission.get("plan_id"),
                     "plan_hash": mission.get("plan_hash"),
                     "workflow_run_id": mission.get("workflow_run_id"),
-                    "current_step": mission.get("current_step", 0),
-                    "step_count": mission.get("step_count"),
+                    "current_step": current_step,
+                    "step_count": step_count,
                     "timeout_seconds": mission.get("timeout_seconds"),
-                    "selected_agents": compact_entries(
-                        mission.get("selected_agents"), selected_agent_fields
-                    ),
-                    "startup_actions": compact_entries(
-                        mission.get("startup_actions"), startup_action_fields
-                    ),
+                    "selected_agents": selected_agents,
+                    "startup_actions": startup_actions,
                     "created_at": mission.get("created_at"),
                     "updated_at": mission.get("updated_at"),
                     "confirmed_at": mission.get("confirmed_at"),
                     "completed_at": mission.get("completed_at"),
-                    "status_command": f"agentdeck mission status --mission-id {mission_id}",
-                    "confirmation_command": (
-                        f"agentdeck mission run --mission-id {mission_id} --confirm"
-                    ),
-                    "resume_command": (
-                        f"agentdeck mission resume --mission-id {mission_id} --confirm"
-                    ),
+                    **commands,
                 }
             )
         return {
-            "count": len(items),
+            "count": source_count,
             "by_status": StateStore._status_counts(items),
             "latest_id": items[-1]["mission_id"] if items else None,
             "items": items,

@@ -76,8 +76,42 @@ def mission_values() -> dict[str, object]:
         "leader_backend": leader_backend_identity("fake", "fake-plan"),
         "plan_id": "pln_demo",
         "plan_hash": "sha256:plan",
-        "selected_agents": [{"agent_id": "planner"}, {"agent_id": "reviewer"}],
-        "startup_actions": [{"agent_id": "planner"}, {"agent_id": "reviewer"}],
+        "selected_agents": [
+            {
+                "agent_id": "planner",
+                "provider": "codex-cli",
+                "role": "planning",
+                "workspace_mode": "shared",
+                "runtime_status": "configured",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+            {
+                "agent_id": "reviewer",
+                "provider": "claude-cli",
+                "role": "review",
+                "workspace_mode": "shared",
+                "runtime_status": "configured",
+                "effective_model": "opus-4.8",
+                "model_source": "configured",
+            },
+        ],
+        "startup_actions": [
+            {
+                "agent_id": "planner",
+                "action": "spawn",
+                "runtime_status": "configured",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+            {
+                "agent_id": "reviewer",
+                "action": "spawn",
+                "runtime_status": "configured",
+                "effective_model": "opus-4.8",
+                "model_source": "configured",
+            },
+        ],
         "step_count": 2,
         "timeout_seconds": 180,
     }
@@ -109,18 +143,22 @@ def test_state_store_creates_updates_gets_and_lists_mission_without_events(tmp_p
     assert store.list_missions() == [created]
     assert store.list_events(limit=10) == []
 
+    preparing = store.update_mission(
+        created["mission_id"],
+        status="preparing",
+        confirmed_at="2026-07-11T00:00:00+00:00",
+    )
     updated = store.update_mission(
         created["mission_id"],
         status="running",
         workflow_run_id="wfr_demo",
         current_step=1,
-        confirmed_at="2026-07-11T00:00:00+00:00",
     )
 
     assert updated["status"] == "running"
     assert updated["workflow_run_id"] == "wfr_demo"
     assert updated["current_step"] == 1
-    assert updated["updated_at"] >= created["updated_at"]
+    assert updated["updated_at"] >= preparing["updated_at"]
     assert store.mission_by_id(created["mission_id"]) == updated
     assert store.list_events(limit=10) == []
 
@@ -138,16 +176,144 @@ def test_state_store_sets_mission_completion_timestamp_only_once(tmp_path) -> No
     store = StateStore(tmp_path)
     created = store.create_mission(**mission_values())
 
+    store.update_mission(created["mission_id"], status="preparing")
+    store.update_mission(created["mission_id"], status="running")
     completed = store.update_mission(created["mission_id"], status="completed")
     completed_at = completed["completed_at"]
-    completed_again = store.update_mission(
-        created["mission_id"],
-        status="completed",
-        completed_at="2020-01-01T00:00:00+00:00",
-    )
+    completed_again = store.update_mission(created["mission_id"], status="completed")
 
     assert completed_at is not None
     assert completed_again["completed_at"] == completed_at
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"mission_id": "mis_000000000000"},
+        {"schema_version": "mission/v0"},
+        {"created_at": "2020-01-01T00:00:00+00:00"},
+        {"provider": "codex-cli"},
+        {"selected_agents": []},
+        {"status": "unknown"},
+        {"status": "failed"},
+        {"current_step": -1},
+        {"current_step": 3},
+        {"current_step": True},
+        {"workflow_run_id": {"command": "unsafe"}},
+        {"stop_reason": {"full_prompt": "unsafe"}},
+        {"confirmed_at": []},
+        {"blockers": ["safe", {"credentials": "unsafe"}]},
+        {"can_start": "yes"},
+        {"completed_at": "2020-01-01T00:00:00+00:00"},
+        {"unknown_field": "value"},
+    ],
+)
+def test_update_mission_rejects_invalid_or_immutable_changes_without_writes(
+    tmp_path, changes
+) -> None:
+    store = StateStore(tmp_path)
+    mission = store.create_mission(**mission_values())
+    state_before = store.state_path.read_bytes()
+
+    with pytest.raises(ValueError):
+        store.update_mission(mission["mission_id"], **changes)
+
+    assert store.state_path.read_bytes() == state_before
+
+
+@pytest.mark.parametrize("stopped_status", ["stopped", "interrupted"])
+def test_mission_state_transitions_support_bounded_resume(tmp_path, stopped_status) -> None:
+    store = StateStore(tmp_path)
+    mission = store.create_mission(**mission_values())
+
+    store.update_mission(mission["mission_id"], status="preparing")
+    if stopped_status == "interrupted":
+        store.update_mission(mission["mission_id"], status="running")
+    stopped = store.update_mission(mission["mission_id"], status=stopped_status)
+    resumed = store.update_mission(mission["mission_id"], status="running")
+
+    assert stopped["status"] == stopped_status
+    assert resumed["status"] == "running"
+
+
+def test_completed_mission_is_terminal_and_cannot_reopen(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    mission = store.create_mission(**mission_values())
+    store.update_mission(mission["mission_id"], status="preparing")
+    store.update_mission(mission["mission_id"], status="running")
+    store.update_mission(mission["mission_id"], status="completed")
+    state_before = store.state_path.read_bytes()
+
+    with pytest.raises(ValueError, match="completed mission is terminal"):
+        store.update_mission(mission["mission_id"], status="running")
+
+    assert store.state_path.read_bytes() == state_before
+
+
+@pytest.mark.parametrize(
+    ("current_status", "target_status"),
+    [
+        ("pending_confirmation", "running"),
+        ("pending_confirmation", "completed"),
+        ("preparing", "completed"),
+        ("preparing", "interrupted"),
+        ("running", "preparing"),
+        ("stopped", "completed"),
+        ("interrupted", "completed"),
+    ],
+)
+def test_mission_state_rejects_out_of_order_transitions_without_writes(
+    tmp_path, current_status, target_status
+) -> None:
+    store = StateStore(tmp_path)
+    mission = store.create_mission(**mission_values())
+    if current_status in {"preparing", "running", "interrupted"}:
+        store.update_mission(mission["mission_id"], status="preparing")
+    if current_status in {"running", "interrupted"}:
+        store.update_mission(mission["mission_id"], status="running")
+    if current_status == "stopped":
+        store.update_mission(mission["mission_id"], status="stopped")
+    if current_status == "interrupted":
+        store.update_mission(mission["mission_id"], status="interrupted")
+    state_before = store.state_path.read_bytes()
+
+    with pytest.raises(ValueError, match="invalid mission status transition"):
+        store.update_mission(mission["mission_id"], status=target_status)
+
+    assert store.state_path.read_bytes() == state_before
+
+
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [("codex-cli", "gpt-5.5"), ("openai-compatible", "gpt-5.5-mini")],
+)
+def test_create_mission_accepts_coherent_cli_and_api_leader_backends(
+    tmp_path, provider, model
+) -> None:
+    store = StateStore(tmp_path)
+    values = mission_values()
+    values.update(
+        {
+            "provider": provider,
+            "model": model,
+            "leader_backend": leader_backend_identity(provider, model),
+        }
+    )
+
+    mission = store.create_mission(**values)
+
+    assert mission["leader_backend"] == leader_backend_identity(provider, model)
+
+
+def test_create_mission_rejects_incoherent_leader_backend_without_writes(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    values = mission_values()
+    values["leader_backend"] = leader_backend_identity("codex-cli", "gpt-5.5")
+
+    with pytest.raises(ValueError, match="leader_backend must match provider and model"):
+        store.create_mission(**values)
+
+    assert store.load()["missions"] == []
 
 
 def test_mission_constants_and_provider_family_are_stable() -> None:
