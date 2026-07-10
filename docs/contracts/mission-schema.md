@@ -25,6 +25,8 @@ agentdeck mission resume --mission-id <id> --confirm
 
 Mission ids use `mis_<12 lowercase hex>`. Status, confirmation, and resume commands must contain the same canonical id. Confirmation and resume always require `--confirm`.
 
+Plan ids use `pln_<12 lowercase hex>`. Plan hashes use exactly `sha256:<64 lowercase hex>`. These values are validated before a command or plan reference can be accepted.
+
 ## Preview response
 
 `MISSION_PREVIEW_RESPONSE_FIELDS` is the exact top-level field set:
@@ -57,6 +59,8 @@ agent_id, action, runtime_status, effective_model, model_source
 
 `action` is only `reuse` or `spawn`. Startup rows must match selected agents in order and count. `effective_model` may be null; all other values are non-empty strings. Raw commands, prompts, environment, credentials, and the state-only optional worker blocker are outside this compact contract.
 
+For each row, `agent_id`, `runtime_status`, `effective_model`, and `model_source` must agree between `selected_agents[]` and `startup_actions[]`. Every plan step role must agree with the selected agent's role. Startup rows intentionally do not duplicate provider or role fields.
+
 ## Plan and control rows
 
 The exact plan fields are `goal`, `summary`, and `steps`. Each step has `step`, `agent_id`, `role`, and `task`.
@@ -68,6 +72,8 @@ kind, label, command, safety, enabled, blocker
 ```
 
 Inspect commands use `kind=inspect` and `safety=inspect`. Confirmation/resume commands use `kind=execute` and `safety=delegated`. Controls may reference only the commands declared in the enclosing payload, must expose every declared command once or more without omissions, and cannot use unrestricted safety claims.
+
+Control `kind`, `label`, `command`, and `safety` are non-empty strings; `enabled` is a literal boolean; `blocker` is null or a non-empty string. Dict/list payloads, nested command/prompt/credential objects, and non-scalar substitutes are invalid rather than serialized or inspected.
 
 ## Status and run responses
 
@@ -86,10 +92,23 @@ completed            -> terminal
 
 `can_resume` is true only for `stopped` and `interrupted`. `current_step` is an integer from zero through `step_count`. Completed status requires `completed_at`.
 
+Lifecycle fields are validated together:
+
+- `pending_confirmation`: `workflow_run_id`, `confirmed_at`, `completed_at`, and `stop_reason` are null.
+- `preparing`: `confirmed_at` is non-empty; no workflow id is required yet; `stop_reason` and `completed_at` are null.
+- `running`: `confirmed_at` and `workflow_run_id` are non-empty; `stop_reason` and `completed_at` are null.
+- `completed`: `confirmed_at`, `workflow_run_id`, and `completed_at` are non-empty; `current_step == step_count`; `stop_reason` is null.
+- `stopped`: `confirmed_at` and `stop_reason` are non-empty; `workflow_run_id` remains optional because setup may fail before a workflow exists; `completed_at` is null.
+- `interrupted`: `confirmed_at`, `workflow_run_id`, and `stop_reason` are non-empty; `completed_at` is null.
+
+For `stopped`/`interrupted`, `can_resume` is true only when blockers are empty. The resume control must use the same enabled value and must explain a disabled state with a non-empty blocker.
+
 `MISSION_RUN_RESPONSE_FIELDS` is the exact status field set plus `confirmed`. A run response uses `mode=mission_run` (or `mission_resume` for resume), `safety=delegated`, `requires_explicit_user=true`, and `confirmed=true`. It must also remain a valid status projection after changing only mode/safety and removing `confirmed`.
+
+Run/resume responses cannot report `pending_confirmation`: confirmation must be the literal JSON boolean `true`, and `confirmed_at` must be present through the lifecycle rules above.
 
 ## Provenance and safety validation
 
-Preview `leader_backend` uses the shared logical-Leader field shape. Its provider/model must match the top-level provider/model; it must remain pane-less, approval-required, and non-dispatch-ready. The contract rejects unknown/extra top-level or compact item fields, invalid Mission ids, command/id drift, status drift, selected/startup count drift, step-count drift, unsafe controls, or a start/resume control that contradicts blockers/status.
+Preview `leader_backend` uses the shared logical-Leader field shape. Its provider/model must match the top-level provider/model; it must remain pane-less, approval-required, and non-dispatch-ready. The contract rejects non-object roots without raising, unknown/extra top-level or compact item fields, invalid Mission/plan ids or plan hashes, command/id drift, status/lifecycle drift, selected/startup count or provenance drift, step-count drift, bool-as-int values, unsafe controls, nested sensitive objects, or a start/resume control that contradicts blockers/status.
 
 Discovery never writes `.agentdeck/`, creates a plan/Mission/workflow, calls a Leader provider, reads a pane, starts a worker, attaches tmux, sends input, or grants execution authority. The command strings and controls are discoverable affordances, not authorization tokens.

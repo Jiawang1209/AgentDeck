@@ -2262,13 +2262,18 @@ MISSION_STATUS_RESPONSE_FIELDS = (
     "controls", "safety", "requires_explicit_user",
 )
 MISSION_RUN_RESPONSE_FIELDS = (*MISSION_STATUS_RESPONSE_FIELDS, "confirmed")
-# Task 3 owns the worker summary schema. The contract exposes its required,
-# compact projection and intentionally excludes the optional state-only blocker.
-MISSION_SELECTED_AGENT_FIELDS = MISSION_STATE_SELECTED_AGENT_REQUIRED_FIELDS
-MISSION_STARTUP_ACTION_FIELDS = MISSION_STATE_STARTUP_ACTION_REQUIRED_FIELDS
+MISSION_SELECTED_AGENT_FIELDS = (
+    "agent_id", "provider", "role", "workspace_mode", "runtime_status",
+    "effective_model", "model_source",
+)
+MISSION_STARTUP_ACTION_FIELDS = (
+    "agent_id", "action", "runtime_status", "effective_model", "model_source",
+)
 MISSION_PLAN_FIELDS = ("goal", "summary", "steps")
 MISSION_PLAN_STEP_FIELDS = ("step", "agent_id", "role", "task")
-MISSION_CONTROL_FIELDS = LEADER_REVIEW_CONTROL_FIELDS
+MISSION_CONTROL_FIELDS = (
+    "kind", "label", "command", "safety", "enabled", "blocker",
+)
 
 WORKFLOW_STATUSES = ("running", "completed", "stopped", "interrupted")
 WORKFLOW_TURN_STATUSES = (
@@ -4975,9 +4980,46 @@ def _mission_exact_fields(
         errors.append(f"{prefix} has unknown fields: {', '.join(extra)}")
 
 
+def _mission_nonempty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _mission_exact_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _mission_optional_nonempty_string(value: object) -> bool:
+    return value is None or _mission_nonempty_string(value)
+
+
+def _mission_valid_plan_id(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"pln_[0-9a-f]{12}", value) is not None
+
+
+def _mission_valid_plan_hash(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) is not None
+
+
+def _validate_mission_nonempty_strings(
+    errors: list[str], prefix: str, value: dict[str, object], fields: tuple[str, ...]
+) -> None:
+    for field in fields:
+        if not _mission_nonempty_string(value.get(field)):
+            errors.append(f"{prefix}.{field} must be a non-empty string")
+
+
+def _mission_worker_schema(kind: str) -> tuple[tuple[str, ...], frozenset[str] | None]:
+    if kind == "selected_agents":
+        return MISSION_SELECTED_AGENT_FIELDS, None
+    if kind == "startup_actions":
+        return MISSION_STARTUP_ACTION_FIELDS, frozenset({"reuse", "spawn"})
+    raise ValueError(f"unknown mission worker row kind: {kind}")
+
+
 def _validate_mission_worker_rows(
-    errors: list[str], prefix: str, value: object, fields: tuple[str, ...]
+    errors: list[str], prefix: str, value: object, *, kind: str
 ) -> list[dict[str, object]]:
+    fields, allowed_actions = _mission_worker_schema(kind)
     if not isinstance(value, list):
         errors.append(f"{prefix} must be a list")
         return []
@@ -4990,14 +5032,14 @@ def _validate_mission_worker_rows(
         for field in fields:
             field_value = item.get(field)
             if field == "effective_model":
-                if field_value is not None and not isinstance(field_value, str):
-                    errors.append(f"{prefix}[{index}].{field} must be a string or null")
-            elif not isinstance(field_value, str) or not field_value:
+                if not _mission_optional_nonempty_string(field_value):
+                    errors.append(f"{prefix}[{index}].{field} must be a non-empty string or null")
+            elif not _mission_nonempty_string(field_value):
                 errors.append(f"{prefix}[{index}].{field} must be a non-empty string")
-        if fields == MISSION_STARTUP_ACTION_FIELDS and item.get("action") not in {
-            "reuse",
-            "spawn",
-        }:
+        action = item.get("action")
+        if allowed_actions is not None and (
+            not isinstance(action, str) or action not in allowed_actions
+        ):
             errors.append(f"{prefix}[{index}].action must be reuse or spawn")
         rows.append(item)
     return rows
@@ -5039,6 +5081,18 @@ def _validate_mission_controls(
         _mission_exact_fields(
             errors, f"{prefix}.controls[{index}]", control, MISSION_CONTROL_FIELDS
         )
+        _validate_mission_nonempty_strings(
+            errors,
+            f"{prefix}.controls[{index}]",
+            control,
+            ("kind", "label", "command", "safety"),
+        )
+        if not isinstance(control.get("enabled"), bool):
+            errors.append(f"{prefix}.controls[{index}].enabled must be a boolean")
+        if not _mission_optional_nonempty_string(control.get("blocker")):
+            errors.append(
+                f"{prefix}.controls[{index}].blocker must be a non-empty string or null"
+            )
         command = control.get("command")
         if not isinstance(command, str) or command not in expected_commands:
             errors.append(f"{prefix}.controls[{index}].command must be a declared mission command")
@@ -5053,7 +5107,7 @@ def _validate_mission_controls(
             errors.append(f"{prefix}.controls[{index}].enabled conflicts with blockers/status")
         if expected_enabled and control.get("blocker") is not None:
             errors.append(f"{prefix}.controls[{index}].blocker must be null when enabled")
-        if not expected_enabled and not isinstance(control.get("blocker"), str):
+        if not expected_enabled and not _mission_nonempty_string(control.get("blocker")):
             errors.append(f"{prefix}.controls[{index}].blocker must explain disabled control")
     if seen != set(expected_commands):
         errors.append(f"{prefix}.controls must expose every declared mission command")
@@ -5077,7 +5131,46 @@ def _validate_mission_identity_and_commands(
             errors.append(f"{prefix}.{field} must match mission_id")
 
 
-def validate_mission_preview_contract(payload: dict[str, object]) -> dict[str, object]:
+def _validate_mission_plan_identity(
+    errors: list[str], prefix: str, payload: dict[str, object]
+) -> None:
+    if not _mission_valid_plan_id(payload.get("plan_id")):
+        errors.append(f"{prefix}.plan_id must match pln_<12 lowercase hex>")
+    if not _mission_valid_plan_hash(payload.get("plan_hash")):
+        errors.append(f"{prefix}.plan_hash must be sha256:<64 lowercase hex>")
+
+
+def _validate_mission_blockers(
+    errors: list[str], prefix: str, value: object
+) -> list[str]:
+    if not isinstance(value, list) or any(
+        not _mission_nonempty_string(item) for item in value
+    ):
+        errors.append(f"{prefix}.blockers must be a list of non-empty strings")
+        return []
+    return value
+
+
+def _validate_mission_worker_provenance(
+    errors: list[str],
+    selected: list[dict[str, object]],
+    startup: list[dict[str, object]],
+) -> None:
+    if len(selected) != len(startup):
+        errors.append("mission_preview.startup_actions must match selected_agents")
+        return
+    shared_fields = ("agent_id", "runtime_status", "effective_model", "model_source")
+    for index, (selected_row, startup_row) in enumerate(zip(selected, startup)):
+        for field in shared_fields:
+            if startup_row.get(field) != selected_row.get(field):
+                errors.append(
+                    f"mission_preview.startup_actions[{index}].{field} must match selected_agents"
+                )
+
+
+def validate_mission_preview_contract(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return {"ok": False, "errors": ["mission_preview must be an object"]}
     errors: list[str] = []
     _mission_exact_fields(errors, "mission_preview", payload, MISSION_PREVIEW_RESPONSE_FIELDS)
     if payload.get("schema_version") != MISSION_SCHEMA_VERSION:
@@ -5088,16 +5181,34 @@ def validate_mission_preview_contract(payload: dict[str, object]) -> dict[str, o
         errors.append("mission_preview.status must be pending_confirmation")
     if payload.get("safety") != "inspect" or payload.get("requires_explicit_user") is not True:
         errors.append("mission_preview must be inspect-only and require an explicit user")
+    _validate_mission_nonempty_strings(
+        errors,
+        "mission_preview",
+        payload,
+        (
+            "user_message", "provider", "model", "plan_id", "plan_hash",
+            "confirmation_command", "status_command", "workbench_command",
+        ),
+    )
+    if not isinstance(payload.get("can_start"), bool):
+        errors.append("mission_preview.can_start must be a boolean")
+    _validate_mission_plan_identity(errors, "mission_preview", payload)
     _validate_mission_identity_and_commands(errors, "mission_preview", payload, preview=True)
-    if not isinstance(payload.get("timeout_seconds"), int) or isinstance(
-        payload.get("timeout_seconds"), bool
-    ) or payload.get("timeout_seconds", 0) <= 0:
+    if not _mission_exact_int(payload.get("timeout_seconds")) or payload.get("timeout_seconds", 0) <= 0:
         errors.append("mission_preview.timeout_seconds must be a positive integer")
+    if not _mission_exact_int(payload.get("step_count")) or payload.get("step_count", 0) < 2:
+        errors.append("mission_preview.step_count must be an integer of at least two")
     selected = _validate_mission_worker_rows(
-        errors, "mission_preview.selected_agents", payload.get("selected_agents"), MISSION_SELECTED_AGENT_FIELDS
+        errors,
+        "mission_preview.selected_agents",
+        payload.get("selected_agents"),
+        kind="selected_agents",
     )
     startup = _validate_mission_worker_rows(
-        errors, "mission_preview.startup_actions", payload.get("startup_actions"), MISSION_STARTUP_ACTION_FIELDS
+        errors,
+        "mission_preview.startup_actions",
+        payload.get("startup_actions"),
+        kind="startup_actions",
     )
     selected_ids = [str(item.get("agent_id")) for item in selected]
     startup_ids = [str(item.get("agent_id")) for item in startup]
@@ -5105,12 +5216,16 @@ def validate_mission_preview_contract(payload: dict[str, object]) -> dict[str, o
         errors.append("mission_preview.selected_agents must contain at least two unique agents")
     if startup_ids != selected_ids:
         errors.append("mission_preview.startup_actions must match selected_agents")
+    _validate_mission_worker_provenance(errors, selected, startup)
     plan = payload.get("plan")
     if not isinstance(plan, dict):
         errors.append("mission_preview.plan must be an object")
         plan = {}
     else:
         _mission_exact_fields(errors, "mission_preview.plan", plan, MISSION_PLAN_FIELDS)
+        _validate_mission_nonempty_strings(
+            errors, "mission_preview.plan", plan, ("goal", "summary")
+        )
         steps = plan.get("steps")
         if isinstance(steps, list):
             for index, step in enumerate(steps):
@@ -5118,19 +5233,44 @@ def validate_mission_preview_contract(payload: dict[str, object]) -> dict[str, o
                     _mission_exact_fields(
                         errors, f"mission_preview.plan.steps[{index}]", step, MISSION_PLAN_STEP_FIELDS
                     )
+                    if not _mission_exact_int(step.get("step")):
+                        errors.append(
+                            f"mission_preview.plan.steps[{index}].step must be an integer"
+                        )
+                    _validate_mission_nonempty_strings(
+                        errors,
+                        f"mission_preview.plan.steps[{index}]",
+                        step,
+                        ("agent_id", "role", "task"),
+                    )
                 else:
                     errors.append(f"mission_preview.plan.steps[{index}] must be an object")
         try:
-            validate_mission_plan(plan, selected_ids, int(payload.get("timeout_seconds") or 0))
+            timeout = payload.get("timeout_seconds")
+            validate_mission_plan(plan, selected_ids, timeout if _mission_exact_int(timeout) else 0)
         except (TypeError, ValueError) as exc:
             errors.append(f"mission_preview.plan is invalid: {exc}")
+        selected_roles = {
+            row["agent_id"]: row.get("role")
+            for row in selected
+            if _mission_nonempty_string(row.get("agent_id"))
+        }
+        if isinstance(steps, list):
+            for index, step in enumerate(steps):
+                step_agent_id = step.get("agent_id") if isinstance(step, dict) else None
+                if (
+                    isinstance(step, dict)
+                    and _mission_nonempty_string(step_agent_id)
+                    and step_agent_id in selected_roles
+                    and step.get("role") != selected_roles.get(step_agent_id)
+                ):
+                    errors.append(
+                        f"mission_preview.plan.steps[{index}].role must match selected agent role"
+                    )
     steps = plan.get("steps") if isinstance(plan, dict) else None
     if not isinstance(steps, list) or payload.get("step_count") != len(steps):
         errors.append("mission_preview.step_count must equal len(plan.steps)")
-    blockers = payload.get("blockers")
-    if not isinstance(blockers, list) or any(not isinstance(item, str) for item in blockers):
-        errors.append("mission_preview.blockers must be a list of strings")
-        blockers = []
+    blockers = _validate_mission_blockers(errors, "mission_preview", payload.get("blockers"))
     can_start = payload.get("can_start")
     if can_start is not (not blockers):
         errors.append("mission_preview.can_start must equal not blockers")
@@ -5151,7 +5291,41 @@ def validate_mission_preview_contract(payload: dict[str, object]) -> dict[str, o
     return {"ok": not errors, "errors": errors}
 
 
-def validate_mission_status_contract(payload: dict[str, object]) -> dict[str, object]:
+def _validate_mission_status_lifecycle(
+    errors: list[str], payload: dict[str, object]
+) -> None:
+    status = payload.get("status")
+    workflow_run_id = payload.get("workflow_run_id")
+    stop_reason = payload.get("stop_reason")
+    confirmed_at = payload.get("confirmed_at")
+    completed_at = payload.get("completed_at")
+    if status == "pending_confirmation":
+        if any(value is not None for value in (workflow_run_id, confirmed_at, completed_at)):
+            errors.append("mission_status.pending_confirmation cannot be confirmed, run, or completed")
+        if stop_reason is not None:
+            errors.append("mission_status.pending_confirmation.stop_reason must be null")
+    if status in ("preparing", "running", "completed", "stopped", "interrupted") and not _mission_nonempty_string(confirmed_at):
+        errors.append(f"mission_status.{status}.confirmed_at must be a non-empty string")
+    if status in ("running", "completed", "interrupted") and not _mission_nonempty_string(workflow_run_id):
+        errors.append(f"mission_status.{status}.workflow_run_id must be a non-empty string")
+    if status in ("stopped", "interrupted") and not _mission_nonempty_string(stop_reason):
+        errors.append(f"mission_status.{status}.stop_reason must be a non-empty string")
+    if status in ("preparing", "running") and stop_reason is not None:
+        errors.append(f"mission_status.{status}.stop_reason must be null")
+    if status != "completed" and completed_at is not None:
+        errors.append(f"mission_status.{status}.completed_at must be null")
+    if status == "completed":
+        if payload.get("current_step") != payload.get("step_count"):
+            errors.append("mission_status.completed current_step must equal step_count")
+        if not _mission_nonempty_string(completed_at):
+            errors.append("mission_status.completed_at is required for completed status")
+        if stop_reason is not None:
+            errors.append("mission_status.completed.stop_reason must be null")
+
+
+def validate_mission_status_contract(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return {"ok": False, "errors": ["mission_status must be an object"]}
     errors: list[str] = []
     _mission_exact_fields(errors, "mission_status", payload, MISSION_STATUS_RESPONSE_FIELDS)
     if payload.get("schema_version") != MISSION_SCHEMA_VERSION:
@@ -5163,35 +5337,44 @@ def validate_mission_status_contract(payload: dict[str, object]) -> dict[str, ob
         errors.append(f"mission_status.status must be one of {MISSION_STATUSES}")
     if payload.get("safety") != "inspect" or payload.get("requires_explicit_user") is not True:
         errors.append("mission_status must be inspect-only and require an explicit user")
+    _validate_mission_nonempty_strings(
+        errors,
+        "mission_status",
+        payload,
+        (
+            "user_message", "plan_id", "plan_hash", "created_at", "updated_at",
+            "status_command", "resume_command", "attach_command", "workbench_command",
+        ),
+    )
+    _validate_mission_plan_identity(errors, "mission_status", payload)
     _validate_mission_identity_and_commands(errors, "mission_status", payload, preview=False)
     selected = _validate_mission_worker_rows(
-        errors, "mission_status.selected_agents", payload.get("selected_agents"), MISSION_SELECTED_AGENT_FIELDS
+        errors,
+        "mission_status.selected_agents",
+        payload.get("selected_agents"),
+        kind="selected_agents",
     )
     selected_ids = [str(item.get("agent_id")) for item in selected]
     if len(selected_ids) < 2 or len(set(selected_ids)) != len(selected_ids):
         errors.append("mission_status.selected_agents must contain at least two unique agents")
     step_count = payload.get("step_count")
     current_step = payload.get("current_step")
-    if not isinstance(step_count, int) or isinstance(step_count, bool) or step_count < 2:
+    if not _mission_exact_int(step_count) or step_count < 2:
         errors.append("mission_status.step_count must be an integer of at least two")
-    if not isinstance(current_step, int) or isinstance(current_step, bool) or not isinstance(step_count, int) or not 0 <= current_step <= step_count:
+    if not _mission_exact_int(current_step) or not _mission_exact_int(step_count) or not 0 <= current_step <= step_count:
         errors.append("mission_status.current_step must be between zero and step_count")
-    if not isinstance(payload.get("timeout_seconds"), int) or isinstance(payload.get("timeout_seconds"), bool) or payload.get("timeout_seconds", 0) <= 0:
+    if not _mission_exact_int(payload.get("timeout_seconds")) or payload.get("timeout_seconds", 0) <= 0:
         errors.append("mission_status.timeout_seconds must be a positive integer")
-    blockers = payload.get("blockers")
-    if not isinstance(blockers, list) or any(not isinstance(item, str) for item in blockers):
-        errors.append("mission_status.blockers must be a list of strings")
+    blockers = _validate_mission_blockers(errors, "mission_status", payload.get("blockers"))
     can_resume = payload.get("can_resume")
-    if can_resume is not (status in {"stopped", "interrupted"}):
-        errors.append("mission_status.can_resume must match stopped/interrupted status")
-    for field in ("created_at", "updated_at"):
-        if not isinstance(payload.get(field), str):
-            errors.append(f"mission_status.{field} must be a string")
+    if not isinstance(can_resume, bool):
+        errors.append("mission_status.can_resume must be a boolean")
+    if can_resume is not (status in ("stopped", "interrupted") and not blockers):
+        errors.append("mission_status.can_resume must match resumable status and empty blockers")
     for field in ("workflow_run_id", "stop_reason", "confirmed_at", "completed_at"):
-        if payload.get(field) is not None and not isinstance(payload.get(field), str):
-            errors.append(f"mission_status.{field} must be a string or null")
-    if status == "completed" and payload.get("completed_at") is None:
-        errors.append("mission_status.completed_at is required for completed status")
+        if not _mission_optional_nonempty_string(payload.get(field)):
+            errors.append(f"mission_status.{field} must be a non-empty string or null")
+    _validate_mission_status_lifecycle(errors, payload)
     if payload.get("workbench_command") != "agentdeck workbench":
         errors.append("mission_status.workbench_command must be agentdeck workbench")
     attach_command = payload.get("attach_command")
@@ -5203,10 +5386,12 @@ def validate_mission_status_contract(payload: dict[str, object]) -> dict[str, ob
     return {"ok": not errors, "errors": errors}
 
 
-def validate_mission_run_contract(payload: dict[str, object]) -> dict[str, object]:
+def validate_mission_run_contract(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return {"ok": False, "errors": ["mission_run must be an object"]}
     errors: list[str] = []
     _mission_exact_fields(errors, "mission_run", payload, MISSION_RUN_RESPONSE_FIELDS)
-    if payload.get("mode") not in {"mission_run", "mission_resume"}:
+    if payload.get("mode") not in ("mission_run", "mission_resume"):
         errors.append("mission_run.mode must be mission_run or mission_resume")
     if payload.get("safety") != "delegated":
         errors.append("mission_run.safety must be delegated")
@@ -5214,6 +5399,8 @@ def validate_mission_run_contract(payload: dict[str, object]) -> dict[str, objec
         errors.append("mission_run.requires_explicit_user must be true")
     if payload.get("confirmed") is not True:
         errors.append("mission_run.confirmed must be true")
+    if payload.get("status") == "pending_confirmation":
+        errors.append("mission_run.status cannot be pending_confirmation")
     status_projection = dict(payload)
     status_projection.pop("confirmed", None)
     status_projection["mode"] = "mission_status"

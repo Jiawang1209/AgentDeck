@@ -5381,6 +5381,276 @@ def test_mission_status_validator_rejects_unsafe_attach_control() -> None:
     assert validate_mission_status_contract(payload)["ok"] is False
 
 
+@pytest.mark.parametrize(
+    ("validator_name", "value", "expected_error"),
+    [
+        ("preview", None, "mission_preview must be an object"),
+        ("preview", [], "mission_preview must be an object"),
+        ("status", None, "mission_status must be an object"),
+        ("status", [], "mission_status must be an object"),
+        ("run", None, "mission_run must be an object"),
+        ("run", [], "mission_run must be an object"),
+    ],
+)
+def test_mission_validators_reject_non_object_roots_without_raising(
+    validator_name, value, expected_error
+) -> None:
+    from agentdeck.contracts import (
+        validate_mission_preview_contract,
+        validate_mission_run_contract,
+        validate_mission_status_contract,
+    )
+
+    validator = {
+        "preview": validate_mission_preview_contract,
+        "status": validate_mission_status_contract,
+        "run": validate_mission_run_contract,
+    }[validator_name]
+
+    assert validator(value) == {"ok": False, "errors": [expected_error]}
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("plan_id",), "pln_example"),
+        (("plan_id",), "pln_deadbeefcafe;rm"),
+        (("plan_hash",), "sha256:abc"),
+        (("plan_hash",), "sha256:" + "A" * 64),
+        (("step_count",), True),
+        (("timeout_seconds",), True),
+        (("user_message",), {"credentials": "secret"}),
+        (("provider",), ["fake"]),
+        (("model",), ""),
+        (("plan", "goal"), ""),
+        (("plan", "summary"), {"prompt": "secret"}),
+        (("plan", "steps", 0, "agent_id"), {"credentials": "secret"}),
+        (("plan", "steps", 0, "role"), ""),
+        (("plan", "steps", 0, "task"), ["unsafe"]),
+        (("controls", 0, "label"), {"prompt": "secret"}),
+        (("controls", 0, "kind"), ["execute"]),
+        (("controls", 0, "command"), {"command": "unsafe"}),
+        (("controls", 0, "safety"), ["delegated"]),
+        (("controls", 0, "enabled"), 1),
+        (("controls", 0, "blocker"), {"credentials": "secret"}),
+        (("selected_agents", 0, "runtime_status"), {"env": "secret"}),
+        (("selected_agents", 0, "agent_id"), {"credentials": "secret"}),
+        (("startup_actions", 0, "action"), {"command": "unsafe"}),
+    ],
+)
+def test_mission_preview_rejects_invalid_scalar_and_nested_values(path, value) -> None:
+    from copy import deepcopy
+
+    from agentdeck.contracts import mission_example, validate_mission_preview_contract
+
+    payload = deepcopy(mission_example("preview"))
+    target = payload
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = value
+
+    assert validate_mission_preview_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("plan_id", {"credentials": "secret"}),
+        ("plan_hash", "sha256:" + "g" * 64),
+        ("current_step", True),
+        ("step_count", True),
+        ("timeout_seconds", True),
+        ("workflow_run_id", {"command": "unsafe"}),
+        ("confirmed_at", ""),
+        ("status", {"credentials": "secret"}),
+    ],
+)
+def test_mission_status_rejects_invalid_identifiers_progress_and_timestamps(
+    field, value
+) -> None:
+    from agentdeck.contracts import mission_example, validate_mission_status_contract
+
+    payload = mission_example("status")
+    payload[field] = value
+
+    assert validate_mission_status_contract(payload)["ok"] is False
+
+
+def _mission_status_payload(status: str) -> dict:
+    from agentdeck.contracts import mission_example
+
+    payload = mission_example("status")
+    payload.update(
+        {
+            "status": status,
+            "workflow_run_id": None,
+            "current_step": 0,
+            "blockers": [],
+            "stop_reason": None,
+            "confirmed_at": None,
+            "completed_at": None,
+            "can_resume": False,
+        }
+    )
+    resume = payload["controls"][0]
+    resume.update(enabled=False, blocker="mission status cannot resume")
+    if status in {"preparing", "running", "completed", "stopped", "interrupted"}:
+        payload["confirmed_at"] = "2026-07-11T00:00:01+00:00"
+    if status in {"running", "completed", "interrupted"}:
+        payload["workflow_run_id"] = "wfr_deadbeefcafe"
+    if status in {"running", "stopped", "interrupted"}:
+        payload["current_step"] = 4
+    if status in {"stopped", "interrupted"}:
+        payload["stop_reason"] = "timed_out"
+        payload["can_resume"] = True
+        resume.update(enabled=True, blocker=None)
+    if status == "completed":
+        payload["current_step"] = payload["step_count"]
+        payload["completed_at"] = "2026-07-11T00:08:00+00:00"
+    return payload
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "pending_confirmation",
+        "preparing",
+        "running",
+        "completed",
+        "stopped",
+        "interrupted",
+    ],
+)
+def test_mission_status_validator_accepts_each_coherent_lifecycle_status(status) -> None:
+    from agentdeck.contracts import validate_mission_status_contract
+
+    payload = _mission_status_payload(status)
+
+    assert validate_mission_status_contract(payload)["ok"] is True
+
+
+@pytest.mark.parametrize(
+    ("status", "changes"),
+    [
+        ("pending_confirmation", {"confirmed_at": "2026-07-11T00:00:01+00:00"}),
+        ("pending_confirmation", {"workflow_run_id": "wfr_deadbeefcafe"}),
+        ("preparing", {"confirmed_at": None}),
+        ("preparing", {"completed_at": "2026-07-11T00:08:00+00:00"}),
+        ("running", {"confirmed_at": None}),
+        ("running", {"workflow_run_id": None}),
+        ("running", {"stop_reason": "failed"}),
+        ("running", {"completed_at": "2026-07-11T00:08:00+00:00"}),
+        ("completed", {"current_step": 7}),
+        ("completed", {"completed_at": None}),
+        ("completed", {"stop_reason": "failed"}),
+        ("completed", {"workflow_run_id": None}),
+        ("stopped", {"stop_reason": None}),
+        ("stopped", {"confirmed_at": None}),
+        ("stopped", {"completed_at": "2026-07-11T00:08:00+00:00"}),
+        ("interrupted", {"stop_reason": None}),
+        ("interrupted", {"workflow_run_id": None}),
+        ("interrupted", {"completed_at": "2026-07-11T00:08:00+00:00"}),
+    ],
+)
+def test_mission_status_validator_rejects_incoherent_lifecycle(status, changes) -> None:
+    from agentdeck.contracts import validate_mission_status_contract
+
+    payload = _mission_status_payload(status)
+    payload.update(changes)
+
+    assert validate_mission_status_contract(payload)["ok"] is False
+
+
+def test_mission_status_resume_gate_accounts_for_blockers() -> None:
+    from agentdeck.contracts import validate_mission_status_contract
+
+    payload = _mission_status_payload("stopped")
+    payload["blockers"] = ["worker setup required"]
+    payload["can_resume"] = False
+    payload["controls"][0].update(enabled=False, blocker="worker setup required")
+
+    assert validate_mission_status_contract(payload)["ok"] is True
+
+    payload["can_resume"] = True
+    payload["controls"][0].update(enabled=True, blocker=None)
+    assert validate_mission_status_contract(payload)["ok"] is False
+
+
+def test_mission_run_rejects_pending_confirmation_and_nonliteral_confirmation() -> None:
+    from agentdeck.contracts import mission_example, validate_mission_run_contract
+
+    pending = mission_example("run")
+    pending["status"] = "pending_confirmation"
+    pending["workflow_run_id"] = None
+    pending["current_step"] = 0
+    pending["confirmed_at"] = None
+    pending["completed_at"] = None
+    pending["confirmed"] = True
+    assert validate_mission_run_contract(pending)["ok"] is False
+
+    not_literal = mission_example("run")
+    not_literal["confirmed"] = 1
+    assert validate_mission_run_contract(not_literal)["ok"] is False
+
+    unsafe_mode = mission_example("run")
+    unsafe_mode["mode"] = {"credentials": "secret"}
+    assert validate_mission_run_contract(unsafe_mode)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "value"),
+    [
+        ("startup", "runtime_status", "stopped"),
+        ("startup", "effective_model", "different-model"),
+        ("startup", "model_source", "different-source"),
+        ("plan", "role", "different-role"),
+    ],
+)
+def test_mission_preview_rejects_cross_row_provenance_drift(target, field, value) -> None:
+    from agentdeck.contracts import mission_example, validate_mission_preview_contract
+
+    payload = mission_example("preview")
+    if target == "startup":
+        payload["startup_actions"][0][field] = value
+    else:
+        payload["plan"]["steps"][0][field] = value
+
+    assert validate_mission_preview_contract(payload)["ok"] is False
+
+
+def test_mission_contract_item_field_tuples_are_stable_and_mission_owned() -> None:
+    from agentdeck.contracts import (
+        MISSION_CONTROL_FIELDS,
+        MISSION_SELECTED_AGENT_FIELDS,
+        MISSION_STARTUP_ACTION_FIELDS,
+    )
+
+    assert MISSION_CONTROL_FIELDS == (
+        "kind",
+        "label",
+        "command",
+        "safety",
+        "enabled",
+        "blocker",
+    )
+    assert MISSION_SELECTED_AGENT_FIELDS == (
+        "agent_id",
+        "provider",
+        "role",
+        "workspace_mode",
+        "runtime_status",
+        "effective_model",
+        "model_source",
+    )
+    assert MISSION_STARTUP_ACTION_FIELDS == (
+        "agent_id",
+        "action",
+        "runtime_status",
+        "effective_model",
+        "model_source",
+    )
+
+
 def test_skill_contracts_expose_and_validate_planning_guidance() -> None:
     from copy import deepcopy
 

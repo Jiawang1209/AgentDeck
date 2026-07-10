@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Harden Mission contract validation
+
+- **类型**: fix + test + contract
+- **审查问题**: 首版 Mission validator 对非 object root 会抛异常，未严格验证 canonical plan id/hash、嵌套 scalar、完整生命周期与 selected/startup/plan provenance；Mission control tuple 还别名 Leader Review tuple，worker helper 依赖 tuple equality 判型。
+- **What**: 三个 validator 现在对 root/深层非法值统一返回 errors；共享 non-empty string、exact-int、optional-string、plan identity/hash、blocker 与 lifecycle helper；Mission-owned 显式 item tuples 与显式 worker kind/schema；严格交叉核对 startup provenance 和 plan role；六状态约束、blocker-aware resume gate、literal confirmation 与安全 attach/control grammar 全部 fail-closed。
+- **TDD 证据**: 首轮质量 RED 为 37 failed / 23 passed；深层 unhashable agent/action/status 与 non-completed timestamp 复查再次 RED 8 项；最小实现后 Mission contract focused 为 104 passed，contracts+CLI mission/index focused 为 115 passed。
+- **安全边界**: 仍只修改 contract discovery/validation，不实现或调用 Mission runner、provider、runtime/tmux，不写 Mission state，不扩大 approval；非法 nested command/prompt/env/credentials 对象不执行、不打印、不泄漏。
+
 ### Add Mission contract discovery
 
 - **类型**: feat + test + contract
