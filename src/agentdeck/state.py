@@ -13,6 +13,8 @@ from .config import CONFIG_DIR, ensure_project_layout, project_root
 from .mission import (
     MISSION_SCHEMA_VERSION,
     MISSION_STATUSES,
+    MISSION_INVALID_BLOCKERS_BLOCKER,
+    compact_mission_blockers,
     compact_mission_worker_entries,
     is_canonical_mission_id,
     mission_commands,
@@ -178,11 +180,10 @@ class StateStore:
             raise ValueError("mission identity fields must be non-empty strings")
         if not isinstance(can_start, bool):
             raise ValueError("can_start must be a boolean")
-        if not isinstance(blockers, list) or not all(
-            isinstance(blocker, str) for blocker in blockers
-        ):
+        compact_blockers, invalid_blockers = compact_mission_blockers(blockers)
+        if invalid_blockers:
             raise ValueError("blockers must be a list of strings")
-        if can_start and blockers:
+        if can_start and compact_blockers:
             raise ValueError("can_start requires empty blockers")
         if not isinstance(step_count, int) or isinstance(step_count, bool) or step_count < 1:
             raise ValueError("step_count must be a positive integer")
@@ -219,7 +220,7 @@ class StateStore:
             "status": MISSION_STATUSES[0],
             "stop_reason": None,
             "can_start": can_start,
-            "blockers": list(blockers),
+            "blockers": compact_blockers,
             "provider": provider,
             "model": model,
             "leader_backend": expected_backend,
@@ -289,11 +290,13 @@ class StateStore:
             raise ValueError("stop_reason must be a string or null")
         if "can_start" in changes and not isinstance(changes["can_start"], bool):
             raise ValueError("can_start must be a boolean")
-        if "blockers" in changes and (
-            not isinstance(changes["blockers"], list)
-            or not all(isinstance(blocker, str) for blocker in changes["blockers"])
-        ):
-            raise ValueError("blockers must be a list of strings")
+        if "blockers" in changes:
+            compact_blockers, invalid_blockers = compact_mission_blockers(
+                changes["blockers"]
+            )
+            if invalid_blockers:
+                raise ValueError("blockers must be a list of strings")
+            changes["blockers"] = compact_blockers
         effective_can_start = changes.get("can_start", record.get("can_start"))
         effective_blockers = changes.get("blockers", record.get("blockers"))
         if effective_can_start is True and effective_blockers:
@@ -1502,11 +1505,11 @@ class StateStore:
                 and selected_ids == action_ids
             )
             raw_can_start = mission.get("can_start") is True
-            blockers = [
-                blocker
-                for blocker in mission.get("blockers", [])
-                if isinstance(blocker, str)
-            ] if isinstance(mission.get("blockers"), list) else []
+            blockers, invalid_blockers = compact_mission_blockers(
+                mission.get("blockers")
+            )
+            if invalid_blockers and MISSION_INVALID_BLOCKERS_BLOCKER not in blockers:
+                blockers.append(MISSION_INVALID_BLOCKERS_BLOCKER)
             if (invalid_agents or invalid_actions or raw_can_start) and not workers_ready:
                 if "invalid mission worker summaries" not in blockers:
                     blockers.append("invalid mission worker summaries")

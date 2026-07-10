@@ -48,6 +48,7 @@ MISSION_STARTUP_ACTION_FIELDS = (
 )
 MISSION_STARTUP_ACTION_REQUIRED_FIELDS = MISSION_STARTUP_ACTION_FIELDS[:-1]
 MISSION_WORKER_NULLABLE_FIELDS = frozenset({"effective_model", "blocker"})
+MISSION_INVALID_BLOCKERS_BLOCKER = "invalid mission blockers"
 
 
 def is_canonical_mission_id(value: object) -> bool:
@@ -72,6 +73,13 @@ def mission_status_transition_allowed(current: object, target: object) -> bool:
     if current not in MISSION_STATUSES or target not in MISSION_STATUSES:
         return False
     return current == target or target in MISSION_STATUS_TRANSITIONS[current]
+
+
+def compact_mission_blockers(value: object) -> tuple[list[str], bool]:
+    if not isinstance(value, list):
+        return [], True
+    blockers = [item for item in value if isinstance(item, str)]
+    return blockers, len(blockers) != len(value)
 
 
 def compact_mission_worker_entries(

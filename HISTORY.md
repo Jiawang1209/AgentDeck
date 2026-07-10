@@ -4,6 +4,15 @@
 
 ## 2026-07-11
 
+### Fail closed on malformed Mission blockers after final quality review
+
+- **类型**: fix + test
+- **审查问题**: legacy blockers 为 dict、纯 non-string list 或混合 list 时，projection 只保留字符串却不记录丢弃，dict/纯非法 list 会被压为空并使 `not blockers` 误判为可启动；混合 list 虽不可启动但隐藏了 corruption。
+- **What**: `mission.py` 新增共享 `compact_mission_blockers()` 与固定 `invalid mission blockers` marker；create/update 复用 helper 拒绝所有非法 blocker containers/items，projection 保留合法字符串、对任一非法成分追加固定 marker、丢弃且不泄漏原值，并强制 `can_start=false`。
+- **TDD 证据**: dict、纯 dict-list、字符串+dict mixed list 与合法 list 参数化测试先 RED（3 failed, 1 passed），最小修复后 4 passed；既有 create/update blocker invariants 3 passed。
+- **安全边界**: 不改变状态机、runner、contract surface、provider/tmux、approval 或事件；仅统一 blocker compact/validation 语义，malformed 原值不进入 ProjectView。
+- **验证**: blockers focused 7 项、三文件相关回归 671 项、全量 pytest 932 项通过；compileall 与 `git diff --check` 均通过。
+
 ### Close Mission projection invariants after quality re-review
 
 - **类型**: fix + test + contract

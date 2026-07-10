@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agentdeck import cli
 from agentdeck.config import write_default_config
 from agentdeck.contracts import (
@@ -10191,8 +10193,20 @@ def test_status_handles_malformed_mission_rows_without_empty_worker_sentinels(
     }
 
 
+@pytest.mark.parametrize(
+    ("raw_blockers", "expected_blockers"),
+    [
+        ({"credentials": "dict-secret"}, ["invalid mission blockers"]),
+        ([{"credentials": "list-secret"}], ["invalid mission blockers"]),
+        (
+            ["valid blocker", {"full_prompt": "mixed-secret"}],
+            ["valid blocker", "invalid mission blockers"],
+        ),
+        (["legacy blocker"], ["legacy blocker"]),
+    ],
+)
 def test_project_view_normalizes_startable_mission_with_legacy_blockers(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, raw_blockers, expected_blockers
 ) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)
@@ -10257,7 +10271,7 @@ def test_project_view_normalizes_startable_mission_with_legacy_blockers(
         timeout_seconds=180,
     )
     state = store.load()
-    state["missions"][0]["blockers"] = ["legacy blocker"]
+    state["missions"][0]["blockers"] = raw_blockers
     store.save(state)
 
     payload = cli.asdict(store.project_view(cli.load_config(root)))
@@ -10265,7 +10279,11 @@ def test_project_view_normalizes_startable_mission_with_legacy_blockers(
 
     assert item["mission_id"] == mission["mission_id"]
     assert item["can_start"] is False
-    assert item["blockers"] == ["legacy blocker"]
+    assert item["blockers"] == expected_blockers
+    assert all(
+        secret not in json.dumps(item, ensure_ascii=False)
+        for secret in ("dict-secret", "list-secret", "mixed-secret")
+    )
     assert validate_project_view_contract(payload) == {"ok": True, "errors": []}
 
 
