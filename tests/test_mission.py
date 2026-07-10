@@ -428,6 +428,11 @@ def test_invalid_shell_quoting_blocks_model_resolution_without_mutating_command(
         "codex exec $(whoami)",
         "codex exec $HOME",
         "MODEL=gpt-5.5 codex exec",
+        "codex exec & echo unsafe",
+        "codex exec # comment",
+        "codex exec *.md",
+        "codex exec ~/project",
+        "codex exec 'path with spaces'",
     ],
 )
 def test_shell_sensitive_worker_commands_are_blocked_unchanged(command: str) -> None:
@@ -445,6 +450,62 @@ def test_shell_sensitive_worker_commands_are_blocked_unchanged(command: str) -> 
     assert result.blocker == "unsupported worker command: planner"
 
 
+def test_worker_executable_must_match_configured_provider_family() -> None:
+    worker = agent("planner", "codex", command="python worker.py")
+
+    result = effective_mission_agent(
+        worker,
+        LeaderConfig(provider="codex-cli", model="gpt-5.5"),
+    )
+
+    assert result.agent is worker
+    assert result.model is None
+    assert result.model_source == "provider_default"
+    assert result.blocker == "worker executable does not match provider: planner"
+
+
+def test_duplicate_explicit_model_flags_are_blocked() -> None:
+    worker = agent(
+        "planner",
+        "codex",
+        command="codex exec --model first --model second",
+    )
+
+    result = effective_mission_agent(
+        worker,
+        LeaderConfig(provider="codex-cli", model="gpt-5.5"),
+    )
+
+    assert result.agent is worker
+    assert result.model is None
+    assert result.model_source == "provider_default"
+    assert result.blocker == "duplicate worker model flag: planner"
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_command"),
+    [
+        ("codex.exe exec", "codex.exe exec --model gpt-5.5"),
+        ("/usr/local/bin/codex exec", "/usr/local/bin/codex exec --model gpt-5.5"),
+    ],
+)
+def test_codex_executable_basename_allows_exe_and_absolute_path(
+    command: str,
+    expected_command: str,
+) -> None:
+    worker = agent("planner", "codex", command=command)
+
+    result = effective_mission_agent(
+        worker,
+        LeaderConfig(provider="codex-cli", model="gpt-5.5"),
+    )
+
+    assert result.agent.command == expected_command
+    assert result.model == "gpt-5.5"
+    assert result.model_source == "leader_inherited"
+    assert result.blocker is None
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -452,6 +513,7 @@ def test_shell_sensitive_worker_commands_are_blocked_unchanged(command: str) -> 
         "codex exec -m --full-auto",
         "codex exec --model=",
         "codex exec --model ''",
+        "codex exec --model '   '",
     ],
 )
 def test_missing_or_empty_explicit_model_value_blocks_without_appending(command: str) -> None:

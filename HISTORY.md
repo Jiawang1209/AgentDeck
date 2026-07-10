@@ -2,6 +2,17 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-11
+
+### Fail-closed direct CLI grammar for Mission model resolution
+
+- **类型**: fix + test
+- **动机**: raw shell blacklist 无法证明 worker command 是可安全重写的 Codex/Claude 直接 CLI argv；未知 executable、单 `&`、comment/glob/tilde 和重复 model flag 仍可能进入继承路径。
+- **What**: command 必须先通过 `shlex.split`，再通过 raw shell-sensitive 检查、provider-family executable basename allowlist（`codex[.exe]` / `claude[.exe]`，允许绝对路径）、conservative literal argv grammar 和全量 model flag 校验。单 `&`、`#`、`* ? [ ]`、tilde、`$`、backtick、换行、重定向/pipe/compound operator、错误 executable、unsupported argv、重复/缺值/空白 model flag 全部 fail-closed，保持原始 `AgentSpec` 并返回仅含固定 reason + agent ID 的 blocker。只有完整 grammar 通过后才允许 `shlex.join` 追加同 family CLI Leader 模型。
+- **TDD 证据**: reviewer 精确案例先 RED（7 failed, 79 passed）再 GREEN；自审增加 whitespace-only model value 后再次 RED（1 failed, 86 passed），最小收紧后 focused suite 87 项通过。
+- **安全边界**: 不执行或探测 command，不读取 env，不调用 provider/tmux，不写 state；unsupported command 不规范化、不补 flag、不泄露原始 command/model/env/secrets。既有简单 Codex/Claude 命令、显式单 model flag、`codex.exe` 和绝对路径 executable 保持可用。
+- **验证**: focused pytest 87 项、provider regression 31 项、全量 pytest 869 项通过；compileall 与 `git diff --check` 均通过。
+
 ## 2026-07-10
 
 ### Natural-language Mission pure domain foundation

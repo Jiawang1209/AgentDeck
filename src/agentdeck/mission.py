@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shlex
 from dataclasses import dataclass, replace
+from pathlib import PurePath
 from typing import Any, Mapping, Sequence
 
 from .models import AgentRuntimeBinding, AgentSpec, LeaderConfig, ProjectConfig
@@ -236,34 +237,79 @@ class EffectiveMissionAgent:
     blocker: str | None = None
 
 
-def _configured_model(tokens: Sequence[str]) -> tuple[str | None, bool]:
-    configured_model: str | None = None
+def _configured_model(tokens: Sequence[str]) -> tuple[str | None, str | None]:
+    model_flag_count = sum(
+        token in {"--model", "-m"} or token.startswith("--model=") for token in tokens
+    )
+    if model_flag_count > 1:
+        return None, "duplicate"
+
     for index, token in enumerate(tokens):
         if token in {"--model", "-m"}:
+            value = tokens[index + 1] if index + 1 < len(tokens) else ""
             if (
                 index + 1 >= len(tokens)
-                or not tokens[index + 1]
-                or tokens[index + 1].startswith("-")
+                or not value.strip()
+                or value.lstrip().startswith("-")
             ):
-                return None, True
-            if configured_model is None:
-                configured_model = tokens[index + 1]
+                return None, "invalid"
+            return value, None
         if token.startswith("--model="):
             value = token.partition("=")[2]
-            if not value:
-                return None, True
-            if configured_model is None:
-                configured_model = value
-    return configured_model, False
+            if not value.strip():
+                return None, "invalid"
+            return value, None
+    return None, None
 
 
 def _unsupported_worker_command(command: str, tokens: Sequence[str]) -> bool:
     if "\n" in command or "\r" in command:
         return True
-    shell_sensitive = ("&&", "||", ";", "|", "<", ">", "`", "$")
+    shell_sensitive = (
+        "&&",
+        "||",
+        ";",
+        "|",
+        "<",
+        ">",
+        "`",
+        "$",
+        "&",
+        "#",
+        "*",
+        "?",
+        "[",
+        "]",
+    )
     if any(operator in command for operator in shell_sensitive):
         return True
-    return bool(tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]))
+    if tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        return True
+    return any(token.startswith("~") for token in tokens)
+
+
+def _worker_executable_matches_provider(agent: AgentSpec, executable: str) -> bool:
+    family = provider_family(agent.provider)
+    allowed_executables = {
+        "codex": {"codex", "codex.exe"},
+        "claude": {"claude", "claude.exe"},
+    }
+    return PurePath(executable).name.lower() in allowed_executables.get(family, set())
+
+
+def _literal_worker_argv(tokens: Sequence[str]) -> bool:
+    literal = re.compile(r"^[A-Za-z0-9_./:=,+@%-]+$")
+    model_literal = re.compile(r"^[A-Za-z0-9_./:=,+@% -]+$")
+    for index, token in enumerate(tokens[1:], start=1):
+        if literal.fullmatch(token):
+            continue
+        if index > 0 and tokens[index - 1] in {"--model", "-m"}:
+            if model_literal.fullmatch(token):
+                continue
+        if token.startswith("--model=") and model_literal.fullmatch(token.partition("=")[2]):
+            continue
+        return False
+    return True
 
 
 def effective_mission_agent(agent: AgentSpec, leader: LeaderConfig) -> EffectiveMissionAgent:
@@ -285,13 +331,36 @@ def effective_mission_agent(agent: AgentSpec, leader: LeaderConfig) -> Effective
             blocker=f"unsupported worker command: {agent.agent_id}",
         )
 
-    configured_model, invalid_model_flag = _configured_model(tokens)
-    if invalid_model_flag:
+    if not _worker_executable_matches_provider(agent, tokens[0]):
+        return EffectiveMissionAgent(
+            agent=agent,
+            model=None,
+            model_source="provider_default",
+            blocker=f"worker executable does not match provider: {agent.agent_id}",
+        )
+
+    configured_model, model_flag_error = _configured_model(tokens)
+    if model_flag_error == "duplicate":
+        return EffectiveMissionAgent(
+            agent=agent,
+            model=None,
+            model_source="provider_default",
+            blocker=f"duplicate worker model flag: {agent.agent_id}",
+        )
+    if model_flag_error == "invalid":
         return EffectiveMissionAgent(
             agent=agent,
             model=None,
             model_source="provider_default",
             blocker=f"invalid worker model flag: {agent.agent_id}",
+        )
+
+    if not _literal_worker_argv(tokens):
+        return EffectiveMissionAgent(
+            agent=agent,
+            model=None,
+            model_source="provider_default",
+            blocker=f"unsupported worker command: {agent.agent_id}",
         )
     if configured_model is not None:
         return EffectiveMissionAgent(
