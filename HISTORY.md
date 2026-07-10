@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Stop orphaned Mission workflows during preparing interruption
+
+- **类型**: important fix + strict TDD + interruption recovery
+- **问题**: workflow record 可能已在 preparing 窗口创建，但 Mission 尚未切到 running；旧 `interrupt_mission` 先按 preparing 返回 stopped，遗漏 workflow，使其永久保持 running。
+- **What**: interruption 现在先读取并持久化已引用 workflow 为 interrupted，再按状态图把 preparing Mission 置为 `stopped(interrupted)`，或把 running Mission 置为 interrupted。缺失 workflow 引用稳定转为 non-resumable `workflow_state_drift`；workflow/mission stop audit 失败不影响已完成的状态持久化。
+- **TDD 证据**: preparing + existing workflow 直测先 RED（workflow 仍 running），修复后双状态通过；`workflow_started` audit 精确窗口注入一次 secret OSError 后，fallback 使 Mission stopped、workflow interrupted、无 secret event。Mission focused 191 项、全量 1153 项通过，compileall 与 diff check 通过。
+- **安全边界**: 不删除 pane、turn 或 workflow；中断先保存状态再尝试 compact audit，审计失败不回滚恢复事实，不回显异常详情。
+
 ### Make Mission execution claims and recovery atomic
 
 - **类型**: important fix + strict TDD + concurrency/recovery safety

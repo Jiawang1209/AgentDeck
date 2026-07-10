@@ -463,6 +463,61 @@ def test_confirmation_audit_failure_does_not_leave_preparing(tmp_path, monkeypat
     assert backend.spawned == []
 
 
+def test_interrupt_preparing_mission_also_interrupts_existing_workflow(tmp_path, monkeypatch) -> None:
+    _root, _config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    from agentdeck.models import utc_now
+    from agentdeck.workflow import authorized_steps
+    store.claim_mission_execution(
+        preview["mission_id"], resuming=False, confirmed_at=utc_now()
+    )
+    workflow = store.create_workflow_run(
+        plan_id=preview["plan_id"],
+        plan_hash=preview["plan_hash"],
+        timeout_seconds=180,
+        authorized_steps=authorized_steps(store.plan_by_id(preview["plan_id"])),
+    )
+    store.update_mission(preview["mission_id"], workflow_run_id=workflow["run_id"])
+
+    mission = interrupt_mission(store, preview["mission_id"])
+
+    assert mission["status"] == "stopped"
+    assert mission["stop_reason"] == "interrupted"
+    interrupted = store.workflow_run_by_id(workflow["run_id"])
+    assert interrupted["status"] == "interrupted"
+    assert interrupted["stop_reason"] == "interrupted"
+
+
+def test_workflow_started_audit_failure_fallback_stops_orphaned_run(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    backend = MissionBackend()
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.wait_for_worker_readiness",
+        lambda **kwargs: ready_batch("planner", "reviewer"),
+    )
+    import agentdeck.mission_orchestration as orchestration
+    original_audit = orchestration._audit
+    failed = False
+    def fail_workflow_started(store_arg, event_type, **payload):
+        nonlocal failed
+        if event_type == "workflow_started" and not failed:
+            failed = True
+            raise OSError("SECRET workflow audit")
+        return original_audit(store_arg, event_type, **payload)
+    monkeypatch.setattr(orchestration, "_audit", fail_workflow_started)
+
+    with pytest.raises(OSError):
+        run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
+    mission = interrupt_mission(store, preview["mission_id"])
+
+    assert mission["status"] == "stopped"
+    assert mission["stop_reason"] == "interrupted"
+    assert mission["blockers"] == []
+    workflow = store.workflow_run_by_id(mission["workflow_run_id"])
+    assert workflow["status"] == "interrupted"
+    assert workflow["status"] != "running"
+    assert "SECRET" not in repr(store.all_events())
+
+
 def test_resume_reuses_existing_workflow_and_duplicate_completion_is_idempotent(tmp_path, monkeypatch) -> None:
     _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
     backend = MissionBackend()

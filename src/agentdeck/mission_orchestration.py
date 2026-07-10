@@ -871,11 +871,34 @@ def resume_mission(*, config: ProjectConfig, store: StateStore, backend: Runtime
 
 def interrupt_mission(store: StateStore, mission_id: str) -> dict[str, Any]:
     mission = store.mission_by_id(mission_id)
-    if mission.get("status") == "preparing":
-        return _stop_mission(store, mission, reason="interrupted")
     run_id = mission.get("workflow_run_id")
     if run_id:
-        store.update_workflow_run(str(run_id), status="interrupted", stop_reason="interrupted")
+        try:
+            store.workflow_run_by_id(str(run_id))
+            store.update_workflow_run(
+                str(run_id), status="interrupted", stop_reason="interrupted"
+            )
+            try:
+                _audit(
+                    store,
+                    "workflow_stopped",
+                    run_id=run_id,
+                    reason="interrupted",
+                )
+            except Exception:
+                pass
+        except Exception:
+            return _stop_mission(
+                store,
+                mission,
+                reason="workflow_state_drift",
+                blockers=["workflow state drift"],
+            )
+    if mission.get("status") == "preparing":
+        return _stop_mission(store, mission, reason="interrupted")
     mission = store.update_mission(mission_id, status="interrupted", stop_reason="interrupted")
-    _audit(store, "mission_stopped", mission_id=mission_id, reason="interrupted")
+    try:
+        _audit(store, "mission_stopped", mission_id=mission_id, reason="interrupted")
+    except Exception:
+        pass
     return mission
