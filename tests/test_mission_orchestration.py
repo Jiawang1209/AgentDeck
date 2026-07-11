@@ -198,7 +198,7 @@ def complete_fake_workflow(store: StateStore, run_id: str) -> dict[str, object]:
             "step": step, "agent_id": agent_id, "status": "completed",
             "summary": f"turn {step}", "verification": "fake", "risks": "none",
             "next_steps": "continue", "artifact_paths": [],
-            "trace_command": f"agentdeck trace --id rpl_fake{step}",
+            "trace_command": f"agentdeck trace --id rep_{step:012x}",
         }
         turns.append({"step": step, "agent_id": agent_id, "status": "completed", "handoff": handoff})
     return store.update_workflow_run(run_id, status="completed", current_step=8, turns=turns)

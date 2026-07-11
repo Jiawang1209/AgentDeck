@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Harden Mission turn trace controls
+
+- **类型**: contract security fix + strict TDD
+- **问题**: run/resume compact turn 的 `trace_command` 只检查固定前缀，因此合法 reply id 后仍可拼接分号、换行、额外 flag 或参数；错误 prefix、大小写和长度也未被拒绝。
+- **What**: trace control 现在必须 fullmatch `agentdeck trace --id rep_[0-9a-f]{12}`，与真实 `record_reply` id 同源；discovery example 与测试 fixture 改用真实 prefix/长度，Mission contract 明确完整匹配规则。
+- **TDD 证据**: 分号、换行、extra flag、extra arg、wrong prefix、uppercase、短 id、长 id 八项先全部 RED 为错误通过；最小 fullmatch 后 10 项 focused GREEN，错误列表不回显注入 marker。contracts 388/388、全量 1200/1200 通过。
+- **安全边界**: validator 只返回稳定字段错误，不回显不可信 command；不执行 trace、不读取 reply 内容、不调用 provider/tmux、不修改 Mission/workflow state。
+
 ### Rehearse the one-confirmation natural-language Mission flow
 
 - **类型**: golden rehearsal + contract evolution + strict TDD

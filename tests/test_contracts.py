@@ -5435,6 +5435,31 @@ def test_mission_run_validator_accepts_interrupted_partial_turns() -> None:
     assert validate_mission_run_contract(payload) == {"ok": True, "errors": []}
 
 
+@pytest.mark.parametrize(
+    "trace_command",
+    [
+        "agentdeck trace --id rep_0123456789ab; marker",
+        "agentdeck trace --id rep_0123456789ab\nmarker",
+        "agentdeck trace --id rep_0123456789ab --extra",
+        "agentdeck trace --id rep_0123456789ab marker",
+        "agentdeck trace --id rpl_0123456789ab",
+        "agentdeck trace --id rep_0123456789AB",
+        "agentdeck trace --id rep_0123456789a",
+        "agentdeck trace --id rep_0123456789abc",
+    ],
+)
+def test_mission_run_validator_rejects_unsafe_turn_trace_command(trace_command) -> None:
+    from agentdeck.contracts import mission_example, validate_mission_run_contract
+
+    payload = mission_example("run")
+    payload["turns"][0]["handoff"]["trace_command"] = trace_command
+
+    result = validate_mission_run_contract(payload)
+
+    assert result["ok"] is False
+    assert "marker" not in repr(result["errors"])
+
+
 def test_mission_status_validator_rejects_unsafe_attach_control() -> None:
     from agentdeck.contracts import mission_example, validate_mission_status_contract
 

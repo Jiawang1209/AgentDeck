@@ -255,7 +255,7 @@ def _completed_chat_workflow(store: StateStore, mission_id: str) -> str:
                 "step": step, "agent_id": agent_id, "status": "completed",
                 "summary": f"turn {step}", "verification": "fake", "risks": "none",
                 "next_steps": "continue", "artifact_paths": [],
-                "trace_command": f"agentdeck trace --id rpl_fake{step}",
+                "trace_command": f"agentdeck trace --id rep_{step:012x}",
             },
         })
     store.update_workflow_run(run["run_id"], status="completed", current_step=8, turns=turns)

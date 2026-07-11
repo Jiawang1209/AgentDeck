@@ -4997,7 +4997,7 @@ def mission_example(kind: str) -> dict[str, object]:
                             "risks": "none",
                             "next_steps": "continue" if step < 8 else "done",
                             "artifact_paths": [],
-                            "trace_command": f"agentdeck trace --id rpl_example{step}",
+                            "trace_command": f"agentdeck trace --id rep_{step:012x}",
                         },
                     }
                     for step in range(1, 9)
@@ -5484,7 +5484,9 @@ def validate_mission_run_contract(payload: object) -> dict[str, object]:
             isinstance(item, str) and item for item in handoff.get("artifact_paths", [])
         ):
             errors.append(f"{prefix}.handoff.artifact_paths must be a string list")
-        if not isinstance(handoff.get("trace_command"), str) or not handoff.get("trace_command", "").startswith("agentdeck trace --id "):
+        if not isinstance(handoff.get("trace_command"), str) or re.fullmatch(
+            r"agentdeck trace --id rep_[0-9a-f]{12}", handoff.get("trace_command", "")
+        ) is None:
             errors.append(f"{prefix}.handoff.trace_command must be a trace command")
     if payload.get("status") == "completed" and (
         not isinstance(step_count, int)
