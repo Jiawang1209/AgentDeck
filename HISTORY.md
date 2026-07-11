@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Require Claude workspace chrome ordering
+
+- **类型**: P1 review fix + strict TDD + readiness safety
+- **问题**: Claude 2.1.207 structured-idle 首版只验证 chrome 信号各自存在，未要求真实 path box，也未约束 UI 行顺序；普通 prose path、Organization 行第二列 path 或乱序片段因此可能与其它信号拼成伪 ready。
+- **What**: structured idle 现在必须按严格递增索引出现：独立 `Accessing workspace:`、Organization box、首列为 `/...` / `~/...` / `…/...` 的 path box、精确 MCP auth UI、standalone empty prompt、trusted mode footer。六个 matcher 都 full-line，path 不从 Organization/release-notes 第二列或普通 prose 提取。
+- **TDD 证据**: 缺 path、三类伪 path、三类乱序先 7 failed / 9 passed RED，workspace/organization 拼接行已保持拒绝。最小 ordered-index 修复后 readiness 99/99、runtime + Mission 交叉 283/283、全量 1240/1240 GREEN，compileall 与 diff check 干净。
+- **安全边界**: 任一信号缺失、乱序或同一行拼接均保持 starting；只接受 box 首列的三个本地路径 UI 形态，不把 release notes、普通文档或 quoted path 当 runtime chrome；trust/login 仍在 ready 判定前优先返回 setup_required。
+
 ### Match Claude real idle chrome
 
 - **类型**: real pane acceptance fix + strict TDD + readiness safety

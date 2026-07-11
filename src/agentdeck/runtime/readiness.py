@@ -39,6 +39,9 @@ _CLAUDE_ORGANIZATION_CHROME = re.compile(
     r"^\s*[│|][^│|\r\n]*organization[^│|\r\n]*[│|][^│|\r\n]+[│|]\s*$"
 )
 _CLAUDE_WORKSPACE_CHROME = re.compile(r"^\s*accessing workspace:\s*$")
+_CLAUDE_WORKSPACE_PATH_CHROME = re.compile(
+    r"^\s*[│|]\s*(?:/|~/|…/)[^│|\r\n]*[│|](?:[^│|\r\n]*[│|])?\s*$"
+)
 _CLAUDE_MCP_AUTH_CHROME = re.compile(
     r"^\s*⚠\s+\d+\s+mcp servers? need authentication\s*·\s*run /mcp\s*$"
 )
@@ -65,6 +68,27 @@ class WorkerReadinessBatch:
     timed_out: bool = False
 
 
+def _has_ordered_claude_idle_chrome(lines: list[str]) -> bool:
+    patterns = (
+        _CLAUDE_WORKSPACE_CHROME,
+        _CLAUDE_ORGANIZATION_CHROME,
+        _CLAUDE_WORKSPACE_PATH_CHROME,
+        _CLAUDE_MCP_AUTH_CHROME,
+        _CLAUDE_EMPTY_PROMPT,
+        _CLAUDE_MODE_FOOTER,
+    )
+    indexes: list[int] = []
+    for pattern in patterns:
+        index = next(
+            (line_index for line_index, line in enumerate(lines) if pattern.fullmatch(line)),
+            None,
+        )
+        if index is None:
+            return False
+        indexes.append(index)
+    return all(left < right for left, right in zip(indexes, indexes[1:]))
+
+
 def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvidence:
     if not isinstance(provider, str):
         raise TypeError("provider must be a string")
@@ -83,12 +107,7 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
         idle_prompt = _CODEX_IDLE_PROMPT
     elif family == "claude":
         prompt_glyph = "❯"
-        has_structured_idle_chrome = (
-            any(_CLAUDE_ORGANIZATION_CHROME.search(line) for line in active_lines)
-            and any(_CLAUDE_WORKSPACE_CHROME.fullmatch(line) for line in active_lines)
-            and any(_CLAUDE_MCP_AUTH_CHROME.fullmatch(line) for line in active_lines)
-            and any(_CLAUDE_MODE_FOOTER.fullmatch(line) for line in active_lines)
-        )
+        has_structured_idle_chrome = _has_ordered_claude_idle_chrome(active_lines)
         has_normal_chrome = (
             "claude code" in active_frame
             and any("context" in line for line in active_lines)

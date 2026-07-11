@@ -163,6 +163,7 @@ def test_claude_empty_prompt_without_trusted_cli_structure_is_not_idle(screen: s
     [
         "Accessing workspace:\n",
         "│ user@example.com's Organization │ /release-notes...          │\n",
+        "│ /tmp/agentdeck-demo             │                            │\n",
         "⚠ 3 MCP servers need authentication · run /mcp\n",
         "❯\u00a0\n",
         "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
@@ -174,6 +175,64 @@ def test_claude_real_idle_chrome_requires_every_structural_signal(
     screen = CLAUDE_21207_READY_SCREEN.replace(missing_line, "")
 
     assert classify_worker_readiness("claude-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "Current path: /tmp/agentdeck-demo\n",
+        "Documentation path /tmp/agentdeck-demo\n",
+        "│ release notes │ /tmp/agentdeck-demo │\n",
+    ],
+)
+def test_claude_workspace_path_must_be_in_the_first_box_cell(
+    replacement: str,
+) -> None:
+    screen = CLAUDE_21207_READY_SCREEN.replace(
+        "│ /tmp/agentdeck-demo             │                            │\n",
+        replacement,
+    )
+
+    assert classify_worker_readiness("claude-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    "screen",
+    [
+        CLAUDE_21207_READY_SCREEN.replace(
+            "│ user@example.com's Organization │ /release-notes...          │\n"
+            "│ /tmp/agentdeck-demo             │                            │\n",
+            "│ /tmp/agentdeck-demo             │                            │\n"
+            "│ user@example.com's Organization │ /release-notes...          │\n",
+        ),
+        CLAUDE_21207_READY_SCREEN.replace(
+            "│ /tmp/agentdeck-demo             │                            │\n"
+            "⚠ 3 MCP servers need authentication · run /mcp\n",
+            "⚠ 3 MCP servers need authentication · run /mcp\n"
+            "│ /tmp/agentdeck-demo             │                            │\n",
+        ),
+        CLAUDE_21207_READY_SCREEN.replace(
+            "⚠ 3 MCP servers need authentication · run /mcp\n❯\u00a0\n",
+            "❯\u00a0\n⚠ 3 MCP servers need authentication · run /mcp\n",
+        ),
+        CLAUDE_21207_READY_SCREEN.replace(
+            "Accessing workspace:\n│ user@example.com's Organization",
+            "Accessing workspace: │ user@example.com's Organization",
+        ),
+    ],
+)
+def test_claude_real_idle_chrome_requires_cli_line_order(screen: str) -> None:
+    assert classify_worker_readiness("claude-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/tmp/agentdeck-demo", "~/src/agentdeck", "…/agentdeck-demo"],
+)
+def test_claude_workspace_path_box_accepts_supported_first_cell_paths(path: str) -> None:
+    screen = CLAUDE_21207_READY_SCREEN.replace("/tmp/agentdeck-demo", path)
+
+    assert classify_worker_readiness("claude-cli", screen).status == "ready"
 
 
 @pytest.mark.parametrize(
