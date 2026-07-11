@@ -270,6 +270,23 @@ def test_acp_preflight_validation_failure_has_no_stdout(tmp_path: Path, monkeypa
     assert "forced invalid" in captured.err
 
 
+def test_acp_preflight_sdk_version_mismatch_is_read_only_diagnostic(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch)
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    monkeypatch.setattr(cli.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(cli.importlib.metadata, "version", lambda _name: "0.10.0")
+    monkeypatch.setattr(cli.shutil, "which", lambda command: f"/example/bin/{command}")
+
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "planner"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["sdk"]["present"] is True
+    assert payload["sdk"]["version"] == "0.10.0"
+    assert payload["ready"] is False
+    assert payload["blockers"] == ["ACP Python SDK version must be 0.11.0"]
+    after = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    assert after == before
+
+
 def test_existing_agent_defaults_to_tmux_transport(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()

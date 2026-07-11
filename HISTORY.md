@@ -11,6 +11,7 @@
 - **Safety boundary**: missing project, invalid config, unknown Agent, and wrong transport fail with stderr and zero stdout; setup blockers return one validated `ready=false` JSON object. The command opens the existing store without creating layout and does not authenticate, mkdir, lock, write state/outbox/events, call providers, inspect tmux, or implement run/load/resume.
 - **TDD**: RED covered missing discovery/routes, SDK/executable blockers, Node <22, deterministic repeatability, no project creation, exact argv, sanitized example, inspect-only controls, and workbench/index discovery; focused tests passed after the minimal implementation.
 - **Semantic hardening**: the validator now enforces exact nested identities/types plus presence/path, pinned SDK `0.11.0`, Claude-target Node 22, parsed-version readiness, stable blocker derivation, top-level readiness, and enabled inspect-only control consistency. A mutation matrix covers every relation, and forced validation failure proves stdout remains empty.
+- **Diagnostic compatibility fix**: an installed SDK with a non-pinned but non-empty version is now a structurally valid preflight fact. It produces `ready=false` plus the unique stable version blocker and exits 0 without writes; missing or extra version blockers remain contract errors.
 
 ### Add a bounded ACP stdio client transport
 

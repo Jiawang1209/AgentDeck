@@ -2867,8 +2867,8 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
         if sdk.get("package") != "agent-client-protocol": errors.append("sdk.package must be agent-client-protocol")
         if type(sdk.get("present")) is not bool: errors.append("sdk.present must be a boolean")
         if sdk.get("version") is not None and not isinstance(sdk.get("version"), str): errors.append("sdk.version has invalid type")
-        if sdk.get("present") is True and sdk.get("version") != ACP_RUNTIME_SDK_VERSION:
-            errors.append(f"sdk.version must equal pinned version {ACP_RUNTIME_SDK_VERSION}")
+        if sdk.get("present") is True and (type(sdk.get("version")) is not str or not sdk.get("version")):
+            errors.append("present sdk must have a non-empty version")
         if sdk.get("present") is False and sdk.get("version") is not None: errors.append("absent sdk must have version null")
     node = payload.get("node")
     if isinstance(node, dict):

@@ -288,7 +288,7 @@ def test_acp_runtime_validator_rejects_drift(mutate, expected: str) -> None:
         (lambda p: p["adapter"].update({"executable_path": "relative/agent"}), "adapter.executable_path must be absolute"),
         (lambda p: p["sdk"].update({"module": "agent_client_protocol"}), "sdk.module must be acp"),
         (lambda p: p["sdk"].update({"package": "acp"}), "sdk.package must be agent-client-protocol"),
-        (lambda p: p["sdk"].update({"version": "0.10.0"}), "sdk.version must equal pinned version 0.11.0"),
+        (lambda p: p["sdk"].update({"version": ""}), "present sdk must have a non-empty version"),
         (lambda p: p["sdk"].update({"present": False, "version": "0.11.0"}), "absent sdk must have version null"),
         (lambda p: p["node"].update({"required": False, "minimum_major": 22}), "non-required node minimum_major must be null"),
         (lambda p: p["node"].update({"required": True}), "required node minimum_major must be 22"),
@@ -305,6 +305,32 @@ def test_acp_runtime_validator_rejects_semantic_inconsistency(mutate, expected: 
     payload = acp_runtime_example()
     mutate(payload)
     assert expected in validate_acp_runtime_contract(payload)["errors"]
+
+
+def test_acp_runtime_validator_accepts_version_mismatch_diagnostic() -> None:
+    from agentdeck.contracts import acp_runtime_example, validate_acp_runtime_contract
+
+    payload = acp_runtime_example()
+    payload["sdk"]["version"] = "0.10.0"
+    payload["blockers"] = ["ACP Python SDK version must be 0.11.0"]
+    payload["ready"] = False
+
+    assert validate_acp_runtime_contract(payload) == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize(
+    "blockers",
+    [[], ["ACP Python SDK version must be 0.11.0", "extra blocker"]],
+)
+def test_acp_runtime_validator_rejects_version_blocker_drift(blockers: list[str]) -> None:
+    from agentdeck.contracts import acp_runtime_example, validate_acp_runtime_contract
+
+    payload = acp_runtime_example()
+    payload["sdk"]["version"] = "0.10.0"
+    payload["blockers"] = blockers
+    payload["ready"] = not blockers
+
+    assert "blockers must exactly match failed readiness facts" in validate_acp_runtime_contract(payload)["errors"]
 
 
 @pytest.mark.parametrize(
