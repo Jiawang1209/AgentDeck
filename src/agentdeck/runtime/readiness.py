@@ -25,6 +25,9 @@ WorkerReadinessStatus = Literal[
 _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 _TERMINAL_STATUSES = frozenset({"setup_required", "failed", "pane_lost"})
 _ACTIVE_FRAME_LINE_COUNT = 40
+_CODEX_IDLE_PROMPT = re.compile(
+    r"^\s*›\s+(?:ask\s+codex\b.*|implement\s*\{\s*feature\s*\})\s*$"
+)
 
 
 @dataclass(frozen=True)
@@ -63,7 +66,7 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
         has_normal_chrome = "openai codex" in active_frame and any(
             "model:" in line or "status:" in line for line in active_lines
         )
-        idle_prompt = re.compile(r"^\s*›\s+ask codex\b")
+        idle_prompt = _CODEX_IDLE_PROMPT
     elif family == "claude":
         prompt_glyph = "❯"
         has_normal_chrome = "claude code" in active_frame and any(
@@ -115,7 +118,7 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
                 "starting", "CLI startup is still in progress"
             )
         if not has_current_input and "openai codex" in active_frame and any(
-            re.match(r"^\s*›\s+ask codex\b", line) for line in active_lines
+            _CODEX_IDLE_PROMPT.match(line) for line in active_lines
         ):
             return WorkerReadinessEvidence("ready", None)
         return WorkerReadinessEvidence("starting", "Codex CLI prompt is not ready")

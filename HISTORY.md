@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Fix real Worker startup readiness
+
+- **类型**: real acceptance fix + strict TDD
+- **问题**: Codex CLI 0.131 的真实 idle chrome 使用 `› Implement {feature}` 模板并在其后显示 model/context footer，旧 classifier 只认 `Ask Codex...`，因而超时；同时 detached tmux session 默认为 80x24，多 pane 分割后只剩约 5 行，无法稳定保留 Worker chrome。
+- **What**: Codex idle grammar 仅新增大小写/空白容忍的 exact `Implement {feature}` 模板，相似的真实用户输入仍视为 starting，并验证真实 `[gpt...] Context...` footer。`TmuxBackend.create_session` 只在新建 AgentDeck detached session 时设置 `-x 160 -y 60`，不 resize 已有用户 session、不 attach。
+- **TDD 证据**: sanitized Codex 0.131 fixture 与 tmux argv 先 2 failed / 3 passed RED；最小修复后 readiness + tmux 70/70、runtime + Mission 交叉 252/252、全量 1209/1209 GREEN，compileall 与 diff check 干净。
+- **安全边界**: 不接受 `Implement the feature`、`Implement {other}` 或模板后追加内容；wrapped current input 仍不能成为 readiness evidence。尺寸参数只影响 AgentDeck 新建 session 的初始 detached geometry。
+
 ### Normalize Mission planning metadata
 
 - **类型**: review pivot + deterministic provenance + strict TDD

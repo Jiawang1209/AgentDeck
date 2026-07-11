@@ -10,6 +10,8 @@ from .base import RuntimeDoctorResult
 
 
 INPUT_SUBMIT_DELAY_SECONDS = 0.15
+DETACHED_SESSION_WIDTH = 160
+DETACHED_SESSION_HEIGHT = 60
 
 
 class TmuxBackend:
@@ -33,6 +35,10 @@ class TmuxBackend:
             config.socket_name,
             "new-session",
             "-d",
+            "-x",
+            str(DETACHED_SESSION_WIDTH),
+            "-y",
+            str(DETACHED_SESSION_HEIGHT),
             "-s",
             config.session_name,
             "-n",

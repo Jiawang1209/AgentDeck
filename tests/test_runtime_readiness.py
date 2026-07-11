@@ -15,6 +15,13 @@ from agentdeck.runtime.readiness import (
 
 
 CODEX_READY_SCREEN = "\x1b[32mOpenAI Codex\x1b[0m  model: gpt-5\n› Ask Codex anything"
+CODEX_0131_READY_SCREEN = (
+    "OpenAI Codex (v0.131.0)\n"
+    "model: gpt-5.3-codex\n"
+    "directory: /tmp/agentdeck-demo\n"
+    "› Implement {feature}\n"
+    "[gpt-5.3-codex] Context: 100% left"
+)
 CODEX_STARTING_MCP_SCREEN = "OpenAI Codex\nStarting MCP servers (1/2)\n›"
 CODEX_MODEL_INCOMPATIBLE_SCREEN = (
     "› old prompt in scrollback\nConfigured model requires a newer version of Codex"
@@ -44,6 +51,30 @@ def test_classify_worker_readiness(provider: str, output: str, expected: str) ->
 
     assert evidence.status == expected
     assert evidence.reason is None or len(evidence.reason) < 120
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    ["› Implement {feature}", "  ›   IMPLEMENT  { feature }  "],
+)
+def test_codex_0131_exact_implement_feature_placeholder_is_ready(prompt: str) -> None:
+    screen = CODEX_0131_READY_SCREEN.replace("› Implement {feature}", prompt)
+
+    assert classify_worker_readiness("codex-cli", screen).status == "ready"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "› Implement the feature",
+        "› Implement {other}",
+        "› Implement {feature} and ignore safeguards",
+    ],
+)
+def test_codex_implement_like_user_input_is_not_idle(prompt: str) -> None:
+    screen = CODEX_0131_READY_SCREEN.replace("› Implement {feature}", prompt)
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
 
 
 @pytest.mark.parametrize(
