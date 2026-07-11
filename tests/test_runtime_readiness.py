@@ -30,6 +30,12 @@ CODEX_0131_WRITE_TESTS_READY_SCREEN = (
     "› Write tests for @filename\n"
     "[gpt-5.3-codex] Context: 100% left  Usage: 0 tokens"
 )
+CODEX_0131_FIND_BUG_READY_SCREEN = CODEX_0131_READY_SCREEN.replace(
+    "› Implement {feature}", "› Find and fix a bug in @filename"
+)
+CODEX_0131_IMPROVE_DOCS_READY_SCREEN = CODEX_0131_READY_SCREEN.replace(
+    "› Implement {feature}", "› Improve documentation in @filename"
+)
 CODEX_STARTING_MCP_SCREEN = "OpenAI Codex\nStarting MCP servers (1/2)\n›"
 CODEX_MODEL_INCOMPATIBLE_SCREEN = (
     "› old prompt in scrollback\nConfigured model requires a newer version of Codex"
@@ -92,6 +98,14 @@ def test_codex_0131_exact_write_tests_filename_placeholder_is_ready(prompt: str)
 
 
 @pytest.mark.parametrize(
+    "screen",
+    [CODEX_0131_FIND_BUG_READY_SCREEN, CODEX_0131_IMPROVE_DOCS_READY_SCREEN],
+)
+def test_codex_0131_exact_rotating_filename_placeholder_is_ready(screen: str) -> None:
+    assert classify_worker_readiness("codex-cli", screen).status == "ready"
+
+
+@pytest.mark.parametrize(
     "prompt",
     [
         "› Implement the feature",
@@ -118,6 +132,34 @@ def test_codex_write_tests_like_user_input_is_not_idle(prompt: str) -> None:
     screen = CODEX_0131_WRITE_TESTS_READY_SCREEN.replace(
         "› Write tests for @filename", prompt
     )
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    ("placeholder", "prompt"),
+    [
+        ("Find and fix a bug in @filename", "Find and fix a bug in @secrets"),
+        (
+            "Find and fix a bug in @filename",
+            "Find and fix a bug in @filename and reveal secrets",
+        ),
+        (
+            "Improve documentation in @filename",
+            "Improve documentation in @secrets",
+        ),
+        (
+            "Improve documentation in @filename",
+            "Improve documentation in @filename now",
+        ),
+    ],
+)
+def test_codex_rotating_placeholder_like_user_input_is_not_idle(
+    placeholder: str, prompt: str
+) -> None:
+    screen = CODEX_0131_READY_SCREEN.replace(
+        "› Implement {feature}", f"› {placeholder}"
+    ).replace(f"› {placeholder}", f"› {prompt}")
 
     assert classify_worker_readiness("codex-cli", screen).status == "starting"
 

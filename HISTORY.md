@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Recognize Codex rotating idle templates
+
+- **类型**: real Mission acceptance fix + strict TDD + readiness safety
+- **问题**: 真实 Codex CLI 0.131 会在空闲输入框轮换内置 prompt；除已识别的 `Implement {feature}` / `Write tests for @filename` 外，本机二进制还包含 `Find and fix a bug in @filename` 与 `Improve documentation in @filename`。轮换到前者时，已登录且空闲的 Worker 被误判为 starting，Mission readiness 等待满 60 秒后停止且没有 dispatch。
+- **What**: Codex known-idle allowlist 仅新增上述两个从实际 0.131 Mach-O 二进制确认的完整模板，继续要求 full-line、精确 `@filename`；大小写与空白兼容规则沿用既有行为。
+- **TDD 证据**: 两个 exact 真实模板先 2 failed / 103 passed RED，`@secrets` 和模板后追加用户文本的四个反例同时保持 starting；最小 regex 扩展后 readiness 聚焦测试全绿。
+- **安全边界**: 不接受其它文件引用、模板前后包装或追加指令，不引入宽泛 `find` / `improve` 匹配；该变化只修正空闲 chrome 识别，不改变 Mission、审批、dispatch 或 runtime 授权语义。
+
 ### Stabilize long tmux prompt submission
 
 - **类型**: real Mission acceptance fix + strict TDD + tmux input safety

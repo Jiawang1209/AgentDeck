@@ -27,7 +27,8 @@ _TERMINAL_STATUSES = frozenset({"setup_required", "failed", "pane_lost"})
 _ACTIVE_FRAME_LINE_COUNT = 40
 _CODEX_IDLE_PROMPT = re.compile(
     r"^\s*›\s+(?:ask\s+codex\b.*|implement\s*\{\s*feature\s*\}|"
-    r"write\s+tests\s+for\s+@filename)\s*$"
+    r"write\s+tests\s+for\s+@filename|find\s+and\s+fix\s+a\s+bug\s+in\s+@filename|"
+    r"improve\s+documentation\s+in\s+@filename)\s*$"
 )
 _CLAUDE_EMPTY_PROMPT = re.compile(r"^\s*❯\s*$")
 _CLAUDE_MODE_FOOTER = re.compile(
