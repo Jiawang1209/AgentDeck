@@ -1192,10 +1192,13 @@ def foreground_permission_decider(
         file=stderr,
     )
     enabled: dict[int, str] = {}
+    known_kinds = {"allow_once", "reject_once", "allow_always", "reject_always"}
     for index, option in enumerate(options, 1):
-        supported = option.kind in {"allow_once", "reject_once"}
+        marker = option.kind if option.kind in known_kinds else "unknown"
+        supported = marker in {"allow_once", "reject_once"}
         suffix = "" if supported else " [disabled]"
-        print(f"{index}. {option.name}{suffix}", file=stderr)
+        label = " ".join(option.name.split())[:120] or "unnamed option"
+        print(f"{index}. {label} [{marker}]{suffix}", file=stderr)
         if supported:
             enabled[index] = option.option_id
     stderr.flush()

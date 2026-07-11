@@ -431,8 +431,29 @@ def test_foreground_permission_decider_renders_disabled_always_and_selects_once(
     )
 
     assert decision.option_id == "allow"
-    assert "1. Allow once" in stderr.getvalue()
-    assert "2. Always [disabled]" in stderr.getvalue()
+    assert "1. Allow once [allow_once]" in stderr.getvalue()
+    assert "2. Always [allow_always] [disabled]" in stderr.getvalue()
+
+
+def test_foreground_permission_decider_marks_localized_reordered_option_kinds() -> None:
+    class TtyInput(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    stderr = io.StringIO()
+    options = [
+        cli.schema.PermissionOption(optionId="forever", name="总是允许", kind="allow_always"),
+        cli.schema.PermissionOption(optionId="no-once", name="这次不要", kind="reject_once"),
+        cli.schema.PermissionOption(optionId="yes-once", name="仅这次允许", kind="allow_once"),
+    ]
+    decision = cli.foreground_permission_decider(
+        {}, options, stdin=TtyInput("2\n"), stderr=stderr,
+    )
+    rendered = stderr.getvalue()
+    assert decision.option_id == "no-once"
+    assert "1. 总是允许 [allow_always] [disabled]" in rendered
+    assert "2. 这次不要 [reject_once]" in rendered
+    assert "3. 仅这次允许 [allow_once]" in rendered
 
 
 def test_foreground_permission_decider_non_tty_and_invalid_exhaustion_fail_closed() -> None:

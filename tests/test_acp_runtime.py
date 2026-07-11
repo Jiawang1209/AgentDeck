@@ -10,6 +10,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import signal
 import subprocess
 import sys
 import time
@@ -85,6 +86,57 @@ def test_live_pty_capture_and_shutdown_are_hard_bounded(tmp_path: Path) -> None:
         os.kill(pid, 0)
 
 
+def test_live_pty_selects_reject_once_by_kind_marker_not_label(tmp_path: Path) -> None:
+    script = tmp_path / "localized_permission.py"
+    script.write_text(
+        "print('1. 永久允许 [allow_always] [disabled]', flush=True)\n"
+        "print('2. 这次不要 [reject_once]', flush=True)\n"
+        "print('3. 仅这一次 [allow_once]', flush=True)\n"
+        "choice = input()\n"
+        "print('{\"selected\": ' + repr(choice) + '}', flush=True)\n",
+        encoding="utf-8",
+    )
+    capture = _run_live_pty(
+        [sys.executable, str(script)], cwd=tmp_path, reject_once=True,
+        total_timeout=0.5, terminate_timeout=0.2, kill_timeout=0.2,
+    )
+    assert '"selected": \'2\'' in capture.text()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group acceptance requires POSIX")
+def test_live_pty_timeout_kills_cancellation_resistant_process_group(tmp_path: Path) -> None:
+    pid_file = tmp_path / "tree-pids.json"
+    script = tmp_path / "resistant_tree.py"
+    script.write_text(
+        "import json, os, signal, subprocess, sys, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)'])\n"
+        f"open({str(pid_file)!r}, 'w').write(json.dumps("
+        "{'parent': os.getpid(), 'grandchild': child.pid, 'pgid': os.getpgrp()}))\n"
+        "print('PROCESS_TREE_RAW_OUTPUT', flush=True)\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    pids: list[int] = []
+    try:
+        with pytest.raises(AssertionError) as raised:
+            _run_live_pty(
+                [sys.executable, str(script)], cwd=tmp_path, reject_once=False,
+                total_timeout=0.2, terminate_timeout=0.2, kill_timeout=0.5,
+            )
+        identities = json.loads(pid_file.read_text(encoding="utf-8"))
+        pids = [identities["parent"], identities["grandchild"]]
+        assert identities["pgid"] == identities["parent"]
+        assert identities["pgid"] != os.getpgrp()
+        assert "PROCESS_TREE_RAW_OUTPUT" not in str(raised.value)
+        assert all(not _pid_exists(pid) for pid in pids)
+    finally:
+        for pid in pids:
+            if _pid_exists(pid):
+                os.kill(pid, 9)
+
+
 def _example_live_ledger() -> dict[str, Any]:
     message = {"content": {"type": "text", "text": "same reply"}}
     return {
@@ -140,19 +192,66 @@ def _wait_bounded(process: subprocess.Popen[bytes], timeout: float) -> bool:
     return True
 
 
+def _process_group_exists(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return False
+    return True
+
+
+def _wait_process_group_gone(pgid: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while _process_group_exists(pgid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
+    return True
+
+
+def _signal_process_group(pgid: int, sig: signal.Signals) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _terminate_bounded(
-    process: subprocess.Popen[bytes], *, terminate_timeout: float, kill_timeout: float,
+    process: subprocess.Popen[bytes], *, pgid: int | None,
+    terminate_timeout: float, kill_timeout: float,
 ) -> None:
-    if process.poll() is not None:
+    if pgid is None:
+        if process.poll() is None:
+            process.terminate()
+        if _wait_bounded(process, terminate_timeout):
+            return
+        process.kill()
         if not _wait_bounded(process, kill_timeout):
-            raise AssertionError("exited PTY child could not be reaped within bound")
+            raise AssertionError("PTY child could not be killed and reaped within bound")
         return
-    process.terminate()
-    if _wait_bounded(process, terminate_timeout):
-        return
-    process.kill()
-    if not _wait_bounded(process, kill_timeout):
-        raise AssertionError("PTY child could not be killed and reaped within bound")
+    if _process_group_exists(pgid):
+        _signal_process_group(pgid, signal.SIGTERM)
+    direct_reaped = _wait_bounded(process, terminate_timeout)
+    group_gone = _wait_process_group_gone(pgid, terminate_timeout)
+    if not group_gone:
+        _signal_process_group(pgid, signal.SIGKILL)
+        group_gone = _wait_process_group_gone(pgid, kill_timeout)
+    if not direct_reaped:
+        direct_reaped = _wait_bounded(process, kill_timeout)
+    if not direct_reaped or not group_gone:
+        raise AssertionError("PTY process group could not be killed and reaped within bound")
 
 
 def _run_live_pty(
@@ -163,8 +262,9 @@ def _run_live_pty(
     master, slave = pty.openpty()
     process = subprocess.Popen(
         argv, cwd=cwd, env=_live_cli_environment(), stdin=slave, stdout=slave, stderr=slave,
-        close_fds=True,
+        close_fds=True, start_new_session=os.name == "posix",
     )
+    pgid = process.pid if os.name == "posix" else None
     os.close(slave)
     capture = _BoundedPtyCapture(capture_limit)
     selection_scan = ""
@@ -189,12 +289,13 @@ def _run_live_pty(
             capture.append(chunk)
             if reject_once and not selected:
                 selection_scan = (selection_scan + chunk.decode("utf-8", errors="replace"))[-4096:]
-                match = re.search(r"(?mi)^(\d+)\.\s+Reject once\s*$", selection_scan)
+                match = re.search(r"(?mi)^(\d+)\..*\[reject_once\](?:\s|$)", selection_scan)
                 if match:
                     os.write(master, (match.group(1) + "\n").encode())
                     selected = True
         _terminate_bounded(
-            process, terminate_timeout=terminate_timeout, kill_timeout=kill_timeout,
+            process, pgid=pgid,
+            terminate_timeout=terminate_timeout, kill_timeout=kill_timeout,
         )
         drain_deadline = time.monotonic() + min(0.25, kill_timeout)
         while time.monotonic() < drain_deadline:
@@ -212,7 +313,8 @@ def _run_live_pty(
         os.close(master)
         if process.poll() is None:
             _terminate_bounded(
-                process, terminate_timeout=terminate_timeout, kill_timeout=kill_timeout,
+                process, pgid=pgid,
+                terminate_timeout=terminate_timeout, kill_timeout=kill_timeout,
             )
     if timed_out:
         raise AssertionError("live ACP CLI timed out; " + capture.diagnostic())

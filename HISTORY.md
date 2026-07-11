@@ -12,6 +12,8 @@
 - Added `docs/validation/phase2-acp-live-acceptance-sop.md`. The reserved PASS report remains absent because `command -v claude-agent-acp` currently returns no executable. Task 11 is externally blocked on human installation/authentication; Task 12 must not start until the real live test passes.
 - **Important gate hardening**: live run and resume now require exact `completed` / `end_turn` results. Load acceptance requires contiguous durable replay updates before the synthetic `loaded` completion and a redacted kind/payload hash match to the first conversation; every command count must equal the ledger, and resume must not persist pre-prompt user-history replay.
 - **Bounded PTY harness**: capture is capped to a 64 KiB tail while hashing the full byte stream. Total runtime, terminate, kill, post-exit drain, and reap are independently bounded; a noisy hung-child test proves truncation, bounded kill/reap, no zombie, and hash-only diagnostics with no raw output.
+- **Stable permission UI**: every foreground option now renders a bounded single-line label plus a machine-stable `[kind]` marker on stderr. The live PTY chooses the numbered `[reject_once]` entry independently of adapter wording, localization, case, or order; `allow_always` / `reject_always` remain marked disabled.
+- **Process-tree containment**: the POSIX live harness starts the CLI in a new session and records its private process group. Timeout cleanup sends bounded TERM then KILL to that group, handles vanished groups, reaps the direct child, and verifies the group disappears. A cancellation-resistant parent/grandchild fixture proves no descendant survives and no raw output enters diagnostics.
 
 ### Integrate ACP runtime observation surfaces
 
