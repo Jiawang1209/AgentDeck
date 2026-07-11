@@ -12,6 +12,7 @@
 - **安全边界**: terminal turn 与 permission 状态不可复活；permission 仅允许 pending 到 approved/denied/expired；session 明确支持 disconnected -> reconnecting -> ready；turn 明确支持 waiting_permission -> streaming 和 load replay 的直接 streaming/completed。任何拒绝（包括已有 pending outbox）保持整个 `.agentdeck` 文件树 byte-for-byte 不变。本切片不实现 ProjectView transition 投影或 ACP wire mapping。
 - **TDD 证据**: transition/turn-kind 聚焦测试先因 API 缺失 collection RED；实现后覆盖 allowed/forbidden edge、stale state、unknown entity、candidate ID collision、JSON/bounds、base immutability、permission 三种结局与 pending-outbox zero-write。
 - **Review fix**: 补充 `load_replay` 在首个 update/response 前遇到 EOF 或畸形流量时所需的 `created -> ambiguous` 边；回归测试同时证明 `ambiguous` 仍是 terminal，不能恢复到 `streaming`。
+- **Quality hardening**: 每次 transition mutation 现在会在 outbox flush 前按持久化顺序验证完整 `protocol_state_transitions[]`：exact 字段、`pst_` identity、实体精确存在、状态 edge、reason/details/created_at 边界及从 immutable base state 开始的连续链。任一无关实体上的 dangling/corrupt/non-dict history 都会 fail-closed，且整棵 `.agentdeck` 保持 byte-for-byte 不变；新增真实并发 writers、全表状态端点/terminal 不变量和 bool-impostor 矩阵。
 
 ### Add explicit ACP agent transport configuration
 

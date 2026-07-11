@@ -13,6 +13,7 @@ from agentdeck.state import StateStore
 from agentdeck.runtime.protocol import (
     AGENT_SESSION_STATES,
     PROTOCOL_ENTITY_TYPES,
+    PROTOCOL_TRANSITION_EDGES,
     PERMISSION_STATES,
     TURN_KINDS,
     TURN_STATES,
@@ -394,6 +395,43 @@ def test_transition_builder_is_json_safe_bounded_and_isolated() -> None:
         build_protocol_transition("session", "ags_1", "created", "ready", "x" * 129, {})
 
 
+@pytest.mark.parametrize(("field", "value"), [
+    ("entity_type", True),
+    ("entity_id", True),
+    ("from_state", True),
+    ("to_state", True),
+    ("reason", True),
+    ("details", True),
+])
+def test_transition_builder_rejects_bool_impostors(field: str, value: object) -> None:
+    values = {
+        "entity_type": "session", "entity_id": "ags_1", "from_state": "created",
+        "to_state": "ready", "reason": None, "details": {},
+    }
+    values[field] = value
+    with pytest.raises((TypeError, ValueError)):
+        build_protocol_transition(**values)
+
+
+def test_transition_tables_use_declared_states_and_keep_terminals_terminal() -> None:
+    vocabularies = {
+        "session": set(AGENT_SESSION_STATES),
+        "turn": set(TURN_STATES),
+        "permission": set(PERMISSION_STATES),
+    }
+    terminals = {
+        "session": {"stopped", "failed"},
+        "turn": {"completed", "blocked", "failed", "ambiguous"},
+        "permission": {"approved", "denied", "expired"},
+    }
+    for entity_type in PROTOCOL_ENTITY_TYPES:
+        edges = PROTOCOL_TRANSITION_EDGES[entity_type]
+        assert edges
+        assert all(source in vocabularies[entity_type] for source, _ in edges)
+        assert all(target in vocabularies[entity_type] for _, target in edges)
+        assert not {source for source, _ in edges} & terminals[entity_type]
+
+
 def test_transition_edge_tables_cover_required_lifecycle_and_terminal_states() -> None:
     allowed = [
         ("session", "created", "ready"),
@@ -461,6 +499,90 @@ def test_load_replay_can_become_ambiguous_before_first_update_and_stays_terminal
             "turn", turn["turn_id"], "ambiguous", "streaming", None, {}
         )
     assert _tree_snapshot(store) == before
+
+
+@pytest.mark.parametrize("corruption", [
+    "non_dict", "extra_field", "bad_id", "dangling", "bad_edge", "bad_chain",
+    "bad_reason", "bad_details", "bad_created_at",
+])
+def test_corrupt_global_transition_history_blocks_valid_write_without_touching_tree(
+    tmp_path, monkeypatch, corruption: str,
+) -> None:
+    store = StateStore(tmp_path)
+    target = store.record_agent_session("target", "p", "acp", "n1", "w", CAPABILITIES)
+    foreign = store.record_agent_session("foreign", "p", "acp", "n2", "w", CAPABILITIES)
+    real_append_event = store.append_event
+    monkeypatch.setattr(
+        store, "append_event",
+        lambda event: (_ for _ in ()).throw(OSError("pending")),
+    )
+    store.record_agent_session("pending", "p", "acp", "n3", "w", CAPABILITIES)
+    monkeypatch.setattr(store, "append_event", real_append_event)
+    assert len(store.load()["protocol_event_outbox"]) == 1
+    persisted = build_protocol_transition(
+        "session", foreign["session_id"], "created", "ready", None, {}
+    )
+    if corruption == "non_dict":
+        corrupt = "not-a-transition"
+    else:
+        corrupt = dict(persisted)
+        if corruption == "extra_field":
+            corrupt["secret"] = "unexpected"
+        elif corruption == "bad_id":
+            corrupt["transition_id"] = True
+        elif corruption == "dangling":
+            corrupt["entity_id"] = "ags_missing"
+        elif corruption == "bad_edge":
+            corrupt["to_state"] = "stopped"
+        elif corruption == "bad_chain":
+            corrupt["from_state"] = "ready"
+            corrupt["to_state"] = "busy"
+        elif corruption == "bad_reason":
+            corrupt["reason"] = True
+        elif corruption == "bad_details":
+            corrupt["details"] = []
+        else:
+            corrupt["created_at"] = True
+    state = store.load()
+    state["protocol_state_transitions"] = [corrupt]
+    store.save(state)
+    before = _tree_snapshot(store)
+
+    with pytest.raises((KeyError, TypeError, ValueError)):
+        store.record_protocol_transition(
+            "session", target["session_id"], "created", "ready", None, {}
+        )
+
+    assert _tree_snapshot(store) == before
+
+
+def test_concurrent_protocol_transition_writers_share_the_mutation_lock(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    sessions = [
+        store.record_agent_session(name, "p", "acp", name, "w", CAPABILITIES)
+        for name in ("one", "two")
+    ]
+    barrier = threading.Barrier(3)
+    records = []
+
+    def record(session: dict[str, object]) -> None:
+        barrier.wait()
+        records.append(store.record_protocol_transition(
+            "session", session["session_id"], "created", "ready", None, {}
+        ))
+
+    threads = [threading.Thread(target=record, args=(session,)) for session in sessions]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(records) == 2
+    assert {item["entity_id"] for item in store.load()["protocol_state_transitions"]} == {
+        session["session_id"] for session in sessions
+    }
 
 
 @pytest.mark.parametrize("field", ["agent_id", "provider", "workspace"])

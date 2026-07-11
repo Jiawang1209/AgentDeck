@@ -18,6 +18,10 @@ TRANSPORT_KINDS = ("acp", "acp-adapter", "tmux", "api")
 PROTOCOL_ENTITY_TYPES = ("session", "turn", "permission")
 PROTOCOL_TRANSITION_DETAILS_MAX_BYTES = 4096
 PROTOCOL_TRANSITION_REASON_MAX_LENGTH = 128
+PROTOCOL_TRANSITION_FIELDS = {
+    "transition_id", "entity_type", "entity_id", "from_state", "to_state",
+    "reason", "details", "created_at",
+}
 
 SESSION_TRANSITION_EDGES = {
     ("created", "connecting"), ("created", "ready"), ("created", "failed"),
@@ -169,17 +173,9 @@ def validate_transition_edge(entity_type: str, from_state: str, to_state: str) -
         raise ValueError(f"invalid protocol state transition: {from_state} -> {to_state}")
 
 
-def build_protocol_transition(
-    entity_type: str,
-    entity_id: str,
-    from_state: str,
-    to_state: str,
-    reason: str | None,
-    details: dict[str, Any],
+def _validated_transition_metadata(
+    reason: str | None, details: object
 ) -> dict[str, Any]:
-    validate_transition_edge(entity_type, from_state, to_state)
-    prefixes = {"session": "ags_", "turn": "trn_", "permission": "prm_"}
-    entity_id = _record_id("entity_id", entity_id, prefixes[entity_type])
     if reason is not None:
         if type(reason) is not str or not reason.strip():
             raise ValueError("reason must be null or a non-empty string")
@@ -197,6 +193,35 @@ def build_protocol_transition(
         raise ValueError(
             f"details must be at most {PROTOCOL_TRANSITION_DETAILS_MAX_BYTES} bytes"
         )
+    return cloned_details
+
+
+def validate_protocol_transition_record(record: object) -> None:
+    if type(record) is not dict:
+        raise TypeError("protocol transition must be a dict")
+    if set(record) != PROTOCOL_TRANSITION_FIELDS:
+        raise ValueError("protocol transition fields must match exactly")
+    _record_id("transition_id", record["transition_id"], "pst_")
+    entity_type = record["entity_type"]
+    validate_transition_edge(entity_type, record["from_state"], record["to_state"])
+    prefixes = {"session": "ags_", "turn": "trn_", "permission": "prm_"}
+    _record_id("entity_id", record["entity_id"], prefixes[entity_type])
+    _validated_transition_metadata(record["reason"], record["details"])
+    _required_string("created_at", record["created_at"])
+
+
+def build_protocol_transition(
+    entity_type: str,
+    entity_id: str,
+    from_state: str,
+    to_state: str,
+    reason: str | None,
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    validate_transition_edge(entity_type, from_state, to_state)
+    prefixes = {"session": "ags_", "turn": "trn_", "permission": "prm_"}
+    entity_id = _record_id("entity_id", entity_id, prefixes[entity_type])
+    cloned_details = _validated_transition_metadata(reason, details)
     return {
         "transition_id": new_id("pst"),
         "entity_type": entity_type,

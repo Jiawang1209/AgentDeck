@@ -36,6 +36,7 @@ from .runtime.protocol import (
     build_protocol_transition,
     build_transport_update,
     build_turn,
+    validate_protocol_transition_record,
     validate_transition_edge,
 )
 
@@ -403,6 +404,38 @@ class StateStore:
             current = item["to_state"]
         return current
 
+    @staticmethod
+    def _validate_protocol_transition_history(
+        state: dict[str, Any],
+    ) -> dict[tuple[str, str], str]:
+        transitions = state.setdefault("protocol_state_transitions", [])
+        if type(transitions) is not list:
+            raise TypeError("protocol_state_transitions must be a list")
+        current_states: dict[tuple[str, str], str] = {}
+        state_vocabularies = {
+            "session": AGENT_SESSION_STATES,
+            "turn": TURN_STATES,
+            "permission": PERMISSION_STATES,
+        }
+        for item in transitions:
+            validate_protocol_transition_record(item)
+            entity_type = item["entity_type"]
+            entity_id = item["entity_id"]
+            key = (entity_type, entity_id)
+            if key not in current_states:
+                entity = StateStore._protocol_transition_entity(
+                    state, entity_type, entity_id
+                )
+                state_field = "status" if entity_type == "permission" else "state"
+                base_state = entity.get(state_field)
+                if type(base_state) is not str or base_state not in state_vocabularies[entity_type]:
+                    raise ValueError("invalid protocol base state")
+                current_states[key] = base_state
+            if item["from_state"] != current_states[key]:
+                raise ValueError("stale protocol transition from_state")
+            current_states[key] = item["to_state"]
+        return current_states
+
     def record_protocol_transition(
         self,
         entity_type: str,
@@ -415,11 +448,13 @@ class StateStore:
         with self._protocol_mutation_lock():
             state = self.load()
             self._validate_protocol_identities(state)
+            current_states = self._validate_protocol_transition_history(state)
             record = build_protocol_transition(
                 entity_type, entity_id, from_state, to_state, reason, details
             )
             entity = self._protocol_transition_entity(state, entity_type, entity_id)
-            current_state = self._derived_protocol_state(state, entity_type, entity_id, entity)
+            state_field = "status" if entity_type == "permission" else "state"
+            current_state = current_states.get((entity_type, entity_id), entity.get(state_field))
             if from_state != current_state:
                 raise ValueError(
                     f"stale protocol transition from_state: expected {current_state}"
