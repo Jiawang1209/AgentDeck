@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Recognize real Codex and Claude idle prompts
+
+- **类型**: real acceptance fix + strict TDD + readiness safety
+- **问题**: 第二轮真实 Mission 演练显示 Codex CLI 0.131 的默认 idle prompt 已变为 `Write tests for @filename`；Claude CLI 2.1.207 则使用 organization/workspace box、MCP auth warning、standalone empty `❯` 和 mode footer，不再保证出现 `Claude Code` / context。旧 classifier 因而把两个已空闲 Worker 都判为 starting。
+- **What**: Codex known-idle allowlist 仅新增大小写/空白容忍的 exact `Write tests for @filename`。Claude 新增独立的结构化 idle 路径，必须同时具备 organization/workspace box、MCP chrome、standalone empty prompt，以及 full-line `auto mode on (...)` 或 permissions-mode footer；旧 Claude Code/context 路径保持不变，login/trust 仍优先。
+- **TDD 证据**: sanitized 真实帧先 4 failed / 76 passed RED；改成真实 box chrome 与 permissions footer 后再 3 failed RED。最小修复后 readiness 83/83、runtime + Mission 交叉 267/267、全量 1224/1224 GREEN，compileall 与 diff check 干净。
+- **安全边界**: `@secrets`、无 `@filename`、追加文本、`User:` wrapped prompt、Claude 非空输入、缺 footer 和 quoted auto-mode 文档均保持 starting；MCP auth warning 本身不视为 login blocker，独立 trust/login system grammar 仍覆盖 idle evidence。
+
 ### Fix real Worker startup readiness
 
 - **类型**: real acceptance fix + strict TDD

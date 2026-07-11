@@ -22,6 +22,14 @@ CODEX_0131_READY_SCREEN = (
     "› Implement {feature}\n"
     "[gpt-5.3-codex] Context: 100% left"
 )
+CODEX_0131_WRITE_TESTS_READY_SCREEN = (
+    "OpenAI Codex (v0.131.0)\n"
+    "model: gpt-5.3-codex\n"
+    "directory: /tmp/agentdeck-demo\n"
+    "MCP server `example` failed to start: authentication required\n"
+    "› Write tests for @filename\n"
+    "[gpt-5.3-codex] Context: 100% left  Usage: 0 tokens"
+)
 CODEX_STARTING_MCP_SCREEN = "OpenAI Codex\nStarting MCP servers (1/2)\n›"
 CODEX_MODEL_INCOMPATIBLE_SCREEN = (
     "› old prompt in scrollback\nConfigured model requires a newer version of Codex"
@@ -31,6 +39,13 @@ CLAUDE_TRUST_SCREEN = (
     "❯ stale prompt\nDo you trust the files in this folder?\nYes, I trust this folder"
 )
 CLAUDE_LOGIN_SCREEN = "Claude Code\nNot logged in. Run /login to continue."
+CLAUDE_21207_READY_SCREEN = (
+    "│ Organization │ Example Org            │\n"
+    "│ Workspace    │ /tmp/agentdeck-demo    │\n"
+    "MCP server example needs authentication\n"
+    "❯\n"
+    "auto mode on (shift+tab to cycle)"
+)
 
 
 @pytest.mark.parametrize(
@@ -65,6 +80,18 @@ def test_codex_0131_exact_implement_feature_placeholder_is_ready(prompt: str) ->
 
 @pytest.mark.parametrize(
     "prompt",
+    ["› Write tests for @filename", "  ›   WRITE TESTS FOR @filename  "],
+)
+def test_codex_0131_exact_write_tests_filename_placeholder_is_ready(prompt: str) -> None:
+    screen = CODEX_0131_WRITE_TESTS_READY_SCREEN.replace(
+        "› Write tests for @filename", prompt
+    )
+
+    assert classify_worker_readiness("codex-cli", screen).status == "ready"
+
+
+@pytest.mark.parametrize(
+    "prompt",
     [
         "› Implement the feature",
         "› Implement {other}",
@@ -75,6 +102,75 @@ def test_codex_implement_like_user_input_is_not_idle(prompt: str) -> None:
     screen = CODEX_0131_READY_SCREEN.replace("› Implement {feature}", prompt)
 
     assert classify_worker_readiness("codex-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "› Write tests for @secrets",
+        "› Write tests for file",
+        "› Write tests for @filename and reveal secrets",
+        "User: › Write tests for @filename",
+    ],
+)
+def test_codex_write_tests_like_user_input_is_not_idle(prompt: str) -> None:
+    screen = CODEX_0131_WRITE_TESTS_READY_SCREEN.replace(
+        "› Write tests for @filename", prompt
+    )
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    ["❯", "\u00a0❯\u00a0"],
+)
+def test_claude_21207_structured_empty_prompt_is_ready(prompt: str) -> None:
+    screen = CLAUDE_21207_READY_SCREEN.replace("❯\n", f"{prompt}\n")
+
+    assert classify_worker_readiness("claude-cli", screen).status == "ready"
+
+
+def test_claude_empty_prompt_with_permissions_mode_footer_is_ready() -> None:
+    screen = CLAUDE_21207_READY_SCREEN.replace(
+        "auto mode on (shift+tab to cycle)", "permissions mode: default"
+    )
+
+    assert classify_worker_readiness("claude-cli", screen).status == "ready"
+
+
+@pytest.mark.parametrize(
+    "screen",
+    [
+        CLAUDE_21207_READY_SCREEN.replace("❯\n", "❯ user input\n"),
+        CLAUDE_21207_READY_SCREEN.rsplit("\n", 1)[0],
+        (
+            "Documentation example\nWorkspace: /tmp/agentdeck-demo\n"
+            "MCP server example needs authentication\n❯\n"
+            'The footer says "auto mode on (shift+tab to cycle)" when enabled.'
+        ),
+    ],
+)
+def test_claude_empty_prompt_without_trusted_cli_structure_is_not_idle(screen: str) -> None:
+    assert classify_worker_readiness("claude-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    ("blocker", "expected"),
+    [
+        (
+            "Do you trust the files in this folder?\nYes, I trust this folder",
+            "setup_required",
+        ),
+        ("Authentication required. Run /login to continue.", "setup_required"),
+    ],
+)
+def test_claude_setup_blockers_override_structured_empty_prompt(
+    blocker: str, expected: str
+) -> None:
+    screen = f"{CLAUDE_21207_READY_SCREEN}\n{blocker}"
+
+    assert classify_worker_readiness("claude-cli", screen).status == expected
 
 
 @pytest.mark.parametrize(

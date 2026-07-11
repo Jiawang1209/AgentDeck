@@ -26,8 +26,17 @@ _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)
 _TERMINAL_STATUSES = frozenset({"setup_required", "failed", "pane_lost"})
 _ACTIVE_FRAME_LINE_COUNT = 40
 _CODEX_IDLE_PROMPT = re.compile(
-    r"^\s*›\s+(?:ask\s+codex\b.*|implement\s*\{\s*feature\s*\})\s*$"
+    r"^\s*›\s+(?:ask\s+codex\b.*|implement\s*\{\s*feature\s*\}|"
+    r"write\s+tests\s+for\s+@filename)\s*$"
 )
+_CLAUDE_EMPTY_PROMPT = re.compile(r"^\s*❯\s*$")
+_CLAUDE_MODE_FOOTER = re.compile(
+    r"^\s*(?:auto mode on(?:\s*\([^\r\n]*\))?|permissions? mode(?:\s*:\s*|\s+)[^\r\n]+)\s*$"
+)
+_CLAUDE_ORGANIZATION_CHROME = re.compile(
+    r"(?:^|[│|])\s*organization\s*(?::|[│|])"
+)
+_CLAUDE_WORKSPACE_CHROME = re.compile(r"(?:^|[│|])\s*workspace\s*(?::|[│|])")
 
 
 @dataclass(frozen=True)
@@ -69,10 +78,17 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
         idle_prompt = _CODEX_IDLE_PROMPT
     elif family == "claude":
         prompt_glyph = "❯"
-        has_normal_chrome = "claude code" in active_frame and any(
-            "context" in line for line in active_lines
+        has_structured_idle_chrome = (
+            any(_CLAUDE_ORGANIZATION_CHROME.search(line) for line in active_lines)
+            and any(_CLAUDE_WORKSPACE_CHROME.search(line) for line in active_lines)
+            and any("mcp" in line for line in active_lines)
+            and any(_CLAUDE_MODE_FOOTER.fullmatch(line) for line in active_lines)
         )
-        idle_prompt = re.compile(r"^\s*❯\s+try\b")
+        has_normal_chrome = (
+            "claude code" in active_frame
+            and any("context" in line for line in active_lines)
+        ) or has_structured_idle_chrome
+        idle_prompt = re.compile(r"^(?:\s*❯\s+try\b|\s*❯\s*$)")
     else:
         prompt_glyph = ""
         has_normal_chrome = False
@@ -146,9 +162,17 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
             )
         if (
             not has_current_input
-            and "claude code" in active_frame
-            and any(re.match(r"^\s*❯\s+", line) for line in active_lines)
-            and any("context" in line for line in active_lines)
+            and (
+                (
+                    "claude code" in active_frame
+                    and any(re.match(r"^\s*❯\s+", line) for line in active_lines)
+                    and any("context" in line for line in active_lines)
+                )
+                or (
+                    has_structured_idle_chrome
+                    and any(_CLAUDE_EMPTY_PROMPT.fullmatch(line) for line in active_lines)
+                )
+            )
         ):
             return WorkerReadinessEvidence("ready", None)
         return WorkerReadinessEvidence("starting", "Claude CLI prompt is not ready")
