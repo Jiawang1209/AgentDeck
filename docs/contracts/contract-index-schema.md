@@ -52,6 +52,7 @@ The index currently lists these contract names in order:
 - `learning-review`
 - `agent-runtime`
 - `protocol-runtime`
+- `acp-runtime`
 - `leader-chat`
 - `leader-status`
 - `leader-actions`
@@ -64,5 +65,7 @@ The index currently lists these contract names in order:
 - `artifacts`
 
 `protocol-runtime` is discoverable through `agentdeck contract protocol-runtime [--example]`; its live read-only projection is `agentdeck protocol status`, and its durable schema is `docs/contracts/protocol-runtime-schema.md`.
+
+`acp-runtime` is discoverable through `agentdeck contract acp-runtime [--example]`; its live read-only preflight is `agentdeck protocol acp preflight --agent <agent_id>`, and its durable schema is `docs/contracts/acp-runtime-schema.md`.
 
 When a new GUI-consumable contract command is added, update `CONTRACT_INDEX_SPECS` in `src/agentdeck/contracts.py`, this document, and the contract index tests in the same commit.

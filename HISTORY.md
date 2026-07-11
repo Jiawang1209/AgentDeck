@@ -4,6 +4,13 @@
 
 ## 2026-07-12
 
+### Publish ACP runtime preflight and contract
+
+- **What**: add `acp-runtime/v1` discovery/example/validator, `agentdeck contract acp-runtime [--example]`, and nested `agentdeck protocol acp preflight --agent <id>` for one explicitly configured ACP Agent. Contract index and workbench contract discovery now expose the new schema.
+- **Read-only evidence**: preflight preserves exact argv, checks the official Python SDK through import metadata, resolves adapter/Node executables through `shutil.which`, and reads adjacent Node headers for the known `claude-agent-acp` Node >=22 prerequisite. It never starts an adapter or runs `--version`.
+- **Safety boundary**: missing project, invalid config, unknown Agent, and wrong transport fail with stderr and zero stdout; setup blockers return one validated `ready=false` JSON object. The command opens the existing store without creating layout and does not authenticate, mkdir, lock, write state/outbox/events, call providers, inspect tmux, or implement run/load/resume.
+- **TDD**: RED covered missing discovery/routes, SDK/executable blockers, Node <22, deterministic repeatability, no project creation, exact argv, sanitized example, inspect-only controls, and workbench/index discovery; focused tests passed after the minimal implementation.
+
 ### Add a bounded ACP stdio client transport
 
 - **What**: add the official `agent-client-protocol==0.11.0` foreground subprocess transport with typed initialize/new/prompt results, exact ACP v1 negotiation, canonical workspace cwd, and deterministic fake-Agent process fixtures.

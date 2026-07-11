@@ -4,6 +4,8 @@ from copy import deepcopy
 from dataclasses import asdict, replace
 import argparse
 import hashlib
+import importlib.metadata
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -24,8 +26,10 @@ from .config import (
     write_default_config,
 )
 from .contracts import (
+    ACP_RUNTIME_CONTRACT_VERSION,
     PROTOCOL_RUNTIME_CONTRACT_VERSION,
     agent_runtime_contract_response,
+    acp_runtime_contract_response,
     approval_contract_response,
     artifacts_contract_response,
     contract_index_response,
@@ -70,6 +74,7 @@ from .contracts import (
     trace_contract_response,
     workbench_contract_response,
     validate_approval_contract,
+    validate_acp_runtime_contract,
     validate_approval_dispatch_ready_contract,
     validate_artifacts_contract,
     validate_continue_contract,
@@ -1030,6 +1035,95 @@ def protocol_status_command(_args: argparse.Namespace) -> int:
     validation = validate_protocol_runtime_contract(payload)
     if not validation["ok"]:
         print("protocol runtime contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def _node_version_from_executable(executable: str | None) -> str | None:
+    """Read Node's installed header; never execute the binary during preflight."""
+    if not executable:
+        return None
+    binary = Path(executable).resolve()
+    header = binary.parent.parent / "include" / "node" / "node_version.h"
+    try:
+        text = header.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    parts: list[str] = []
+    for name in ("NODE_MAJOR_VERSION", "NODE_MINOR_VERSION", "NODE_PATCH_VERSION"):
+        match = re.search(rf"^#define\s+{name}\s+(\d+)\s*$", text, re.MULTILINE)
+        if match is None:
+            return None
+        parts.append(match.group(1))
+    return ".".join(parts)
+
+
+def protocol_acp_preflight_command(args: argparse.Namespace) -> int:
+    root = project_root()
+    try:
+        config = load_config(root)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    StateStore.open_existing(root)  # Explicitly select the non-creating store path.
+    agent = next((item for item in config.agents if item.agent_id == args.agent), None)
+    if agent is None:
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    if agent.transport != "acp":
+        print(f"agent {args.agent} is not configured for ACP transport", file=sys.stderr)
+        return 1
+    argv = list(agent.transport_command)
+    if not argv:
+        print(f"agent {args.agent} has an empty ACP transport_command", file=sys.stderr)
+        return 1
+
+    sdk_present = importlib.util.find_spec("acp") is not None
+    sdk_version: str | None = None
+    if sdk_present:
+        try:
+            sdk_version = importlib.metadata.version("agent-client-protocol")
+        except importlib.metadata.PackageNotFoundError:
+            sdk_present = False
+    executable_path = shutil.which(argv[0])
+    blockers: list[str] = []
+    if not sdk_present:
+        blockers.append("ACP Python SDK is not installed")
+    if executable_path is None:
+        blockers.append("ACP adapter executable was not found")
+
+    known_claude = Path(argv[0]).name == "claude-agent-acp"
+    node_path = shutil.which("node") if known_claude else None
+    node_version = _node_version_from_executable(node_path) if known_claude else None
+    node_ready = True
+    if known_claude:
+        node_major = int(node_version.split(".", 1)[0]) if node_version and node_version.split(".", 1)[0].isdigit() else None
+        node_ready = node_path is not None and node_major is not None and node_major >= 22
+        if not node_ready:
+            blockers.append("claude-agent-acp requires Node >=22")
+
+    payload = {
+        "mode": "acp_preflight",
+        "contract_version": ACP_RUNTIME_CONTRACT_VERSION,
+        "project": config.name,
+        "ready": not blockers,
+        "agent": {"agent_id": agent.agent_id, "provider": agent.provider, "transport": agent.transport},
+        "adapter": {"argv": argv, "executable_path": executable_path, "present": executable_path is not None},
+        "sdk": {"module": "acp", "package": "agent-client-protocol", "present": sdk_present, "version": sdk_version},
+        "node": {"required": known_claude, "minimum_major": 22 if known_claude else None, "executable_path": node_path, "version": node_version, "ready": node_ready},
+        "blockers": blockers,
+        "controls": [
+            {"kind": "inspect", "label": "Inspect ACP preflight", "command": f"agentdeck protocol acp preflight --agent {agent.agent_id}", "safety": "inspect", "enabled": True, "blocker": None},
+            {"kind": "inspect", "label": "Inspect ACP runtime contract", "command": "agentdeck contract acp-runtime", "safety": "inspect", "enabled": True, "blocker": None},
+            {"kind": "inspect", "label": "Inspect protocol runtime", "command": "agentdeck protocol status", "safety": "inspect", "enabled": True, "blocker": None},
+        ],
+    }
+    validation = validate_acp_runtime_contract(payload)
+    if not validation["ok"]:
+        print("ACP runtime contract validation failed", file=sys.stderr)
         for error in validation["errors"]:
             print(f"- {error}", file=sys.stderr)
         return 1
@@ -3648,6 +3742,7 @@ def _workbench_contracts_card() -> dict[str, object]:
         "memory_contract": "agentdeck contract memory",
         "learning_review_contract": "agentdeck contract learning-review",
         "agent_runtime_contract": "agentdeck contract agent-runtime",
+        "acp_runtime_contract": "agentdeck contract acp-runtime",
         "leader_chat_contract": "agentdeck contract leader-chat",
         "leader_review_contract": "agentdeck contract leader-review",
         "leader_summary_contract": "agentdeck contract leader-summary",
@@ -4665,6 +4760,13 @@ def contract_protocol_runtime_command(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    _print_json(payload)
+    return 0
+
+
+def contract_acp_runtime_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "acp-runtime-schema.md"
+    payload = acp_runtime_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -14988,6 +15090,13 @@ def build_parser() -> argparse.ArgumentParser:
         "status", help="Show read-only protocol runtime status"
     )
     protocol_status.set_defaults(func=protocol_status_command)
+    protocol_acp = protocol_subparsers.add_parser("acp", help="Inspect explicit ACP adapter readiness")
+    protocol_acp_subparsers = protocol_acp.add_subparsers(dest="protocol_acp_command", required=True)
+    protocol_acp_preflight = protocol_acp_subparsers.add_parser(
+        "preflight", help="Check ACP SDK and adapter readiness without starting a process"
+    )
+    protocol_acp_preflight.add_argument("--agent", required=True, help="Configured ACP agent id")
+    protocol_acp_preflight.set_defaults(func=protocol_acp_preflight_command)
 
     events = subparsers.add_parser("events", help="Show recent audit events")
     events.add_argument("--limit", type=int, default=20, help="Number of recent events to show")
@@ -15300,6 +15409,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--example", action="store_true", help="Include a GUI-ready protocol runtime example"
     )
     contract_protocol_runtime.set_defaults(func=contract_protocol_runtime_command)
+    contract_acp_runtime = contract_subparsers.add_parser(
+        "acp-runtime", help="Show ACP runtime contract discovery metadata"
+    )
+    contract_acp_runtime.add_argument(
+        "--example", action="store_true", help="Include a sanitized fake ACP preflight example"
+    )
+    contract_acp_runtime.set_defaults(func=contract_acp_runtime_command)
     contract_leader_chat = contract_subparsers.add_parser(
         "leader-chat",
         help="Show Leader chat response contract discovery metadata",

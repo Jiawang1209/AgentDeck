@@ -230,6 +230,55 @@ def test_protocol_runtime_contract_discovery_and_example(tmp_path: Path) -> None
     assert validate_protocol_runtime_contract(example) == {"ok": True, "errors": []}
 
 
+def test_acp_runtime_contract_discovery_and_sanitized_example(tmp_path: Path) -> None:
+    from agentdeck.contracts import (
+        ACP_RUNTIME_CONTRACT_VERSION,
+        ACP_RUNTIME_PREFLIGHT_RESPONSE_FIELDS,
+        acp_runtime_contract_response,
+        acp_runtime_example,
+        validate_acp_runtime_contract,
+    )
+
+    contract_path = tmp_path / "acp-runtime-schema.md"
+    contract_path.write_text("# ACP Runtime Contract\n", encoding="utf-8")
+    payload = acp_runtime_contract_response(contract_path, include_example=True)
+    example = acp_runtime_example()
+
+    assert payload["contract_version"] == ACP_RUNTIME_CONTRACT_VERSION == "acp-runtime/v1"
+    assert payload["preflight_command"] == "agentdeck protocol acp preflight --agent <agent_id>"
+    assert payload["response_fields"] == list(ACP_RUNTIME_PREFLIGHT_RESPONSE_FIELDS)
+    assert payload["example_acp_runtime"] == example
+    assert example["agent"]["agent_id"] == "fake-agent"
+    assert example["adapter"]["argv"] == ["fake-acp-agent", "--stdio"]
+    assert example["adapter"]["executable_path"] == "/example/bin/fake-acp-agent"
+    assert "claude" not in repr(example).lower()
+    assert validate_acp_runtime_contract(example) == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (lambda p: p.pop("ready"), "missing ACP runtime field: ready"),
+        (lambda p: p.update({"mode": "acp_run"}), "mode is invalid"),
+        (lambda p: p["agent"].update({"transport": "tmux"}), "agent.transport must be acp"),
+        (lambda p: p["adapter"].update({"argv": "fake-acp-agent"}), "adapter.argv must be a non-empty argv list"),
+        (lambda p: p["controls"][0].update({"safety": "explicit_user"}), "controls[0].safety must be inspect"),
+        (lambda p: p["controls"][0].update({"command": "agentdeck protocol acp run"}), "controls[0].command is not allowed"),
+        (lambda p: p["sdk"].update({"present": 1}), "sdk.present must be a boolean"),
+        (lambda p: p["node"].update({"minimum_major": True}), "node.minimum_major has invalid type"),
+        (lambda p: p["adapter"].update({"credential": "secret"}), "adapter has unexpected field: credential"),
+        (lambda p: p.update({"ready": True, "blockers": ["missing SDK"]}), "ready must equal blockers being empty"),
+    ],
+)
+def test_acp_runtime_validator_rejects_drift(mutate, expected: str) -> None:
+    from agentdeck.contracts import acp_runtime_example, validate_acp_runtime_contract
+
+    payload = acp_runtime_example()
+    mutate(payload)
+    result = validate_acp_runtime_contract(payload)
+    assert expected in result["errors"]
+
+
 @pytest.mark.parametrize(
     ("mutate", "expected"),
     [
@@ -527,6 +576,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "learning-review-schema.md",
         "agent-runtime-schema.md",
         "protocol-runtime-schema.md",
+        "acp-runtime-schema.md",
         "leader-chat-schema.md",
         "leader-status-schema.md",
         "leader-actions-schema.md",
@@ -548,7 +598,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 30
+    assert payload["count"] == 31
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -571,6 +621,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "learning-review",
         "agent-runtime",
         "protocol-runtime",
+        "acp-runtime",
         "leader-chat",
         "leader-status",
         "leader-actions",
@@ -2607,6 +2658,7 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["contracts_card"]["contracts_command"] == "agentdeck contract list"
     assert example["contracts_card"]["contract_index_contract"] == "docs/contracts/contract-index-schema.md"
     assert example["contracts_card"]["controls_contract"] == "agentdeck contract controls"
+    assert example["contracts_card"]["acp_runtime_contract"] == "agentdeck contract acp-runtime"
     assert example["contracts_card"]["learning_review_contract"] == "agentdeck contract learning-review"
     assert example["contracts_card"]["leader_chat_contract"] == "agentdeck contract leader-chat"
     assert example["contracts_card"]["leader_review_contract"] == "agentdeck contract leader-review"

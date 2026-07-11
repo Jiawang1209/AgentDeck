@@ -111,6 +111,15 @@ def test_contract_protocol_runtime_cli_matches_module(capsys) -> None:
     assert payload == protocol_runtime_contract_response(contract_path, include_example=True)
 
 
+def test_contract_acp_runtime_cli_matches_module(capsys) -> None:
+    from agentdeck.contracts import acp_runtime_contract_response
+
+    assert cli.main(["contract", "acp-runtime", "--example"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    contract_path = Path(cli.__file__).resolve().parents[2] / "docs" / "contracts" / "acp-runtime-schema.md"
+    assert payload == acp_runtime_contract_response(contract_path, include_example=True)
+
+
 def test_protocol_requires_a_subcommand(capsys) -> None:
     with pytest.raises(SystemExit, match="2"):
         cli.main(["protocol"])
@@ -152,6 +161,98 @@ def prepare_project(tmp_path: Path, monkeypatch) -> Path:
     write_default_config(root)
     monkeypatch.chdir(root)
     return root
+
+
+def prepare_acp_project(tmp_path: Path, monkeypatch, *, command: str = "fake-acp-agent") -> Path:
+    root = prepare_project(tmp_path, monkeypatch)
+    path = root / ".agentdeck" / "config.toml"
+    text = path.read_text(encoding="utf-8").replace(
+        'command = "codex"',
+        f'command = "codex"\ntransport = "acp"\ntransport_command = ["{command}", "--stdio"]',
+        1,
+    )
+    path.write_text(text, encoding="utf-8")
+    return root
+
+
+def test_acp_preflight_is_read_only_and_deterministic(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch)
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    monkeypatch.setattr(cli.importlib.util, "find_spec", lambda name: object() if name == "acp" else None)
+    monkeypatch.setattr(cli.importlib.metadata, "version", lambda name: "0.11.0")
+    monkeypatch.setattr(cli.shutil, "which", lambda command: f"/example/bin/{command}")
+
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "planner"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "planner"]) == 0
+    second = json.loads(capsys.readouterr().out)
+
+    assert first == second
+    assert first["mode"] == "acp_preflight"
+    assert first["ready"] is True
+    assert first["agent"]["transport"] == "acp"
+    assert first["adapter"]["argv"] == ["fake-acp-agent", "--stdio"]
+    assert first["sdk"] == {"module": "acp", "package": "agent-client-protocol", "present": True, "version": "0.11.0"}
+    assert all(control["safety"] == "inspect" for control in first["controls"])
+    after = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    ("sdk_present", "executable_present", "blocker"),
+    [
+        (False, True, "ACP Python SDK is not installed"),
+        (True, False, "ACP adapter executable was not found"),
+    ],
+)
+def test_acp_preflight_reports_setup_blockers(
+    tmp_path: Path, monkeypatch, capsys, sdk_present: bool, executable_present: bool, blocker: str
+) -> None:
+    prepare_acp_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli.importlib.util, "find_spec", lambda _name: object() if sdk_present else None)
+    monkeypatch.setattr(cli.importlib.metadata, "version", lambda _name: "0.11.0")
+    monkeypatch.setattr(cli.shutil, "which", lambda command: f"/bin/{command}" if executable_present else None)
+
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "planner"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False
+    assert blocker in payload["blockers"]
+
+
+def test_acp_preflight_enforces_known_claude_node_requirement(tmp_path: Path, monkeypatch, capsys) -> None:
+    prepare_acp_project(tmp_path, monkeypatch, command="claude-agent-acp")
+    monkeypatch.setattr(cli.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(cli.importlib.metadata, "version", lambda _name: "0.11.0")
+    monkeypatch.setattr(cli.shutil, "which", lambda command: f"/opt/node-v20.19.0/bin/{command}")
+    monkeypatch.setattr(cli, "_node_version_from_executable", lambda _path: "20.19.0")
+
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "planner"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["node"] == {"required": True, "minimum_major": 22, "executable_path": "/opt/node-v20.19.0/bin/node", "version": "20.19.0", "ready": False}
+    assert "claude-agent-acp requires Node >=22" in payload["blockers"]
+
+
+def test_acp_preflight_errors_have_no_stdout_or_project_creation(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = tmp_path / "not-a-project"
+    root.mkdir()
+    monkeypatch.chdir(root)
+
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "planner"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "missing config" in captured.err
+    assert not (root / ".agentdeck").exists()
+
+
+def test_acp_preflight_rejects_unknown_agent_and_wrong_transport(tmp_path: Path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "unknown"]) == 1
+    assert capsys.readouterr().out == ""
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "planner"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "not configured for ACP transport" in captured.err
 
 
 def test_existing_agent_defaults_to_tmux_transport(tmp_path: Path) -> None:
@@ -5142,6 +5243,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "learning-review",
         "agent-runtime",
         "protocol-runtime",
+        "acp-runtime",
         "leader-chat",
         "leader-status",
         "leader-actions",
@@ -6791,6 +6893,7 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "memory_contract",
         "learning_review_contract",
         "agent_runtime_contract",
+        "acp_runtime_contract",
         "leader_chat_contract",
         "leader_review_contract",
         "leader_summary_contract",
@@ -8345,6 +8448,7 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "contract_index_contract": "docs/contracts/contract-index-schema.md",
         "workbench_contract": "agentdeck contract workbench",
         "agent_runtime_contract": "agentdeck contract agent-runtime",
+        "acp_runtime_contract": "agentdeck contract acp-runtime",
         "controls_contract": "agentdeck contract controls",
         "skills_contract": "agentdeck contract skills",
         "memory_contract": "agentdeck contract memory",

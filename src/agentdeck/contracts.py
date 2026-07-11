@@ -163,6 +163,12 @@ CONTRACT_INDEX_SPECS = (
         "protocol-runtime-schema.md",
     ),
     (
+        "acp-runtime",
+        "agentdeck contract acp-runtime",
+        "agentdeck contract acp-runtime --example",
+        "acp-runtime-schema.md",
+    ),
+    (
         "leader-chat",
         "agentdeck contract leader-chat",
         "agentdeck contract leader-chat --example",
@@ -331,6 +337,26 @@ PROTOCOL_RUNTIME_UPDATE_KINDS = (
     "progress", "text", "tool_call", "tool_result", "permission_request", "artifact", "completion", "error",
 )
 PROTOCOL_RUNTIME_PERMISSION_STATUSES = ("pending", "approved", "denied", "expired")
+
+ACP_RUNTIME_CONTRACT_VERSION = "acp-runtime/v1"
+ACP_RUNTIME_PREFLIGHT_RESPONSE_FIELDS = (
+    "mode", "contract_version", "project", "ready", "agent", "adapter",
+    "sdk", "node", "blockers", "controls",
+)
+ACP_RUNTIME_AGENT_FIELDS = ("agent_id", "provider", "transport")
+ACP_RUNTIME_ADAPTER_FIELDS = ("argv", "executable_path", "present")
+ACP_RUNTIME_SDK_FIELDS = ("module", "package", "present", "version")
+ACP_RUNTIME_NODE_FIELDS = ("required", "minimum_major", "executable_path", "version", "ready")
+ACP_RUNTIME_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
+ACP_RUNTIME_RUN_RESPONSE_FIELDS = (
+    "mode", "contract_version", "agent_id", "session_id", "native_session_id",
+    "protocol_version", "capabilities", "turn_id", "turn_state", "stop_reason",
+    "update_count", "permission_count", "disconnect_reason", "controls",
+)
+ACP_RUNTIME_TRANSITION_FIELDS = (
+    "transition_id", "entity_type", "entity_id", "from_state", "to_state",
+    "reason", "details", "created_at",
+)
 
 PROJECT_VIEW_LEADER_FIELDS = (
     "agent_id",
@@ -2047,6 +2073,7 @@ WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "memory_contract",
     "learning_review_contract",
     "agent_runtime_contract",
+    "acp_runtime_contract",
     "leader_chat_contract",
     "leader_review_contract",
     "leader_summary_contract",
@@ -2720,6 +2747,141 @@ def protocol_runtime_contract_response(
             "example_protocol_runtime": example,
         })
     return payload
+
+
+def acp_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "contract_version": ACP_RUNTIME_CONTRACT_VERSION,
+        "preflight_command": "agentdeck protocol acp preflight --agent <agent_id>",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(ACP_RUNTIME_PREFLIGHT_RESPONSE_FIELDS),
+        "agent_fields": list(ACP_RUNTIME_AGENT_FIELDS),
+        "adapter_fields": list(ACP_RUNTIME_ADAPTER_FIELDS),
+        "sdk_fields": list(ACP_RUNTIME_SDK_FIELDS),
+        "node_fields": list(ACP_RUNTIME_NODE_FIELDS),
+        "control_fields": list(ACP_RUNTIME_CONTROL_FIELDS),
+        "run_response_fields": list(ACP_RUNTIME_RUN_RESPONSE_FIELDS),
+        "load_response_fields": list(ACP_RUNTIME_RUN_RESPONSE_FIELDS),
+        "resume_response_fields": list(ACP_RUNTIME_RUN_RESPONSE_FIELDS),
+        "transition_fields": list(ACP_RUNTIME_TRANSITION_FIELDS),
+        "transition_entity_types": list(PROTOCOL_RUNTIME_TRANSITION_ENTITY_TYPES),
+        "safety_values": ["inspect", "explicit_user"],
+        "confirmation_required": {"preflight": False, "run": True, "load": True, "resume": True},
+        "protocol_runtime_contract": "agentdeck contract protocol-runtime",
+        "workbench_contract": "agentdeck contract workbench",
+    }
+
+
+def acp_runtime_contract_response(contract_path: Path, include_example: bool = False) -> dict[str, object]:
+    payload = acp_runtime_contract_payload(contract_path)
+    if include_example:
+        example = acp_runtime_example()
+        validation = validate_acp_runtime_contract(example)
+        if not validation["ok"]:
+            raise ValueError("invalid ACP runtime example: " + "; ".join(validation["errors"]))
+        payload.update({
+            "example": True,
+            "example_response_fields": list(example),
+            "example_acp_runtime": example,
+        })
+    return payload
+
+
+def acp_runtime_example() -> dict[str, object]:
+    return {
+        "mode": "acp_preflight",
+        "contract_version": ACP_RUNTIME_CONTRACT_VERSION,
+        "project": "example",
+        "ready": True,
+        "agent": {"agent_id": "fake-agent", "provider": "fake", "transport": "acp"},
+        "adapter": {
+            "argv": ["fake-acp-agent", "--stdio"],
+            "executable_path": "/example/bin/fake-acp-agent",
+            "present": True,
+        },
+        "sdk": {
+            "module": "acp", "package": "agent-client-protocol", "present": True, "version": "0.0.0-fake",
+        },
+        "node": {"required": False, "minimum_major": None, "executable_path": None, "version": None, "ready": True},
+        "blockers": [],
+        "controls": [
+            {"kind": "inspect", "label": "Inspect ACP preflight", "command": "agentdeck protocol acp preflight --agent fake-agent", "safety": "inspect", "enabled": True, "blocker": None},
+            {"kind": "inspect", "label": "Inspect ACP runtime contract", "command": "agentdeck contract acp-runtime", "safety": "inspect", "enabled": True, "blocker": None},
+        ],
+    }
+
+
+def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
+    errors: list[str] = []
+    if not isinstance(payload, dict):
+        return {"ok": False, "errors": ["ACP runtime payload must be an object"]}
+    for field in ACP_RUNTIME_PREFLIGHT_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing ACP runtime field: {field}")
+    if errors:
+        return {"ok": False, "errors": errors}
+    unexpected = sorted(set(payload) - set(ACP_RUNTIME_PREFLIGHT_RESPONSE_FIELDS))
+    errors.extend(f"unexpected ACP runtime field: {field}" for field in unexpected)
+    if payload.get("mode") != "acp_preflight": errors.append("mode is invalid")
+    if payload.get("contract_version") != ACP_RUNTIME_CONTRACT_VERSION: errors.append("contract_version is invalid")
+    if not isinstance(payload.get("project"), str) or not payload.get("project"): errors.append("project must be a non-empty string")
+    if type(payload.get("ready")) is not bool: errors.append("ready must be a boolean")
+    blockers = payload.get("blockers")
+    if not isinstance(blockers, list) or any(not isinstance(item, str) or not item for item in blockers):
+        errors.append("blockers must be a list of non-empty strings")
+    elif payload.get("ready") != (not blockers):
+        errors.append("ready must equal blockers being empty")
+    nested = (
+        ("agent", ACP_RUNTIME_AGENT_FIELDS), ("adapter", ACP_RUNTIME_ADAPTER_FIELDS),
+        ("sdk", ACP_RUNTIME_SDK_FIELDS), ("node", ACP_RUNTIME_NODE_FIELDS),
+    )
+    for name, fields in nested:
+        value = payload.get(name)
+        if not isinstance(value, dict): errors.append(f"{name} must be an object"); continue
+        for field in fields:
+            if field not in value: errors.append(f"missing {name} field: {field}")
+        for field in sorted(set(value) - set(fields)): errors.append(f"{name} has unexpected field: {field}")
+    agent = payload.get("agent")
+    if isinstance(agent, dict) and agent.get("transport") != "acp": errors.append("agent.transport must be acp")
+    adapter = payload.get("adapter")
+    if isinstance(adapter, dict):
+        argv = adapter.get("argv")
+        if not isinstance(argv, list) or not argv or any(not isinstance(part, str) or not part for part in argv):
+            errors.append("adapter.argv must be a non-empty argv list")
+        if type(adapter.get("present")) is not bool: errors.append("adapter.present must be a boolean")
+        if adapter.get("executable_path") is not None and not isinstance(adapter.get("executable_path"), str):
+            errors.append("adapter.executable_path has invalid type")
+    sdk = payload.get("sdk")
+    if isinstance(sdk, dict):
+        if type(sdk.get("present")) is not bool: errors.append("sdk.present must be a boolean")
+        if sdk.get("version") is not None and not isinstance(sdk.get("version"), str): errors.append("sdk.version has invalid type")
+    node = payload.get("node")
+    if isinstance(node, dict):
+        if type(node.get("required")) is not bool: errors.append("node.required must be a boolean")
+        if type(node.get("ready")) is not bool: errors.append("node.ready must be a boolean")
+        if node.get("minimum_major") is not None and type(node.get("minimum_major")) is not int:
+            errors.append("node.minimum_major has invalid type")
+        for field in ("executable_path", "version"):
+            if node.get(field) is not None and not isinstance(node.get(field), str): errors.append(f"node.{field} has invalid type")
+    controls = payload.get("controls")
+    if not isinstance(controls, list) or not controls: errors.append("controls must be a non-empty list")
+    else:
+        for index, control in enumerate(controls):
+            if not isinstance(control, dict): errors.append(f"controls[{index}] must be an object"); continue
+            if set(control) != set(ACP_RUNTIME_CONTROL_FIELDS): errors.append(f"controls[{index}] fields are invalid")
+            if control.get("safety") != "inspect": errors.append(f"controls[{index}].safety must be inspect")
+            if control.get("kind") != "inspect": errors.append(f"controls[{index}].kind must be inspect")
+            if type(control.get("enabled")) is not bool: errors.append(f"controls[{index}].enabled must be a boolean")
+            command = control.get("command")
+            allowed = command in {"agentdeck contract acp-runtime", "agentdeck protocol status"}
+            allowed = allowed or (
+                isinstance(command, str)
+                and re.fullmatch(r"agentdeck protocol acp preflight --agent [A-Za-z0-9_.-]+", command) is not None
+            )
+            if not allowed: errors.append(f"controls[{index}].command is not allowed")
+    return {"ok": not errors, "errors": errors}
 
 
 def skills_contract_payload(contract_path: Path) -> dict[str, object]:
@@ -14556,6 +14718,7 @@ def workbench_example() -> dict[str, object]:
             "memory_contract": "agentdeck contract memory",
             "learning_review_contract": "agentdeck contract learning-review",
             "agent_runtime_contract": "agentdeck contract agent-runtime",
+            "acp_runtime_contract": "agentdeck contract acp-runtime",
             "leader_chat_contract": "agentdeck contract leader-chat",
             "leader_review_contract": "agentdeck contract leader-review",
             "leader_summary_contract": "agentdeck contract leader-summary",

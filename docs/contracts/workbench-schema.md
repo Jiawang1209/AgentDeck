@@ -142,7 +142,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `memory_suggestions_card` is derived from pending `memory_suggestions[]`; it exposes count, pending_count, items, `apply_preview_command_template`, item-level `apply_preview` / `apply_memory` controls, and inspect controls for `agentdeck memory suggestions` and `agentdeck status`. Rendering the card is read-only: it must not create or modify `.agentdeck/memory/*.md` or inject memory into prompts. Only a separate explicit `agentdeck memory apply --suggestion-id <id> --confirm` command may write long-term memory.
 `leader_summary_card` is `null` until the latest plan's local Leader review returns `next_action=summarize`; then it reuses `agentdeck leader summary --plan-id <id>` and must pass `validate_leader_summary_contract()`.
 `learning_review_card` is `null` under the same gate (latest plan review `next_action=summarize`); then it reuses the `agentdeck learn review --plan-id <id>` response shape and must pass `validate_learning_review_contract()`. It is the read-only Hermes-style learning reviewer: it surfaces suggested `agentdeck skills suggest ... --source learn-review` and `agentdeck memory suggest ... --source learn-review` follow-up commands (its `summary` / `suggest_skill` / `suggest_memory` controls enter `control_registry[]` under `scope=learning_review`), but rendering the workbench never writes `skill_suggestions[]` / `memory_suggestions[]`, calls a provider, or creates/loads skills — the explicit suggestion commands remain the only write path into the pending queues.
-`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Skill Registry, memory suggestion/apply, Leader chat, and Leader review contracts.
+`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Skill Registry, memory suggestion/apply, ACP runtime preflight, Leader chat, and Leader review contracts.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `run_progress_card` is `null` when there is no plan; otherwise it reuses the latest plan's `agentdeck run --plan-id <id>` response shape and must pass `validate_run_start_contract()`. Its `leader_backend` field is the same normalized logical Leader identity card stored with the plan; it is not a tmux pane binding or execution permission.
@@ -1018,6 +1018,7 @@ The card reuses `validate_leader_summary_contract()`. It only aggregates existin
   "leader_chat_contract": "agentdeck contract leader-chat",
   "leader_review_contract": "agentdeck contract leader-review",
   "leader_summary_contract": "agentdeck contract leader-summary",
+  "acp_runtime_contract": "agentdeck contract acp-runtime",
   "project_view_contract": "agentdeck contract project-view",
   "events_contract": "agentdeck contract events",
   "doctor_contract": "agentdeck contract doctor",
