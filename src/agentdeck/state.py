@@ -39,6 +39,10 @@ from .runtime.protocol import (
     validate_protocol_transition_record,
     validate_transition_edge,
 )
+from .runtime.acp_mapping import (
+    MAX_ACP_TURN_PAYLOAD_BYTES,
+    MAX_ACP_UPDATES_PER_TURN,
+)
 
 
 def leader_provider_backend(provider: str | None) -> str:
@@ -552,6 +556,113 @@ class StateStore:
                 "risk": record["risk"],
             })
             return self._save_protocol_record(state, "permission_requests", record, event)
+
+    def record_acp_permission_pending(
+        self,
+        session_id: str,
+        turn_id: str,
+        sequence: int,
+        *,
+        tool_name: str,
+        target: str,
+        risk: str,
+        tool_call_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Atomically reserve one bounded ACP permission request and its ledger facts."""
+        with self._protocol_mutation_lock():
+            state = self.load()
+            self._validated_protocol_turn(state, session_id, turn_id)
+            current_states = self._validate_protocol_transition_history(state)
+            turn = self._unique_protocol_record(
+                state.setdefault("protocol_turns", []), "turn_id", turn_id,
+                "duplicate protocol turn identity",
+            )
+            current = current_states.get(("turn", turn_id), turn["state"])
+            if current not in {"submitted", "streaming"}:
+                raise ValueError("ACP permission requires a submitted or streaming turn")
+
+            permission = build_permission_request(
+                session_id, turn_id, tool_name, target, risk
+            )
+            payload = {
+                "permission_id": permission["permission_id"],
+                "tool_call_id": tool_call_id,
+                "risk": risk,
+            }
+            updates = state.setdefault("transport_updates", [])
+            turn_updates = [
+                item for item in updates
+                if isinstance(item, dict) and item.get("turn_id") == turn_id
+            ]
+            if any(item.get("sequence") == sequence for item in turn_updates):
+                raise ValueError("duplicate transport update sequence")
+            if sequence != len(turn_updates):
+                raise ValueError("ACP transport update sequence must be contiguous")
+            existing_bytes = sum(
+                len(json.dumps(item["payload"], ensure_ascii=False, sort_keys=True).encode("utf-8"))
+                for item in turn_updates
+            )
+            payload_bytes = len(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+            )
+            total_bytes = existing_bytes + payload_bytes
+            total_updates = len(turn_updates) + 1
+            if total_bytes > MAX_ACP_TURN_PAYLOAD_BYTES:
+                raise ValueError(
+                    f"ACP turn payload exceeds {MAX_ACP_TURN_PAYLOAD_BYTES} bytes"
+                )
+            if total_updates > MAX_ACP_UPDATES_PER_TURN:
+                raise ValueError(
+                    f"ACP turn updates exceed {MAX_ACP_UPDATES_PER_TURN}"
+                )
+
+            update = build_transport_update(
+                session_id, turn_id, sequence, "permission_request", payload
+            )
+            transition = build_protocol_transition(
+                "turn", turn_id, current, "waiting_permission", "permission_requested", {}
+            )
+            permissions = state.setdefault("permission_requests", [])
+            if any(item.get("permission_id") == permission["permission_id"] for item in permissions):
+                raise ValueError("duplicate permission request identity")
+            events = [
+                EventRecord.create("permission_request_recorded", {
+                    "permission_id": permission["permission_id"], "session_id": session_id,
+                    "turn_id": turn_id, "tool_name": tool_name, "risk": risk,
+                }),
+                EventRecord.create("transport_update_recorded", {
+                    "update_id": update["update_id"], "session_id": session_id,
+                    "turn_id": turn_id, "sequence": sequence, "kind": "permission_request",
+                }),
+                EventRecord.create("protocol_state_transition_recorded", {
+                    key: transition[key] for key in (
+                        "transition_id", "entity_type", "entity_id", "from_state",
+                        "to_state", "reason",
+                    )
+                }),
+            ]
+            # Flush only after every prospective record and bound has validated.
+            self._flush_protocol_event_outbox_locked(state)
+            permissions.append(permission)
+            updates.append(update)
+            state.setdefault("protocol_state_transitions", []).append(transition)
+            state.setdefault("protocol_event_outbox", []).extend(asdict(event) for event in events)
+            self.save(state)
+            for event in events:
+                try:
+                    self.append_event(event)
+                except OSError:
+                    return {"permission": permission, "update": update, "transition": transition}
+            event_ids = {event.event_id for event in events}
+            state["protocol_event_outbox"] = [
+                item for item in state["protocol_event_outbox"]
+                if item.get("event_id") not in event_ids
+            ]
+            try:
+                self.save(state)
+            except OSError:
+                pass
+            return {"permission": permission, "update": update, "transition": transition}
 
     def agent_session_by_id(self, session_id: str) -> dict[str, Any]:
         state = self.load()

@@ -22,6 +22,10 @@ The command does not spawn a process, authenticate, create or load a session, ca
 
 Run responses contain the exact `run_response_fields` published by discovery. Completion is derived only from the ACP prompt `stopReason`; streamed text is never completion proof. The session is always transitioned to `disconnected` during bounded cleanup.
 
+Every response field has one durable source. Agent/session/native identity and negotiated capabilities come from the immutable AgentSession; protocol version and bounded negotiated Agent identity come from the `session_new_completed` transition details; stop reason comes only from the completion TransportUpdate; disconnect reason comes from the terminal session transition; turn state and counts are derived from the complete persisted lineage. The CLI reloads these records after disconnect and does not use transport result locals to construct stdout.
+
+Permission admission is atomic under the protocol mutation lock. Before any durable mutation, AgentDeck computes the prospective redacted permission update against the complete persisted turn update count and payload-byte total. Only an in-budget request appends the pending PermissionRequest, redacted TransportUpdate, waiting-permission transition, and their outbox events in one state save. Boundary failure leaves the entire tree, including a pre-existing pending outbox, byte-for-byte unchanged; it cannot create an orphan permission.
+
 ## Future load/resume responses
 
 Discovery also publishes the planned load/resume response fields. Those operations remain unavailable until their later approved tasks.

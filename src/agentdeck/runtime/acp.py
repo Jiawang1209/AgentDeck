@@ -82,6 +82,7 @@ class AcpInitializeResult:
     protocol_version: int
     client_capabilities: dict[str, object]
     capabilities: TransportCapabilities
+    agent_identity: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -279,6 +280,13 @@ class AcpTransport:
             protocol_version=response.protocol_version,
             client_capabilities={"fs": None, "terminal": False},
             capabilities=map_agent_capabilities(response),
+            agent_identity={
+                key: value for key, value in {
+                    "name": response.agent_info.name if response.agent_info else None,
+                    "title": response.agent_info.title if response.agent_info else None,
+                    "version": response.agent_info.version if response.agent_info else None,
+                }.items() if value is not None
+            },
         )
 
     async def _connection_ended(self, error: Exception) -> bool:

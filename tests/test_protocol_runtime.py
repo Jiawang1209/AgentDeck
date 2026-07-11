@@ -1165,3 +1165,54 @@ def test_rejected_mutation_does_not_flush_pending_outbox(tmp_path, monkeypatch, 
         else:
             store.record_agent_session("b", "p", "tmux", None, "w", CAPABILITIES)
     assert _tree_snapshot(store) == before
+
+
+def test_acp_permission_pending_is_one_atomic_mutation_with_exact_bounds(
+    tmp_path, monkeypatch,
+) -> None:
+    store = StateStore(tmp_path)
+    session = store.record_agent_session("a", "p", "acp-adapter", "native", "w", CAPABILITIES)
+    turn = store.record_protocol_turn(session["session_id"], "msg")
+    store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", None, {})
+    payload = {"permission_id": "prm_" + "x" * 12, "tool_call_id": "call-1", "risk": "high"}
+    encoded = len(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+    monkeypatch.setattr("agentdeck.state.MAX_ACP_TURN_PAYLOAD_BYTES", encoded)
+    monkeypatch.setattr("agentdeck.state.MAX_ACP_UPDATES_PER_TURN", 1)
+
+    result = store.record_acp_permission_pending(
+        session["session_id"], turn["turn_id"], 0,
+        tool_name="Edit", target="notes.txt", risk="high",
+        tool_call_id="call-1",
+    )
+
+    state = store.load()
+    assert result["permission"] in state["permission_requests"]
+    assert result["update"] in state["transport_updates"]
+    assert result["transition"] in state["protocol_state_transitions"]
+    assert result["update"]["payload"]["permission_id"] == result["permission"]["permission_id"]
+
+
+@pytest.mark.parametrize("overflow", ["bytes", "count"])
+def test_acp_permission_bound_failure_is_full_tree_zero_write_with_pending_outbox(
+    tmp_path, monkeypatch, overflow: str,
+) -> None:
+    store = StateStore(tmp_path)
+    session = store.record_agent_session("a", "p", "acp-adapter", "native", "w", CAPABILITIES)
+    turn = store.record_protocol_turn(session["session_id"], "msg")
+    store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", None, {})
+    real_append_event = store.append_event
+    monkeypatch.setattr(store, "append_event", lambda _event: (_ for _ in ()).throw(OSError("pending")))
+    store.record_transport_update(session["session_id"], turn["turn_id"], 0, "text", {"x": "y"})
+    monkeypatch.setattr(store, "append_event", real_append_event)
+    assert store.load()["protocol_event_outbox"]
+    monkeypatch.setattr("agentdeck.state.MAX_ACP_TURN_PAYLOAD_BYTES", 1 if overflow == "bytes" else 10_000)
+    monkeypatch.setattr("agentdeck.state.MAX_ACP_UPDATES_PER_TURN", 1 if overflow == "count" else 10)
+    before = _tree_snapshot(store)
+
+    with pytest.raises(ValueError, match="ACP turn"):
+        store.record_acp_permission_pending(
+            session["session_id"], turn["turn_id"], 1,
+            tool_name="Edit", target="notes.txt", risk="high", tool_call_id="call-1",
+        )
+
+    assert _tree_snapshot(store) == before

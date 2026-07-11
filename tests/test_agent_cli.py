@@ -70,6 +70,7 @@ from agentdeck.contracts import (
     WORKBENCH_PROVIDER_HEALTH_FIELDS,
 )
 from agentdeck.state import StateStore
+from agentdeck.runtime.protocol import TransportCapabilities
 
 
 class FakeTmuxBackend:
@@ -509,6 +510,160 @@ def test_acp_run_validator_failure_has_no_stdout(tmp_path: Path, monkeypatch, ca
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "forced" in captured.err
+
+
+def test_acp_run_tty_reject_once_is_denied_and_ui_is_stderr(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    path = root / ".agentdeck" / "config.toml"
+    path.write_text(path.read_text().replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "permission"]',
+    ))
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+
+    class Tty(io.StringIO):
+        def isatty(self): return True
+
+    monkeypatch.setattr(cli.sys, "stdin", Tty("3\n"))
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "hello", "--confirm"]) == 0
+    captured = capsys.readouterr()
+    assert "Reject once" in captured.err
+    assert "Reject once" not in captured.out
+    state = StateStore(root).load()
+    permission_id = state["permission_requests"][0]["permission_id"]
+    decision = next(item for item in state["protocol_state_transitions"] if item["entity_id"] == permission_id)
+    assert (decision["to_state"], decision["reason"]) == ("denied", "selected")
+
+
+def test_acp_run_eof_before_response_is_ambiguous_and_disconnected(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    path = root / ".agentdeck" / "config.toml"
+    path.write_text(path.read_text().replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "eof_before_response"]',
+    ))
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "hello", "--confirm"]) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["turn_state"] == "ambiguous"
+    assert payload["stop_reason"] is None
+    assert payload["disconnect_reason"] == "unexpected_eof"
+    assert "ambiguous" in captured.err
+
+
+def test_acp_run_response_is_rebuilt_from_persisted_facts(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    capabilities = TransportCapabilities(True, True, True, True, False, False)
+    session = store.record_agent_session("planner", "fake", "acp-adapter", "native-1", str(tmp_path), capabilities)
+    store.record_protocol_transition(
+        "session", session["session_id"], "created", "ready", "session_new_completed",
+        {"protocol_version": 1, "agent_identity": {"name": "persisted-agent", "version": "1.0"}},
+    )
+    turn = store.record_protocol_turn(session["session_id"], "msg")
+    store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", None, {})
+    store.record_transport_update(session["session_id"], turn["turn_id"], 0, "completion", {"stop_reason": "max_tokens"})
+    store.record_protocol_transition("turn", turn["turn_id"], "submitted", "blocked", "max_tokens", {})
+    store.record_protocol_transition("session", session["session_id"], "ready", "disconnected", "persisted_disconnect", {})
+
+    payload = cli._acp_run_payload_from_state(store, session["session_id"], turn["turn_id"])
+
+    assert payload["stop_reason"] == "max_tokens"
+    assert payload["disconnect_reason"] == "persisted_disconnect"
+    assert payload["protocol_version"] == 1
+    assert cli.validate_acp_runtime_contract(payload)["ok"] is True
+
+
+@pytest.mark.parametrize(("failure", "reason"), [("eof", "eof"), ("ctrl_c", "ctrl_c")])
+def test_acp_run_tty_permission_input_failure_settles_before_completion(
+    tmp_path: Path, monkeypatch, capsys, failure: str, reason: str,
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    path = root / ".agentdeck" / "config.toml"
+    path.write_text(path.read_text().replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "permission"]',
+    ))
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+
+    class BrokenTty(io.StringIO):
+        def isatty(self): return True
+        def readline(self, *_args):
+            if failure == "ctrl_c": raise KeyboardInterrupt()
+            return ""
+
+    monkeypatch.setattr(cli.sys, "stdin", BrokenTty())
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "hello", "--confirm"]) == 0
+    capsys.readouterr()
+    state = StateStore(root).load()
+    permission_id = state["permission_requests"][0]["permission_id"]
+    decision = next(item for item in state["protocol_state_transitions"] if item["entity_id"] == permission_id)
+    assert (decision["to_state"], decision["reason"]) == ("denied", reason)
+
+
+def test_acp_run_prompt_timeout_sends_cancel_and_persists_failed_disconnect(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    cancel_file = tmp_path / "cancelled.txt"
+    path = root / ".agentdeck" / "config.toml"
+    path.write_text(path.read_text().replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "timeout", "{cancel_file}"]',
+    ))
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+    real_transport = cli.AcpTransport
+    monkeypatch.setattr(
+        cli, "AcpTransport",
+        lambda argv, workspace, client: real_transport(
+            argv, workspace, client, request_timeout=0.5, cancel_timeout=0.5,
+            close_grace=0.2, terminate_grace=0.2, kill_grace=0.2,
+        ),
+    )
+
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "hello", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["turn_state"] == "failed"
+    assert payload["disconnect_reason"] == "timeout"
+    assert cancel_file.read_text() == "cancelled"
+
+
+def test_acp_run_permission_bound_exhaustion_leaves_no_orphan_permission(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    path = root / ".agentdeck" / "config.toml"
+    path.write_text(path.read_text().replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "permission"]',
+    ))
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+    monkeypatch.setattr("agentdeck.state.MAX_ACP_UPDATES_PER_TURN", 0)
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO())
+
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "hello", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    state = StateStore(root).load()
+    assert payload["turn_state"] == "failed"
+    assert state["permission_requests"] == []
+    assert not any(item["kind"] == "permission_request" for item in state["transport_updates"])
+    assert not any(item["to_state"] == "waiting_permission" for item in state["protocol_state_transitions"])
+    assert state["protocol_event_outbox"] == []
 
 
 def test_existing_agent_defaults_to_tmux_transport(tmp_path: Path) -> None:

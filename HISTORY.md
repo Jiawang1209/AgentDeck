@@ -11,6 +11,9 @@
 - **Permissions**: numbered choices render on stderr. Only current `allow_once` and `reject_once` options are selectable; always options remain visible and disabled. Non-TTY, EOF, timeout, Ctrl-C, and three invalid entries fail closed, with the permission decision persisted before the ACP response returns.
 - **Bounds and truth**: mapped updates remain sequence- and payload-bounded, completion is emitted only from the prompt response `stopReason`, and every created session is transitioned to disconnected during cleanup. Load and resume remain out of scope.
 - **TDD**: focused fake-Agent tests cover confirmation and readiness zero-write gates, successful single-document output, non-TTY permission denial ordering, disabled choices, invalid-input exhaustion, and validator failure with empty stdout.
+- **Review hardening**: permission admission now checks the prospective count and payload budget before any write, then atomically records pending request, redacted update, waiting transition, and outbox events. Exact-boundary, +1 overflow, and pre-existing-outbox tests prove failed admission is full-tree zero-write.
+- **Persisted response truth**: protocol version and negotiated Agent identity are persisted in the new-session transition, capabilities remain on AgentSession, stop reason comes only from the completion update, and disconnect reason comes from the final session transition. The final JSON is rebuilt after a fresh state reload with no execution-local facts.
+- **Failure matrix**: fake-process CLI tests now cover TTY reject-once, TTY EOF/Ctrl-C settlement, non-TTY denial, prompt timeout plus cancel, EOF ambiguity, permission-bound exhaustion without orphan records, disconnect on every created-session path, and validator failure with empty stdout.
 
 ### Publish ACP runtime preflight and contract
 

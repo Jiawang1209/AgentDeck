@@ -1262,24 +1262,18 @@ class _AcpRunLedgerSink:
         self, native_session_id: str, summary: dict[str, Any], options: list[schema.PermissionOption]
     ) -> object:
         session_id, turn_id = self._correlate(native_session_id)
-        permission = self.store.record_permission_request(
-            session_id, turn_id, summary.get("title") or summary.get("kind") or "unknown",
-            summary.get("target", "unknown"), summary["risk"],
+        result = self.store.record_acp_permission_pending(
+            session_id, turn_id, self.sequence,
+            tool_name=summary.get("title") or summary.get("kind") or "unknown",
+            target=summary.get("target", "unknown"), risk=summary["risk"],
+            tool_call_id=summary["tool_call_id"],
         )
+        permission = result["permission"]
         self.pending_by_tool[summary["tool_call_id"]] = permission
-        payload = {
-            "permission_id": permission["permission_id"], "tool_call_id": summary["tool_call_id"],
-            "risk": summary["risk"],
-        }
-        encoded = len(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"))
-        ensure_turn_within_bounds(self.payload_bytes + encoded, self.sequence + 1)
-        self.store.record_transport_update(
-            session_id, turn_id, self.sequence, "permission_request", payload
-        )
+        encoded = len(json.dumps(result["update"]["payload"], ensure_ascii=False, sort_keys=True).encode("utf-8"))
         self.sequence += 1
         self.payload_bytes += encoded
-        if self.turn_state in {"submitted", "streaming"}:
-            self._transition_turn("waiting_permission", "permission_requested")
+        self.turn_state = "waiting_permission"
         return {**summary, "permission_id": permission["permission_id"]}
 
     async def append_permission_decision(
@@ -1324,7 +1318,13 @@ async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateS
             agent.agent_id, agent.provider, "acp-adapter", native.native_session_id,
             str(project_root().resolve()), initialized.capabilities,
         )
-        store.record_protocol_transition("session", session["session_id"], "created", "ready", "session_new_completed", {})
+        store.record_protocol_transition(
+            "session", session["session_id"], "created", "ready",
+            "session_new_completed", {
+                "protocol_version": initialized.protocol_version,
+                "agent_identity": initialized.agent_identity,
+            },
+        )
         turn = store.record_protocol_turn(session["session_id"], new_id("msg"), "prompt")
         store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", "prompt_submitted", {})
         sink.activate(native.native_session_id, session["session_id"], turn["turn_id"])
@@ -1360,17 +1360,40 @@ async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateS
                 store.record_protocol_transition("session", session["session_id"], current, "disconnected", disconnect_reason, {})
     if session is None or turn is None or initialized is None:
         raise AcpTransportError("ACP run failed before a native session was created")
+    return _acp_run_payload_from_state(store, session["session_id"], turn["turn_id"])
+
+
+def _acp_run_payload_from_state(
+    store: StateStore, session_id: str, turn_id: str
+) -> dict[str, Any]:
+    """Rebuild the public run response exclusively from durable protocol facts."""
     state = store.load()
-    turn_state = _derived_entity_state(state, "turn", turn["turn_id"], "created")
-    updates = [item for item in state["transport_updates"] if item["turn_id"] == turn["turn_id"]]
-    permissions = [item for item in state["permission_requests"] if item["turn_id"] == turn["turn_id"]]
+    session = next(item for item in state["agent_sessions"] if item["session_id"] == session_id)
+    turn = next(item for item in state["protocol_turns"] if item["turn_id"] == turn_id)
+    transitions = state["protocol_state_transitions"]
+    ready = next(
+        item for item in transitions
+        if item["entity_type"] == "session" and item["entity_id"] == session_id
+        and item["reason"] == "session_new_completed"
+    )
+    disconnected = next(
+        item for item in reversed(transitions)
+        if item["entity_type"] == "session" and item["entity_id"] == session_id
+        and item["to_state"] == "disconnected"
+    )
+    turn_state = _derived_entity_state(state, "turn", turn_id, turn["state"])
+    updates = [item for item in state["transport_updates"] if item["turn_id"] == turn_id]
+    permissions = [item for item in state["permission_requests"] if item["turn_id"] == turn_id]
+    completions = [item for item in updates if item["kind"] == "completion"]
+    stop_reason = completions[-1]["payload"]["stop_reason"] if completions else None
     return {
         "mode": "acp_run", "contract_version": ACP_RUNTIME_CONTRACT_VERSION,
-        "agent_id": agent.agent_id, "session_id": session["session_id"],
-        "native_session_id": session["native_session_id"], "protocol_version": initialized.protocol_version,
+        "agent_id": session["agent_id"], "session_id": session["session_id"],
+        "native_session_id": session["native_session_id"],
+        "protocol_version": ready["details"]["protocol_version"],
         "capabilities": session["capabilities"], "turn_id": turn["turn_id"], "turn_state": turn_state,
         "stop_reason": stop_reason, "update_count": len(updates), "permission_count": len(permissions),
-        "disconnect_reason": disconnect_reason,
+        "disconnect_reason": disconnected["reason"],
         "controls": [
             {"kind": "inspect", "label": "Inspect protocol runtime", "command": "agentdeck protocol status", "safety": "inspect", "enabled": True, "blocker": None},
             {"kind": "inspect", "label": "Inspect ACP runtime contract", "command": "agentdeck contract acp-runtime", "safety": "inspect", "enabled": True, "blocker": None},
