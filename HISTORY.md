@@ -4,6 +4,12 @@
 
 ## 2026-07-12
 
+### Map ACP wire facts into the protocol ledger
+
+- **What**: add a pure ACP 0.11.0 mapping boundary for negotiated resume capability, typed session updates, stop reasons, compact permission facts, and exact 64 KiB message / 2 MiB turn / 256 update limits.
+- **Safety boundary**: mapping uses explicit field allowlists and rejects unknown update types, malformed identifiers, unsupported content, boolean count impostors, and over-limit traffic. ACP `_meta`, raw tool input/output, environment data, full diffs, and embedded artifact contents are never projected; unknown stop reasons cannot become successful turns.
+- **Scope**: no Client callbacks, subprocess lifecycle, CLI routing, provider calls, tmux behavior, or state persistence are added in this slice.
+
 ### Project protocol lifecycle transitions
 
 - **ProjectView**: 新增 `protocol_state_transitions` compact summary（count、按 entity type 计数、稳定 latest 20）；session/turn/permission summary 的 current state/status 从 immutable base record 与完整 transition history 派生。
