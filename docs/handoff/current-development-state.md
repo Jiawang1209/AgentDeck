@@ -63,6 +63,8 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 The next product generation is now governed by `docs/roadmap/product-north-star.md` and `docs/superpowers/specs/2026-07-11-agentdeck-protocol-native-v2-design.md`: default `agentdeck` conversation, project-first/global-roaming sessions, a durable project daemon, ACP-native Runtime, tmux fallback, and gradual V2 migration. The current natural-language Mission goal remains Phase 0 and must be completed and frozen as the compatibility baseline before the first protocol-model implementation slice.
 
+The approved first implementation plan is `docs/superpowers/plans/2026-07-11-protocol-native-phase0-phase1.md`. It covers only Phase 0 acceptance plus the no-behavior-change Phase 1 protocol model. ACP JSON-RPC, the project daemon, the default interactive REPL, global roaming, state migration, and Workspace Client remain separate future specs/plans.
+
 ## Canonical Handoff Inputs
 
 When switching from Codex to Claude Code CLI or another local agent, read these files first:

@@ -4,6 +4,13 @@
 
 ## 2026-07-11
 
+### Plan the protocol-native Phase 0 and Phase 1 implementation
+
+- **类型**: approved implementation plan + staged V2 delivery
+- **What**: 新增 `docs/superpowers/plans/2026-07-11-protocol-native-phase0-phase1.md`，把已批准 V2 设计拆成第一份可独立交付计划：先用真实 Codex/Claude 两句话 Mission 完成 Phase 0 compatibility baseline，再以 TDD 引入纯 transport/session/turn/update/permission domain、append-only state、compact ProjectView、`protocol-runtime/v1` contract、只读 `agentdeck protocol status` 和 tmux fallback capability metadata。
+- **范围**: 本计划明确不实现 ACP JSON-RPC、project daemon、默认 `agentdeck` REPL、全局漫游、V2 migration 或 Workspace Client；这些是后续独立 spec/plan。最后集成步骤要求保护主工作区既有 `.omc/` 与未跟踪 `AGENTS.md`，完整验证后才能非 force push `main`。
+- **自检**: 计划中的测试路径已与当前仓库逐一核对；无 TBD/TODO/省略实现占位；domain、StateStore、ProjectView、contract 和 CLI 的身份/字段名保持一致；每个任务包含 RED、GREEN、回归和独立 commit。
+
 ### Set the protocol-native AgentDeck product north star
 
 - **类型**: product direction + approved architecture design + README product rewrite
