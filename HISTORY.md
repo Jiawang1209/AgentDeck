@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Add protocol runtime domain records
+
+- **类型**: pure runtime domain + strict TDD
+- **What**: 新增 transport capability、agent session、turn、transport update 与 permission request 的协议领域记录构造器，固定状态与 update kind 枚举，并统一使用 `ags` / `trn` / `upd` / `prm` 标识和 UTC 时间。
+- **Validation**: required identity 严格拒绝空白、bool 与非字符串；session/turn 引用强制协议前缀；sequence 严格拒绝 bool、负数与非整数；update payload 必须为 dict 并深拷贝；native session 与 capability 类型严格守门。
+- **边界**: 本切片只生成 JSON 可序列化 dict，不读取或写入 StateStore、ProjectView、provider、tmux 或 permission side effect；tmux fallback capability 仅声明 observable terminal。
+- **TDD 证据**: 聚焦测试先因 `agentdeck.runtime.protocol` 不存在得到预期 collection RED；最小实现后 `tests/test_protocol_runtime.py` 34/34 GREEN。
+
 ### Anchor Worker readiness to the current terminal frame
 
 - **类型**: code-quality review fix + strict TDD + readiness false-positive hardening
