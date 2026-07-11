@@ -127,6 +127,7 @@ ACP 标准化 Agent 通信，但不会替代 AgentDeck 的 Mission、policy、sc
 
 - [产品北极星](docs/roadmap/product-north-star.md)
 - [协议原生 V2 设计](docs/superpowers/specs/2026-07-11-agentdeck-protocol-native-v2-design.md)
+- [自然语言 Mission 基线验收](docs/validation/2026-07-11-natural-language-mission-acceptance.md)
 - [当前开发状态](docs/handoff/current-development-state.md)
 - [Contract 索引](docs/contracts/contract-index-schema.md)
 - [架构文档](docs/architecture/)

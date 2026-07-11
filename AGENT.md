@@ -4,6 +4,8 @@
 
 本项目中的 agent 是有名字、有角色、有 runtime 绑定、有消息队列、有权限边界的工作单元。
 
+真实基线：2026-07-11 的 fresh-project 自然语言 Mission 只用 preview 请求与一次整体确认两条用户消息，让 Codex/Claude Worker 完成 8 步冻结串行接龙；验收与 lineage 见 `docs/validation/2026-07-11-natural-language-mission-acceptance.md`。目录 trust 是显式 human setup，不能当作 Worker 任务或自动提交。
+
 ## Agent 类型
 
 ### Leader Agent

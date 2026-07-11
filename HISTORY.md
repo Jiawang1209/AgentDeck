@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Validate the natural-language Mission baseline
+
+- **类型**: real fresh-project acceptance + durable evidence
+- **What**: 在全新临时 Git 项目中把 Leader 配置为 `codex-cli/gpt-5.5`，只用“让 Codex 和 Claude 一人一句接龙百家姓，共8轮”与一次带真实 Mission ID 的“批准执行”两条用户消息，自动选择并启动 planner/Codex 与 reviewer/Claude，完成冻结的 8 步 sequential workflow。成功 Mission `mis_1d5c2a569173`、plan `pln_c13709530632`、workflow `wfr_7d309ae9c507`。
+- **验收**: 八步依次输出赵钱孙李、周吴郑王、冯陈褚卫、蒋沈韩杨、朱秦尤许、何吕施张、孔曹严华、金魏陶姜；run response、`mission status`、ProjectView `status` 与 workbench 均为 `completed/current_step=8` 且 IDs 同源。审计严格为 1 条 `mission_confirmed`、8 条 `workflow_step_completed`、1 条 `mission_completed` 与 2 条 `leader_chat_turn`。
+- **证据**: 新增 `docs/validation/2026-07-11-natural-language-mission-acceptance.md`，记录环境、严格两消息、冻结 Mission/Worker、compact transcript、公开状态同源、审计 lineage、first-run trust、RED 缺陷、cleanup 与 PASS verdict；README 只新增验收链接，handoff、CLAUDE 与 AGENT 同步基线事实。
+- **边界**: 首次 Codex/Claude directory trust 只作为 human setup 处理；失败项目均保留诊断证据后销毁并重建，最终成功项目没有第三条自然语言、手工 Worker 任务输入或补 Enter。报告不含 token、email 或完整私密 terminal transcript。
+
 ### Recognize the real Phase 0 Codex and Claude idle frames
 
 - **类型**: natural-language Mission acceptance fix + strict TDD + bounded readiness safety

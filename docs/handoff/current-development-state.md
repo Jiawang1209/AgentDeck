@@ -1,6 +1,10 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-10
+Updated: 2026-07-11
+
+## Natural-language Mission Phase 0 baseline — accepted
+
+The fresh-project two-message Codex/Claude acceptance completed all eight frozen sequential steps as Mission `mis_1d5c2a569173` / workflow `wfr_7d309ae9c507`. Mission status, ProjectView status, workbench, and the event ledger agree on `completed/current_step=8`; the audit contains one `mission_confirmed` and eight `workflow_step_completed` events. First-run trust remained an explicit human setup boundary. Two real readiness false negatives were converted to strict regression tests before minimal fixes. Durable evidence: `docs/validation/2026-07-11-natural-language-mission-acceptance.md`.
 
 ## Sequential workflow core — implemented
 
