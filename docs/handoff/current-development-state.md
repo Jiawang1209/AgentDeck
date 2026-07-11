@@ -61,6 +61,8 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 设计并实现自然语言 Mission 编排闭环：用户一句多智能体目标生成冻结 `mission_preview`，一次整体确认后自动选择并准备配置中的 Codex/Claude Worker、通过 provider-aware readiness gate、执行完整 sequential workflow，并把状态/恢复/ProjectView/contract/audit 闭环。用户不再手工 assign-role、编辑 TOML、load skill、spawn Worker、提取 plan id 或拼接 workflow preview/run。设计已获 human 批准并固化到 `docs/superpowers/specs/2026-07-10-natural-language-mission-orchestration-design.md`，详细 TDD 实施计划已写入 `docs/superpowers/plans/2026-07-10-natural-language-mission-orchestration.md`；下一步是在隔离 worktree 中按任务实施。并行/DAG/循环、自动 login/trust、GUI、remote/marketplace 和无界自治不在本目标。
 
+The next product generation is now governed by `docs/roadmap/product-north-star.md` and `docs/superpowers/specs/2026-07-11-agentdeck-protocol-native-v2-design.md`: default `agentdeck` conversation, project-first/global-roaming sessions, a durable project daemon, ACP-native Runtime, tmux fallback, and gradual V2 migration. The current natural-language Mission goal remains Phase 0 and must be completed and frozen as the compatibility baseline before the first protocol-model implementation slice.
+
 ## Canonical Handoff Inputs
 
 When switching from Codex to Claude Code CLI or another local agent, read these files first:

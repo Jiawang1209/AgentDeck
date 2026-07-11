@@ -1,5 +1,7 @@
 # AgentDeck Ultimate Goal Roadmap
 
+> **New product north star:** [product-north-star.md](product-north-star.md) defines the approved protocol-native product direction. This document remains the historical capability roadmap and implementation trace; when the two differ, the product north star governs new product decisions.
+
 > 目的：防止 AgentDeck 在连续开发中偏离终极目标。每一轮新功能都应该能映射到本文中的某个目标能力。
 
 ## 1. 终极目标

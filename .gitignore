@@ -2,6 +2,7 @@ References/
 *.zip
 .DS_Store
 .agentdeck/
+.superpowers/
 __pycache__/
 *.py[cod]
 *.egg-info/

@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Set the protocol-native AgentDeck product north star
+
+- **类型**: product direction + approved architecture design + README product rewrite
+- **问题**: 旧 README 把数百条内部命令、contract 字段、安全约束、`Sequential Workflow` 实现细节、参考分析和开发约束堆在产品首页，读者无法快速理解 AgentDeck 是什么；同时既有路线仍以 tmux-first control plane 描述终局，没有固化 human 已批准的 ACP、Hermes、CCB、WispTerm 取长边界与默认自然语言产品体验。
+- **What**: 新增 `docs/roadmap/product-north-star.md`，明确 AgentDeck 的产品承诺：Hermes 式持续自然交互、ACP 原生通信、CCB 式真实多 Agent 协作与可接管、未来 WispTerm 级 workspace client，以及 AgentDeck 独有的 Mission/治理/审计/恢复内核。新增正式 `2026-07-11-agentdeck-protocol-native-v2-design.md`，固化项目优先/全局漫游会话、单项目 daemon、已确认 Mission 后台继续、自动检测且可跳过的 LLM setup、session-first identity、ACP/adapter/tmux/API backends、permission bridge、学习治理、V2 migration 和分阶段 release gates。
+- **README**: 将 README 重写为简洁产品首页，只保留价值主张、目标体验、当前真实能力、最短试用路径、总体架构、安全模型和深入文档入口；移除冗长 `Sequential Workflow`、内部 card/contract 字段、参考分析和开发约束正文。工程事实继续由 `docs/`、`AGENTS.md`、`CLAUDE.md` 和 HISTORY 承载。
+- **边界**: 当前不实现 daemon、ACP backend、默认 interactive REPL、Desktop 或 Zig terminal；新方向要求先完成当前自然语言 Mission Golden Demo 作为 Phase 0 baseline，再按独立 spec/plan/TDD 切片渐进迁移。旧项目和命令必须 preview/backup/confirm/rollback 兼容，不做大爆炸重写。
+
 ### Unify the Codex 0.131 idle placeholder catalog
 
 - **类型**: real Mission acceptance fix + strict TDD + readiness safety
