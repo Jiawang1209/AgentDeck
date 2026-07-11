@@ -4654,3 +4654,6 @@
 - 新增 `agentdeck contract protocol-runtime [--example]`；仅发布契约，不实现后续 `agentdeck protocol status`。
 - 将 protocol runtime 加入 contract index，并新增 schema 文档与 TDD/CLI 覆盖。
 - 收紧 protocol runtime controls validator：必须恰好三项、命令唯一，且三条允许的只读命令各出现一次。
+- 加固 hostile control command 类型边界；先验证 exact `str`，再做 allowlist 与唯一性比较，避免触发外部 hash/equality hooks。
+- 在 ProjectView 裁剪前用全量 ID maps 校验 protocol cross-lineage，同时允许 bounded latest-20 summaries 引用窗口外的合法父记录。
+- 将 `protocol-runtime/v1` transport 固定为 `acp`、`acp-adapter`、`tmux`、`api`，并同步 builder、ProjectView、contract discovery 与 schema。

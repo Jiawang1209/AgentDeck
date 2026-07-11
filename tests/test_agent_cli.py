@@ -10948,7 +10948,7 @@ def test_status_rejects_protocol_duplicate_hidden_by_latest_twenty_without_write
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)
     templates = {
-        "agent_sessions": {"session_id": "ags_0", "agent_id": "planner", "provider": "codex", "transport": "native", "native_session_id": None, "workspace": str(root), "capabilities": {"structured_sessions": True, "streaming_updates": True, "structured_tools": True, "permission_requests": True, "resume_session": True, "observable_terminal": False}, "state": "created", "created_at": "now", "updated_at": "now"},
+        "agent_sessions": {"session_id": "ags_0", "agent_id": "planner", "provider": "codex", "transport": "tmux", "native_session_id": None, "workspace": str(root), "capabilities": {"structured_sessions": True, "streaming_updates": True, "structured_tools": True, "permission_requests": True, "resume_session": True, "observable_terminal": False}, "state": "created", "created_at": "now", "updated_at": "now"},
         "protocol_turns": {"turn_id": "trn_0", "session_id": "ags_0", "message_id": "msg_0", "state": "created", "created_at": "now", "updated_at": "now"},
         "transport_updates": {"update_id": "upd_0", "session_id": "ags_0", "turn_id": "trn_0", "sequence": 0, "kind": "text", "created_at": "now"},
         "permission_requests": {"permission_id": "prm_0", "session_id": "ags_0", "turn_id": "trn_0", "tool_name": "read", "risk": "low", "status": "pending", "decision": None, "created_at": "now"},
@@ -10972,6 +10972,40 @@ def test_status_rejects_protocol_duplicate_hidden_by_latest_twenty_without_write
 
     captured = capsys.readouterr()
     assert captured.out == ""
+    assert store.state_path.read_bytes() == state_before
+    assert (store.events_path.read_bytes() if store.events_path.exists() else None) == events_before
+
+
+def test_status_rejects_protocol_lineage_corruption_hidden_by_latest_twenty_without_writes(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agent_sessions"] = [{
+        "session_id": "ags_0", "agent_id": "planner", "provider": "codex", "transport": "tmux",
+        "native_session_id": None, "workspace": str(root),
+        "capabilities": {"structured_sessions": True, "streaming_updates": True, "structured_tools": True,
+                         "permission_requests": True, "resume_session": True, "observable_terminal": False},
+        "state": "created", "created_at": "now", "updated_at": "now",
+    }]
+    state["protocol_turns"] = [{
+        "turn_id": "trn_0", "session_id": "ags_0", "message_id": "msg_0", "state": "created",
+        "created_at": "now", "updated_at": "now",
+    }]
+    state["transport_updates"] = [{
+        "update_id": f"upd_{index:02d}", "session_id": "ags_0", "turn_id": "trn_0",
+        "sequence": index, "kind": "text", "created_at": f"2026-07-11T00:00:{index:02d}+00:00",
+    } for index in range(21)]
+    state["transport_updates"][0]["turn_id"] = "trn_missing"
+    store.save(state)
+    state_before = store.state_path.read_bytes()
+    events_before = store.events_path.read_bytes() if store.events_path.exists() else None
+
+    with pytest.raises(ValueError, match="transport update turn reference missing"):
+        cli.main(["status"])
+
+    assert capsys.readouterr().out == ""
     assert store.state_path.read_bytes() == state_before
     assert (store.events_path.read_bytes() if store.events_path.exists() else None) == events_before
 

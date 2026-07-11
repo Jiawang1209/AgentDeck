@@ -20,6 +20,7 @@ from .mission import (
 )
 from .models import PROJECT_VIEW_SCHEMA_VERSION
 from .state import leader_backend_identity
+from .runtime.protocol import TRANSPORT_KINDS
 
 
 CONTRACT_INDEX_RESPONSE_FIELDS = (
@@ -2673,6 +2674,7 @@ def protocol_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
         "turn_states": list(PROTOCOL_RUNTIME_TURN_STATES),
         "update_kinds": list(PROTOCOL_RUNTIME_UPDATE_KINDS),
         "permission_statuses": list(PROTOCOL_RUNTIME_PERMISSION_STATUSES),
+        "transport_kinds": list(TRANSPORT_KINDS),
         "project_view_contract": "agentdeck contract project-view",
         "workbench_contract": "agentdeck contract workbench",
     }
@@ -6452,6 +6454,10 @@ def _validate_project_view_protocol_summaries(
                     allowed = enum_fields.get((name, field))
                     if allowed is not None and item.get(field) not in allowed:
                         errors.append(f"{name}.items[{index}].{field} is invalid")
+                if name == "agent_sessions" and (
+                    type(item.get("transport")) is not str or item.get("transport") not in TRANSPORT_KINDS
+                ):
+                    errors.append(f"{name}.items[{index}].transport is invalid")
             if all(isinstance(created_at, str) and isinstance(identity, str) for created_at, identity in order):
                 if order != sorted(order):
                     errors.append(f"{name}.items must be sorted by created_at and {identity_field}")
@@ -6497,17 +6503,12 @@ def validate_protocol_runtime_contract(payload: object) -> dict[str, object]:
         for item in summaries["protocol_turns"].get("items", [])
         if isinstance(item, dict) and isinstance(item.get("turn_id"), str)
     }
-    for index, turn in enumerate(summaries["protocol_turns"].get("items", [])):
-        if isinstance(turn, dict) and turn.get("session_id") not in sessions:
-            errors.append(f"protocol_turns.items[{index}].session_id must reference agent_sessions")
     for name in ("transport_updates", "permission_requests"):
         for index, item in enumerate(summaries[name].get("items", [])):
             if not isinstance(item, dict):
                 continue
             turn = turns.get(item.get("turn_id"))
-            if turn is None:
-                errors.append(f"{name}.items[{index}].turn_id must reference protocol_turns")
-            elif item.get("session_id") != turn.get("session_id"):
+            if turn is not None and item.get("session_id") != turn.get("session_id"):
                 errors.append(f"{name}.items[{index}].session_id must match protocol_turns")
             if name == "permission_requests" and item.get("status") == "pending" and item.get("decision") is not None:
                 errors.append("pending permission_requests items must have decision null")
@@ -6529,7 +6530,10 @@ def validate_protocol_runtime_contract(payload: object) -> dict[str, object]:
                 errors.append(f"controls[{index}] fields must match protocol runtime control fields")
             if control.get("kind") != "inspect":
                 errors.append(f"controls[{index}].kind must be inspect")
-            if control.get("command") not in allowed_commands:
+            command = control.get("command")
+            if type(command) is not str:
+                errors.append(f"controls[{index}].command must be a string")
+            elif command not in allowed_commands:
                 errors.append(f"controls[{index}].command is not allowed")
             if control.get("safety") != "inspect":
                 errors.append(f"controls[{index}].safety must be inspect")
@@ -6541,7 +6545,8 @@ def validate_protocol_runtime_contract(payload: object) -> dict[str, object]:
                 errors.append(f"controls[{index}].label must be a non-empty string")
     if isinstance(controls, list):
         commands = [
-            control.get("command") for control in controls if isinstance(control, dict)
+            control.get("command") for control in controls
+            if isinstance(control, dict) and type(control.get("command")) is str
         ]
         if len(commands) != len(set(commands)):
             errors.append("controls commands must be unique")
@@ -11609,7 +11614,7 @@ def project_view_example() -> dict[str, object]:
         },
         "agent_sessions": {"count": 1, "by_state": {"ready": 1}, "items": [{
             "session_id": "ags_example", "agent_id": "planner", "provider": "codex-cli",
-            "transport": "native", "state": "ready", "capabilities": {
+            "transport": "tmux", "state": "ready", "capabilities": {
                 "structured_sessions": True, "streaming_updates": True,
                 "structured_tools": True, "permission_requests": True,
                 "resume_session": True, "observable_terminal": False,

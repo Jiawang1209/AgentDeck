@@ -28,6 +28,7 @@ from .runtime.protocol import (
     AGENT_SESSION_STATES,
     PERMISSION_STATES,
     TURN_STATES,
+    TRANSPORT_KINDS,
     UPDATE_KINDS,
     TransportCapabilities,
     build_agent_session,
@@ -205,6 +206,36 @@ class StateStore:
             raise ValueError("duplicate transport update identity")
         if len(permission_ids) != len(set(permission_ids)):
             raise ValueError("duplicate permission request identity")
+
+    @staticmethod
+    def _validate_protocol_lineage(state: dict[str, Any]) -> None:
+        sessions = {
+            item.get("session_id"): item
+            for item in state.get("agent_sessions", [])
+            if isinstance(item, dict) and isinstance(item.get("session_id"), str)
+        }
+        turns = {
+            item.get("turn_id"): item
+            for item in state.get("protocol_turns", [])
+            if isinstance(item, dict) and isinstance(item.get("turn_id"), str)
+        }
+        for turn in state.get("protocol_turns", []):
+            if isinstance(turn, dict) and turn.get("session_id") not in sessions:
+                raise ValueError("protocol turn session reference missing")
+        for collection, label in (
+            ("transport_updates", "transport update"),
+            ("permission_requests", "permission request"),
+        ):
+            for item in state.get(collection, []):
+                if not isinstance(item, dict):
+                    continue
+                if item.get("session_id") not in sessions:
+                    raise ValueError(f"{label} session reference missing")
+                turn = turns.get(item.get("turn_id"))
+                if turn is None:
+                    raise ValueError(f"{label} turn reference missing")
+                if item.get("session_id") != turn.get("session_id"):
+                    raise ValueError(f"{label} session mismatch")
 
     @contextmanager
     def _protocol_mutation_lock(self):
@@ -1786,6 +1817,9 @@ class StateStore:
                     raise ValueError(f"invalid agent session field: {field}")
             if record.get("state") not in AGENT_SESSION_STATES:
                 raise ValueError("invalid agent session state")
+            transport = record.get("transport")
+            if type(transport) is not str or transport not in TRANSPORT_KINDS:
+                raise ValueError("invalid agent session transport")
             native_session_id = record.get("native_session_id")
             if native_session_id is not None and (
                 not isinstance(native_session_id, str) or not native_session_id.strip()
@@ -2600,6 +2634,11 @@ class StateStore:
 
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
+        agent_sessions = self._agent_session_summaries(state.get("agent_sessions", []))
+        protocol_turns = self._protocol_turn_summaries(state.get("protocol_turns", []))
+        transport_updates = self._transport_update_summaries(state.get("transport_updates", []))
+        permission_requests = self._permission_request_summaries(state.get("permission_requests", []))
+        self._validate_protocol_lineage(state)
         bindings = state.get("agents", {})
         agents = []
         for agent in config.agents:
@@ -2648,10 +2687,10 @@ class StateStore:
             leader_actions=self._leader_action_summaries(state.get("leader_actions", [])),
             skills=self._skill_load_summaries(state.get("skill_loads", [])),
             memory=self._memory_context_summary(self.root),
-            agent_sessions=self._agent_session_summaries(state.get("agent_sessions", [])),
-            protocol_turns=self._protocol_turn_summaries(state.get("protocol_turns", [])),
-            transport_updates=self._transport_update_summaries(state.get("transport_updates", [])),
-            permission_requests=self._permission_request_summaries(state.get("permission_requests", [])),
+            agent_sessions=agent_sessions,
+            protocol_turns=protocol_turns,
+            transport_updates=transport_updates,
+            permission_requests=permission_requests,
             inbox=self._inbox_summary(state.get("inbox", {})),
             recovery=self._recovery_summary(state, config),
         )

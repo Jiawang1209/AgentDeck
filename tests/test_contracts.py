@@ -216,6 +216,7 @@ def test_protocol_runtime_contract_discovery_and_example(tmp_path: Path) -> None
     assert payload["status_command"] == "agentdeck protocol status"
     assert payload["project_view_contract"] == "agentdeck contract project-view"
     assert payload["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["transport_kinds"] == ["acp", "acp-adapter", "tmux", "api"]
     assert payload["response_fields"] == list(PROTOCOL_RUNTIME_RESPONSE_FIELDS)
     assert payload["example_protocol_runtime"] == example
     assert payload["example_response_fields"] == payload["response_fields"]
@@ -235,8 +236,7 @@ def test_protocol_runtime_contract_discovery_and_example(tmp_path: Path) -> None
         (lambda p: p["transport_updates"]["items"][0].update({"payload": "secret"}), "transport_updates.items[0] has unexpected field: payload"),
         (lambda p: p["permission_requests"]["items"][0].update({"target": "secret"}), "permission_requests.items[0] has unexpected field: target"),
         (lambda p: p["permission_requests"]["items"][0].update({"decision": "approve"}), "pending permission_requests items must have decision null"),
-        (lambda p: p["protocol_turns"]["items"][0].update({"session_id": "ags_missing"}), "protocol_turns.items[0].session_id must reference agent_sessions"),
-        (lambda p: p["transport_updates"]["items"][0].update({"turn_id": "trn_missing"}), "transport_updates.items[0].turn_id must reference protocol_turns"),
+        (lambda p: p["transport_updates"]["items"][0].update({"session_id": "ags_mismatch"}), "transport_updates.items[0].session_id must match protocol_turns"),
         (lambda p: p["controls"][0].update({"command": "agentdeck protocol mutate"}), "controls[0].command is not allowed"),
     ],
 )
@@ -249,11 +249,11 @@ def test_protocol_runtime_validator_rejects_drift(mutate, expected: str) -> None
     assert expected in result["errors"]
 
 
-def test_protocol_runtime_transport_is_extensible_string() -> None:
+def test_protocol_runtime_accepts_versioned_transport_kind() -> None:
     from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
 
     payload = protocol_runtime_example()
-    payload["agent_sessions"]["items"][0]["transport"] = "future-native-v2"
+    payload["agent_sessions"]["items"][0]["transport"] = "acp-adapter"
     assert validate_protocol_runtime_contract(payload) == {"ok": True, "errors": []}
 
 
@@ -267,6 +267,77 @@ def test_protocol_runtime_controls_require_each_exact_command_once() -> None:
 
     assert "controls must contain exactly 3 items" in result["errors"]
     assert "controls commands must be unique" in result["errors"]
+
+
+@pytest.mark.parametrize("bad_command", [[], {}, {"hostile"}])
+def test_protocol_runtime_controls_reject_non_string_commands_without_raising(bad_command) -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    payload["controls"][0]["command"] = bad_command
+
+    result = validate_protocol_runtime_contract(payload)
+
+    assert "controls[0].command must be a string" in result["errors"]
+
+
+def test_protocol_runtime_controls_do_not_invoke_hostile_command_hooks() -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    class HostileCommand:
+        called = False
+
+        def __hash__(self):
+            type(self).called = True
+            raise AssertionError("hash hook must not run")
+
+        def __eq__(self, other):
+            type(self).called = True
+            raise AssertionError("equality hook must not run")
+
+    payload = protocol_runtime_example()
+    payload["controls"][0]["command"] = HostileCommand()
+    result = validate_protocol_runtime_contract(payload)
+
+    assert "controls[0].command must be a string" in result["errors"]
+    assert HostileCommand.called is False
+
+
+def test_protocol_runtime_accepts_bounded_children_with_parent_outside_window() -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    session_template = payload["agent_sessions"]["items"][0]
+    payload["agent_sessions"] = {
+        "count": 21,
+        "by_state": {"ready": 21},
+        "items": [
+            {
+                **deepcopy(session_template),
+                "session_id": f"ags_window_{index:02d}",
+                "created_at": f"2026-07-04T00:01:{index:02d}+00:00",
+            }
+            for index in range(20)
+        ],
+    }
+    payload["protocol_turns"]["items"][0]["session_id"] = "ags_outside_window"
+    payload["transport_updates"]["items"][0].update(
+        {"session_id": "ags_outside_window", "turn_id": "trn_outside_window"}
+    )
+    payload["permission_requests"]["items"][0].update(
+        {"session_id": "ags_outside_window", "turn_id": "trn_outside_window"}
+    )
+
+    assert validate_protocol_runtime_contract(payload) == {"ok": True, "errors": []}
+
+
+def test_protocol_runtime_rejects_unsupported_transport() -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    payload["agent_sessions"]["items"][0]["transport"] = "telepathy"
+
+    assert "agent_sessions.items[0].transport is invalid" in validate_protocol_runtime_contract(payload)["errors"]
 
 
 def _attach_leader_status_registry_card(payload: dict[str, object], status_card: dict[str, object]) -> None:

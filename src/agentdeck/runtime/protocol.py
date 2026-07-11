@@ -12,6 +12,7 @@ AGENT_SESSION_STATES = ("created", "connecting", "ready", "busy", "reconnecting"
 TURN_STATES = ("created", "submitted", "streaming", "waiting_permission", "completed", "blocked", "failed", "ambiguous")
 UPDATE_KINDS = ("progress", "text", "tool_call", "tool_result", "permission_request", "artifact", "completion", "error")
 PERMISSION_STATES = ("pending", "approved", "denied", "expired")
+TRANSPORT_KINDS = ("acp", "acp-adapter", "tmux", "api")
 
 
 @dataclass(frozen=True)
@@ -86,7 +87,8 @@ def build_agent_session(
 ) -> dict[str, Any]:
     agent_id = _required_string("agent_id", agent_id)
     provider = _required_string("provider", provider)
-    transport = _required_string("transport", transport)
+    if type(transport) is not str or transport not in TRANSPORT_KINDS:
+        raise ValueError("transport must be one of TRANSPORT_KINDS")
     workspace = _required_string("workspace", workspace)
     if native_session_id is not None and (type(native_session_id) is not str or not native_session_id.strip()):
         raise ValueError("native_session_id must be None or a non-empty string")

@@ -13,6 +13,7 @@ from agentdeck.runtime.protocol import (
     AGENT_SESSION_STATES,
     PERMISSION_STATES,
     TURN_STATES,
+    TRANSPORT_KINDS,
     UPDATE_KINDS,
     TransportCapabilities,
     build_agent_session,
@@ -60,7 +61,7 @@ def test_fresh_project_view_has_non_null_empty_protocol_summaries(tmp_path) -> N
 def test_project_view_exposes_compact_protocol_lineage_without_private_values(tmp_path) -> None:
     store = StateStore(tmp_path)
     session = store.record_agent_session(
-        "planner", "codex", "native", "private-native-session", str(tmp_path), CAPABILITIES,
+        "planner", "codex", "tmux", "private-native-session", str(tmp_path), CAPABILITIES,
     )
     turn = store.record_protocol_turn(session["session_id"], "msg_protocol")
     update = store.record_transport_update(
@@ -78,7 +79,7 @@ def test_project_view_exposes_compact_protocol_lineage_without_private_values(tm
         "by_state": {"created": 1},
         "items": [{
             "session_id": session["session_id"], "agent_id": "planner", "provider": "codex",
-            "transport": "native", "state": "created", "capabilities": CAPABILITIES.summary(),
+            "transport": "tmux", "state": "created", "capabilities": CAPABILITIES.summary(),
             "native_session_present": True, "workspace": str(tmp_path),
             "created_at": session["created_at"], "updated_at": session["updated_at"],
         }],
@@ -104,6 +105,12 @@ def test_project_view_exposes_compact_protocol_lineage_without_private_values(tm
 def test_project_view_protocol_summaries_are_sorted_counted_and_bounded(tmp_path) -> None:
     store = StateStore(tmp_path)
     state = store.load()
+    session = build_agent_session("planner", "codex", "tmux", None, "/tmp", CAPABILITIES)
+    session["session_id"] = "ags_1"
+    turn = build_turn("ags_1", "msg_1")
+    turn["turn_id"] = "trn_1"
+    state["agent_sessions"] = [session]
+    state["protocol_turns"] = [turn]
     for index in range(25):
         state["transport_updates"].append({
             "update_id": f"upd_{index:02d}", "session_id": "ags_1", "turn_id": "trn_1",
@@ -148,9 +155,9 @@ def test_project_view_rejects_corrupt_protocol_rows_instead_of_hiding_them(tmp_p
 
 
 @pytest.mark.parametrize(("collection", "record", "error"), [
-    ("agent_sessions", {"session_id": "ags_1", "agent_id": "", "provider": "codex", "transport": "native", "native_session_id": None, "workspace": "/tmp", "capabilities": CAPABILITIES.summary(), "state": "created", "created_at": "now", "updated_at": "now"}, "invalid agent session field: agent_id"),
-    ("agent_sessions", {"session_id": "ags_1", "agent_id": "a", "provider": "codex", "transport": "native", "native_session_id": "", "workspace": "/tmp", "capabilities": CAPABILITIES.summary(), "state": "created", "created_at": "now", "updated_at": "now"}, "invalid agent session native_session_id"),
-    ("agent_sessions", {"session_id": "ags_1", "agent_id": "a", "provider": "codex", "transport": "native", "native_session_id": None, "workspace": "/tmp", "capabilities": {**CAPABILITIES.summary(), "secret": True}, "state": "created", "created_at": "now", "updated_at": "now"}, "invalid agent session capabilities"),
+    ("agent_sessions", {"session_id": "ags_1", "agent_id": "", "provider": "codex", "transport": "tmux", "native_session_id": None, "workspace": "/tmp", "capabilities": CAPABILITIES.summary(), "state": "created", "created_at": "now", "updated_at": "now"}, "invalid agent session field: agent_id"),
+    ("agent_sessions", {"session_id": "ags_1", "agent_id": "a", "provider": "codex", "transport": "tmux", "native_session_id": "", "workspace": "/tmp", "capabilities": CAPABILITIES.summary(), "state": "created", "created_at": "now", "updated_at": "now"}, "invalid agent session native_session_id"),
+    ("agent_sessions", {"session_id": "ags_1", "agent_id": "a", "provider": "codex", "transport": "tmux", "native_session_id": None, "workspace": "/tmp", "capabilities": {**CAPABILITIES.summary(), "secret": True}, "state": "created", "created_at": "now", "updated_at": "now"}, "invalid agent session capabilities"),
     ("protocol_turns", {"turn_id": "trn_1", "session_id": "ags_1", "message_id": "msg_1", "state": "bogus", "created_at": "now", "updated_at": "now"}, "invalid protocol turn state"),
     ("transport_updates", {"update_id": "upd_1", "session_id": "ags_1", "turn_id": "trn_1", "sequence": True, "kind": "text", "created_at": "now"}, "invalid transport update sequence"),
     ("permission_requests", {"permission_id": "prm_1", "session_id": "ags_1", "turn_id": "trn_1", "tool_name": "shell", "risk": "high", "status": "bogus", "decision": None, "created_at": "now"}, "invalid permission request status"),
@@ -175,7 +182,7 @@ def test_project_view_rejects_protocol_duplicate_hidden_by_latest_twenty(
     tmp_path, collection, identity_field, prefix,
 ) -> None:
     store = StateStore(tmp_path)
-    session = build_agent_session("planner", "codex", "native", None, "/tmp", CAPABILITIES)
+    session = build_agent_session("planner", "codex", "tmux", None, "/tmp", CAPABILITIES)
     turn = build_turn(session["session_id"], "msg_1")
     templates = {
         "agent_sessions": session,
@@ -205,6 +212,49 @@ def test_protocol_constants_are_stable() -> None:
     assert TURN_STATES == ("created", "submitted", "streaming", "waiting_permission", "completed", "blocked", "failed", "ambiguous")
     assert UPDATE_KINDS == ("progress", "text", "tool_call", "tool_result", "permission_request", "artifact", "completion", "error")
     assert PERMISSION_STATES == ("pending", "approved", "denied", "expired")
+    assert TRANSPORT_KINDS == ("acp", "acp-adapter", "tmux", "api")
+
+
+def test_session_rejects_unsupported_transport_without_equality_hooks() -> None:
+    class HostileTransport:
+        equality_called = False
+
+        def __eq__(self, other):
+            type(self).equality_called = True
+            raise AssertionError("equality hook must not run")
+
+    with pytest.raises(ValueError, match=r"^transport must be one of TRANSPORT_KINDS$"):
+        build_agent_session("planner", "codex", "telepathy", None, "/tmp", CAPABILITIES)
+    with pytest.raises(ValueError, match=r"^transport must be one of TRANSPORT_KINDS$"):
+        build_agent_session("planner", "codex", HostileTransport(), None, "/tmp", CAPABILITIES)
+    assert HostileTransport.equality_called is False
+
+
+@pytest.mark.parametrize("transport", ["", "   ", True, 7])
+def test_session_rejects_invalid_transport_types_and_values(transport: object) -> None:
+    with pytest.raises(ValueError, match=r"^transport must be one of TRANSPORT_KINDS$"):
+        build_agent_session("planner", "codex", transport, None, "/tmp", CAPABILITIES)
+
+
+def test_project_view_rejects_hidden_broken_protocol_lineage_without_writes(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    session = build_agent_session("planner", "codex", "tmux", None, "/tmp", CAPABILITIES)
+    turn = build_turn(session["session_id"], "msg_1")
+    state["agent_sessions"] = [session]
+    state["protocol_turns"] = [turn]
+    state["transport_updates"] = [
+        build_transport_update(session["session_id"], turn["turn_id"], index, "text", {})
+        for index in range(21)
+    ]
+    state["transport_updates"][0]["turn_id"] = "trn_missing"
+    store.save(state)
+    before = store.state_path.read_bytes()
+
+    with pytest.raises(ValueError, match="transport update turn reference missing"):
+        store.project_view(_project_config(tmp_path))
+
+    assert store.state_path.read_bytes() == before
 
 
 def test_tmux_fallback_capabilities_are_terminal_only() -> None:
@@ -220,13 +270,13 @@ def test_tmux_fallback_capabilities_are_terminal_only() -> None:
 
 
 def test_builders_create_json_serializable_domain_records() -> None:
-    session = build_agent_session("planner", "codex", "native", None, "/tmp/project", CAPABILITIES)
+    session = build_agent_session("planner", "codex", "tmux", None, "/tmp/project", CAPABILITIES)
     turn = build_turn(session["session_id"], "msg_123")
     update = build_transport_update(session["session_id"], turn["turn_id"], 0, "progress", {"percent": 10})
     permission = build_permission_request(session["session_id"], turn["turn_id"], "write_file", "README.md", "medium")
 
     assert session == {
-        "session_id": session["session_id"], "agent_id": "planner", "provider": "codex", "transport": "native",
+        "session_id": session["session_id"], "agent_id": "planner", "provider": "codex", "transport": "tmux",
         "native_session_id": None, "workspace": "/tmp/project", "capabilities": CAPABILITIES.summary(),
         "state": "created", "created_at": session["created_at"], "updated_at": session["updated_at"],
         "observation_bindings": [],
@@ -241,10 +291,10 @@ def test_builders_create_json_serializable_domain_records() -> None:
     json.dumps([session, turn, update, permission])
 
 
-@pytest.mark.parametrize("field", ["agent_id", "provider", "transport", "workspace"])
+@pytest.mark.parametrize("field", ["agent_id", "provider", "workspace"])
 @pytest.mark.parametrize("bad_value", ["", "   ", True, 7])
 def test_session_rejects_invalid_required_strings(field: str, bad_value: object) -> None:
-    values = {"agent_id": "planner", "provider": "codex", "transport": "native", "workspace": "/tmp/project"}
+    values = {"agent_id": "planner", "provider": "codex", "transport": "tmux", "workspace": "/tmp/project"}
     values[field] = bad_value
     with pytest.raises(ValueError, match=rf"^{field} must be a non-empty string$"):
         build_agent_session(capabilities=CAPABILITIES, native_session_id=None, **values)
@@ -253,12 +303,12 @@ def test_session_rejects_invalid_required_strings(field: str, bad_value: object)
 @pytest.mark.parametrize("native_session_id", ["", "  ", True, 3])
 def test_session_rejects_bad_native_session_id(native_session_id: object) -> None:
     with pytest.raises(ValueError, match=r"^native_session_id must be None or a non-empty string$"):
-        build_agent_session("planner", "codex", "native", native_session_id, "/tmp/project", CAPABILITIES)
+        build_agent_session("planner", "codex", "tmux", native_session_id, "/tmp/project", CAPABILITIES)
 
 
 def test_session_requires_exact_capabilities_type() -> None:
     with pytest.raises(TypeError, match=r"^capabilities must be a TransportCapabilities instance$"):
-        build_agent_session("planner", "codex", "native", None, "/tmp/project", CAPABILITIES.summary())
+        build_agent_session("planner", "codex", "tmux", None, "/tmp/project", CAPABILITIES.summary())
 
 
 @pytest.mark.parametrize(("builder", "message"), [
@@ -360,8 +410,8 @@ def test_builder_mutable_fields_are_isolated() -> None:
     first["payload"]["nested"]["items"].append(3)
     assert second["payload"] == {"nested": {"items": [1]}}
 
-    first_session = build_agent_session("a", "p", "t", None, "w", CAPABILITIES)
-    second_session = build_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    first_session = build_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
+    second_session = build_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
     first_session["observation_bindings"].append({"kind": "terminal"})
     assert second_session["observation_bindings"] == []
 
@@ -371,7 +421,7 @@ def test_builders_are_pure_domain_helpers(monkeypatch: pytest.MonkeyPatch) -> No
         raise AssertionError("external side effect")
 
     monkeypatch.setattr("builtins.open", forbidden)
-    build_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    build_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
     build_turn("ags_1", "msg_1")
     build_transport_update("ags_1", "trn_1", 0, "text", {})
     build_permission_request("ags_1", "trn_1", "shell", "cwd", "low")
@@ -405,7 +455,7 @@ def test_fresh_state_has_protocol_lineage_collections(tmp_path) -> None:
 
 def test_state_store_records_complete_protocol_lineage_and_redacted_events(tmp_path) -> None:
     store = StateStore(tmp_path)
-    session = store.record_agent_session("planner", "codex", "native", None, "/tmp/project", CAPABILITIES)
+    session = store.record_agent_session("planner", "codex", "tmux", None, "/tmp/project", CAPABILITIES)
     turn = store.record_protocol_turn(session["session_id"], "msg_123")
     update = store.record_transport_update(session["session_id"], turn["turn_id"], 0, "tool_call", {"path": "/secret"})
     permission = store.record_permission_request(session["session_id"], turn["turn_id"], "write_file", "/secret", "high")
@@ -421,7 +471,7 @@ def test_state_store_records_complete_protocol_lineage_and_redacted_events(tmp_p
     assert [event["event_type"] for event in events] == [
         "agent_session_recorded", "protocol_turn_recorded", "transport_update_recorded", "permission_request_recorded"
     ]
-    assert events[0]["payload"] == {"session_id": session["session_id"], "agent_id": "planner", "transport": "native"}
+    assert events[0]["payload"] == {"session_id": session["session_id"], "agent_id": "planner", "transport": "tmux"}
     assert events[1]["payload"] == {"turn_id": turn["turn_id"], "session_id": session["session_id"], "message_id": "msg_123"}
     assert events[2]["payload"] == {"update_id": update["update_id"], "session_id": session["session_id"], "turn_id": turn["turn_id"], "sequence": 0, "kind": "tool_call"}
     assert events[3]["payload"] == {"permission_id": permission["permission_id"], "session_id": session["session_id"], "turn_id": turn["turn_id"], "tool_name": "write_file", "risk": "high"}
@@ -431,7 +481,7 @@ def test_state_store_records_complete_protocol_lineage_and_redacted_events(tmp_p
 def test_protocol_state_methods_support_old_state_and_lists_are_independent(tmp_path) -> None:
     store = StateStore(tmp_path)
     store.save({"agents": {}})
-    session = store.record_agent_session("planner", "codex", "native", None, "/tmp/project", CAPABILITIES)
+    session = store.record_agent_session("planner", "codex", "tmux", None, "/tmp/project", CAPABILITIES)
     listed = store.list_agent_sessions()
     listed.clear()
     assert store.list_agent_sessions() == [session]
@@ -453,8 +503,8 @@ def test_unknown_protocol_references_are_zero_write(tmp_path, operation: str) ->
 
 def test_mismatched_turn_references_and_duplicate_sequence_are_zero_write(tmp_path) -> None:
     store = StateStore(tmp_path)
-    first = store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
-    second = store.record_agent_session("b", "p", "t", None, "w", CAPABILITIES)
+    first = store.record_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
+    second = store.record_agent_session("b", "p", "tmux", None, "w", CAPABILITIES)
     turn = store.record_protocol_turn(first["session_id"], "msg")
     store.record_transport_update(first["session_id"], turn["turn_id"], 0, "text", {})
     for call, message in [
@@ -474,7 +524,7 @@ def test_mismatched_turn_references_and_duplicate_sequence_are_zero_write(tmp_pa
 ])
 def test_corrupt_duplicate_protocol_identity_is_zero_write(tmp_path, collection: str, error: str) -> None:
     store = StateStore(tmp_path)
-    session = build_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    session = build_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
     turn = build_turn(session["session_id"], "msg")
     state = store.load()
     state["agent_sessions"] = [session]
@@ -491,7 +541,7 @@ def test_builder_rejection_and_save_failure_do_not_append_events(tmp_path, monke
     store = StateStore(tmp_path)
     before = _disk_snapshot(store)
     with pytest.raises(ValueError):
-        store.record_agent_session("", "p", "t", None, "w", CAPABILITIES)
+        store.record_agent_session("", "p", "tmux", None, "w", CAPABILITIES)
     assert _disk_snapshot(store) == before
 
     def fail_save(state):
@@ -500,7 +550,7 @@ def test_builder_rejection_and_save_failure_do_not_append_events(tmp_path, monke
     monkeypatch.setattr(store, "save", fail_save)
     before_save_failure = _disk_snapshot(store)
     with pytest.raises(OSError, match="save failed"):
-        store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+        store.record_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
     assert _disk_snapshot(store) == before_save_failure
 
 
@@ -512,7 +562,7 @@ def test_event_failure_returns_record_with_durable_outbox_and_flushes_once(tmp_p
         raise OSError("event failed")
 
     monkeypatch.setattr(store, "append_event", fail_event)
-    record = store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    record = store.record_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
     state = store.load()
     assert state["agent_sessions"] == [record]
     assert len(state["protocol_event_outbox"]) == 1
@@ -529,7 +579,7 @@ def test_event_failure_returns_record_with_durable_outbox_and_flushes_once(tmp_p
 
 def test_outbox_replay_deduplicates_event_already_in_ledger(tmp_path) -> None:
     store = StateStore(tmp_path)
-    record = store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    record = store.record_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
     event = json.loads(store.events_path.read_text().splitlines()[0])
     state = store.load()
     state["protocol_event_outbox"] = [event]
@@ -546,7 +596,7 @@ def test_outbox_clear_save_failure_is_recoverable_without_duplicate_event(tmp_pa
     store = StateStore(tmp_path)
     real_append_event = store.append_event
     monkeypatch.setattr(store, "append_event", lambda event: (_ for _ in ()).throw(OSError("event failed")))
-    store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    store.record_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
     monkeypatch.setattr(store, "append_event", real_append_event)
     real_save = store.save
     calls = 0
@@ -575,7 +625,7 @@ def test_concurrent_protocol_mutations_do_not_lose_records(tmp_path) -> None:
 
     def record(agent_id: str) -> None:
         barrier.wait()
-        records.append(store.record_agent_session(agent_id, "p", "t", None, "w", CAPABILITIES))
+        records.append(store.record_agent_session(agent_id, "p", "tmux", None, "w", CAPABILITIES))
 
     threads = [threading.Thread(target=record, args=(agent_id,)) for agent_id in ("a", "b")]
     for thread in threads:
@@ -601,7 +651,7 @@ def test_builder_candidate_id_collisions_are_zero_write(
     tmp_path, monkeypatch, builder_name: str, record_kind: str
 ) -> None:
     store = StateStore(tmp_path)
-    session = store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    session = store.record_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
     turn = store.record_protocol_turn(session["session_id"], "msg")
     update = store.record_transport_update(session["session_id"], turn["turn_id"], 0, "text", {})
     permission = store.record_permission_request(session["session_id"], turn["turn_id"], "shell", "cwd", "low")
@@ -623,7 +673,7 @@ def test_builder_candidate_id_collisions_are_zero_write(
     before = _disk_snapshot(store)
     with pytest.raises(ValueError, match="duplicate .* identity"):
         if record_kind == "session":
-            store.record_agent_session("b", "p", "t", None, "w", CAPABILITIES)
+            store.record_agent_session("b", "p", "tmux", None, "w", CAPABILITIES)
         elif record_kind == "turn":
             store.record_protocol_turn(session["session_id"], "msg2")
         elif record_kind == "update":
@@ -638,7 +688,7 @@ def test_rejected_mutation_does_not_flush_pending_outbox(tmp_path, monkeypatch, 
     store = StateStore(tmp_path)
     real_append_event = store.append_event
     monkeypatch.setattr(store, "append_event", lambda event: (_ for _ in ()).throw(OSError("pending")))
-    existing = store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    existing = store.record_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
     monkeypatch.setattr(store, "append_event", real_append_event)
     assert len(store.load()["protocol_event_outbox"]) == 1
 
@@ -655,9 +705,9 @@ def test_rejected_mutation_does_not_flush_pending_outbox(tmp_path, monkeypatch, 
     before = _tree_snapshot(store)
     with pytest.raises((ValueError, KeyError)):
         if rejection == "invalid":
-            store.record_agent_session("", "p", "t", None, "w", CAPABILITIES)
+            store.record_agent_session("", "p", "tmux", None, "w", CAPABILITIES)
         elif rejection == "unknown":
             store.record_protocol_turn("ags_unknown", "msg")
         else:
-            store.record_agent_session("b", "p", "t", None, "w", CAPABILITIES)
+            store.record_agent_session("b", "p", "tmux", None, "w", CAPABILITIES)
     assert _tree_snapshot(store) == before

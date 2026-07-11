@@ -13,9 +13,9 @@ The four summaries reuse the strict ProjectView shapes and semantics:
 - `transport_updates`: `count`, `by_kind`, `items`; each item exposes only `update_id`, `session_id`, `turn_id`, `sequence`, `kind`, `created_at`. Update payload content is deliberately absent.
 - `permission_requests`: `count`, `pending_count`, `by_status`, `items`; each item exposes only `permission_id`, `session_id`, `turn_id`, `tool_name`, `risk`, `status`, `decision`, `created_at`. Provider-native permission identifiers and execution targets are deliberately absent. Pending requests have `decision: null`.
 
-Counts are non-negative integers (booleans are rejected), equal their grouped totals, and item distributions match when the total is at most 20. Items are the sorted latest 20 and have unique identities. Sessions and turns use the published state enums, updates use the published kind enum, and permissions use the published status enum. `transport` is an extensible non-empty string; structured capability flags describe supported behavior.
+Counts are non-negative integers (booleans are rejected), equal their grouped totals, and item distributions match when the total is at most 20. Items are the sorted latest 20 and have unique identities. Sessions and turns use the published state enums, updates use the published kind enum, and permissions use the published status enum. In `protocol-runtime/v1`, `transport` is restricted to `acp`, `acp-adapter`, `tmux`, or `api`; structured capability flags describe supported behavior.
 
-The summaries form a linked chain: every turn references a listed session; every update and permission references a listed turn and the same session.
+The four summaries are independently bounded to their latest 20 records, so a child record may reference a valid parent outside the corresponding response window. When both a child and its parent turn appear in the bounded response, their session IDs must match. Before ProjectView creates these bounded summaries, `StateStore` validates the complete source collections with linear ID maps: every turn must reference an existing session, and every update and permission must reference an existing session and turn whose session matches. Corrupt hidden rows therefore fail closed instead of disappearing behind the latest-20 boundary.
 
 ## Controls
 
@@ -29,7 +29,7 @@ These commands contain no placeholders and grant no execution authority.
 
 ## Discovery payload
 
-Discovery exposes `schema_version`, `contract_version`, `status_command`, `contract_path`, `contract_exists`, response/summary/item/capability/control field lists, the session/turn/update/permission enums, `project_view_contract`, and `workbench_contract`. With `--example`, it additionally exposes `example_protocol_runtime` and same-source example field lists.
+Discovery exposes `schema_version`, `contract_version`, `status_command`, `contract_path`, `contract_exists`, response/summary/item/capability/control field lists, the session/turn/update/permission enums, `transport_kinds`, `project_view_contract`, and `workbench_contract`. With `--example`, it additionally exposes `example_protocol_runtime` and same-source example field lists.
 
 ## Safety and current phase
 
