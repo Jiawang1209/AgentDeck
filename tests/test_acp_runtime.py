@@ -26,6 +26,254 @@ from agentdeck.state import StateStore
 
 
 FAKE_AGENT = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+LIVE_PTY_CAPTURE_BYTES = 64 * 1024
+
+
+def test_live_ledger_rejects_synthetic_load_without_replayed_history() -> None:
+    ledger = _example_live_ledger()
+    ledger["transport_updates"] = [
+        item for item in ledger["transport_updates"] if item["turn_id"] != "turn-load"
+    ] + [{
+        "turn_id": "turn-load", "sequence": 0, "kind": "completion",
+        "payload": {"stop_reason": "loaded"},
+    }]
+    with pytest.raises(AssertionError, match="replayed history"):
+        _assert_live_ledger(ledger, "turn-first", "turn-load", "turn-resume")
+
+
+def test_live_ledger_requires_replay_hash_from_prior_conversation() -> None:
+    ledger = _example_live_ledger()
+    replay = next(
+        item for item in ledger["transport_updates"]
+        if item["turn_id"] == "turn-load" and item["kind"] != "completion"
+    )
+    replay["payload"] = {"content": {"type": "text", "text": "different"}}
+    with pytest.raises(AssertionError, match="prior conversation"):
+        _assert_live_ledger(ledger, "turn-first", "turn-load", "turn-resume")
+
+
+def test_live_ledger_accepts_exact_prompt_load_resume_lineage() -> None:
+    _assert_live_ledger(_example_live_ledger(), "turn-first", "turn-load", "turn-resume")
+
+
+def test_live_pty_capture_and_shutdown_are_hard_bounded(tmp_path: Path) -> None:
+    marker = "RAW_TRANSCRIPT_MUST_NOT_ESCAPE"
+    script = tmp_path / "noisy_hung.py"
+    pid_file = tmp_path / "child.pid"
+    script.write_text(
+        "import os, time\n"
+        f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+        f"os.write(1, ({marker!r} * 8192).encode())\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    started = time.monotonic()
+    with pytest.raises(AssertionError) as raised:
+        _run_live_pty(
+            [sys.executable, str(script)], cwd=tmp_path, reject_once=False,
+            total_timeout=0.2, terminate_timeout=0.2, kill_timeout=0.2,
+            capture_limit=1024,
+        )
+    elapsed = time.monotonic() - started
+    diagnostic = str(raised.value)
+    assert elapsed < 2.0
+    assert "truncated=True" in diagnostic
+    assert "sha256=" in diagnostic
+    assert marker not in diagnostic
+    pid = int(pid_file.read_text(encoding="utf-8"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def _example_live_ledger() -> dict[str, Any]:
+    message = {"content": {"type": "text", "text": "same reply"}}
+    return {
+        "protocol_turns": [
+            {"turn_id": "turn-first", "kind": "prompt"},
+            {"turn_id": "turn-load", "kind": "load_replay"},
+            {"turn_id": "turn-resume", "kind": "prompt"},
+        ],
+        "transport_updates": [
+            {"turn_id": "turn-first", "sequence": 0, "kind": "agent_message_chunk", "payload": message},
+            {"turn_id": "turn-first", "sequence": 1, "kind": "completion", "payload": {"stop_reason": "end_turn"}},
+            {"turn_id": "turn-load", "sequence": 0, "kind": "agent_message_chunk", "payload": message},
+            {"turn_id": "turn-load", "sequence": 1, "kind": "completion", "payload": {"stop_reason": "loaded"}},
+            {"turn_id": "turn-resume", "sequence": 0, "kind": "agent_message_chunk", "payload": {"content": {"type": "text", "text": "second"}}},
+            {"turn_id": "turn-resume", "sequence": 1, "kind": "completion", "payload": {"stop_reason": "end_turn"}},
+        ],
+    }
+
+
+class _BoundedPtyCapture:
+    def __init__(self, limit: int) -> None:
+        if limit <= 0:
+            raise ValueError("capture limit must be positive")
+        self.limit = limit
+        self.total_bytes = 0
+        self.truncated = False
+        self._tail = bytearray()
+        self._digest = hashlib.sha256()
+
+    def append(self, chunk: bytes) -> None:
+        self.total_bytes += len(chunk)
+        self._digest.update(chunk)
+        self._tail.extend(chunk)
+        if len(self._tail) > self.limit:
+            del self._tail[:len(self._tail) - self.limit]
+            self.truncated = True
+
+    def text(self) -> str:
+        return self._tail.decode("utf-8", errors="replace")
+
+    def diagnostic(self) -> str:
+        return (
+            f"byte_count={self.total_bytes} truncated={self.truncated} "
+            f"sha256={self._digest.hexdigest()}"
+        )
+
+
+def _wait_bounded(process: subprocess.Popen[bytes], timeout: float) -> bool:
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False
+    return True
+
+
+def _terminate_bounded(
+    process: subprocess.Popen[bytes], *, terminate_timeout: float, kill_timeout: float,
+) -> None:
+    if process.poll() is not None:
+        if not _wait_bounded(process, kill_timeout):
+            raise AssertionError("exited PTY child could not be reaped within bound")
+        return
+    process.terminate()
+    if _wait_bounded(process, terminate_timeout):
+        return
+    process.kill()
+    if not _wait_bounded(process, kill_timeout):
+        raise AssertionError("PTY child could not be killed and reaped within bound")
+
+
+def _run_live_pty(
+    argv: list[str], *, cwd: Path, reject_once: bool, total_timeout: float = 240.0,
+    terminate_timeout: float = 2.0, kill_timeout: float = 2.0,
+    capture_limit: int = LIVE_PTY_CAPTURE_BYTES,
+) -> _BoundedPtyCapture:
+    master, slave = pty.openpty()
+    process = subprocess.Popen(
+        argv, cwd=cwd, env=_live_cli_environment(), stdin=slave, stdout=slave, stderr=slave,
+        close_fds=True,
+    )
+    os.close(slave)
+    capture = _BoundedPtyCapture(capture_limit)
+    selection_scan = ""
+    selected = False
+    deadline = time.monotonic() + total_timeout
+    timed_out = False
+    try:
+        while process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            ready, _, _ = select.select([master], [], [], min(0.25, remaining))
+            if not ready:
+                continue
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            capture.append(chunk)
+            if reject_once and not selected:
+                selection_scan = (selection_scan + chunk.decode("utf-8", errors="replace"))[-4096:]
+                match = re.search(r"(?mi)^(\d+)\.\s+Reject once\s*$", selection_scan)
+                if match:
+                    os.write(master, (match.group(1) + "\n").encode())
+                    selected = True
+        _terminate_bounded(
+            process, terminate_timeout=terminate_timeout, kill_timeout=kill_timeout,
+        )
+        drain_deadline = time.monotonic() + min(0.25, kill_timeout)
+        while time.monotonic() < drain_deadline:
+            ready, _, _ = select.select([master], [], [], 0)
+            if not ready:
+                break
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            capture.append(chunk)
+    finally:
+        os.close(master)
+        if process.poll() is None:
+            _terminate_bounded(
+                process, terminate_timeout=terminate_timeout, kill_timeout=kill_timeout,
+            )
+    if timed_out:
+        raise AssertionError("live ACP CLI timed out; " + capture.diagnostic())
+    if reject_once and not selected:
+        raise AssertionError("ACP Agent did not request reject_once; " + capture.diagnostic())
+    if process.returncode != 0:
+        raise AssertionError(
+            f"interactive CLI failed with exit {process.returncode}; " + capture.diagnostic()
+        )
+    return capture
+
+
+def _update_fact_hash(update: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        {"kind": update["kind"], "payload": update["payload"]},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _assert_live_ledger(
+    ledger: dict[str, Any], first_turn_id: str, load_turn_id: str, resume_turn_id: str,
+) -> None:
+    turns = ledger["protocol_turns"]
+    assert [(item["turn_id"], item["kind"]) for item in turns] == [
+        (first_turn_id, "prompt"), (load_turn_id, "load_replay"),
+        (resume_turn_id, "prompt"),
+    ], "live ledger must contain exactly prompt/load_replay/prompt"
+    by_turn = {
+        turn_id: [item for item in ledger["transport_updates"] if item["turn_id"] == turn_id]
+        for turn_id in (first_turn_id, load_turn_id, resume_turn_id)
+    }
+    for turn_id, updates in by_turn.items():
+        assert [item["sequence"] for item in updates] == list(range(len(updates))), (
+            f"{turn_id} updates must be contiguous"
+        )
+        assert updates and updates[-1]["kind"] == "completion"
+    assert by_turn[first_turn_id][-1]["payload"]["stop_reason"] == "end_turn"
+    assert by_turn[load_turn_id][-1]["payload"]["stop_reason"] == "loaded"
+    assert by_turn[resume_turn_id][-1]["payload"]["stop_reason"] == "end_turn"
+    replay = [item for item in by_turn[load_turn_id] if item["kind"] != "completion"]
+    assert replay, "load must contain replayed history before completion"
+    prior_hashes = {
+        _update_fact_hash(item) for item in by_turn[first_turn_id] if item["kind"] != "completion"
+    }
+    replay_hashes = {_update_fact_hash(item) for item in replay}
+    assert prior_hashes & replay_hashes, "load replay must match prior conversation by hash"
+    resume_updates = [
+        item for item in by_turn[resume_turn_id] if item["kind"] != "completion"
+    ]
+    assert all(item["kind"] != "user_message_chunk" for item in resume_updates), (
+        "resume prompt must not persist pre-prompt history replay"
+    )
+
+
+def _assert_live_payload_counts(payload: dict[str, Any], ledger: dict[str, Any]) -> None:
+    assert payload["session_count"] == len(ledger["agent_sessions"])
+    assert payload["turn_count"] == len(ledger["protocol_turns"])
+    assert payload["update_count"] == len(ledger["transport_updates"])
+    assert payload["permission_count"] == len(ledger["permission_requests"])
+    assert payload["transition_count"] == len(ledger["protocol_state_transitions"])
 
 
 def _live_acp_executable() -> Path:
@@ -103,66 +351,13 @@ def _configure_live_acp(project: Path, adapter: Path) -> None:
 
 
 def _live_cli_tty_reject_once(project: Path, *arguments: str) -> dict[str, Any]:
-    master, slave = pty.openpty()
-    process = subprocess.Popen(
-        [sys.executable, "-m", "agentdeck", *arguments],
-        cwd=project,
-        env=_live_cli_environment(),
-        stdin=slave,
-        stdout=slave,
-        stderr=slave,
-        close_fds=True,
+    capture = _run_live_pty(
+        [sys.executable, "-m", "agentdeck", *arguments], cwd=project, reject_once=True,
     )
-    os.close(slave)
-    output = bytearray()
-    selected = False
-    deadline = time.monotonic() + 240
     try:
-        while process.poll() is None and time.monotonic() < deadline:
-            ready, _, _ = select.select([master], [], [], 0.25)
-            if not ready:
-                continue
-            try:
-                chunk = os.read(master, 4096)
-            except OSError:
-                break
-            if not chunk:
-                break
-            output.extend(chunk)
-            if not selected:
-                text = output.decode("utf-8", errors="replace")
-                match = re.search(r"(?mi)^(\d+)\.\s+Reject once\s*$", text)
-                if match:
-                    os.write(master, (match.group(1) + "\n").encode())
-                    selected = True
-        if process.poll() is None:
-            process.kill()
-            raise AssertionError("live ACP CLI timed out")
-        while True:
-            ready, _, _ = select.select([master], [], [], 0)
-            if not ready:
-                break
-            try:
-                chunk = os.read(master, 4096)
-            except OSError:
-                break
-            if not chunk:
-                break
-            output.extend(chunk)
-    finally:
-        os.close(master)
-        if process.poll() is None:
-            process.kill()
-        process.wait()
-    text = output.decode("utf-8", errors="replace")
-    if not selected:
-        raise AssertionError("ACP Agent did not request a reject-once permission")
-    if process.returncode != 0:
-        raise AssertionError(
-            f"interactive CLI failed with exit {process.returncode}; diagnostic="
-            + _sanitized_diagnostic(text)
-        )
-    return _json_document(text)
+        return _json_document(capture.text())
+    except AssertionError as error:
+        raise AssertionError("PTY emitted no valid JSON document; " + capture.diagnostic()) from error
 
 
 def test_live_acp_gate_requires_explicit_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -250,11 +445,14 @@ def test_live_claude_agent_vertical_slice(tmp_path: Path) -> None:
         "protocol", "acp", "run", "--agent", "reviewer", "--prompt", prompt, "--confirm",
     )
     assert first["protocol_version"] == 1
-    assert first["turn_state"] in {"completed", "blocked"}
+    assert first["turn_state"] == "completed"
+    assert first["stop_reason"] == "end_turn"
     assert first["session_state"] == "disconnected"
     assert first["disconnect_reason"] == "clean_exit"
     assert first["permission_count"] >= 1
     assert not forbidden.exists()
+    first_ledger = StateStore(project).load()
+    _assert_live_payload_counts(first, first_ledger)
 
     loaded = _live_cli(
         project, "protocol", "acp", "load", "--session-id", first["session_id"], "--confirm"
@@ -264,6 +462,8 @@ def test_live_claude_agent_vertical_slice(tmp_path: Path) -> None:
     assert loaded["turn_state"] == "completed"
     assert loaded["stop_reason"] == "loaded"
     assert loaded["session_state"] == "disconnected"
+    loaded_ledger = StateStore(project).load()
+    _assert_live_payload_counts(loaded, loaded_ledger)
 
     resumed = _live_cli(
         project, "protocol", "acp", "resume", "--session-id", first["session_id"],
@@ -277,12 +477,18 @@ def test_live_claude_agent_vertical_slice(tmp_path: Path) -> None:
 
     status = _live_cli(project, "protocol", "status")
     ledger = StateStore(project).load()
+    _assert_live_payload_counts(resumed, ledger)
+    _assert_live_ledger(
+        ledger, first["turn_id"], loaded["turn_id"], resumed["turn_id"],
+    )
     assert status["agent_sessions"]["count"] == 1
     assert status["protocol_turns"]["count"] == 3
-    assert [item["kind"] for item in ledger["protocol_turns"]] == [
-        "prompt", "load_replay", "prompt",
-    ]
-    assert status["permission_requests"]["count"] >= 1
+    assert status["transport_updates"]["count"] == len(ledger["transport_updates"])
+    assert status["permission_requests"]["count"] == first["permission_count"]
+    assert resumed["permission_count"] == first["permission_count"]
+    assert status["protocol_state_transitions"]["count"] == len(
+        ledger["protocol_state_transitions"]
+    )
     assert all(item["state"] == "denied" for item in status["permission_requests"]["items"])
     assert status["agent_sessions"]["items"][0]["session_id"] == first["session_id"]
     assert ledger["agent_sessions"][0]["native_session_id"] == first["native_session_id"]

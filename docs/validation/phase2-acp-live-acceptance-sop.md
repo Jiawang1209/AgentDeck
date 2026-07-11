@@ -44,14 +44,19 @@ pytest tests/test_acp_runtime.py::test_live_claude_agent_vertical_slice -q -s
 The test creates a disposable project and invokes the real AgentDeck CLI for
 project initialization, preflight, run, load, resume, a second prompt, and
 protocol status. The permission interaction uses a pseudo-terminal and selects
-the exact current `reject_once` option. Acceptance requires the requested file
-to remain absent and the compact status plus durable ledger to agree on one
-native session, prompt/load-replay/prompt turns, denied permission, and final
-disconnect.
+the exact current `reject_once` option. Acceptance requires both prompt turns to
+finish with `completed` / `end_turn`; the requested file must remain absent.
+Load must persist at least one non-completion replay update before its `loaded`
+completion, with contiguous sequences and a kind/payload hash matching the
+prior conversation. Resume must add one normal prompt turn without pre-prompt
+history replay. Every command's global counts must equal the durable ledger,
+which must finish with one native session and a final disconnect.
 
-Failure output is bounded and replaces the home directory with `<HOME>`. Never
-copy transcript text, raw tool input, environment dumps, credentials, email,
-tokens, or auth-file contents into durable evidence.
+PTY capture is a 64 KiB bounded tail with a hard total timeout and bounded
+terminate/kill/reap stages. Failure diagnostics expose only total byte count,
+the truncation flag, and SHA-256; they never include captured text. Never copy
+transcript text, raw tool input, environment dumps, credentials, email, tokens,
+or auth-file contents into durable evidence.
 
 ## PASS-only evidence
 
