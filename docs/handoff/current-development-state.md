@@ -71,9 +71,9 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-设计并实现自然语言 Mission 编排闭环：用户一句多智能体目标生成冻结 `mission_preview`，一次整体确认后自动选择并准备配置中的 Codex/Claude Worker、通过 provider-aware readiness gate、执行完整 sequential workflow，并把状态/恢复/ProjectView/contract/audit 闭环。用户不再手工 assign-role、编辑 TOML、load skill、spawn Worker、提取 plan id 或拼接 workflow preview/run。设计已获 human 批准并固化到 `docs/superpowers/specs/2026-07-10-natural-language-mission-orchestration-design.md`，详细 TDD 实施计划已写入 `docs/superpowers/plans/2026-07-10-natural-language-mission-orchestration.md`；下一步是在隔离 worktree 中按任务实施。并行/DAG/循环、自动 login/trust、GUI、remote/marketplace 和无界自治不在本目标。
+**STOP — no implementation slice is currently approved.** Natural-language Mission Phase 0 and protocol-model Phase 1 are complete. The next candidate product fork is Phase 2, a real ACP vertical slice, but it must first receive its own human-approved design spec and implementation plan. Do not begin ACP JSON-RPC, an ACP backend/adapter, automatic protocol emission, a project daemon, the default interactive REPL, global roaming, state migration, or Workspace Client work from this handoff.
 
-The next product generation is governed by `docs/roadmap/product-north-star.md` and `docs/superpowers/specs/2026-07-11-agentdeck-protocol-native-v2-design.md`. The approved `docs/superpowers/plans/2026-07-11-protocol-native-phase0-phase1.md` is now complete: Phase 0 is the frozen compatibility baseline and Phase 1 adds the protocol model without changing default tmux dispatch behavior. ACP JSON-RPC, the project daemon, the default interactive REPL, global roaming, state migration, and Workspace Client remain future work; Phase 2 requires a separate approved spec/plan.
+The completed natural-language Mission and G-series work below is historical context only. It must not be treated as an active continuation request or redone.
 
 ## Canonical Handoff Inputs
 
@@ -95,129 +95,11 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-North-star Phase G5: Reviewer Gate Visibility.
+Phase 0 and Phase 1 are complete. Current state is **STOP pending human direction**. There is no active G5 or natural-language Mission implementation follow-up.
 
-Phase G1 is already committed: AgentDeck has a read-only `frontdesk` natural-language route:
+The next candidate slice is Phase 2 ACP vertical slice from `docs/superpowers/specs/2026-07-11-agentdeck-protocol-native-v2-design.md`. Before any implementation, a human must approve a new standalone spec and plan covering one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. Until then, preserve tmux as the active default backend and make no protocol transport or daemon changes.
 
-```bash
-agentdeck leader chat --message "frontdesk <goal>"
-```
-
-Expected behavior:
-
-- Returns `mode=frontdesk`.
-- Embeds `frontdesk_card`.
-- Recommends explicit `agentdeck leader plan --task <goal>`.
-- Records only chat turn and audit event.
-- Does not call a Leader provider.
-- Does not create plan/action/approval/message/job/inbox.
-- Does not inspect or write tmux.
-
-Phase G2 is already committed: AgentDeck makes the layered Leader topology visible to CLI/GUI clients through `coordination_roles[]` on:
-
-- `agentdeck status` as `leader.coordination_roles`.
-- `agentdeck leader status` as top-level `coordination_roles`.
-- `agentdeck workbench` as `leader_card.coordination_roles`.
-
-The roles are `frontdesk`, `planner`, and `orchestrator`. They are logical Leader coordination roles, not worker panes: every role must keep `runtime_kind=logical_role`, `pane_backed=false`, `pane_id=null`, and `dispatch_ready=false`. `frontdesk` is local-rule/deterministic; `planner` and `orchestrator` inherit the configured Leader provider/model and remain approval-gated.
-
-Phase G3 is already committed: AgentDeck has a read-only programmatic loop step:
-
-```bash
-agentdeck loop once
-```
-
-Expected behavior:
-
-- Validates ProjectView.
-- Embeds the same `continue_card` used by `agentdeck continue`.
-- Recommends exactly one explicit `next_command`.
-- Returns `stop_reason`, `will_execute=false`, `requires_explicit_user`, `safety`, and GUI-ready controls.
-- Does not call a Leader provider.
-- Does not read, write, or send input to tmux.
-- Does not approve, reject, dispatch, capture replies, ack inbox, or write state.
-
-Phase G4 is already committed: AgentDeck exposes worker lifecycle visibility through:
-
-```bash
-agentdeck workbench
-```
-
-New surface:
-
-- Adds `worker_lifecycle_card`.
-- Derives worker status from `agents[]`, visible runtime status, messages, jobs, replies, artifacts, and inbox summary.
-- Exposes each worker's `lifecycle_stage`, active message/job/reply ids, artifact count, pending inbox count, and inspect-only controls for trace, inbox, terminal, and capture.
-- Does not spawn workers.
-- Does not dispatch approvals or messages.
-- Does not capture pane output automatically.
-- Does not ack inbox items, release work, or write state.
-
-The first G5 slice is already committed:
-
-```bash
-agentdeck workbench
-```
-
-New surface:
-
-- Adds `review_gate_card`.
-- Derives code-review and round-review readiness from artifacts, replies, traceable reviewer messages, and configured reviewer roles.
-- Treats `reviewer` / `code_reviewer` as the code-review stage.
-- Requires explicit `round_reviewer` configuration for round-level acceptance.
-- Exposes `status`, `reason`, `can_release=false/true`, artifact/review counts, per-stage blockers, and inspect-only trace/inbox controls.
-- Exposes disabled `assign_code_reviewer` / `assign_round_reviewer` templates as explicit-user controls so GUI/TUI can render reviewer role configuration forms without mutating config.
-- Does not release, merge, ack inbox items, dispatch follow-up work, or advance the loop.
-
-The second G5 slice is already committed:
-
-```bash
-agentdeck leader chat --message "查看验收门"
-```
-
-Expected behavior:
-
-- Returns `mode=review_gate`.
-- Embeds the same read-only `review_gate_card` as `agentdeck workbench`.
-- Attaches a `control_registry_card` filtered to `scope=review_gate` / `card=review_gate_card`.
-- Selects the `agentdeck workbench` inspect control.
-- Records only the chat turn and audit event.
-- Does not call a Leader provider.
-- Does not create plan/action/approval/message/job/inbox.
-- Does not release, merge, ack inbox items, dispatch follow-up work, advance the loop, read tmux, or send tmux input.
-
-The release-preview workbench slice is already committed:
-
-```bash
-agentdeck workbench
-```
-
-New surface:
-
-- Adds `release_preview_card`.
-- Derives release readiness only from `review_gate_card`.
-- Keeps `can_release` and blocked `reason` aligned with the review gate.
-- Exposes `release_preview` and `next_round_preview` controls as disabled `explicit_user` placeholders with `command=null`.
-- Exposes only `inspect_review_gate` as an enabled inspect control.
-- Does not release, merge, ack inbox items, dispatch follow-up work, advance the loop, call a provider, read tmux, write tmux, or mutate state.
-
-The current G5 follow-up adds release-preview natural-language discovery:
-
-```bash
-agentdeck leader chat --message "查看发布预览"
-```
-
-Expected behavior:
-
-- Returns `mode=release_preview`.
-- Embeds the same read-only `release_preview_card` as `agentdeck workbench`.
-- Attaches a `control_registry_card` filtered to `scope=release_preview` / `card=release_preview_card`.
-- Selects the `inspect_review_gate` control pointing at `agentdeck workbench`.
-- Keeps `release_preview` / `next_round_preview` controls as disabled `explicit_user` placeholders with `command=null`.
-- Records only the chat turn and audit event.
-- Does not call a Leader provider.
-- Does not create plan/action/approval/message/job/inbox.
-- Does not release, merge, ack inbox items, dispatch follow-up work, advance the loop, read tmux, or send tmux input.
+Historical note: G1–G5 frontdesk, coordination-role, loop, worker-lifecycle, review-gate, release-preview, and natural-language discovery slices were completed before the Phase 0/1 protocol-native work. Their detailed behavior remains in `HISTORY.md` and the contract documents; they are not the current phase or next slice.
 
 ## Cross-Agent Goal Continuity
 
@@ -238,7 +120,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-Continue the active north-star goal; do not redo completed work.
+STOP after reading current state. Do not redo Phase 0, Phase 1, Mission, or G-series work. Do not implement Phase 2 until a human has approved its standalone spec and plan.
 ```
 
 The explicit release command slice is already committed:
@@ -288,9 +170,9 @@ The release contract discovery slice is already committed (Phase G5 complete):
 
 - Read-only `agentdeck contract release` / `--example` discovery, and `agentdeck release --confirm` now self-validates via `validate_release_contract()`.
 
-## Current Phase
+## Historical G6 context
 
-North-star Phase G6: Role Topology GUI.
+Phase G6 Role Topology GUI was completed before the Phase 0/1 protocol-native work. The following entries are retained only as implementation history, not as an active phase or continuation instruction.
 
 The first G6 slice is already committed:
 
