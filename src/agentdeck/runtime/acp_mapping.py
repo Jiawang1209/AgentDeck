@@ -62,6 +62,21 @@ def _bounded_text(name: str, value: object, *, limit: int = MAX_ACP_SUMMARY_BYTE
     raise ValueError(f"{name} cannot be normalized")
 
 
+def _bounded_string(name: str, value: object, *, limit: int = MAX_ACP_SUMMARY_BYTES) -> str:
+    if type(value) is not str:
+        raise TypeError(f"{name} must be a string")
+    encoded = value.encode("utf-8")
+    if len(encoded) <= limit:
+        return value
+    shortened = encoded[:limit]
+    while shortened:
+        try:
+            return shortened.decode("utf-8")
+        except UnicodeDecodeError:
+            shortened = shortened[:-1]
+    return ""
+
+
 def _identifier(name: str, value: object) -> str:
     return _bounded_text(name, value, limit=MAX_ACP_IDENTIFIER_BYTES)
 
@@ -212,17 +227,26 @@ def _map_progress(update: BaseModel, discriminator: str, fields: tuple[str, ...]
 def _map_config(update: schema.ConfigOptionUpdate) -> tuple[str, dict[str, Any]]:
     options = []
     for option in update.config_options:
-        dumped = option.model_dump(by_alias=True, exclude_none=True)
-        item: dict[str, Any] = {}
-        for source, target in (
-            ("id", "id"), ("name", "name"), ("type", "type"),
-            ("currentValue", "current_value"),
-        ):
-            if source in dumped:
-                value = dumped[source]
-                if source in {"id", "name", "type"}:
-                    value = _bounded_text(target, value)
-                item[target] = value
+        if isinstance(option, schema.SessionConfigOptionSelect):
+            if option.type != "select":
+                raise ValueError("ACP config option discriminator does not match its typed model")
+            current_value: str | bool = _bounded_string("current_value", option.current_value)
+            option_type = "select"
+        elif isinstance(option, schema.SessionConfigOptionBoolean):
+            if option.type != "boolean":
+                raise ValueError("ACP config option discriminator does not match its typed model")
+            if type(option.current_value) is not bool:
+                raise TypeError("current_value must be a bool")
+            current_value = option.current_value
+            option_type = "boolean"
+        else:
+            raise TypeError("unsupported ACP config option")
+        item = {
+            "id": _identifier("config option id", option.id),
+            "name": _bounded_text("config option name", option.name),
+            "type": option_type,
+            "current_value": current_value,
+        }
         options.append(item)
     return "progress", {"session_update": "config_option_update", "config_options": options}
 

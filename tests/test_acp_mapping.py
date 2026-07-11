@@ -17,6 +17,7 @@ from acp.schema import (
     RequestPermissionRequest,
     SessionCapabilities,
     SessionConfigOptionBoolean,
+    SessionConfigOptionSelect,
     SessionInfoUpdate,
     SessionResumeCapabilities,
     TextContentBlock,
@@ -29,6 +30,7 @@ from pydantic import BaseModel, ConfigDict
 
 from agentdeck.runtime.acp_mapping import (
     MAX_ACP_MESSAGE_BYTES,
+    MAX_ACP_SUMMARY_BYTES,
     MAX_ACP_TURN_PAYLOAD_BYTES,
     MAX_ACP_UPDATES_PER_TURN,
     ensure_message_within_bounds,
@@ -178,6 +180,43 @@ def test_plan_progress_and_information_updates_are_bounded_allowlists() -> None:
         "progress",
         {"session_update": "config_option_update", "config_options": [{"id": "safe", "name": "Safe", "type": "boolean", "current_value": True}]},
     )
+
+
+def test_config_select_current_value_is_bounded_at_exact_utf8_edge() -> None:
+    exact = "x" * MAX_ACP_SUMMARY_BYTES
+    config = ConfigOptionUpdate(
+        sessionUpdate="config_option_update",
+        configOptions=[SessionConfigOptionSelect(
+            id="mode", name="Mode", currentValue=exact, options=[], type="select"
+        )],
+    )
+    assert map_session_update(config)[1]["config_options"][0]["current_value"] == exact
+
+
+def test_config_select_over_bound_secret_like_value_is_truncated_without_full_leak() -> None:
+    secret = "SECRET-LIKE-" + ("z" * MAX_ACP_SUMMARY_BYTES)
+    config = ConfigOptionUpdate(
+        sessionUpdate="config_option_update",
+        configOptions=[SessionConfigOptionSelect(
+            id="mode", name="Mode", currentValue=secret, options=[], type="select"
+        )],
+    )
+    projected = map_session_update(config)[1]["config_options"][0]["current_value"]
+    assert len(projected.encode("utf-8")) == MAX_ACP_SUMMARY_BYTES
+    assert projected != secret
+    assert secret not in repr(map_session_update(config))
+
+
+@pytest.mark.parametrize("invalid", [1, 1.5, None, {"env": "secret"}, ["secret"]])
+def test_config_current_value_rejects_non_string_non_bool_runtime_values(invalid: object) -> None:
+    option = SessionConfigOptionSelect.model_construct(
+        id="mode", name="Mode", current_value=invalid, options=[], type="select"
+    )
+    config = ConfigOptionUpdate.model_construct(
+        session_update="config_option_update", config_options=[option]
+    )
+    with pytest.raises(TypeError, match="current_value"):
+        map_session_update(config)
 
 
 @pytest.mark.parametrize(
