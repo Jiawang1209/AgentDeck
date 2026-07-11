@@ -55,7 +55,7 @@ AgentDeck 已经具备本地控制平面的主要底座：
 
 下一代产品会在保留这些能力和审计历史的前提下，用协议原生 Runtime Kernel 替换脆弱的终端屏幕通信。
 
-当前 Phase 1 已交付 protocol runtime model、只读状态面和 tmux fallback capability metadata；tmux 仍是默认执行 backend，尚不会由 dispatch 自动 emit protocol records，ACP transport/backend/adapter、permission bridge 与 daemon 均未实现。
+当前 Phase 2 已实现显式配置下的 ACP diagnostic vertical slice（preflight、foreground run/load/resume、permission bridge、protocol/ProjectView/workbench 同源观察面）；tmux 仍是默认执行 backend，dispatch、Mission 与 workflow 尚未路由到 ACP，真实 adapter 验收和 daemon 也尚未完成。
 
 ## 体验当前 CLI
 

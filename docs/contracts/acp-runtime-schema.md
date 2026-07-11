@@ -22,6 +22,14 @@ traffic by protocol ordering. An adapter that asynchronously emits old replay at
 an uncorrelatable protocol violation and is covered by adapter conformance/order tests; the
 runtime does not claim to infer provenance absent from the wire message.
 
+The official SDK 0.11 dispatcher schedules `session/update` notification handlers as tasks while
+responses are resolved directly by the receive loop. AgentDeck therefore installs a synchronous
+incoming stream observer that counts each update at the SDK scheduling boundary; the callback
+settles that exact count in `finally`, and load waits for the known pre-response set before sealing
+its lifecycle generation. This is a deterministic dispatcher barrier, not an event-loop sleep or
+quiet-time heuristic. A notification first observed after the load response is not valid load
+replay and is rejected by the sealed phase without a ledger write.
+
 ## Read-only preflight
 
 ```text

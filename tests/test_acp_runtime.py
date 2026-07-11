@@ -439,6 +439,38 @@ async def test_transport_load_session_preserves_ordered_replay(tmp_path: Path) -
 
 
 @async_test
+async def test_transport_load_response_waits_for_scheduled_replay_callbacks(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpTransport
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingSink(FakeLedgerSink):
+        async def append_update(self, session_id, kind, payload):
+            started.set()
+            await release.wait()
+            return await super().append_update(session_id, kind, payload)
+
+    sink = BlockingSink()
+    sink.session_id = "fake-session-1"
+    client = AgentDeckAcpClient(
+        sink=sink, decide=lambda *_: PermissionDecision.cancelled("non_tty")
+    )
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "load_replay"), tmp_path, client
+    )
+    await transport.initialize()
+    loading = asyncio.create_task(transport.load_session("fake-session-1"))
+    await asyncio.wait_for(started.wait(), timeout=2)
+    assert loading.done() is False
+    release.set()
+    await loading
+    await transport.close()
+
+    assert [item["payload"]["content"]["text"] for item in sink.updates] == ["one", "two"]
+
+
+@async_test
 async def test_transport_resume_rejects_update_before_response(tmp_path: Path) -> None:
     from agentdeck.runtime.acp import AcpTransport, AcpTransportError
 

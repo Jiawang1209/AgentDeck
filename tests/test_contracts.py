@@ -276,6 +276,58 @@ def test_acp_runtime_contract_publishes_observation_and_governed_controls() -> N
     }
 
 
+def _acp_run_contract_example() -> dict[str, object]:
+    return {
+        "mode": "acp_run", "contract_version": "acp-runtime/v1", "agent_id": "planner",
+        "session_id": "ags_example", "native_session_id": "native-example", "protocol_version": 1,
+        "capabilities": {
+            "structured_sessions": True, "streaming_updates": True, "structured_tools": True,
+            "permission_requests": True, "resume_session": True, "observable_terminal": False,
+        },
+        "turn_id": "trn_example", "turn_state": "completed", "stop_reason": "end_turn",
+        "session_count": 1, "turn_count": 1, "update_count": 1, "permission_count": 0,
+        "transition_count": 4, "latest_session_id": "ags_example", "latest_turn_id": "trn_example",
+        "latest_update_id": "upd_example", "latest_permission_id": None,
+        "latest_transition_id": "pst_example", "session_state": "disconnected",
+        "disconnect_reason": "clean_exit",
+        "controls": [
+            {"kind": "inspect", "label": "Inspect protocol runtime", "command": "agentdeck protocol status", "safety": "inspect", "enabled": True, "blocker": None},
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("count_field", "latest_field", "latest_value"),
+    [
+        ("session_count", "latest_session_id", "ags_example"),
+        ("turn_count", "latest_turn_id", "trn_example"),
+        ("update_count", "latest_update_id", "upd_example"),
+        ("permission_count", "latest_permission_id", "prm_example"),
+        ("transition_count", "latest_transition_id", "pst_example"),
+    ],
+)
+def test_acp_runtime_global_count_and_latest_identity_are_biconditional(
+    count_field: str, latest_field: str, latest_value: str,
+) -> None:
+    from agentdeck.contracts import validate_acp_runtime_contract
+
+    payload = _acp_run_contract_example()
+    payload[count_field] = 0
+    payload[latest_field] = latest_value
+    assert f"{count_field} must be zero exactly when {latest_field} is null" in validate_acp_runtime_contract(payload)["errors"]
+
+    payload = _acp_run_contract_example()
+    payload[count_field] = 1
+    payload[latest_field] = None
+    assert f"{count_field} must be zero exactly when {latest_field} is null" in validate_acp_runtime_contract(payload)["errors"]
+
+
+def test_acp_runtime_global_count_and_latest_identity_valid_matrix() -> None:
+    from agentdeck.contracts import validate_acp_runtime_contract
+
+    assert validate_acp_runtime_contract(_acp_run_contract_example()) == {"ok": True, "errors": []}
+
+
 @pytest.mark.parametrize(
     ("mutate", "expected"),
     [

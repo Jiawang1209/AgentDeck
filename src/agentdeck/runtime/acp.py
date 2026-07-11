@@ -11,6 +11,7 @@ from types import TracebackType
 from typing import Any
 
 from acp import schema, spawn_agent_process
+from acp.connection import StreamDirection
 
 from agentdeck import __version__
 from agentdeck.runtime.acp_mapping import MAX_ACP_MESSAGE_BYTES, map_agent_capabilities
@@ -76,6 +77,33 @@ class AcpRequestTimeout(AcpTransportError):
 
 class AcpAmbiguousOutcome(AcpTransportError):
     """The Agent disappeared during an active request; completion is unknowable."""
+
+
+class _SessionUpdateBarrier:
+    """Track notifications synchronously at the SDK stream scheduling boundary."""
+
+    def __init__(self) -> None:
+        self._pending = 0
+        self._drained = asyncio.Event()
+        self._drained.set()
+
+    def observe(self, event: object) -> None:
+        if getattr(event, "direction", None) is not StreamDirection.INCOMING:
+            return
+        message = getattr(event, "message", None)
+        if isinstance(message, dict) and message.get("method") == "session/update":
+            self._pending += 1
+            self._drained.clear()
+
+    def settle(self) -> None:
+        if self._pending <= 0:
+            raise RuntimeError("ACP session update settled without scheduled notification")
+        self._pending -= 1
+        if self._pending == 0:
+            self._drained.set()
+
+    async def wait(self) -> None:
+        await self._drained.wait()
 
 
 @dataclass(frozen=True)
@@ -147,6 +175,10 @@ class AcpTransport:
         self._argv = argv
         self._workspace = Path(workspace).resolve(strict=True)
         self._client = client
+        self._update_barrier = _SessionUpdateBarrier()
+        set_update_settled = getattr(client, "set_update_settled_callback", None)
+        if callable(set_update_settled):
+            set_update_settled(self._update_barrier.settle)
         self._request_timeout = float(request_timeout)
         self._cancel_timeout = float(cancel_timeout)
         self._close_grace = float(close_grace)
@@ -239,6 +271,7 @@ class AcpTransport:
                 # AcpTransport performs the two-stage shutdown before context exit.
                 "shutdown_timeout": self._kill_grace,
             },
+            observers=[self._update_barrier.observe],
         )
         try:
             self._connection, self._process = await self._context.__aenter__()
@@ -338,7 +371,7 @@ class AcpTransport:
             await self._request(self._connection.load_session(
                 cwd=str(self._workspace), session_id=native_session_id, mcp_servers=[]
             ), eof_is_ambiguous=True)
-            await self._client.drain_update_callbacks()
+            await self._update_barrier.wait()
         finally:
             await self._client.switch_update_phase("sealed")
         callback_error = getattr(self._client, "take_callback_error", lambda: None)()

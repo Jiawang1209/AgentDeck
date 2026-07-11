@@ -2874,9 +2874,15 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
             value = payload.get(field)
             if value is not None and (type(value) is not str or re.fullmatch(rf"{prefix}[a-z0-9]+", value) is None):
                 errors.append(f"{field} is invalid")
-        if payload.get("update_count", 0) > 0 and payload.get("latest_update_id") is None: errors.append("latest_update_id is required when updates exist")
-        if payload.get("permission_count", 0) > 0 and payload.get("latest_permission_id") is None: errors.append("latest_permission_id is required when permissions exist")
-        if payload.get("transition_count", 0) > 0 and payload.get("latest_transition_id") is None: errors.append("latest_transition_id is required when transitions exist")
+        for count_field, latest_field in (
+            ("session_count", "latest_session_id"), ("turn_count", "latest_turn_id"),
+            ("update_count", "latest_update_id"), ("permission_count", "latest_permission_id"),
+            ("transition_count", "latest_transition_id"),
+        ):
+            count = payload.get(count_field)
+            latest = payload.get(latest_field)
+            if type(count) is int and count >= 0 and (count == 0) != (latest is None):
+                errors.append(f"{count_field} must be zero exactly when {latest_field} is null")
         controls = payload.get("controls")
         if not isinstance(controls, list) or not controls: errors.append("controls must be a non-empty list")
         else:
