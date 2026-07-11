@@ -71,7 +71,7 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-**Prepare the ACP vertical slice for live acceptance without claiming Phase 2 completion.** Phase 2 Tasks 1–10 are code-complete, Task 11's opt-in gate and operator SOP are ready, and Task 12's non-live release documentation/verification is closed out. Real acceptance remains **BLOCKED** because `command -v claude-agent-acp` returns no executable. The ACP Python SDK 0.11.0 and Node >=22 prerequisites are ready. A human must install and authenticate the adapter outside AgentDeck, then run the exact opt-in command in `docs/validation/phase2-acp-live-acceptance-sop.md`. Do not install an adapter, change authentication, use `npx`/`npm`/`pip`, auto-download anything, or write the reserved PASS report before that real acceptance passes.
+**Pre-Task 12 live-acceptance preparation.** Phase 2 Tasks 1–10 are code-complete and Task 11's opt-in gate/operator SOP are ready, but real acceptance remains **BLOCKED** because `command -v claude-agent-acp` returns no executable. Task 12 is **NOT STARTED / PENDING** and may begin only after the real live gate passes and the reserved PASS report is created. The ACP Python SDK 0.11.0 and Node >=22 prerequisites are ready. A human must install and authenticate the adapter outside AgentDeck, then run the exact opt-in command in `docs/validation/phase2-acp-live-acceptance-sop.md`. Do not install an adapter, change authentication, use `npx`/`npm`/`pip`, auto-download anything, or write the reserved PASS report before that real acceptance passes.
 
 The design is foreground-only and keeps tmux as the default backend. It does not authorize adapter/SDK installation, real Agent execution, automatic protocol emission from existing dispatch, a project daemon, the default interactive REPL, global roaming, state migration, Workspace Client work, or a multi-agent ACP Mission.
 
@@ -97,7 +97,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0 and Phase 1 are complete. Phase 2 Tasks 1–10 are code-complete. Task 11 has an opt-in real Claude ACP acceptance harness plus a read-only missing-executable rehearsal; the gate is ready, but live acceptance has not run because `claude-agent-acp` is not installed on PATH. Task 12 closes only the non-live documentation and verification work. The release state remains **BLOCKED on external setup**, not Phase 2 complete.
+Phase 0 and Phase 1 are complete. Phase 2 Tasks 1–10 are code-complete. Task 11 has an opt-in real Claude ACP acceptance harness plus a read-only missing-executable rehearsal; the gate is ready, but live acceptance has not run because `claude-agent-acp` is not installed on PATH. Current work is live-acceptance readiness documentation only. Task 12 is **NOT STARTED / PENDING** until Task 11 produces a real PASS and the reserved PASS report. The phase remains **BLOCKED on external setup**, not Phase 2 complete.
 
 The implemented diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. It explicitly distinguishes `session/load` history replay from `session/resume` without replay, uses append-only lifecycle transitions rather than rewriting Phase 1 records, and makes non-interactive permission requests fail closed. Preserve tmux as the active default backend; do not route dispatch/Mission/workflow through ACP or add a daemon.
 
@@ -122,7 +122,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-STOP after reading current state. Do not redo Phase 0, Phase 1, Mission, G-series work, or Phase 2 Tasks 1–10. Task 11 is blocked until a human installs/authenticates the exact adapter outside AgentDeck and runs the opt-in SOP. Task 12 non-live documentation and verification are prepared, but Phase 2 is not complete. Do not auto-install, change authentication, use `npx`/`npm`/`pip`, auto-download, or write the PASS report before the live gate passes.
+STOP after reading current state. Do not redo Phase 0, Phase 1, Mission, G-series work, or Phase 2 Tasks 1–10. Task 11 is blocked until a human installs/authenticates the exact adapter outside AgentDeck and runs the opt-in SOP. Task 12 is NOT STARTED and may begin only after the live test passes and the PASS report exists. Do not auto-install, change authentication, use `npx`/`npm`/`pip`, auto-download, pre-write the PASS report, or perform Task 12 work while the gate is blocked.
 ```
 
 ## Historical development log — not active

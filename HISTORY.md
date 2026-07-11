@@ -4,13 +4,13 @@
 
 ## 2026-07-12
 
-### Prepare ACP vertical slice for live acceptance
+### Prepare pre-Task 12 live-acceptance readiness documentation
 
-- **Release state**: Phase 2 Tasks 1–10 are code-complete, foreground ACP v1 behavior is covered by deterministic fake-Agent conformance, and Task 11's opt-in harness/SOP is ready. This is a non-live release preparation, not Phase 2 completion.
+- **Gate state**: Phase 2 Tasks 1–10 are code-complete, foreground ACP v1 behavior is covered by deterministic fake-Agent conformance, and Task 11's opt-in harness/SOP is ready. This is pre-Task 12 live-acceptance preparation, not Task 12 execution and not Phase 2 completion. Task 12 remains **NOT STARTED / PENDING** until the real live gate passes and its reserved PASS report exists.
 - **External blocker**: `command -v claude-agent-acp` returns no executable. Real initialize/new/prompt/permission-reject/load/resume acceptance and adapter authentication therefore remain unverified; the reserved PASS report was not created.
 - **Documentation**: aligned README, CLAUDE/AGENT safety and commands, active handoff state, ACP contract/index notes, and the live SOP link. tmux remains default; dispatch, Mission, workflow, automatic protocol emission, daemon, default REPL, global roaming, Workspace Client, and multi-agent ACP Mission remain outside this slice.
 - **Human next step**: install and authenticate `claude-agent-acp` outside AgentDeck, then run the exact opt-in command in `docs/validation/phase2-acp-live-acceptance-sop.md`. AgentDeck must not auto-install, use `npx`/`npm`/`pip`, auto-download, or change authentication.
-- **Implementation commits**: Tasks 1–10 and subsequent hardening are recorded in the entries below, ending at `3526f3b7`; this release-preparation commit changes documentation only.
+- **Implementation commits**: Tasks 1–10 and subsequent hardening are recorded in the entries below, ending at `3526f3b7`; this live-acceptance readiness documentation commit changes documentation only and does not bypass the Task 11 → Task 12 gate.
 - **Verification**: ACP contract discovery reports `schema_version=project-view/v1` and `contract_version=acp-runtime/v1`; the missing-adapter read-only gate rehearsal is 4 passed / 1 live skipped; the fresh full suite is 1741 passed / 1 live skipped (1742 collected); `compileall src tests`, `git diff --check`, PASS-report absence, and documentation leak/placeholder checks pass.
 
 ### Prepare the real Claude ACP acceptance gate
