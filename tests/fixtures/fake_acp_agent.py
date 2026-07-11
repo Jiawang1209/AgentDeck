@@ -72,6 +72,13 @@ class FakeAgent:
         self.log_request("load", cwd=cwd, session_id=session_id, mcp_servers=mcp_servers or [])
         if self.scenario == "load_eof_before_response":
             os._exit(0)
+        if self.scenario == "load_malformed_update":
+            writer = self.client._conn._writer
+            writer.write((json.dumps({
+                "jsonrpc": "2.0", "method": "session/update",
+                "params": {"sessionId": session_id, "update": {"sessionUpdate": "agent_message_chunk"}},
+            }) + "\n").encode())
+            await writer.drain()
         if self.scenario in {"load_replay", "full_reconnect", "full_reconnect_log"}:
             for text in ("one", "two"):
                 await self.client.session_update(session_id, schema.AgentMessageChunk(

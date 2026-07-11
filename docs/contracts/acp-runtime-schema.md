@@ -29,6 +29,12 @@ settles that exact count in `finally`, and load waits for the known pre-response
 its lifecycle generation. This is a deterministic dispatcher barrier, not an event-loop sleep or
 quiet-time heuristic. A notification first observed after the load response is not valid load
 replay and is rejected by the sealed phase without a ledger write.
+The observer first validates exact `SessionNotification` params with the official SDK model;
+malformed params set only the compact `invalid_session_update` diagnostic and never increment the
+barrier or persist raw input. Each load resets the barrier generation, and settlement waiting is
+hard-bounded to a small timeout derived from the request timeout. A valid observed notification
+whose router callback never settles fails with a compact callback-settlement timeout, allowing the
+existing load controller to terminalize the replay and disconnect rather than hang.
 
 ## Read-only preflight
 

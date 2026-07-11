@@ -471,6 +471,44 @@ async def test_transport_load_response_waits_for_scheduled_replay_callbacks(tmp_
 
 
 @async_test
+async def test_transport_load_rejects_malformed_update_without_barrier_hang(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpTransport, AcpTransportError
+
+    client, sink = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "load_malformed_update"),
+        tmp_path, client, request_timeout=0.5,
+    )
+    await transport.initialize()
+    with pytest.raises(AcpTransportError, match="invalid_session_update"):
+        await asyncio.wait_for(transport.load_session("fake-session-1"), timeout=1)
+    await transport.close()
+    assert sink.updates == []
+
+
+@async_test
+async def test_transport_load_bounds_valid_update_callback_that_never_settles(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpTransport, AcpTransportError
+
+    class UnsettledClient(AgentDeckAcpClient):
+        async def session_update(self, session_id, update, **kwargs):
+            raise RuntimeError("router swallowed callback failure")
+
+    sink = FakeLedgerSink()
+    sink.session_id = "fake-session-1"
+    client = UnsettledClient(sink=sink, decide=lambda *_: PermissionDecision.cancelled("non_tty"))
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "load_replay"),
+        tmp_path, client, request_timeout=0.4,
+    )
+    await transport.initialize()
+    with pytest.raises(AcpTransportError, match="callback settlement timed out"):
+        await asyncio.wait_for(transport.load_session("fake-session-1"), timeout=1)
+    await transport.close()
+    assert sink.updates == []
+
+
+@async_test
 async def test_transport_resume_rejects_update_before_response(tmp_path: Path) -> None:
     from agentdeck.runtime.acp import AcpTransport, AcpTransportError
 

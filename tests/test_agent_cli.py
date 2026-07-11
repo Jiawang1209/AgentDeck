@@ -678,6 +678,31 @@ def test_acp_load_eof_terminalizes_replay_as_ambiguous(tmp_path: Path, monkeypat
     assert cli._derived_entity_state(state, "session", session_id, "created") == "disconnected"
 
 
+def test_acp_load_malformed_update_is_bounded_redacted_and_terminal(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    config_path = root / ".agentdeck" / "config.toml"
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    config_path.write_text(config_path.read_text(encoding="utf-8").replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "load_malformed_update"]',
+    ), encoding="utf-8")
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda value: value)
+
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "first", "--confirm"]) == 0
+    session_id = json.loads(capsys.readouterr().out)["session_id"]
+    assert cli.main(["protocol", "acp", "load", "--session-id", session_id, "--confirm"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "invalid_session_update" in captured.err
+    assert "sessionUpdate" not in captured.err
+    state = StateStore(root).load()
+    replay = state["protocol_turns"][-1]
+    assert cli._derived_entity_state(state, "turn", replay["turn_id"], replay["state"]) in {"failed", "ambiguous"}
+    assert cli._derived_entity_state(state, "session", session_id, "created") == "disconnected"
+    assert all("sessionUpdate" not in repr(item) for item in state["transport_updates"])
+
+
 def test_acp_reconnect_adapter_drift_blocks_before_spawn_and_write(tmp_path: Path, monkeypatch, capsys) -> None:
     root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
     config_path = root / ".agentdeck" / "config.toml"

@@ -86,12 +86,24 @@ class _SessionUpdateBarrier:
         self._pending = 0
         self._drained = asyncio.Event()
         self._drained.set()
+        self._error: str | None = None
+
+    def begin(self) -> None:
+        if self._pending:
+            raise AcpTransportError("ACP session update barrier is not settled")
+        self._error = None
+        self._drained.set()
 
     def observe(self, event: object) -> None:
         if getattr(event, "direction", None) is not StreamDirection.INCOMING:
             return
         message = getattr(event, "message", None)
         if isinstance(message, dict) and message.get("method") == "session/update":
+            try:
+                schema.SessionNotification.model_validate(message.get("params"))
+            except Exception:
+                self._error = "invalid_session_update"
+                return
             self._pending += 1
             self._drained.clear()
 
@@ -102,8 +114,13 @@ class _SessionUpdateBarrier:
         if self._pending == 0:
             self._drained.set()
 
-    async def wait(self) -> None:
-        await self._drained.wait()
+    async def wait(self, timeout: float) -> None:
+        try:
+            await asyncio.wait_for(self._drained.wait(), timeout=timeout)
+        except TimeoutError:
+            raise AcpTransportError("ACP session update callback settlement timed out") from None
+        if self._error is not None:
+            raise AcpTransportError(self._error)
 
 
 @dataclass(frozen=True)
@@ -180,6 +197,7 @@ class AcpTransport:
         if callable(set_update_settled):
             set_update_settled(self._update_barrier.settle)
         self._request_timeout = float(request_timeout)
+        self._callback_settlement_timeout = max(0.1, min(5.0, self._request_timeout / 4))
         self._cancel_timeout = float(cancel_timeout)
         self._close_grace = float(close_grace)
         self._terminate_grace = float(terminate_grace)
@@ -366,12 +384,13 @@ class AcpTransport:
             raise RuntimeError("ACP transport is not initialized")
         if type(native_session_id) is not str or not native_session_id:
             raise ValueError("native_session_id must be a non-empty string")
+        self._update_barrier.begin()
         await self._client.switch_update_phase("load_replay")
         try:
             await self._request(self._connection.load_session(
                 cwd=str(self._workspace), session_id=native_session_id, mcp_servers=[]
             ), eof_is_ambiguous=True)
-            await self._update_barrier.wait()
+            await self._update_barrier.wait(self._callback_settlement_timeout)
         finally:
             await self._client.switch_update_phase("sealed")
         callback_error = getattr(self._client, "take_callback_error", lambda: None)()
