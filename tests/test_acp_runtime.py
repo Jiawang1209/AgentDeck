@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
+import os
 from pathlib import Path
+import sys
 from typing import Any
 
 import pytest
@@ -12,6 +15,9 @@ from acp.exceptions import RequestError
 import agentdeck.runtime.acp_client as acp_client_module
 from agentdeck.runtime.acp_client import AgentDeckAcpClient, PermissionDecision
 from agentdeck.runtime.acp_mapping import MAX_ACP_TURN_PAYLOAD_BYTES, MAX_ACP_UPDATES_PER_TURN
+
+
+FAKE_AGENT = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
 
 
 def async_test(function: Any) -> Any:
@@ -384,3 +390,154 @@ async def test_all_unadvertised_callbacks_return_unsupported_without_side_effect
             await call
     assert not target.exists()
     assert client.on_connect(object()) is None
+
+
+def _transport_client(session_id: str = "fake-session-1") -> tuple[AgentDeckAcpClient, FakeLedgerSink]:
+    sink = FakeLedgerSink()
+    sink.session_id = session_id
+    return AgentDeckAcpClient(
+        sink=sink, decide=lambda *_: PermissionDecision.cancelled("non_tty")
+    ), sink
+
+
+@async_test
+async def test_transport_initializes_streams_and_completes_prompt(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpTransport
+
+    client, sink = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "stream_end_turn"), tmp_path, client
+    )
+    initialized = await transport.initialize()
+    session = await transport.new_session()
+    result = await transport.prompt(session.native_session_id, "hello")
+    await transport.close()
+
+    assert initialized.protocol_version == 1
+    assert initialized.client_capabilities == {"fs": None, "terminal": False}
+    assert session.native_session_id == "fake-session-1"
+    assert result.stop_reason == "end_turn"
+    assert result.outcome == "completed"
+    assert result.disconnect_reason == "clean_exit"
+    assert [item["payload"]["content"]["text"] for item in sink.updates] == ["hello"]
+
+
+@async_test
+async def test_transport_preserves_exact_argv_and_canonical_cwd(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpTransport
+
+    marker = tmp_path / "argv.json"
+    client, _ = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "record_argv", str(marker), "two words", "$(false)"),
+        tmp_path / ".",
+        client,
+    )
+    await transport.initialize()
+    await transport.close()
+    import json
+    recorded = json.loads(marker.read_text())
+    assert recorded["argv"] == ["two words", "$(false)"]
+    assert recorded["cwd"] == str(tmp_path.resolve())
+    assert "create_subprocess_shell" not in inspect.getsource(AcpTransport)
+
+
+@pytest.mark.parametrize("argv", [(), ("",), (sys.executable, 1)])
+def test_transport_rejects_non_exact_nonempty_argv(argv: tuple[object, ...], tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpTransport
+
+    client, _ = _transport_client()
+    with pytest.raises((TypeError, ValueError), match="argv"):
+        AcpTransport(argv, tmp_path, client)  # type: ignore[arg-type]
+
+
+@async_test
+async def test_transport_blocks_exact_protocol_version_mismatch(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpProtocolVersionError, AcpTransport
+
+    client, _ = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "version_mismatch"), tmp_path, client
+    )
+    with pytest.raises(AcpProtocolVersionError, match="protocol version"):
+        await transport.initialize()
+    await transport.close()
+
+
+@async_test
+async def test_transport_bounds_timeout_and_eof_as_ambiguous(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpAmbiguousOutcome, AcpRequestTimeout, AcpTransport
+
+    for scenario, error in [("timeout", AcpRequestTimeout), ("eof_before_response", AcpAmbiguousOutcome)]:
+        client, _ = _transport_client()
+        transport = AcpTransport(
+            (sys.executable, str(FAKE_AGENT), scenario), tmp_path, client,
+            request_timeout=0.5,
+        )
+        await transport.initialize()
+        session = await transport.new_session()
+        with pytest.raises(error):
+            await transport.prompt(session.native_session_id, "hello")
+        await transport.close()
+
+
+@async_test
+async def test_transport_rejects_malformed_or_oversize_frames(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpTransport, AcpTransportError
+
+    for scenario in ("malformed_frame", "oversize_frame"):
+        client, _ = _transport_client()
+        transport = AcpTransport(
+            (sys.executable, str(FAKE_AGENT), scenario), tmp_path, client,
+            request_timeout=0.5,
+        )
+        with pytest.raises(AcpTransportError):
+            await transport.initialize()
+        await transport.close()
+
+
+@async_test
+async def test_transport_bounds_and_redacts_stderr(tmp_path: Path, monkeypatch: Any) -> None:
+    from agentdeck.runtime.acp import MAX_ACP_STDERR_BYTES, AcpTransport
+
+    secret = "transport-secret-value"
+    monkeypatch.setenv("ACP_TEST_SECRET", secret)
+    client, _ = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "stderr_noise"), tmp_path, client
+    )
+    await transport.initialize()
+    await transport.close()
+    diagnostic = transport.stderr_diagnostic
+    assert len(diagnostic.encode()) <= MAX_ACP_STDERR_BYTES
+    assert secret not in diagnostic
+    assert "[REDACTED]" in diagnostic
+    assert "ACP_TEST_SECRET" not in repr(transport)
+
+
+@async_test
+async def test_transport_cancellation_sends_cancel_and_kills_only_child(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpTransport
+
+    marker = tmp_path / "cancelled"
+    client, _ = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "cancel_or_ignore_terminate", str(marker)),
+        tmp_path,
+        client,
+        request_timeout=5,
+        terminate_grace=0.05,
+        kill_grace=0.2,
+    )
+    await transport.initialize()
+    session = await transport.new_session()
+    prompt = asyncio.create_task(transport.prompt(session.native_session_id, "wait"))
+    await asyncio.sleep(0.05)
+    prompt.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await prompt
+    child_pid = transport.child_pid
+    await transport.close()
+    assert marker.read_text() == "cancelled"
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)

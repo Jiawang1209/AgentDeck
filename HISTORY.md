@@ -4,6 +4,13 @@
 
 ## 2026-07-12
 
+### Add a bounded ACP stdio client transport
+
+- **What**: add the official `agent-client-protocol==0.11.0` foreground subprocess transport with typed initialize/new/prompt results, exact ACP v1 negotiation, canonical workspace cwd, and deterministic fake-Agent process fixtures.
+- **Bounds**: adapter argv remains a non-empty tuple of exact non-empty strings and is passed without a shell; every SDK request is timeout-bounded, wire reads use the 64 KiB SDK transport limit, and stderr diagnostics are capped at 64 KiB and redact secret-like lines.
+- **Failure safety**: protocol mismatch, malformed or oversized frames, request timeout, and EOF during an active prompt are explicit failures; active EOF is ambiguous and never fabricated as `end_turn`. Cancellation sends `session/cancel`, then shutdown closes the connection and exact child stdin before bounded wait/terminate/kill escalation.
+- **Scope**: this slice does not add CLI or `StateStore` orchestration, does not install an ACP adapter, does not persist environment data, and does not change tmux defaults.
+
 ### Bridge ACP updates and permissions fail closed
 
 - **What**: add the official-SDK `AgentDeckAcpClient` callback boundary with injected `AcpLedgerSink` and `PermissionDecider`. Typed session updates cross the Task 4 allowlisted mapper exactly once; the sink remains the source of session/turn correlation, monotonic sequence, completion, and cumulative bounds enforcement.
