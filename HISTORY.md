@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Stabilize long tmux prompt submission
+
+- **类型**: real Mission acceptance fix + strict TDD + tmux input safety
+- **问题**: 真实 Task 10 第 5 步把约千字符、多行 Codex prompt 通过 literal `tmux send-keys` 写入 pane 后，固定 150ms 即发送 Enter；TUI 尚未完成 paste settle，输入停留在编辑区未提交，workflow 最终 `timed_out`。验收期间未手工补发输入，保留了可复现缺陷证据。
+- **What**: 新增纯函数 `input_submit_delay(text)`，按文本长度以每字符 1ms 计算，并夹在 250ms 到 1.5s；`send_input` 在任何 tmux 副作用前验证 string，继续严格使用一次 literal `-l <text>`、等待计算后的 bounded delay、再发送且只发送一次 `Enter`。逻辑不绑定 Codex/Claude，也不经 shell。
+- **TDD 证据**: 首轮 helper/长 prompt fake-TUI 7 failed / 1 passed RED，证明旧 150ms 无法满足 1000 字符的 1s settle threshold；补充副作用前类型校验再得到 1 failed / 8 passed RED。最小实现后 tmux/workflow/dispatch/Mission 交叉 214/214、全量 1247/1247 GREEN；compileall 与 diff check 干净。
+- **安全边界**: delay 始终有限，短输入保持低延迟、长输入不超过 1.5s；拒绝 bool/bytes/number/None，不会先向 pane 写坏输入；不增加第二次 Enter、不改变 prompt、不执行 shell，也不修改 workflow/approval/runtime 授权语义。
+
 ### Require Claude workspace chrome ordering
 
 - **类型**: P1 review fix + strict TDD + readiness safety
