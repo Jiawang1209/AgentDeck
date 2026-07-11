@@ -10,8 +10,10 @@
 - **What**: `StateStore` fresh state 新增 `agent_sessions`、`protocol_turns`、`transport_updates`、`permission_requests` 四个集合，并新增 session、turn、update、permission 的持久化、按 ID 查询和只读列表方法；旧 state 通过 `setdefault` 保持兼容，记录继续保持 JSON 可序列化。
 - **引用完整性**: 所有写入在 builder、save 和 event 前验证 session/turn 唯一且存在、turn 属于目标 session，并拒绝重复 `(turn_id, sequence)`；未知引用、session mismatch、损坏的重复 identity、重复 sequence 和 builder 输入错误均保持 state/events 文件存在状态与字节完全不变。
 - **并发与 durable audit**: 四条 protocol mutation 共享 `protocol-mutation.lock`，锁住 pending audit flush、load、validate、build、candidate identity 校验、record+outbox state save 和 event 处理，避免并发 read-modify-write 丢记录。`protocol_event_outbox` 与 record 在同一次 state save 持久化；event append 失败时调用仍成功并保留 audit pending，后续 mutation 或显式 flush 按 `event_id` 去重重放。event 已写但 outbox clear save 失败也可恢复，不会重复审计。
+- **拒绝零写**: mutation 在锁内先完成参数、引用和 candidate identity 校验，只有确认本次操作可接受后才 flush 旧 pending outbox；因此无效参数、未知引用和 ID 碰撞即使遇到历史 pending audit，也保持整个 `.agentdeck` 文件树路径与字节不变。显式 flush 和成功 mutation 仍会恢复 pending audit。
 - **审计边界**: update event 不记录业务 payload，permission event 不记录可能敏感的 target。record state 与 events JSONL 是可恢复的 durable outbox 协议，不宣称跨文件事务原子性。
 - **TDD 证据**: 初始状态契约先得到 11 failed / 57 passed RED，最小实现后 68/68 GREEN；质量审查回归随后稳定复现 9 failed / 66 passed，包括两线程并发丢 session、event 异常裂缝、缺 outbox replay 和四类 candidate ID 碰撞。共享锁与 durable outbox 修复后 `tests/test_protocol_runtime.py` 75/75 GREEN。
+- **P2 回归**: pending outbox 下 invalid params、unknown ref、candidate collision 三条拒绝路径先得到 3 failed / 75 passed RED，均复现拒绝操作意外 flush audit 并改写 state/events；调整校验与 flush 次序后聚焦测试 78/78 GREEN。
 
 ### Add protocol runtime domain records
 

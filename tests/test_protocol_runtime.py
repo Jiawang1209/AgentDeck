@@ -209,6 +209,14 @@ def _disk_snapshot(store: StateStore) -> tuple[bool, bytes | None, bool, bytes |
     )
 
 
+def _tree_snapshot(store: StateStore) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(store.deck_dir)): path.read_bytes()
+        for path in sorted(store.deck_dir.rglob("*"))
+        if path.is_file()
+    }
+
+
 def test_fresh_state_has_protocol_lineage_collections(tmp_path) -> None:
     state = StateStore(tmp_path).load()
     assert state["agent_sessions"] == []
@@ -446,3 +454,33 @@ def test_builder_candidate_id_collisions_are_zero_write(
         else:
             store.record_permission_request(session["session_id"], turn["turn_id"], "shell", "other", "low")
     assert _disk_snapshot(store) == before
+
+
+@pytest.mark.parametrize("rejection", ["invalid", "unknown", "collision"])
+def test_rejected_mutation_does_not_flush_pending_outbox(tmp_path, monkeypatch, rejection: str) -> None:
+    store = StateStore(tmp_path)
+    real_append_event = store.append_event
+    monkeypatch.setattr(store, "append_event", lambda event: (_ for _ in ()).throw(OSError("pending")))
+    existing = store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    monkeypatch.setattr(store, "append_event", real_append_event)
+    assert len(store.load()["protocol_event_outbox"]) == 1
+
+    if rejection == "collision":
+        real_builder = build_agent_session
+
+        def colliding_builder(*args, **kwargs):
+            candidate = real_builder(*args, **kwargs)
+            candidate["session_id"] = existing["session_id"]
+            return candidate
+
+        monkeypatch.setattr("agentdeck.state.build_agent_session", colliding_builder)
+
+    before = _tree_snapshot(store)
+    with pytest.raises((ValueError, KeyError)):
+        if rejection == "invalid":
+            store.record_agent_session("", "p", "t", None, "w", CAPABILITIES)
+        elif rejection == "unknown":
+            store.record_protocol_turn("ags_unknown", "msg")
+        else:
+            store.record_agent_session("b", "p", "t", None, "w", CAPABILITIES)
+    assert _tree_snapshot(store) == before
