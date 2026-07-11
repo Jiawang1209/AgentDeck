@@ -101,6 +101,15 @@ class FakeTmuxBackend:
         return pane_id in self.existing_panes
 
 
+def test_contract_protocol_runtime_cli_matches_module(capsys) -> None:
+    from agentdeck.contracts import protocol_runtime_contract_response
+
+    assert cli.main(["contract", "protocol-runtime", "--example"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    contract_path = Path(cli.__file__).resolve().parents[2] / "docs" / "contracts" / "protocol-runtime-schema.md"
+    assert payload == protocol_runtime_contract_response(contract_path, include_example=True)
+
+
 class WorkflowFakeBackend(FakeTmuxBackend):
     def __init__(self, reply_status: str = "completed") -> None:
         super().__init__()
@@ -5062,6 +5071,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "memory",
         "learning-review",
         "agent-runtime",
+        "protocol-runtime",
         "leader-chat",
         "leader-status",
         "leader-actions",

@@ -52,6 +52,7 @@ from .contracts import (
     mission_contract_response,
     plan_board_contract_response,
     project_view_contract_response,
+    protocol_runtime_contract_response,
     runtime_agent_controls,
     run_loop_contract_response,
     run_loop_all_contract_response,
@@ -4611,6 +4612,17 @@ def controls_command(args: argparse.Namespace) -> int:
 def contract_project_view_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "project-view-schema.md"
     payload = project_view_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_protocol_runtime_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "protocol-runtime-schema.md"
+    try:
+        payload = protocol_runtime_contract_response(contract_path, include_example=args.example)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     _print_json(payload)
     return 0
 
@@ -15231,6 +15243,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_project_view.add_argument("--example", action="store_true", help="Include a GUI-ready ProjectView example")
     contract_project_view.set_defaults(func=contract_project_view_command)
+    contract_protocol_runtime = contract_subparsers.add_parser(
+        "protocol-runtime",
+        help="Show protocol runtime status contract discovery metadata",
+    )
+    contract_protocol_runtime.add_argument(
+        "--example", action="store_true", help="Include a GUI-ready protocol runtime example"
+    )
+    contract_protocol_runtime.set_defaults(func=contract_protocol_runtime_command)
     contract_leader_chat = contract_subparsers.add_parser(
         "leader-chat",
         help="Show Leader chat response contract discovery metadata",

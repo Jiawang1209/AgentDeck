@@ -156,6 +156,12 @@ CONTRACT_INDEX_SPECS = (
         "agent-runtime-schema.md",
     ),
     (
+        "protocol-runtime",
+        "agentdeck contract protocol-runtime",
+        "agentdeck contract protocol-runtime --example",
+        "protocol-runtime-schema.md",
+    ),
+    (
         "leader-chat",
         "agentdeck contract leader-chat",
         "agentdeck contract leader-chat --example",
@@ -294,6 +300,27 @@ PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS = ("count", "pending_count", "by_status"
 PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS = (
     "permission_id", "session_id", "turn_id", "tool_name", "risk", "status", "decision", "created_at",
 )
+
+PROTOCOL_RUNTIME_CONTRACT_VERSION = "protocol-runtime/v1"
+PROTOCOL_RUNTIME_RESPONSE_FIELDS = (
+    "mode", "contract_version", "project", "runtime_backend", "agent_sessions",
+    "protocol_turns", "transport_updates", "permission_requests", "controls",
+)
+PROTOCOL_RUNTIME_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
+PROTOCOL_RUNTIME_CAPABILITY_FIELDS = (
+    "structured_sessions", "streaming_updates", "structured_tools",
+    "permission_requests", "resume_session", "observable_terminal",
+)
+PROTOCOL_RUNTIME_SESSION_STATES = (
+    "created", "connecting", "ready", "busy", "reconnecting", "stopped", "failed",
+)
+PROTOCOL_RUNTIME_TURN_STATES = (
+    "created", "submitted", "streaming", "waiting_permission", "completed", "blocked", "failed", "ambiguous",
+)
+PROTOCOL_RUNTIME_UPDATE_KINDS = (
+    "progress", "text", "tool_call", "tool_result", "permission_request", "artifact", "completion", "error",
+)
+PROTOCOL_RUNTIME_PERMISSION_STATUSES = ("pending", "approved", "denied", "expired")
 
 PROJECT_VIEW_LEADER_FIELDS = (
     "agent_id",
@@ -2621,6 +2648,60 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
             payload[f"example_{name}_fields"] = list(example[name])
             payload[f"example_{name[:-1]}_item_fields"] = list(example[name]["items"][0])
         payload["example_project_view"] = example
+    return payload
+
+
+def protocol_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "contract_version": PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        "status_command": "agentdeck protocol status",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(PROTOCOL_RUNTIME_RESPONSE_FIELDS),
+        "agent_sessions_fields": list(PROJECT_VIEW_AGENT_SESSIONS_FIELDS),
+        "agent_session_item_fields": list(PROJECT_VIEW_AGENT_SESSION_ITEM_FIELDS),
+        "protocol_turns_fields": list(PROJECT_VIEW_PROTOCOL_TURNS_FIELDS),
+        "protocol_turn_item_fields": list(PROJECT_VIEW_PROTOCOL_TURN_ITEM_FIELDS),
+        "transport_updates_fields": list(PROJECT_VIEW_TRANSPORT_UPDATES_FIELDS),
+        "transport_update_item_fields": list(PROJECT_VIEW_TRANSPORT_UPDATE_ITEM_FIELDS),
+        "permission_requests_fields": list(PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS),
+        "permission_request_item_fields": list(PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS),
+        "capability_fields": list(PROTOCOL_RUNTIME_CAPABILITY_FIELDS),
+        "control_fields": list(PROTOCOL_RUNTIME_CONTROL_FIELDS),
+        "session_states": list(PROTOCOL_RUNTIME_SESSION_STATES),
+        "turn_states": list(PROTOCOL_RUNTIME_TURN_STATES),
+        "update_kinds": list(PROTOCOL_RUNTIME_UPDATE_KINDS),
+        "permission_statuses": list(PROTOCOL_RUNTIME_PERMISSION_STATUSES),
+        "project_view_contract": "agentdeck contract project-view",
+        "workbench_contract": "agentdeck contract workbench",
+    }
+
+
+def protocol_runtime_contract_response(
+    contract_path: Path, include_example: bool = False
+) -> dict[str, object]:
+    payload = protocol_runtime_contract_payload(contract_path)
+    if include_example:
+        example = protocol_runtime_example()
+        validation = validate_protocol_runtime_contract(example)
+        if not validation["ok"]:
+            raise ValueError("invalid protocol runtime example: " + "; ".join(validation["errors"]))
+        payload.update({
+            "example": True,
+            "example_response_fields": list(example),
+            "example_agent_sessions_fields": list(example["agent_sessions"]),
+            "example_agent_session_item_fields": list(example["agent_sessions"]["items"][0]),
+            "example_protocol_turns_fields": list(example["protocol_turns"]),
+            "example_protocol_turn_item_fields": list(example["protocol_turns"]["items"][0]),
+            "example_transport_updates_fields": list(example["transport_updates"]),
+            "example_transport_update_item_fields": list(example["transport_updates"]["items"][0]),
+            "example_permission_requests_fields": list(example["permission_requests"]),
+            "example_permission_request_item_fields": list(example["permission_requests"]["items"][0]),
+            "example_capability_fields": list(example["agent_sessions"]["items"][0]["capabilities"]),
+            "example_control_fields": list(example["controls"][0]),
+            "example_protocol_runtime": example,
+        })
     return payload
 
 
@@ -6285,10 +6366,10 @@ def _validate_project_view_protocol_summaries(
         "permission_requests": (PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS, PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS, "by_status", "status", "permission_id"),
     }
     enum_fields = {
-        ("agent_sessions", "state"): {"created", "connecting", "ready", "busy", "reconnecting", "stopped", "failed"},
-        ("protocol_turns", "state"): {"created", "submitted", "streaming", "waiting_permission", "completed", "blocked", "failed", "ambiguous"},
-        ("transport_updates", "kind"): {"progress", "text", "tool_call", "tool_result", "permission_request", "artifact", "completion", "error"},
-        ("permission_requests", "status"): {"pending", "approved", "denied", "expired"},
+        ("agent_sessions", "state"): set(PROTOCOL_RUNTIME_SESSION_STATES),
+        ("protocol_turns", "state"): set(PROTOCOL_RUNTIME_TURN_STATES),
+        ("transport_updates", "kind"): set(PROTOCOL_RUNTIME_UPDATE_KINDS),
+        ("permission_requests", "status"): set(PROTOCOL_RUNTIME_PERMISSION_STATUSES),
     }
     for name, (required_fields, item_fields, group_field, item_group_field, identity_field) in specs.items():
         summary = payload.get(name)
@@ -6381,6 +6462,86 @@ def _validate_project_view_protocol_summaries(
                 and item_counts != summary[group_field]
             ):
                 errors.append(f"{name} items distribution must match {group_field}")
+
+
+def validate_protocol_runtime_contract(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return {"ok": False, "errors": ["protocol runtime response must be an object"]}
+    errors: list[str] = []
+    for field in PROTOCOL_RUNTIME_RESPONSE_FIELDS:
+        if field not in payload:
+            errors.append(f"missing protocol runtime field: {field}")
+    for field in sorted(set(payload) - set(PROTOCOL_RUNTIME_RESPONSE_FIELDS)):
+        errors.append(f"protocol runtime response has unexpected field: {field}")
+    if payload.get("mode") != "protocol_runtime_status":
+        errors.append("mode must be protocol_runtime_status")
+    if payload.get("contract_version") != PROTOCOL_RUNTIME_CONTRACT_VERSION:
+        errors.append(f"contract_version must be {PROTOCOL_RUNTIME_CONTRACT_VERSION}")
+    for field in ("project", "runtime_backend"):
+        value = payload.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{field} must be a non-empty string")
+
+    _validate_project_view_protocol_summaries(errors, payload)
+    summaries = {
+        name: payload.get(name) if isinstance(payload.get(name), dict) else {}
+        for name in ("agent_sessions", "protocol_turns", "transport_updates", "permission_requests")
+    }
+    sessions = {
+        item.get("session_id"): item
+        for item in summaries["agent_sessions"].get("items", [])
+        if isinstance(item, dict) and isinstance(item.get("session_id"), str)
+    }
+    turns = {
+        item.get("turn_id"): item
+        for item in summaries["protocol_turns"].get("items", [])
+        if isinstance(item, dict) and isinstance(item.get("turn_id"), str)
+    }
+    for index, turn in enumerate(summaries["protocol_turns"].get("items", [])):
+        if isinstance(turn, dict) and turn.get("session_id") not in sessions:
+            errors.append(f"protocol_turns.items[{index}].session_id must reference agent_sessions")
+    for name in ("transport_updates", "permission_requests"):
+        for index, item in enumerate(summaries[name].get("items", [])):
+            if not isinstance(item, dict):
+                continue
+            turn = turns.get(item.get("turn_id"))
+            if turn is None:
+                errors.append(f"{name}.items[{index}].turn_id must reference protocol_turns")
+            elif item.get("session_id") != turn.get("session_id"):
+                errors.append(f"{name}.items[{index}].session_id must match protocol_turns")
+            if name == "permission_requests" and item.get("status") == "pending" and item.get("decision") is not None:
+                errors.append("pending permission_requests items must have decision null")
+
+    controls = payload.get("controls")
+    allowed_commands = {
+        "agentdeck protocol status", "agentdeck status", "agentdeck contract protocol-runtime",
+    }
+    if not isinstance(controls, list):
+        errors.append("controls must be a list")
+    else:
+        for index, control in enumerate(controls):
+            if not isinstance(control, dict):
+                errors.append(f"controls[{index}] must be an object")
+                continue
+            if set(control) != set(PROTOCOL_RUNTIME_CONTROL_FIELDS):
+                errors.append(f"controls[{index}] fields must match protocol runtime control fields")
+            if control.get("kind") != "inspect":
+                errors.append(f"controls[{index}].kind must be inspect")
+            if control.get("command") not in allowed_commands:
+                errors.append(f"controls[{index}].command is not allowed")
+            if control.get("safety") != "inspect":
+                errors.append(f"controls[{index}].safety must be inspect")
+            if control.get("enabled") is not True:
+                errors.append(f"controls[{index}].enabled must be true")
+            if control.get("blocker") is not None:
+                errors.append(f"controls[{index}].blocker must be null")
+            if not isinstance(control.get("label"), str) or not control["label"].strip():
+                errors.append(f"controls[{index}].label must be a non-empty string")
+    if isinstance(controls, list) and {
+        control.get("command") for control in controls if isinstance(control, dict)
+    } != allowed_commands:
+        errors.append("controls must expose the exact protocol runtime inspect commands")
+    return {"ok": not errors, "errors": errors}
 
 
 def _validate_project_view_mission_items(
@@ -15492,5 +15653,24 @@ def artifacts_example() -> dict[str, object]:
                 "enabled": True,
                 "blocker": None,
             }
+        ],
+    }
+
+
+def protocol_runtime_example() -> dict[str, object]:
+    project_view = project_view_example()
+    return {
+        "mode": "protocol_runtime_status",
+        "contract_version": PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        "project": "example",
+        "runtime_backend": "tmux",
+        "agent_sessions": deepcopy(project_view["agent_sessions"]),
+        "protocol_turns": deepcopy(project_view["protocol_turns"]),
+        "transport_updates": deepcopy(project_view["transport_updates"]),
+        "permission_requests": deepcopy(project_view["permission_requests"]),
+        "controls": [
+            {"kind": "inspect", "label": "Inspect protocol runtime", "command": "agentdeck protocol status", "safety": "inspect", "enabled": True, "blocker": None},
+            {"kind": "inspect", "label": "Inspect ProjectView", "command": "agentdeck status", "safety": "inspect", "enabled": True, "blocker": None},
+            {"kind": "inspect", "label": "Inspect protocol runtime contract", "command": "agentdeck contract protocol-runtime", "safety": "inspect", "enabled": True, "blocker": None},
         ],
     }

@@ -4647,3 +4647,9 @@
 - 分析内容覆盖技术栈、源码结构、核心机制、优势、风险、可学习内容和对 AgentDeck 的分阶段建议。
 - 新增 `.gitignore`，避免把 `References/`、zip 包和 `.DS_Store` 纳入 git。
 - 本地验证：检查四份 Markdown 文件存在、统计行数、检查 heading，并确认 git 工作区只包含预期文档。
+
+### Publish the protocol runtime contract
+
+- 新增 `protocol-runtime/v1` discovery、linked example 和严格 validator，复用 ProjectView 的四类 protocol summary 校验并补充 lineage、pending permission 与只读 controls 边界。
+- 新增 `agentdeck contract protocol-runtime [--example]`；仅发布契约，不实现后续 `agentdeck protocol status`。
+- 将 protocol runtime 加入 contract index，并新增 schema 文档与 TDD/CLI 覆盖。

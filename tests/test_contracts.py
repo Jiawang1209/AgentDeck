@@ -197,6 +197,66 @@ from agentdeck.contracts import (
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
 
 
+def test_protocol_runtime_contract_discovery_and_example(tmp_path: Path) -> None:
+    from agentdeck.contracts import (
+        PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        PROTOCOL_RUNTIME_RESPONSE_FIELDS,
+        protocol_runtime_contract_response,
+        protocol_runtime_example,
+        validate_protocol_runtime_contract,
+    )
+
+    contract_path = tmp_path / "protocol-runtime-schema.md"
+    contract_path.write_text("# Protocol Runtime Contract\n", encoding="utf-8")
+    payload = protocol_runtime_contract_response(contract_path, include_example=True)
+    example = protocol_runtime_example()
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["contract_version"] == PROTOCOL_RUNTIME_CONTRACT_VERSION == "protocol-runtime/v1"
+    assert payload["status_command"] == "agentdeck protocol status"
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["response_fields"] == list(PROTOCOL_RUNTIME_RESPONSE_FIELDS)
+    assert payload["example_protocol_runtime"] == example
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(example) == set(PROTOCOL_RUNTIME_RESPONSE_FIELDS)
+    assert example["project"] == "example"
+    assert example["runtime_backend"] == "tmux"
+    assert validate_protocol_runtime_contract(example) == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (lambda p: p.pop("agent_sessions"), "missing protocol runtime field: agent_sessions"),
+        (lambda p: p["agent_sessions"].update({"count": True}), "agent_sessions.count must be a non-negative integer"),
+        (lambda p: p["transport_updates"]["items"][0].update({"sequence": True}), "transport_updates.items[0].sequence has invalid type"),
+        (lambda p: p["protocol_turns"]["items"][0].update({"state": "bogus"}), "protocol_turns.items[0].state is invalid"),
+        (lambda p: p["transport_updates"]["items"][0].update({"payload": "secret"}), "transport_updates.items[0] has unexpected field: payload"),
+        (lambda p: p["permission_requests"]["items"][0].update({"target": "secret"}), "permission_requests.items[0] has unexpected field: target"),
+        (lambda p: p["permission_requests"]["items"][0].update({"decision": "approve"}), "pending permission_requests items must have decision null"),
+        (lambda p: p["protocol_turns"]["items"][0].update({"session_id": "ags_missing"}), "protocol_turns.items[0].session_id must reference agent_sessions"),
+        (lambda p: p["transport_updates"]["items"][0].update({"turn_id": "trn_missing"}), "transport_updates.items[0].turn_id must reference protocol_turns"),
+        (lambda p: p["controls"][0].update({"command": "agentdeck protocol mutate"}), "controls[0].command is not allowed"),
+    ],
+)
+def test_protocol_runtime_validator_rejects_drift(mutate, expected: str) -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    mutate(payload)
+    result = validate_protocol_runtime_contract(payload)
+    assert expected in result["errors"]
+
+
+def test_protocol_runtime_transport_is_extensible_string() -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    payload["agent_sessions"]["items"][0]["transport"] = "future-native-v2"
+    assert validate_protocol_runtime_contract(payload) == {"ok": True, "errors": []}
+
+
 def _attach_leader_status_registry_card(payload: dict[str, object], status_card: dict[str, object]) -> None:
     workbench_card = workbench_example()
     refresh_control_id = next(
@@ -258,6 +318,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "memory-schema.md",
         "learning-review-schema.md",
         "agent-runtime-schema.md",
+        "protocol-runtime-schema.md",
         "leader-chat-schema.md",
         "leader-status-schema.md",
         "leader-actions-schema.md",
@@ -279,7 +340,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 29
+    assert payload["count"] == 30
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -301,6 +362,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "memory",
         "learning-review",
         "agent-runtime",
+        "protocol-runtime",
         "leader-chat",
         "leader-status",
         "leader-actions",

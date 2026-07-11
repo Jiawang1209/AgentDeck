@@ -51,6 +51,7 @@ The index currently lists these contract names in order:
 - `memory`
 - `learning-review`
 - `agent-runtime`
+- `protocol-runtime`
 - `leader-chat`
 - `leader-status`
 - `leader-actions`
