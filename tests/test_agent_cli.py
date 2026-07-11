@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import io
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -354,6 +356,159 @@ def test_acp_preflight_normalizes_relative_paths_and_windows_target_suffix(
     assert Path(payload["node"]["executable_path"]).is_absolute()
     assert payload["node"]["required"] is True
     assert payload["node"]["ready"] is True
+
+
+def test_acp_run_requires_confirm_and_writes_nothing(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch)
+    before = snapshot_tree_metadata(root)
+
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "hello"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--confirm" in captured.err
+    assert snapshot_tree_metadata(root) == before
+
+
+def test_acp_run_not_ready_preflight_spawns_nothing_and_writes_nothing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch)
+    before = snapshot_tree_metadata(root)
+    spawned = False
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (False, None))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda _command: None)
+
+    class ForbiddenTransport:
+        def __init__(self, *_args, **_kwargs):
+            nonlocal spawned
+            spawned = True
+
+    monkeypatch.setattr(cli, "AcpTransport", ForbiddenTransport)
+    assert cli.main([
+        "protocol", "acp", "run", "--agent", "planner", "--prompt", "hello", "--confirm"
+    ]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "not ready" in captured.err
+    assert spawned is False
+    assert snapshot_tree_metadata(root) == before
+
+
+def test_foreground_permission_decider_renders_disabled_always_and_selects_once() -> None:
+    class TtyInput(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    stderr = io.StringIO()
+    options = [
+        cli.schema.PermissionOption(optionId="allow", name="Allow once", kind="allow_once"),
+        cli.schema.PermissionOption(optionId="always", name="Always", kind="allow_always"),
+        cli.schema.PermissionOption(optionId="reject", name="Reject once", kind="reject_once"),
+    ]
+    decision = cli.foreground_permission_decider(
+        {"tool_name": "Edit", "target": "notes.txt", "risk": "high"},
+        options,
+        stdin=TtyInput("1\n"),
+        stderr=stderr,
+        timeout_seconds=60,
+    )
+
+    assert decision.option_id == "allow"
+    assert "1. Allow once" in stderr.getvalue()
+    assert "2. Always [disabled]" in stderr.getvalue()
+
+
+def test_foreground_permission_decider_non_tty_and_invalid_exhaustion_fail_closed() -> None:
+    options = [cli.schema.PermissionOption(optionId="allow", name="Allow", kind="allow_once")]
+    non_tty = io.StringIO("1\n")
+    assert cli.foreground_permission_decider({}, options, stdin=non_tty, stderr=io.StringIO()).reason == "non_tty"
+
+    class TtyInput(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    decision = cli.foreground_permission_decider(
+        {}, options, stdin=TtyInput("x\n9\n0\n"), stderr=io.StringIO()
+    )
+    assert decision.reason == "invalid_input_exhausted"
+
+
+def test_acp_run_prints_one_validated_json_document(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    config_path = root / ".agentdeck" / "config.toml"
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    text = config_path.read_text(encoding="utf-8").replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "stream_end_turn"]',
+    )
+    config_path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+
+    assert cli.main([
+        "protocol", "acp", "run", "--agent", "planner", "--prompt", "hello", "--confirm"
+    ]) == 0
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert captured.out.count("\n{") == 0
+    assert payload["mode"] == "acp_run"
+    assert payload["turn_state"] == "completed"
+    assert payload["stop_reason"] == "end_turn"
+    state = StateStore(root).load()
+    assert state["agent_sessions"][0]["transport"] == "acp-adapter"
+    assert [item["to_state"] for item in state["protocol_state_transitions"]] == [
+        "ready", "submitted", "busy", "streaming", "completed", "ready", "disconnected"
+    ]
+
+
+def test_acp_run_non_tty_permission_is_persisted_denied_before_completion(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    config_path = root / ".agentdeck" / "config.toml"
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            f'transport_command = ["{sys.executable}", "--stdio"]',
+            f'transport_command = ["{sys.executable}", "{fixture}", "permission"]',
+        ), encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO())
+
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "hello", "--confirm"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["permission_count"] == 1
+    state = StateStore(root).load()
+    permission = state["permission_requests"][0]
+    transitions = state["protocol_state_transitions"]
+    denied_index = next(i for i, item in enumerate(transitions) if item["entity_id"] == permission["permission_id"])
+    completion_index = next(i for i, item in enumerate(transitions) if item["entity_type"] == "turn" and item["to_state"] == "completed")
+    assert transitions[denied_index]["to_state"] == "denied"
+    assert transitions[denied_index]["reason"] == "non_tty"
+    assert denied_index < completion_index
+
+
+def test_acp_run_validator_failure_has_no_stdout(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    config_path = root / ".agentdeck" / "config.toml"
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    config_path.write_text(config_path.read_text(encoding="utf-8").replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "stream_end_turn"]',
+    ), encoding="utf-8")
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+    monkeypatch.setattr(cli, "validate_acp_runtime_contract", lambda _payload: {"ok": False, "errors": ["forced"]})
+
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "hello", "--confirm"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "forced" in captured.err
 
 
 def test_existing_agent_defaults_to_tmux_transport(tmp_path: Path) -> None:

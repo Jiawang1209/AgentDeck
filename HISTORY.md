@@ -4,6 +4,14 @@
 
 ## 2026-07-12
 
+### Run one governed ACP prompt turn
+
+- **What**: add `agentdeck protocol acp run --agent <id> --prompt <text> --confirm` for one foreground initialize/new/prompt lifecycle using the explicitly configured adapter argv. Native session identity, negotiated capabilities, prompt updates, exact stop reason, and disconnect are recorded through the existing append-only protocol ledger.
+- **Safety order**: configuration, explicit confirmation, and read-only readiness checks all complete before store mutation or process spawn. The session is recorded only after `session/new` returns its opaque native ID; run output is rebuilt from persisted facts and validated before one stdout write.
+- **Permissions**: numbered choices render on stderr. Only current `allow_once` and `reject_once` options are selectable; always options remain visible and disabled. Non-TTY, EOF, timeout, Ctrl-C, and three invalid entries fail closed, with the permission decision persisted before the ACP response returns.
+- **Bounds and truth**: mapped updates remain sequence- and payload-bounded, completion is emitted only from the prompt response `stopReason`, and every created session is transitioned to disconnected during cleanup. Load and resume remain out of scope.
+- **TDD**: focused fake-Agent tests cover confirmation and readiness zero-write gates, successful single-document output, non-TTY permission denial ordering, disabled choices, invalid-input exhaustion, and validator failure with empty stdout.
+
 ### Publish ACP runtime preflight and contract
 
 - **What**: add `acp-runtime/v1` discovery/example/validator, `agentdeck contract acp-runtime [--example]`, and nested `agentdeck protocol acp preflight --agent <id>` for one explicitly configured ACP Agent. Contract index and workbench contract discovery now expose the new schema.

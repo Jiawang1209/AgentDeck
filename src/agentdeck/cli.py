@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict, replace
 import argparse
+import asyncio
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -12,8 +13,12 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import select
 import sys
 import time
+from typing import Any, TextIO
+
+from acp import schema
 
 from .config import (
     config_path,
@@ -107,7 +112,7 @@ from .contracts import (
     workflow_contract_response,
 )
 from .autonomy import run_loop_gate, select_auto_approvals
-from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, utc_now
+from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, new_id, utc_now
 from .mission import mission_intent, workbench_mission_card
 from .mission_orchestration import (
     MissionPreviewError,
@@ -123,6 +128,9 @@ from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provid
 from .dashboard import render_workbench_dashboard
 from .history import render_history_markdown
 from .runtime import TmuxBackend
+from .runtime.acp import AcpAmbiguousOutcome, AcpRequestTimeout, AcpTransport, AcpTransportError
+from .runtime.acp_client import AgentDeckAcpClient, PermissionDecision
+from .runtime.acp_mapping import ensure_turn_within_bounds, map_stop_reason
 from .tui import TuiModel, run_tui
 from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import, resolve_skill_dependencies
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
@@ -1136,6 +1144,270 @@ def protocol_acp_preflight_command(args: argparse.Namespace) -> int:
             {"kind": "inspect", "label": "Inspect protocol runtime", "command": "agentdeck protocol status", "safety": "inspect", "enabled": True, "blocker": None},
         ],
     }
+    validation = validate_acp_runtime_contract(payload)
+    if not validation["ok"]:
+        print("ACP runtime contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def _acp_readiness(agent: AgentSpec) -> list[str]:
+    blockers: list[str] = []
+    sdk_present, sdk_version = _probe_acp_sdk()
+    if not sdk_present:
+        blockers.append("ACP Python SDK is unavailable or unusable")
+    elif sdk_version != ACP_RUNTIME_SDK_VERSION:
+        blockers.append(f"ACP Python SDK version must be {ACP_RUNTIME_SDK_VERSION}")
+    if not agent.transport_command or _resolved_executable(agent.transport_command[0]) is None:
+        blockers.append("ACP adapter executable was not found")
+    if agent.transport_command and acp_executable_basename(agent.transport_command[0]) == "claude-agent-acp":
+        node = _resolved_executable("node")
+        version = _node_version_from_executable(node)
+        major = int(version.split(".", 1)[0]) if version and version.split(".", 1)[0].isdigit() else None
+        if node is None or major is None or major < 22:
+            blockers.append("claude-agent-acp requires Node >=22")
+    return blockers
+
+
+def foreground_permission_decider(
+    request: object,
+    options: list[schema.PermissionOption],
+    *,
+    stdin: TextIO = sys.stdin,
+    stderr: TextIO = sys.stderr,
+    timeout_seconds: float = 60.0,
+) -> PermissionDecision:
+    if not stdin.isatty():
+        return PermissionDecision.cancelled("non_tty")
+    summary = request if isinstance(request, dict) else {}
+    print(
+        f"ACP permission: {summary.get('tool_name') or summary.get('title') or 'unknown tool'} "
+        f"target={summary.get('target', 'unknown')} risk={summary.get('risk', 'unknown')}",
+        file=stderr,
+    )
+    enabled: dict[int, str] = {}
+    for index, option in enumerate(options, 1):
+        supported = option.kind in {"allow_once", "reject_once"}
+        suffix = "" if supported else " [disabled]"
+        print(f"{index}. {option.name}{suffix}", file=stderr)
+        if supported:
+            enabled[index] = option.option_id
+    stderr.flush()
+    deadline = time.monotonic() + timeout_seconds
+    for _ in range(3):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return PermissionDecision.cancelled("timeout")
+        try:
+            if hasattr(stdin, "fileno") and not isinstance(stdin, __import__("io").StringIO):
+                ready, _, _ = select.select([stdin], [], [], remaining)
+                if not ready:
+                    return PermissionDecision.cancelled("timeout")
+            line = stdin.readline()
+        except (EOFError, KeyboardInterrupt):
+            return PermissionDecision.cancelled("ctrl_c" if sys.exc_info()[0] is KeyboardInterrupt else "eof")
+        if line == "":
+            return PermissionDecision.cancelled("eof")
+        try:
+            choice = int(line.strip())
+        except ValueError:
+            choice = -1
+        if choice in enabled:
+            return PermissionDecision.select(enabled[choice])
+        print("Invalid or disabled selection.", file=stderr)
+        stderr.flush()
+    return PermissionDecision.cancelled("invalid_input_exhausted")
+
+
+class _AcpRunLedgerSink:
+    def __init__(self, store: StateStore) -> None:
+        self.store = store
+        self.native_session_id: str | None = None
+        self.session_id: str | None = None
+        self.turn_id: str | None = None
+        self.sequence = 0
+        self.payload_bytes = 0
+        self.turn_state = "created"
+        self.pending_by_tool: dict[str, dict[str, Any]] = {}
+
+    def activate(self, native_session_id: str, session_id: str, turn_id: str) -> None:
+        self.native_session_id, self.session_id, self.turn_id = native_session_id, session_id, turn_id
+        self.turn_state = "submitted"
+
+    def _correlate(self, native_session_id: str) -> tuple[str, str]:
+        if native_session_id != self.native_session_id or self.session_id is None or self.turn_id is None:
+            raise ValueError("ACP session correlation mismatch")
+        return self.session_id, self.turn_id
+
+    def _transition_turn(self, to_state: str, reason: str | None = None) -> None:
+        assert self.turn_id is not None
+        self.store.record_protocol_transition("turn", self.turn_id, self.turn_state, to_state, reason, {})
+        self.turn_state = to_state
+
+    async def append_update(self, native_session_id: str, kind: str, payload: dict[str, Any]) -> object:
+        session_id, turn_id = self._correlate(native_session_id)
+        encoded = len(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+        ensure_turn_within_bounds(self.payload_bytes + encoded, self.sequence + 1)
+        if self.turn_state == "submitted":
+            self._transition_turn("streaming", "session_update_received")
+        record = self.store.record_transport_update(session_id, turn_id, self.sequence, kind, payload)
+        self.sequence += 1
+        self.payload_bytes += encoded
+        return record
+
+    async def append_permission(
+        self, native_session_id: str, summary: dict[str, Any], options: list[schema.PermissionOption]
+    ) -> object:
+        session_id, turn_id = self._correlate(native_session_id)
+        permission = self.store.record_permission_request(
+            session_id, turn_id, summary.get("title") or summary.get("kind") or "unknown",
+            summary.get("target", "unknown"), summary["risk"],
+        )
+        self.pending_by_tool[summary["tool_call_id"]] = permission
+        payload = {
+            "permission_id": permission["permission_id"], "tool_call_id": summary["tool_call_id"],
+            "risk": summary["risk"],
+        }
+        encoded = len(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+        ensure_turn_within_bounds(self.payload_bytes + encoded, self.sequence + 1)
+        self.store.record_transport_update(
+            session_id, turn_id, self.sequence, "permission_request", payload
+        )
+        self.sequence += 1
+        self.payload_bytes += encoded
+        if self.turn_state in {"submitted", "streaming"}:
+            self._transition_turn("waiting_permission", "permission_requested")
+        return {**summary, "permission_id": permission["permission_id"]}
+
+    async def append_permission_decision(
+        self, native_session_id: str, tool_call_id: str, decision: PermissionDecision
+    ) -> None:
+        self._correlate(native_session_id)
+        permission = self.pending_by_tool.pop(tool_call_id)
+        target = "expired" if decision.reason == "timeout" else decision.ledger_status
+        self.store.record_protocol_transition(
+            "permission", permission["permission_id"], "pending", target, decision.reason, {}
+        )
+        if self.turn_state == "waiting_permission":
+            self._transition_turn("streaming", "permission_settled")
+
+
+def _derived_entity_state(state: dict[str, Any], entity_type: str, entity_id: str, base: str) -> str:
+    current = base
+    for transition in state.get("protocol_state_transitions", []):
+        if transition.get("entity_type") == entity_type and transition.get("entity_id") == entity_id:
+            current = transition["to_state"]
+    return current
+
+
+async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateStore, prompt: str) -> dict[str, Any]:
+    sink = _AcpRunLedgerSink(store)
+    client = AgentDeckAcpClient(
+        sink=sink,
+        decide=lambda pending, options: foreground_permission_decider(
+            pending, options, stdin=sys.stdin, stderr=sys.stderr
+        ),
+    )
+    transport = AcpTransport(agent.transport_command, project_root(), client)
+    session: dict[str, Any] | None = None
+    turn: dict[str, Any] | None = None
+    stop_reason: str | None = None
+    disconnect_reason = "clean_exit"
+    initialized = None
+    try:
+        initialized = await transport.initialize()
+        native = await transport.new_session()
+        session = store.record_agent_session(
+            agent.agent_id, agent.provider, "acp-adapter", native.native_session_id,
+            str(project_root().resolve()), initialized.capabilities,
+        )
+        store.record_protocol_transition("session", session["session_id"], "created", "ready", "session_new_completed", {})
+        turn = store.record_protocol_turn(session["session_id"], new_id("msg"), "prompt")
+        store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", "prompt_submitted", {})
+        sink.activate(native.native_session_id, session["session_id"], turn["turn_id"])
+        store.record_protocol_transition("session", session["session_id"], "ready", "busy", "prompt_started", {})
+        result = await transport.prompt(native.native_session_id, prompt)
+        stop_reason = result.stop_reason
+        target_state, reason = map_stop_reason(stop_reason)
+        completion_payload = {"stop_reason": stop_reason}
+        completion_bytes = len(json.dumps(completion_payload, sort_keys=True).encode("utf-8"))
+        ensure_turn_within_bounds(sink.payload_bytes + completion_bytes, sink.sequence + 1)
+        store.record_transport_update(session["session_id"], turn["turn_id"], sink.sequence, "completion", completion_payload)
+        sink.sequence += 1
+        sink._transition_turn(target_state, reason)
+        store.record_protocol_transition("session", session["session_id"], "busy", "ready", "prompt_finished", {})
+    except AcpAmbiguousOutcome as error:
+        disconnect_reason = "unexpected_eof"
+        if turn is not None and sink.turn_state not in {"completed", "blocked", "failed", "ambiguous"}:
+            sink._transition_turn("ambiguous", "unexpected_eof")
+        print(str(error), file=sys.stderr)
+    except (AcpRequestTimeout, AcpTransportError, asyncio.CancelledError) as error:
+        disconnect_reason = "timeout" if isinstance(error, AcpRequestTimeout) else "failed"
+        if turn is not None and sink.turn_state not in {"completed", "blocked", "failed", "ambiguous"}:
+            sink._transition_turn("failed", disconnect_reason)
+        print(str(error), file=sys.stderr)
+    finally:
+        await transport.close()
+        if transport.stderr_diagnostic:
+            print(transport.stderr_diagnostic, file=sys.stderr)
+        if session is not None:
+            state = store.load()
+            current = _derived_entity_state(state, "session", session["session_id"], "created")
+            if current != "disconnected":
+                store.record_protocol_transition("session", session["session_id"], current, "disconnected", disconnect_reason, {})
+    if session is None or turn is None or initialized is None:
+        raise AcpTransportError("ACP run failed before a native session was created")
+    state = store.load()
+    turn_state = _derived_entity_state(state, "turn", turn["turn_id"], "created")
+    updates = [item for item in state["transport_updates"] if item["turn_id"] == turn["turn_id"]]
+    permissions = [item for item in state["permission_requests"] if item["turn_id"] == turn["turn_id"]]
+    return {
+        "mode": "acp_run", "contract_version": ACP_RUNTIME_CONTRACT_VERSION,
+        "agent_id": agent.agent_id, "session_id": session["session_id"],
+        "native_session_id": session["native_session_id"], "protocol_version": initialized.protocol_version,
+        "capabilities": session["capabilities"], "turn_id": turn["turn_id"], "turn_state": turn_state,
+        "stop_reason": stop_reason, "update_count": len(updates), "permission_count": len(permissions),
+        "disconnect_reason": disconnect_reason,
+        "controls": [
+            {"kind": "inspect", "label": "Inspect protocol runtime", "command": "agentdeck protocol status", "safety": "inspect", "enabled": True, "blocker": None},
+            {"kind": "inspect", "label": "Inspect ACP runtime contract", "command": "agentdeck contract acp-runtime", "safety": "inspect", "enabled": True, "blocker": None},
+        ],
+    }
+
+
+def protocol_acp_run_command(args: argparse.Namespace) -> int:
+    if not args.confirm:
+        print("--confirm is required to start an ACP Agent", file=sys.stderr)
+        return 1
+    if type(args.prompt) is not str or not args.prompt.strip():
+        print("--prompt must be non-empty", file=sys.stderr)
+        return 1
+    root = project_root()
+    try:
+        config = load_config(root)
+    except (FileNotFoundError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    agent = next((item for item in config.agents if item.agent_id == args.agent), None)
+    if agent is None:
+        print(f"unknown agent: {args.agent}", file=sys.stderr)
+        return 1
+    if agent.transport != "acp":
+        print(f"agent {args.agent} is not configured for ACP transport", file=sys.stderr)
+        return 1
+    blockers = _acp_readiness(agent)
+    if blockers:
+        print("ACP preflight is not ready: " + "; ".join(blockers), file=sys.stderr)
+        return 1
+    store = StateStore.open_existing(root)
+    try:
+        payload = asyncio.run(_run_acp_prompt(config, agent, store, args.prompt))
+    except (AcpTransportError, ValueError, KeyError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
     validation = validate_acp_runtime_contract(payload)
     if not validation["ok"]:
         print("ACP runtime contract validation failed", file=sys.stderr)
@@ -15112,6 +15384,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     protocol_acp_preflight.add_argument("--agent", required=True, help="Configured ACP agent id")
     protocol_acp_preflight.set_defaults(func=protocol_acp_preflight_command)
+    protocol_acp_run = protocol_acp_subparsers.add_parser(
+        "run", help="Run one confirmed foreground ACP prompt turn"
+    )
+    protocol_acp_run.add_argument("--agent", required=True, help="Configured ACP agent id")
+    protocol_acp_run.add_argument("--prompt", required=True, help="Prompt text")
+    protocol_acp_run.add_argument("--confirm", action="store_true", help="Confirm external Agent activity")
+    protocol_acp_run.set_defaults(func=protocol_acp_run_command)
 
     events = subparsers.add_parser("events", help="Show recent audit events")
     events.add_argument("--limit", type=int, default=20, help="Number of recent events to show")

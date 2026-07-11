@@ -12,7 +12,8 @@ from typing import Any
 from acp import schema, spawn_agent_process
 
 from agentdeck import __version__
-from agentdeck.runtime.acp_mapping import MAX_ACP_MESSAGE_BYTES
+from agentdeck.runtime.acp_mapping import MAX_ACP_MESSAGE_BYTES, map_agent_capabilities
+from agentdeck.runtime.protocol import TransportCapabilities
 
 
 ACP_PROTOCOL_VERSION = 1
@@ -80,6 +81,7 @@ class AcpAmbiguousOutcome(AcpTransportError):
 class AcpInitializeResult:
     protocol_version: int
     client_capabilities: dict[str, object]
+    capabilities: TransportCapabilities
 
 
 @dataclass(frozen=True)
@@ -276,6 +278,7 @@ class AcpTransport:
         return AcpInitializeResult(
             protocol_version=response.protocol_version,
             client_capabilities={"fs": None, "terminal": False},
+            capabilities=map_agent_capabilities(response),
         )
 
     async def _connection_ended(self, error: Exception) -> bool:

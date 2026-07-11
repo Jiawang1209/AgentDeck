@@ -2826,6 +2826,37 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
     errors: list[str] = []
     if not isinstance(payload, dict):
         return {"ok": False, "errors": ["ACP runtime payload must be an object"]}
+    if payload.get("mode") == "acp_run" and "project" not in payload:
+        if set(payload) != set(ACP_RUNTIME_RUN_RESPONSE_FIELDS):
+            errors.extend(f"missing ACP runtime field: {field}" for field in sorted(set(ACP_RUNTIME_RUN_RESPONSE_FIELDS) - set(payload)))
+            errors.extend(f"unexpected ACP runtime field: {field}" for field in sorted(set(payload) - set(ACP_RUNTIME_RUN_RESPONSE_FIELDS)))
+        if payload.get("contract_version") != ACP_RUNTIME_CONTRACT_VERSION: errors.append("contract_version is invalid")
+        for field, prefix in (("session_id", "ags_"), ("turn_id", "trn_")):
+            value = payload.get(field)
+            if type(value) is not str or re.fullmatch(rf"{prefix}[a-z0-9]+", value) is None: errors.append(f"{field} is invalid")
+        for field in ("agent_id", "native_session_id", "disconnect_reason"):
+            if type(payload.get(field)) is not str or not payload.get(field): errors.append(f"{field} must be a non-empty string")
+        if payload.get("protocol_version") != 1: errors.append("protocol_version must be 1")
+        capabilities = payload.get("capabilities")
+        capability_fields = {"structured_sessions", "streaming_updates", "structured_tools", "permission_requests", "resume_session", "observable_terminal"}
+        if not isinstance(capabilities, dict) or set(capabilities) != capability_fields: errors.append("capabilities fields are invalid")
+        elif any(type(value) is not bool for value in capabilities.values()): errors.append("capabilities values must be booleans")
+        if payload.get("turn_state") not in {"completed", "blocked", "failed", "ambiguous"}: errors.append("run turn_state must be terminal")
+        if payload.get("turn_state") in {"completed", "blocked"}:
+            if type(payload.get("stop_reason")) is not str or not payload.get("stop_reason"): errors.append("completed or blocked run must have stop_reason")
+        elif payload.get("stop_reason") is not None and (type(payload.get("stop_reason")) is not str or not payload.get("stop_reason")):
+            errors.append("failed or ambiguous stop_reason must be null or non-empty")
+        for field in ("update_count", "permission_count"):
+            if type(payload.get(field)) is not int or payload[field] < 0: errors.append(f"{field} must be a non-negative integer")
+        controls = payload.get("controls")
+        if not isinstance(controls, list) or not controls: errors.append("controls must be a non-empty list")
+        else:
+            for index, control in enumerate(controls):
+                if not isinstance(control, dict) or set(control) != set(ACP_RUNTIME_CONTROL_FIELDS): errors.append(f"controls[{index}] fields are invalid"); continue
+                if control.get("kind") != "inspect" or control.get("safety") != "inspect": errors.append(f"controls[{index}] must be inspect-only")
+                if control.get("enabled") is not True or control.get("blocker") is not None: errors.append(f"controls[{index}] must be enabled without blocker")
+                if control.get("command") not in {"agentdeck protocol status", "agentdeck contract acp-runtime"}: errors.append(f"controls[{index}].command is not allowed")
+        return {"ok": not errors, "errors": errors}
     for field in ACP_RUNTIME_PREFLIGHT_RESPONSE_FIELDS:
         if field not in payload:
             errors.append(f"missing ACP runtime field: {field}")

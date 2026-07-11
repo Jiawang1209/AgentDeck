@@ -62,6 +62,16 @@ class FakeAgent:
             os._exit(0)
         if self.scenario == "cancel_or_ignore_terminate":
             await asyncio.sleep(60)
+        if self.scenario == "permission":
+            await self.client.request_permission(
+                session_id,
+                schema.ToolCallUpdate(toolCallId="call-1", title="Edit notes", kind="edit"),
+                [
+                    schema.PermissionOption(optionId="allow", name="Allow once", kind="allow_once"),
+                    schema.PermissionOption(optionId="always", name="Always", kind="allow_always"),
+                    schema.PermissionOption(optionId="reject", name="Reject once", kind="reject_once"),
+                ],
+            )
         text = prompt[0].text
         await self.client.session_update(
             session_id,

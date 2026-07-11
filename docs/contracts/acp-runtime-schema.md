@@ -16,8 +16,14 @@ The response fields are `mode`, `contract_version`, `project`, `ready`, `agent`,
 
 The command does not spawn a process, authenticate, create or load a session, call a provider, inspect tmux, create directories, acquire runtime locks, write state/outbox/events, or change permissions. It validates the complete response before its single JSON stdout write. Command/config errors use stderr and produce no partial stdout.
 
-## Future foreground responses
+## Foreground run response
 
-Discovery also publishes the planned run/load/resume response fields, transition fields, entity kinds, safety values, and confirmation requirements. This Task 7 slice does not add `run`, `load`, or `resume` routes. Those operations remain unavailable until their later approved tasks.
+`agentdeck protocol acp run --agent <agent_id> --prompt <text> --confirm` starts one explicitly configured adapter, negotiates ACP v1, creates one native session, and runs one prompt turn. Missing confirmation, invalid configuration, or a not-ready preflight spawns no process and writes no state. The final response is constructed from persisted facts and validated before one JSON document is written to stdout. Diagnostics and permission questions use stderr only.
+
+Run responses contain the exact `run_response_fields` published by discovery. Completion is derived only from the ACP prompt `stopReason`; streamed text is never completion proof. The session is always transitioned to `disconnected` during bounded cleanup.
+
+## Future load/resume responses
+
+Discovery also publishes the planned load/resume response fields. Those operations remain unavailable until their later approved tasks.
 
 The `--example` fixture is deterministic and uses only a sanitized fake Agent, fake adapter argv, fake SDK version, and `/example` path. It contains no local path, credential, transcript, provider output, or real installed version.
