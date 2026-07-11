@@ -33,8 +33,10 @@ from .runtime.protocol import (
     TransportCapabilities,
     build_agent_session,
     build_permission_request,
+    build_protocol_transition,
     build_transport_update,
     build_turn,
+    validate_transition_edge,
 )
 
 
@@ -170,6 +172,7 @@ class StateStore:
                 "protocol_turns": [],
                 "transport_updates": [],
                 "permission_requests": [],
+                "protocol_state_transitions": [],
                 "protocol_event_outbox": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
@@ -201,11 +204,13 @@ class StateStore:
         turns = state.setdefault("protocol_turns", [])
         updates = state.setdefault("transport_updates", [])
         permissions = state.setdefault("permission_requests", [])
+        transitions = state.setdefault("protocol_state_transitions", [])
         state.setdefault("protocol_event_outbox", [])
         session_ids = [item.get("session_id") for item in sessions if isinstance(item, dict)]
         turn_ids = [item.get("turn_id") for item in turns if isinstance(item, dict)]
         update_ids = [item.get("update_id") for item in updates if isinstance(item, dict)]
         permission_ids = [item.get("permission_id") for item in permissions if isinstance(item, dict)]
+        transition_ids = [item.get("transition_id") for item in transitions if isinstance(item, dict)]
         if len(session_ids) != len(set(session_ids)):
             raise ValueError("duplicate agent session identity")
         if len(turn_ids) != len(set(turn_ids)):
@@ -214,6 +219,8 @@ class StateStore:
             raise ValueError("duplicate transport update identity")
         if len(permission_ids) != len(set(permission_ids)):
             raise ValueError("duplicate permission request identity")
+        if len(transition_ids) != len(set(transition_ids)):
+            raise ValueError("duplicate protocol transition identity")
 
     @staticmethod
     def _validate_protocol_lineage(state: dict[str, Any]) -> None:
@@ -341,7 +348,9 @@ class StateStore:
             })
             return self._save_protocol_record(state, "agent_sessions", record, event)
 
-    def record_protocol_turn(self, session_id: str, message_id: str) -> dict[str, Any]:
+    def record_protocol_turn(
+        self, session_id: str, message_id: str, kind: str = "prompt"
+    ) -> dict[str, Any]:
         with self._protocol_mutation_lock():
             state = self.load()
             self._validate_protocol_identities(state)
@@ -349,7 +358,7 @@ class StateStore:
                 state.setdefault("agent_sessions", []), "session_id", session_id,
                 "duplicate agent session identity",
             )
-            record = build_turn(session_id, message_id)
+            record = build_turn(session_id, message_id, kind)
             if any(item.get("turn_id") == record["turn_id"] for item in state["protocol_turns"]):
                 raise ValueError("duplicate protocol turn identity")
             self._flush_protocol_event_outbox_locked(state)
@@ -359,6 +368,76 @@ class StateStore:
                 "message_id": record["message_id"],
             })
             return self._save_protocol_record(state, "protocol_turns", record, event)
+
+    @staticmethod
+    def _protocol_transition_entity(
+        state: dict[str, Any], entity_type: str, entity_id: str
+    ) -> dict[str, Any]:
+        entity_sources = {
+            "session": ("agent_sessions", "session_id", "duplicate agent session identity", "state"),
+            "turn": ("protocol_turns", "turn_id", "duplicate protocol turn identity", "state"),
+            "permission": (
+                "permission_requests", "permission_id",
+                "duplicate permission request identity", "status",
+            ),
+        }
+        collection, key, duplicate_error, _ = entity_sources[entity_type]
+        return StateStore._unique_protocol_record(
+            state.setdefault(collection, []), key, entity_id, duplicate_error
+        )
+
+    @staticmethod
+    def _derived_protocol_state(
+        state: dict[str, Any], entity_type: str, entity_id: str, base: dict[str, Any]
+    ) -> str:
+        state_field = "status" if entity_type == "permission" else "state"
+        current = base.get(state_field)
+        if type(current) is not str:
+            raise ValueError("invalid protocol base state")
+        for item in state.setdefault("protocol_state_transitions", []):
+            if not isinstance(item, dict) or item.get("entity_type") != entity_type or item.get("entity_id") != entity_id:
+                continue
+            if item.get("from_state") != current:
+                raise ValueError("stale protocol transition from_state")
+            validate_transition_edge(entity_type, item.get("from_state"), item.get("to_state"))
+            current = item["to_state"]
+        return current
+
+    def record_protocol_transition(
+        self,
+        entity_type: str,
+        entity_id: str,
+        from_state: str,
+        to_state: str,
+        reason: str | None,
+        details: dict[str, Any],
+    ) -> dict[str, Any]:
+        with self._protocol_mutation_lock():
+            state = self.load()
+            self._validate_protocol_identities(state)
+            record = build_protocol_transition(
+                entity_type, entity_id, from_state, to_state, reason, details
+            )
+            entity = self._protocol_transition_entity(state, entity_type, entity_id)
+            current_state = self._derived_protocol_state(state, entity_type, entity_id, entity)
+            if from_state != current_state:
+                raise ValueError(
+                    f"stale protocol transition from_state: expected {current_state}"
+                )
+            transitions = state.setdefault("protocol_state_transitions", [])
+            if any(item.get("transition_id") == record["transition_id"] for item in transitions):
+                raise ValueError("duplicate protocol transition identity")
+            self._flush_protocol_event_outbox_locked(state)
+            event = EventRecord.create("protocol_state_transition_recorded", {
+                key: record[key]
+                for key in (
+                    "transition_id", "entity_type", "entity_id", "from_state",
+                    "to_state", "reason",
+                )
+            })
+            return self._save_protocol_record(
+                state, "protocol_state_transitions", record, event
+            )
 
     def _validated_protocol_turn(
         self, state: dict[str, Any], session_id: str, turn_id: str

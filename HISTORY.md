@@ -4,6 +4,14 @@
 
 ## 2026-07-12
 
+### Record append-only protocol lifecycle transitions
+
+- **类型**: Phase 2 ACP lifecycle foundation + strict TDD
+- **What**: protocol domain 新增 `session|turn|permission` 三类 append-only state transition、显式 allowed-edge tables、session `disconnected` 状态，以及 backward-compatible `ProtocolTurn.kind=prompt|load_replay`。transition details 只接受最多 4 KiB 的 JSON-safe metadata，reason 最多 128 字符。
+- **持久化与恢复**: fresh state 新增 `protocol_state_transitions[]`；`StateStore.record_protocol_transition()` 在共享 protocol mutation lock 内完成精确实体查找、从 immutable base record 和既有 transitions 派生 current state、拒绝 stale/illegal/unknown/duplicate 后，再复用 durable protocol outbox 写 compact audit event。base session/turn/permission records 永不改写。
+- **安全边界**: terminal turn 与 permission 状态不可复活；permission 仅允许 pending 到 approved/denied/expired；session 明确支持 disconnected -> reconnecting -> ready；turn 明确支持 waiting_permission -> streaming 和 load replay 的直接 streaming/completed。任何拒绝（包括已有 pending outbox）保持整个 `.agentdeck` 文件树 byte-for-byte 不变。本切片不实现 ProjectView transition 投影或 ACP wire mapping。
+- **TDD 证据**: transition/turn-kind 聚焦测试先因 API 缺失 collection RED；实现后覆盖 allowed/forbidden edge、stale state、unknown entity、candidate ID collision、JSON/bounds、base immutability、permission 三种结局与 pending-outbox zero-write。
+
 ### Add explicit ACP agent transport configuration
 
 - **类型**: backward-compatible configuration foundation + strict TDD

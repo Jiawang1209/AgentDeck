@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields
+import json
 import math
 import re
 from typing import Any
@@ -8,11 +9,42 @@ from typing import Any
 from agentdeck.models import new_id, utc_now
 
 
-AGENT_SESSION_STATES = ("created", "connecting", "ready", "busy", "reconnecting", "stopped", "failed")
+AGENT_SESSION_STATES = ("created", "connecting", "ready", "busy", "reconnecting", "disconnected", "stopped", "failed")
 TURN_STATES = ("created", "submitted", "streaming", "waiting_permission", "completed", "blocked", "failed", "ambiguous")
+TURN_KINDS = ("prompt", "load_replay")
 UPDATE_KINDS = ("progress", "text", "tool_call", "tool_result", "permission_request", "artifact", "completion", "error")
 PERMISSION_STATES = ("pending", "approved", "denied", "expired")
 TRANSPORT_KINDS = ("acp", "acp-adapter", "tmux", "api")
+PROTOCOL_ENTITY_TYPES = ("session", "turn", "permission")
+PROTOCOL_TRANSITION_DETAILS_MAX_BYTES = 4096
+PROTOCOL_TRANSITION_REASON_MAX_LENGTH = 128
+
+SESSION_TRANSITION_EDGES = {
+    ("created", "connecting"), ("created", "ready"), ("created", "failed"),
+    ("connecting", "ready"), ("connecting", "disconnected"), ("connecting", "failed"),
+    ("ready", "busy"), ("ready", "disconnected"), ("ready", "stopped"), ("ready", "failed"),
+    ("busy", "ready"), ("busy", "disconnected"), ("busy", "stopped"), ("busy", "failed"),
+    ("disconnected", "reconnecting"), ("disconnected", "stopped"),
+    ("reconnecting", "ready"), ("reconnecting", "disconnected"), ("reconnecting", "failed"),
+}
+TURN_TRANSITION_EDGES = {
+    ("created", "submitted"), ("created", "streaming"), ("created", "completed"),
+    ("submitted", "streaming"), ("submitted", "waiting_permission"),
+    ("submitted", "completed"), ("submitted", "blocked"), ("submitted", "failed"),
+    ("submitted", "ambiguous"),
+    ("streaming", "waiting_permission"), ("streaming", "completed"),
+    ("streaming", "blocked"), ("streaming", "failed"), ("streaming", "ambiguous"),
+    ("waiting_permission", "streaming"), ("waiting_permission", "blocked"),
+    ("waiting_permission", "failed"), ("waiting_permission", "ambiguous"),
+}
+PERMISSION_TRANSITION_EDGES = {
+    ("pending", "approved"), ("pending", "denied"), ("pending", "expired"),
+}
+PROTOCOL_TRANSITION_EDGES = {
+    "session": SESSION_TRANSITION_EDGES,
+    "turn": TURN_TRANSITION_EDGES,
+    "permission": PERMISSION_TRANSITION_EDGES,
+}
 
 
 @dataclass(frozen=True)
@@ -110,17 +142,69 @@ def build_agent_session(
     }
 
 
-def build_turn(session_id: str, message_id: str) -> dict[str, Any]:
+def build_turn(session_id: str, message_id: str, kind: str = "prompt") -> dict[str, Any]:
     session_id = _record_id("session_id", session_id, "ags_")
     message_id = _required_string("message_id", message_id)
+    if type(kind) is not str or kind not in TURN_KINDS:
+        raise ValueError("kind must be one of TURN_KINDS")
     now = utc_now()
     return {
         "turn_id": new_id("trn"),
         "session_id": session_id,
         "message_id": message_id,
+        "kind": kind,
         "state": "created",
         "created_at": now,
         "updated_at": now,
+    }
+
+
+def validate_transition_edge(entity_type: str, from_state: str, to_state: str) -> None:
+    if type(entity_type) is not str or entity_type not in PROTOCOL_ENTITY_TYPES:
+        raise ValueError("entity_type must be one of PROTOCOL_ENTITY_TYPES")
+    if type(from_state) is not str or type(to_state) is not str:
+        raise ValueError("invalid protocol state transition")
+    if (from_state, to_state) not in PROTOCOL_TRANSITION_EDGES[entity_type]:
+        raise ValueError(f"invalid protocol state transition: {from_state} -> {to_state}")
+
+
+def build_protocol_transition(
+    entity_type: str,
+    entity_id: str,
+    from_state: str,
+    to_state: str,
+    reason: str | None,
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    validate_transition_edge(entity_type, from_state, to_state)
+    prefixes = {"session": "ags_", "turn": "trn_", "permission": "prm_"}
+    entity_id = _record_id("entity_id", entity_id, prefixes[entity_type])
+    if reason is not None:
+        if type(reason) is not str or not reason.strip():
+            raise ValueError("reason must be null or a non-empty string")
+        if len(reason) > PROTOCOL_TRANSITION_REASON_MAX_LENGTH:
+            raise ValueError(
+                f"reason must be at most {PROTOCOL_TRANSITION_REASON_MAX_LENGTH} characters"
+            )
+    if type(details) is not dict:
+        raise TypeError("details must be a dict")
+    cloned_details = _clone_json_value(details, set())
+    encoded_details = json.dumps(
+        cloned_details, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    if len(encoded_details) > PROTOCOL_TRANSITION_DETAILS_MAX_BYTES:
+        raise ValueError(
+            f"details must be at most {PROTOCOL_TRANSITION_DETAILS_MAX_BYTES} bytes"
+        )
+    return {
+        "transition_id": new_id("pst"),
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "from_state": from_state,
+        "to_state": to_state,
+        "reason": reason,
+        "details": cloned_details,
+        "created_at": utc_now(),
     }
 
 

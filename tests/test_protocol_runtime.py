@@ -12,13 +12,16 @@ from agentdeck.models import AgentSpec, LeaderConfig, ProjectConfig, RuntimeConf
 from agentdeck.state import StateStore
 from agentdeck.runtime.protocol import (
     AGENT_SESSION_STATES,
+    PROTOCOL_ENTITY_TYPES,
     PERMISSION_STATES,
+    TURN_KINDS,
     TURN_STATES,
     TRANSPORT_KINDS,
     UPDATE_KINDS,
     TransportCapabilities,
     build_agent_session,
     build_permission_request,
+    build_protocol_transition,
     build_transport_update,
     build_turn,
 )
@@ -281,7 +284,9 @@ def test_project_view_rejects_protocol_duplicate_hidden_by_latest_twenty(
 
 
 def test_protocol_constants_are_stable() -> None:
-    assert AGENT_SESSION_STATES == ("created", "connecting", "ready", "busy", "reconnecting", "stopped", "failed")
+    assert AGENT_SESSION_STATES == ("created", "connecting", "ready", "busy", "reconnecting", "disconnected", "stopped", "failed")
+    assert PROTOCOL_ENTITY_TYPES == ("session", "turn", "permission")
+    assert TURN_KINDS == ("prompt", "load_replay")
     assert TURN_STATES == ("created", "submitted", "streaming", "waiting_permission", "completed", "blocked", "failed", "ambiguous")
     assert UPDATE_KINDS == ("progress", "text", "tool_call", "tool_result", "permission_request", "artifact", "completion", "error")
     assert PERMISSION_STATES == ("pending", "approved", "denied", "expired")
@@ -357,11 +362,82 @@ def test_builders_create_json_serializable_domain_records() -> None:
     assert session["session_id"].startswith("ags_")
     assert "pane_id" not in session
     assert turn["turn_id"].startswith("trn_") and turn["state"] == "created"
+    assert turn["kind"] == "prompt"
     assert update["update_id"].startswith("upd_") and update["payload"] == {"percent": 10}
     assert permission["permission_id"].startswith("prm_")
     assert permission["status"] == "pending" and permission["decision"] is None
     assert "state" not in permission
     json.dumps([session, turn, update, permission])
+
+
+def test_turn_kind_is_backward_compatible_and_explicit() -> None:
+    assert build_turn("ags_1", "msg_1")["kind"] == "prompt"
+    assert build_turn("ags_1", "msg_1", kind="load_replay")["kind"] == "load_replay"
+    with pytest.raises(ValueError, match=r"^kind must be one of TURN_KINDS$"):
+        build_turn("ags_1", "msg_1", kind="other")
+
+
+def test_transition_builder_is_json_safe_bounded_and_isolated() -> None:
+    details = {"attempt": 1, "nested": [True, None]}
+    transition = build_protocol_transition(
+        "session", "ags_1", "created", "ready", "session_new_completed", details,
+    )
+    details["nested"].append("changed")
+    assert transition["details"] == {"attempt": 1, "nested": [True, None]}
+    assert transition["transition_id"].startswith("pst_")
+    json.dumps(transition)
+    with pytest.raises(TypeError, match="details must be a dict"):
+        build_protocol_transition("session", "ags_1", "created", "ready", None, [])
+    with pytest.raises(ValueError, match="details must be at most"):
+        build_protocol_transition("session", "ags_1", "created", "ready", None, {"x": "x" * 5000})
+    with pytest.raises(ValueError, match="reason must be at most"):
+        build_protocol_transition("session", "ags_1", "created", "ready", "x" * 129, {})
+
+
+def test_transition_edge_tables_cover_required_lifecycle_and_terminal_states() -> None:
+    allowed = [
+        ("session", "created", "ready"),
+        ("session", "ready", "disconnected"),
+        ("session", "disconnected", "reconnecting"),
+        ("session", "reconnecting", "ready"),
+        ("turn", "created", "submitted"),
+        ("turn", "created", "streaming"),
+        ("turn", "created", "completed"),
+        ("turn", "submitted", "streaming"),
+        ("turn", "streaming", "waiting_permission"),
+        ("turn", "waiting_permission", "streaming"),
+        ("turn", "streaming", "completed"),
+        ("permission", "pending", "approved"),
+        ("permission", "pending", "denied"),
+        ("permission", "pending", "expired"),
+    ]
+    for entity_type, from_state, to_state in allowed:
+        build_protocol_transition(entity_type, f"{ {'session':'ags','turn':'trn','permission':'prm'}[entity_type] }_1", from_state, to_state, None, {})
+    for entity_type, from_state, to_state in [
+        ("turn", "completed", "streaming"),
+        ("turn", "failed", "submitted"),
+        ("permission", "denied", "approved"),
+        ("session", "stopped", "ready"),
+    ]:
+        with pytest.raises(ValueError, match="invalid protocol state transition"):
+            build_protocol_transition(entity_type, f"{ {'session':'ags','turn':'trn','permission':'prm'}[entity_type] }_1", from_state, to_state, None, {})
+
+
+@pytest.mark.parametrize("to_state", ["approved", "denied", "expired"])
+def test_permission_transition_outcomes_are_persisted_without_base_rewrite(
+    tmp_path, to_state: str,
+) -> None:
+    store = StateStore(tmp_path)
+    session = store.record_agent_session("a", "p", "acp", "native", "w", CAPABILITIES)
+    turn = store.record_protocol_turn(session["session_id"], "msg")
+    permission = store.record_permission_request(
+        session["session_id"], turn["turn_id"], "shell", "cwd", "high"
+    )
+    transition = store.record_protocol_transition(
+        "permission", permission["permission_id"], "pending", to_state, to_state, {}
+    )
+    assert transition["to_state"] == to_state
+    assert store.load()["permission_requests"] == [permission]
 
 
 @pytest.mark.parametrize("field", ["agent_id", "provider", "workspace"])
@@ -523,7 +599,78 @@ def test_fresh_state_has_protocol_lineage_collections(tmp_path) -> None:
     assert state["protocol_turns"] == []
     assert state["transport_updates"] == []
     assert state["permission_requests"] == []
+    assert state["protocol_state_transitions"] == []
     assert state["protocol_event_outbox"] == []
+
+
+def test_protocol_transitions_are_append_only_and_derive_current_state(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    session = store.record_agent_session("planner", "codex", "acp", "native-1", str(tmp_path), CAPABILITIES)
+    turn = store.record_protocol_turn(session["session_id"], "msg_1", kind="load_replay")
+    permission = store.record_permission_request(session["session_id"], turn["turn_id"], "shell", "cwd", "high")
+    base_records = deepcopy({
+        "sessions": store.load()["agent_sessions"],
+        "turns": store.load()["protocol_turns"],
+        "permissions": store.load()["permission_requests"],
+    })
+
+    transitions = [
+        store.record_protocol_transition("session", session["session_id"], "created", "ready", "session_new_completed", {}),
+        store.record_protocol_transition("session", session["session_id"], "ready", "disconnected", "clean_exit", {}),
+        store.record_protocol_transition("session", session["session_id"], "disconnected", "reconnecting", "load_started", {}),
+        store.record_protocol_transition("session", session["session_id"], "reconnecting", "ready", "load_completed", {}),
+        store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", None, {}),
+        store.record_protocol_transition("turn", turn["turn_id"], "submitted", "streaming", None, {}),
+        store.record_protocol_transition("turn", turn["turn_id"], "streaming", "waiting_permission", None, {}),
+        store.record_protocol_transition("permission", permission["permission_id"], "pending", "denied", "reject_once", {}),
+        store.record_protocol_transition("turn", turn["turn_id"], "waiting_permission", "streaming", None, {}),
+    ]
+
+    state = store.load()
+    assert state["protocol_state_transitions"] == transitions
+    assert state["agent_sessions"] == base_records["sessions"]
+    assert state["protocol_turns"] == base_records["turns"]
+    assert state["permission_requests"] == base_records["permissions"]
+    events = [json.loads(line) for line in store.events_path.read_text().splitlines()]
+    assert events[-1]["event_type"] == "protocol_state_transition_recorded"
+    assert events[-1]["payload"] == {
+        key: transitions[-1][key]
+        for key in ("transition_id", "entity_type", "entity_id", "from_state", "to_state", "reason")
+    }
+
+
+@pytest.mark.parametrize("rejection", ["unknown", "stale", "illegal", "duplicate"])
+def test_protocol_transition_rejections_are_tree_zero_write_with_pending_outbox(
+    tmp_path, monkeypatch, rejection: str,
+) -> None:
+    store = StateStore(tmp_path)
+    real_append_event = store.append_event
+    monkeypatch.setattr(store, "append_event", lambda event: (_ for _ in ()).throw(OSError("pending")))
+    session = store.record_agent_session("a", "p", "acp", "native", "w", CAPABILITIES)
+    monkeypatch.setattr(store, "append_event", real_append_event)
+    assert len(store.load()["protocol_event_outbox"]) == 1
+    existing = build_protocol_transition("session", session["session_id"], "created", "ready", None, {})
+    if rejection == "duplicate":
+        state = store.load()
+        state["protocol_state_transitions"] = [existing]
+        store.save(state)
+        real_builder = build_protocol_transition
+        def colliding_builder(*args, **kwargs):
+            candidate = real_builder(*args, **kwargs)
+            candidate["transition_id"] = existing["transition_id"]
+            return candidate
+        monkeypatch.setattr("agentdeck.state.build_protocol_transition", colliding_builder)
+    before = _tree_snapshot(store)
+    with pytest.raises((KeyError, ValueError)):
+        if rejection == "unknown":
+            store.record_protocol_transition("session", "ags_unknown", "created", "ready", None, {})
+        elif rejection == "stale":
+            store.record_protocol_transition("session", session["session_id"], "ready", "busy", None, {})
+        elif rejection == "illegal":
+            store.record_protocol_transition("session", session["session_id"], "created", "stopped", None, {})
+        else:
+            store.record_protocol_transition("session", session["session_id"], "ready", "disconnected", None, {})
+    assert _tree_snapshot(store) == before
 
 
 def test_state_store_records_complete_protocol_lineage_and_redacted_events(tmp_path) -> None:
