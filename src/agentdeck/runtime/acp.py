@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import re
 from types import TracebackType
@@ -16,9 +17,39 @@ from agentdeck.runtime.acp_mapping import MAX_ACP_MESSAGE_BYTES
 
 ACP_PROTOCOL_VERSION = 1
 MAX_ACP_STDERR_BYTES = 64 * 1024
+ACP_INHERITED_ENV_VARS = (
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+    "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "https_proxy",
+    "http_proxy", "all_proxy", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR",
+)
 _SECRET_LINE = re.compile(
     rb"(?i)(?:secret|token|password|api[_-]?key|authorization)[^\r\n]*"
 )
+
+
+def _exception_chain(error: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def _consume_task(task: asyncio.Task[Any]) -> None:
+    with contextlib.suppress(BaseException):
+        task.exception()
+
+
+async def _hard_bound(operation: object, timeout: float) -> bool:
+    task = asyncio.create_task(operation)  # type: ignore[arg-type]
+    done, _ = await asyncio.wait({task}, timeout=timeout)
+    if task in done:
+        _consume_task(task)
+        return True
+    task.cancel()
+    task.add_done_callback(_consume_task)
+    return False
 
 
 class AcpTransportError(RuntimeError):
@@ -75,8 +106,10 @@ class AcpTransport:
         *,
         request_timeout: float = 30.0,
         cancel_timeout: float = 1.0,
+        close_grace: float = 5.0,
         terminate_grace: float = 2.0,
         kill_grace: float = 2.0,
+        test_env: dict[str, str] | None = None,
     ) -> None:
         if type(argv) is not tuple or not argv:
             raise ValueError("argv must be a non-empty tuple")
@@ -87,6 +120,7 @@ class AcpTransport:
         for name, value in (
             ("request_timeout", request_timeout),
             ("cancel_timeout", cancel_timeout),
+            ("close_grace", close_grace),
             ("terminate_grace", terminate_grace),
             ("kill_grace", kill_grace),
         ):
@@ -97,6 +131,7 @@ class AcpTransport:
         self._client = client
         self._request_timeout = float(request_timeout)
         self._cancel_timeout = float(cancel_timeout)
+        self._close_grace = float(close_grace)
         self._terminate_grace = float(terminate_grace)
         self._kill_grace = float(kill_grace)
         self._context: Any = None
@@ -105,6 +140,23 @@ class AcpTransport:
         self._stderr_task: asyncio.Task[bytes] | None = None
         self._stderr = b""
         self._closed = False
+        self._cleanup_task: asyncio.Task[None] | None = None
+        if test_env is not None and (
+            type(test_env) is not dict
+            or any(type(k) is not str or type(v) is not str for k, v in test_env.items())
+        ):
+            raise TypeError("test_env must contain exact string keys and values")
+        self._spawn_env = {
+            key: os.environ[key] for key in ACP_INHERITED_ENV_VARS if key in os.environ
+        }
+        self._spawn_env.update({
+            key: value for key, value in os.environ.items() if key.startswith("CLAUDE_CODE")
+        })
+        if test_env:
+            self._spawn_env.update(test_env)
+        self._diagnostic_redactions = tuple(
+            value.encode("utf-8") for value in self._spawn_env.values() if value
+        )
 
     @property
     def child_pid(self) -> int:
@@ -115,6 +167,8 @@ class AcpTransport:
     @property
     def stderr_diagnostic(self) -> str:
         redacted = _SECRET_LINE.sub(b"[REDACTED]", self._stderr[:MAX_ACP_STDERR_BYTES])
+        for value in self._diagnostic_redactions:
+            redacted = redacted.replace(value, b"[REDACTED]")
         return redacted.decode("utf-8", errors="replace")
 
     async def _capture_stderr(self) -> bytes:
@@ -142,6 +196,7 @@ class AcpTransport:
             self._argv[0],
             *self._argv[1:],
             cwd=self._workspace,
+            env=self._spawn_env,
             transport_kwargs={
                 "limit": MAX_ACP_MESSAGE_BYTES,
                 # AcpTransport performs the two-stage shutdown before context exit.
@@ -154,7 +209,7 @@ class AcpTransport:
             raise AcpTransportError("failed to start ACP stdio transport") from error
         self._stderr_task = asyncio.create_task(self._capture_stderr())
 
-    async def _request(self, operation: object, *, active_prompt: bool = False) -> Any:
+    async def _request(self, operation: object, *, eof_is_ambiguous: bool = False) -> Any:
         try:
             return await asyncio.wait_for(operation, timeout=self._request_timeout)  # type: ignore[arg-type]
         except TimeoutError as error:
@@ -162,9 +217,9 @@ class AcpTransport:
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            if active_prompt and self._process is not None and self._process.returncode is not None:
+            if eof_is_ambiguous and await self._connection_ended(error):
                 raise AcpAmbiguousOutcome(
-                    "ACP Agent reached EOF during an active prompt; outcome is ambiguous"
+                    "ACP Agent reached EOF during an active operation; outcome is ambiguous"
                 ) from error
             raise AcpTransportError("ACP stdio request failed") from error
 
@@ -172,22 +227,41 @@ class AcpTransport:
         await self._start()
         capabilities = schema.ClientCapabilities(fs=None, terminal=False)
         info = schema.Implementation(name="agentdeck", title="AgentDeck", version=__version__)
-        response = await self._request(
-            self._connection.initialize(
-                protocol_version=ACP_PROTOCOL_VERSION,
-                client_capabilities=capabilities,
-                client_info=info,
+        try:
+            response = await self._request(
+                self._connection.initialize(
+                    protocol_version=ACP_PROTOCOL_VERSION,
+                    client_capabilities=capabilities,
+                    client_info=info,
+                ),
+                eof_is_ambiguous=True,
             )
-        )
-        if response.protocol_version != ACP_PROTOCOL_VERSION:
-            await self.close()
-            raise AcpProtocolVersionError(
-                f"unsupported ACP protocol version {response.protocol_version}; expected 1"
-            )
+            if response.protocol_version != ACP_PROTOCOL_VERSION:
+                raise AcpProtocolVersionError(
+                    f"unsupported ACP protocol version {response.protocol_version}; expected 1"
+                )
+        except BaseException:
+            await asyncio.shield(self._ensure_cleanup())
+            raise
         return AcpInitializeResult(
             protocol_version=response.protocol_version,
             client_capabilities={"fs": None, "terminal": False},
         )
+
+    async def _connection_ended(self, error: Exception) -> bool:
+        process = self._process
+        if process is not None and process.returncode is not None:
+            return True
+        messages = " ".join(str(item).lower() for item in _exception_chain(error))
+        if "connection closed" in messages or "unexpected eof" in messages:
+            return True
+        if process is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(process.wait()), timeout=0.05)
+                return True
+            except TimeoutError:
+                pass
+        return False
 
     async def new_session(self) -> AcpSessionResult:
         if self._connection is None:
@@ -209,7 +283,7 @@ class AcpTransport:
             prompt=[schema.TextContentBlock(type="text", text=text)],
         )
         try:
-            response = await self._request(operation, active_prompt=True)
+            response = await self._request(operation, eof_is_ambiguous=True)
         except AcpRequestTimeout as error:
             error.cancel_diagnostic = await self._send_bounded_cancel(native_session_id)
             raise
@@ -245,20 +319,24 @@ class AcpTransport:
             status = "sent"
         return AcpCancelDiagnostic(session_id=native_session_id, status=status)
 
+    def _ensure_cleanup(self) -> asyncio.Task[None]:
+        if self._cleanup_task is None:
+            self._cleanup_task = asyncio.create_task(self._cleanup())
+        return self._cleanup_task
+
     async def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+        await asyncio.shield(self._ensure_cleanup())
+
+    async def _cleanup(self) -> None:
         process = self._process
         if self._connection is not None:
-            with contextlib.suppress(Exception):
-                await self._connection.close()
+            await _hard_bound(self._connection.close(), self._cancel_timeout)
         if process is not None and process.stdin is not None:
             with contextlib.suppress(Exception):
                 process.stdin.close()
         if process is not None and process.returncode is None:
             try:
-                await asyncio.wait_for(process.wait(), timeout=5.0)
+                await asyncio.wait_for(process.wait(), timeout=self._close_grace)
             except TimeoutError:
                 process.terminate()
                 try:
@@ -267,11 +345,24 @@ class AcpTransport:
                     process.kill()
                     await asyncio.wait_for(process.wait(), timeout=self._kill_grace)
         if self._context is not None:
-            with contextlib.suppress(Exception):
-                await self._context.__aexit__(None, None, None)
+            await _hard_bound(
+                self._context.__aexit__(None, None, None), self._kill_grace
+            )
         if self._stderr_task is not None:
-            with contextlib.suppress(Exception):
-                self._stderr = await self._stderr_task
+            if not self._stderr_task.done():
+                self._stderr_task.cancel()
+            done, _ = await asyncio.wait({self._stderr_task}, timeout=self._kill_grace)
+            if self._stderr_task in done:
+                with contextlib.suppress(BaseException):
+                    self._stderr = self._stderr_task.result()
+            else:
+                self._stderr_task.add_done_callback(_consume_task)
+        if process is not None:
+            process_transport = getattr(process, "_transport", None)
+            if process_transport is not None:
+                with contextlib.suppress(Exception):
+                    process_transport.close()
+        self._closed = True
 
     async def __aenter__(self) -> AcpTransport:
         await self.initialize()

@@ -457,11 +457,30 @@ async def test_transport_blocks_exact_protocol_version_mismatch(tmp_path: Path) 
 
     client, _ = _transport_client()
     transport = AcpTransport(
-        (sys.executable, str(FAKE_AGENT), "version_mismatch"), tmp_path, client
+        (sys.executable, str(FAKE_AGENT), "version_mismatch"), tmp_path, client,
+        close_grace=0.05, terminate_grace=0.05, kill_grace=0.1,
     )
     with pytest.raises(AcpProtocolVersionError, match="protocol version"):
         await transport.initialize()
-    await transport.close()
+    assert transport._process.returncode is not None
+    assert transport._stderr_task.done()
+    assert transport._closed is True
+
+
+@async_test
+async def test_initialize_eof_race_is_ambiguous_and_self_cleans(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpAmbiguousOutcome, AcpTransport
+
+    client, _ = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "eof_initialize"), tmp_path, client,
+        request_timeout=0.5, close_grace=0.05, terminate_grace=0.05, kill_grace=0.1,
+    )
+    with pytest.raises(AcpAmbiguousOutcome):
+        await transport.initialize()
+    assert transport._process.returncode is not None
+    assert transport._stderr_task.done()
+    assert transport._closed is True
 
 
 @async_test
@@ -555,11 +574,123 @@ async def test_transport_rejects_malformed_or_oversize_frames(tmp_path: Path) ->
         client, _ = _transport_client()
         transport = AcpTransport(
             (sys.executable, str(FAKE_AGENT), scenario), tmp_path, client,
-            request_timeout=0.5,
+            request_timeout=0.5, close_grace=0.05,
+            terminate_grace=0.05, kill_grace=0.1,
         )
         with pytest.raises(AcpTransportError):
             await transport.initialize()
-        await transport.close()
+        assert transport._process.returncode is not None
+        assert transport._stderr_task.done()
+
+
+@async_test
+async def test_transport_uses_reviewed_environment_plus_explicit_test_injection(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from agentdeck.runtime.acp import AcpTransport
+
+    marker = tmp_path / "env.json"
+    monkeypatch.setenv("ACP_UNREVIEWED_SECRET", "must-not-reach-child")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "reviewed-provider-value")
+    client, _ = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "record_env", str(marker)), tmp_path, client,
+        test_env={"ACP_TEST_SENTINEL": "harmless-sentinel"},
+    )
+    await transport.initialize()
+    await transport.close()
+    import json
+    recorded = json.loads(marker.read_text())
+    assert recorded == {
+        "sentinel": "harmless-sentinel", "unreviewed": None,
+        "anthropic": "reviewed-provider-value",
+    }
+    assert "reviewed-provider-value" not in repr(transport)
+    assert "harmless-sentinel" not in transport.stderr_diagnostic
+    assert "[REDACTED]" in transport.stderr_diagnostic
+
+
+@async_test
+async def test_close_is_shielded_concurrent_retryable_and_bounds_stderr_descendant(
+    tmp_path: Path
+) -> None:
+    from agentdeck.runtime.acp import AcpTransport
+
+    client, _ = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "descendant_stderr"), tmp_path, client,
+        cancel_timeout=0.05, close_grace=0.05, terminate_grace=0.05, kill_grace=0.1,
+    )
+    await transport.initialize()
+    child_pid = transport.child_pid
+
+    original_close = transport._connection.close
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    close_calls = 0
+
+    async def resistant_close() -> None:
+        nonlocal close_calls
+        close_calls += 1
+        if close_calls > 1:
+            await original_close()
+            return
+        entered.set()
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                continue
+        await original_close()
+
+    transport._connection.close = resistant_close
+    first = asyncio.create_task(transport.close())
+    await entered.wait()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert transport._closed is False
+    await asyncio.gather(transport.close(), transport.close())
+    assert transport._closed is True
+    assert transport._cleanup_task.done()
+    assert transport._stderr_task.done()
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
+    release.set()
+    await asyncio.sleep(0)
+
+
+@async_test
+async def test_close_caller_cancellation_during_process_wait_does_not_stop_cleanup(
+    tmp_path: Path
+) -> None:
+    from agentdeck.runtime.acp import AcpTransport
+
+    marker = tmp_path / "later-cancel"
+    client, _ = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "cancel_or_ignore_terminate", str(marker)),
+        tmp_path, client, close_grace=0.05, terminate_grace=0.05, kill_grace=0.1,
+    )
+    await transport.initialize()
+    child_pid = transport.child_pid
+    entered_wait = asyncio.Event()
+    original_wait = transport._process.wait
+
+    async def observed_wait() -> int:
+        entered_wait.set()
+        return await original_wait()
+
+    transport._process.wait = observed_wait
+    closing = asyncio.create_task(transport.close())
+    await entered_wait.wait()
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    await transport.close()
+    assert transport._closed is True
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
 
 
 @async_test

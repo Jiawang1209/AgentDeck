@@ -23,8 +23,24 @@ class FakeAgent:
         self.client = conn
 
     async def initialize(self, protocol_version: int, client_capabilities=None, client_info=None, **kwargs):
+        if self.scenario == "eof_initialize":
+            os._exit(0)
         if self.scenario == "record_argv":
             Path(self.args[0]).write_text(json.dumps({"argv": self.args[1:], "cwd": os.getcwd()}))
+        if self.scenario == "record_env":
+            Path(self.args[0]).write_text(json.dumps({
+                "sentinel": os.environ.get("ACP_TEST_SENTINEL"),
+                "unreviewed": os.environ.get("ACP_UNREVIEWED_SECRET"),
+                "anthropic": os.environ.get("ANTHROPIC_API_KEY"),
+            }))
+            sys.stderr.write(f"ACP_TEST_SENTINEL={os.environ.get('ACP_TEST_SENTINEL')}\n")
+            sys.stderr.flush()
+        if self.scenario == "descendant_stderr":
+            import subprocess
+            subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(1)"],
+                stdout=subprocess.DEVNULL,
+            )
         if self.scenario == "stderr_noise":
             secret = os.environ.get("ACP_TEST_SECRET", "missing")
             sys.stderr.write((f"ACP_TEST_SECRET={secret}\n" + "x" * 100000))
