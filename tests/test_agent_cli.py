@@ -175,9 +175,20 @@ def prepare_acp_project(tmp_path: Path, monkeypatch, *, command: str = "fake-acp
     return root
 
 
+def snapshot_tree_metadata(root: Path) -> dict[str, tuple[str, bytes | None, int]]:
+    return {
+        str(path.relative_to(root)): (
+            "dir" if path.is_dir() else "file",
+            path.read_bytes() if path.is_file() else None,
+            path.stat().st_mtime_ns,
+        )
+        for path in sorted(root.rglob("*"))
+    }
+
+
 def test_acp_preflight_is_read_only_and_deterministic(tmp_path: Path, monkeypatch, capsys) -> None:
     root = prepare_acp_project(tmp_path, monkeypatch)
-    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    before = snapshot_tree_metadata(root)
     monkeypatch.setattr(cli.importlib.util, "find_spec", lambda name: object() if name == "acp" else None)
     monkeypatch.setattr(cli.importlib.metadata, "version", lambda name: "0.11.0")
     monkeypatch.setattr(cli.shutil, "which", lambda command: f"/example/bin/{command}")
@@ -194,21 +205,21 @@ def test_acp_preflight_is_read_only_and_deterministic(tmp_path: Path, monkeypatc
     assert first["adapter"]["argv"] == ["fake-acp-agent", "--stdio"]
     assert first["sdk"] == {"module": "acp", "package": "agent-client-protocol", "present": True, "version": "0.11.0"}
     assert all(control["safety"] == "inspect" for control in first["controls"])
-    after = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
-    assert after == before
+    assert snapshot_tree_metadata(root) == before
 
 
 @pytest.mark.parametrize(
     ("sdk_present", "executable_present", "blocker"),
     [
-        (False, True, "ACP Python SDK is not installed"),
+        (False, True, "ACP Python SDK is unavailable or unusable"),
         (True, False, "ACP adapter executable was not found"),
     ],
 )
 def test_acp_preflight_reports_setup_blockers(
     tmp_path: Path, monkeypatch, capsys, sdk_present: bool, executable_present: bool, blocker: str
 ) -> None:
-    prepare_acp_project(tmp_path, monkeypatch)
+    root = prepare_acp_project(tmp_path, monkeypatch)
+    before = snapshot_tree_metadata(root)
     monkeypatch.setattr(cli.importlib.util, "find_spec", lambda _name: object() if sdk_present else None)
     monkeypatch.setattr(cli.importlib.metadata, "version", lambda _name: "0.11.0")
     monkeypatch.setattr(cli.shutil, "which", lambda command: f"/bin/{command}" if executable_present else None)
@@ -217,6 +228,7 @@ def test_acp_preflight_reports_setup_blockers(
     payload = json.loads(capsys.readouterr().out)
     assert payload["ready"] is False
     assert blocker in payload["blockers"]
+    assert snapshot_tree_metadata(root) == before
 
 
 def test_acp_preflight_enforces_known_claude_node_requirement(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -272,7 +284,7 @@ def test_acp_preflight_validation_failure_has_no_stdout(tmp_path: Path, monkeypa
 
 def test_acp_preflight_sdk_version_mismatch_is_read_only_diagnostic(tmp_path: Path, monkeypatch, capsys) -> None:
     root = prepare_acp_project(tmp_path, monkeypatch)
-    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    before = snapshot_tree_metadata(root)
     monkeypatch.setattr(cli.importlib.util, "find_spec", lambda _name: object())
     monkeypatch.setattr(cli.importlib.metadata, "version", lambda _name: "0.10.0")
     monkeypatch.setattr(cli.shutil, "which", lambda command: f"/example/bin/{command}")
@@ -283,8 +295,65 @@ def test_acp_preflight_sdk_version_mismatch_is_read_only_diagnostic(tmp_path: Pa
     assert payload["sdk"]["version"] == "0.10.0"
     assert payload["ready"] is False
     assert payload["blockers"] == ["ACP Python SDK version must be 0.11.0"]
-    after = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
-    assert after == before
+    assert snapshot_tree_metadata(root) == before
+
+
+@pytest.mark.parametrize(
+    "probe_error",
+    [ValueError("bad spec"), ImportError("broken finder"), RuntimeError("finder failed")],
+)
+def test_acp_preflight_sdk_discovery_errors_are_deterministic_diagnostics(
+    tmp_path: Path, monkeypatch, capsys, probe_error: Exception
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch)
+    before = snapshot_tree_metadata(root)
+    monkeypatch.setattr(cli.importlib.util, "find_spec", lambda _name: (_ for _ in ()).throw(probe_error))
+    monkeypatch.setattr(cli.shutil, "which", lambda command: command)
+
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "planner"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["sdk"]["present"] is False
+    assert payload["sdk"]["version"] is None
+    assert payload["blockers"] == ["ACP Python SDK is unavailable or unusable"]
+    assert snapshot_tree_metadata(root) == before
+
+
+@pytest.mark.parametrize(
+    "metadata_result",
+    ["", "   ", RuntimeError("metadata failed")],
+)
+def test_acp_preflight_sdk_metadata_errors_are_unusable(
+    tmp_path: Path, monkeypatch, capsys, metadata_result: object
+) -> None:
+    prepare_acp_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli.importlib.util, "find_spec", lambda _name: object())
+    if isinstance(metadata_result, Exception):
+        monkeypatch.setattr(cli.importlib.metadata, "version", lambda _name: (_ for _ in ()).throw(metadata_result))
+    else:
+        monkeypatch.setattr(cli.importlib.metadata, "version", lambda _name: metadata_result)
+    monkeypatch.setattr(cli.shutil, "which", lambda command: command)
+
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "planner"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["sdk"] == {"module": "acp", "package": "agent-client-protocol", "present": False, "version": None}
+    assert payload["blockers"] == ["ACP Python SDK is unavailable or unusable"]
+
+
+def test_acp_preflight_normalizes_relative_paths_and_windows_target_suffix(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    prepare_acp_project(tmp_path, monkeypatch, command="CLAUDE-AGENT-ACP.CMD")
+    monkeypatch.setattr(cli.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(cli.importlib.metadata, "version", lambda _name: "0.11.0")
+    monkeypatch.setattr(cli.shutil, "which", lambda command: f"relative/{command}")
+    monkeypatch.setattr(cli, "_node_version_from_executable", lambda _path: "22.1.0")
+
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "planner"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert Path(payload["adapter"]["executable_path"]).is_absolute()
+    assert Path(payload["node"]["executable_path"]).is_absolute()
+    assert payload["node"]["required"] is True
+    assert payload["node"]["ready"] is True
 
 
 def test_existing_agent_defaults_to_tmux_transport(tmp_path: Path) -> None:

@@ -31,6 +31,7 @@ from .contracts import (
     PROTOCOL_RUNTIME_CONTRACT_VERSION,
     agent_runtime_contract_response,
     acp_runtime_contract_response,
+    acp_executable_basename,
     approval_contract_response,
     artifacts_contract_response,
     contract_index_response,
@@ -1062,6 +1063,23 @@ def _node_version_from_executable(executable: str | None) -> str | None:
     return ".".join(parts)
 
 
+def _resolved_executable(command: str) -> str | None:
+    found = shutil.which(command)
+    return str(Path(found).expanduser().resolve(strict=False)) if found else None
+
+
+def _probe_acp_sdk() -> tuple[bool, str | None]:
+    try:
+        if importlib.util.find_spec("acp") is None:
+            return False, None
+        version = importlib.metadata.version("agent-client-protocol")
+    except Exception:
+        return False, None
+    if type(version) is not str or not version.strip():
+        return False, None
+    return True, version.strip()
+
+
 def protocol_acp_preflight_command(args: argparse.Namespace) -> int:
     root = project_root()
     try:
@@ -1082,24 +1100,18 @@ def protocol_acp_preflight_command(args: argparse.Namespace) -> int:
         print(f"agent {args.agent} has an empty ACP transport_command", file=sys.stderr)
         return 1
 
-    sdk_present = importlib.util.find_spec("acp") is not None
-    sdk_version: str | None = None
-    if sdk_present:
-        try:
-            sdk_version = importlib.metadata.version("agent-client-protocol")
-        except importlib.metadata.PackageNotFoundError:
-            sdk_present = False
-    executable_path = shutil.which(argv[0])
+    sdk_present, sdk_version = _probe_acp_sdk()
+    executable_path = _resolved_executable(argv[0])
     blockers: list[str] = []
     if not sdk_present:
-        blockers.append("ACP Python SDK is not installed")
+        blockers.append("ACP Python SDK is unavailable or unusable")
     elif sdk_version != ACP_RUNTIME_SDK_VERSION:
         blockers.append(f"ACP Python SDK version must be {ACP_RUNTIME_SDK_VERSION}")
     if executable_path is None:
         blockers.append("ACP adapter executable was not found")
 
-    known_claude = Path(argv[0]).name == "claude-agent-acp"
-    node_path = shutil.which("node") if known_claude else None
+    known_claude = acp_executable_basename(argv[0]) == "claude-agent-acp"
+    node_path = _resolved_executable("node") if known_claude else None
     node_version = _node_version_from_executable(node_path) if known_claude else None
     node_ready = True
     if known_claude:

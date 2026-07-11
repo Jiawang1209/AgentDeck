@@ -12,6 +12,7 @@
 - **TDD**: RED covered missing discovery/routes, SDK/executable blockers, Node <22, deterministic repeatability, no project creation, exact argv, sanitized example, inspect-only controls, and workbench/index discovery; focused tests passed after the minimal implementation.
 - **Semantic hardening**: the validator now enforces exact nested identities/types plus presence/path, pinned SDK `0.11.0`, Claude-target Node 22, parsed-version readiness, stable blocker derivation, top-level readiness, and enabled inspect-only control consistency. A mutation matrix covers every relation, and forced validation failure proves stdout remains empty.
 - **Diagnostic compatibility fix**: an installed SDK with a non-pinned but non-empty version is now a structurally valid preflight fact. It produces `ready=false` plus the unique stable version blocker and exits 0 without writes; missing or extra version blockers remain contract errors.
+- **Probe/path hardening**: adapter and Node `which` results are expanded and resolved to absolute paths; producer and validator share case-insensitive Windows-suffix-aware Claude target matching. SDK spec/metadata discovery is exception-safe and never imports `acp`; unavailable or unusable metadata collapses to one deterministic diagnostic. Read-only tests compare paths, bytes, directory/file kinds, and mtimes across repeated, mismatch, and missing-executable preflights.
 
 ### Add a bounded ACP stdio client transport
 

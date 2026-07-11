@@ -359,6 +359,14 @@ ACP_RUNTIME_TRANSITION_FIELDS = (
     "reason", "details", "created_at",
 )
 
+
+def acp_executable_basename(value: str) -> str:
+    name = Path(value).name.lower()
+    for suffix in (".exe", ".cmd", ".bat"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
 PROJECT_VIEW_LEADER_FIELDS = (
     "agent_id",
     "provider",
@@ -2899,7 +2907,10 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
             if node.get("ready") is not True: errors.append("non-required node must be ready")
     if isinstance(adapter, dict) and isinstance(node, dict):
         argv = adapter.get("argv")
-        first_target = bool(isinstance(argv, list) and argv and Path(argv[0]).name == "claude-agent-acp")
+        first_target = bool(
+            isinstance(argv, list) and argv and isinstance(argv[0], str)
+            and acp_executable_basename(argv[0]) == "claude-agent-acp"
+        )
         if node.get("required") != first_target: errors.append("node.required must match claude-agent-acp target")
     controls = payload.get("controls")
     if not isinstance(controls, list) or not controls: errors.append("controls must be a non-empty list")
@@ -2921,7 +2932,7 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
             if not allowed: errors.append(f"controls[{index}].command is not allowed")
     if isinstance(adapter, dict) and isinstance(sdk, dict) and isinstance(node, dict) and isinstance(blockers, list):
         expected_blockers: list[str] = []
-        if sdk.get("present") is not True: expected_blockers.append("ACP Python SDK is not installed")
+        if sdk.get("present") is not True: expected_blockers.append("ACP Python SDK is unavailable or unusable")
         elif sdk.get("version") != ACP_RUNTIME_SDK_VERSION:
             expected_blockers.append(f"ACP Python SDK version must be {ACP_RUNTIME_SDK_VERSION}")
         if adapter.get("present") is not True: expected_blockers.append("ACP adapter executable was not found")
