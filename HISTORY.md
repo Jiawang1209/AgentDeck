@@ -16,6 +16,7 @@
 - **Failure matrix**: fake-process CLI tests now cover TTY reject-once, TTY EOF/Ctrl-C settlement, non-TTY denial, prompt timeout plus cancel, EOF ambiguity, permission-bound exhaustion without orphan records, disconnect on every created-session path, and validator failure with empty stdout.
 - **Terminal reserve and integrity**: streaming now reserves one update plus 512 bytes for completion or compact error. Post-creation failures terminalize writable turns, and final response reconstruction rejects corrupt global identities/lineage, sequence gaps, conflicting completion facts, stop-reason/state mismatch, or a non-final disconnect.
 - **Diagnostic privacy and cleanup**: raw adapter stderr is no longer exposed. CLI diagnostics contain only bounded counts/truncation/hash facts; cleanup exceptions persist `cleanup_failed`, preserve the operation error as primary, and never print raw exception, prompt, tool, credential, or native-session content.
+- **Final lineage/cancellation hardening**: strict run reconstruction now validates cross-session update and permission lineage before transitions. Repeated cancellation during close waits for the one shielded cleanup task, writes exactly one disconnect after terminalizing the turn, then preserves cancellation semantics; adversarial two-session and double-cancel tests cover both guarantees.
 
 ### Publish ACP runtime preflight and contract
 

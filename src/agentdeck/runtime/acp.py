@@ -383,6 +383,10 @@ class AcpTransport:
     async def close(self) -> None:
         await asyncio.shield(self._ensure_cleanup())
 
+    def ensure_cleanup_task(self) -> asyncio.Task[None]:
+        """Return the one retryable cleanup task for cancellation-safe orchestration."""
+        return self._ensure_cleanup()
+
     async def _cleanup(self) -> None:
         self._lifecycle_state = "cleaning"
         self._cleanup_incomplete = False

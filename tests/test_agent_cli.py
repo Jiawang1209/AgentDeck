@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import asyncio
 import io
 import json
 from pathlib import Path
@@ -681,9 +682,12 @@ def test_acp_run_cleanup_failure_still_disconnects_without_raw_exception(
     real_transport = cli.AcpTransport
 
     class CloseFailureTransport(real_transport):
-        async def close(self):
-            await super().close()
-            raise RuntimeError("raw-secret-native-id")
+        def ensure_cleanup_task(self):
+            cleanup = super().ensure_cleanup_task()
+            async def fail_after_cleanup():
+                await asyncio.shield(cleanup)
+                raise RuntimeError("raw-secret-native-id")
+            return asyncio.create_task(fail_after_cleanup())
 
     monkeypatch.setattr(cli, "AcpTransport", CloseFailureTransport)
     assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "private-prompt", "--confirm"]) == 0
@@ -694,7 +698,10 @@ def test_acp_run_cleanup_failure_still_disconnects_without_raw_exception(
     assert "private-prompt" not in captured.err
 
 
-@pytest.mark.parametrize("corruption", ["duplicate_session", "sequence_gap", "completion_conflict", "disconnect_not_final"])
+@pytest.mark.parametrize("corruption", [
+    "duplicate_session", "sequence_gap", "completion_conflict", "disconnect_not_final",
+    "cross_session_update", "cross_session_permission",
+])
 def test_acp_run_payload_rejects_corrupt_global_ledger(
     tmp_path: Path, corruption: str,
 ) -> None:
@@ -713,12 +720,68 @@ def test_acp_run_payload_rejects_corrupt_global_ledger(
     elif corruption == "completion_conflict":
         duplicate = dict(state["transport_updates"][0]); duplicate["update_id"] = "upd_conflict0000"; duplicate["sequence"] = 1
         state["transport_updates"].append(duplicate)
-    else:
+    elif corruption == "disconnect_not_final":
         state["protocol_state_transitions"].append({**state["protocol_state_transitions"][-1], "transition_id": "pst_corrupt00000", "from_state": "disconnected", "to_state": "reconnecting", "reason": "bad"})
+    else:
+        other = store.record_agent_session("other", "fake", "acp-adapter", "native-2", str(tmp_path), capabilities)
+        state = store.load()
+        if corruption == "cross_session_update":
+            state["transport_updates"][0]["session_id"] = other["session_id"]
+        else:
+            permission = store.record_permission_request(session["session_id"], turn["turn_id"], "Edit", "x", "high")
+            state = store.load()
+            next(item for item in state["permission_requests"] if item["permission_id"] == permission["permission_id"])["session_id"] = other["session_id"]
     store.save(state)
-
+    before = snapshot_tree_metadata(tmp_path)
     with pytest.raises((ValueError, KeyError)):
         cli._acp_run_payload_from_state(store, session["session_id"], turn["turn_id"])
+    assert snapshot_tree_metadata(tmp_path) == before
+
+
+def test_acp_run_repeated_cancellation_during_cleanup_finalizes_ledger(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    path = root / ".agentdeck" / "config.toml"
+    path.write_text(path.read_text().replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "stream_end_turn"]',
+    ))
+    real_transport = cli.AcpTransport
+    cleanup_started: asyncio.Event
+
+    class SlowCleanupTransport(real_transport):
+        def ensure_cleanup_task(self):
+            base = super().ensure_cleanup_task()
+            async def delayed():
+                cleanup_started.set()
+                await asyncio.sleep(0.15)
+                await asyncio.shield(base)
+            return asyncio.create_task(delayed())
+
+    monkeypatch.setattr(cli, "AcpTransport", SlowCleanupTransport)
+    config = load_config(root)
+    agent = next(item for item in config.agents if item.agent_id == "planner")
+    store = StateStore.open_existing(root)
+
+    async def exercise():
+        nonlocal cleanup_started
+        cleanup_started = asyncio.Event()
+        task = asyncio.create_task(cli._run_acp_prompt(config, agent, store, "private"))
+        await cleanup_started.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(exercise())
+    state = store.validated_protocol_state()
+    disconnects = [item for item in state["protocol_state_transitions"] if item["entity_type"] == "session" and item["to_state"] == "disconnected"]
+    assert len(disconnects) == 1
+    turn_id = state["protocol_turns"][0]["turn_id"]
+    assert cli._derived_entity_state(state, "turn", turn_id, "created") in {"completed", "blocked", "failed", "ambiguous"}
 
 
 def test_existing_agent_defaults_to_tmux_transport(tmp_path: Path) -> None:

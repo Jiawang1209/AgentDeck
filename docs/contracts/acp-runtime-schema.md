@@ -30,6 +30,8 @@ Streaming admission reserves one update slot and a 512-byte payload allowance fo
 
 Adapter stderr is never printed or returned as text. The only CLI diagnostic is a compact summary containing presence, bounded byte count, truncation, line count, and SHA-256. Cleanup failure is reported with a stable message and persisted as `cleanup_failed`; raw exceptions, prompts, tool data, native IDs, and stderr content are excluded.
 
+Strict response reconstruction validates cross-record lineage after global identity validation and before transition derivation. Updates and permissions whose session differs from their referenced turn, including otherwise valid references to a second session, are corruption and produce no stdout or new writes. Foreground cancellation cannot bypass cleanup: repeated cancellation waits on the single shielded bounded cleanup task, persists exactly one disconnect and a terminal turn, then re-raises cancellation.
+
 ## Future load/resume responses
 
 Discovery also publishes the planned load/resume response fields. Those operations remain unavailable until their later approved tasks.

@@ -1328,6 +1328,7 @@ async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateS
     stop_reason: str | None = None
     disconnect_reason = "clean_exit"
     initialized = None
+    cancellation_requested = False
     try:
         initialized = await transport.initialize()
         native = await transport.new_session()
@@ -1364,6 +1365,7 @@ async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateS
             sink._transition_turn("ambiguous", "unexpected_eof")
         print("ACP prompt outcome is ambiguous", file=sys.stderr)
     except (AcpRequestTimeout, AcpTransportError, asyncio.CancelledError, OSError, ValueError) as error:
+        cancellation_requested = isinstance(error, asyncio.CancelledError)
         disconnect_reason = "timeout" if isinstance(error, AcpRequestTimeout) else "failed"
         if turn is not None and sink.turn_state not in {"completed", "blocked", "failed", "ambiguous"}:
             with contextlib.suppress(Exception):
@@ -1377,10 +1379,22 @@ async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateS
         )
     finally:
         cleanup_failed = False
-        try:
-            await transport.close()
-        except Exception:
-            cleanup_failed = True
+        cleanup_task = transport.ensure_cleanup_task()
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                cancellation_requested = True
+                continue
+            except BaseException:
+                cleanup_failed = True
+                break
+        if cleanup_task.done() and not cleanup_task.cancelled():
+            try:
+                cleanup_task.result()
+            except BaseException:
+                cleanup_failed = True
+        if cleanup_failed:
             print("ACP cleanup failed", file=sys.stderr)
         summary = transport.stderr_summary
         if summary["present"]:
@@ -1393,6 +1407,8 @@ async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateS
                     "session", session["session_id"], current, "disconnected",
                     "cleanup_failed" if cleanup_failed else disconnect_reason, {},
                 )
+    if cancellation_requested:
+        raise asyncio.CancelledError
     if session is None or turn is None or initialized is None:
         raise AcpTransportError("ACP run failed before a native session was created")
     return _acp_run_payload_from_state(store, session["session_id"], turn["turn_id"])

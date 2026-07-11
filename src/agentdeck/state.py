@@ -685,6 +685,7 @@ class StateStore:
         """Load and globally validate all protocol identities and transition lineage."""
         state = self.load()
         self._validate_protocol_identities(state)
+        self._validate_protocol_lineage(state)
         self._validate_protocol_transition_history(state)
         return state
 
