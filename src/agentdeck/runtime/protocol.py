@@ -140,7 +140,7 @@ def build_permission_request(
         "tool_name": tool_name,
         "target": target,
         "risk": risk,
-        "state": "pending",
+        "status": "pending",
         "decision": None,
         "created_at": now,
         "updated_at": now,

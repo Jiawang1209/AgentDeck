@@ -56,7 +56,8 @@ def test_builders_create_json_serializable_domain_records() -> None:
     assert turn["turn_id"].startswith("trn_") and turn["state"] == "created"
     assert update["update_id"].startswith("upd_") and update["payload"] == {"percent": 10}
     assert permission["permission_id"].startswith("prm_")
-    assert permission["state"] == "pending" and permission["decision"] is None
+    assert permission["status"] == "pending" and permission["decision"] is None
+    assert "state" not in permission
     json.dumps([session, turn, update, permission])
 
 

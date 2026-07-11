@@ -11,6 +11,7 @@
 - **Validation**: required identity 严格拒绝空白、bool 与非字符串；session/turn 引用强制协议前缀；sequence 严格拒绝 bool、负数与非整数；update payload 必须为 dict 并深拷贝；native session 与 capability 类型严格守门。
 - **边界**: 本切片只生成 JSON 可序列化 dict，不读取或写入 StateStore、ProjectView、provider、tmux 或 permission side effect；tmux fallback capability 仅声明 observable terminal。
 - **TDD 证据**: 聚焦测试先因 `agentdeck.runtime.protocol` 不存在得到预期 collection RED；最小实现后 `tests/test_protocol_runtime.py` 34/34 GREEN。
+- **规格修正**: permission request 的生命周期字段与批准计划统一为 `status="pending"`，不再输出漂移的 `state`；契约测试先以 `KeyError: 'status'` 精确 RED，再做单字段修复。
 
 ### Anchor Worker readiness to the current terminal frame
 
