@@ -3,7 +3,7 @@
 ## Environment
 
 - Implementation checkout: `codex/natural-language-mission`
-- Acceptance project: `/Users/liuyue/Desktop/agentdeck-protocol-v2-phase0-acceptance`
+- Acceptance project basename: `agentdeck-protocol-v2-phase0-acceptance`
 - Python: conda environment `agentdeck`
 - Leader: `codex-cli` / `gpt-5.5`
 - Workers: `planner` / Codex and `reviewer` / Claude

@@ -4,6 +4,10 @@
 
 ## 2026-07-11
 
+### Redact the Phase 0 acceptance project path
+
+- **问题与修复**: 规格审查发现验收报告 Environment 误写本机绝对路径，泄露本地用户名。durable 报告现只保留临时项目 basename；同步扫描本轮 README、HISTORY、handoff、CLAUDE、AGENT 与验收报告，不保留本机用户名、email 地址、token 值或 credential 值。
+
 ### Validate the natural-language Mission baseline
 
 - **类型**: real fresh-project acceptance + durable evidence
