@@ -165,6 +165,41 @@ def test_project_view_protocol_source_validation_matrix(tmp_path, collection, re
         store.project_view(_project_config(tmp_path))
 
 
+@pytest.mark.parametrize(("collection", "identity_field", "prefix"), [
+    ("agent_sessions", "session_id", "ags"),
+    ("protocol_turns", "turn_id", "trn"),
+    ("transport_updates", "update_id", "upd"),
+    ("permission_requests", "permission_id", "prm"),
+])
+def test_project_view_rejects_protocol_duplicate_hidden_by_latest_twenty(
+    tmp_path, collection, identity_field, prefix,
+) -> None:
+    store = StateStore(tmp_path)
+    session = build_agent_session("planner", "codex", "native", None, "/tmp", CAPABILITIES)
+    turn = build_turn(session["session_id"], "msg_1")
+    templates = {
+        "agent_sessions": session,
+        "protocol_turns": turn,
+        "transport_updates": build_transport_update(session["session_id"], turn["turn_id"], 0, "text", {}),
+        "permission_requests": build_permission_request(session["session_id"], turn["turn_id"], "read", "/tmp", "low"),
+    }
+    records = []
+    for index in range(21):
+        record = dict(templates[collection])
+        record[identity_field] = f"{prefix}_{index:02d}"
+        record["created_at"] = f"2026-07-11T00:00:{index:02d}+00:00"
+        if collection == "transport_updates":
+            record["sequence"] = index
+        records.append(record)
+    records[-1][identity_field] = records[0][identity_field]
+    state = store.load()
+    state[collection] = records
+    store.save(state)
+
+    with pytest.raises(ValueError, match=f"duplicate {identity_field}: {prefix}_00"):
+        store.project_view(_project_config(tmp_path))
+
+
 def test_protocol_constants_are_stable() -> None:
     assert AGENT_SESSION_STATES == ("created", "connecting", "ready", "busy", "reconnecting", "stopped", "failed")
     assert TURN_STATES == ("created", "submitted", "streaming", "waiting_permission", "completed", "blocked", "failed", "ambiguous")

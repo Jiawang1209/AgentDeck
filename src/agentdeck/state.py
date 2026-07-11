@@ -1745,6 +1745,7 @@ class StateStore:
             raise ValueError("protocol summary source must be a list")
         prepared: list[dict[str, Any]] = []
         counts: dict[str, int] = {}
+        identities: set[str] = set()
         for index, record in enumerate(records):
             if not isinstance(record, dict):
                 raise ValueError(f"protocol summary item at index {index} must be an object")
@@ -1753,6 +1754,9 @@ class StateStore:
             group = record.get(group_field)
             if not isinstance(identity, str) or not isinstance(created_at, str) or not isinstance(group, str):
                 raise ValueError(f"invalid protocol summary item at index {index}")
+            if identity in identities:
+                raise ValueError(f"duplicate {identity_field}: {identity}")
+            identities.add(identity)
             for field in item_fields:
                 value = record.get(field)
                 if field == "decision" and (
