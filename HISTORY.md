@@ -11,6 +11,7 @@
 - **Cancellation and concurrency**: non-TTY/EOF/timeout/Ctrl-C/cancel behavior comes from the injected decision edge or its interruption result and is persisted as denied before returning cancelled. A second concurrent permission request is rejected before creating another pending record; the callback never infers or auto-grants approval.
 - **Unadvertised capabilities**: every official SDK filesystem, terminal, elicitation, and extension callback returns an explicit unsupported JSON-RPC error without disk or process side effects. This slice adds no subprocess, CLI, provider, or tmux behavior.
 - **TDD**: RED began at the missing callback module; tests cover allow/reject once, disabled and unknown choices, cancellation/interruption paths, wrong session, completed turn, concurrent permission, exact update sequencing, bound propagation, and unsupported callback no-I/O guarantees.
+- **Cancellation hardening**: real `task.cancel()` at either a possibly persisted pending write or an in-flight decision write now invokes a bounded, shielded, idempotent denied settlement keyed by session/tool-call correlation before cancellation propagates. A cancellation settlement dominates a possibly written approval; settlement failure raises explicitly, the permission guard is always released, and adversarial tests prove no stale pending record, duplicate final decision, accidental approval, or next-request confusion.
 
 ### Map ACP wire facts into the protocol ledger
 

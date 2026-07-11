@@ -69,8 +69,10 @@ class FakeLedgerSink:
         return item
 
     async def append_permission_decision(
-        self, pending: dict[str, Any], decision: PermissionDecision
+        self, session_id: str, tool_call_id: str, decision: PermissionDecision
     ) -> None:
+        pending = next(item for item in reversed(self.permissions)
+                       if item["summary"]["tool_call_id"] == tool_call_id)
         if pending["decision"] is not None:
             raise ValueError("permission already settled")
         pending["decision"] = decision.ledger_status
@@ -152,7 +154,7 @@ async def test_cancel_semantics_are_decider_results_and_never_auto_approve(reaso
 
 @pytest.mark.parametrize(
     ("error", "reason"), [(TimeoutError(), "timeout"), (EOFError(), "eof"),
-                           (KeyboardInterrupt(), "ctrl_c"), (asyncio.CancelledError(), "cancelled")]
+                           (KeyboardInterrupt(), "ctrl_c")]
 )
 @async_test
 async def test_interrupted_decider_is_settled_as_cancelled(error: BaseException, reason: str) -> None:
@@ -220,6 +222,86 @@ async def test_concurrent_permission_request_fails_without_second_pending_record
     assert len(sink.permissions) == 1
     release.set()
     await first
+
+
+class CancellingLedgerSink(FakeLedgerSink):
+    def __init__(self, block_at: str, *, fail_cancel_settlement: bool = False) -> None:
+        super().__init__()
+        self.block_at = block_at
+        self.fail_cancel_settlement = fail_cancel_settlement
+        self.blocked = asyncio.Event()
+        self.release = asyncio.Event()
+        self.final_decisions: list[PermissionDecision] = []
+
+    async def append_permission(
+        self, session_id: str, summary: dict[str, Any], options: list[schema.PermissionOption]
+    ) -> dict[str, Any]:
+        pending = await super().append_permission(session_id, summary, options)
+        if self.block_at == "pending":
+            self.blocked.set()
+            await self.release.wait()
+        return pending
+
+    async def append_permission_decision(
+        self, session_id: str, tool_call_id: str, decision: PermissionDecision
+    ) -> None:
+        pending = next(item for item in reversed(self.permissions)
+                       if item["summary"]["tool_call_id"] == tool_call_id)
+        if decision.reason == "cancelled" and self.fail_cancel_settlement:
+            raise RuntimeError("cancel settlement failed")
+        if self.block_at == "decision" and not self.blocked.is_set():
+            pending["decision"] = decision.ledger_status
+            pending["reason"] = decision.reason
+            self.blocked.set()
+            await self.release.wait()
+        if decision.reason == "cancelled":
+            pending["decision"] = "denied"
+            pending["reason"] = "cancelled"
+        elif pending["decision"] is None:
+            await super().append_permission_decision(session_id, tool_call_id, decision)
+        if not self.final_decisions or self.final_decisions[-1] != decision:
+            self.final_decisions[:] = [decision]
+
+
+@pytest.mark.parametrize("block_at", ["pending", "decision"])
+@async_test
+async def test_task_cancel_settles_possibly_written_permission_once_and_cleans_guard(
+    block_at: str,
+) -> None:
+    sink = CancellingLedgerSink(block_at)
+    client = AgentDeckAcpClient(sink=sink, decide=lambda *_: PermissionDecision.select("allow"))
+    task = asyncio.create_task(client.request_permission("native-1", _tool(), _options()))
+    await sink.blocked.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert sink.permissions[0]["decision"] == "denied"
+    assert sink.permissions[0]["reason"] == "cancelled"
+    assert len(sink.final_decisions) == 1
+
+    sink.block_at = "none"
+    result = await client.request_permission("native-1", _tool(), _options())
+    assert result.outcome.outcome == "selected"
+    assert len(sink.permissions) == 2
+    assert sink.permissions[0]["decision"] == "denied"
+    assert sink.permissions[1]["decision"] == "approved"
+
+
+@async_test
+async def test_cancel_settlement_failure_raises_and_never_records_approval() -> None:
+    sink = CancellingLedgerSink("pending", fail_cancel_settlement=True)
+    client = AgentDeckAcpClient(sink=sink, decide=lambda *_: PermissionDecision.select("allow"))
+    task = asyncio.create_task(client.request_permission("native-1", _tool(), _options()))
+    await sink.blocked.wait()
+    task.cancel()
+    with pytest.raises(RuntimeError, match="cancel settlement failed"):
+        await task
+    assert sink.permissions[0]["decision"] is None
+    assert all(decision.ledger_status != "approved" for decision in sink.final_decisions)
+    sink.fail_cancel_settlement = False
+    sink.block_at = "none"
+    result = await client.request_permission("native-1", _tool(), _options())
+    assert result.outcome.outcome == "selected"
 
 
 @async_test

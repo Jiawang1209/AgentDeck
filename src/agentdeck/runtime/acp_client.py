@@ -13,6 +13,7 @@ from agentdeck.runtime.acp_mapping import map_session_update, summarize_permissi
 
 _SUPPORTED_PERMISSION_KINDS = {"allow_once", "reject_once"}
 _METHOD_NOT_FOUND = -32601
+_CANCEL_SETTLEMENT_TIMEOUT_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -62,8 +63,10 @@ class AcpLedgerSink(Protocol):
     ) -> object: ...
 
     async def append_permission_decision(
-        self, pending: object, decision: PermissionDecision
-    ) -> None: ...
+        self, session_id: str, tool_call_id: str, decision: PermissionDecision
+    ) -> None:
+        """Settle by correlation idempotently; cancelled denial dominates an in-flight write."""
+        ...
 
 
 PermissionDecider = Callable[
@@ -86,6 +89,23 @@ class AgentDeckAcpClient:
         self._sink = sink
         self._decide = decide
         self._permission_pending = False
+
+    async def _settle_cancelled(self, session_id: str, tool_call_id: str) -> None:
+        """Bound and shield the idempotent fail-closed settlement write."""
+        task = asyncio.create_task(self._sink.append_permission_decision(
+            session_id, tool_call_id, PermissionDecision.cancelled("cancelled")
+        ))
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task), timeout=_CANCEL_SETTLEMENT_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=0.1)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+            raise RuntimeError("ACP permission cancellation settlement timed out") from None
 
     async def session_update(self, session_id: str, update: object, **_: Any) -> None:
         kind, payload = map_session_update(update)
@@ -112,19 +132,20 @@ class AgentDeckAcpClient:
             sessionId=session_id, toolCall=tool_call, options=options
         )
         self._permission_pending = True
+        pending_write_started = False
         try:
+            pending_write_started = True
             pending = await self._sink.append_permission(
                 session_id, summarize_permission(request), options
             )
             try:
                 candidate = self._decide(pending, options)
                 decision = await candidate if inspect.isawaitable(candidate) else candidate
-            except (TimeoutError, EOFError, KeyboardInterrupt, asyncio.CancelledError) as error:
+            except (TimeoutError, EOFError, KeyboardInterrupt) as error:
                 reason = {
                     TimeoutError: "timeout",
                     EOFError: "eof",
                     KeyboardInterrupt: "ctrl_c",
-                    asyncio.CancelledError: "cancelled",
                 }[type(error)]
                 decision = PermissionDecision.cancelled(reason)
             if not isinstance(decision, PermissionDecision):
@@ -139,8 +160,14 @@ class AgentDeckAcpClient:
             elif option is not None:
                 decision = decision.settled_for(option)
 
-            await self._sink.append_permission_decision(pending, decision)
+            await self._sink.append_permission_decision(
+                session_id, tool_call.tool_call_id, decision
+            )
             return decision.to_acp_response()
+        except asyncio.CancelledError:
+            if pending_write_started:
+                await self._settle_cancelled(session_id, tool_call.tool_call_id)
+            raise
         finally:
             self._permission_pending = False
 
