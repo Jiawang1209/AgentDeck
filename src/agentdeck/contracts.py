@@ -269,6 +269,10 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "leader_actions",
     "skills",
     "memory",
+    "agent_sessions",
+    "protocol_turns",
+    "transport_updates",
+    "permission_requests",
     "inbox",
     "recovery",
 )
@@ -6233,12 +6237,40 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     _validate_project_view_mission_items(errors, payload)
     _validate_project_view_skill_items(errors, payload)
     _validate_project_view_memory_items(errors, payload)
+    _validate_project_view_protocol_summaries(errors, payload)
     _validate_project_view_summary_items(errors, payload, "messages", PROJECT_VIEW_MESSAGE_ITEM_FIELDS, "message")
     _validate_project_view_summary_items(errors, payload, "jobs", PROJECT_VIEW_JOB_ITEM_FIELDS, "job")
     _validate_project_view_summary_items(errors, payload, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
     _validate_project_view_summary_items(errors, payload, "artifacts", PROJECT_VIEW_ARTIFACT_ITEM_FIELDS, "artifact")
     _validate_project_view_summary_items(errors, payload, "releases", PROJECT_VIEW_RELEASE_ITEM_FIELDS, "release")
     return {"ok": not errors, "errors": errors}
+
+
+def _validate_project_view_protocol_summaries(
+    errors: list[str], payload: dict[str, object]
+) -> None:
+    specs = {
+        "agent_sessions": ("by_state", False),
+        "protocol_turns": ("by_state", False),
+        "transport_updates": ("by_kind", False),
+        "permission_requests": ("by_status", True),
+    }
+    for name, (group_field, has_pending_count) in specs.items():
+        summary = payload.get(name)
+        if not isinstance(summary, dict):
+            if name in payload:
+                errors.append(f"{name} must be an object")
+            continue
+        required = ["count", group_field, "items"]
+        if has_pending_count:
+            required.insert(1, "pending_count")
+        for field in required:
+            if field not in summary:
+                errors.append(f"missing {name} field: {field}")
+        if not isinstance(summary.get("items"), list):
+            errors.append(f"{name}.items must be a list")
+        elif len(summary["items"]) > 20:
+            errors.append(f"{name}.items must contain at most 20 items")
 
 
 def _validate_project_view_mission_items(
@@ -11297,6 +11329,15 @@ def project_view_example() -> dict[str, object]:
                     "preview": "- Keep approval-gated worker dispatch.",
                 }
             ],
+        },
+        "agent_sessions": {"count": 0, "by_state": {}, "items": []},
+        "protocol_turns": {"count": 0, "by_state": {}, "items": []},
+        "transport_updates": {"count": 0, "by_kind": {}, "items": []},
+        "permission_requests": {
+            "count": 0,
+            "pending_count": 0,
+            "by_status": {},
+            "items": [],
         },
         "inbox": {"total": 0, "by_agent": {}, "by_status": {}, "heads": {}},
         "recovery": {

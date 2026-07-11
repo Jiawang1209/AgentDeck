@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
-from typing import Any
+from typing import Any, Callable
 
 from .config import CONFIG_DIR, ensure_project_layout, project_root
 from .mission import (
@@ -1729,6 +1729,101 @@ class StateStore:
         return counts
 
     @staticmethod
+    def _protocol_summary_items(
+        records: object,
+        *,
+        identity_field: str,
+        group_field: str,
+        item_fields: tuple[str, ...],
+        transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        if not isinstance(records, list):
+            raise ValueError("protocol summary source must be a list")
+        prepared: list[dict[str, Any]] = []
+        counts: dict[str, int] = {}
+        for index, record in enumerate(records):
+            if not isinstance(record, dict):
+                raise ValueError(f"protocol summary item at index {index} must be an object")
+            identity = record.get(identity_field)
+            created_at = record.get("created_at")
+            group = record.get(group_field)
+            if not isinstance(identity, str) or not isinstance(created_at, str) or not isinstance(group, str):
+                raise ValueError(f"invalid protocol summary item at index {index}")
+            for field in item_fields:
+                value = record.get(field)
+                if field == "decision" and (value is None or isinstance(value, str)):
+                    continue
+                if field == "sequence" and isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    continue
+                if not isinstance(value, str):
+                    raise ValueError(f"invalid protocol summary field: {field}")
+            item = {field: record.get(field) for field in item_fields}
+            prepared.append(transform(record) if transform is not None else item)
+            counts[group] = counts.get(group, 0) + 1
+        prepared.sort(key=lambda item: (str(item.get("created_at", "")), str(item.get(identity_field, ""))))
+        return prepared[-20:], {key: counts[key] for key in sorted(counts)}
+
+    @staticmethod
+    def _agent_session_summaries(records: object) -> dict[str, Any]:
+        capability_fields = (
+            "structured_sessions", "streaming_updates", "structured_tools",
+            "permission_requests", "resume_session", "observable_terminal",
+        )
+
+        def compact(record: dict[str, Any]) -> dict[str, Any]:
+            capabilities = record.get("capabilities")
+            if not isinstance(capabilities, dict):
+                raise ValueError("agent session capabilities must be an object")
+            return {
+                "session_id": record.get("session_id"),
+                "agent_id": record.get("agent_id"),
+                "provider": record.get("provider"),
+                "transport": record.get("transport"),
+                "state": record.get("state"),
+                "capabilities": {field: capabilities.get(field) for field in capability_fields},
+                "native_session_present": bool(record.get("native_session_id")),
+                "workspace": record.get("workspace"),
+                "created_at": record.get("created_at"),
+                "updated_at": record.get("updated_at"),
+            }
+
+        items, by_state = StateStore._protocol_summary_items(
+            records, identity_field="session_id", group_field="state", item_fields=(), transform=compact,
+        )
+        return {"count": len(records), "by_state": by_state, "items": items}
+
+    @staticmethod
+    def _protocol_turn_summaries(records: object) -> dict[str, Any]:
+        items, by_state = StateStore._protocol_summary_items(
+            records, identity_field="turn_id", group_field="state",
+            item_fields=("turn_id", "session_id", "message_id", "state", "created_at", "updated_at"),
+        )
+        return {"count": len(records), "by_state": by_state, "items": items}
+
+    @staticmethod
+    def _transport_update_summaries(records: object) -> dict[str, Any]:
+        items, by_kind = StateStore._protocol_summary_items(
+            records, identity_field="update_id", group_field="kind",
+            item_fields=("update_id", "session_id", "turn_id", "sequence", "kind", "created_at"),
+        )
+        return {"count": len(records), "by_kind": by_kind, "items": items}
+
+    @staticmethod
+    def _permission_request_summaries(records: object) -> dict[str, Any]:
+        items, by_status = StateStore._protocol_summary_items(
+            records, identity_field="permission_id", group_field="status",
+            item_fields=(
+                "permission_id", "session_id", "turn_id", "tool_name", "risk", "status", "decision", "created_at",
+            ),
+        )
+        return {
+            "count": len(records),
+            "pending_count": by_status.get("pending", 0),
+            "by_status": by_status,
+            "items": items,
+        }
+
+    @staticmethod
     def _plan_summaries(plans: list[dict[str, Any]]) -> dict[str, Any]:
         items = []
         for plan in plans:
@@ -2513,6 +2608,10 @@ class StateStore:
             leader_actions=self._leader_action_summaries(state.get("leader_actions", [])),
             skills=self._skill_load_summaries(state.get("skill_loads", [])),
             memory=self._memory_context_summary(self.root),
+            agent_sessions=self._agent_session_summaries(state.get("agent_sessions", [])),
+            protocol_turns=self._protocol_turn_summaries(state.get("protocol_turns", [])),
+            transport_updates=self._transport_update_summaries(state.get("transport_updates", [])),
+            permission_requests=self._permission_request_summaries(state.get("permission_requests", [])),
             inbox=self._inbox_summary(state.get("inbox", {})),
             recovery=self._recovery_summary(state, config),
         )

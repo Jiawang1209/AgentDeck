@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Expose compact protocol lineage in ProjectView
+
+- **类型**: additive-v1 ProjectView projection + strict TDD
+- **What**: `ProjectView` 在保持 `project-view/v1` 的前提下新增 `agent_sessions`、`protocol_turns`、`transport_updates`、`permission_requests` 四个非空摘要；完整集合提供稳定排序的状态/类型计数，GUI-ready latest items 按 `created_at` + domain ID 确定排序并最多保留 20 条。
+- **隐私边界**: session 只暴露 `native_session_present` 布尔值和 allowlisted capability 摘要，不暴露原始 `native_session_id` / observation；turn 不暴露 prompt；update 不暴露 payload；permission 不暴露 target。实际 domain 中 session/turn 有 `updated_at`，故保留；update 无该字段不伪造；permission 虽有 `updated_at`，compact 契约只保留 `created_at`。
+- **只读与 fail-safe**: fresh project 返回四个 count=0 的稳定对象；status/ProjectView 不写 state/events、不调用 provider、不读取 tmux、不改变 permission。损坏的集合或 row 明确失败，不静默缩减 count；ProjectView example、mandatory top-level validator 与 additive-v1 文档同步。`src/agentdeck/contracts.py` 的修改仅限既有 ProjectView 字段/example/validator 同步，不新增 protocol-runtime contract、discovery 或 CLI 路由。
+- **TDD 证据**: protocol ProjectView 测试先因四字段缺失得到 3 failed / 78 passed RED，最小实现后 81/81 GREEN；contract/example/read-only status 测试随后先得到预期字段缺失 RED，再同步既有 ProjectView contract。
+
 ### Persist protocol runtime lineage
 
 - **类型**: append-only protocol state + strict TDD

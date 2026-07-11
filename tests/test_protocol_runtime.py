@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import math
 import threading
+from dataclasses import asdict
 
 import pytest
 
+from agentdeck.models import AgentSpec, LeaderConfig, ProjectConfig, RuntimeConfig
 from agentdeck.state import StateStore
 from agentdeck.runtime.protocol import (
     AGENT_SESSION_STATES,
@@ -21,6 +23,128 @@ from agentdeck.runtime.protocol import (
 
 
 CAPABILITIES = TransportCapabilities(True, True, True, True, True, False)
+
+
+def _project_config(root) -> ProjectConfig:
+    return ProjectConfig(
+        name="protocol-project",
+        root=str(root),
+        leader=LeaderConfig(),
+        agents=(AgentSpec("planner", "planner", "codex", "codex"),),
+        runtime=RuntimeConfig(),
+    )
+
+
+def _contains_string(value: object, needle: str) -> bool:
+    if isinstance(value, str):
+        return needle in value
+    if isinstance(value, dict):
+        return any(_contains_string(key, needle) or _contains_string(item, needle) for key, item in value.items())
+    if isinstance(value, list):
+        return any(_contains_string(item, needle) for item in value)
+    return False
+
+
+def test_fresh_project_view_has_non_null_empty_protocol_summaries(tmp_path) -> None:
+    payload = asdict(StateStore(tmp_path).project_view(_project_config(tmp_path)))
+
+    assert payload["agent_sessions"] == {"count": 0, "by_state": {}, "items": []}
+    assert payload["protocol_turns"] == {"count": 0, "by_state": {}, "items": []}
+    assert payload["transport_updates"] == {"count": 0, "by_kind": {}, "items": []}
+    assert payload["permission_requests"] == {
+        "count": 0, "pending_count": 0, "by_status": {}, "items": [],
+    }
+    json.dumps(payload)
+
+
+def test_project_view_exposes_compact_protocol_lineage_without_private_values(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    session = store.record_agent_session(
+        "planner", "codex", "native", "private-native-session", str(tmp_path), CAPABILITIES,
+    )
+    turn = store.record_protocol_turn(session["session_id"], "msg_protocol")
+    update = store.record_transport_update(
+        session["session_id"], turn["turn_id"], 7, "tool_call",
+        {"nested": {"private": "private-update-payload"}},
+    )
+    permission = store.record_permission_request(
+        session["session_id"], turn["turn_id"], "write_file", "private-target-path", "high",
+    )
+
+    payload = asdict(store.project_view(_project_config(tmp_path)))
+
+    assert payload["agent_sessions"] == {
+        "count": 1,
+        "by_state": {"created": 1},
+        "items": [{
+            "session_id": session["session_id"], "agent_id": "planner", "provider": "codex",
+            "transport": "native", "state": "created", "capabilities": CAPABILITIES.summary(),
+            "native_session_present": True, "workspace": str(tmp_path),
+            "created_at": session["created_at"], "updated_at": session["updated_at"],
+        }],
+    }
+    assert payload["protocol_turns"]["items"] == [{
+        key: turn[key] for key in ("turn_id", "session_id", "message_id", "state", "created_at", "updated_at")
+    }]
+    assert payload["transport_updates"] == {
+        "count": 1, "by_kind": {"tool_call": 1},
+        "items": [{key: update[key] for key in ("update_id", "session_id", "turn_id", "sequence", "kind", "created_at")}],
+    }
+    assert payload["permission_requests"] == {
+        "count": 1, "pending_count": 1, "by_status": {"pending": 1},
+        "items": [{key: permission[key] for key in (
+            "permission_id", "session_id", "turn_id", "tool_name", "risk", "status", "decision", "created_at",
+        )}],
+    }
+    assert not _contains_string(payload, "private-native-session")
+    assert not _contains_string(payload, "private-update-payload")
+    assert not _contains_string(payload, "private-target-path")
+
+
+def test_project_view_protocol_summaries_are_sorted_counted_and_bounded(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    for index in range(25):
+        state["transport_updates"].append({
+            "update_id": f"upd_{index:02d}", "session_id": "ags_1", "turn_id": "trn_1",
+            "sequence": index, "kind": "text" if index % 2 else "progress",
+            "payload": {"secret": index}, "created_at": f"2026-07-11T00:00:{index:02d}+00:00",
+        })
+    state["permission_requests"] = [
+        {"permission_id": "prm_b", "session_id": "ags_1", "turn_id": "trn_1", "tool_name": "shell",
+         "target": "secret", "risk": "high", "status": "denied", "decision": "deny",
+         "created_at": "2026-07-11T00:00:00+00:00"},
+        {"permission_id": "prm_a", "session_id": "ags_1", "turn_id": "trn_1", "tool_name": "read",
+         "target": "secret", "risk": "low", "status": "pending", "decision": None,
+         "created_at": "2026-07-11T00:00:00+00:00"},
+    ]
+    store.save(state)
+
+    payload = asdict(store.project_view(_project_config(tmp_path)))
+
+    updates = payload["transport_updates"]
+    assert updates["count"] == 25
+    assert updates["by_kind"] == {"progress": 13, "text": 12}
+    assert len(updates["items"]) == 20
+    assert [item["update_id"] for item in updates["items"]] == [f"upd_{index:02d}" for index in range(5, 25)]
+    permissions = payload["permission_requests"]
+    assert permissions["pending_count"] == 1
+    assert permissions["by_status"] == {"denied": 1, "pending": 1}
+    assert [item["permission_id"] for item in permissions["items"]] == ["prm_a", "prm_b"]
+
+
+def test_project_view_rejects_corrupt_protocol_rows_instead_of_hiding_them(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["protocol_turns"] = [{
+        "turn_id": "trn_broken", "session_id": "ags_1", "message_id": None,
+        "state": "created", "created_at": "2026-07-11T00:00:00+00:00",
+        "updated_at": "2026-07-11T00:00:00+00:00",
+    }]
+    store.save(state)
+
+    with pytest.raises(ValueError, match="invalid protocol summary field: message_id"):
+        store.project_view(_project_config(tmp_path))
 
 
 def test_protocol_constants_are_stable() -> None:

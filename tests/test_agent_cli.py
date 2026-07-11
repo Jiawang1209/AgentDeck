@@ -10904,6 +10904,28 @@ def test_status_matches_project_view_contract_for_gui_clients(tmp_path, monkeypa
     assert validate_project_view_contract(payload) == {"ok": True, "errors": []}
 
 
+def test_status_exposes_empty_protocol_summaries_without_writing_state_or_events(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state_before = store.state_path.read_bytes() if store.state_path.exists() else None
+    events_before = store.events_path.read_bytes() if store.events_path.exists() else None
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["agent_sessions"] == {"count": 0, "by_state": {}, "items": []}
+    assert payload["protocol_turns"] == {"count": 0, "by_state": {}, "items": []}
+    assert payload["transport_updates"] == {"count": 0, "by_kind": {}, "items": []}
+    assert payload["permission_requests"] == {
+        "count": 0, "pending_count": 0, "by_status": {}, "items": [],
+    }
+    assert (store.state_path.read_bytes() if store.state_path.exists() else None) == state_before
+    assert (store.events_path.read_bytes() if store.events_path.exists() else None) == events_before
+
+
 def test_status_recovery_surfaces_leader_errors_when_no_work_is_pending(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)

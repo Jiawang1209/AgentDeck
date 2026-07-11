@@ -1139,6 +1139,25 @@ def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> No
     assert example["leader_actions"]["recommended_action_id"] == "act_example"
     assert example["leader_actions"]["items"][0]["is_recommended"] is True
     assert example["recovery"]["recommended_action"]["target_id"] == "act_example"
+    assert example["agent_sessions"] == {"count": 0, "by_state": {}, "items": []}
+    assert example["protocol_turns"] == {"count": 0, "by_state": {}, "items": []}
+    assert example["transport_updates"] == {"count": 0, "by_kind": {}, "items": []}
+    assert example["permission_requests"] == {
+        "count": 0, "pending_count": 0, "by_status": {}, "items": [],
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["agent_sessions", "protocol_turns", "transport_updates", "permission_requests"],
+)
+def test_validate_project_view_contract_requires_protocol_summary_fields(field: str) -> None:
+    payload = project_view_example()
+    payload.pop(field)
+
+    result = validate_project_view_contract(payload)
+
+    assert f"missing top-level field: {field}" in result["errors"]
 
 
 def test_project_view_contract_response_matches_cli_shape(tmp_path: Path) -> None:

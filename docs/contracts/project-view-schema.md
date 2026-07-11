@@ -6,7 +6,7 @@
 
 GUI clients should consume ProjectView first. They should not scan `.agentdeck/state/state.json`, parse tmux panes, or infer workflow state from command strings when ProjectView already exposes the same fact.
 
-The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in `src/agentdeck/models.py`. Current value: `project-view/v1`.
+The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in `src/agentdeck/models.py`. Current value: `project-view/v1`. The protocol-lineage summaries described below are an additive-v1 extension: the version remains `project-view/v1`, while current producers and validators require the new top-level fields.
 
 Reusable contract response, payload, and example fixture helpers live in `src/agentdeck/contracts.py`. The CLI discovery command uses `project_view_contract_response()` directly so command output and reusable module output stay identical.
 
@@ -229,6 +229,16 @@ The following blocks use a consistent summary pattern:
 - `releases`: `count`, `items[]`
 - `skills`: `count`, `by_agent`, `by_source`, `items[]`
 - `memory`: `count`, `by_scope`, `items[]`
+- `agent_sessions`: `count`, sorted `by_state`, compact `items[]`
+- `protocol_turns`: `count`, sorted `by_state`, compact `items[]`
+- `transport_updates`: `count`, sorted `by_kind`, compact `items[]`
+- `permission_requests`: `count`, `pending_count`, sorted `by_status`, compact `items[]`
+
+The four protocol summaries are always non-null, including on a fresh project. Their `count` and `by_*` maps describe the complete stored collection, while `items[]` is bounded to the latest 20 records. Items are deterministically ordered by `created_at` and then their domain id (`session_id`, `turn_id`, `update_id`, or `permission_id`); after sorting, only the last 20 are retained.
+
+`agent_sessions.items[]` exposes `session_id`, `agent_id`, `provider`, `transport`, `state`, the boolean capability summary, `native_session_present`, `workspace`, `created_at`, and `updated_at`. It never exposes `native_session_id` or private observation bindings. `protocol_turns.items[]` exposes `turn_id`, `session_id`, `message_id`, `state`, `created_at`, and `updated_at`, never a prompt. `transport_updates.items[]` exposes only `update_id`, `session_id`, `turn_id`, `sequence`, `kind`, and `created_at`, never `payload`. `permission_requests.items[]` exposes `permission_id`, `session_id`, `turn_id`, `tool_name`, `risk`, `status`, `decision`, and `created_at`, never `target`.
+
+Projection is fail-safe: a corrupt collection or malformed protocol row produces a validation/projection error instead of silently omitting it and presenting misleading counts. These summaries are read-only facts. Rendering `agentdeck status`, ProjectView, or a consumer such as workbench does not create protocol records, append events, inspect tmux, call a provider, grant a permission, or send terminal input.
 
 `skills.items[]` is the ProjectView summary of explicit `agentdeck skills load` records. Each item includes `load_id`, `agent_id`, `purpose`, `name`, `source`, `path`, `content_hash`, `description`, `required_tools`, bounded `planning_guidance`, `risk`, `created_at`, `show_command`, and `reload_command`. ProjectView intentionally keeps the full `content_snapshot` out of the summary so status/workbench payloads stay compact; use `agentdeck skills list` for the available skill registry with GUI-ready show/load controls, `agentdeck skills show --name <name>` for current content, and the persisted `skill_loads[]` record for replay. `planning_guidance` is an ordered list (maximum eight entries, 240 characters each); only guidance from an explicit `agent_id=leader` load enters the provider planning prompt, and it never grants execution permission. External skills must first be copied into the project with `agentdeck skills import --path <SKILL.md>` and still do not appear here until a human explicitly runs `agentdeck skills load`. The summary is read-only and does not load, install, rewrite, or enable skills.
 
