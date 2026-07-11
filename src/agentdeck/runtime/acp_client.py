@@ -102,6 +102,9 @@ class AgentDeckAcpClient:
         self._update_phase = "prompt"
         self._phase_generation = 0
         self._phase_lock = asyncio.Lock()
+        self._update_callbacks_in_flight = 0
+        self._updates_drained = asyncio.Event()
+        self._updates_drained.set()
 
     async def switch_update_phase(self, phase: str) -> int:
         if phase not in {"load_replay", "prompt", "sealed"}:
@@ -130,6 +133,11 @@ class AgentDeckAcpClient:
         generation = min(self._callback_errors)
         return self._callback_errors.pop(generation)
 
+    async def drain_update_callbacks(self) -> None:
+        """Let SDK notification tasks start, then wait for admitted callbacks to settle."""
+        await asyncio.sleep(0)
+        await self._updates_drained.wait()
+
     async def _settle_cancelled(self, session_id: str, tool_call_id: str) -> None:
         """Bound and shield the idempotent fail-closed settlement write."""
         task = asyncio.create_task(self._sink.append_permission_decision(
@@ -149,27 +157,33 @@ class AgentDeckAcpClient:
             raise RuntimeError("ACP permission cancellation settlement timed out") from None
 
     async def session_update(self, session_id: str, update: object, **_: Any) -> None:
+        self._update_callbacks_in_flight += 1
+        self._updates_drained.clear()
         captured_generation = self._phase_generation
         captured_phase = self._update_phase
         self._update_count += 1
         # Deliberate admission boundary: callbacks already dispatched by the SDK retain
         # their captured generation even if a later lifecycle opens before they run.
         await asyncio.sleep(0)
-        kind, payload = map_session_update(update)
-        async with self._phase_lock:
-            if (
-                captured_generation != self._phase_generation
-                or captured_phase != self._update_phase
-                or captured_phase not in {"load_replay", "prompt"}
-            ):
-                error = RuntimeError("unexpected ACP update during sealed phase or stale generation")
-                self._callback_errors.setdefault(captured_generation, error)
-                raise error
-            try:
+        try:
+            kind, payload = map_session_update(update)
+            async with self._phase_lock:
+                if (
+                    captured_generation != self._phase_generation
+                    or captured_phase != self._update_phase
+                    or captured_phase not in {"load_replay", "prompt"}
+                ):
+                    error = RuntimeError("unexpected ACP update during sealed phase or stale generation")
+                    self._callback_errors.setdefault(captured_generation, error)
+                    raise error
                 await self._sink.append_update(session_id, kind, payload)
-            except Exception as error:
-                self._callback_errors.setdefault(captured_generation, error)
-                raise
+        except Exception as error:
+            self._callback_errors.setdefault(captured_generation, error)
+            raise
+        finally:
+            self._update_callbacks_in_flight -= 1
+            if self._update_callbacks_in_flight == 0:
+                self._updates_drained.set()
 
     async def request_permission(
         self,

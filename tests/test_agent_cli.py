@@ -472,11 +472,38 @@ def test_acp_run_prints_one_validated_json_document(tmp_path: Path, monkeypatch,
     assert payload["mode"] == "acp_run"
     assert payload["turn_state"] == "completed"
     assert payload["stop_reason"] == "end_turn"
+    assert payload["session_state"] == "disconnected"
     state = StateStore(root).load()
     assert state["agent_sessions"][0]["transport"] == "acp-adapter"
     assert [item["to_state"] for item in state["protocol_state_transitions"]] == [
         "ready", "submitted", "busy", "streaming", "completed", "ready", "disconnected"
     ]
+    assert payload["transition_count"] == len(state["protocol_state_transitions"])
+    assert payload["session_count"] == 1
+    assert payload["turn_count"] == 1
+    assert payload["latest_session_id"] == payload["session_id"]
+    assert payload["latest_turn_id"] == payload["turn_id"]
+    assert payload["latest_update_id"] == state["transport_updates"][-1]["update_id"]
+    assert payload["latest_permission_id"] is None
+    assert payload["latest_transition_id"] == state["protocol_state_transitions"][-1]["transition_id"]
+
+    assert cli.main(["protocol", "status"]) == 0
+    protocol_status = json.loads(capsys.readouterr().out)
+    assert cli.main(["status"]) == 0
+    project_view = json.loads(capsys.readouterr().out)
+    assert cli.main(["workbench"]) == 0
+    workbench = json.loads(capsys.readouterr().out)
+    for observed in (protocol_status, project_view, workbench["project_view"]):
+        assert observed["agent_sessions"]["count"] == 1
+        assert observed["agent_sessions"]["items"][-1]["session_id"] == payload["session_id"]
+        assert observed["agent_sessions"]["items"][-1]["state"] == payload["session_state"]
+        assert observed["protocol_turns"]["items"][-1]["turn_id"] == payload["turn_id"]
+        assert observed["protocol_turns"]["items"][-1]["state"] == payload["turn_state"]
+        assert observed["transport_updates"]["count"] == payload["update_count"]
+        assert observed["transport_updates"]["items"][-1]["update_id"] == payload["latest_update_id"]
+        assert observed["permission_requests"]["count"] == payload["permission_count"]
+        assert observed["protocol_state_transitions"]["count"] == payload["transition_count"]
+        assert observed["protocol_state_transitions"]["items"][-1]["transition_id"] == payload["latest_transition_id"]
 
 
 def test_acp_load_replays_then_resume_prompts_same_identity(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -9917,7 +9944,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 107,
+        "item_count_before_filter": 113,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -10053,7 +10080,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 106,
+        "item_count_before_filter": 112,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -10096,7 +10123,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 107,
+        "item_count_before_filter": 113,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -10135,7 +10162,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 107,
+        "item_count_before_filter": 113,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -10168,7 +10195,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 107,
+        "item_count_before_filter": 113,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -10207,7 +10234,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 107,
+        "item_count_before_filter": 113,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

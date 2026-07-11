@@ -255,6 +255,27 @@ def test_acp_runtime_contract_discovery_and_sanitized_example(tmp_path: Path) ->
     assert validate_acp_runtime_contract(example) == {"ok": True, "errors": []}
 
 
+def test_acp_runtime_contract_publishes_observation_and_governed_controls() -> None:
+    from agentdeck.contracts import acp_runtime_contract_payload
+
+    payload = acp_runtime_contract_payload(Path("docs/contracts/acp-runtime-schema.md"))
+
+    assert payload["observation_fields"] == [
+        "session_count", "turn_count", "update_count", "permission_count",
+        "transition_count", "latest_session_id", "latest_turn_id",
+        "latest_update_id", "latest_permission_id", "latest_transition_id",
+        "session_state", "turn_state",
+    ]
+    assert payload["control_commands"] == {
+        "preflight": "agentdeck protocol acp preflight --agent <agent_id>",
+        "status": "agentdeck protocol status",
+        "contract": "agentdeck contract acp-runtime",
+        "run": "agentdeck protocol acp run --agent <agent_id> --prompt <text> --confirm",
+        "load": "agentdeck protocol acp load --session-id <ags_id> --confirm",
+        "resume": "agentdeck protocol acp resume --session-id <ags_id> --prompt <text> --confirm",
+    }
+
+
 @pytest.mark.parametrize(
     ("mutate", "expected"),
     [
@@ -2713,6 +2734,16 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["contracts_card"]["contract_index_contract"] == "docs/contracts/contract-index-schema.md"
     assert example["contracts_card"]["controls_contract"] == "agentdeck contract controls"
     assert example["contracts_card"]["acp_runtime_contract"] == "agentdeck contract acp-runtime"
+    acp_controls = [item for item in example["control_registry"] if item["scope"] == "acp_runtime"]
+    assert [(item["kind"], item["safety"], item["enabled"]) for item in acp_controls] == [
+        ("preflight", "inspect", False),
+        ("status", "inspect", True),
+        ("contract", "inspect", True),
+        ("run", "explicit_user", False),
+        ("load", "explicit_user", False),
+        ("resume", "explicit_user", False),
+    ]
+    assert all(item["blocker"] for item in acp_controls if not item["enabled"])
     assert example["contracts_card"]["learning_review_contract"] == "agentdeck contract learning-review"
     assert example["contracts_card"]["leader_chat_contract"] == "agentdeck contract leader-chat"
     assert example["contracts_card"]["leader_review_contract"] == "agentdeck contract leader-review"

@@ -4,6 +4,14 @@
 
 ## 2026-07-12
 
+### Integrate ACP runtime observation surfaces
+
+- **Observation truth**: governed ACP run/load/resume responses now rebuild final session state, complete transition count, and latest update/permission/transition identities from the validated persisted ledger. Protocol status, ProjectView, and workbench's embedded ProjectView expose the same counts, latest identities, and derived states.
+- **GUI controls**: ACP discovery publishes stable preflight/status/contract/run/load/resume control templates. Workbench/control registry exposes inspect-only status and contract entries, while preflight and all `explicit_user` process-starting controls remain disabled until concrete identities and requirements are supplied. Controls are not authorization and do not bypass confirmation, readiness, capabilities, or permissions.
+- **Compatibility freeze**: observation surfaces are read-only and never execute `transport_command`; tmux remains the default legacy runtime. Focused regression covers the unchanged legacy tmux command path (including explicit ACP metadata), dispatch/config serialization, Mission orchestration, and contract behavior without a real adapter.
+- **TDD**: cross-surface tests compare ACP command output against protocol status, ProjectView, and workbench for counts, latest IDs, and current states; contract tests enforce the control safety/disabled matrix.
+- **Replay drain hardening**: load now lets official-SDK notification tasks enter the tracked callback set and waits for admitted replay callbacks to settle before sealing the lifecycle generation, preventing the load response/notification scheduling race from dropping the final ordered replay update.
+
 ### Load and resume ACP sessions explicitly
 
 - **What**: add confirmed `protocol acp load` and `protocol acp resume` commands with exact internal/native session, workspace, and configured-agent resolution.

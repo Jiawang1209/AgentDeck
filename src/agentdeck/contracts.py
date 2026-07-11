@@ -349,10 +349,27 @@ ACP_RUNTIME_ADAPTER_FIELDS = ("argv", "executable_path", "present")
 ACP_RUNTIME_SDK_FIELDS = ("module", "package", "present", "version")
 ACP_RUNTIME_NODE_FIELDS = ("required", "minimum_major", "executable_path", "version", "ready")
 ACP_RUNTIME_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
+ACP_RUNTIME_OBSERVATION_FIELDS = (
+    "session_count", "turn_count", "update_count", "permission_count",
+    "transition_count", "latest_session_id", "latest_turn_id",
+    "latest_update_id", "latest_permission_id", "latest_transition_id",
+    "session_state", "turn_state",
+)
+ACP_RUNTIME_CONTROL_COMMANDS = {
+    "preflight": "agentdeck protocol acp preflight --agent <agent_id>",
+    "status": "agentdeck protocol status",
+    "contract": "agentdeck contract acp-runtime",
+    "run": "agentdeck protocol acp run --agent <agent_id> --prompt <text> --confirm",
+    "load": "agentdeck protocol acp load --session-id <ags_id> --confirm",
+    "resume": "agentdeck protocol acp resume --session-id <ags_id> --prompt <text> --confirm",
+}
 ACP_RUNTIME_RUN_RESPONSE_FIELDS = (
     "mode", "contract_version", "agent_id", "session_id", "native_session_id",
     "protocol_version", "capabilities", "turn_id", "turn_state", "stop_reason",
-    "update_count", "permission_count", "disconnect_reason", "controls",
+    "session_count", "turn_count", "update_count", "permission_count",
+    "transition_count", "latest_session_id", "latest_turn_id", "latest_update_id",
+    "latest_permission_id", "latest_transition_id", "session_state",
+    "disconnect_reason", "controls",
 )
 ACP_RUNTIME_TRANSITION_FIELDS = (
     "transition_id", "entity_type", "entity_id", "from_state", "to_state",
@@ -2771,6 +2788,8 @@ def acp_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
         "sdk_fields": list(ACP_RUNTIME_SDK_FIELDS),
         "node_fields": list(ACP_RUNTIME_NODE_FIELDS),
         "control_fields": list(ACP_RUNTIME_CONTROL_FIELDS),
+        "observation_fields": list(ACP_RUNTIME_OBSERVATION_FIELDS),
+        "control_commands": dict(ACP_RUNTIME_CONTROL_COMMANDS),
         "run_response_fields": list(ACP_RUNTIME_RUN_RESPONSE_FIELDS),
         "load_response_fields": list(ACP_RUNTIME_RUN_RESPONSE_FIELDS),
         "resume_response_fields": list(ACP_RUNTIME_RUN_RESPONSE_FIELDS),
@@ -2848,8 +2867,16 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
             errors.append("failed or ambiguous stop_reason must be null or non-empty")
         if payload.get("mode") == "acp_load" and payload.get("stop_reason") != "loaded":
             errors.append("load stop_reason must be loaded")
-        for field in ("update_count", "permission_count"):
+        for field in ("session_count", "turn_count", "update_count", "permission_count", "transition_count"):
             if type(payload.get(field)) is not int or payload[field] < 0: errors.append(f"{field} must be a non-negative integer")
+        if payload.get("session_state") != "disconnected": errors.append("session_state must be disconnected")
+        for field, prefix in (("latest_session_id", "ags_"), ("latest_turn_id", "trn_"), ("latest_update_id", "upd_"), ("latest_permission_id", "prm_"), ("latest_transition_id", "pst_")):
+            value = payload.get(field)
+            if value is not None and (type(value) is not str or re.fullmatch(rf"{prefix}[a-z0-9]+", value) is None):
+                errors.append(f"{field} is invalid")
+        if payload.get("update_count", 0) > 0 and payload.get("latest_update_id") is None: errors.append("latest_update_id is required when updates exist")
+        if payload.get("permission_count", 0) > 0 and payload.get("latest_permission_id") is None: errors.append("latest_permission_id is required when permissions exist")
+        if payload.get("transition_count", 0) > 0 and payload.get("latest_transition_id") is None: errors.append("latest_transition_id is required when transitions exist")
         controls = payload.get("controls")
         if not isinstance(controls, list) or not controls: errors.append("controls must be a non-empty list")
         else:
@@ -13084,6 +13111,14 @@ def ledger_card_controls() -> list[dict[str, object]]:
 
 def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, object]]:
     registry: list[dict[str, object]] = []
+    acp_controls = [
+        {"kind": "preflight", "label": "Inspect ACP preflight", "command": ACP_RUNTIME_CONTROL_COMMANDS["preflight"], "safety": "inspect", "enabled": False, "blocker": "requires concrete ACP agent_id"},
+        {"kind": "status", "label": "Inspect protocol runtime", "command": ACP_RUNTIME_CONTROL_COMMANDS["status"], "safety": "inspect", "enabled": True, "blocker": None},
+        {"kind": "contract", "label": "Inspect ACP runtime contract", "command": ACP_RUNTIME_CONTROL_COMMANDS["contract"], "safety": "inspect", "enabled": True, "blocker": None},
+        {"kind": "run", "label": "Run ACP prompt", "command": ACP_RUNTIME_CONTROL_COMMANDS["run"], "safety": "explicit_user", "enabled": False, "blocker": "requires concrete agent_id, prompt, readiness, and confirmation"},
+        {"kind": "load", "label": "Load ACP session", "command": ACP_RUNTIME_CONTROL_COMMANDS["load"], "safety": "explicit_user", "enabled": False, "blocker": "requires concrete session_id, load capability, and confirmation"},
+        {"kind": "resume", "label": "Resume ACP session", "command": ACP_RUNTIME_CONTROL_COMMANDS["resume"], "safety": "explicit_user", "enabled": False, "blocker": "requires concrete session_id, prompt, resume capability, and confirmation"},
+    ]
     mission_card = payload.get("mission_card") if isinstance(payload.get("mission_card"), dict) else {}
     _append_control_registry_items(
         registry,
@@ -13388,6 +13423,10 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         agent_id=None,
         controls=trace_card.get("controls"),
     )
+    if isinstance(payload.get("contracts_card"), dict):
+        _append_control_registry_items(
+            registry, scope="acp_runtime", card="contracts_card", agent_id=None, controls=acp_controls,
+        )
     return registry
 
 

@@ -338,6 +338,7 @@ class AcpTransport:
             await self._request(self._connection.load_session(
                 cwd=str(self._workspace), session_id=native_session_id, mcp_servers=[]
             ), eof_is_ambiguous=True)
+            await self._client.drain_update_callbacks()
         finally:
             await self._client.switch_update_phase("sealed")
         callback_error = getattr(self._client, "take_callback_error", lambda: None)()

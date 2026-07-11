@@ -40,7 +40,7 @@ The command does not spawn a process, authenticate, create or load a session, ca
 
 `agentdeck protocol acp run --agent <agent_id> --prompt <text> --confirm` starts one explicitly configured adapter, negotiates ACP v1, creates one native session, and runs one prompt turn. Missing confirmation, invalid configuration, or a not-ready preflight spawns no process and writes no state. The final response is constructed from persisted facts and validated before one JSON document is written to stdout. Diagnostics and permission questions use stderr only.
 
-Run responses contain the exact `run_response_fields` published by discovery. Completion is derived only from the ACP prompt `stopReason`; streamed text is never completion proof. The session is always transitioned to `disconnected` during bounded cleanup.
+Run/load/resume responses contain the exact response fields published by discovery. In addition to operation-local update and permission counts, they expose the complete persisted transition count, latest update/permission/transition identities, and final derived session state. These facts are rebuilt from the same ledger that feeds `agentdeck protocol status`, ProjectView, and the workbench's embedded ProjectView. A missing permission is represented by `latest_permission_id=null`; identities are provenance, never authority. Completion is derived only from the ACP prompt `stopReason`; streamed text is never completion proof. The session is always transitioned to `disconnected` during bounded cleanup.
 
 Every response field has one durable source. Agent/session/native identity and negotiated capabilities come from the immutable AgentSession; protocol version and bounded negotiated Agent identity come from the `session_new_completed` transition details; stop reason comes only from the completion TransportUpdate; disconnect reason comes from the terminal session transition; turn state and counts are derived from the complete persisted lineage. The CLI reloads these records after disconnect and does not use transport result locals to construct stdout.
 
@@ -52,8 +52,10 @@ Adapter stderr is never printed or returned as text. The only CLI diagnostic is 
 
 Strict response reconstruction validates cross-record lineage after global identity validation and before transition derivation. Updates and permissions whose session differs from their referenced turn, including otherwise valid references to a second session, are corruption and produce no stdout or new writes. Foreground cancellation cannot bypass cleanup: repeated cancellation waits on the single shielded bounded cleanup task, persists exactly one disconnect and a terminal turn, then re-raises cancellation.
 
-## Future load/resume responses
+## Observation and control surfaces
 
-Discovery also publishes the planned load/resume response fields. Those operations remain unavailable until their later approved tasks.
+Discovery publishes the observation vocabulary and six stable control templates. Preflight, protocol status, and contract discovery are inspect surfaces. Run, load, and resume are `explicit_user` controls and remain disabled in the generic workbench registry until a client supplies concrete identities, prompt/capability requirements, readiness, and confirmation. Rendering or selecting a control never authorizes execution or bypasses command validation, `--confirm`, negotiated capabilities, or permission handling.
+
+All observation commands remain read-only: protocol status, ProjectView status, workbench, and contract discovery do not write state/events, call a provider, inspect tmux, or start `transport_command`.
 
 The `--example` fixture is deterministic and uses only a sanitized fake Agent, fake adapter argv, fake SDK version, and `/example` path. It contains no local path, credential, transcript, provider output, or real installed version.

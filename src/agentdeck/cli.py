@@ -1493,6 +1493,7 @@ def _acp_run_payload_from_state(
     if [item["sequence"] for item in updates] != list(range(len(updates))):
         raise ValueError("ACP run update sequence is not contiguous")
     permissions = [item for item in state["permission_requests"] if item["turn_id"] == turn_id]
+    all_transitions = state["protocol_state_transitions"]
     completions = [item for item in updates if item["kind"] == "completion"]
     if len(completions) > 1:
         raise ValueError("ACP run has conflicting completion updates")
@@ -1507,7 +1508,15 @@ def _acp_run_payload_from_state(
         "native_session_id": session["native_session_id"],
         "protocol_version": ready["details"]["protocol_version"],
         "capabilities": session["capabilities"], "turn_id": turn["turn_id"], "turn_state": turn_state,
-        "stop_reason": stop_reason, "update_count": len(updates), "permission_count": len(permissions),
+        "stop_reason": stop_reason, "session_count": len(state["agent_sessions"]),
+        "turn_count": len(state["protocol_turns"]), "update_count": len(updates), "permission_count": len(permissions),
+        "transition_count": len(all_transitions),
+        "latest_session_id": state["agent_sessions"][-1]["session_id"],
+        "latest_turn_id": state["protocol_turns"][-1]["turn_id"],
+        "latest_update_id": updates[-1]["update_id"] if updates else None,
+        "latest_permission_id": permissions[-1]["permission_id"] if permissions else None,
+        "latest_transition_id": all_transitions[-1]["transition_id"] if all_transitions else None,
+        "session_state": _derived_entity_state(state, "session", session["session_id"], session["state"]),
         "disconnect_reason": disconnected["reason"],
         "controls": [
             {"kind": "inspect", "label": "Inspect protocol runtime", "command": "agentdeck protocol status", "safety": "inspect", "enabled": True, "blocker": None},
@@ -1542,6 +1551,8 @@ def _acp_reconnect_payload_from_state(
     if turn["session_id"] != session_id:
         raise ValueError("ACP reconnect turn does not belong to session")
     updates = [item for item in state["transport_updates"] if item["turn_id"] == turn_id]
+    permissions = [item for item in state["permission_requests"] if item["turn_id"] == turn_id]
+    all_transitions = state["protocol_state_transitions"]
     if [item["sequence"] for item in updates] != list(range(len(updates))):
         raise ValueError("ACP reconnect update sequence is not contiguous")
     transitions = [item for item in state["protocol_state_transitions"] if item["entity_type"] == "session" and item["entity_id"] == session_id]
@@ -1581,8 +1592,15 @@ def _acp_reconnect_payload_from_state(
         "protocol_version": ready["details"]["protocol_version"],
         "capabilities": session["capabilities"], "turn_id": turn_id,
         "turn_state": turn_state,
-        "stop_reason": stop_reason, "update_count": len(updates),
-        "permission_count": len([item for item in state["permission_requests"] if item["turn_id"] == turn_id]),
+        "stop_reason": stop_reason, "session_count": len(state["agent_sessions"]),
+        "turn_count": len(state["protocol_turns"]), "update_count": len(updates),
+        "permission_count": len(permissions), "transition_count": len(all_transitions),
+        "latest_session_id": state["agent_sessions"][-1]["session_id"],
+        "latest_turn_id": state["protocol_turns"][-1]["turn_id"],
+        "latest_update_id": updates[-1]["update_id"] if updates else None,
+        "latest_permission_id": permissions[-1]["permission_id"] if permissions else None,
+        "latest_transition_id": all_transitions[-1]["transition_id"] if all_transitions else None,
+        "session_state": _derived_entity_state(state, "session", session_id, session["state"]),
         "disconnect_reason": disconnected["reason"],
         "controls": [
             {"kind": "inspect", "label": "Inspect protocol runtime", "command": "agentdeck protocol status", "safety": "inspect", "enabled": True, "blocker": None},
@@ -2542,6 +2560,14 @@ def _leader_provider_controls(current_provider: str) -> list[dict[str, object]]:
 
 def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, object]]:
     registry: list[dict[str, object]] = []
+    acp_controls = [
+        {"kind": "preflight", "label": "Inspect ACP preflight", "command": "agentdeck protocol acp preflight --agent <agent_id>", "safety": "inspect", "enabled": False, "blocker": "requires concrete ACP agent_id"},
+        {"kind": "status", "label": "Inspect protocol runtime", "command": "agentdeck protocol status", "safety": "inspect", "enabled": True, "blocker": None},
+        {"kind": "contract", "label": "Inspect ACP runtime contract", "command": "agentdeck contract acp-runtime", "safety": "inspect", "enabled": True, "blocker": None},
+        {"kind": "run", "label": "Run ACP prompt", "command": "agentdeck protocol acp run --agent <agent_id> --prompt <text> --confirm", "safety": "explicit_user", "enabled": False, "blocker": "requires concrete agent_id, prompt, readiness, and confirmation"},
+        {"kind": "load", "label": "Load ACP session", "command": "agentdeck protocol acp load --session-id <ags_id> --confirm", "safety": "explicit_user", "enabled": False, "blocker": "requires concrete session_id, load capability, and confirmation"},
+        {"kind": "resume", "label": "Resume ACP session", "command": "agentdeck protocol acp resume --session-id <ags_id> --prompt <text> --confirm", "safety": "explicit_user", "enabled": False, "blocker": "requires concrete session_id, prompt, resume capability, and confirmation"},
+    ]
     mission_preview_card = (
         payload.get("mission_preview_card")
         if isinstance(payload.get("mission_preview_card"), dict)
@@ -2931,6 +2957,10 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         agent_id=capture_card.get("agent_id"),
         controls=capture_card.get("controls"),
     )
+    if isinstance(payload.get("contracts_card"), dict):
+        _append_workbench_control_registry_items(
+            registry, scope="acp_runtime", card="contracts_card", agent_id=None, controls=acp_controls,
+        )
     return registry
 
 
