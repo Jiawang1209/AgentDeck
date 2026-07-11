@@ -6,6 +6,8 @@
 
 真实基线：2026-07-11 的 fresh-project 自然语言 Mission 只用 preview 请求与一次整体确认两条用户消息，让 Codex/Claude Worker 完成 8 步冻结串行接龙；验收与 lineage 见 `docs/validation/2026-07-11-natural-language-mission-acceptance.md`。目录 trust 是显式 human setup，不能当作 Worker 任务或自动提交。
 
+Protocol-native Phase 1 已实现协议 records、append-only lineage、compact ProjectView、`protocol-runtime/v1` contract、只读 `agentdeck protocol status` 和 runtime capability metadata。`protocol status` 不得写 state/event、调用 provider、读取或输入 tmux、改变 permission；能力元数据不是执行授权。tmux 仍是 active default backend，只能声明真实的 observable fallback 能力，不得标为 ACP compatible。当前 tmux dispatch 不自动 emit protocol records，ACP backend/adapter、automatic emission 和 project daemon 尚未实现；Phase 2 ACP vertical slice 必须有独立且经 human 批准的 spec/plan。
+
 ## Agent 类型
 
 ### Leader Agent

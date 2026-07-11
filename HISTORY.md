@@ -4,6 +4,13 @@
 
 ## 2026-07-12
 
+### Complete the protocol runtime model phase
+
+- **Phase 0 baseline**: 冻结 `docs/validation/2026-07-11-natural-language-mission-acceptance.md` 的真实 fresh-project PASS 证据：严格两条用户消息完成 Mission `mis_1d5c2a569173`、plan `pln_c13709530632`、workflow `wfr_7d309ae9c507` 的八步 Codex/Claude 顺序协作。
+- **Phase 1 release surface**: 完成协议 records、append-only audited lineage、compact ProjectView、`protocol-runtime/v1` discovery/example、只读 `agentdeck protocol status` 与 runtime capability metadata，并在 README、handoff、contract index、CLAUDE 和 AGENT 中同步可发现入口与实现边界。
+- **边界**: tmux 仍是 active default backend，且不得标成 ACP compatible；能力元数据不是授权。当前 tmux dispatch 尚不自动 emit protocol records，ACP backend/adapter、automatic emission、project daemon 和 provider-native permission bridge 均未实现。下一产品 fork 是 Phase 2 ACP vertical slice，必须另立 human-approved spec/plan。
+- **最终验证**: `agentdeck contract protocol-runtime --example` 与临时已初始化项目的 `agentdeck protocol status` 分别写入 `/tmp/agentdeck-protocol-runtime-contract.json` 和 `/tmp/agentdeck-protocol-runtime-status.json`，两项 mode `jq -e` 检查通过；完整测试为 1490 passed，`python -m compileall src tests -q` 与 `git diff --check` 均通过。
+
 ### Expose read-only protocol runtime status
 
 - **What**: 新增 `agentdeck protocol status`，从单次已验证 ProjectView 精确投影 project、runtime backend 和四类 compact protocol summaries，并复用 `protocol-runtime/v1` example 的三项 inspect-only controls；最终 payload 在打印前通过 protocol runtime validator，失败时 stdout 保持为空。

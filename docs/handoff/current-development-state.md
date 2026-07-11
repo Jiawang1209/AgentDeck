@@ -1,10 +1,18 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-11
+Updated: 2026-07-12
 
 ## Natural-language Mission Phase 0 baseline — accepted
 
-The fresh-project two-message Codex/Claude acceptance completed all eight frozen sequential steps as Mission `mis_1d5c2a569173` / workflow `wfr_7d309ae9c507`. Mission status, ProjectView status, workbench, and the event ledger agree on `completed/current_step=8`; the audit contains one `mission_confirmed` and eight `workflow_step_completed` events. First-run trust remained an explicit human setup boundary. Two real readiness false negatives were converted to strict regression tests before minimal fixes. Durable evidence: `docs/validation/2026-07-11-natural-language-mission-acceptance.md`.
+The fresh-project strict two-message Codex/Claude acceptance completed all eight frozen sequential steps as Mission `mis_1d5c2a569173`, plan `pln_c13709530632`, and workflow `wfr_7d309ae9c507`. Mission status, ProjectView status, workbench, and the event ledger agree on `completed/current_step=8`; the audit contains one `mission_confirmed` and eight `workflow_step_completed` events. First-run trust remained an explicit human setup boundary. Two real readiness false negatives were converted to strict regression tests before minimal fixes. Verdict: **PASS**. Durable evidence: `docs/validation/2026-07-11-natural-language-mission-acceptance.md`.
+
+## Protocol-native Phase 1 model — complete
+
+Phase 1 adds pure transport capability, agent session, protocol turn, transport update, and permission request records; append-only persistence with audited lineage; compact ProjectView summaries; the versioned `protocol-runtime/v1` discovery contract; read-only `agentdeck protocol status`; and runtime capability metadata. `agentdeck contract protocol-runtime --example`, `agentdeck protocol status`, ProjectView, and the contract index expose the implemented observation surface.
+
+tmux remains the active default backend. Its capability metadata describes only the observable fallback it actually provides; it is not ACP-compatible metadata and does not authorize execution. Existing tmux dispatch does **not** automatically emit protocol records. Phase 1 has not implemented an ACP backend or adapter subprocess, automatic emission, a project daemon, a backend switch, or a provider-native permission bridge.
+
+The next product fork is the Phase 2 ACP vertical slice. It must begin with its own human-approved spec and implementation plan; Phase 1 completion does not authorize that work or imply ACP has landed.
 
 ## Sequential workflow core — implemented
 
@@ -65,9 +73,7 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 设计并实现自然语言 Mission 编排闭环：用户一句多智能体目标生成冻结 `mission_preview`，一次整体确认后自动选择并准备配置中的 Codex/Claude Worker、通过 provider-aware readiness gate、执行完整 sequential workflow，并把状态/恢复/ProjectView/contract/audit 闭环。用户不再手工 assign-role、编辑 TOML、load skill、spawn Worker、提取 plan id 或拼接 workflow preview/run。设计已获 human 批准并固化到 `docs/superpowers/specs/2026-07-10-natural-language-mission-orchestration-design.md`，详细 TDD 实施计划已写入 `docs/superpowers/plans/2026-07-10-natural-language-mission-orchestration.md`；下一步是在隔离 worktree 中按任务实施。并行/DAG/循环、自动 login/trust、GUI、remote/marketplace 和无界自治不在本目标。
 
-The next product generation is now governed by `docs/roadmap/product-north-star.md` and `docs/superpowers/specs/2026-07-11-agentdeck-protocol-native-v2-design.md`: default `agentdeck` conversation, project-first/global-roaming sessions, a durable project daemon, ACP-native Runtime, tmux fallback, and gradual V2 migration. The current natural-language Mission goal remains Phase 0 and must be completed and frozen as the compatibility baseline before the first protocol-model implementation slice.
-
-The approved first implementation plan is `docs/superpowers/plans/2026-07-11-protocol-native-phase0-phase1.md`. It covers only Phase 0 acceptance plus the no-behavior-change Phase 1 protocol model. ACP JSON-RPC, the project daemon, the default interactive REPL, global roaming, state migration, and Workspace Client remain separate future specs/plans.
+The next product generation is governed by `docs/roadmap/product-north-star.md` and `docs/superpowers/specs/2026-07-11-agentdeck-protocol-native-v2-design.md`. The approved `docs/superpowers/plans/2026-07-11-protocol-native-phase0-phase1.md` is now complete: Phase 0 is the frozen compatibility baseline and Phase 1 adds the protocol model without changing default tmux dispatch behavior. ACP JSON-RPC, the project daemon, the default interactive REPL, global roaming, state migration, and Workspace Client remain future work; Phase 2 requires a separate approved spec/plan.
 
 ## Canonical Handoff Inputs
 

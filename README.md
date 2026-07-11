@@ -55,6 +55,8 @@ AgentDeck 已经具备本地控制平面的主要底座：
 
 下一代产品会在保留这些能力和审计历史的前提下，用协议原生 Runtime Kernel 替换脆弱的终端屏幕通信。
 
+当前 Phase 1 已交付只读协议运行时模型与状态面；tmux 仍是默认执行 backend，ACP transport 尚未实现。
+
 ## 体验当前 CLI
 
 AgentDeck 当前使用 Python 3.12 和 `agentdeck` conda 环境：
@@ -128,6 +130,7 @@ ACP 标准化 Agent 通信，但不会替代 AgentDeck 的 Mission、policy、sc
 - [产品北极星](docs/roadmap/product-north-star.md)
 - [协议原生 V2 设计](docs/superpowers/specs/2026-07-11-agentdeck-protocol-native-v2-design.md)
 - [自然语言 Mission 基线验收](docs/validation/2026-07-11-natural-language-mission-acceptance.md)
+- [Protocol Runtime Contract](docs/contracts/protocol-runtime-schema.md)
 - [当前开发状态](docs/handoff/current-development-state.md)
 - [Contract 索引](docs/contracts/contract-index-schema.md)
 - [架构文档](docs/architecture/)

@@ -8,6 +8,8 @@ AgentDeck 是一个 local-first 多智能体终端工作台。目标是用任意
 
 2026-07-11 自然语言 Mission Phase 0 已通过全新项目真实验收：两条用户消息驱动 Codex/Claude 完成 8 步冻结顺序，证据见 `docs/validation/2026-07-11-natural-language-mission-acceptance.md`。首次目录 trust 仍是 human setup，不得由 Worker 任务输入或静默 Enter 绕过。
 
+Protocol-native Phase 1 已实现协议 records、append-only lineage、compact ProjectView、`protocol-runtime/v1` contract、只读 `agentdeck protocol status` 和 runtime capability metadata。`protocol status` 必须保持只读：不得写 state/event、调用 provider、读取或输入 tmux、改变 permission。能力元数据只描述 transport 能力，不是授权；tmux 是当前 active default backend，只能标为 observable fallback，绝不得标成 ACP compatible。tmux dispatch 尚不自动 emit protocol records，ACP backend/adapter、automatic emission 和 project daemon 均未实现；Phase 2 ACP vertical slice 必须另立并获批 spec/plan。
+
 Skill 是北极星的一部分：AgentDeck 后续应支持内置 skill、项目本地 skill 和显式 allowlist 的外源 skill，但 skill 必须通过 Skill Registry 加载并记录 path/source、hash、content snapshot、调用者和用途；skill 是可审计工作流上下文，不是绕过 approval、runtime safety 或 tool 权限的后门。
 
 北极星 Skill 诉求：AgentDeck 应该逐步形成可内置、可外源、可建议、可审阅、可加载、可回放的 skill 生态。内置 skill 用来沉淀稳定高频工作流；外源 skill 可以来自用户、本地目录或未来 marketplace，但必须先经过只读 preview、hash/provenance 展示、显式 import、显式 load 和审计。任何 agent 都不得把外源 `SKILL.md` 静默安装、自动启用、当作权限授权，或绕过 human approval。
