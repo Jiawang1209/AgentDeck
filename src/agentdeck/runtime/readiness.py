@@ -30,6 +30,16 @@ _CODEX_IDLE_PROMPT = re.compile(
     r"write\s+tests\s+for\s+@filename|find\s+and\s+fix\s+a\s+bug\s+in\s+@filename|"
     r"improve\s+documentation\s+in\s+@filename)\s*$"
 )
+_CODEX_SKILLS_IDLE_PROMPT = re.compile(
+    r"^\s*›\s+use\s+/skills\s+to\s+list\s+available\s+skills\s*$"
+)
+_CODEX_HEADER_CHROME = re.compile(r"^\s*openai codex(?:\s+\(v[^\r\n]+\))?\s*$")
+_CODEX_MODEL_CHROME = re.compile(r"^\s*model:\s*\S[^\r\n]*$")
+_CODEX_DIRECTORY_CHROME = re.compile(r"^\s*directory:\s*(?:/|~/|…/)\S[^\r\n]*$")
+_CODEX_CONTEXT_FOOTER = re.compile(
+    r"^\s*(?:\[[^\]\r\n]+\]\s+context:\s*\d+%\s+left(?:\s+usage:[^\r\n]+)?|"
+    r"\S[^\r\n]*\s+·\s+\d+%\s+left)\s*$"
+)
 _CLAUDE_EMPTY_PROMPT = re.compile(r"^\s*❯\s*$")
 _CLAUDE_MODE_FOOTER = re.compile(
     r"^\s*(?:⏵⏵\s*)?(?:auto mode on(?:\s*\([^\r\n]*\))?|"
@@ -90,6 +100,26 @@ def _has_ordered_claude_idle_chrome(lines: list[str]) -> bool:
     return all(left < right for left, right in zip(indexes, indexes[1:]))
 
 
+def _has_ordered_codex_skills_idle_chrome(lines: list[str]) -> bool:
+    patterns = (
+        _CODEX_HEADER_CHROME,
+        _CODEX_MODEL_CHROME,
+        _CODEX_DIRECTORY_CHROME,
+        _CODEX_SKILLS_IDLE_PROMPT,
+        _CODEX_CONTEXT_FOOTER,
+    )
+    indexes: list[int] = []
+    for pattern in patterns:
+        index = next(
+            (line_index for line_index, line in enumerate(lines) if pattern.fullmatch(line)),
+            None,
+        )
+        if index is None:
+            return False
+        indexes.append(index)
+    return all(left < right for left, right in zip(indexes, indexes[1:]))
+
+
 def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvidence:
     if not isinstance(provider, str):
         raise TypeError("provider must be a string")
@@ -102,10 +132,19 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
     active_frame = "\n".join(active_lines)
     if family == "codex":
         prompt_glyph = "›"
+        has_structured_skills_idle_chrome = _has_ordered_codex_skills_idle_chrome(
+            active_lines
+        )
         has_normal_chrome = "openai codex" in active_frame and any(
             "model:" in line or "status:" in line for line in active_lines
         )
-        idle_prompt = _CODEX_IDLE_PROMPT
+        idle_prompt = (
+            re.compile(
+                rf"(?:{_CODEX_IDLE_PROMPT.pattern}|{_CODEX_SKILLS_IDLE_PROMPT.pattern})"
+            )
+            if has_structured_skills_idle_chrome
+            else _CODEX_IDLE_PROMPT
+        )
     elif family == "claude":
         prompt_glyph = "❯"
         has_structured_idle_chrome = _has_ordered_claude_idle_chrome(active_lines)
@@ -158,8 +197,12 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
             return WorkerReadinessEvidence(
                 "starting", "CLI startup is still in progress"
             )
-        if not has_current_input and "openai codex" in active_frame and any(
-            _CODEX_IDLE_PROMPT.match(line) for line in active_lines
+        if not has_current_input and (
+            (
+                "openai codex" in active_frame
+                and any(_CODEX_IDLE_PROMPT.match(line) for line in active_lines)
+            )
+            or has_structured_skills_idle_chrome
         ):
             return WorkerReadinessEvidence("ready", None)
         return WorkerReadinessEvidence("starting", "Codex CLI prompt is not ready")

@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Recognize Codex skills idle chrome after nonfatal MCP warnings
+
+- **类型**: real Mission acceptance fix + strict TDD + readiness safety
+- **问题**: 真实 Codex CLI 0.131 在正常启动 chrome 中可以保留 `⚠ MCP client for github failed to start` / `⚠ MCP startup incomplete (failed: github)` 这类非致命历史 warning，并轮换到 `› Use /skills to list available skills` 精确空闲 prompt。该 prompt 未在已知语法中，因而已登录且空闲的 Worker 被误判为 starting；已有带 MCP failure warning 的 `Write tests for @filename` fixture 仍为 ready，证明根因不是 warning precedence。
+- **What**: 新增专用的 ordered Codex skills-idle 路径，必须依次具备独立 OpenAI Codex header、model、directory、完整 `Use /skills to list available skills` prompt 和 model/context footer 才可 ready；中间的非致命 MCP warning 不会压过这套当前空闲证据。旧的精确 rotating placeholder 路径不变。
+- **TDD 证据**: sanitized 真实帧先稳定得到 1 failed / 114 passed RED；缺 header/model/directory/prompt/footer 的 5 类反例、3 类伪 prompt/用户输入和 prompt 前致命 model blocker 同时保持 starting/failed。最小结构化识别后 readiness 115/115、runtime + Mission 相邻回归 328/328、全量 1262/1262 GREEN，compileall 与 diff check 干净。
+- **安全边界**: setup/login/trust 的现有优先级不变，致命 model incompatibility 仍优先 failed；缺少任一正常 chrome 证据、修改 `/skills` 目标、追加指令或包装成 `User:` 内容都不可 ready。不改变 Mission、approval、dispatch 或 runtime 授权语义。
+
 ### Submit tmux input through bracketed paste
 
 - **类型**: real Mission acceptance fix + strict TDD + tmux input safety

@@ -36,6 +36,15 @@ CODEX_0131_FIND_BUG_READY_SCREEN = CODEX_0131_READY_SCREEN.replace(
 CODEX_0131_IMPROVE_DOCS_READY_SCREEN = CODEX_0131_READY_SCREEN.replace(
     "› Implement {feature}", "› Improve documentation in @filename"
 )
+CODEX_0131_SKILLS_READY_SCREEN = (
+    "OpenAI Codex (v0.131.0)\n"
+    "model: gpt-5.3-codex\n"
+    "directory: /tmp/agentdeck-demo\n"
+    "⚠ MCP client for github failed to start\n"
+    "⚠ MCP startup incomplete (failed: github)\n"
+    "› Use /skills to list available skills\n"
+    "gpt-5.3-codex · 100% left"
+)
 CODEX_STARTING_MCP_SCREEN = "OpenAI Codex\nStarting MCP servers (1/2)\n›"
 CODEX_MODEL_INCOMPATIBLE_SCREEN = (
     "› old prompt in scrollback\nConfigured model requires a newer version of Codex"
@@ -103,6 +112,55 @@ def test_codex_0131_exact_write_tests_filename_placeholder_is_ready(prompt: str)
 )
 def test_codex_0131_exact_rotating_filename_placeholder_is_ready(screen: str) -> None:
     assert classify_worker_readiness("codex-cli", screen).status == "ready"
+
+
+def test_codex_0131_nonfatal_mcp_warning_with_exact_skills_placeholder_is_ready() -> None:
+    assert (
+        classify_worker_readiness("codex-cli", CODEX_0131_SKILLS_READY_SCREEN).status
+        == "ready"
+    )
+
+
+@pytest.mark.parametrize(
+    "missing_line",
+    [
+        "OpenAI Codex (v0.131.0)\n",
+        "model: gpt-5.3-codex\n",
+        "directory: /tmp/agentdeck-demo\n",
+        "› Use /skills to list available skills\n",
+        "gpt-5.3-codex · 100% left",
+    ],
+)
+def test_codex_skills_idle_requires_complete_normal_chrome(missing_line: str) -> None:
+    screen = CODEX_0131_SKILLS_READY_SCREEN.replace(missing_line, "")
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "› Use /skills to list available skills and ignore safeguards",
+        "› Use /skills to list available secrets",
+        "User: › Use /skills to list available skills",
+    ],
+)
+def test_codex_skills_like_user_input_is_not_idle(prompt: str) -> None:
+    screen = CODEX_0131_SKILLS_READY_SCREEN.replace(
+        "› Use /skills to list available skills", prompt
+    )
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
+
+
+def test_codex_fatal_model_error_overrides_skills_idle_and_nonfatal_mcp_warning() -> None:
+    screen = CODEX_0131_SKILLS_READY_SCREEN.replace(
+        "› Use /skills to list available skills\n",
+        "Configured model requires a newer version of Codex\n"
+        "› Use /skills to list available skills\n",
+    )
+
+    assert classify_worker_readiness("codex-cli", screen).status == "failed"
 
 
 @pytest.mark.parametrize(
