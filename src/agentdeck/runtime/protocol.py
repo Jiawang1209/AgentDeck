@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import asdict, dataclass, fields
+import math
+import re
 from typing import Any
 
 from agentdeck.models import new_id, utc_now
@@ -43,9 +44,36 @@ def _required_string(name: str, value: object) -> str:
 
 def _record_id(name: str, value: object, prefix: str) -> str:
     result = _required_string(name, value)
-    if not result.startswith(prefix):
-        raise ValueError(f"{name} must start with {prefix}")
+    if re.fullmatch(rf"{re.escape(prefix)}[a-z0-9]+", result) is None:
+        raise ValueError(f"{name} must match {prefix}<lowercase alphanumeric token>")
     return result
+
+
+def _clone_json_value(value: object, active_containers: set[int]) -> Any:
+    if value is None or type(value) in (bool, int, str):
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError("payload numbers must be finite")
+        return value
+    if type(value) not in (list, dict):
+        raise TypeError("payload must contain only JSON-safe values")
+
+    identity = id(value)
+    if identity in active_containers:
+        raise TypeError("payload must contain only JSON-safe values")
+    active_containers.add(identity)
+    try:
+        if type(value) is list:
+            return [_clone_json_value(item, active_containers) for item in value]
+        clone: dict[str, Any] = {}
+        for key, item in value.items():
+            if type(key) is not str:
+                raise TypeError("payload keys must be strings")
+            clone[key] = _clone_json_value(item, active_containers)
+        return clone
+    finally:
+        active_containers.remove(identity)
 
 
 def build_agent_session(
@@ -115,7 +143,7 @@ def build_transport_update(
         "turn_id": turn_id,
         "sequence": sequence,
         "kind": kind,
-        "payload": deepcopy(payload),
+        "payload": _clone_json_value(payload, set()),
         "created_at": utc_now(),
     }
 

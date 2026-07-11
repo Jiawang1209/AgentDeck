@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 import pytest
 
@@ -82,9 +83,9 @@ def test_session_requires_exact_capabilities_type() -> None:
 
 
 @pytest.mark.parametrize(("builder", "message"), [
-    (lambda: build_turn("bad", "msg_1"), "session_id must start with ags_"),
-    (lambda: build_transport_update("ags_1", "bad", 0, "text", {}), "turn_id must start with trn_"),
-    (lambda: build_permission_request("bad", "trn_1", "shell", "cwd", "high"), "session_id must start with ags_"),
+    (lambda: build_turn("bad", "msg_1"), "session_id must match ags_<lowercase alphanumeric token>"),
+    (lambda: build_transport_update("ags_1", "bad", 0, "text", {}), "turn_id must match trn_<lowercase alphanumeric token>"),
+    (lambda: build_permission_request("bad", "trn_1", "shell", "cwd", "high"), "session_id must match ags_<lowercase alphanumeric token>"),
 ])
 def test_builders_reject_bad_record_id_prefixes(builder, message: str) -> None:
     with pytest.raises(ValueError, match=rf"^{message}$"):
@@ -102,6 +103,61 @@ def test_update_rejects_unknown_kind_and_bad_payload() -> None:
         build_transport_update("ags_1", "trn_1", 0, "unknown", {})
     with pytest.raises(TypeError, match=r"^payload must be a dict$"):
         build_transport_update("ags_1", "trn_1", 0, "text", [])
+
+
+@pytest.mark.parametrize("bad_value", [{1, 2}, object(), (1, 2)])
+def test_update_rejects_non_json_payload_values(bad_value: object) -> None:
+    with pytest.raises(TypeError, match=r"^payload must contain only JSON-safe values$"):
+        build_transport_update("ags_1", "trn_1", 0, "text", {"value": bad_value})
+
+
+def test_update_rejects_non_string_payload_keys() -> None:
+    with pytest.raises(TypeError, match=r"^payload keys must be strings$"):
+        build_transport_update("ags_1", "trn_1", 0, "text", {1: "value"})
+
+
+@pytest.mark.parametrize("bad_number", [math.nan, math.inf, -math.inf])
+def test_update_rejects_non_finite_payload_numbers(bad_number: float) -> None:
+    with pytest.raises(ValueError, match=r"^payload numbers must be finite$"):
+        build_transport_update("ags_1", "trn_1", 0, "text", {"value": bad_number})
+
+
+def test_update_does_not_invoke_payload_deepcopy_hooks() -> None:
+    class HostileValue:
+        deepcopy_called = False
+
+        def __deepcopy__(self, memo):
+            type(self).deepcopy_called = True
+            raise AssertionError("deepcopy hook must not run")
+
+    with pytest.raises(TypeError, match=r"^payload must contain only JSON-safe values$"):
+        build_transport_update("ags_1", "trn_1", 0, "text", {"value": HostileValue()})
+    assert HostileValue.deepcopy_called is False
+
+
+@pytest.mark.parametrize("field,prefix,bad_value", [
+    ("session_id", "ags_", "ags_"),
+    ("session_id", "ags_", "ags_   "),
+    ("session_id", "ags_", " ags_abc"),
+    ("session_id", "ags_", "ags_abc "),
+    ("session_id", "ags_", "ags_abc\n"),
+    ("session_id", "ags_", "ags_ABC"),
+    ("session_id", "ags_", "ags_a-b"),
+    ("turn_id", "trn_", "trn_"),
+    ("turn_id", "trn_", "trn_   "),
+    ("turn_id", "trn_", " trn_abc"),
+    ("turn_id", "trn_", "trn_abc "),
+    ("turn_id", "trn_", "trn_abc\n"),
+    ("turn_id", "trn_", "trn_ABC"),
+    ("turn_id", "trn_", "trn_a-b"),
+])
+def test_builders_reject_malformed_protocol_ids(field: str, prefix: str, bad_value: str) -> None:
+    if field == "session_id":
+        builder = lambda: build_turn(bad_value, "msg_1")
+    else:
+        builder = lambda: build_transport_update("ags_abc", bad_value, 0, "text", {})
+    with pytest.raises(ValueError, match=rf"^{field} must match {prefix}<lowercase alphanumeric token>$"):
+        builder()
 
 
 def test_builder_mutable_fields_are_isolated() -> None:

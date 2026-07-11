@@ -12,6 +12,7 @@
 - **边界**: 本切片只生成 JSON 可序列化 dict，不读取或写入 StateStore、ProjectView、provider、tmux 或 permission side effect；tmux fallback capability 仅声明 observable terminal。
 - **TDD 证据**: 聚焦测试先因 `agentdeck.runtime.protocol` 不存在得到预期 collection RED；最小实现后 `tests/test_protocol_runtime.py` 34/34 GREEN。
 - **规格修正**: permission request 的生命周期字段与批准计划统一为 `status="pending"`，不再输出漂移的 `state`；契约测试先以 `KeyError: 'status'` 精确 RED，再做单字段修复。
+- **输入加固**: transport update payload 改为无用户 hook 的白名单递归 JSON clone，仅接受 `null`、bool、int、有限 float、str、list 与 string-key dict，拒绝 set/object/tuple/non-string key/NaN/Infinity/cycle；session/turn ID 改为 exact prefix 加 lowercase alphanumeric token 的完整匹配，拒绝空后缀、首尾空白、换行与非法字符。56 项聚焦测试 GREEN。
 
 ### Anchor Worker readiness to the current terminal frame
 
