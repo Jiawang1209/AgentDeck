@@ -11,6 +11,7 @@
 - **持久化与恢复**: fresh state 新增 `protocol_state_transitions[]`；`StateStore.record_protocol_transition()` 在共享 protocol mutation lock 内完成精确实体查找、从 immutable base record 和既有 transitions 派生 current state、拒绝 stale/illegal/unknown/duplicate 后，再复用 durable protocol outbox 写 compact audit event。base session/turn/permission records 永不改写。
 - **安全边界**: terminal turn 与 permission 状态不可复活；permission 仅允许 pending 到 approved/denied/expired；session 明确支持 disconnected -> reconnecting -> ready；turn 明确支持 waiting_permission -> streaming 和 load replay 的直接 streaming/completed。任何拒绝（包括已有 pending outbox）保持整个 `.agentdeck` 文件树 byte-for-byte 不变。本切片不实现 ProjectView transition 投影或 ACP wire mapping。
 - **TDD 证据**: transition/turn-kind 聚焦测试先因 API 缺失 collection RED；实现后覆盖 allowed/forbidden edge、stale state、unknown entity、candidate ID collision、JSON/bounds、base immutability、permission 三种结局与 pending-outbox zero-write。
+- **Review fix**: 补充 `load_replay` 在首个 update/response 前遇到 EOF 或畸形流量时所需的 `created -> ambiguous` 边；回归测试同时证明 `ambiguous` 仍是 terminal，不能恢复到 `streaming`。
 
 ### Add explicit ACP agent transport configuration
 

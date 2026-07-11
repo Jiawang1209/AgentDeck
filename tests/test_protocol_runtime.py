@@ -440,6 +440,29 @@ def test_permission_transition_outcomes_are_persisted_without_base_rewrite(
     assert store.load()["permission_requests"] == [permission]
 
 
+def test_load_replay_can_become_ambiguous_before_first_update_and_stays_terminal(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    session = store.record_agent_session("a", "p", "acp", "native", "w", CAPABILITIES)
+    turn = store.record_protocol_turn(
+        session["session_id"], "load-native", kind="load_replay"
+    )
+
+    transition = store.record_protocol_transition(
+        "turn", turn["turn_id"], "created", "ambiguous", "eof_before_response", {}
+    )
+
+    assert transition["to_state"] == "ambiguous"
+    assert store.load()["protocol_turns"] == [turn]
+    before = _tree_snapshot(store)
+    with pytest.raises(ValueError, match="invalid protocol state transition"):
+        store.record_protocol_transition(
+            "turn", turn["turn_id"], "ambiguous", "streaming", None, {}
+        )
+    assert _tree_snapshot(store) == before
+
+
 @pytest.mark.parametrize("field", ["agent_id", "provider", "workspace"])
 @pytest.mark.parametrize("bad_value", ["", "   ", True, 7])
 def test_session_rejects_invalid_required_strings(field: str, bad_value: object) -> None:

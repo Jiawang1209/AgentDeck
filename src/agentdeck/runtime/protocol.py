@@ -29,6 +29,7 @@ SESSION_TRANSITION_EDGES = {
 }
 TURN_TRANSITION_EDGES = {
     ("created", "submitted"), ("created", "streaming"), ("created", "completed"),
+    ("created", "ambiguous"),
     ("submitted", "streaming"), ("submitted", "waiting_permission"),
     ("submitted", "completed"), ("submitted", "blocked"), ("submitted", "failed"),
     ("submitted", "ambiguous"),
