@@ -1314,6 +1314,17 @@ def _derived_entity_state(state: dict[str, Any], entity_type: str, entity_id: st
     return current
 
 
+def _latest_protocol_identity(records: list[dict[str, Any]], identity_field: str) -> str | None:
+    if not records:
+        return None
+    latest = max(
+        records,
+        key=lambda item: (str(item.get("created_at", "")), str(item.get(identity_field, ""))),
+    )
+    value = latest.get(identity_field)
+    return value if isinstance(value, str) else None
+
+
 def _acp_adapter_provenance(agent: AgentSpec) -> dict[str, str]:
     encoded = json.dumps(list(agent.transport_command), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     executable = _resolved_executable(agent.transport_command[0]) or agent.transport_command[0]
@@ -1492,7 +1503,6 @@ def _acp_run_payload_from_state(
     updates = [item for item in state["transport_updates"] if item["turn_id"] == turn_id]
     if [item["sequence"] for item in updates] != list(range(len(updates))):
         raise ValueError("ACP run update sequence is not contiguous")
-    permissions = [item for item in state["permission_requests"] if item["turn_id"] == turn_id]
     all_transitions = state["protocol_state_transitions"]
     completions = [item for item in updates if item["kind"] == "completion"]
     if len(completions) > 1:
@@ -1509,13 +1519,14 @@ def _acp_run_payload_from_state(
         "protocol_version": ready["details"]["protocol_version"],
         "capabilities": session["capabilities"], "turn_id": turn["turn_id"], "turn_state": turn_state,
         "stop_reason": stop_reason, "session_count": len(state["agent_sessions"]),
-        "turn_count": len(state["protocol_turns"]), "update_count": len(updates), "permission_count": len(permissions),
+        "turn_count": len(state["protocol_turns"]), "update_count": len(state["transport_updates"]),
+        "permission_count": len(state["permission_requests"]),
         "transition_count": len(all_transitions),
-        "latest_session_id": state["agent_sessions"][-1]["session_id"],
-        "latest_turn_id": state["protocol_turns"][-1]["turn_id"],
-        "latest_update_id": updates[-1]["update_id"] if updates else None,
-        "latest_permission_id": permissions[-1]["permission_id"] if permissions else None,
-        "latest_transition_id": all_transitions[-1]["transition_id"] if all_transitions else None,
+        "latest_session_id": _latest_protocol_identity(state["agent_sessions"], "session_id"),
+        "latest_turn_id": _latest_protocol_identity(state["protocol_turns"], "turn_id"),
+        "latest_update_id": _latest_protocol_identity(state["transport_updates"], "update_id"),
+        "latest_permission_id": _latest_protocol_identity(state["permission_requests"], "permission_id"),
+        "latest_transition_id": _latest_protocol_identity(all_transitions, "transition_id"),
         "session_state": _derived_entity_state(state, "session", session["session_id"], session["state"]),
         "disconnect_reason": disconnected["reason"],
         "controls": [
@@ -1551,7 +1562,6 @@ def _acp_reconnect_payload_from_state(
     if turn["session_id"] != session_id:
         raise ValueError("ACP reconnect turn does not belong to session")
     updates = [item for item in state["transport_updates"] if item["turn_id"] == turn_id]
-    permissions = [item for item in state["permission_requests"] if item["turn_id"] == turn_id]
     all_transitions = state["protocol_state_transitions"]
     if [item["sequence"] for item in updates] != list(range(len(updates))):
         raise ValueError("ACP reconnect update sequence is not contiguous")
@@ -1593,13 +1603,13 @@ def _acp_reconnect_payload_from_state(
         "capabilities": session["capabilities"], "turn_id": turn_id,
         "turn_state": turn_state,
         "stop_reason": stop_reason, "session_count": len(state["agent_sessions"]),
-        "turn_count": len(state["protocol_turns"]), "update_count": len(updates),
-        "permission_count": len(permissions), "transition_count": len(all_transitions),
-        "latest_session_id": state["agent_sessions"][-1]["session_id"],
-        "latest_turn_id": state["protocol_turns"][-1]["turn_id"],
-        "latest_update_id": updates[-1]["update_id"] if updates else None,
-        "latest_permission_id": permissions[-1]["permission_id"] if permissions else None,
-        "latest_transition_id": all_transitions[-1]["transition_id"] if all_transitions else None,
+        "turn_count": len(state["protocol_turns"]), "update_count": len(state["transport_updates"]),
+        "permission_count": len(state["permission_requests"]), "transition_count": len(all_transitions),
+        "latest_session_id": _latest_protocol_identity(state["agent_sessions"], "session_id"),
+        "latest_turn_id": _latest_protocol_identity(state["protocol_turns"], "turn_id"),
+        "latest_update_id": _latest_protocol_identity(state["transport_updates"], "update_id"),
+        "latest_permission_id": _latest_protocol_identity(state["permission_requests"], "permission_id"),
+        "latest_transition_id": _latest_protocol_identity(all_transitions, "transition_id"),
         "session_state": _derived_entity_state(state, "session", session_id, session["state"]),
         "disconnect_reason": disconnected["reason"],
         "controls": [

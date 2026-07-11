@@ -11,6 +11,7 @@
 - **Compatibility freeze**: observation surfaces are read-only and never execute `transport_command`; tmux remains the default legacy runtime. Focused regression covers the unchanged legacy tmux command path (including explicit ACP metadata), dispatch/config serialization, Mission orchestration, and contract behavior without a real adapter.
 - **TDD**: cross-surface tests compare ACP command output against protocol status, ProjectView, and workbench for counts, latest IDs, and current states; contract tests enforce the control safety/disabled matrix.
 - **Replay drain hardening**: load now lets official-SDK notification tasks enter the tracked callback set and waits for admitted replay callbacks to settle before sealing the lifecycle generation, preventing the load response/notification scheduling race from dropping the final ordered replay update.
+- **Global summary correction**: `update_count`, `permission_count`, and their latest identities now use the complete ledger with ProjectView's stable latest ordering, matching the already-global session/turn/transition fields after a second run, load, resume, or earlier permission history. Command-target turn/session identities and states remain explicit and separate.
 
 ### Load and resume ACP sessions explicitly
 

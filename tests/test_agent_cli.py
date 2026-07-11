@@ -529,11 +529,101 @@ def test_acp_load_replays_then_resume_prompts_same_identity(tmp_path: Path, monk
     assert loaded["mode"] == "acp_load"
     assert loaded["session_id"] == first["session_id"]
     assert loaded["native_session_id"] == first["native_session_id"]
+    assert cli.main(["protocol", "status"]) == 0
+    loaded_status = json.loads(capsys.readouterr().out)
+    assert loaded["session_count"] == loaded_status["agent_sessions"]["count"]
+    assert loaded["turn_count"] == loaded_status["protocol_turns"]["count"]
+    assert loaded["update_count"] == loaded_status["transport_updates"]["count"]
+    assert loaded["permission_count"] == loaded_status["permission_requests"]["count"]
+    assert loaded["transition_count"] == loaded_status["protocol_state_transitions"]["count"]
+    assert loaded["latest_update_id"] == loaded_status["transport_updates"]["items"][-1]["update_id"]
+    assert loaded["latest_transition_id"] == loaded_status["protocol_state_transitions"]["items"][-1]["transition_id"]
     assert cli.main(["protocol", "acp", "resume", "--session-id", first["session_id"], "--prompt", "again", "--confirm"]) == 0
     resumed = json.loads(capsys.readouterr().out)
     assert resumed["mode"] == "acp_resume"
     state = StateStore(root).load()
     assert [turn["kind"] for turn in state["protocol_turns"]] == ["prompt", "load_replay", "prompt"]
+    assert resumed["session_count"] == len(state["agent_sessions"])
+    assert resumed["turn_count"] == len(state["protocol_turns"])
+    assert resumed["update_count"] == len(state["transport_updates"])
+    assert resumed["permission_count"] == len(state["permission_requests"])
+    assert resumed["transition_count"] == len(state["protocol_state_transitions"])
+    assert resumed["latest_update_id"] == state["transport_updates"][-1]["update_id"]
+    assert resumed["latest_permission_id"] is None
+
+    assert cli.main(["protocol", "status"]) == 0
+    protocol_status = json.loads(capsys.readouterr().out)
+    assert cli.main(["status"]) == 0
+    project_view = json.loads(capsys.readouterr().out)
+    assert cli.main(["workbench"]) == 0
+    workbench = json.loads(capsys.readouterr().out)
+    for observed in (protocol_status, project_view, workbench["project_view"]):
+        assert observed["agent_sessions"]["count"] == resumed["session_count"]
+        assert observed["protocol_turns"]["count"] == resumed["turn_count"]
+        assert observed["transport_updates"]["count"] == resumed["update_count"]
+        assert observed["permission_requests"]["count"] == resumed["permission_count"]
+        assert observed["protocol_state_transitions"]["count"] == resumed["transition_count"]
+        assert observed["transport_updates"]["items"][-1]["update_id"] == resumed["latest_update_id"]
+        assert observed["protocol_state_transitions"]["items"][-1]["transition_id"] == resumed["latest_transition_id"]
+
+
+def test_acp_second_run_reports_global_protocol_observation(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    config_path = root / ".agentdeck" / "config.toml"
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    config_path.write_text(config_path.read_text(encoding="utf-8").replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "stream_end_turn"]',
+    ), encoding="utf-8")
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+
+    for prompt in ("first", "second"):
+        assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", prompt, "--confirm"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+
+    assert cli.main(["protocol", "status"]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert payload["session_count"] == status["agent_sessions"]["count"] == 2
+    assert payload["turn_count"] == status["protocol_turns"]["count"] == 2
+    assert payload["update_count"] == status["transport_updates"]["count"]
+    assert payload["permission_count"] == status["permission_requests"]["count"]
+    assert payload["transition_count"] == status["protocol_state_transitions"]["count"]
+    assert payload["latest_session_id"] == status["agent_sessions"]["items"][-1]["session_id"]
+    assert payload["latest_turn_id"] == status["protocol_turns"]["items"][-1]["turn_id"]
+    assert payload["latest_update_id"] == status["transport_updates"]["items"][-1]["update_id"]
+    assert payload["latest_transition_id"] == status["protocol_state_transitions"]["items"][-1]["transition_id"]
+
+
+def test_acp_later_run_retains_global_permission_observation(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    config_path = root / ".agentdeck" / "config.toml"
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    base = config_path.read_text(encoding="utf-8")
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+
+    def scenario(name: str) -> None:
+        config_path.write_text(base.replace(
+            f'transport_command = ["{sys.executable}", "--stdio"]',
+            f'transport_command = ["{sys.executable}", "{fixture}", "{name}"]',
+        ), encoding="utf-8")
+
+    scenario("permission")
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "permission", "--confirm"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["permission_count"] == 1
+    permission_id = first["latest_permission_id"]
+
+    scenario("stream_end_turn")
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "later", "--confirm"]) == 0
+    later = json.loads(capsys.readouterr().out)
+    assert later["permission_count"] == 1
+    assert later["latest_permission_id"] == permission_id
+    assert cli.main(["protocol", "status"]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["permission_requests"]["count"] == later["permission_count"]
+    assert status["permission_requests"]["items"][-1]["permission_id"] == permission_id
 
 
 @pytest.mark.parametrize("command,scenario_name,extra,capability", [
@@ -662,8 +752,9 @@ def test_acp_run_non_tty_permission_is_persisted_denied_before_completion(
 
     assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "hello", "--confirm"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["permission_count"] == 1
     state = StateStore(root).load()
+    assert payload["permission_count"] == len(state["permission_requests"]) == 1
+    assert payload["latest_permission_id"] == state["permission_requests"][-1]["permission_id"]
     permission = state["permission_requests"][0]
     transitions = state["protocol_state_transitions"]
     denied_index = next(i for i, item in enumerate(transitions) if item["entity_id"] == permission["permission_id"])
