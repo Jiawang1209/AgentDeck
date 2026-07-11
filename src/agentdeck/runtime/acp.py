@@ -22,7 +22,9 @@ _SECRET_LINE = re.compile(
 
 
 class AcpTransportError(RuntimeError):
-    pass
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.cancel_diagnostic: AcpCancelDiagnostic | None = None
 
 
 class AcpProtocolVersionError(AcpTransportError):
@@ -41,6 +43,12 @@ class AcpAmbiguousOutcome(AcpTransportError):
 class AcpInitializeResult:
     protocol_version: int
     client_capabilities: dict[str, object]
+
+
+@dataclass(frozen=True)
+class AcpCancelDiagnostic:
+    session_id: str
+    status: str
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,7 @@ class AcpTransport:
         client: object,
         *,
         request_timeout: float = 30.0,
+        cancel_timeout: float = 1.0,
         terminate_grace: float = 2.0,
         kill_grace: float = 2.0,
     ) -> None:
@@ -77,6 +86,7 @@ class AcpTransport:
             raise ValueError("argv elements must be non-empty strings")
         for name, value in (
             ("request_timeout", request_timeout),
+            ("cancel_timeout", cancel_timeout),
             ("terminate_grace", terminate_grace),
             ("kill_grace", kill_grace),
         ):
@@ -86,6 +96,7 @@ class AcpTransport:
         self._workspace = Path(workspace).resolve(strict=True)
         self._client = client
         self._request_timeout = float(request_timeout)
+        self._cancel_timeout = float(cancel_timeout)
         self._terminate_grace = float(terminate_grace)
         self._kill_grace = float(kill_grace)
         self._context: Any = None
@@ -199,18 +210,40 @@ class AcpTransport:
         )
         try:
             response = await self._request(operation, active_prompt=True)
+        except AcpRequestTimeout as error:
+            error.cancel_diagnostic = await self._send_bounded_cancel(native_session_id)
+            raise
         except asyncio.CancelledError:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(
                     self._connection.cancel(session_id=native_session_id), timeout=1.0
                 )
             raise
+        callback_error = getattr(self._client, "take_callback_error", lambda: None)()
+        if callback_error is not None:
+            error = AcpTransportError("ACP client callback rejected a streamed update")
+            error.cancel_diagnostic = await self._send_bounded_cancel(native_session_id)
+            raise error from callback_error
         return AcpPromptResult(
             native_session_id=native_session_id,
             stop_reason=response.stop_reason,
             outcome="completed" if response.stop_reason == "end_turn" else "not_completed",
             disconnect_reason="clean_exit",
         )
+
+    async def _send_bounded_cancel(self, native_session_id: str) -> AcpCancelDiagnostic:
+        try:
+            await asyncio.wait_for(
+                self._connection.cancel(session_id=native_session_id),
+                timeout=self._cancel_timeout,
+            )
+        except TimeoutError:
+            status = "timed_out"
+        except Exception:
+            status = "failed"
+        else:
+            status = "sent"
+        return AcpCancelDiagnostic(session_id=native_session_id, status=status)
 
     async def close(self) -> None:
         if self._closed:

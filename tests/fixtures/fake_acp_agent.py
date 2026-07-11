@@ -17,6 +17,7 @@ class FakeAgent:
         self.scenario = scenario
         self.args = args
         self.client = None
+        self.cancelled = asyncio.Event()
 
     def on_connect(self, conn: object) -> None:
         self.client = conn
@@ -39,7 +40,8 @@ class FakeAgent:
 
     async def prompt(self, session_id: str, prompt: list[object], **kwargs):
         if self.scenario == "timeout":
-            await asyncio.sleep(60)
+            await self.cancelled.wait()
+            return schema.PromptResponse(stopReason="cancelled")
         if self.scenario == "eof_before_response":
             os._exit(0)
         if self.scenario == "cancel_or_ignore_terminate":
@@ -57,6 +59,7 @@ class FakeAgent:
     async def cancel(self, session_id: str, **kwargs):
         if self.args:
             Path(self.args[0]).write_text("cancelled")
+        self.cancelled.set()
 
     async def ext_method(self, method: str, params: dict):
         return {}

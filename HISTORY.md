@@ -10,6 +10,7 @@
 - **Bounds**: adapter argv remains a non-empty tuple of exact non-empty strings and is passed without a shell; every SDK request is timeout-bounded, wire reads use the 64 KiB SDK transport limit, and stderr diagnostics are capped at 64 KiB and redact secret-like lines.
 - **Failure safety**: protocol mismatch, malformed or oversized frames, request timeout, and EOF during an active prompt are explicit failures; active EOF is ambiguous and never fabricated as `end_turn`. Cancellation sends `session/cancel`, then shutdown closes the connection and exact child stdin before bounded wait/terminate/kill escalation.
 - **Scope**: this slice does not add CLI or `StateStore` orchestration, does not install an ACP adapter, does not persist environment data, and does not change tmux defaults.
+- **Timeout/cumulative-bound hardening**: an active prompt timeout now sends a separately bounded `session/cancel` before shutdown; a streamed-update callback failure (including cumulative payload/update bounds) is surfaced after the SDK prompt response and follows the same cancellation path. Cancel success, timeout, or failure is attached only as a compact `{session_id,status}` diagnostic, while the original request timeout or callback failure remains the primary exception and no cancel error text is retained.
 
 ### Bridge ACP updates and permissions fail closed
 

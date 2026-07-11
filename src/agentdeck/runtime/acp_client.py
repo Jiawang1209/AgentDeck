@@ -97,6 +97,12 @@ class AgentDeckAcpClient:
         self._sink = sink
         self._decide = decide
         self._permission_pending = False
+        self._callback_error: Exception | None = None
+
+    def take_callback_error(self) -> Exception | None:
+        error = self._callback_error
+        self._callback_error = None
+        return error
 
     async def _settle_cancelled(self, session_id: str, tool_call_id: str) -> None:
         """Bound and shield the idempotent fail-closed settlement write."""
@@ -118,7 +124,11 @@ class AgentDeckAcpClient:
 
     async def session_update(self, session_id: str, update: object, **_: Any) -> None:
         kind, payload = map_session_update(update)
-        await self._sink.append_update(session_id, kind, payload)
+        try:
+            await self._sink.append_update(session_id, kind, payload)
+        except Exception as error:
+            self._callback_error = error
+            raise
 
     async def request_permission(
         self,

@@ -468,17 +468,83 @@ async def test_transport_blocks_exact_protocol_version_mismatch(tmp_path: Path) 
 async def test_transport_bounds_timeout_and_eof_as_ambiguous(tmp_path: Path) -> None:
     from agentdeck.runtime.acp import AcpAmbiguousOutcome, AcpRequestTimeout, AcpTransport
 
-    for scenario, error in [("timeout", AcpRequestTimeout), ("eof_before_response", AcpAmbiguousOutcome)]:
+    timeout_marker = tmp_path / "timeout-cancelled"
+    for scenario, error, args in [
+        ("timeout", AcpRequestTimeout, (str(timeout_marker),)),
+        ("eof_before_response", AcpAmbiguousOutcome, ()),
+    ]:
         client, _ = _transport_client()
         transport = AcpTransport(
-            (sys.executable, str(FAKE_AGENT), scenario), tmp_path, client,
+            (sys.executable, str(FAKE_AGENT), scenario, *args), tmp_path, client,
             request_timeout=0.5,
         )
         await transport.initialize()
         session = await transport.new_session()
-        with pytest.raises(error):
+        with pytest.raises(error) as caught:
             await transport.prompt(session.native_session_id, "hello")
+        if scenario == "timeout":
+            await asyncio.sleep(0.05)
+            assert timeout_marker.read_text() == "cancelled"
+            assert caught.value.cancel_diagnostic.status == "sent"
+            assert caught.value.cancel_diagnostic.session_id == "fake-session-1"
         await transport.close()
+
+
+@pytest.mark.parametrize("cancel_behavior", ["hang", "error"])
+@async_test
+async def test_prompt_timeout_bounds_cancel_and_preserves_primary_error(
+    tmp_path: Path, cancel_behavior: str
+) -> None:
+    from agentdeck.runtime.acp import AcpRequestTimeout, AcpTransport
+
+    client, _ = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "timeout"), tmp_path, client,
+        request_timeout=0.5, cancel_timeout=0.03,
+    )
+    await transport.initialize()
+    session = await transport.new_session()
+    transport._request_timeout = 0.15
+
+    async def bad_cancel(**_: Any) -> None:
+        if cancel_behavior == "hang":
+            await asyncio.sleep(60)
+        raise RuntimeError("cancel failed with sensitive detail")
+
+    transport._connection.cancel = bad_cancel
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(AcpRequestTimeout) as caught:
+        await transport.prompt(session.native_session_id, "hello")
+    elapsed = asyncio.get_running_loop().time() - started
+    assert elapsed < 0.4
+    assert caught.value.cancel_diagnostic.status == (
+        "timed_out" if cancel_behavior == "hang" else "failed"
+    )
+    assert "sensitive detail" not in repr(caught.value.cancel_diagnostic)
+    await transport.close()
+
+
+@async_test
+async def test_prompt_cumulative_bound_failure_sends_bounded_cancel(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpTransport, AcpTransportError
+
+    marker = tmp_path / "bound-cancelled"
+    client, sink = _transport_client()
+    sink.payload_bytes = MAX_ACP_TURN_PAYLOAD_BYTES
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "stream_end_turn", str(marker)),
+        tmp_path,
+        client,
+        request_timeout=0.5,
+    )
+    await transport.initialize()
+    session = await transport.new_session()
+    with pytest.raises(AcpTransportError) as caught:
+        await transport.prompt(session.native_session_id, "hello")
+    await asyncio.sleep(0.05)
+    assert marker.read_text() == "cancelled"
+    assert caught.value.cancel_diagnostic.status == "sent"
+    await transport.close()
 
 
 @async_test
