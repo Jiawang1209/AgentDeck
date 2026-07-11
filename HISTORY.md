@@ -4,6 +4,13 @@
 
 ## 2026-07-12
 
+### Add explicit ACP agent transport configuration
+
+- **类型**: backward-compatible configuration foundation + strict TDD
+- **What**: pin the official `agent-client-protocol==0.11.0` SDK and add additive `AgentSpec.transport` / `transport_command` fields. Existing agents default to `transport="tmux"` and an empty argv; explicit ACP agents require a non-empty argv list whose elements are exact non-empty strings.
+- **Safety boundary**: config parsing never infers ACP from provider or command, never joins argv through a shell, and does not add an ACP runtime path. Existing dispatch, Mission, and tmux behavior continue to use the legacy `command` field.
+- **TDD evidence**: focused tests first failed for missing model fields and missing validation, then passed after the minimal parser/model/dependency changes.
+
 ### Design the Phase 2 ACP vertical slice
 
 - **官方事实刷新**: 以 2026-07-12 的 ACP v1 官方文档、official Python SDK、ACP Registry 和 `claude-agent-acp` 0.58.1 发布包为准重新核对 initialize、capability negotiation、session new/load/resume、prompt/update、permission request、completion 与 disconnect 语义；明确库/Schema artifact version 不是 wire protocol version，`session/load` 与 `session/resume` 必须分别按能力守门。

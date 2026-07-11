@@ -154,6 +154,64 @@ def prepare_project(tmp_path: Path, monkeypatch) -> Path:
     return root
 
 
+def test_existing_agent_defaults_to_tmux_transport(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_default_config(root)
+
+    agent = load_config(root).agents[0]
+
+    assert agent.transport == "tmux"
+    assert agent.transport_command == ()
+
+
+def test_agent_can_configure_explicit_acp_argv(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    config_path = write_default_config(root)
+    text = config_path.read_text(encoding="utf-8").replace(
+        'command = "codex"',
+        'command = "codex"\ntransport = "acp"\ntransport_command = ["claude-agent-acp", "--hide-claude-auth"]',
+        1,
+    )
+    config_path.write_text(text, encoding="utf-8")
+
+    agent = load_config(root).agents[0]
+
+    assert agent.command == "codex"
+    assert agent.transport == "acp"
+    assert agent.transport_command == ("claude-agent-acp", "--hide-claude-auth")
+
+
+@pytest.mark.parametrize(
+    ("transport", "transport_command"),
+    [
+        ('"ssh"', '["agent"]'),
+        ('"acp"', '"claude-agent-acp"'),
+        ('"acp"', '[]'),
+        ('"acp"', '[""]'),
+        ('"acp"', '[true]'),
+        ('"acp"', '[1]'),
+        ('"acp"', '[["claude-agent-acp"]]'),
+    ],
+)
+def test_agent_transport_config_rejects_invalid_values(
+    tmp_path: Path, transport: str, transport_command: str
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    config_path = write_default_config(root)
+    text = config_path.read_text(encoding="utf-8").replace(
+        'command = "codex"',
+        f'command = "codex"\ntransport = {transport}\ntransport_command = {transport_command}',
+        1,
+    )
+    config_path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="transport"):
+        load_config(root)
+
+
 def bind_agent(root: Path, agent_id: str, pane_id: str = "%42") -> None:
     store = StateStore(root)
     state = store.load()

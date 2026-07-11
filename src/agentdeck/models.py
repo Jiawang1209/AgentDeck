@@ -25,6 +25,8 @@ class AgentSpec:
     command: str
     workspace_mode: str = "shared"
     role_prompt: str = ""
+    transport: str = "tmux"
+    transport_command: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

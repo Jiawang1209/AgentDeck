@@ -115,17 +115,7 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         session_name=runtime_raw.get("session_name", "agentdeck"),
         socket_name=runtime_raw.get("socket_name", f"agentdeck-{base.name}"),
     )
-    agents = tuple(
-        AgentSpec(
-            agent_id=item["agent_id"],
-            role=item.get("role", item["agent_id"]),
-            provider=item.get("provider", "codex"),
-            command=item.get("command", item.get("provider", "codex")),
-            workspace_mode=item.get("workspace_mode", "shared"),
-            role_prompt=item.get("role_prompt", ""),
-        )
-        for item in agents_raw
-    )
+    agents = tuple(_agent_spec(item) for item in agents_raw)
     autonomous_raw = raw.get("autonomous", {})
     allowed = autonomous_raw.get("allowed_agents", []) if isinstance(autonomous_raw, dict) else []
     autonomous = AutonomousPolicy(
@@ -149,6 +139,31 @@ def load_config(root: Path | None = None) -> ProjectConfig:
     )
 
 
+def _agent_spec(item: dict[str, object]) -> AgentSpec:
+    transport = item.get("transport", "tmux")
+    if type(transport) is not str or transport not in {"tmux", "acp"}:
+        raise ValueError("agent transport must be 'tmux' or 'acp'")
+    raw_command = item.get("transport_command", [])
+    if type(raw_command) is not list:
+        raise ValueError("agent transport_command must be an argv list")
+    if any(type(part) is not str or not part for part in raw_command):
+        raise ValueError("agent transport_command elements must be non-empty strings")
+    transport_command = tuple(raw_command)
+    if transport == "acp" and not transport_command:
+        raise ValueError("ACP transport requires a non-empty transport_command")
+    agent_id = item["agent_id"]
+    return AgentSpec(
+        agent_id=agent_id,  # type: ignore[arg-type]
+        role=item.get("role", agent_id),  # type: ignore[arg-type]
+        provider=item.get("provider", "codex"),  # type: ignore[arg-type]
+        command=item.get("command", item.get("provider", "codex")),  # type: ignore[arg-type]
+        workspace_mode=item.get("workspace_mode", "shared"),  # type: ignore[arg-type]
+        role_prompt=item.get("role_prompt", ""),  # type: ignore[arg-type]
+        transport=transport,
+        transport_command=transport_command,
+    )
+
+
 def update_agent_role(root: Path, agent_id: str, role: str, role_prompt: str) -> AgentSpec:
     path = config_path(root)
     if not path.exists():
@@ -159,14 +174,7 @@ def update_agent_role(root: Path, agent_id: str, role: str, role_prompt: str) ->
         if item.get("agent_id") == agent_id:
             item["role"] = role
             item["role_prompt"] = role_prompt
-            updated = AgentSpec(
-                agent_id=item["agent_id"],
-                role=role,
-                provider=item.get("provider", "codex"),
-                command=item.get("command", item.get("provider", "codex")),
-                workspace_mode=item.get("workspace_mode", "shared"),
-                role_prompt=role_prompt,
-            )
+            updated = _agent_spec(item)
             break
     if updated is None:
         raise KeyError(agent_id)
@@ -253,6 +261,20 @@ def _dump_config(raw: dict[str, object]) -> str:
                     f"command = {_quote_toml(str(item.get('command', item.get('provider', 'codex'))))}",
                     f"workspace_mode = {_quote_toml(str(item.get('workspace_mode', 'shared')))}",
                     f"role_prompt = {_quote_toml(str(item.get('role_prompt', '')))}",
+                    *(
+                        [f"transport = {_quote_toml(str(item['transport']))}"]
+                        if "transport" in item
+                        else []
+                    ),
+                    *(
+                        [
+                            "transport_command = ["
+                            + ", ".join(_quote_toml(str(part)) for part in item["transport_command"])
+                            + "]"
+                        ]
+                        if "transport_command" in item and isinstance(item["transport_command"], list)
+                        else []
+                    ),
                     "",
                 ]
             )
