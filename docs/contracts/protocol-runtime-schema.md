@@ -1,6 +1,6 @@
 # Protocol Runtime Contract
 
-`agentdeck contract protocol-runtime [--example]` publishes the read-only discovery contract for the future `agentdeck protocol status` surface. The contract version is `protocol-runtime/v1`; its ProjectView compatibility version remains the current `schema_version`.
+`agentdeck contract protocol-runtime [--example]` publishes the read-only discovery contract for the implemented `agentdeck protocol status` surface. The contract version is `protocol-runtime/v1`; its ProjectView compatibility version remains the current `schema_version`.
 
 ## Status response
 
@@ -33,4 +33,6 @@ Discovery exposes `schema_version`, `contract_version`, `status_command`, `contr
 
 ## Safety and current phase
 
-Contract discovery and the modeled status surface are fully read-only: they do not call a provider, inspect or send input to tmux, write state, or decide a permission. In Phase 1, protocol records are produced primarily by contract tests and manual `StateStore` usage; tmux dispatch does not yet emit them automatically. This contract does not implement `agentdeck protocol status`.
+Contract discovery and `agentdeck protocol status` are fully read-only: they do not call a provider, inspect or send input to tmux, write state, or decide a permission. The status command opens only an existing project layout, projects the same validated ProjectView summaries, validates the final `protocol-runtime/v1` response, and prints JSON only after both validations succeed.
+
+Phase 1 still does not automatically emit protocol records from tmux dispatch and does not implement an ACP subprocess, ACP backend, project daemon, backend switch, or provider-native permission bridge. Protocol records remain produced primarily by contract tests and explicit `StateStore` usage; the status command only observes those persisted records.

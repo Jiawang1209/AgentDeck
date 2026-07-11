@@ -9,6 +9,7 @@
 - **What**: 新增 `agentdeck protocol status`，从单次已验证 ProjectView 精确投影 project、runtime backend 和四类 compact protocol summaries，并复用 `protocol-runtime/v1` example 的三项 inspect-only controls；最终 payload 在打印前通过 protocol runtime validator，失败时 stdout 保持为空。
 - **只读边界**: `StateStore.open_existing()` 提供不 mkdir、不 touch state/events/approvals 的现有项目只读入口；重复 status payload 完全一致，不调用 provider 或 tmux，不创建 lock/outbox/state，并继续拒绝隐藏在 latest-20 窗口外的重复 identity 或损坏 lineage。
 - **TDD 证据**: argparse/status 测试先因 protocol 路由缺失得到预期 RED；只读文件快照随后捕获默认 `StateStore` 初始化会更新空账本 mtime，新增 `open_existing` 测试先 RED，再以默认行为不变的显式只读构造完成 GREEN。
+- **规格审查修复**: 同步 `protocol-runtime-schema.md`，移除仍把 status 描述为 future/not implemented 的过期文案，明确当前命令是双重 contract 校验的只读观察面；Phase 1 仍不从 tmux dispatch 自动 emit protocol records，也未实现 ACP backend、daemon 或 permission bridge。
 
 ## 2026-07-11
 
