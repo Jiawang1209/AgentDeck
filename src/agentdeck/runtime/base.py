@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from agentdeck.models import AgentSpec, RuntimeConfig
+from agentdeck.runtime.protocol import TransportCapabilities
 
 
 @dataclass(frozen=True)
@@ -13,6 +14,9 @@ class RuntimeDoctorResult:
 
 
 class RuntimeBackend(Protocol):
+    def capabilities(self) -> TransportCapabilities:
+        raise NotImplementedError
+
     def doctor(self) -> RuntimeDoctorResult:
         raise NotImplementedError
 

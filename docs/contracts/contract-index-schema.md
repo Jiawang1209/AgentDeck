@@ -38,6 +38,12 @@ The index currently lists these contract names in order:
 - `doctor`
 - `events`
 - `run`
+- `run-loop`
+- `run-loop-all`
+- `workflow`
+- `mission`
+- `demo`
+- `plans`
 - `release`
 - `workbench`
 - `controls`
@@ -45,6 +51,7 @@ The index currently lists these contract names in order:
 - `memory`
 - `learning-review`
 - `agent-runtime`
+- `protocol-runtime`
 - `leader-chat`
 - `leader-status`
 - `leader-actions`
@@ -55,5 +62,7 @@ The index currently lists these contract names in order:
 - `inbox`
 - `trace`
 - `artifacts`
+
+`protocol-runtime` is discoverable through `agentdeck contract protocol-runtime [--example]`; its live read-only projection is `agentdeck protocol status`, and its durable schema is `docs/contracts/protocol-runtime-schema.md`.
 
 When a new GUI-consumable contract command is added, update `CONTRACT_INDEX_SPECS` in `src/agentdeck/contracts.py`, this document, and the contract index tests in the same commit.

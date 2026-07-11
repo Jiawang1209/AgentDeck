@@ -2,7 +2,456 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-12
+
+### Complete the protocol runtime model phase
+
+- **Phase 0 baseline**: 冻结 `docs/validation/2026-07-11-natural-language-mission-acceptance.md` 的真实 fresh-project PASS 证据：严格两条用户消息完成 Mission `mis_1d5c2a569173`、plan `pln_c13709530632`、workflow `wfr_7d309ae9c507` 的八步 Codex/Claude 顺序协作。
+- **Phase 1 release surface**: 完成协议 records、append-only audited lineage、compact ProjectView、`protocol-runtime/v1` discovery/example、只读 `agentdeck protocol status` 与 runtime capability metadata，并在 README、handoff、contract index、CLAUDE 和 AGENT 中同步可发现入口与实现边界。
+- **边界**: tmux 仍是 active default backend，且不得标成 ACP compatible；能力元数据不是授权。当前 tmux dispatch 尚不自动 emit protocol records，ACP backend/adapter、automatic emission、project daemon 和 provider-native permission bridge 均未实现。下一产品 fork 是 Phase 2 ACP vertical slice，必须另立 human-approved spec/plan。
+- **最终验证**: `agentdeck contract protocol-runtime --example` 与临时已初始化项目的 `agentdeck protocol status` 分别写入 `/tmp/agentdeck-protocol-runtime-contract.json` 和 `/tmp/agentdeck-protocol-runtime-status.json`，两项 mode `jq -e` 检查通过；完整测试为 1490 passed，`python -m compileall src tests -q` 与 `git diff --check` 均通过。
+
+### Expose read-only protocol runtime status
+
+- **What**: 新增 `agentdeck protocol status`，从单次已验证 ProjectView 精确投影 project、runtime backend 和四类 compact protocol summaries，并复用 `protocol-runtime/v1` example 的三项 inspect-only controls；最终 payload 在打印前通过 protocol runtime validator，失败时 stdout 保持为空。
+- **只读边界**: `StateStore.open_existing()` 提供不 mkdir、不 touch state/events/approvals 的现有项目只读入口；重复 status payload 完全一致，不调用 provider 或 tmux，不创建 lock/outbox/state，并继续拒绝隐藏在 latest-20 窗口外的重复 identity 或损坏 lineage。
+- **TDD 证据**: argparse/status 测试先因 protocol 路由缺失得到预期 RED；只读文件快照随后捕获默认 `StateStore` 初始化会更新空账本 mtime，新增 `open_existing` 测试先 RED，再以默认行为不变的显式只读构造完成 GREEN。
+- **规格审查修复**: 同步 `protocol-runtime-schema.md`，移除仍把 status 描述为 future/not implemented 的过期文案，明确当前命令是双重 contract 校验的只读观察面；Phase 1 仍不从 tmux dispatch 自动 emit protocol records，也未实现 ACP backend、daemon 或 permission bridge。
+
+## 2026-07-11
+
+### Expose compact protocol lineage in ProjectView
+
+- **类型**: additive-v1 ProjectView projection + strict TDD
+- **What**: `ProjectView` 在保持 `project-view/v1` 的前提下新增 `agent_sessions`、`protocol_turns`、`transport_updates`、`permission_requests` 四个非空摘要；完整集合提供稳定排序的状态/类型计数，GUI-ready latest items 按 `created_at` + domain ID 确定排序并最多保留 20 条。
+- **隐私边界**: session 只暴露 `native_session_present` 布尔值和 allowlisted capability 摘要，不暴露原始 `native_session_id` / observation；turn 不暴露 prompt；update 不暴露 payload；permission 不暴露 target。实际 domain 中 session/turn 有 `updated_at`，故保留；update 无该字段不伪造；permission 虽有 `updated_at`，compact 契约只保留 `created_at`。
+- **只读与 fail-safe**: fresh project 返回四个 count=0 的稳定对象；status/ProjectView 不写 state/events、不调用 provider、不读取 tmux、不改变 permission。损坏的集合或 row 明确失败，不静默缩减 count；ProjectView example、mandatory top-level validator 与 additive-v1 文档同步。`src/agentdeck/contracts.py` 的修改仅限既有 ProjectView 字段/example/validator 同步，不新增 protocol-runtime contract、discovery 或 CLI 路由。
+- **TDD 证据**: protocol ProjectView 测试先因四字段缺失得到 3 failed / 78 passed RED，最小实现后 81/81 GREEN；contract/example/read-only status 测试随后先得到预期字段缺失 RED，再同步既有 ProjectView contract。
+- **规格审查 2**: source projection 现在逐类严格验证 required 字段、non-empty string、domain enum、非 bool sequence、optional decision、exact 六项 bool capabilities 和 native session 类型；corrupt row 使 status 在输出前失败。既有 ProjectView discovery 新增四组 summary/item field lists，example 改为同源完整 session→turn→update→permission chain；validator 对 summary/item exact allowlist、非负 int（拒 bool）、计数 map、20 上限、字段类型/enum 和敏感 extra 字段严格守门。审查矩阵先得到 13 failed RED，最小加固后 14/14 GREEN。
+- **质量审查 1**: protocol summary validator 进一步校验 `count == sum(by_*)`、`items` 长度等于 `min(count, 20)`、enum-only map keys、permission pending 同源、count<=20 时 item 分布与 map 精确一致，并拒绝乱序和重复 domain ID；count>20 仍只验证 latest items 的字段/enum/顺序，不错误要求其局部分布等于全量 map。七项语义矩阵先全部 RED，加固后 14/14 GREEN。
+- **最终复审**: latest20 裁剪前对四类 source collection 的完整 identity 集合做唯一性检查，避免重复 ID 一条落在裁剪区、一条留在 items 时绕过 validator；只比较已通过 required string 校验的 domain ID，不把 legacy missing key 误报为 duplicate。四类 ProjectView 与四类 status 零输出/零写回归先 8/8 RED，加固后 8/8 GREEN。
+
+### Persist protocol runtime lineage
+
+- **类型**: append-only protocol state + strict TDD
+- **What**: `StateStore` fresh state 新增 `agent_sessions`、`protocol_turns`、`transport_updates`、`permission_requests` 四个集合，并新增 session、turn、update、permission 的持久化、按 ID 查询和只读列表方法；旧 state 通过 `setdefault` 保持兼容，记录继续保持 JSON 可序列化。
+- **引用完整性**: 所有写入在 builder、save 和 event 前验证 session/turn 唯一且存在、turn 属于目标 session，并拒绝重复 `(turn_id, sequence)`；未知引用、session mismatch、损坏的重复 identity、重复 sequence 和 builder 输入错误均保持 state/events 文件存在状态与字节完全不变。
+- **并发与 durable audit**: 四条 protocol mutation 共享 `protocol-mutation.lock`，锁住 pending audit flush、load、validate、build、candidate identity 校验、record+outbox state save 和 event 处理，避免并发 read-modify-write 丢记录。`protocol_event_outbox` 与 record 在同一次 state save 持久化；event append 失败时调用仍成功并保留 audit pending，后续 mutation 或显式 flush 按 `event_id` 去重重放。event 已写但 outbox clear save 失败也可恢复，不会重复审计。
+- **拒绝零写**: mutation 在锁内先完成参数、引用和 candidate identity 校验，只有确认本次操作可接受后才 flush 旧 pending outbox；因此无效参数、未知引用和 ID 碰撞即使遇到历史 pending audit，也保持整个 `.agentdeck` 文件树路径与字节不变。显式 flush 和成功 mutation 仍会恢复 pending audit。
+- **审计边界**: update event 不记录业务 payload，permission event 不记录可能敏感的 target。record state 与 events JSONL 是可恢复的 durable outbox 协议，不宣称跨文件事务原子性。
+- **TDD 证据**: 初始状态契约先得到 11 failed / 57 passed RED，最小实现后 68/68 GREEN；质量审查回归随后稳定复现 9 failed / 66 passed，包括两线程并发丢 session、event 异常裂缝、缺 outbox replay 和四类 candidate ID 碰撞。共享锁与 durable outbox 修复后 `tests/test_protocol_runtime.py` 75/75 GREEN。
+- **P2 回归**: pending outbox 下 invalid params、unknown ref、candidate collision 三条拒绝路径先得到 3 failed / 75 passed RED，均复现拒绝操作意外 flush audit 并改写 state/events；调整校验与 flush 次序后聚焦测试 78/78 GREEN。
+
+### Add protocol runtime domain records
+
+- **类型**: pure runtime domain + strict TDD
+- **What**: 新增 transport capability、agent session、turn、transport update 与 permission request 的协议领域记录构造器，固定状态与 update kind 枚举，并统一使用 `ags` / `trn` / `upd` / `prm` 标识和 UTC 时间。
+- **Validation**: required identity 严格拒绝空白、bool 与非字符串；session/turn 引用强制协议前缀；sequence 严格拒绝 bool、负数与非整数；update payload 必须为 dict 并深拷贝；native session 与 capability 类型严格守门。
+- **边界**: 本切片只生成 JSON 可序列化 dict，不读取或写入 StateStore、ProjectView、provider、tmux 或 permission side effect；tmux fallback capability 仅声明 observable terminal。
+- **TDD 证据**: 聚焦测试先因 `agentdeck.runtime.protocol` 不存在得到预期 collection RED；最小实现后 `tests/test_protocol_runtime.py` 34/34 GREEN。
+- **规格修正**: permission request 的生命周期字段与批准计划统一为 `status="pending"`，不再输出漂移的 `state`；契约测试先以 `KeyError: 'status'` 精确 RED，再做单字段修复。
+- **输入加固**: transport update payload 改为无用户 hook 的白名单递归 JSON clone，仅接受 `null`、bool、int、有限 float、str、list 与 string-key dict，拒绝 set/object/tuple/non-string key/NaN/Infinity/cycle；session/turn ID 改为 exact prefix 加 lowercase alphanumeric token 的完整匹配，拒绝空后缀、首尾空白、换行与非法字符。56 项聚焦测试 GREEN。
+- **Hook 安全**: update kind 在 enum membership 前先做 exact string type guard，非字符串恶意对象不会触发用户 `__eq__`；回归测试先复现 hook 被执行的 RED，再以条件顺序最小修复。
+
+### Anchor Worker readiness to the current terminal frame
+
+- **类型**: code-quality review fix + strict TDD + readiness false-positive hardening
+- **问题**: Claude 的 80 行有界窗口仍会把旧 idle frame 后 10/40/60 行普通任务输出误判为当前 ready，且 organization/path/empty-prompt/mode-footer 四条可复制 prose 足以伪造 ready；Codex box chrome 的左右 delimiter 可独立缺失或混用，bars footer 还接受任意尾随文本。
+- **What**: Claude structured idle 现在要求最后四个非空行严格为水平分隔线、空 `❯`、水平分隔线、mode footer，并要求更早的 organization box、workspace path box、box 底边按序出现；因此 recency 由当前 frame 尾部结构决定，不依赖时间，也不继续扩大窗口。Codex header/model/directory 每行只接受无框 legacy 或成对同类 `│...│` / `|...|`，bars footer 只接受百分比、可选 resets 与可选 Weekly 的真实结构。
+- **TDD 证据**: 11 个聚焦审查案例先得到 7 failed / 4 passed RED，其中旧 Claude idle + 10/40/60 行输出、复制 UI prose、Codex 半框/混框/尾随均复现误报；最小修复后 11/11 GREEN，完整 readiness 189/189 GREEN，脱敏真实 Codex/Claude pane capture 仍直接分类为 ready。
+- **安全边界**: post-trust Claude 14 行真实 idle frame 保持 ready；旧 idle 后任意仍在窗口内的普通输出为 starting；复制 UI 字符串缺真实分隔/底边结构时为 starting。setup/login/fatal/startup 与当前非空输入继续优先，不改变 Mission 事实、确认、dispatch 或权限。
+
+### Redact the Phase 0 acceptance project path
+
+- **问题与修复**: 规格审查发现验收报告 Environment 误写本机绝对路径，泄露本地用户名。durable 报告现只保留临时项目 basename；同步扫描本轮 README、HISTORY、handoff、CLAUDE、AGENT 与验收报告，不保留本机用户名、email 地址、token 值或 credential 值。
+
+### Validate the natural-language Mission baseline
+
+- **类型**: real fresh-project acceptance + durable evidence
+- **What**: 在全新临时 Git 项目中把 Leader 配置为 `codex-cli/gpt-5.5`，只用“让 Codex 和 Claude 一人一句接龙百家姓，共8轮”与一次带真实 Mission ID 的“批准执行”两条用户消息，自动选择并启动 planner/Codex 与 reviewer/Claude，完成冻结的 8 步 sequential workflow。成功 Mission `mis_1d5c2a569173`、plan `pln_c13709530632`、workflow `wfr_7d309ae9c507`。
+- **验收**: 八步依次输出赵钱孙李、周吴郑王、冯陈褚卫、蒋沈韩杨、朱秦尤许、何吕施张、孔曹严华、金魏陶姜；run response、`mission status`、ProjectView `status` 与 workbench 均为 `completed/current_step=8` 且 IDs 同源。审计严格为 1 条 `mission_confirmed`、8 条 `workflow_step_completed`、1 条 `mission_completed` 与 2 条 `leader_chat_turn`。
+- **证据**: 新增 `docs/validation/2026-07-11-natural-language-mission-acceptance.md`，记录环境、严格两消息、冻结 Mission/Worker、compact transcript、公开状态同源、审计 lineage、first-run trust、RED 缺陷、cleanup 与 PASS verdict；README 只新增验收链接，handoff、CLAUDE 与 AGENT 同步基线事实。
+- **边界**: 首次 Codex/Claude directory trust 只作为 human setup 处理；失败项目均保留诊断证据后销毁并重建，最终成功项目没有第三条自然语言、手工 Worker 任务输入或补 Enter。报告不含 token、email 或完整私密 terminal transcript。
+
+### Recognize the real Phase 0 Codex and Claude idle frames
+
+- **类型**: natural-language Mission acceptance fix + strict TDD + bounded readiness safety
+- **问题**: trust setup 完成后的真实两消息 Mission 仍在 step 0 以 `worker_readiness_timeout` 停止。Codex 0.131 的当前 footer 分成 model/project 行与 `Context <bars> <percent> │ Usage <bars> <percent>` 行，且 tmux capture 保留 header/model/directory 的 `│ ... │` box；Claude 2.1.20.7 的 release notes 会把 workspace header 推出通用 40 行 active frame，post-trust 启动还可能完全省略 `Accessing workspace:` 与 MCP warning。旧 matcher 因而把两个已空闲 Worker 都误判为 starting。
+- **What**: Codex 继续使用 40 行有界 active frame，只新增真实 bars footer 与精确 box-wrapped header/model/directory 结构；Claude 使用独立的 80 行有界 frame，并继续要求有序 organization box、workspace path box、空 `❯` prompt 和 mode footer，workspace label 与 MCP warning 均作为可选状态信息。没有使用无界 scrollback，也没有放宽 prompt、path 或 box 结构。
+- **TDD 证据**: 第一组脱敏真实 idle frame 先得到 2 failed RED；真实 tmux box/post-trust frame 随后再次得到 2 failed RED，防止理想化 fixture 掩盖 pane capture 差异。最小修复后两组新用例均 GREEN，完整 readiness suite 179/179 GREEN，runtime + Mission + Leader 相邻回归 407/407 GREEN；第三次失败项目的两段真实 capture 直接分类均为 `ready`。现有负面矩阵继续覆盖当前非空输入、trust/login、fatal/startup、结构缺失/乱序、伪 workspace path 和超出 Codex 当前 frame 的旧 blocker。
+- **安全边界**: 当前输入仍优先于 idle placeholder；setup/fatal/startup 仍优先于 ready；Claude frame 只从 40 有界扩大到 80，Codex 仍为 40，历史错误不会被重新当作当前状态。不改变 Mission 确认、dispatch、Worker 输入或 runtime 权限。
+
+### Plan the protocol-native Phase 0 and Phase 1 implementation
+
+- **类型**: approved implementation plan + staged V2 delivery
+- **What**: 新增 `docs/superpowers/plans/2026-07-11-protocol-native-phase0-phase1.md`，把已批准 V2 设计拆成第一份可独立交付计划：先用真实 Codex/Claude 两句话 Mission 完成 Phase 0 compatibility baseline，再以 TDD 引入纯 transport/session/turn/update/permission domain、append-only state、compact ProjectView、`protocol-runtime/v1` contract、只读 `agentdeck protocol status` 和 tmux fallback capability metadata。
+- **范围**: 本计划明确不实现 ACP JSON-RPC、project daemon、默认 `agentdeck` REPL、全局漫游、V2 migration 或 Workspace Client；这些是后续独立 spec/plan。最后集成步骤要求保护主工作区既有 `.omc/` 与未跟踪 `AGENTS.md`，完整验证后才能非 force push `main`。
+- **自检**: 计划中的测试路径已与当前仓库逐一核对；无 TBD/TODO/省略实现占位；domain、StateStore、ProjectView、contract 和 CLI 的身份/字段名保持一致；每个任务包含 RED、GREEN、回归和独立 commit。
+
+### Set the protocol-native AgentDeck product north star
+
+- **类型**: product direction + approved architecture design + README product rewrite
+- **问题**: 旧 README 把数百条内部命令、contract 字段、安全约束、`Sequential Workflow` 实现细节、参考分析和开发约束堆在产品首页，读者无法快速理解 AgentDeck 是什么；同时既有路线仍以 tmux-first control plane 描述终局，没有固化 human 已批准的 ACP、Hermes、CCB、WispTerm 取长边界与默认自然语言产品体验。
+- **What**: 新增 `docs/roadmap/product-north-star.md`，明确 AgentDeck 的产品承诺：Hermes 式持续自然交互、ACP 原生通信、CCB 式真实多 Agent 协作与可接管、未来 WispTerm 级 workspace client，以及 AgentDeck 独有的 Mission/治理/审计/恢复内核。新增正式 `2026-07-11-agentdeck-protocol-native-v2-design.md`，固化项目优先/全局漫游会话、单项目 daemon、已确认 Mission 后台继续、自动检测且可跳过的 LLM setup、session-first identity、ACP/adapter/tmux/API backends、permission bridge、学习治理、V2 migration 和分阶段 release gates。
+- **README**: 将 README 重写为简洁产品首页，只保留价值主张、目标体验、当前真实能力、最短试用路径、总体架构、安全模型和深入文档入口；移除冗长 `Sequential Workflow`、内部 card/contract 字段、参考分析和开发约束正文。工程事实继续由 `docs/`、`AGENTS.md`、`CLAUDE.md` 和 HISTORY 承载。
+- **边界**: 当前不实现 daemon、ACP backend、默认 interactive REPL、Desktop 或 Zig terminal；新方向要求先完成当前自然语言 Mission Golden Demo 作为 Phase 0 baseline，再按独立 spec/plan/TDD 切片渐进迁移。旧项目和命令必须 preview/backup/confirm/rollback 兼容，不做大爆炸重写。
+
+### Unify the Codex 0.131 idle placeholder catalog
+
+- **类型**: real Mission acceptance fix + strict TDD + readiness safety
+- **问题**: Codex 0.131 的 `PLACEHOLDERS` 实际包含 8 条模板；此前通用 rotating matcher 只覆盖其中 4 条，`Use /skills to list available skills` 又走独立 special-case，仍漏掉 `Explain this codebase`、`Summarize recent commits` 和 `Run /review on my current changes`。更重要的是，非 `/skills` 模板仅凭宽松 header/model 证据即可 ready，没有统一要求真实 directory 与 context/model footer。
+- **What**: 用单一 `_CODEX_OFFICIAL_IDLE_PROMPT` exact normalized allowlist 覆盖 8 条官方模板，并统一通过 header → model → directory → exact prompt → context/model footer 的 ordered active-frame matcher。删除 `/skills` 专用 prompt 与 chrome 分支。旧 `Ask Codex...` 仅作为历史 CLI compatibility grammar 单独保留，不属于 0.131 catalog，也不放宽任何 catalog 条目的结构要求。
+- **TDD 证据**: 三条缺失模板先稳定得到 3 failed RED；8 条 catalog 的缺 header/model/directory/footer 与乱序矩阵随后暴露旧路径 16 failed / 24 passed RED。统一 matcher 后 readiness 180/180、全量 1327/1327 GREEN；compileall 与 diff check 干净。回归矩阵覆盖全部 8 条的追加指令、`User:` wrapper、slash/path 相似输入，以及后续当前输入与 fatal/startup 优先级。
+- **安全边界**: catalog prompt 只有在完整有序 normal chrome 中才 ready；模板追加文本、wrapper、`@secrets`、相似 `/review`/`/skills`、结构缺失或乱序、后续当前输入均保持 starting。fatal model、setup 与 startup grammar 继续优先，不改变 Mission、审批、dispatch 或 runtime 授权语义。
+
+### Recognize Codex skills idle chrome after nonfatal MCP warnings
+
+- **类型**: real Mission acceptance fix + strict TDD + readiness safety
+- **问题**: 真实 Codex CLI 0.131 在正常启动 chrome 中可以保留 `⚠ MCP client for github failed to start` / `⚠ MCP startup incomplete (failed: github)` 这类非致命历史 warning，并轮换到 `› Use /skills to list available skills` 精确空闲 prompt。该 prompt 未在已知语法中，因而已登录且空闲的 Worker 被误判为 starting；已有带 MCP failure warning 的 `Write tests for @filename` fixture 仍为 ready，证明根因不是 warning precedence。
+- **What**: 新增专用的 ordered Codex skills-idle 路径，必须依次具备独立 OpenAI Codex header、model、directory、完整 `Use /skills to list available skills` prompt 和 model/context footer 才可 ready；中间的非致命 MCP warning 不会压过这套当前空闲证据。旧的精确 rotating placeholder 路径不变。
+- **TDD 证据**: sanitized 真实帧先稳定得到 1 failed / 114 passed RED；缺 header/model/directory/prompt/footer 的 5 类反例、3 类伪 prompt/用户输入和 prompt 前致命 model blocker 同时保持 starting/failed。最小结构化识别后 readiness 115/115、runtime + Mission 相邻回归 328/328、全量 1262/1262 GREEN，compileall 与 diff check 干净。
+- **安全边界**: setup/login/trust 的现有优先级不变，致命 model incompatibility 仍优先 failed；缺少任一正常 chrome 证据、修改 `/skills` 目标、追加指令或包装成 `User:` 内容都不可 ready。不改变 Mission、approval、dispatch 或 runtime 授权语义。
+
+### Submit tmux input through bracketed paste
+
+- **类型**: real Mission acceptance fix + strict TDD + tmux input safety
+- **问题**: Codex CLI 0.131 的 chat composer 会把 `tmux send-keys -l` 的快速字符流识别为 paste burst；burst active 时紧随其后的 Enter 被 `append_newline_if_active` 吞为编辑区换行，sleep 又不会触发 composer flush，因此长多行 Mission prompt 仍可能停留在输入框而未提交。
+- **What**: 非空输入由 `TmuxBackend.send_input` 创建独立命名的 tmux buffer，通过 `load-buffer ... -` 的 stdin 原样加载文本，再用 `paste-buffer -p` 向目标 pane 发送 tmux 原生 bracketed paste，最后且仅最后发送一次 Enter；finally 是 buffer 的唯一删除者，通过静默、容错 `delete-buffer` 覆盖 load/paste/Enter 任一路径。空字符串不创建 buffer，直接发送一次 Enter。正文不进入进程 argv；短、长、多行与 Unicode 输入统一走 bracketed-paste 路径。
+- **TDD 证据**: 短/两行/长 Unicode 多行契约先以旧实现缺少 `load-buffer` / `paste-buffer` 得到 3 failed / 2 passed RED；首版 bracketed-paste 后，空输入与失败清理审查用例再得到 5 failed / 2 passed RED，分别证明 tmux 3.6a 空 buffer 不可 paste、paste 失败会遗留正文；复审再以成功/paste 失败/load 失败得到 5 failed / 3 passed RED，证明 `-d` 与 finally 双删会向 stderr 输出 unknown buffer。最终 tmux runtime 8/8 GREEN。
+- **安全边界**: 非字符串仍在任何 tmux 副作用前拒绝；每次非空调用使用独立 buffer 避免并发争用默认 buffer，finally 统一删除且捕获 cleanup stdout/stderr，cleanup 的普通异常被抑制以保证不覆盖原始 load/paste/Enter 异常；命令继续使用 argv 数组且不经 shell，prompt 完全通过 stdin，Enter 只发送一次，不改变 workflow、approval 或 runtime 授权语义。旧 delay helper 与常量被删除，因为等待不能结束 Codex composer 的内部 paste-burst 状态，继续保留会制造错误正确性暗示。
+
+### Recognize Codex rotating idle templates
+
+- **类型**: real Mission acceptance fix + strict TDD + readiness safety
+- **问题**: 真实 Codex CLI 0.131 会在空闲输入框轮换内置 prompt；除已识别的 `Implement {feature}` / `Write tests for @filename` 外，本机二进制还包含 `Find and fix a bug in @filename` 与 `Improve documentation in @filename`。轮换到前者时，已登录且空闲的 Worker 被误判为 starting，Mission readiness 等待满 60 秒后停止且没有 dispatch。
+- **What**: Codex known-idle allowlist 仅新增上述两个从实际 0.131 Mach-O 二进制确认的完整模板，继续要求 full-line、精确 `@filename`；大小写与空白兼容规则沿用既有行为。
+- **TDD 证据**: 两个 exact 真实模板先 2 failed / 103 passed RED，`@secrets` 和模板后追加用户文本的四个反例同时保持 starting；最小 regex 扩展后 readiness 聚焦测试全绿。
+- **安全边界**: 不接受其它文件引用、模板前后包装或追加指令，不引入宽泛 `find` / `improve` 匹配；该变化只修正空闲 chrome 识别，不改变 Mission、审批、dispatch 或 runtime 授权语义。
+
+### Stabilize long tmux prompt submission
+
+- **类型**: real Mission acceptance fix + strict TDD + tmux input safety
+- **问题**: 真实 Task 10 第 5 步把约千字符、多行 Codex prompt 通过 literal `tmux send-keys` 写入 pane 后，固定 150ms 即发送 Enter；TUI 尚未完成 paste settle，输入停留在编辑区未提交，workflow 最终 `timed_out`。验收期间未手工补发输入，保留了可复现缺陷证据。
+- **What**: 新增纯函数 `input_submit_delay(text)`，按文本长度以每字符 1ms 计算，并夹在 250ms 到 1.5s；`send_input` 在任何 tmux 副作用前验证 string，继续严格使用一次 literal `-l <text>`、等待计算后的 bounded delay、再发送且只发送一次 `Enter`。逻辑不绑定 Codex/Claude，也不经 shell。
+- **TDD 证据**: 首轮 helper/长 prompt fake-TUI 7 failed / 1 passed RED，证明旧 150ms 无法满足 1000 字符的 1s settle threshold；补充副作用前类型校验再得到 1 failed / 8 passed RED。最小实现后 tmux/workflow/dispatch/Mission 交叉 214/214、全量 1247/1247 GREEN；compileall 与 diff check 干净。
+- **安全边界**: delay 始终有限，短输入保持低延迟、长输入不超过 1.5s；拒绝 bool/bytes/number/None，不会先向 pane 写坏输入；不增加第二次 Enter、不改变 prompt、不执行 shell，也不修改 workflow/approval/runtime 授权语义。
+
+### Require Claude workspace chrome ordering
+
+- **类型**: P1 review fix + strict TDD + readiness safety
+- **问题**: Claude 2.1.207 structured-idle 首版只验证 chrome 信号各自存在，未要求真实 path box，也未约束 UI 行顺序；普通 prose path、Organization 行第二列 path 或乱序片段因此可能与其它信号拼成伪 ready。
+- **What**: structured idle 现在必须按严格递增索引出现：独立 `Accessing workspace:`、Organization box、首列为 `/...` / `~/...` / `…/...` 的 path box、精确 MCP auth UI、standalone empty prompt、trusted mode footer。六个 matcher 都 full-line，path 不从 Organization/release-notes 第二列或普通 prose 提取。
+- **TDD 证据**: 缺 path、三类伪 path、三类乱序先 7 failed / 9 passed RED，workspace/organization 拼接行已保持拒绝。最小 ordered-index 修复后 readiness 99/99、runtime + Mission 交叉 283/283、全量 1240/1240 GREEN，compileall 与 diff check 干净。
+- **安全边界**: 任一信号缺失、乱序或同一行拼接均保持 starting；只接受 box 首列的三个本地路径 UI 形态，不把 release notes、普通文档或 quoted path 当 runtime chrome；trust/login 仍在 ready 判定前优先返回 setup_required。
+
+### Match Claude real idle chrome
+
+- **类型**: real pane acceptance fix + strict TDD + readiness safety
+- **问题**: 首轮 Claude 2.1.207 sanitized fixture 假设了 `Organization` / `Workspace` 标签和无装饰 mode footer；真实 pane 实际使用独立 `Accessing workspace:`、带账户名的 Organization box、path box、精确 MCP auth warning、NBSP empty prompt，以及 `⏵⏵ ... · ← for agents` footer，因此仍被判为 starting。
+- **What**: Claude structured-idle grammar 与真实 chrome 对齐：workspace 必须是独立 full-line marker，organization 必须位于 box delimiter 行，MCP 必须匹配计数 + `run /mcp` 的 auth UI，prompt 必须 standalone empty，mode footer允许固定 `⏵⏵` 前缀和 `· ← for agents` 后缀。旧 Claude Code/context 路径与 permissions-mode footer 保持兼容。
+- **TDD 证据**: exact 2.1.207 sanitized frame 的 empty/NBSP prompt 与 permissions footer 先 3 failed / 8 passed RED，五类结构缺失、普通文档引用和非空 prompt 反例均保持拒绝。最小修复后 readiness 88/88、runtime + Mission 交叉 272/272、全量 1229/1229 GREEN，compileall 与 diff check 干净。
+- **安全边界**: workspace、organization、MCP、empty prompt、trusted footer 任一缺失都保持 starting；普通 prose/quoted UI line 不成为 chrome，trust/login 独立 system grammar 仍优先于 idle evidence。
+
+### Recognize real Codex and Claude idle prompts
+
+- **类型**: real acceptance fix + strict TDD + readiness safety
+- **问题**: 第二轮真实 Mission 演练显示 Codex CLI 0.131 的默认 idle prompt 已变为 `Write tests for @filename`；Claude CLI 2.1.207 则使用 organization/workspace box、MCP auth warning、standalone empty `❯` 和 mode footer，不再保证出现 `Claude Code` / context。旧 classifier 因而把两个已空闲 Worker 都判为 starting。
+- **What**: Codex known-idle allowlist 仅新增大小写/空白容忍的 exact `Write tests for @filename`。Claude 新增独立的结构化 idle 路径，必须同时具备 organization/workspace box、MCP chrome、standalone empty prompt，以及 full-line `auto mode on (...)` 或 permissions-mode footer；旧 Claude Code/context 路径保持不变，login/trust 仍优先。
+- **TDD 证据**: sanitized 真实帧先 4 failed / 76 passed RED；改成真实 box chrome 与 permissions footer 后再 3 failed RED。最小修复后 readiness 83/83、runtime + Mission 交叉 267/267、全量 1224/1224 GREEN，compileall 与 diff check 干净。
+- **安全边界**: `@secrets`、无 `@filename`、追加文本、`User:` wrapped prompt、Claude 非空输入、缺 footer 和 quoted auto-mode 文档均保持 starting；MCP auth warning 本身不视为 login blocker，独立 trust/login system grammar 仍覆盖 idle evidence。
+
+### Fix real Worker startup readiness
+
+- **类型**: real acceptance fix + strict TDD
+- **问题**: Codex CLI 0.131 的真实 idle chrome 使用 `› Implement {feature}` 模板并在其后显示 model/context footer，旧 classifier 只认 `Ask Codex...`，因而超时；同时 detached tmux session 默认为 80x24，多 pane 分割后只剩约 5 行，无法稳定保留 Worker chrome。
+- **What**: Codex idle grammar 仅新增大小写/空白容忍的 exact `Implement {feature}` 模板，相似的真实用户输入仍视为 starting，并验证真实 `[gpt...] Context...` footer。`TmuxBackend.create_session` 只在新建 AgentDeck detached session 时设置 `-x 160 -y 60`，不 resize 已有用户 session、不 attach。
+- **TDD 证据**: sanitized Codex 0.131 fixture 与 tmux argv 先 2 failed / 3 passed RED；最小修复后 readiness + tmux 71/71、runtime + Mission 交叉 252/252、全量 1210/1210 GREEN，compileall 与 diff check 干净。
+- **安全边界**: 不接受 `Implement the feature`、`Implement {other}` 或模板后追加内容；wrapped current input 仍不能成为 readiness evidence。尺寸参数只影响 AgentDeck 新建 session 的初始 detached geometry。
+
+### Normalize Mission planning metadata
+
+- **类型**: review pivot + deterministic provenance + strict TDD
+- **问题**: 用自然语言 regex 判断 provider `goal` / `summary` 的审批语义仍存在漏判与误判空间，也会把不受信任的 provider prose 当作可持久化、可展示的 Mission 事实。
+- **What**: 删除审批话术 guard，新增不修改输入的纯 `normalize_mission_plan_metadata(plan, step_count)`。provider plan 先通过既有 schema/串行结构校验，再只保留深拷贝的 validated steps，并把 `goal` / `summary` 替换为 AgentDeck canonical compact strings：fixed sequential N-step、one overall Mission confirmation、no per-step approval；归一化结果再次通过结构校验后才 record plan/Mission。
+- **TDD 证据**: per-step summary 原先被 guard 拒绝、business/SECRET summary 原样进入 preview/state 的三项回归先 3/3 RED；最小归一化后 3/3 GREEN，pure helper 1/1 验证输出确定且输入/steps 不 mutation；Mission domain/orchestration 182/182、全量 1204/1204 GREEN，compileall 与 diff check 干净。
+- **安全边界**: provider `goal` / `summary` 不再作为授权或事实展示，不进入 payload/state/events；Mission `user_message` 继续保存用户原始目标，step task 完整保留。一次确认只授权已验证且冻结的固定串行 steps，不改变 Worker/runtime/tool 权限。
+
+### Refine Mission approval guard
+
+- **类型**: review fix + strict TDD
+- **问题**: 首版 per-step approval guard 只靠相邻关键词，既漏掉 `Approval is required before every step` / `每个步骤都需要人工批准` 等双向表达，也会误拒绝仅描述既有审批状态或元数据的文本。
+- **What**: 抽出纯 `_requires_per_step_approval(text)`；英文仅在 each/every step、approval/approve 与 must/required/require/need/mandatory 三类语义同时出现时命中，中文仅在每一步/每步/每个步骤/各步骤、批准/审批与必须/需要/需/要求三类语义同时出现时命中，词序不限。validator 仍只检查 provider plan 的 `goal` / `summary`。
+- **TDD 证据**: pure helper 缺失首先 collection RED；新增 goal/summary 双字段拒绝、双语双向 helper 和 business-metadata allow 回归后 focused 24/24、Mission domain/orchestration 206/206、全量 1228/1228 GREEN；compileall 与 diff check 干净。
+- **安全边界**: `approved invoice`、prior approval metadata、记录人工批准状态、读取审批结果和普通业务 approve 不构成 Mission 执行授权；step task 完全不进入该 guard，错误文本保持固定且不回显 provider 内容。
+
+### Clarify one-confirmation Mission planning
+
+- **类型**: acceptance fix + strict TDD
+- **问题**: 真实 Codex preview 把旧 planning prompt 的 `Every step must require human approval` 复述为逐步人工批准，与用户只确认一次、随后自动完成固定串行序列的 Mission 契约冲突。
+- **What**: Leader planning request 现在明确 `one overall Mission confirmation` 授权整个 fixed sequence，并明确 `must not request per-step approval`。共享 Mission plan validator 对 provider `goal` / `summary` 中明确的英文 per-step/every-step human approval 和中文“每一步人工批准/逐步批准”话术 fail closed；普通 step task 中的业务审批文字仍合法。
+- **TDD 证据**: provider request 三项契约断言与八组中英文 provider plan 反例先 9/9 RED；最小 prompt/validator 修复后 focused 9/9、Mission domain/orchestration 187/187、全量 1209/1209 GREEN，并验证非法 plan 在 plan/Mission/event 写入前拒绝；compileall 与 diff check 干净。
+- **安全边界**: 一次整体确认仍只授权已冻结的串行步骤，不扩大 Worker、provider、runtime 或 tool 权限；validator 仅检查 `goal` / `summary` 的强模式，不扫描用户任务或 step task，不回显被拒绝内容。
+
+### Harden Mission turn trace controls
+
+- **类型**: contract security fix + strict TDD
+- **问题**: run/resume compact turn 的 `trace_command` 只检查固定前缀，因此合法 reply id 后仍可拼接分号、换行、额外 flag 或参数；错误 prefix、大小写和长度也未被拒绝。
+- **What**: trace control 现在必须 fullmatch `agentdeck trace --id rep_[0-9a-f]{12}`，与真实 `record_reply` id 同源；discovery example 与测试 fixture 改用真实 prefix/长度，Mission contract 明确完整匹配规则。
+- **TDD 证据**: 分号、换行、extra flag、extra arg、wrong prefix、uppercase、短 id、长 id 八项先全部 RED 为错误通过；最小 fullmatch 后 10 项 focused GREEN，错误列表不回显注入 marker。contracts 388/388、全量 1200/1200 通过。
+- **安全边界**: validator 只返回稳定字段错误，不回显不可信 command；不执行 trace、不读取 reply 内容、不调用 provider/tmux、不修改 Mission/workflow state。
+
+### Rehearse the one-confirmation natural-language Mission flow
+
+- **类型**: golden rehearsal + contract evolution + strict TDD
+- **问题**: 真实 Mission runner 已能执行八轮串行 workflow，但用户通过两次自然语言 Leader chat 完成确认后，最终 `mission_run_card` 只展示生命周期状态，无法直接观看每一轮 Worker 与 compact handoff，百家姓接龙的端到端产品目标缺少一个连续、可重复的公共 CLI 证据。
+- **What**: 新增恰好两条 human message 的 deterministic 演练：自然语言创建 Mission、自然语言批准同一 Mission，并由真实 runner/workflow 让 planner/reviewer 交替八轮。run/resume card 新增只读 `turns` 投影；每轮只包含 step/agent/status 和既有 compact handoff，discovery example、validator、Leader chat 嵌入与 Mission contract 文档同源更新。status/workbench 保持不含 turns。
+- **TDD 证据**: 连续演练先 RED 为 `KeyError: turns`，同时已实际完成八轮，确认唯一缺口是最终卡投影。最小实现后断言八个百家姓 summary、8 messages/replies/turns/sends、1 Mission/plan/workflow、2 chat turns 和精确 step audit；敏感字段拒绝、completed 全轮约束与 interrupted partial 合法性均有 contract 回归。Mission focused 52/52、contracts 380/380、Leader CLI 173/173、Mission/Leader/CLI/contracts/workflow 交叉 1023/1023、全量 1192/1192 通过。
+- **安全边界**: `turns` 仅出现在已确认的 run/resume response；严格拒绝非连续 step、非 frozen Worker、额外字段和 terminal handoff 漂移。raw prompt、handoff token、message/job/reply id、full output、credentials 和 secrets 不进入投影；配置 bytes 不变，演练不创建 approval、skill load 或 manual leader action。
+
+### Harden Mission surface recovery
+
+- **类型**: important fix + strict TDD + state-integrity hardening
+- **问题**: Leader chat 的 generic runtime exception 未复用显式 Mission CLI 的 interruption recovery，可能在 claim 后留下 running workflow/ghost Mission；ProjectView 又未拒绝 duplicate Mission ids，workbench 可能面对 split-brain latest state。
+- **What**: 显式 CLI 与 Leader chat 现在共用 active Mission recovery helper，仅对 preparing/running 状态调用 `interrupt_mission` 并返回 persisted contract-valid run card；恢复失败稳定 nonzero。ProjectView 强制 Mission id 唯一，workbench 同源拒绝 duplicate。Mission workbench projector 保持 provider/model/backend provenance 只在 ProjectView，不在 card 建立 dead conditional。
+- **TDD 证据**: fake Leader operation 先创建 running workflow 后抛 `SECRET` RuntimeError，最终 Mission/workflow 均 interrupted、run card 有效、chat audit 精确一次且无 secret；recovery failure 稳定空 stdout。duplicate raw state 的 workbench 非零且 bytes 不变，ProjectView/workbench contract 同时拒绝。Task+Mission surface 1004/1004、全量 1185/1185 通过，compileall 与 diff check clean。
+- **安全边界**: unknown/普通 MissionRunError/claim 前失败不触发错误 mutation；所有 exception detail 均不进入 stdout、stderr、state 或 events。duplicate error 只命名字段，不回显记录内容。
+
+### Align workbench Mission projection with ProjectView
+
+- **类型**: contract fix + strict TDD + single-source projection
+- **问题**: workbench discovery example 手工创建 Mission card，却与同一 payload 的 `project_view.missions.latest_id/items` 指向不同 Mission；validator 也只校验 card 自身 shape，plan hash 等同源漂移可直接通过。
+- **What**: 新增共享纯 `workbench_mission_card()` projector；真实 CLI 和 discovery example 都先确定 ProjectView latest Mission item，再由该 item 派生 card。workbench validator 要求 latest id 命中 item，并逐字段比较双方共有的 identity、lifecycle、plan/workflow、progress、Workers、timestamps、resume 与 command facts。ProjectView 的 `can_resume` 同样按 stopped/interrupted 且 blockers 为空派生；无 Mission 必须 null，有 latest Mission 必须有 card。
+- **TDD 证据**: mission_id/status/selected_agents 漂移最初只产生间接 shape 错误，plan_hash 漂移错误通过；新增同源守门后四类均返回稳定 field-only error，control command drift 继续由 card validator 阻断。Projection focused 143/143、Task+state 949/949、全量 1181/1181 通过，compileall 与 diff check clean。
+- **安全边界**: drift error 不回显实际值；validator 不读取 raw state、provider、tmux 或文件内容，不执行 card commands，不改变 ProjectView/Mission 状态。
+
+### Complete Mission surface contracts
+
+- **类型**: contract hardening + strict TDD + review follow-up
+- **问题**: 首版 Mission surface 缺少完整无 ID/named route 证据，workbench disabled confirmation 丢失真实 blocker，discovery example 仍未携带 Mission card，controls filters 也未端到端证明。
+- **What**: workbench confirmation blocker 现在优先使用第一个 compact Mission blocker；workbench contract 公开独立 `WORKBENCH_MISSION_CARD_FIELDS` 并提供 non-null example，controls discovery example 包含五项 Mission group。补齐无 Mission、latest、多生命周期 controls，以及 controls scope/card/query/id/enabled-only selection 契约。
+- **TDD 证据**: blocked pending confirmation 先 RED 为 `mission status is pending_confirmation`，最小修复后使用真实 compact blocker。Task surface 三文件 818/818、全量 1176/1176 通过，compileall 与 diff check clean。
+- **安全边界**: blocker 只接受 compact 字符串，不投影 nested 值；workbench/controls provider 与 tmux raising backend 均不触发，state/events bytes 保持不变；disabled control 永不产生 `selection.next_command`。
+
+### Expose Mission orchestration across Leader chat and workbench
+
+- **类型**: major feature + strict TDD + natural-language control surface
+- **问题**: Mission preview/run/recovery APIs existed, but natural-language confirmation was still captured by the generic approval route, Mission inspection fell through to generic review, and workbench/controls did not expose the latest Mission.
+- **What**: exact Mission follow-up grammar now resolves named or uniquely selectable Missions for confirm, status, and resume before generic approval/continue routing. Leader responses embed validated `mission_status_card` / `mission_run_card` plus a filtered Mission control registry. Completed re-confirm is idempotent. Workbench derives `mission_card` solely from compact ProjectView Mission facts and exposes aligned confirm/resume/status/tmux-attach/workbench controls.
+- **TDD 证据**: named confirm, current status, and ambiguous id-less confirm first RED as approval/review misroutes; after the route/card implementation Mission-focused Leader tests are 14/14 GREEN and the Task surface suite is 804/804 GREEN. Contract negatives reject a status payload in a run card and confirmation-enabled/status drift; final full suite is 1163/1163 GREEN, with compileall and diff check clean.
+- **安全边界**: ambiguous or missing id-less mutation exits non-zero with zero runtime/state/audit writes; explicit `批准当前审批` remains the approval route. Status/workbench rendering does not call providers, inspect tmux, execute commands, or mutate state; card selection only projects enabled controls.
+
+### Stop orphaned Mission workflows during preparing interruption
+
+- **类型**: important fix + strict TDD + interruption recovery
+- **问题**: workflow record 可能已在 preparing 窗口创建，但 Mission 尚未切到 running；旧 `interrupt_mission` 先按 preparing 返回 stopped，遗漏 workflow，使其永久保持 running。
+- **What**: interruption 现在先读取并持久化已引用 workflow 为 interrupted，再按状态图把 preparing Mission 置为 `stopped(interrupted)`，或把 running Mission 置为 interrupted。缺失 workflow 引用稳定转为 non-resumable `workflow_state_drift`；workflow/mission stop audit 失败不影响已完成的状态持久化。
+- **TDD 证据**: preparing + existing workflow 直测先 RED（workflow 仍 running），修复后双状态通过；`workflow_started` audit 精确窗口注入一次 secret OSError 后，fallback 使 Mission stopped、workflow interrupted、无 secret event。Mission focused 191 项、全量 1153 项通过，compileall 与 diff check 通过。
+- **安全边界**: 不删除 pane、turn 或 workflow；中断先保存状态再尝试 compact audit，审计失败不回滚恢复事实，不回显异常详情。
+
+### Make Mission execution claims and recovery atomic
+
+- **类型**: important fix + strict TDD + concurrency/recovery safety
+- **问题**: preflight 与 `pending -> preparing` 原为普通 load/update，两个进程可能同时通过并重复确认、spawn 和创建 workflow；preparing 阶段 Ctrl-C 又试图走非法 `preparing -> interrupted`。损坏 events 或 dangling workflow 引用也可能冒泡为 traceback/unknown Mission，留下不可解释状态。
+- **What**: StateStore 新增 stdlib `fcntl.flock` 跨进程独占 claim，在同一锁内检查 run/resume eligibility、原子写 preparing/confirmed gate 并返回 deep copy；只有 claimant 能继续 runtime，loser只投影当前状态。preparing 中断改为 recoverable `stopped(interrupted)`，running 中断才同步 workflow/Mission interrupted。Mission-owned spawn 审计读取损坏时 fail closed 为 `mission_audit_invalid`；已有 workflow 引用现在严格重验 id/plan/hash/authorized steps，漂移统一为 `workflow_state_drift`。
+- **TDD 证据**: claim API 缺失先 RED 为 AttributeError；单进程重复 claim 与 spawn-context 双进程竞争均 GREEN，精确一真一假。同步双确认 runner 只产生一条 `mission_confirmed`、一个 workflow 和每个 selected Worker 一次 spawn。preparing spawn/readiness Ctrl-C、截断 audit、缺失 workflow 引用用例均 GREEN；确认 audit append failure 先 RED 为 OSError + stuck preparing，修复后稳定 stopped/零 spawn。Mission focused 189 项、Mission/state/CLI/contracts/workflow/readiness 相邻回归 895 项、全量 1151 项通过，compileall 与 diff check 通过。
+- **安全边界**: lock file 不承载授权内容；unlock 在 finally，返回记录为 deep copy。audit/workflow corruption 只输出固定 reason/blocker，不回显损坏 JSON、异常、prompt、command 或 credentials；已创建 pane 保留，非 claimant 不触碰 runtime。
+
+### Prove Mission runner recovery and frozen runtime provenance
+
+- **类型**: important fix + strict TDD + authorization/recovery safety
+- **问题**: 首版 runner 虽冻结 Worker 摘要，却仍按确认时的当前 binding 自由选择 reuse/spawn；这会让预览后出现的外部进程被静默复用，或让 frozen reuse pane 丢失后按未知 model 重启。恢复和 KeyboardInterrupt 也需要由真实 workflow engine 证明不重复 dispatch，而不能只靠 mock。
+- **What**: startup 现在逐项执行 frozen action。`reuse` 必须仍有 live pane；`spawn` 若遇到外部 running pane 则 fail closed；只有 binding/live pane 与同 Mission compact `agent_spawned` audit 完全匹配时，partial retry/resume 才能复用 Mission 自己启动的进程。runtime drift 写 blocker 禁止隐式 resume。Readiness mixed batch 为 ready Worker 和 blocked Worker 分别审计；所有 wait/workflow exception 只投影固定 stop reason。真实 CLI interruption 在第2步已 dispatch 后持久化双 interrupted，resume 复用同 run/turns。
+- **TDD 证据**: frozen spawn 外部 pane 与 frozen reuse pane-lost 两项先 RED（旧代码继续到 readiness），修复后 Mission focused 57 项通过；真实 correlated workflow 在 step2 capture 中断后保持 step1 completed + step2 dispatched，CLI/direct resume 最终严格 8 turns、8 messages/replies/sends、1 workflow，step1/2 prompt 不重复。Mission/CLI/contracts/workflow/readiness 相邻回归 763 项、全量 1143 项通过，compileall 与 diff check 通过。
+- **安全边界**: `agent_spawned` 仅含 mission/agent/pane/session/cwd；Mission audit 使用字段 allowlist，禁止 command/prompt/output/credential/secret。外部 runtime drift 不 spawn、不 workflow，partial Mission-owned pane 保留且可显式恢复。
+
+### Run and resume confirmed natural-language Missions
+
+- **类型**: major feature + strict TDD + bounded runtime orchestration
+- **问题**: Mission 已能冻结自然语言预览、Worker 集合和串行 plan，但尚无一个明确确认后自动准备 Codex/Claude pane、等待 CLI readiness、执行完整 workflow，并在中断/失败后复用同一 run 恢复的产品路径。
+- **What**: 新增纯 ProjectView/state 投影的 `mission status`，以及显式 `mission run|resume --confirm`；runner 在任何 runtime mutation 前重验 schema/id、start gate、plan hash/步数/selected ids、Leader provenance、Worker role/provider/workspace/effective-model/startup provenance。确认后只 reuse/spawn frozen Workers，session 每次准备至多创建一次，全部 provider-aware ready 后才创建唯一 workflow，并复用现有 sequential engine 的 message/job/reply/correlated handoff；resume 复用同一 workflow/turns，completed/preparing/running 重复确认只返回状态。CLI KeyboardInterrupt 同步持久化 workflow/Mission interrupted。
+- **TDD 证据**: runner API 与 CLI route 缺失测试先 RED（collection ImportError；CLI argparse invalid choice）；最小 pipeline/routes 后 Mission focused 52 项通过，其中真实 correlated fake backend 完成 8 个交替 turn、8 条 message/reply；Mission/CLI/contracts/workflow/readiness 相邻回归 756 项通过，最终全量 1138 项通过，compileall、diff check 与 installed CLI 缺确认零输出 smoke 均通过。
+- **安全边界**: 缺少 `--confirm` 零写/零 runtime；plan/config drift 在 runtime 前停止且不可 resume；部分 spawn 保留已创建 pane/binding 但零 dispatch；readiness 未全绿零 workflow dispatch。Mission event/response 不保存 raw command、prompt、pane output、异常详情或 secret，login/trust 仍由人类处理。
+
+### Ignore wrapped Worker readiness input
+
+- **类型**: important fix + strict TDD + runtime safety
+- **问题**: 只排除以 prompt glyph 开头的首行仍会让当前多行输入的无 glyph/缩进续行落入 state grammar；用户粘贴完整 Codex diagnostic、Claude trust pair 或 login line 时会被误判为 failure/setup，旧 idle placeholder 又可能使 busy pane 误报 ready。
+- **What**: classifier 先识别 normal Codex chrome（OpenAI Codex + model/status）或 Claude chrome（Claude Code + context footer），再定位最后一个 provider prompt。若最后 prompt 不是已知 idle placeholder（Codex `Ask Codex...`、Claude `Try ...`），从该 prompt 到 active frame 末尾全部视为 untrusted current input，包括所有缩进或无缩进 wrapped continuation；该 pane 返回 starting，不能复用更早 idle prompt。无 normal chrome 的真实 setup/error-only fixture 继续走严格 system grammar。
+- **TDD 证据**: ready chrome + non-idle prompt、Codex diagnostic continuation、Claude trust/login continuation 用例先 RED 为 8 failed / 56 passed；最小 active-input trim 后 focused readiness 64 项、全量 1128 项通过；compileall 与 diff 检查通过。
+- **安全边界**: 不解析或回显 current input，不改变 provider/runtime/state，不 send/spawn/kill/create session；真实 ready、Codex model failure、Claude trust/login fixtures 保持原目标分类。
+
+### Finalize Worker readiness safety gates
+
+- **类型**: important fix + strict TDD + runtime safety
+- **问题**: active-frame 初版仍允许以 prompt glyph 开头的用户输入成为 setup/failure substring evidence，Codex 的 `model` + `not supported` 与 Claude 的裸 `/login`/trust 短语过宽；capture 抛错路径又绕过 post-call deadline gate，可能把已迟到异常投影为 failed 后继续 probe。
+- **What**: state evidence 现在排除以 `User:`、`›`、`❯` 开头的行；Codex failure 只接受独立完整的 configured-model/newer-version 或 exact model-incompatible 行，startup 只接受独立 MCP-starting 行；Claude trust 必须同时出现独立 question 与 choice 行，login 必须是独立的 not-logged-in/authentication-required + `/login` 结构。capture 成功或异常统一先做 post-call monotonic deadline gate，到期一律 timeout 并停止后续 pane probe，未到期才把异常投影为固定 failed reason。
+- **TDD 证据**: prompt input、multiline continuation 与 late capture exception 用例先 RED 为 5 failed / 55 passed；最小 grammar/gate 修复后 focused readiness 60 项、runtime/tmux/dispatch/workflow 相邻回归 84 项、全量 1124 项通过；compileall 与 diff 检查通过。
+- **安全边界**: 不解析或泄漏迟到异常，不把用户输入当 CLI 状态；不 send/spawn/kill/create session、不调用 provider、不写 state。
+
+### Harden Worker readiness evidence
+
+- **类型**: important fix + strict TDD + runtime safety
+- **问题**: 全屏 substring/提示符扫描会把旧 scrollback、文档示例和用户对话误判为当前 Codex/Claude ready、setup 或 failure；重复 agent/pane selection 直到 backend probe 后才暴露；`pane_exists()` 在 deadline 后返回或抛错时仍可能投影迟到结果并继续 probe。
+- **What**: classifier 只检查最近 40 行 active frame，以 CLI header + 行首 prompt + context 的结构化组合识别 ready，并从 setup/failure state evidence 中排除 `User:` 对话行；selection 在任何 backend read 前拒绝重复 agent id 或规范化 pane id，使用不回显输入的固定错误；每次 `pane_exists()` 返回或异常后立即执行 deadline gate，迟到结果不分类、不泄漏、不继续 probe，当前及未 probe Worker 稳定转为 timeout。真实时钟测试只保留最小等待下界，移除受调度噪声影响的脆弱上界。
+- **TDD 证据**: 质量用例先 RED 为 8 failed / 42 passed，分别覆盖 active-frame 误判 4 项、duplicate selection 2 项与 post-pane-check deadline 2 项；最小实现及新增 clock observation 对齐后 focused readiness 50 项、runtime/tmux/dispatch/workflow 相邻回归 74 项、全量 1114 项通过；compileall 与 diff 检查通过。
+- **安全边界**: classifier 仍为纯函数；readiness 不 send/spawn/kill/create session、不调用 provider、不写 state。backend exception 和 duplicate marker 均不回显，deadline 到期后不读取后续 pane。
+
+### Reject late Worker readiness captures
+
+- **类型**: important fix + strict TDD + runtime safety
+- **问题**: deadline gate 已能阻止到期后开始下一轮 probe，但一次在 deadline 前开始、deadline 后才返回的慢 capture 仍会先 classify；迟到的 ready/setup/error TUI 内容可能被接受或泄漏，并可能继续读取后续 Worker pane。
+- **What**: 每次 `capture_output()` 成功返回后、classify 前，readiness 立即复用 `max(monotonic(), start + scheduled_sleep_total)` 检查 deadline。若已到期，不解析或投影 capture 内容：当前 Worker 与尚未 probe 的 Worker 先补为 generic starting evidence，再与此前所有 starting evidence 一起稳定转为 timeout；此前 deadline 前完成的 ready evidence 保留，结果顺序仍与 selected 一致，后续 pane 不再读取。
+- **TDD 证据**: 单 Worker capture side effect 把 fake clock 从 0 推到 2（timeout=1）先 RED，旧实现错误接受迟到 ready 为 `all_ready=true`；三 Worker 慢第二次 capture 先 RED，旧实现泄漏 trust/setup 分类并继续 capture 第三个 pane。最小 post-capture deadline gate 后新用例 2 项及 focused readiness 42 项、runtime/dispatch/workflow 相邻回归 300 项、全量 1106 项通过；compileall 与 diff 检查通过。
+- **安全边界**: 迟到 screen 无论 ready/setup/error 都不分类、不进入 reason；不 send/spawn/kill/create session、不调用 provider、不写 state，FakeBackend `sent` 保持空。
+
+### Honor Worker readiness polling deadlines
+
+- **类型**: important fix + strict TDD + runtime safety
+- **问题**: 首版 readiness 在第二轮 capture 后才检查 deadline，因此恰好到期的 Worker 仍可能凭 deadline 后的 ready screen 通过；`poll_interval=0` 又用 synthetic 1 秒 poll budget，使真实短 timeout 在没有实际等待时提前结束。
+- **What**: zero poll 现在使用 `min(0.01, timeout)` 作为 effective interval；每次 sleep 不超过 remaining deadline，并累计 scheduled sleep 形成 logical elapsed。第二轮及后续轮次必须在 `pane_exists` / `capture_output` 前以 `max(monotonic(), start + scheduled_sleep_total)` 守住 deadline，因此到期即把已有 starting evidence 转为 timeout，绝不读取 deadline 后输出。constant、倒退 monotonic 与 no-op sleeper 仍会由 logical time 有限终止，真实 monotonic/default sleeper 不会在 deadline 前提前 timeout。
+- **TDD 证据**: deadline equality fixture 先 RED，旧实现进行了第二次 capture 并错误返回 ready；真实 monotonic `timeout=0.05/poll=0` 先 RED，旧实现约 30µs 即 timeout。最小 logical-time 修复后目标 6 项及 focused readiness 40 项、runtime/dispatch/workflow 相邻回归 300 项、全量 1104 项通过；compileall 与 diff 检查通过。
+- **安全边界**: 不改变 provider classifier、selected Worker 集合或终态优先级；不 send/spawn/kill/create session、不调用 provider、不写 state，FakeBackend `sent` 保持空。
+
+### Probe Codex and Claude Worker readiness
+
+- **类型**: feat + strict TDD + runtime safety
+- **What**: 新增纯 `classify_worker_readiness()` 与 immutable `WorkerReadinessEvidence` / `WorkerReadiness` / compact batch result，复用 `provider_family()` 区分 Codex 与 Claude 短 TUI 信号；明确输出 `starting`、`ready`、`setup_required`、`failed`、`pane_lost`、`timeout` 六种状态。Codex 识别 ready prompt、MCP startup 和 model incompatibility；Claude 识别 ready prompt、directory trust 与 login blocker；ANSI/大小写被规范化，未知 provider fail-closed。
+- **轮询边界**: `wait_for_worker_readiness()` 只对显式 selected `(AgentSpec, pane_id)` 顺序执行 `pane_exists` → `capture_output`，所有 Worker ready 才成功；setup/failed/pane loss/capture failure 均为稳定终态，starting 仅在 finite deadline 内轮询并最终转为 timeout。timeout/poll/config/backend/selected/pane/clock/sleeper 输入严格校验并拒绝 bool-as-number；单次 sleep 不超过剩余 deadline，额外 poll budget 保证 constant、倒退 monotonic 或 `poll_interval=0` 也不会无限循环。
+- **安全边界**: pane 存在绝不等于 ready；fail/setup/startup 信号优先于 scrollback 中的旧 prompt marker。readiness 不调用 provider，不 spawn/kill/create session，不 send input，不改 state；backend exception 只投影固定短 reason，不回显原异常。
+- **TDD 证据**: 首轮 RED 在收集阶段因缺少 `agentdeck.runtime.readiness` 得到预期 `ModuleNotFoundError`；最小实现后 focused readiness 37 项通过。审查再以 `timeout=1/poll=100` 精确 RED 证明 sleep 可突破 deadline，限制为 remaining deadline 后 focused readiness 38 项通过；runtime/dispatch/workflow 相邻回归 300 项、全量 1102 项通过；compileall 与 diff 检查通过。
+
+### Canonicalize Mission preview provider
+
+- **类型**: important fix + TDD + provenance
+- **问题**: provider identity preflight 虽按 strip/lower 比较同源性，后续仍把 adapter 的 raw `provider.name` 写入 plan/Mission/payload，允许空白/大小写漂移污染 `leader_backend` 与审计 provenance。
+- **What**: 以 `config.leader.provider.strip().lower()` 作为唯一 `canonical_provider`；adapter candidate 只用于同源比较。selected provider config、`record_plan()`、`create_mission()` 及其 payload/backend 投影全部使用 canonical provider，不再使用 raw adapter name。
+- **TDD 证据**: fake、codex-cli、claude-cli、deepseek 四种合法 provider 的 uppercase/outer-whitespace adapter name 先 RED 4 failed，最小 canonical write-path 修复后 4 passed。
+- **安全边界**: 不新增 provider alias；`codex` 与 `codex-cli` 等不同 backend 仍不相等。仅规范化已确认同源的大小写/外部空白，不改变 provider 调用、runtime、approval 或 Mission 执行边界。
+
+### Validate Mission preview provenance
+
+- **类型**: important fix + TDD + provenance
+- **问题**: preview 未在 provider call/plan write 前验证 provider adapter identity，空 name 会到 Mission create 才失败并可能留下 partial plan，不同 backend name 也可能写入与配置 Leader 不同源的 provenance；top-level `state.agents` corruption 或 ProjectView skill-context 异常会泄漏内部 exception/marker。
+- **What**: `create_mission_preview()` 现在首先要求 `provider.name` 与 `config.leader.provider` 都是 non-empty string，且按 strip/lower 后精确相等；不合并 `codex`/`codex-cli` 等实际不同 backend。首次 state 使用前要求 state object 与 `agents` object，ProjectView compact skill-context 构建也包裹在同一稳定 state gate。
+- **TDD 证据**: provider empty/mismatch、`agents=list` 与 ProjectView marker 四项先 RED 4 failed；最小 preflight 后 4 passed。
+- **安全边界**: provider provenance/state 无效时 provider calls、plans、missions、events、chat 均为零，config bytes 不变；service exception 固定为 `mission preview provider invalid` 或 `mission preview state invalid`，不回显 rejected provider/state/ProjectView 值。
+
+### Harden Mission preview boundaries
+
+- **类型**: P1 fix + TDD + safety boundary
+- **问题**: malformed selected runtime binding、duplicate/不足两个 Worker selection 与 malformed compact summaries 可能在 provider 调用后才失败，造成不必要调用或 plan partial-write 风险；running-without-pane 与 reuse provenance 判定不一致；provider/plan exception 可能把 URL、命令或恶意 marker 原文带到 service/CLI error。
+- **What**: 新增共享纯 helper `mission_binding_reusable()`，统一校验 selected binding status/pane 类型，并仅将 `status=running` 且 non-empty string `pane_id` 视为可 reuse；service 在 provider 前拒绝 malformed binding 与 selection blocker，在 `record_plan` 前复用 compact domain projection 校验 selected/startup summaries、ID/数量/唯一性与 gate 关系。新增 `MissionPreviewError` 稳定分类，provider 与 plan validation 的任意普通 Exception 分别净化为固定 `mission preview provider failed` / `mission preview plan invalid`，CLI 对未知 Exception 也只输出固定文案。
+- **TDD 证据**: 边界目标集先 RED 16 failed（reuse、binding、selection、summary、provider/plan 与 CLI sanitization），最小实现后 16 passed；随后同步旧未净化 exception 断言。
+- **安全边界**: malformed binding/selection 在 provider 前 zero-call/zero-write；provider、plan 或 compact summary 失败时 plans/missions/events/chat 均为零，stdout 为空且 stderr/exception 不含 rejected marker；command-not-found 仍按既有设计保留 blocked preview。未捕获 `KeyboardInterrupt` / `SystemExit`。
+
+### Fix Mission preview provenance
+
+- **类型**: P1 fix + TDD
+- **问题**: preview 对已 running 的 Worker 仍按 launch command 派生/继承模型，错误暗示后续会使用改写后的 spawn command；固定串行 plan validator 只拒绝 truthy forbidden metadata，允许 `parallel=false`、`dynamic_steps=[]`、`dag=null` 或 `cycle=false` 穿透。
+- **What**: 新增纯 helper `effective_mission_agent_for_binding()`，running binding 优先保留原始 `AgentSpec.command`，以 `effective_model=null` / `model_source=running_binding` 投影 selected/startup provenance，并保持 `action=reuse`；非 running Worker 继续复用既有安全模型推导。`validate_mission_plan()` 现在按 key presence 拒绝四类 forbidden metadata，值真假不影响 fail-closed 结果。
+- **TDD 证据**: 新增 service RED 为 5 failed（1 个 running-binding provenance、4 个 falsy forbidden metadata）；最小修复后 5 passed。旧“falsy metadata 可接受”领域测试同步改为新安全契约。
+- **安全边界**: 不读取 pane、不探测 running Worker 实际模型、不改写持久配置、不创建额外 runtime/workflow/approval/message/job/inbox；非法 provider plan 在 plan/Mission/event write 前拒绝且零写。
+
+### Create Missions from natural language
+
+- **类型**: feat + TDD + contract
+- **What**: 新增独立 `mission_orchestration.create_mission_preview()`；普通多 Agent 执行请求在既有显式只读 Leader Chat routes 之后进入 `mode=mission_preview`。服务冻结请求中的 Codex/Claude Worker、继承安全有效模型、要求 provider 返回精确 8 步固定串行 plan，并在完整校验后写入一个 plan、一个 `pending_confirmation` Mission 和一个 `mission_preview_created` 事件；CLI 再记录同源 chat turn/audit，并嵌入通过 Mission validator 的 `mission_preview_card`、intent card 与过滤后的 control registry。
+- **TDD 证据**: 首轮 RED 在收集期以 `ModuleNotFoundError: agentdeck.mission_orchestration` 失败；最小 service/route 接入后 focused Mission suite 为 8 passed，随后补充 malformed command 与 raising runtime backend 覆盖。
+- **安全边界**: preview 只调用配置 Leader planning provider，不读取/修改 tmux/runtime，不 send input，不创建 workflow/job/message/approval/inbox，不修改 config bytes，不自动 load skill。已显式 load 的 Leader skill 仅以既有 compact ProjectView context 进入 prompt 与 plan provenance，绝不包含 `content_snapshot` 或作为授权。provider plan 在任何 plan/Mission/event write 前校验；非法 plan 零写。缺失或 malformed Worker command 只生成不回显命令的 compact blocker，保留可 inspect preview 并禁用确认。
+
+### Sanitize Mission contract validation errors
+
+- **类型**: security fix + test + contract
+- **审查问题**: Mission validator 虽已拒绝恶意 nested payload，但 shared plan exception、未知字段名与非法 status lifecycle error 会把被拒绝的 agent id、字段 key 或 status object 回显进 `errors[]`，CLI 还会把同一错误写入 stderr。
+- **What**: lifecycle-specific 校验只在 status 是已知六状态字符串后运行，并使用固定错误文案；未知字段错误不列出不可信 key；`validate_mission_plan` 的 ValueError/TypeError 统一翻译为固定 `mission_preview.plan is invalid`，不附原 exception。所有 Mission validator error f-string 仅包含内部 prefix/schema field/index，不插入 rejected payload value。
+- **TDD 证据**: status dict+completed_at、plan agent id、role/task/control marker 与 CLI stderr sanitization 先 RED（4 failed / 2 passed），最小修复后 6 passed。
+- **安全边界**: 只净化 contract validation error，不放宽或改变 Mission 状态、runner、provider/runtime/tmux、state 或 approval；CLI invalid example 继续 exit 1、stdout 为空。
+
+### Harden Mission contract validation
+
+- **类型**: fix + test + contract
+- **审查问题**: 首版 Mission validator 对非 object root 会抛异常，未严格验证 canonical plan id/hash、嵌套 scalar、完整生命周期与 selected/startup/plan provenance；Mission control tuple 还别名 Leader Review tuple，worker helper 依赖 tuple equality 判型。
+- **What**: 三个 validator 现在对 root/深层非法值统一返回 errors；共享 non-empty string、exact-int、optional-string、plan identity/hash、blocker 与 lifecycle helper；Mission-owned 显式 item tuples 与显式 worker kind/schema；严格交叉核对 startup provenance 和 plan role；六状态约束、blocker-aware resume gate、literal confirmation 与安全 attach/control grammar 全部 fail-closed。
+- **TDD 证据**: 首轮质量 RED 为 37 failed / 23 passed；深层 unhashable agent/action/status 与 non-completed timestamp 复查再次 RED 8 项；最小实现后 Mission contract focused 为 104 passed，contracts+CLI mission/index focused 为 115 passed。
+- **安全边界**: 仍只修改 contract discovery/validation，不实现或调用 Mission runner、provider、runtime/tmux，不写 Mission state，不扩大 approval；非法 nested command/prompt/env/credentials 对象不执行、不打印、不泄漏。
+
+### Add Mission contract discovery
+
+- **类型**: feat + test + contract
+- **What**: 新增 `agentdeck contract mission [--example]` 与 contract index 注册，公开 preview/status/run 精确字段、selected/startup/plan/control item 字段、六状态及固定 8 轮串行示例；三个 validator 复用 Mission v1 状态、canonical id/command 与固定 plan helper，拒绝状态/计数/命令/provenance/control 漂移，CLI 在打印前守门，失败时不输出半坏 JSON。
+- **TDD 证据**: focused RED 为 18 failed / 26 passed（缺 contract constants/helpers、index item 与 CLI route）；派生 Leader provenance、unsafe tmux attach 与 non-object example 又分别先 RED，再复用共享 identity 并 fail-closed；最终 focused 为 47 passed。
+- **安全边界**: 本切片仅提供只读 discovery/example，不实现 Mission preview/run/status 业务，不写 Mission state、不调用 provider/runtime/tmux、不发送输入、不改变 approval。
+- **验证**: contracts + agent CLI 回归、全量 pytest、compileall、真实 discovery smoke 与 `git diff --check` 均通过。
+
+### Fail closed on malformed Mission blockers after final quality review
+
+- **类型**: fix + test
+- **审查问题**: legacy blockers 为 dict、纯 non-string list 或混合 list 时，projection 只保留字符串却不记录丢弃，dict/纯非法 list 会被压为空并使 `not blockers` 误判为可启动；混合 list 虽不可启动但隐藏了 corruption。
+- **What**: `mission.py` 新增共享 `compact_mission_blockers()` 与固定 `invalid mission blockers` marker；create/update 复用 helper 拒绝所有非法 blocker containers/items，projection 保留合法字符串、对任一非法成分追加固定 marker、丢弃且不泄漏原值，并强制 `can_start=false`。
+- **TDD 证据**: dict、纯 dict-list、字符串+dict mixed list 与合法 list 参数化测试先 RED（3 failed, 1 passed），最小修复后 4 passed；既有 create/update blocker invariants 3 passed。
+- **安全边界**: 不改变状态机、runner、contract surface、provider/tmux、approval 或事件；仅统一 blocker compact/validation 语义，malformed 原值不进入 ProjectView。
+- **验证**: blockers focused 7 项、三文件相关回归 671 项、全量 pytest 932 项通过；compileall 与 `git diff --check` 均通过。
+
+### Close Mission projection invariants after quality re-review
+
+- **类型**: fix + test + contract
+- **审查问题**: create/update 分别校验了 `can_start` 与 `blockers` 类型，却允许 `can_start=true` 与非空 blockers 共存；legacy 矛盾记录仍投影为可启动，validator 也接受。顶层 `missions` 若不是 list 会被静默折叠为空 summary，隐藏 state corruption。
+- **What**: create/update 现在基于最终有效值联合检查 `can_start => blockers == []`，在 save 前 fail-closed；projection 保留 compact legacy blockers 并强制 `can_start=false`；validator 拒绝外部 startable/blocker 矛盾。非-list missions container 现在安全投影为 `count=-1/by_status={}/latest_id=null/items=[]`，不读取或泄漏原值，并通过明确 non-negative count validator error 让 ProjectView/status controlled-fail。
+- **TDD 证据**: 联合 create/update RED 为 3 failed，projection/container RED 为 2 failed，contract RED 为 2 failed；最小修复后分别为 3 passed、2 passed、19 passed。
+- **安全边界**: 不改变批准的 Mission 状态机、runner、provider/tmux、approval 或事件；非法 state write 零写，corrupt container 不生成 Mission command，`agentdeck status` 自校验失败时不打印半合法 JSON。
+- **验证**: Mission suite 124 项、ProjectView contract focused 38 项、三文件相关回归 668 项、全量 pytest 929 项通过；compileall 与 `git diff --check` 均通过。
+
+### Enforce Mission state and ProjectView invariants after quality review
+
+- **类型**: fix + test + contract
+- **审查问题**: `update_mission()` 可覆盖 identity/schema/frozen plan/timestamps、写入未知 status/非法 progress 并 reopen completed；ProjectView command 直接插值未验证 mission id；Leader backend 可与顶层 provider/model 矛盾；non-dict Mission row 会 crash，incomplete nested rows 会被压成 `{}` 且仍可能保持 `can_start=true`。
+- **What**: Mission domain 新增 canonical `mis_<12 lowercase hex>` grammar、精确六状态 transition map、共享 selected-agent/startup-action compact 字段与 required schema、canonical command helper。State create 现在校验冻结 identity、provider/model/backend coherence、step/timeout 与 worker/action summaries；update 仅允许显式 mutable 字段，校验类型、单向/恢复迁移、workflow/confirmation 一次性、progress 单调且位于 `0..step_count`，completed terminal。ProjectView 只为 safe id 生成 exact commands；non-dict/unsafe-id row 不生成 item/command，但 raw count 保留以让 validator controlled-fail；nested invalid rows不生成 `{}`，并降级 `can_start=false` + compact blocker。contract 同步验证 coherence、canonical command、required nested fields 和 start gate。
+- **TDD 证据**: State/invariant RED 为 19 failed（经状态规格纠正后 `failed` 保持非法），malformed ProjectView RED 为 non-dict row `AttributeError`，contract adversarial RED 为 6 failed；顶层 corruption count 语义追加测试再次 RED（expected 2, got 1）。最小实现后 Mission suite 112 项、malformed/security ProjectView 2 项、contract adversarial+example 18 项、ProjectView focused 36 项通过。
+- **安全边界**: 不新增 `failed` 状态，不进入 Mission CLI/独立 contract/runner；不调用 provider/tmux，不写事件，不扩大 approval。非法 update 在 record mutation/save 前拒绝且零写；ProjectView corruption 只以 safe compact facts 和 validator error 呈现，绝不从不可信 id 生成 shell command。
+- **验证**: Mission suite 121 项、ProjectView contract focused 36 项、三文件相关回归 661 项、全量 pytest 922 项通过；compileall 与 `git diff --check` 均通过。
+
+### Harden Mission ProjectView projection after specification review
+
+- **类型**: fix + test + contract
+- **审查问题**: 首版 Mission projection 只 allowlist nested row 的键，却原样保留 allowlisted 键的任意 dict/list 值，并直接复制 `leader_backend`；validator 也只检查第一层禁用键和 backend 容器类型。因此 `leader_backend.credentials`、`selected_agents[].blocker.full_prompt` 或 `startup_actions[].effective_model.credentials` 可穿透 compact ProjectView。
+- **What**: Mission summary 现在从既有 logical Leader identity 字段重建 `leader_backend`，selected-agent/startup-action 按字段级 string/null 类型投影，blockers 仅保留字符串；合法 Task 2 compact provider/role/runtime/model/source/blocker 字段保持可用。ProjectView validator 复用 `_validate_leader_backend()`，校验 nested compact allowlist 和标量类型，并递归拒绝 dict/list 中的 command/prompt/full_prompt/credentials/env 等语义键，但不扫描或误拒绝普通字符串内容。
+- **Review TDD 证据**: 恶意嵌套 status + validator focused 测试先 RED（4 failed, 8 passed），明确复现 projection 泄漏与三个 validator 漏检；最小修复后同组含 example acceptance 为 13 passed。
+- **安全边界**: 仍为纯 ProjectView 投影/校验加固，不改 Mission 执行、provider、tmux、approval 或事件语义；`agentdeck status` 保持只读。输出构建和外部 payload validation 均独立 fail-closed，避免只依赖单层检查。
+- **验证**: mission/status focused 101 项、ProjectView contract focused 30 项、三文件相关回归 624 项、全量 pytest 885 项通过；compileall 与 `git diff --check` 均通过。
+
+### Persist natural-language Mission state in ProjectView
+
+- **类型**: feat + test + contract
+- **动机**: Mission 纯领域规则已经冻结，但自然语言 Mission 尚无权威持久记录，也无法从 canonical `agentdeck status` / ProjectView 安全恢复或渲染当前进度。
+- **What**: StateStore 默认 state 新增 `missions[]`，并提供显式 create/get/list/update 方法；Mission 记录保存 `mission/v1`、用户请求、状态/阻塞、Leader provenance、冻结 plan/agent/startup/timeout、workflow progress 与时间戳。ProjectView 新增 compact `missions` summary（count/by_status/latest_id/items）和 status/run/resume controls；ProjectView discovery payload、example、validator 与 schema 文档同步新增 Mission summary/item 字段。
+- **TDD 证据**: 首轮 state/status RED 为 5 failed, 87 passed（缺默认 key、StateStore API 和 ProjectView 投影）；contract RED 在收集期因缺 `PROJECT_VIEW_MISSIONS_FIELDS` 失败。最小实现后 mission/status focused 101 passed、ProjectView contract focused 25 passed、三文件相关回归 619 passed。安全复查再以 3 个预期失败证明 completed timestamp 可被覆盖、nested raw command 未压缩/未校验，最小修复后该组 9 passed。
+- **安全边界**: 本切片只写显式 Mission state，不发事件、不调用 provider、不读取或操作 tmux，也不创建独立 Mission contract/CLI；`agentdeck status` 保持只读。ProjectView 仅投影 allowlisted selected-agent/startup-action 字段，排除 raw launch command、完整 prompt、credentials/env；completed timestamp 只能由首次 `status=completed` 自动设置，后续 update 不可覆盖。
+- **验证**: mission/status focused 101 项、ProjectView contract focused 27 项、三文件相关回归 621 项、全量 pytest 882 项通过；`python -m compileall src tests -q` 与 `git diff --check` 均通过。
+
+### Fail-closed direct CLI grammar for Mission model resolution
+
+- **类型**: fix + test
+- **动机**: raw shell blacklist 无法证明 worker command 是可安全重写的 Codex/Claude 直接 CLI argv；未知 executable、单 `&`、comment/glob/tilde 和重复 model flag 仍可能进入继承路径。
+- **What**: command 必须先通过 `shlex.split`，再通过 raw shell-sensitive 检查、provider-family executable basename allowlist（`codex[.exe]` / `claude[.exe]`，允许绝对路径）、conservative literal argv grammar 和全量 model flag 校验。单 `&`、`#`、`* ? [ ]`、tilde、`$`、backtick、换行、重定向/pipe/compound operator、错误 executable、unsupported argv、重复/缺值/空白 model flag 全部 fail-closed，保持原始 `AgentSpec` 并返回仅含固定 reason + agent ID 的 blocker。只有完整 grammar 通过后才允许 `shlex.join` 追加同 family CLI Leader 模型。
+- **TDD 证据**: reviewer 精确案例先 RED（7 failed, 79 passed）再 GREEN；自审增加 whitespace-only model value 后再次 RED（1 failed, 86 passed），最小收紧后 focused suite 87 项通过。
+- **安全边界**: 不执行或探测 command，不读取 env，不调用 provider/tmux，不写 state；unsupported command 不规范化、不补 flag、不泄露原始 command/model/env/secrets。既有简单 Codex/Claude 命令、显式单 model flag、`codex.exe` 和绝对路径 executable 保持可用。
+- **验证**: focused pytest 87 项、provider regression 31 项、全量 pytest 869 项通过；compileall 与 `git diff --check` 均通过。
+
 ## 2026-07-10
+
+### Natural-language Mission pure domain foundation
+
+- **类型**: feat + test
+- **动机**: 自然语言 Mission 编排需要先冻结一组可独立验证、无副作用的领域规则，供后续 preview/state/CLI 切片复用，避免选人、模型继承和固定顺序约束散落到入口层。
+- **What**: 新增 `src/agentdeck/mission.py`：定义 `mission/v1` 与状态集合；识别同时具备执行意图和多 Agent 证据的请求并保护 help/status/skill/memory/trace 既有入口；按显式 ID、显式 provider 或 provider 配置顺序确定性选择至少两个 Worker，provider 内按 running → shared → config order 排序且永不选择 logical Leader；生成不修改原始 `AgentSpec` 的有效模型配置；附加固定顺序 plan 验证和不含 command/env/secrets 的 compact Worker/startup 摘要。
+- **TDD 证据**: 首个 RED 为 `tests/test_mission.py` 收集时 `ModuleNotFoundError: No module named 'agentdeck.mission'`；首轮 GREEN 为 32 项通过。自审新增非法 timeout 类型测试后再次 RED（2 failed, 33 passed），最小修复后 focused suite 为 35 项通过。
+- **Spec review 修复**: intent 的英文 `run`、provider 和 agent id 均使用安全 token 边界，`codex-coder` 不再冒充 Codex provider；inspection 保护改为保守的 verb/route shape，不再因任务正文出现 skill/memory/status/trace 裸名词而拒绝合法 Mission。plan timeout 现在只接受正有限整数，step number 只接受非 bool 的精确 int，动态元数据只拒绝 truthy 的 `parallel` / `dag` / `cycle` / `dynamic_steps` 精确顶层键。Leader 模型继承只允许精确 `codex-cli` / `claude-cli` provider。补充 `EffectiveMissionAgent` frozen mutation 覆盖。
+- **Review-fix TDD 证据**: intent 边界先 RED（2 failed, 39 passed）再 GREEN（41 passed）；plan 类型/metadata 先 RED（5 failed, 45 passed）再 GREEN（50 passed）；非 CLI Leader 继承先 RED（2 failed, 50 passed）再 GREEN（52 passed）。frozen mutation 属于既有正确实现的缺失覆盖，新增测试即通过；最终 focused suite 53 项通过。
+- **Final route-shape review fix**: 新增三条精确回归，覆盖句首 `状态：...`、`请帮助我查看...`、`帮助我查看...` 即使同时包含 Codex/Claude 与“协作”也必须保留在 inspection/help/status 路由。测试先 RED（3 failed, 53 passed），最小扩展句首 shape 后 GREEN（56 passed）；合法 memory 模块执行请求继续命中 Mission，未恢复裸名词拦截。
+- **Code-quality review fix**: Mission agent 选择现在先检测配置内重复 `agent_id`，跨 provider 或同 provider 重复均 fail-closed，返回 `duplicate configured agent_id: <id>` 且零选择，并在两个成功出口再次验证 selected ID 唯一。`EffectiveMissionAgent` 新增 compact `blocker`；worker command 仅在 shlex 解析成功、无换行/shell operator/backtick/`$` expansion/leading env assignment、且 model flag 形状有效时才允许保留显式模型或继承 CLI Leader 模型。invalid/unsupported command 与缺值 model flag 保持原始 `AgentSpec`，不追加第二个 model flag；Leader provider 先 strip/lower，再仅允许 `codex-cli` / `claude-cli` 继承。selected/startup summary 只投影 blocker 文本，不暴露 command/env/secrets。
+- **Code-quality TDD 证据**: duplicate ID 测试先 RED（2 failed, 56 passed）再 GREEN（58 passed）；safe model/command/blocker 测试先 RED（25 failed, 52 passed）再 GREEN（77 passed），refactor 后仍为 77 passed。
+- **安全边界**: 本切片仅包含纯 domain helper/dataclass；不写 state、不注册 CLI、不调用 provider、不读取或操作 tmux、不生成 contract/ProjectView，也不支持 parallel/DAG/cycle/dynamic steps。选人遇到未知 ID、缺失 provider 或不足两个 Worker 时返回空选择，绝不部分执行；模型摘要不暴露原始 command 或环境变量。
+- **验证**: `pytest tests/test_mission.py -q` 77 项通过；provider regression 31 项通过；全量 pytest 859 项通过；compileall 与 `git diff --check` 均通过。
 
 ### Current - Design natural-language Mission orchestration
 
@@ -4214,3 +4663,19 @@
 - 分析内容覆盖技术栈、源码结构、核心机制、优势、风险、可学习内容和对 AgentDeck 的分阶段建议。
 - 新增 `.gitignore`，避免把 `References/`、zip 包和 `.DS_Store` 纳入 git。
 - 本地验证：检查四份 Markdown 文件存在、统计行数、检查 heading，并确认 git 工作区只包含预期文档。
+
+### Publish the protocol runtime contract
+
+- 新增 `protocol-runtime/v1` discovery、linked example 和严格 validator，复用 ProjectView 的四类 protocol summary 校验并补充 lineage、pending permission 与只读 controls 边界。
+- 新增 `agentdeck contract protocol-runtime [--example]`；仅发布契约，不实现后续 `agentdeck protocol status`。
+- 将 protocol runtime 加入 contract index，并新增 schema 文档与 TDD/CLI 覆盖。
+- 收紧 protocol runtime controls validator：必须恰好三项、命令唯一，且三条允许的只读命令各出现一次。
+- 加固 hostile control command 类型边界；先验证 exact `str`，再做 allowlist 与唯一性比较，避免触发外部 hash/equality hooks。
+- 在 ProjectView 裁剪前用全量 ID maps 校验 protocol cross-lineage，同时允许 bounded latest-20 summaries 引用窗口外的合法父记录。
+- 将 `protocol-runtime/v1` transport 固定为 `acp`、`acp-adapter`、`tmux`、`api`，并同步 builder、ProjectView、contract discovery 与 schema。
+- 完善 bounded lineage contract：父 summary 完整时必须解析父 ID，父窗口被 latest-20 截断时允许窗口外引用；可见父 turn 始终要求 session 一致。
+
+### Declare tmux fallback transport capabilities
+
+- `RuntimeBackend` 新增 transport capability 声明接口，`TmuxBackend` 明确返回仅支持可观察终端的 `TransportCapabilities.tmux_fallback()`。
+- `agentdeck contract agent-runtime` 新增只读 `transport_capability_fields` 与 `tmux_fallback_capabilities` discovery metadata；这些字段不进入 authorization controls，也不改变 readiness、pane、send、capture 或 approval 行为。

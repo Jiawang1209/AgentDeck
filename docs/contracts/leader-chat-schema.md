@@ -1,5 +1,11 @@
 # Leader Chat Contract
 
+Natural-language Mission follow-ups are first-class routes. `批准执行 mis_<id>` (or the id-less form when exactly one Mission is pending) returns `mode=mission_run` with a validated `mission_run_card`; `查看 mission [mis_<id>]` returns the read-only `mission_status_card`; and `继续 mission [mis_<id>]` returns `mode=mission_resume` with a `mission_run_card`. Id-less mutation is rejected when selection is ambiguous. These exact routes run before generic approval/continue matching but do not capture explicit approval phrases such as `批准当前审批`.
+
+Both Mission cards embed a Mission-scoped `control_registry_card`. Selection points only to an enabled control: resume for a resumable stopped/interrupted result, otherwise status inspection. Re-confirming a completed named Mission is idempotent and does not create another runtime or workflow.
+
+Explicit Mission CLI execution and Leader-chat execution share the same active-execution recovery projection. A KeyboardInterrupt or unexpected runtime exception after the Mission reached `preparing`/`running` first persists the workflow and Mission interruption, then returns the validated sanitized run card. Unknown Missions, ordinary `MissionRunError`, and failures before the active claim do not enter this recovery mutation path. If recovery itself fails, the command returns stable non-zero output without exception details.
+
 `agentdeck leader chat --message <text>` is the natural-language Leader entrypoint for AgentDeck.
 
 This contract describes the chat response surface. It does not replace ProjectView. Chat responses embed `project_view`, expose selected GUI-ready convenience fields, and preserve ProjectView as the state source of truth.
@@ -36,6 +42,7 @@ Use `agentdeck contract leader-chat` to discover this contract:
   "plan_board_card_fields": [],
   "skills_catalog_card_fields": [],
   "run_loop_preview_card_fields": [],
+  "mission_preview_card_fields": [],
   "capture_card_fields": [],
   "dispatch_preview_card_fields": [],
   "dispatch_batch_preview_card_fields": [],
@@ -123,6 +130,7 @@ The review-mode response shape is:
   "plan_board_card": null,
   "skills_catalog_card": null,
   "run_loop_preview_card": null,
+  "mission_preview_card": null,
   "capture_card": null,
   "dispatch_preview_card": null,
   "dispatch_batch_preview_card": null,
@@ -147,6 +155,14 @@ The review-mode response shape is:
 ```
 
 `leader_actions` is identical to `project_view.leader_actions`. It is provided so a chat surface can render the queue without issuing a second status call.
+
+`mission_preview_card` is the validated `mission/v1` preview produced for ordinary execution requests such as `让 Codex 和 Claude 一人一句接龙百家姓，共8轮`. This route is evaluated only after explicit help/status/skill/memory/trace and other inspection routes, and before role/task/generic plan fallbacks. It selects only the requested configured Workers, gives the Leader provider a temporary config containing only that frozen selection, requires an exact fixed serial plan, and records the validated plan, one pending-confirmation Mission, one `mission_preview_created` event, plus the normal chat turn/audit event. The persisted config remains byte-identical.
+
+The card's `selected_agents[]`, `startup_actions[]`, plan, commands, blockers, and controls use the exact Mission contract projections. A startable preview sets top-level `next_command` to `agentdeck leader chat --message "批准执行 <mis_id>"`; a blocked preview selects its safe status command instead and keeps the confirmation control disabled. `intent_card.embedded_card=mission_preview_card`, and `control_registry_card` is filtered to `scope=mission` / `card=mission_preview_card` with selection matching that safe next command. Preview may call only the configured Leader planning provider and may write plan/Mission/chat/audit state. It must not create a workflow run, approval, job, message, reply, artifact, or inbox item; load a skill; inspect or modify tmux/runtime; send input; or treat loaded skills as authority. Explicitly loaded Leader skills enter planning and plan provenance only through the existing compact ProjectView skill context, never through `content_snapshot`.
+
+Selected runtime bindings are validated before provider invocation. Only statuses `configured`, `running`, `stopped`, and `unknown` are accepted, and a non-null pane id must be a non-empty string. A Worker is reusable only when it is `running` with such a pane id; otherwise preview derives the normal spawn model/command. Local selection blockers and malformed bindings make zero provider calls. Provider failures and plan-validation failures are returned only through stable `mission preview provider failed` / `mission preview plan invalid` classifications; raw URLs, commands, exception details, and rejected payload markers are not copied to service or CLI errors. Compact selected/startup projections are validated before the first plan write, so invalid summaries cannot leave a partial plan.
+
+The provider adapter name must be a non-empty string and must exactly match the configured Leader provider after case/outer-whitespace normalization; backend-distinguishing names such as `codex` and `codex-cli` are not aliases on this boundary. After a match, the normalized configured provider is the canonical value used by the selected provider config, plan, Mission, payload, and logical Leader backend; raw adapter casing/whitespace is never persisted. Empty/mismatched provider provenance fails before provider invocation or state write. The loaded state and top-level `agents` value must be objects, and compact ProjectView skill-context derivation must complete safely; corruption is reduced to fixed `mission preview state invalid` without copying rejected values.
 
 `leader_action_card` is a GUI-ready projection of the top-level `leader_action` when one is present:
 

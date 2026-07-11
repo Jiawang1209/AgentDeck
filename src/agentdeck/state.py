@@ -1,16 +1,41 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import copy
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import shlex
 import shutil
-from typing import Any
+from typing import Any, Callable
 
 from .config import CONFIG_DIR, ensure_project_layout, project_root
+from .mission import (
+    MISSION_SCHEMA_VERSION,
+    MISSION_STATUSES,
+    MISSION_INVALID_BLOCKERS_BLOCKER,
+    compact_mission_blockers,
+    compact_mission_worker_entries,
+    is_canonical_mission_id,
+    mission_commands,
+    mission_status_transition_allowed,
+)
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
+from .runtime.protocol import (
+    AGENT_SESSION_STATES,
+    PERMISSION_STATES,
+    TURN_STATES,
+    TRANSPORT_KINDS,
+    UPDATE_KINDS,
+    TransportCapabilities,
+    build_agent_session,
+    build_permission_request,
+    build_transport_update,
+    build_turn,
+)
 
 
 def leader_provider_backend(provider: str | None) -> str:
@@ -110,11 +135,19 @@ def leader_coordination_roles(provider: str | None, model: str | None) -> list[d
 
 
 class StateStore:
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, *, ensure_layout: bool = True) -> None:
         self.root = root or project_root()
-        self.deck_dir = ensure_project_layout(self.root)
+        self.deck_dir = (
+            ensure_project_layout(self.root)
+            if ensure_layout
+            else agentdeck_dir(self.root)
+        )
         self.state_path = self.deck_dir / "state" / "state.json"
         self.events_path = self.deck_dir / "state" / "events.jsonl"
+
+    @classmethod
+    def open_existing(cls, root: Path | None = None) -> StateStore:
+        return cls(root, ensure_layout=False)
 
     def load(self) -> dict[str, Any]:
         if not self.state_path.exists():
@@ -124,6 +157,7 @@ class StateStore:
                 "jobs": [],
                 "replies": [],
                 "artifacts": [],
+                "missions": [],
                 "plans": [],
                 "approvals": [],
                 "chat_turns": [],
@@ -132,6 +166,11 @@ class StateStore:
                 "skill_loads": [],
                 "skill_suggestions": [],
                 "memory_suggestions": [],
+                "agent_sessions": [],
+                "protocol_turns": [],
+                "transport_updates": [],
+                "permission_requests": [],
+                "protocol_event_outbox": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -144,6 +183,500 @@ class StateStore:
     def append_event(self, event: EventRecord) -> None:
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
+
+    @staticmethod
+    def _unique_protocol_record(
+        records: list[dict[str, Any]], key: str, value: str, duplicate_error: str
+    ) -> dict[str, Any]:
+        matches = [item for item in records if isinstance(item, dict) and item.get(key) == value]
+        if len(matches) > 1:
+            raise ValueError(duplicate_error)
+        if not matches:
+            raise KeyError(value)
+        return matches[0]
+
+    @staticmethod
+    def _validate_protocol_identities(state: dict[str, Any]) -> None:
+        sessions = state.setdefault("agent_sessions", [])
+        turns = state.setdefault("protocol_turns", [])
+        updates = state.setdefault("transport_updates", [])
+        permissions = state.setdefault("permission_requests", [])
+        state.setdefault("protocol_event_outbox", [])
+        session_ids = [item.get("session_id") for item in sessions if isinstance(item, dict)]
+        turn_ids = [item.get("turn_id") for item in turns if isinstance(item, dict)]
+        update_ids = [item.get("update_id") for item in updates if isinstance(item, dict)]
+        permission_ids = [item.get("permission_id") for item in permissions if isinstance(item, dict)]
+        if len(session_ids) != len(set(session_ids)):
+            raise ValueError("duplicate agent session identity")
+        if len(turn_ids) != len(set(turn_ids)):
+            raise ValueError("duplicate protocol turn identity")
+        if len(update_ids) != len(set(update_ids)):
+            raise ValueError("duplicate transport update identity")
+        if len(permission_ids) != len(set(permission_ids)):
+            raise ValueError("duplicate permission request identity")
+
+    @staticmethod
+    def _validate_protocol_lineage(state: dict[str, Any]) -> None:
+        sessions = {
+            item.get("session_id"): item
+            for item in state.get("agent_sessions", [])
+            if isinstance(item, dict) and isinstance(item.get("session_id"), str)
+        }
+        turns = {
+            item.get("turn_id"): item
+            for item in state.get("protocol_turns", [])
+            if isinstance(item, dict) and isinstance(item.get("turn_id"), str)
+        }
+        for turn in state.get("protocol_turns", []):
+            if isinstance(turn, dict) and turn.get("session_id") not in sessions:
+                raise ValueError("protocol turn session reference missing")
+        for collection, label in (
+            ("transport_updates", "transport update"),
+            ("permission_requests", "permission request"),
+        ):
+            for item in state.get(collection, []):
+                if not isinstance(item, dict):
+                    continue
+                if item.get("session_id") not in sessions:
+                    raise ValueError(f"{label} session reference missing")
+                turn = turns.get(item.get("turn_id"))
+                if turn is None:
+                    raise ValueError(f"{label} turn reference missing")
+                if item.get("session_id") != turn.get("session_id"):
+                    raise ValueError(f"{label} session mismatch")
+
+    @contextmanager
+    def _protocol_mutation_lock(self):
+        lock_path = self.state_path.parent / "protocol-mutation.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+    def _protocol_event_ids(self) -> set[str]:
+        event_ids: set[str] = set()
+        if not self.events_path.exists():
+            return event_ids
+        for line in self.events_path.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and isinstance(event.get("event_id"), str):
+                event_ids.add(event["event_id"])
+        return event_ids
+
+    def _flush_protocol_event_outbox_locked(self, state: dict[str, Any] | None = None) -> int:
+        state = state if state is not None else self.load()
+        outbox = state.setdefault("protocol_event_outbox", [])
+        if not outbox:
+            return 0
+        existing_ids = self._protocol_event_ids()
+        appended = 0
+        for item in outbox:
+            event_id = item.get("event_id") if isinstance(item, dict) else None
+            if event_id in existing_ids:
+                continue
+            event = EventRecord(**item)
+            self.append_event(event)
+            existing_ids.add(event.event_id)
+            appended += 1
+        state["protocol_event_outbox"] = []
+        self.save(state)
+        return appended
+
+    def flush_protocol_event_outbox(self) -> int:
+        with self._protocol_mutation_lock():
+            return self._flush_protocol_event_outbox_locked()
+
+    def _save_protocol_record(
+        self,
+        state: dict[str, Any],
+        collection: str,
+        record: dict[str, Any],
+        event: EventRecord,
+    ) -> dict[str, Any]:
+        state.setdefault(collection, []).append(record)
+        state.setdefault("protocol_event_outbox", []).append(asdict(event))
+        self.save(state)
+        try:
+            self.append_event(event)
+        except OSError:
+            return record
+        state["protocol_event_outbox"] = [
+            item for item in state["protocol_event_outbox"]
+            if item.get("event_id") != event.event_id
+        ]
+        try:
+            self.save(state)
+        except OSError:
+            pass
+        return record
+
+    def record_agent_session(
+        self,
+        agent_id: str,
+        provider: str,
+        transport: str,
+        native_session_id: str | None,
+        workspace: str,
+        capabilities: TransportCapabilities,
+    ) -> dict[str, Any]:
+        with self._protocol_mutation_lock():
+            state = self.load()
+            self._validate_protocol_identities(state)
+            record = build_agent_session(
+                agent_id, provider, transport, native_session_id, workspace, capabilities
+            )
+            if any(item.get("session_id") == record["session_id"] for item in state["agent_sessions"]):
+                raise ValueError("duplicate agent session identity")
+            self._flush_protocol_event_outbox_locked(state)
+            event = EventRecord.create("agent_session_recorded", {
+                "session_id": record["session_id"],
+                "agent_id": record["agent_id"],
+                "transport": record["transport"],
+            })
+            return self._save_protocol_record(state, "agent_sessions", record, event)
+
+    def record_protocol_turn(self, session_id: str, message_id: str) -> dict[str, Any]:
+        with self._protocol_mutation_lock():
+            state = self.load()
+            self._validate_protocol_identities(state)
+            self._unique_protocol_record(
+                state.setdefault("agent_sessions", []), "session_id", session_id,
+                "duplicate agent session identity",
+            )
+            record = build_turn(session_id, message_id)
+            if any(item.get("turn_id") == record["turn_id"] for item in state["protocol_turns"]):
+                raise ValueError("duplicate protocol turn identity")
+            self._flush_protocol_event_outbox_locked(state)
+            event = EventRecord.create("protocol_turn_recorded", {
+                "turn_id": record["turn_id"],
+                "session_id": record["session_id"],
+                "message_id": record["message_id"],
+            })
+            return self._save_protocol_record(state, "protocol_turns", record, event)
+
+    def _validated_protocol_turn(
+        self, state: dict[str, Any], session_id: str, turn_id: str
+    ) -> dict[str, Any]:
+        self._validate_protocol_identities(state)
+        self._unique_protocol_record(
+            state.setdefault("agent_sessions", []), "session_id", session_id,
+            "duplicate agent session identity",
+        )
+        turn = self._unique_protocol_record(
+            state.setdefault("protocol_turns", []), "turn_id", turn_id,
+            "duplicate protocol turn identity",
+        )
+        if turn.get("session_id") != session_id:
+            raise ValueError("protocol turn session mismatch")
+        return turn
+
+    def record_transport_update(
+        self, session_id: str, turn_id: str, sequence: int, kind: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        with self._protocol_mutation_lock():
+            state = self.load()
+            self._validated_protocol_turn(state, session_id, turn_id)
+            updates = state.setdefault("transport_updates", [])
+            if any(
+                isinstance(item, dict)
+                and item.get("turn_id") == turn_id
+                and item.get("sequence") == sequence
+                for item in updates
+            ):
+                raise ValueError("duplicate transport update sequence")
+            record = build_transport_update(session_id, turn_id, sequence, kind, payload)
+            if any(item.get("update_id") == record["update_id"] for item in updates):
+                raise ValueError("duplicate transport update identity")
+            self._flush_protocol_event_outbox_locked(state)
+            event = EventRecord.create("transport_update_recorded", {
+                "update_id": record["update_id"],
+                "session_id": record["session_id"],
+                "turn_id": record["turn_id"],
+                "sequence": record["sequence"],
+                "kind": record["kind"],
+            })
+            return self._save_protocol_record(state, "transport_updates", record, event)
+
+    def record_permission_request(
+        self, session_id: str, turn_id: str, tool_name: str, target: str, risk: str
+    ) -> dict[str, Any]:
+        with self._protocol_mutation_lock():
+            state = self.load()
+            self._validated_protocol_turn(state, session_id, turn_id)
+            record = build_permission_request(session_id, turn_id, tool_name, target, risk)
+            permissions = state.setdefault("permission_requests", [])
+            if any(item.get("permission_id") == record["permission_id"] for item in permissions):
+                raise ValueError("duplicate permission request identity")
+            self._flush_protocol_event_outbox_locked(state)
+            event = EventRecord.create("permission_request_recorded", {
+                "permission_id": record["permission_id"],
+                "session_id": record["session_id"],
+                "turn_id": record["turn_id"],
+                "tool_name": record["tool_name"],
+                "risk": record["risk"],
+            })
+            return self._save_protocol_record(state, "permission_requests", record, event)
+
+    def agent_session_by_id(self, session_id: str) -> dict[str, Any]:
+        state = self.load()
+        self._validate_protocol_identities(state)
+        return self._unique_protocol_record(
+            state.setdefault("agent_sessions", []), "session_id", session_id,
+            "duplicate agent session identity",
+        )
+
+    def protocol_turn_by_id(self, turn_id: str) -> dict[str, Any]:
+        state = self.load()
+        self._validate_protocol_identities(state)
+        return self._unique_protocol_record(
+            state.setdefault("protocol_turns", []), "turn_id", turn_id,
+            "duplicate protocol turn identity",
+        )
+
+    def list_agent_sessions(self) -> list[dict[str, Any]]:
+        return list(self.load().setdefault("agent_sessions", []))
+
+    def list_protocol_turns(self) -> list[dict[str, Any]]:
+        return list(self.load().setdefault("protocol_turns", []))
+
+    def list_transport_updates(self) -> list[dict[str, Any]]:
+        return list(self.load().setdefault("transport_updates", []))
+
+    def list_permission_requests(self) -> list[dict[str, Any]]:
+        return list(self.load().setdefault("permission_requests", []))
+
+    def create_mission(
+        self,
+        *,
+        user_message: str,
+        can_start: bool,
+        blockers: list[str],
+        provider: str,
+        model: str,
+        leader_backend: dict[str, Any],
+        plan_id: str,
+        plan_hash: str,
+        selected_agents: list[dict[str, Any]],
+        startup_actions: list[dict[str, Any]],
+        step_count: int,
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        state = self.load()
+        if not all(
+            isinstance(value, str) and value
+            for value in (user_message, provider, model, plan_id, plan_hash)
+        ):
+            raise ValueError("mission identity fields must be non-empty strings")
+        if not isinstance(can_start, bool):
+            raise ValueError("can_start must be a boolean")
+        compact_blockers, invalid_blockers = compact_mission_blockers(blockers)
+        if invalid_blockers:
+            raise ValueError("blockers must be a list of strings")
+        if can_start and compact_blockers:
+            raise ValueError("can_start requires empty blockers")
+        if not isinstance(step_count, int) or isinstance(step_count, bool) or step_count < 1:
+            raise ValueError("step_count must be a positive integer")
+        if (
+            not isinstance(timeout_seconds, int)
+            or isinstance(timeout_seconds, bool)
+            or timeout_seconds < 1
+        ):
+            raise ValueError("timeout_seconds must be a positive integer")
+        expected_backend = leader_backend_identity(provider, model)
+        if leader_backend != expected_backend:
+            raise ValueError("leader_backend must match provider and model")
+        compact_agents, invalid_agents = compact_mission_worker_entries(
+            selected_agents, kind="selected_agents"
+        )
+        compact_actions, invalid_actions = compact_mission_worker_entries(
+            startup_actions, kind="startup_actions"
+        )
+        if invalid_agents or invalid_actions:
+            raise ValueError("mission worker summaries must use compact domain fields")
+        selected_ids = [item["agent_id"] for item in compact_agents]
+        action_ids = [item["agent_id"] for item in compact_actions]
+        if can_start and (
+            len(compact_agents) < 2
+            or len(compact_actions) < 2
+            or selected_ids != action_ids
+        ):
+            raise ValueError("startable mission requires matching worker and startup summaries")
+        now = utc_now()
+        record = {
+            "mission_id": new_id("mis"),
+            "schema_version": MISSION_SCHEMA_VERSION,
+            "user_message": user_message,
+            "status": MISSION_STATUSES[0],
+            "stop_reason": None,
+            "can_start": can_start,
+            "blockers": compact_blockers,
+            "provider": provider,
+            "model": model,
+            "leader_backend": expected_backend,
+            "plan_id": plan_id,
+            "plan_hash": plan_hash,
+            "selected_agents": compact_agents,
+            "startup_actions": compact_actions,
+            "step_count": step_count,
+            "timeout_seconds": timeout_seconds,
+            "workflow_run_id": None,
+            "current_step": 0,
+            "confirmed_at": None,
+            "completed_at": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        state.setdefault("missions", []).append(record)
+        self.save(state)
+        return record
+
+    def mission_by_id(self, mission_id: str) -> dict[str, Any]:
+        for item in self.load().get("missions", []):
+            if isinstance(item, dict) and item.get("mission_id") == mission_id:
+                return item
+        raise KeyError(mission_id)
+
+    def list_missions(self) -> list[dict[str, Any]]:
+        return list(self.load().get("missions", []))
+
+    def claim_mission_execution(
+        self,
+        mission_id: str,
+        *,
+        resuming: bool,
+        confirmed_at: str,
+    ) -> dict[str, Any]:
+        if not isinstance(resuming, bool):
+            raise TypeError("resuming must be a boolean")
+        if not isinstance(confirmed_at, str) or not confirmed_at:
+            raise ValueError("confirmed_at must be a non-empty string")
+        lock_path = self.state_path.parent / "mission-execution.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                state = self.load()
+                record = next(
+                    (
+                        item
+                        for item in state.setdefault("missions", [])
+                        if isinstance(item, dict) and item.get("mission_id") == mission_id
+                    ),
+                    None,
+                )
+                if record is None:
+                    raise KeyError(mission_id)
+                status = record.get("status")
+                if status in {"preparing", "running", "completed"}:
+                    return {"claimed": False, "mission": copy.deepcopy(record)}
+                allowed = {"stopped", "interrupted"} if resuming else {"pending_confirmation"}
+                if status not in allowed:
+                    raise ValueError("mission is not claimable")
+                record.update(
+                    {
+                        "status": "preparing",
+                        "confirmed_at": record.get("confirmed_at") or confirmed_at,
+                        "stop_reason": None,
+                        "blockers": [],
+                        "can_start": False,
+                        "updated_at": utc_now(),
+                    }
+                )
+                self.save(state)
+                return {"claimed": True, "mission": copy.deepcopy(record)}
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+    def update_mission(self, mission_id: str, /, **changes: Any) -> dict[str, Any]:
+        state = self.load()
+        record = next(
+            (
+                item
+                for item in state.setdefault("missions", [])
+                if isinstance(item, dict) and item.get("mission_id") == mission_id
+            ),
+            None,
+        )
+        if record is None:
+            raise KeyError(mission_id)
+        mutable_fields = {
+            "status",
+            "stop_reason",
+            "can_start",
+            "blockers",
+            "workflow_run_id",
+            "current_step",
+            "confirmed_at",
+        }
+        unknown_fields = set(changes) - mutable_fields
+        if unknown_fields:
+            raise ValueError(
+                f"immutable or unknown mission fields: {', '.join(sorted(unknown_fields))}"
+            )
+        current_status = record.get("status")
+        target_status = changes.get("status", current_status)
+        if current_status == "completed":
+            if changes == {"status": "completed"}:
+                return record
+            raise ValueError("completed mission is terminal")
+        if not mission_status_transition_allowed(current_status, target_status):
+            raise ValueError(f"invalid mission status transition: {current_status} -> {target_status}")
+        if "stop_reason" in changes and changes["stop_reason"] is not None and not isinstance(
+            changes["stop_reason"], str
+        ):
+            raise ValueError("stop_reason must be a string or null")
+        if "can_start" in changes and not isinstance(changes["can_start"], bool):
+            raise ValueError("can_start must be a boolean")
+        if "blockers" in changes:
+            compact_blockers, invalid_blockers = compact_mission_blockers(
+                changes["blockers"]
+            )
+            if invalid_blockers:
+                raise ValueError("blockers must be a list of strings")
+            changes["blockers"] = compact_blockers
+        effective_can_start = changes.get("can_start", record.get("can_start"))
+        effective_blockers = changes.get("blockers", record.get("blockers"))
+        if effective_can_start is True and effective_blockers:
+            raise ValueError("can_start requires empty blockers")
+        if "workflow_run_id" in changes:
+            workflow_run_id = changes["workflow_run_id"]
+            if workflow_run_id is not None and not isinstance(workflow_run_id, str):
+                raise ValueError("workflow_run_id must be a string or null")
+            existing_run_id = record.get("workflow_run_id")
+            if existing_run_id is not None and workflow_run_id != existing_run_id:
+                raise ValueError("workflow_run_id cannot change once set")
+        if "confirmed_at" in changes:
+            confirmed_at = changes["confirmed_at"]
+            if confirmed_at is not None and not isinstance(confirmed_at, str):
+                raise ValueError("confirmed_at must be a string or null")
+            existing_confirmed_at = record.get("confirmed_at")
+            if existing_confirmed_at is not None and confirmed_at != existing_confirmed_at:
+                raise ValueError("confirmed_at cannot change once set")
+        if "current_step" in changes:
+            current_step = changes["current_step"]
+            step_count = record.get("step_count")
+            if (
+                not isinstance(current_step, int)
+                or isinstance(current_step, bool)
+                or not isinstance(step_count, int)
+                or isinstance(step_count, bool)
+                or current_step < record.get("current_step", 0)
+                or current_step < 0
+                or current_step > step_count
+            ):
+                raise ValueError("current_step must advance within 0..step_count")
+        record.update(changes)
+        record["updated_at"] = utc_now()
+        if changes.get("status") == "completed" and not record.get("completed_at"):
+            record["completed_at"] = record["updated_at"]
+        self.save(state)
+        return record
 
     def record_skill_load(
         self,
@@ -1239,6 +1772,140 @@ class StateStore:
         return counts
 
     @staticmethod
+    def _protocol_summary_items(
+        records: object,
+        *,
+        identity_field: str,
+        group_field: str,
+        item_fields: tuple[str, ...],
+        transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        if not isinstance(records, list):
+            raise ValueError("protocol summary source must be a list")
+        prepared: list[dict[str, Any]] = []
+        counts: dict[str, int] = {}
+        identities: set[str] = set()
+        for index, record in enumerate(records):
+            if not isinstance(record, dict):
+                raise ValueError(f"protocol summary item at index {index} must be an object")
+            identity = record.get(identity_field)
+            created_at = record.get("created_at")
+            group = record.get(group_field)
+            if not isinstance(identity, str) or not isinstance(created_at, str) or not isinstance(group, str):
+                raise ValueError(f"invalid protocol summary item at index {index}")
+            if identity in identities:
+                raise ValueError(f"duplicate {identity_field}: {identity}")
+            identities.add(identity)
+            for field in item_fields:
+                value = record.get(field)
+                if field == "decision" and (
+                    value is None or isinstance(value, str) and bool(value.strip())
+                ):
+                    continue
+                if field == "sequence" and isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    continue
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"invalid protocol summary field: {field}")
+            item = {field: record.get(field) for field in item_fields}
+            prepared.append(transform(record) if transform is not None else item)
+            counts[group] = counts.get(group, 0) + 1
+        prepared.sort(key=lambda item: (str(item.get("created_at", "")), str(item.get(identity_field, ""))))
+        return prepared[-20:], {key: counts[key] for key in sorted(counts)}
+
+    @staticmethod
+    def _agent_session_summaries(records: object) -> dict[str, Any]:
+        capability_fields = (
+            "structured_sessions", "streaming_updates", "structured_tools",
+            "permission_requests", "resume_session", "observable_terminal",
+        )
+
+        def compact(record: dict[str, Any]) -> dict[str, Any]:
+            for field in ("session_id", "agent_id", "provider", "transport", "workspace", "created_at", "updated_at"):
+                if not isinstance(record.get(field), str) or not record[field].strip():
+                    raise ValueError(f"invalid agent session field: {field}")
+            if record.get("state") not in AGENT_SESSION_STATES:
+                raise ValueError("invalid agent session state")
+            transport = record.get("transport")
+            if type(transport) is not str or transport not in TRANSPORT_KINDS:
+                raise ValueError("invalid agent session transport")
+            native_session_id = record.get("native_session_id")
+            if native_session_id is not None and (
+                not isinstance(native_session_id, str) or not native_session_id.strip()
+            ):
+                raise ValueError("invalid agent session native_session_id")
+            capabilities = record.get("capabilities")
+            if (
+                not isinstance(capabilities, dict)
+                or set(capabilities) != set(capability_fields)
+                or any(type(capabilities[field]) is not bool for field in capability_fields)
+            ):
+                raise ValueError("invalid agent session capabilities")
+            return {
+                "session_id": record.get("session_id"),
+                "agent_id": record.get("agent_id"),
+                "provider": record.get("provider"),
+                "transport": record.get("transport"),
+                "state": record.get("state"),
+                "capabilities": {field: capabilities.get(field) for field in capability_fields},
+                "native_session_present": bool(record.get("native_session_id")),
+                "workspace": record.get("workspace"),
+                "created_at": record.get("created_at"),
+                "updated_at": record.get("updated_at"),
+            }
+
+        items, by_state = StateStore._protocol_summary_items(
+            records, identity_field="session_id", group_field="state", item_fields=(), transform=compact,
+        )
+        return {"count": len(records), "by_state": by_state, "items": items}
+
+    @staticmethod
+    def _protocol_turn_summaries(records: object) -> dict[str, Any]:
+        if isinstance(records, list):
+            for record in records:
+                if isinstance(record, dict) and record.get("state") not in TURN_STATES:
+                    raise ValueError("invalid protocol turn state")
+        items, by_state = StateStore._protocol_summary_items(
+            records, identity_field="turn_id", group_field="state",
+            item_fields=("turn_id", "session_id", "message_id", "state", "created_at", "updated_at"),
+        )
+        return {"count": len(records), "by_state": by_state, "items": items}
+
+    @staticmethod
+    def _transport_update_summaries(records: object) -> dict[str, Any]:
+        if isinstance(records, list):
+            for record in records:
+                if isinstance(record, dict) and record.get("kind") not in UPDATE_KINDS:
+                    raise ValueError("invalid transport update kind")
+                if isinstance(record, dict) and (
+                    type(record.get("sequence")) is not int or record["sequence"] < 0
+                ):
+                    raise ValueError("invalid transport update sequence")
+        items, by_kind = StateStore._protocol_summary_items(
+            records, identity_field="update_id", group_field="kind",
+            item_fields=("update_id", "session_id", "turn_id", "sequence", "kind", "created_at"),
+        )
+        return {"count": len(records), "by_kind": by_kind, "items": items}
+
+    @staticmethod
+    def _permission_request_summaries(records: object) -> dict[str, Any]:
+        if isinstance(records, list):
+            for record in records:
+                if isinstance(record, dict) and record.get("status") not in PERMISSION_STATES:
+                    raise ValueError("invalid permission request status")
+        items, by_status = StateStore._protocol_summary_items(
+            records, identity_field="permission_id", group_field="status",
+            item_fields=(
+                "permission_id", "session_id", "turn_id", "tool_name", "risk", "status", "decision", "created_at",
+            ),
+        )
+        return {
+            "count": len(records),
+            "pending_count": by_status.get("pending", 0),
+            "by_status": by_status,
+            "items": items,
+        }
+
+    @staticmethod
     def _plan_summaries(plans: list[dict[str, Any]]) -> dict[str, Any]:
         items = []
         for plan in plans:
@@ -1268,6 +1935,96 @@ class StateStore:
                 }
             )
         return {"count": len(items), "items": items}
+
+    @staticmethod
+    def _mission_summaries(missions: list[dict[str, Any]]) -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
+        source_count = len(missions) if isinstance(missions, list) else -1
+        if not isinstance(missions, list):
+            missions = []
+        for mission in missions:
+            if not isinstance(mission, dict):
+                continue
+            mission_id = mission.get("mission_id")
+            if not is_canonical_mission_id(mission_id):
+                continue
+            status = mission.get("status")
+            provider = mission.get("provider")
+            model = mission.get("model")
+            step_count = mission.get("step_count")
+            current_step = mission.get("current_step", 0)
+            if (
+                mission.get("schema_version") != MISSION_SCHEMA_VERSION
+                or status not in MISSION_STATUSES
+                or not isinstance(provider, str)
+                or not isinstance(model, str)
+                or not isinstance(step_count, int)
+                or isinstance(step_count, bool)
+                or not isinstance(current_step, int)
+                or isinstance(current_step, bool)
+                or current_step < 0
+                or current_step > step_count
+            ):
+                continue
+            selected_agents, invalid_agents = compact_mission_worker_entries(
+                mission.get("selected_agents"), kind="selected_agents"
+            )
+            startup_actions, invalid_actions = compact_mission_worker_entries(
+                mission.get("startup_actions"), kind="startup_actions"
+            )
+            selected_ids = [item["agent_id"] for item in selected_agents]
+            action_ids = [item["agent_id"] for item in startup_actions]
+            workers_ready = (
+                not invalid_agents
+                and not invalid_actions
+                and len(selected_agents) >= 2
+                and len(startup_actions) >= 2
+                and selected_ids == action_ids
+            )
+            raw_can_start = mission.get("can_start") is True
+            blockers, invalid_blockers = compact_mission_blockers(
+                mission.get("blockers")
+            )
+            if invalid_blockers and MISSION_INVALID_BLOCKERS_BLOCKER not in blockers:
+                blockers.append(MISSION_INVALID_BLOCKERS_BLOCKER)
+            if (invalid_agents or invalid_actions or raw_can_start) and not workers_ready:
+                if "invalid mission worker summaries" not in blockers:
+                    blockers.append("invalid mission worker summaries")
+            commands = mission_commands(mission_id)
+            items.append(
+                {
+                    "mission_id": mission_id,
+                    "schema_version": mission.get("schema_version"),
+                    "user_message": mission.get("user_message"),
+                    "status": status,
+                    "stop_reason": mission.get("stop_reason"),
+                    "can_start": raw_can_start and workers_ready and not blockers,
+                    "can_resume": status in {MISSION_STATUSES[4], MISSION_STATUSES[5]} and not blockers,
+                    "blockers": blockers,
+                    "provider": provider,
+                    "model": model,
+                    "leader_backend": leader_backend_identity(provider, model),
+                    "plan_id": mission.get("plan_id"),
+                    "plan_hash": mission.get("plan_hash"),
+                    "workflow_run_id": mission.get("workflow_run_id"),
+                    "current_step": current_step,
+                    "step_count": step_count,
+                    "timeout_seconds": mission.get("timeout_seconds"),
+                    "selected_agents": selected_agents,
+                    "startup_actions": startup_actions,
+                    "created_at": mission.get("created_at"),
+                    "updated_at": mission.get("updated_at"),
+                    "confirmed_at": mission.get("confirmed_at"),
+                    "completed_at": mission.get("completed_at"),
+                    **commands,
+                }
+            )
+        return {
+            "count": source_count,
+            "by_status": StateStore._status_counts(items),
+            "latest_id": items[-1]["mission_id"] if items else None,
+            "items": items,
+        }
 
     @staticmethod
     def _plan_skill_context(skill_context: Any) -> dict[str, Any]:
@@ -1885,6 +2642,11 @@ class StateStore:
 
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
+        agent_sessions = self._agent_session_summaries(state.get("agent_sessions", []))
+        protocol_turns = self._protocol_turn_summaries(state.get("protocol_turns", []))
+        transport_updates = self._transport_update_summaries(state.get("transport_updates", []))
+        permission_requests = self._permission_request_summaries(state.get("permission_requests", []))
+        self._validate_protocol_lineage(state)
         bindings = state.get("agents", {})
         agents = []
         for agent in config.agents:
@@ -1920,6 +2682,7 @@ class StateStore:
             leader=leader,
             agents=agents,
             state_path=str(self.state_path),
+            missions=self._mission_summaries(state.get("missions", [])),
             plans=self._plan_summaries(state.get("plans", [])),
             approvals=self._approval_summaries(state.get("approvals", [])),
             messages=self._message_summaries(state.get("messages", [])),
@@ -1932,6 +2695,10 @@ class StateStore:
             leader_actions=self._leader_action_summaries(state.get("leader_actions", [])),
             skills=self._skill_load_summaries(state.get("skill_loads", [])),
             memory=self._memory_context_summary(self.root),
+            agent_sessions=agent_sessions,
+            protocol_turns=protocol_turns,
+            transport_updates=transport_updates,
+            permission_requests=permission_requests,
             inbox=self._inbox_summary(state.get("inbox", {})),
             recovery=self._recovery_summary(state, config),
         )

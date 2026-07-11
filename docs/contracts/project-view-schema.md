@@ -1,14 +1,16 @@
 # ProjectView Contract
 
+`missions.items[].mission_id` values must be unique. Duplicate ids are invalid split-brain state: ProjectView validation returns a stable field-only error, and workbench/status refuse to print a partial snapshot rather than silently selecting one duplicate.
+
 `agentdeck status` is the canonical read-only ProjectView for CLI, natural-language Leader chat, recovery tooling, and future GUI clients.
 
 GUI clients should consume ProjectView first. They should not scan `.agentdeck/state/state.json`, parse tmux panes, or infer workflow state from command strings when ProjectView already exposes the same fact.
 
-The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in `src/agentdeck/models.py`. Current value: `project-view/v1`.
+The source-of-truth schema version constant is `PROJECT_VIEW_SCHEMA_VERSION` in `src/agentdeck/models.py`. Current value: `project-view/v1`. The protocol-lineage summaries described below are an additive-v1 extension: the version remains `project-view/v1`, while current producers and validators require the new top-level fields.
 
 Reusable contract response, payload, and example fixture helpers live in `src/agentdeck/contracts.py`. The CLI discovery command uses `project_view_contract_response()` directly so command output and reusable module output stay identical.
 
-Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_LEADER_FIELDS`, `PROJECT_VIEW_COORDINATION_ROLE_FIELDS`, `PROJECT_VIEW_PLAN_ITEM_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_SKILLS_FIELDS`, `PROJECT_VIEW_SKILL_ITEM_FIELDS`, `PROJECT_VIEW_MEMORY_FIELDS`, `PROJECT_VIEW_MEMORY_ITEM_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
+Field list constants are also defined in `src/agentdeck/contracts.py`: `PROJECT_VIEW_TOP_LEVEL_FIELDS`, `PROJECT_VIEW_LEADER_FIELDS`, `PROJECT_VIEW_COORDINATION_ROLE_FIELDS`, `PROJECT_VIEW_MISSIONS_FIELDS`, `PROJECT_VIEW_MISSION_ITEM_FIELDS`, `PROJECT_VIEW_PLAN_ITEM_FIELDS`, `PROJECT_VIEW_RECOVERY_FIELDS`, `PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS`, `PROJECT_VIEW_SKILLS_FIELDS`, `PROJECT_VIEW_SKILL_ITEM_FIELDS`, `PROJECT_VIEW_MEMORY_FIELDS`, `PROJECT_VIEW_MEMORY_ITEM_FIELDS`, `PROJECT_VIEW_MESSAGE_ITEM_FIELDS`, `PROJECT_VIEW_JOB_ITEM_FIELDS`, `PROJECT_VIEW_REPLY_ITEM_FIELDS`, and `PROJECT_VIEW_ARTIFACT_ITEM_FIELDS`.
 
 Use `validate_project_view_contract(payload)` from `src/agentdeck/contracts.py` to check any ProjectView-like payload against the v1 baseline contract.
 
@@ -68,6 +70,7 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
   },
   "agents": [],
   "state_path": "/absolute/project/root/.agentdeck/state/state.json",
+  "missions": {},
   "plans": {},
   "approvals": {},
   "messages": {},
@@ -95,6 +98,16 @@ All ProjectView fields are read-only summaries. Commands that mutate state, send
 
 `messages.items[]` includes `prompt_skill_context`, the compact worker skill provenance snapshot captured when `agentdeck dispatch` or `agentdeck approval dispatch` injected loaded skill content into the worker prompt. It uses the same compact shape as `plans.items[].skill_context`, intentionally excludes full `content_snapshot`, and exists so GUI clients can show worker skill context without parsing prompt text. Old or manually seeded messages without skill provenance are normalized to an empty summary.
 
+## Missions
+
+`missions` is the compact, read-only projection of persisted natural-language Mission records. It has the summary fields `count`, `by_status`, `latest_id`, and `items`. Item order follows persisted state order and `latest_id` is the final safely projected item id, or `null` when no safe Mission exists. In healthy state, `count == len(items)`. If persisted `missions[]` contains a non-object or unsafe-id row, `count` retains the raw row count while `items`, `by_status`, and `latest_id` remain limited to safe rows; contract validation then fails with a controlled count mismatch instead of crashing or hiding corruption. If the top-level `missions` container itself is not a list, the projection emits only `{count: -1, by_status: {}, latest_id: null, items: []}`; the negative sentinel leaks none of the corrupt value and produces the explicit validator error `missions.count must be a non-negative integer`.
+
+Each `missions.items[]` row contains `mission_id`, `schema_version`, `user_message`, `status`, `stop_reason`, `can_start`, `can_resume`, `blockers`, `provider`, `model`, `leader_backend`, `plan_id`, `plan_hash`, `workflow_run_id`, `current_step`, `step_count`, `timeout_seconds`, compact `selected_agents` and `startup_actions`, timestamps, and deterministic status/confirmation/resume commands. `can_resume` is true only for `stopped` or `interrupted` Mission state; commands are affordances and do not authorize execution.
+
+The projection uses allowlisted fields for nested selected-agent and startup-action rows, requires their domain-produced worker/runtime/model/action scalars, and rebuilds `leader_backend` from the top-level provider/model using the existing compact logical-Leader identity instead of copying arbitrary state. It excludes raw Worker launch commands, full prompts, credentials, environment values, and other execution secrets even if a legacy or manually seeded state record hides them under an otherwise allowlisted key. Invalid nested rows are never rendered as `{}`; safely recoverable fields may remain, while the Mission is forced to `can_start=false` with `invalid mission worker summaries`. `validate_project_view_contract()` verifies summary counts/statuses/latest id, canonical `mis_<12 lowercase hex>` ids, exact status/run/resume commands derived from that id, progress bounds, required nested fields and scalar types, provider/model coherence, known Mission statuses, the existing logical-Leader backend contract, and recursively rejects raw command/prompt/credential semantic keys without inspecting ordinary string content. Rendering `agentdeck status` neither changes Mission state nor appends events.
+
+Mission identity and frozen planning fields are immutable after creation. `update_mission()` only accepts `status`, `stop_reason`, `can_start`, `blockers`, `workflow_run_id`, monotonic bounded `current_step`, and one-time `confirmed_at`; `updated_at` and first completion time are store-owned. `can_start=true` always requires an empty blocker list: create/update reject contradictions before writing, legacy contradictory rows preserve compact blockers but project `can_start=false`, and the contract validator rejects external contradictory payloads. If a legacy blockers container is not a list or contains any non-string item, projection retains every valid string, appends the fixed `invalid mission blockers` marker, discards the malformed values without exposing them, and forces `can_start=false`. Legal transitions are `pending_confirmation -> preparing|stopped`, `preparing -> running|stopped`, `running -> completed|stopped|interrupted`, and explicit resume from `stopped|interrupted -> preparing|running`. Same-state updates are idempotent where otherwise valid, and `completed` is terminal.
+
 ## Recovery
 
 `recovery` is the canonical next-step surface for humans, natural-language shells, and GUI clients. It prioritizes pending Leader actions, approved approvals, pending approvals, stale runtime bindings, pending inbox items, waiting dispatched replies, and Leader errors before returning idle.
@@ -114,6 +127,8 @@ Use `agentdeck contract project-view` to discover this contract from tools or GU
   "top_level_fields": [],
   "leader_fields": [],
   "coordination_role_fields": [],
+  "missions_fields": [],
+  "mission_item_fields": [],
   "plan_item_fields": [],
   "recovery_fields": [],
   "recovery_pending_fields": [],
@@ -142,6 +157,8 @@ Use `agentdeck contract project-view --example` to include a stable GUI-ready Pr
   "example_top_level_fields": [],
   "example_leader_fields": [],
   "example_coordination_role_fields": [],
+  "example_missions_fields": [],
+  "example_mission_item_fields": [],
   "example_plan_item_fields": [],
   "example_recovery_fields": [],
   "example_recommended_action_fields": [],
@@ -212,6 +229,20 @@ The following blocks use a consistent summary pattern:
 - `releases`: `count`, `items[]`
 - `skills`: `count`, `by_agent`, `by_source`, `items[]`
 - `memory`: `count`, `by_scope`, `items[]`
+- `agent_sessions`: `count`, sorted `by_state`, compact `items[]`
+- `protocol_turns`: `count`, sorted `by_state`, compact `items[]`
+- `transport_updates`: `count`, sorted `by_kind`, compact `items[]`
+- `permission_requests`: `count`, `pending_count`, sorted `by_status`, compact `items[]`
+
+The four protocol summaries are always non-null, including on a fresh project. Their `count` and `by_*` maps describe the complete stored collection, while `items[]` is bounded to the latest 20 records. Items are deterministically ordered by `created_at` and then their domain id (`session_id`, `turn_id`, `update_id`, or `permission_id`); after sorting, only the last 20 are retained.
+
+`agent_sessions.items[]` exposes `session_id`, `agent_id`, `provider`, `transport`, `state`, the boolean capability summary, `native_session_present`, `workspace`, `created_at`, and `updated_at`. It never exposes `native_session_id` or private observation bindings. `protocol_turns.items[]` exposes `turn_id`, `session_id`, `message_id`, `state`, `created_at`, and `updated_at`, never a prompt. `transport_updates.items[]` exposes only `update_id`, `session_id`, `turn_id`, `sequence`, `kind`, and `created_at`, never `payload`. `permission_requests.items[]` exposes `permission_id`, `session_id`, `turn_id`, `tool_name`, `risk`, `status`, `decision`, and `created_at`, never `target`.
+
+Discovery exposes matching `agent_sessions_fields` / `agent_session_item_fields`, `protocol_turns_fields` / `protocol_turn_item_fields`, `transport_updates_fields` / `transport_update_item_fields`, and `permission_requests_fields` / `permission_request_item_fields`, plus same-shaped `example_*` lists. The deterministic example includes one linked session, turn, update, and pending permission rather than empty placeholders.
+
+Protocol summary and item shapes are exact allowlists in additive v1. Counts must be non-negative integers (booleans are rejected), `by_*` maps must have non-empty string keys and non-negative integer values, and `items` must contain at most 20 objects with exact fields and valid domain enum values. Capability summaries contain exactly the six boolean transport capability keys. Unexpected fields are rejected, including `native_session_id`, `observation_bindings`, `prompt`, `payload`, and `target`; future additions require an explicit contract update.
+
+Projection is fail-safe: a corrupt collection or malformed protocol row produces a validation/projection error instead of silently omitting it and presenting misleading counts. These summaries are read-only facts. Rendering `agentdeck status`, ProjectView, or a consumer such as workbench does not create protocol records, append events, inspect tmux, call a provider, grant a permission, or send terminal input.
 
 `skills.items[]` is the ProjectView summary of explicit `agentdeck skills load` records. Each item includes `load_id`, `agent_id`, `purpose`, `name`, `source`, `path`, `content_hash`, `description`, `required_tools`, bounded `planning_guidance`, `risk`, `created_at`, `show_command`, and `reload_command`. ProjectView intentionally keeps the full `content_snapshot` out of the summary so status/workbench payloads stay compact; use `agentdeck skills list` for the available skill registry with GUI-ready show/load controls, `agentdeck skills show --name <name>` for current content, and the persisted `skill_loads[]` record for replay. `planning_guidance` is an ordered list (maximum eight entries, 240 characters each); only guidance from an explicit `agent_id=leader` load enters the provider planning prompt, and it never grants execution permission. External skills must first be copied into the project with `agentdeck skills import --path <SKILL.md>` and still do not appear here until a human explicitly runs `agentdeck skills load`. The summary is read-only and does not load, install, rewrite, or enable skills.
 

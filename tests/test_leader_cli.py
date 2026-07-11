@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+from urllib.error import URLError
+
+import pytest
 
 from agentdeck import cli
 from agentdeck.config import write_default_config
@@ -72,6 +75,36 @@ def bind_agent(root: Path, agent_id: str, pane_id: str = "%42") -> None:
     store.save(state)
 
 
+class FakeMissionProvider:
+    name = "fake"
+
+    def __init__(self) -> None:
+        self.requests: list[LeaderPlanRequest] = []
+
+    def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
+        self.requests.append(request)
+        steps = []
+        for step in range(1, 9):
+            agent_id, role = ("planner", "planning") if step % 2 else ("reviewer", "review")
+            steps.append(
+                {
+                    "step": step,
+                    "agent_id": agent_id,
+                    "role": role,
+                    "task": f"完成接龙第 {step} 轮",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                }
+            )
+        return {
+            "goal": "完成八轮接龙",
+            "summary": "Codex 与 Claude 严格串行交替执行。",
+            "steps": steps,
+            "approval_required": True,
+            "dispatch_ready": False,
+        }
+
+
 def break_project_view_recovery(monkeypatch) -> None:
     original_asdict = cli.asdict
 
@@ -129,6 +162,498 @@ def test_leader_plan_creates_structured_plan_without_dispatching(tmp_path, monke
 
     events = (root / ".agentdeck" / "state" / "events.jsonl").read_text(encoding="utf-8")
     assert '"event_type": "leader_plan_created"' in events
+
+
+def test_leader_chat_plain_language_creates_mission_preview(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    provider = FakeMissionProvider()
+    monkeypatch.setattr(cli, "leader_provider", lambda _name: provider)
+    monkeypatch.setattr(
+        cli,
+        "TmuxBackend",
+        lambda: (_ for _ in ()).throw(AssertionError("mission preview must not touch runtime")),
+    )
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+    config_before = (root / ".agentdeck" / "config.toml").read_bytes()
+
+    assert cli.main(
+        ["leader", "chat", "--message", "让 Codex 和 Claude 一人一句接龙百家姓，共8轮"]
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "mission_preview"
+    card = payload["mission_preview_card"]
+    assert card["mission_id"].startswith("mis_")
+    assert payload["intent_card"]["embedded_card"] == "mission_preview_card"
+    assert payload["control_registry_card"]["filters"]["card"] == "mission_preview_card"
+    assert payload["next_command"] == card["confirmation_command"]
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["next_command"]
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+    state = StateStore(root).load()
+    assert len(state["missions"]) == 1
+    assert len(state["plans"]) == 1
+    assert len(state["chat_turns"]) == 1
+    assert state.get("workflow_runs", []) == []
+    assert state["jobs"] == []
+    assert state["messages"] == []
+    assert state["approvals"] == []
+    assert state["skill_loads"] == []
+    assert (root / ".agentdeck" / "config.toml").read_bytes() == config_before
+    assert [event["event_type"] for event in StateStore(root).list_events(limit=10)] == [
+        "mission_preview_created",
+        "leader_chat_turn",
+    ]
+
+
+def test_leader_chat_blocked_mission_preview_has_no_executable_confirmation(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli, "leader_provider", lambda _name: FakeMissionProvider())
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which",
+        lambda command: "/bin/codex" if command == "codex" else None,
+    )
+
+    assert cli.main(
+        ["leader", "chat", "--message", "让 Codex 和 Claude 一人一句接龙百家姓，共8轮"]
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mission_preview_card"]["can_start"] is False
+    assert payload["next_command"] == payload["mission_preview_card"]["status_command"]
+    assert "批准执行" not in str(payload["control_registry_card"]["selection"]["next_command"])
+    assert cli.validate_leader_chat_contract(payload) == {"ok": True, "errors": []}
+
+
+def _seed_chat_mission(root: Path, monkeypatch, capsys) -> str:
+    monkeypatch.setattr(cli, "leader_provider", lambda _name: FakeMissionProvider())
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+    assert cli.main(["leader", "chat", "--message", "让 Codex 和 Claude 一人一句接龙百家姓，共8轮"]) == 0
+    return json.loads(capsys.readouterr().out)["mission_preview_card"]["mission_id"]
+
+
+def _completed_chat_workflow(store: StateStore, mission_id: str) -> str:
+    from agentdeck.workflow import authorized_steps
+
+    mission = store.mission_by_id(mission_id)
+    plan = store.plan_by_id(str(mission["plan_id"]))
+    run = store.create_workflow_run(
+        plan_id=str(mission["plan_id"]),
+        plan_hash=str(mission["plan_hash"]),
+        timeout_seconds=180,
+        authorized_steps=authorized_steps(plan),
+    )
+    turns = []
+    for step in range(1, 9):
+        agent_id = "planner" if step % 2 else "reviewer"
+        turns.append({
+            "step": step, "agent_id": agent_id, "status": "completed",
+            "handoff": {
+                "step": step, "agent_id": agent_id, "status": "completed",
+                "summary": f"turn {step}", "verification": "fake", "risks": "none",
+                "next_steps": "continue", "artifact_paths": [],
+                "trace_command": f"agentdeck trace --id rep_{step:012x}",
+            },
+        })
+    store.update_workflow_run(run["run_id"], status="completed", current_step=8, turns=turns)
+    return str(run["run_id"])
+
+
+def test_leader_chat_named_mission_confirmation_embeds_run_card(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+
+    def fake_run(**kwargs):
+        run_id = _completed_chat_workflow(kwargs["store"], kwargs["mission_id"])
+        kwargs["store"].update_mission(
+            kwargs["mission_id"], status="preparing",
+            confirmed_at="2026-07-11T00:00:00+00:00",
+        )
+        kwargs["store"].update_mission(
+            kwargs["mission_id"], status="running", workflow_run_id=run_id,
+        )
+        mission = kwargs["store"].update_mission(kwargs["mission_id"], status="completed", current_step=8)
+        return cli.mission_status_payload(kwargs["config"], kwargs["store"], mission, mode="mission_run", confirmed=True)
+
+    monkeypatch.setattr(cli, "run_mission", fake_run)
+    assert cli.main(["leader", "chat", "--message", f"批准执行 {mission_id}"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "mission_run"
+    assert payload["mission_run_card"]["status"] == "completed"
+    assert payload["intent_card"]["embedded_card"] == "mission_run_card"
+    assert payload["control_registry_card"]["selection"]["next_command"] == payload["mission_run_card"]["status_command"]
+
+
+def test_leader_chat_idless_confirmation_runs_the_only_pending_mission(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    calls: list[str] = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs["mission_id"])
+        run_id = _completed_chat_workflow(kwargs["store"], kwargs["mission_id"])
+        kwargs["store"].update_mission(kwargs["mission_id"], status="preparing", confirmed_at="2026-07-11T00:00:00+00:00")
+        kwargs["store"].update_mission(kwargs["mission_id"], status="running", workflow_run_id=run_id)
+        mission = kwargs["store"].update_mission(kwargs["mission_id"], status="completed", current_step=8)
+        return cli.mission_status_payload(kwargs["config"], kwargs["store"], mission, mode="mission_run", confirmed=True)
+
+    monkeypatch.setattr(cli, "run_mission", fake_run)
+    assert cli.main(["leader", "chat", "--message", "批准执行"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert calls == [mission_id]
+    assert payload["mission_run_card"]["mission_id"] == mission_id
+    assert [turn["mode"] for turn in StateStore(root).load()["chat_turns"]] == ["mission_preview", "mission_run"]
+
+
+@pytest.mark.parametrize("message", ["查看 mission", "查看当前 mission"])
+def test_leader_chat_exact_current_mission_status_forms(tmp_path, monkeypatch, capsys, message) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    before = StateStore(root).mission_by_id(mission_id)
+    assert cli.main(["leader", "chat", "--message", message]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mission_status_card"]["mission_id"] == mission_id
+    assert StateStore(root).mission_by_id(mission_id) == before
+
+
+def test_leader_chat_named_mission_status_selects_exact_record(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    first = _seed_chat_mission(root, monkeypatch, capsys)
+    _seed_chat_mission(root, monkeypatch, capsys)
+    assert cli.main(["leader", "chat", "--message", f"查看 mission {first}"]) == 0
+    assert json.loads(capsys.readouterr().out)["mission_status_card"]["mission_id"] == first
+
+
+def test_leader_chat_mission_status_is_read_only_and_idless_uses_latest(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    before = StateStore(root).mission_by_id(mission_id)
+    assert cli.main(["leader", "chat", "--message", "查看当前 mission"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "mission_status"
+    assert payload["mission_status_card"]["mission_id"] == mission_id
+    assert payload["intent_card"]["embedded_card"] == "mission_status_card"
+    after = StateStore(root).mission_by_id(mission_id)
+    assert after == before
+
+
+def test_leader_chat_idless_confirmation_rejects_ambiguous_pending_missions(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _seed_chat_mission(root, monkeypatch, capsys)
+    _seed_chat_mission(root, monkeypatch, capsys)
+    events_before = StateStore(root).list_events(limit=100)
+    assert cli.main(["leader", "chat", "--message", "批准执行"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "mission selection is ambiguous"
+    assert StateStore(root).list_events(limit=100) == events_before
+
+
+def test_workbench_projects_latest_mission_and_registers_controls_read_only(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    first = _seed_chat_mission(root, monkeypatch, capsys)
+    latest = _seed_chat_mission(root, monkeypatch, capsys)
+    state_before = StateStore(root).state_path.read_bytes()
+    events_before = StateStore(root).events_path.read_bytes()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: (_ for _ in ()).throw(AssertionError("read only")))
+
+    assert cli.main(["workbench"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    card = payload["mission_card"]
+    assert card["mission_id"] == latest
+    assert card["mission_id"] != first
+    mission_controls = [item for item in payload["control_registry"] if item["card"] == "mission_card"]
+    assert [item["kind"] for item in mission_controls] == ["execute", "execute", "inspect", "inspect", "inspect"]
+    assert mission_controls[0]["enabled"] is True
+    assert mission_controls[0]["command"] == card["confirmation_command"]
+    assert mission_controls[1]["enabled"] is False
+    assert StateStore(root).state_path.read_bytes() == state_before
+    assert StateStore(root).events_path.read_bytes() == events_before
+
+
+def test_workbench_has_null_mission_card_without_missions(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["workbench"]) == 0
+    assert json.loads(capsys.readouterr().out)["mission_card"] is None
+
+
+def test_workbench_blocked_pending_mission_uses_first_compact_blocker(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    StateStore(root).update_mission(
+        mission_id, can_start=False, blockers=["claude executable is unavailable"]
+    )
+
+    assert cli.main(["workbench"]) == 0
+    card = json.loads(capsys.readouterr().out)["mission_card"]
+
+    assert card["controls"][0] == {
+        "kind": "execute",
+        "label": "Confirm mission",
+        "command": card["confirmation_command"],
+        "safety": "delegated",
+        "enabled": False,
+        "blocker": "claude executable is unavailable",
+    }
+
+
+@pytest.mark.parametrize(
+    ("status", "blockers", "confirm_enabled", "resume_enabled", "resume_blocker"),
+    [
+        ("pending_confirmation", [], True, False, "mission status is pending_confirmation"),
+        ("stopped", [], False, True, None),
+        ("stopped", ["worker runtime drift"], False, False, "worker runtime drift"),
+        ("completed", [], False, False, "mission status is completed"),
+    ],
+)
+def test_workbench_mission_controls_follow_lifecycle(
+    tmp_path, monkeypatch, capsys, status, blockers, confirm_enabled, resume_enabled, resume_blocker
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    store = StateStore(root)
+    if status != "pending_confirmation":
+        store.update_mission(mission_id, status="preparing", confirmed_at="2026-07-11T00:00:00+00:00")
+        if status == "stopped":
+            store.update_mission(
+                mission_id, status="stopped", stop_reason="timed_out",
+                can_start=not blockers, blockers=blockers,
+            )
+        else:
+            store.update_mission(mission_id, status="running", workflow_run_id="wfr_deadbeefcafe")
+            store.update_mission(mission_id, status="completed", current_step=8)
+    assert cli.main(["workbench"]) == 0
+    card = json.loads(capsys.readouterr().out)["mission_card"]
+    controls = card["controls"]
+    assert [item["kind"] for item in controls] == ["execute", "execute", "inspect", "inspect", "inspect"]
+    assert [item["command"] for item in controls] == [
+        card["confirmation_command"], card["resume_command"], card["status_command"],
+        card["attach_command"], card["workbench_command"],
+    ]
+    assert controls[0]["enabled"] is confirm_enabled
+    assert controls[1]["enabled"] is resume_enabled
+    assert controls[1]["blocker"] == resume_blocker
+    assert all(item["blocker"] is None for item in controls[2:])
+    assert [item["safety"] for item in controls] == ["delegated", "delegated", "inspect", "inspect", "inspect"]
+
+
+def test_controls_filters_and_selects_mission_controls_without_mutation(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _seed_chat_mission(root, monkeypatch, capsys)
+    assert cli.main(["workbench"]) == 0
+    workbench = json.loads(capsys.readouterr().out)
+    mission_items = [item for item in workbench["control_registry"] if item["scope"] == "mission"]
+    assert len(mission_items) == 5
+    assert all(item["card"] == "mission_card" for item in mission_items)
+    assert all(item["control_id"] == cli.control_registry_item_id(item) for item in mission_items)
+    selected = mission_items[0]
+    before = StateStore(root).state_path.read_bytes(), StateStore(root).events_path.read_bytes()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: (_ for _ in ()).throw(AssertionError("controls is read only")))
+    monkeypatch.setattr(cli, "leader_provider", lambda _name: (_ for _ in ()).throw(AssertionError("controls is read only")))
+
+    assert cli.main(["controls", "--scope", "mission", "--card", "mission_card"]) == 0
+    scoped = json.loads(capsys.readouterr().out)
+    assert scoped["items"] == mission_items
+    assert cli.main(["controls", "--scope", "mission", "--query", "Confirm mission"]) == 0
+    queried = json.loads(capsys.readouterr().out)
+    assert [item["control_id"] for item in queried["items"]] == [selected["control_id"]]
+    assert cli.main(["controls", "--control-id", selected["control_id"], "--enabled-only"]) == 0
+    selection = json.loads(capsys.readouterr().out)["selection"]
+    assert selection["selected_control"] == selected
+    assert selection["next_command"] == selected["command"]
+    assert (StateStore(root).state_path.read_bytes(), StateStore(root).events_path.read_bytes()) == before
+
+
+def test_workbench_rejects_duplicate_mission_ids_without_mutation(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    _seed_chat_mission(root, monkeypatch, capsys)
+    store = StateStore(root)
+    state = store.load()
+    state["missions"].append(dict(state["missions"][0]))
+    store.save(state)
+    before = store.state_path.read_bytes(), store.events_path.read_bytes()
+
+    assert cli.main(["workbench"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "missions.items mission_id must be unique" in captured.err
+    assert (store.state_path.read_bytes(), store.events_path.read_bytes()) == before
+
+
+def test_leader_chat_resumes_unique_stopped_mission_and_selects_status_after_completion(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    store = StateStore(root)
+    store.update_mission(mission_id, status="preparing", confirmed_at="2026-07-11T00:00:00+00:00")
+    store.update_mission(mission_id, status="stopped", stop_reason="timed_out")
+
+    def fake_resume(**kwargs):
+        run_id = _completed_chat_workflow(kwargs["store"], kwargs["mission_id"])
+        kwargs["store"].update_mission(kwargs["mission_id"], status="preparing", stop_reason=None)
+        kwargs["store"].update_mission(kwargs["mission_id"], status="running", workflow_run_id=run_id)
+        mission = kwargs["store"].update_mission(kwargs["mission_id"], status="completed", current_step=8)
+        return cli.mission_status_payload(kwargs["config"], kwargs["store"], mission, mode="mission_resume", confirmed=True)
+
+    monkeypatch.setattr(cli, "resume_mission", fake_resume)
+    assert cli.main(["leader", "chat", "--message", "继续 mission"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "mission_resume"
+    assert payload["mission_run_card"]["mission_id"] == mission_id
+    assert payload["next_command"] == payload["mission_run_card"]["status_command"]
+
+
+def test_leader_chat_completed_reconfirmation_is_idempotent(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    store = StateStore(root)
+    run_id = _completed_chat_workflow(store, mission_id)
+    store.update_mission(mission_id, status="preparing", confirmed_at="2026-07-11T00:00:00+00:00")
+    store.update_mission(mission_id, status="running", workflow_run_id=run_id)
+    store.update_mission(mission_id, status="completed", current_step=8)
+    events_before = [event for event in store.list_events(limit=100) if event["event_type"] != "leader_chat_turn"]
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: (_ for _ in ()).throw(AssertionError("no duplicate runtime")))
+    assert cli.main(["leader", "chat", "--message", f"批准执行 {mission_id}"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mission_run_card"]["status"] == "completed"
+    events_after = [event for event in store.list_events(limit=100) if event["event_type"] != "leader_chat_turn"]
+    assert events_after == events_before
+
+
+def test_leader_chat_runtime_exception_recovers_active_mission_and_workflow(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+
+    def exploding_run(**kwargs):
+        store = kwargs["store"]
+        mission = store.update_mission(
+            kwargs["mission_id"], status="preparing", confirmed_at="2026-07-11T00:00:00+00:00"
+        )
+        plan = store.plan_by_id(mission["plan_id"])
+        workflow = store.create_workflow_run(
+            plan_id=mission["plan_id"], plan_hash=mission["plan_hash"],
+            timeout_seconds=mission["timeout_seconds"], authorized_steps=plan["plan"]["steps"],
+        )
+        store.update_mission(
+            kwargs["mission_id"], status="running", workflow_run_id=workflow["run_id"]
+        )
+        raise RuntimeError("SECRET runtime detail")
+
+    monkeypatch.setattr(cli, "run_mission", exploding_run)
+    assert cli.main(["leader", "chat", "--message", f"批准执行 {mission_id}"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mission_run_card"]["status"] == "interrupted"
+    store = StateStore(root)
+    assert store.mission_by_id(mission_id)["status"] == "interrupted"
+    assert store.workflow_run_by_id(payload["mission_run_card"]["workflow_run_id"])["status"] == "interrupted"
+    assert [turn["mode"] for turn in store.load()["chat_turns"]].count("mission_run") == 1
+    assert [event["event_type"] for event in store.list_events(limit=100)].count("leader_chat_turn") == 2
+    assert "SECRET" not in json.dumps(store.load(), ensure_ascii=False)
+    assert "SECRET" not in (store.events_path.read_text(encoding="utf-8"))
+
+
+def test_leader_chat_recovery_failure_is_stable_and_sanitized(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+
+    def exploding_run(**kwargs):
+        kwargs["store"].update_mission(
+            kwargs["mission_id"], status="preparing", confirmed_at="2026-07-11T00:00:00+00:00"
+        )
+        raise RuntimeError("SECRET operation")
+
+    monkeypatch.setattr(cli, "run_mission", exploding_run)
+    monkeypatch.setattr(cli, "interrupt_mission", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("SECRET recovery")))
+    assert cli.main(["leader", "chat", "--message", f"批准执行 {mission_id}"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "mission run failed"
+    assert "SECRET" not in captured.err
+
+
+def test_leader_chat_explicit_current_approval_is_not_mission_confirmation(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    assert cli.main(["leader", "chat", "--message", "批准当前审批"]) == 0
+    assert json.loads(capsys.readouterr().out)["mode"] == "approval"
+
+
+def test_leader_chat_idless_resume_rejects_ambiguous_or_blocked_missions_without_writes(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    ids = [_seed_chat_mission(root, monkeypatch, capsys) for _ in range(2)]
+    store = StateStore(root)
+    for mission_id in ids:
+        store.update_mission(mission_id, status="preparing", confirmed_at="2026-07-11T00:00:00+00:00")
+        store.update_mission(mission_id, status="stopped", stop_reason="timed_out")
+    before = store.state_path.read_bytes(), store.events_path.read_bytes()
+    assert cli.main(["leader", "chat", "--message", "继续 mission"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "mission selection is ambiguous"
+    assert (store.state_path.read_bytes(), store.events_path.read_bytes()) == before
+
+    store.update_mission(ids[0], can_start=False, blockers=["worker runtime drift"])
+    store.update_mission(ids[1], can_start=False, blockers=["worker runtime drift"])
+    before = store.state_path.read_bytes(), store.events_path.read_bytes()
+    assert cli.main(["leader", "chat", "--message", "继续 mission"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "no matching mission"
+    assert (store.state_path.read_bytes(), store.events_path.read_bytes()) == before
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        URLError("CLI_URL_MARKER"),
+        subprocess.TimeoutExpired("CLI_TIMEOUT_MARKER", 1),
+        RuntimeError("CLI_RUNTIME_MARKER"),
+        ValueError("CLI_VALUE_MARKER"),
+    ],
+)
+def test_leader_chat_mission_provider_failures_are_sanitized_and_write_nothing(
+    tmp_path, monkeypatch, capsys, error
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+
+    class FailingMissionProvider:
+        name = "fake"
+
+        def plan(self, _request):
+            raise error
+
+    monkeypatch.setattr(cli, "leader_provider", lambda _name: FailingMissionProvider())
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+
+    assert cli.main(
+        ["leader", "chat", "--message", "让 Codex 和 Claude 一人一句接龙百家姓，共8轮"]
+    ) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "mission preview provider failed"
+    assert "MARKER" not in captured.err
+    state = StateStore(root).load()
+    assert state["plans"] == []
+    assert state["missions"] == []
+    assert state["chat_turns"] == []
+    assert StateStore(root).list_events(limit=10) == []
+
+
+def test_leader_chat_explicit_help_route_is_not_hijacked_by_mission_preview(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    def fail_provider(_name):
+        raise AssertionError("explicit help route must not invoke mission planning")
+
+    monkeypatch.setattr(cli, "leader_provider", fail_provider)
+    assert cli.main(["leader", "chat", "--message", "帮助"] ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "help"
+    assert payload["mission_preview_card"] is None
 
 
 def test_run_task_creates_plan_and_pending_approvals_without_dispatching(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from copy import deepcopy
+from dataclasses import asdict, replace
 import argparse
 import hashlib
 import json
@@ -23,6 +24,7 @@ from .config import (
     write_default_config,
 )
 from .contracts import (
+    PROTOCOL_RUNTIME_CONTRACT_VERSION,
     agent_runtime_contract_response,
     approval_contract_response,
     artifacts_contract_response,
@@ -49,8 +51,11 @@ from .contracts import (
     loop_contract_response,
     release_contract_response,
     memory_contract_response,
+    mission_contract_response,
     plan_board_contract_response,
     project_view_contract_response,
+    protocol_runtime_contract_response,
+    protocol_runtime_example,
     runtime_agent_controls,
     run_loop_contract_response,
     run_loop_all_contract_response,
@@ -78,9 +83,13 @@ from .contracts import (
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_loop_once_contract,
+    validate_mission_preview_contract,
+    validate_mission_run_contract,
+    validate_mission_status_contract,
     validate_plan_board_contract,
     validate_release_contract,
     validate_project_view_contract,
+    validate_protocol_runtime_contract,
     validate_run_loop_contract,
     validate_run_start_contract,
     validate_trace_contract,
@@ -92,6 +101,16 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, utc_now
+from .mission import mission_intent, workbench_mission_card
+from .mission_orchestration import (
+    MissionPreviewError,
+    MissionRunError,
+    create_mission_preview,
+    interrupt_mission,
+    mission_status_payload,
+    resume_mission,
+    run_mission,
+)
 from .orchestration.leader import LeaderOrchestrator
 from .providers import DeepSeekProvider, OpenAICompatibleProvider, leader_provider
 from .dashboard import render_workbench_dashboard
@@ -135,6 +154,9 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         "frontdesk_card",
         "workbench_card",
         "continue_card",
+        "mission_preview_card",
+        "mission_status_card",
+        "mission_run_card",
         "run_start_card",
         "run_progress_card",
         "plan_board_card",
@@ -187,6 +209,10 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
     if embedded_card == "continue_card" and payload.get("inbox_card") is not None:
         secondary_embedded_cards.append("inbox_card")
     if embedded_card == "continue_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card == "mission_preview_card" and payload.get("control_registry_card") is not None:
+        secondary_embedded_cards.append("control_registry_card")
+    if embedded_card in ("mission_status_card", "mission_run_card") and payload.get("control_registry_card") is not None:
         secondary_embedded_cards.append("control_registry_card")
     if embedded_card == "agent_ready_card" and payload.get("startup_preview_card") is not None:
         secondary_embedded_cards.append("startup_preview_card")
@@ -278,9 +304,9 @@ def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
         and payload.get("terminal_session_card") is not None
     ):
         secondary_embedded_cards.append("terminal_session_card")
-    route_source = "provider_plan" if mode in {"plan", "run_start"} else "state_review" if mode in {"review", "summary"} else "local_rule"
+    route_source = "provider_plan" if mode in {"plan", "run_start", "mission_preview"} else "state_review" if mode in {"review", "summary"} else "local_rule"
     action_kind = explanation.get("action_kind")
-    read_only = mode not in {"plan", "run_start", "review", "apply_action"} and action_kind != "approval_create"
+    read_only = mode not in {"plan", "run_start", "review", "apply_action", "mission_preview", "mission_run", "mission_resume"} and action_kind != "approval_create"
     next_command = payload.get("next_command")
     controls: list[dict[str, object]] = []
     if embedded_card == "leader_status_card":
@@ -440,6 +466,14 @@ def _leader_chat_intent_inspect_command(embedded_card: object, payload: dict[str
         return "agentdeck workbench"
     if embedded_card == "continue_card":
         return "agentdeck continue"
+    if embedded_card == "mission_preview_card":
+        card = payload.get("mission_preview_card")
+        command = card.get("status_command") if isinstance(card, dict) else None
+        return str(command) if command else None
+    if embedded_card in ("mission_status_card", "mission_run_card"):
+        card = payload.get(embedded_card)
+        command = card.get("status_command") if isinstance(card, dict) else None
+        return str(command) if command else None
     if embedded_card == "run_start_card":
         return "agentdeck approval list"
     if embedded_card == "run_progress_card":
@@ -663,6 +697,9 @@ def _print_leader_chat_payload_or_error(
     payload.setdefault("plan_board_card", None)
     payload.setdefault("skills_catalog_card", None)
     payload.setdefault("run_loop_preview_card", None)
+    payload.setdefault("mission_preview_card", None)
+    payload.setdefault("mission_status_card", None)
+    payload.setdefault("mission_run_card", None)
     leader_action = payload.get("leader_action")
     payload.setdefault(
         "leader_action_card",
@@ -957,6 +994,43 @@ def status_command(_args: argparse.Namespace) -> int:
     store = StateStore(root)
     payload = _project_view_payload_or_error(config, store)
     if payload is None:
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def protocol_status_command(_args: argparse.Namespace) -> int:
+    root = project_root()
+    try:
+        config = load_config(root)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        print("Run: python -m agentdeck project init", file=sys.stderr)
+        return 1
+    store = StateStore.open_existing(root)
+    try:
+        project_view = _project_view_payload_or_error(config, store)
+    except ValueError as exc:
+        print(f"protocol runtime status failed: {exc}", file=sys.stderr)
+        return 1
+    if project_view is None:
+        return 1
+    payload = {
+        "mode": "protocol_runtime_status",
+        "contract_version": PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        "project": project_view["project"],
+        "runtime_backend": project_view["runtime_backend"],
+        "agent_sessions": project_view["agent_sessions"],
+        "protocol_turns": project_view["protocol_turns"],
+        "transport_updates": project_view["transport_updates"],
+        "permission_requests": project_view["permission_requests"],
+        "controls": deepcopy(protocol_runtime_example()["controls"]),
+    }
+    validation = validate_protocol_runtime_contract(payload)
+    if not validation["ok"]:
+        print("protocol runtime contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
         return 1
     _print_json(payload)
     return 0
@@ -1437,6 +1511,7 @@ def _workbench_snapshot_payload(
     runtime_card = _workbench_runtime_card(project_view)
     agent_ready_card = _agent_ready_card_payload(project_view)
     config = load_config(store.root)
+    mission_card = _workbench_mission_card(project_view, config, store)
     terminal_session_card = _workbench_terminal_session_card(config, runtime_card)
     role_card = _workbench_role_card(project_view)
     worker_lifecycle_card = _workbench_worker_lifecycle_card(project_view)
@@ -1467,6 +1542,7 @@ def _workbench_snapshot_payload(
         "project_view": project_view,
         "leader_actions": project_view.get("leader_actions"),
         "leader_card": leader_card,
+        "mission_card": mission_card,
         "provider_health": provider_health,
         "runtime_card": runtime_card,
         "agent_ready_card": agent_ready_card,
@@ -1506,6 +1582,31 @@ def _workbench_snapshot_payload(
     }
     payload["control_registry"] = _workbench_control_registry(payload)
     return payload
+
+
+def _workbench_mission_card(
+    project_view: dict[str, object], config: ProjectConfig, store: StateStore
+) -> dict[str, object] | None:
+    summary = project_view.get("missions")
+    if not isinstance(summary, dict):
+        return None
+    latest_id = summary.get("latest_id")
+    items = summary.get("items")
+    if not isinstance(latest_id, str) or not isinstance(items, list):
+        return None
+    latest = next(
+        (
+            item for item in reversed(items)
+            if isinstance(item, dict) and item.get("mission_id") == latest_id
+        ),
+        None,
+    )
+    if latest is None:
+        return None
+    try:
+        return workbench_mission_card(latest, config.runtime.session_name)
+    except ValueError:
+        return None
 
 
 def _workbench_run_progress_card(store: StateStore) -> dict[str, object] | None:
@@ -1695,6 +1796,31 @@ def _leader_provider_controls(current_provider: str) -> list[dict[str, object]]:
 
 def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, object]]:
     registry: list[dict[str, object]] = []
+    mission_preview_card = (
+        payload.get("mission_preview_card")
+        if isinstance(payload.get("mission_preview_card"), dict)
+        else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="mission",
+        card="mission_preview_card",
+        agent_id="leader",
+        controls=mission_preview_card.get("controls"),
+    )
+    for mission_card_name in ("mission_status_card", "mission_run_card", "mission_card"):
+        mission_card = (
+            payload.get(mission_card_name)
+            if isinstance(payload.get(mission_card_name), dict)
+            else {}
+        )
+        _append_workbench_control_registry_items(
+            registry,
+            scope="mission",
+            card=mission_card_name,
+            agent_id="leader",
+            controls=mission_card.get("controls"),
+        )
     leader_card = payload.get("leader_card") if isinstance(payload.get("leader_card"), dict) else {}
     _append_workbench_control_registry_items(
         registry,
@@ -4531,6 +4657,17 @@ def contract_project_view_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def contract_protocol_runtime_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "protocol-runtime-schema.md"
+    try:
+        payload = protocol_runtime_contract_response(contract_path, include_example=args.example)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
 def contract_list_command(_args: argparse.Namespace) -> int:
     contract_docs_dir = Path(__file__).resolve().parents[2] / "docs" / "contracts"
     payload = contract_index_response(contract_docs_dir)
@@ -4612,6 +4749,32 @@ def contract_workflow_command(args: argparse.Namespace) -> int:
         Path(__file__).resolve().parents[2] / "docs" / "contracts" / "workflow-schema.md"
     )
     _print_json(workflow_contract_response(contract_path, include_example=args.example))
+    return 0
+
+
+def contract_mission_command(args: argparse.Namespace) -> int:
+    contract_path = _repo_root() / "docs" / "contracts" / "mission-schema.md"
+    payload = mission_contract_response(contract_path, include_example=args.example)
+    if args.example:
+        errors: list[str] = []
+        for name, validator in (
+            ("example_preview", validate_mission_preview_contract),
+            ("example_status", validate_mission_status_contract),
+            ("example_run", validate_mission_run_contract),
+        ):
+            example = payload.get(name)
+            if not isinstance(example, dict):
+                errors.append(f"{name} must be an object")
+                continue
+            result = validator(example)
+            errors.extend(str(error) for error in result["errors"])
+        if errors:
+            print(
+                "Mission contract validation failed: " + "; ".join(errors),
+                file=sys.stderr,
+            )
+            return 1
+    _print_json(payload)
     return 0
 
 
@@ -8691,6 +8854,165 @@ def _chat_wants_approval(message: str) -> bool:
     return any(token in normalized for token in ["approval", "approve", "审批", "批准"])
 
 
+_MISSION_ID_PATTERN = r"mis_[0-9a-f]{12}"
+
+
+def _chat_mission_route(message: str) -> tuple[str, str | None] | None:
+    text = message.strip()
+    match = re.fullmatch(rf"批准执行\s+({_MISSION_ID_PATTERN})", text, re.IGNORECASE)
+    if match:
+        return "run", match.group(1).lower()
+    if re.fullmatch(r"批准执行|批准当前\s*mission", text, re.IGNORECASE):
+        return "run", None
+    match = re.fullmatch(rf"查看\s*(?:当前\s*)?mission(?:\s+({_MISSION_ID_PATTERN}))?", text, re.IGNORECASE)
+    if match:
+        return "status", match.group(1).lower() if match.group(1) else None
+    match = re.fullmatch(rf"继续\s*mission(?:\s+({_MISSION_ID_PATTERN}))?", text, re.IGNORECASE)
+    if match:
+        return "resume", match.group(1).lower() if match.group(1) else None
+    return None
+
+
+def _select_chat_mission(store: StateStore, route: str, mission_id: str | None) -> dict[str, object]:
+    if mission_id is not None:
+        return store.mission_by_id(mission_id)
+    missions = store.list_missions()
+    if route == "status":
+        if not missions:
+            raise LookupError("no mission found")
+        return missions[-1]
+    wanted = (
+        [item for item in missions if item.get("status") == "pending_confirmation"]
+        if route == "run"
+        else [
+            item for item in missions
+            if item.get("status") in ("stopped", "interrupted") and not item.get("blockers")
+        ]
+    )
+    if not wanted:
+        raise LookupError("no matching mission")
+    if len(wanted) != 1:
+        raise RuntimeError("mission selection is ambiguous")
+    return wanted[0]
+
+
+def _leader_chat_mission_response(
+    *,
+    config: ProjectConfig,
+    store: StateStore,
+    message: str,
+    route: str,
+    mission: dict[str, object],
+) -> int:
+    mission_id = str(mission["mission_id"])
+    mode = "mission_status" if route == "status" else "mission_run" if route == "run" else "mission_resume"
+    card_name = "mission_status_card" if route == "status" else "mission_run_card"
+    try:
+        if route == "status":
+            card = mission_status_payload(config, store, mission)
+        elif route == "run":
+            if mission.get("status") == "completed":
+                card = mission_status_payload(
+                    config, store, mission, mode="mission_run", confirmed=True
+                )
+            else:
+                card = run_mission(
+                    config=config,
+                    store=store,
+                    backend=TmuxBackend(),
+                    mission_id=mission_id,
+                )
+        else:
+            card = resume_mission(
+                config=config,
+                store=store,
+                backend=TmuxBackend(),
+                mission_id=mission_id,
+            )
+    except KeyboardInterrupt:
+        card = _mission_execution_recovery_payload(config, store, mission_id, mode)
+        if card is None:
+            print("mission interrupted", file=sys.stderr)
+            return 1
+    except (KeyError, MissionRunError, ValueError):
+        print(f"mission {route} failed", file=sys.stderr)
+        return 1
+    except Exception:
+        card = _mission_execution_recovery_payload(config, store, mission_id, mode)
+        if card is None:
+            print(f"mission {route} failed", file=sys.stderr)
+            return 1
+    next_command = (
+        card["resume_command"] if card.get("can_resume") is True else card["status_command"]
+    )
+    turn = store.record_chat_turn(
+        mode=mode,
+        message=message,
+        plan_id=str(card["plan_id"]),
+        next_command=str(next_command),
+        review=None,
+        action_id=None,
+        action_kind=mode,
+    )
+    store.append_event(
+        EventRecord.create(
+            "leader_chat_turn",
+            {
+                "turn_id": turn["turn_id"],
+                "mode": mode,
+                "plan_id": card["plan_id"],
+                "message_length": len(message),
+            },
+        )
+    )
+    refreshed = _project_view_payload_or_error(config, store)
+    if refreshed is None:
+        return 1
+    registry_items = _workbench_control_registry({card_name: card})
+    selected_id = next(
+        (
+            item.get("control_id")
+            for item in registry_items
+            if item.get("command") == next_command and item.get("enabled") is True
+        ),
+        None,
+    )
+    registry_card = leader_chat_control_registry_card(
+        {"control_registry": registry_items},
+        scope="mission",
+        card=card_name,
+        control_id=str(selected_id) if selected_id else None,
+    )
+    payload = {
+        "ok": True,
+        "turn_id": turn["turn_id"],
+        "mode": mode,
+        "message": message,
+        "project_view": refreshed,
+        "leader_actions": refreshed.get("leader_actions"),
+        "leader_explanation": _leader_chat_explanation(
+            mode, next_command=next_command, project_view=refreshed, result=card
+        ),
+        "plan_id": card["plan_id"],
+        "review": None,
+        "recovery": refreshed.get("recovery"),
+        "next_command": next_command,
+        "leader_action": None,
+        card_name: card,
+        "control_registry_card": registry_card,
+        "continue_card": None,
+        "inbox_card": None,
+        "approval_card": None,
+        "runtime_card": None,
+        "queue_card": None,
+        "operator_card": None,
+        "role_card": None,
+        "ledger_card": None,
+        "workbench_card": None,
+    }
+    return _print_leader_chat_payload_or_error(payload, store, task=message)
+
+
 def _chat_wants_approval_approve(message: str) -> bool:
     normalized = message.strip().lower()
     return any(token in normalized for token in ["approve", "批准", "同意", "通过审批"])
@@ -8905,6 +9227,34 @@ def _leader_chat_explanation(
             "requires_explicit_user": recovery_action.get("requires_explicit_user")
             if isinstance(recovery_action, dict)
             else True,
+        }
+    if mode == "mission_preview":
+        card = result if isinstance(result, dict) else {}
+        can_start = card.get("can_start") is True
+        return {
+            "mode": mode,
+            "summary": "Leader created a bounded Mission preview without touching Worker runtime.",
+            "reason": "human requested a fixed multi-agent Mission",
+            "next_command": next_command,
+            "recommended_action_id": card.get("mission_id"),
+            "action_kind": "mission_preview",
+            "action_status": card.get("status"),
+            "safety": "delegated" if can_start else "inspect",
+            "requires_explicit_user": can_start,
+        }
+    if mode in ("mission_status", "mission_run", "mission_resume"):
+        card = result if isinstance(result, dict) else {}
+        read_only = mode == "mission_status"
+        return {
+            "mode": mode,
+            "summary": "Leader is showing Mission status." if read_only else "Leader applied the explicit Mission control and is showing its persisted result.",
+            "reason": "human requested Mission inspection" if read_only else "human explicitly confirmed or resumed the Mission",
+            "next_command": next_command,
+            "recommended_action_id": card.get("mission_id"),
+            "action_kind": mode,
+            "action_status": card.get("status"),
+            "safety": "inspect" if read_only else "delegated",
+            "requires_explicit_user": not read_only,
         }
     if mode == "run_start":
         run_start_card = result if isinstance(result, dict) else {}
@@ -9696,6 +10046,27 @@ def leader_chat_command(args: argparse.Namespace) -> int:
     project_view = _project_view_payload_or_error(config, store)
     if project_view is None:
         return 1
+    mission_route = _chat_mission_route(args.message)
+    if mission_route is not None:
+        route, explicit_id = mission_route
+        try:
+            mission = _select_chat_mission(store, route, explicit_id)
+        except KeyError:
+            print(f"unknown mission: {explicit_id}", file=sys.stderr)
+            return 1
+        except LookupError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        return _leader_chat_mission_response(
+            config=config,
+            store=store,
+            message=args.message,
+            route=route,
+            mission=mission,
+        )
     if _chat_wants_frontdesk(args.message):
         frontdesk_card = _frontdesk_card(args.message)
         next_command = frontdesk_card["next_command"]
@@ -12604,6 +12975,113 @@ def leader_chat_command(args: argparse.Namespace) -> int:
         }
         return _print_leader_chat_payload_or_error(payload, store, task=args.message)
 
+    if mission_intent(args.message, config) is not None:
+        try:
+            provider_name = _leader_provider_name(config, args.provider)
+            model_label = _leader_model_label(config, args.model)
+            provider = leader_provider(provider_name)
+            mission_config = replace(
+                config,
+                leader=replace(
+                    config.leader,
+                    provider=provider_name,
+                    model=model_label,
+                ),
+            )
+            mission_preview_card = create_mission_preview(
+                config=mission_config,
+                store=store,
+                provider=provider,
+                user_message=args.message,
+                timeout_seconds=180,
+            )
+        except MissionPreviewError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        except Exception:
+            print("mission preview failed", file=sys.stderr)
+            return 1
+        next_command = (
+            mission_preview_card["confirmation_command"]
+            if mission_preview_card["can_start"] is True
+            else mission_preview_card["status_command"]
+        )
+        turn = store.record_chat_turn(
+            mode="mission_preview",
+            message=args.message,
+            plan_id=str(mission_preview_card["plan_id"]),
+            next_command=str(next_command),
+            provider=str(mission_preview_card["provider"]),
+            model=str(mission_preview_card["model"]),
+            review=None,
+            action_id=None,
+            action_kind="mission_preview",
+        )
+        store.append_event(
+            EventRecord.create(
+                "leader_chat_turn",
+                {
+                    "turn_id": turn["turn_id"],
+                    "mode": "mission_preview",
+                    "plan_id": mission_preview_card["plan_id"],
+                    "message_length": len(args.message),
+                },
+            )
+        )
+        refreshed_project_view = _project_view_payload_or_error(config, store)
+        if refreshed_project_view is None:
+            return 1
+        registry_items = _workbench_control_registry(
+            {"mission_preview_card": mission_preview_card}
+        )
+        next_control_id = next(
+            (
+                item.get("control_id")
+                for item in registry_items
+                if isinstance(item, dict)
+                and item.get("card") == "mission_preview_card"
+                and item.get("command") == next_command
+            ),
+            None,
+        )
+        control_registry_card = leader_chat_control_registry_card(
+            {"control_registry": registry_items},
+            scope="mission",
+            card="mission_preview_card",
+            control_id=str(next_control_id) if next_control_id else None,
+        )
+        payload = {
+            "ok": True,
+            "turn_id": turn["turn_id"],
+            "mode": "mission_preview",
+            "message": args.message,
+            "project_view": refreshed_project_view,
+            "leader_actions": refreshed_project_view.get("leader_actions"),
+            "leader_explanation": _leader_chat_explanation(
+                "mission_preview",
+                next_command=next_command,
+                project_view=refreshed_project_view,
+                result=mission_preview_card,
+            ),
+            "plan_id": mission_preview_card["plan_id"],
+            "review": None,
+            "recovery": refreshed_project_view.get("recovery"),
+            "next_command": next_command,
+            "leader_action": None,
+            "mission_preview_card": mission_preview_card,
+            "control_registry_card": control_registry_card,
+            "continue_card": None,
+            "inbox_card": None,
+            "approval_card": None,
+            "runtime_card": None,
+            "queue_card": None,
+            "operator_card": None,
+            "role_card": None,
+            "ledger_card": None,
+            "workbench_card": None,
+        }
+        return _print_leader_chat_payload_or_error(payload, store, task=args.message)
+
     role_assignment_intent = _chat_role_assignment_intent(args.message, config)
     if role_assignment_intent is not None:
         role_agent_id, role, role_prompt = role_assignment_intent
@@ -14201,6 +14679,92 @@ def workflow_resume_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def mission_status_command(args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        mission = store.mission_by_id(args.mission_id)
+        payload = mission_status_payload(config, store, mission)
+    except KeyError:
+        print(f"unknown mission: {args.mission_id}", file=sys.stderr)
+        return 1
+    except (MissionRunError, ValueError):
+        print("mission status invalid", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def _mission_execution_recovery_payload(
+    config: ProjectConfig,
+    store: StateStore,
+    mission_id: str,
+    mode: str,
+) -> dict[str, object] | None:
+    """Persist an active Mission interruption and return its sanitized run projection."""
+    try:
+        current = store.mission_by_id(mission_id)
+        if current.get("status") not in {"preparing", "running"}:
+            return None
+        stopped = interrupt_mission(store, mission_id)
+        return mission_status_payload(
+            config, store, stopped, mode=mode, confirmed=True
+        )
+    except Exception:
+        return None
+
+
+def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int:
+    action = "resume" if resume else "run"
+    if not args.confirm:
+        print(f"mission {action} requires --confirm", file=sys.stderr)
+        return 1
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    operation = resume_mission if resume else run_mission
+    try:
+        payload = operation(
+            config=config,
+            store=store,
+            backend=TmuxBackend(),
+            mission_id=args.mission_id,
+        )
+    except KeyboardInterrupt:
+        payload = _mission_execution_recovery_payload(
+            config, store, args.mission_id,
+            "mission_resume" if resume else "mission_run",
+        )
+        if payload is None:
+            print("mission interrupted", file=sys.stderr)
+            return 1
+    except KeyError:
+        print(f"unknown mission: {args.mission_id}", file=sys.stderr)
+        return 1
+    except (MissionRunError, ValueError):
+        print(f"mission {action} failed", file=sys.stderr)
+        return 1
+    except Exception:
+        payload = _mission_execution_recovery_payload(
+            config, store, args.mission_id,
+            "mission_resume" if resume else "mission_run",
+        )
+        if payload is None:
+            print(f"mission {action} failed", file=sys.stderr)
+            return 1
+    _print_json(payload)
+    return 0
+
+
+def mission_run_command(args: argparse.Namespace) -> int:
+    return _mission_execution_command(args, resume=False)
+
+
+def mission_resume_command(args: argparse.Namespace) -> int:
+    return _mission_execution_command(args, resume=True)
+
+
 def _run_loop_all(config: ProjectConfig, store: StateStore) -> int:
     """Round-robin one wave over all active plans (shared budget, skip-on-contention)."""
     policy = config.autonomous
@@ -14417,6 +14981,13 @@ def build_parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser("status", help="Show project configuration and runtime state")
     status.set_defaults(func=status_command)
 
+    protocol = subparsers.add_parser("protocol", help="Inspect protocol runtime state")
+    protocol_subparsers = protocol.add_subparsers(dest="protocol_command", required=True)
+    protocol_status = protocol_subparsers.add_parser(
+        "status", help="Show read-only protocol runtime status"
+    )
+    protocol_status.set_defaults(func=protocol_status_command)
+
     events = subparsers.add_parser("events", help="Show recent audit events")
     events.add_argument("--limit", type=int, default=20, help="Number of recent events to show")
     events.add_argument("--since", default=None, help="Show audit events after this event id")
@@ -14476,6 +15047,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--confirm", action="store_true", help="Confirm resuming the frozen workflow"
     )
     workflow_resume.set_defaults(func=workflow_resume_command)
+
+    mission = subparsers.add_parser(
+        "mission", help="Inspect, run, and resume frozen natural-language missions"
+    )
+    mission_subparsers = mission.add_subparsers(dest="mission_command")
+    mission_status = mission_subparsers.add_parser("status", help="Show persisted mission status")
+    mission_status.add_argument("--mission-id", required=True, help="Mission id")
+    mission_status.set_defaults(func=mission_status_command)
+    mission_run = mission_subparsers.add_parser("run", help="Run a confirmed frozen mission")
+    mission_run.add_argument("--mission-id", required=True, help="Mission id")
+    mission_run.add_argument("--confirm", action="store_true", help="Confirm mission execution")
+    mission_run.set_defaults(func=mission_run_command)
+    mission_resume = mission_subparsers.add_parser("resume", help="Resume a stopped frozen mission")
+    mission_resume.add_argument("--mission-id", required=True, help="Mission id")
+    mission_resume.add_argument("--confirm", action="store_true", help="Confirm mission resume")
+    mission_resume.set_defaults(func=mission_resume_command)
 
     release = subparsers.add_parser(
         "release", help="Explicitly record a round release once the review gate is ready"
@@ -14704,6 +15291,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_project_view.add_argument("--example", action="store_true", help="Include a GUI-ready ProjectView example")
     contract_project_view.set_defaults(func=contract_project_view_command)
+    contract_protocol_runtime = contract_subparsers.add_parser(
+        "protocol-runtime",
+        help="Show protocol runtime status contract discovery metadata",
+    )
+    contract_protocol_runtime.add_argument(
+        "--example", action="store_true", help="Include a GUI-ready protocol runtime example"
+    )
+    contract_protocol_runtime.set_defaults(func=contract_protocol_runtime_command)
     contract_leader_chat = contract_subparsers.add_parser(
         "leader-chat",
         help="Show Leader chat response contract discovery metadata",
@@ -14773,6 +15368,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--example", action="store_true", help="Include GUI-ready workflow examples"
     )
     contract_workflow.set_defaults(func=contract_workflow_command)
+    contract_mission = contract_subparsers.add_parser(
+        "mission", help="Show natural-language mission contract discovery metadata"
+    )
+    contract_mission.add_argument(
+        "--example", action="store_true", help="Include GUI-ready mission examples"
+    )
+    contract_mission.set_defaults(func=contract_mission_command)
     contract_demo = contract_subparsers.add_parser("demo", help="Show the golden demo contract")
     contract_demo.add_argument("--example", action="store_true", help="Include a GUI-ready golden demo example")
     contract_demo.set_defaults(func=contract_demo_command)

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
+
+import pytest
+
+from agentdeck.mission import mission_commands
 
 from agentdeck.contracts import (
     AGENT_RUNTIME_AGENT_ITEM_FIELDS,
@@ -48,6 +53,8 @@ from agentdeck.contracts import (
     PROJECT_VIEW_PLAN_ITEM_FIELDS,
     PROJECT_VIEW_JOB_ITEM_FIELDS,
     PROJECT_VIEW_MESSAGE_ITEM_FIELDS,
+    PROJECT_VIEW_MISSIONS_FIELDS,
+    PROJECT_VIEW_MISSION_ITEM_FIELDS,
     PROJECT_VIEW_ARTIFACT_ITEM_FIELDS,
     PROJECT_VIEW_RECOVERY_PENDING_FIELDS,
     PROJECT_VIEW_RECOMMENDED_ACTION_FIELDS,
@@ -128,6 +135,7 @@ from agentdeck.contracts import (
     loop_contract_payload,
     loop_contract_response,
     loop_once_example,
+    mission_example,
     learning_review_contract_payload,
     learning_review_contract_response,
     learning_review_example,
@@ -189,6 +197,197 @@ from agentdeck.contracts import (
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
 
 
+def test_protocol_runtime_contract_discovery_and_example(tmp_path: Path) -> None:
+    from agentdeck.contracts import (
+        PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        PROTOCOL_RUNTIME_RESPONSE_FIELDS,
+        protocol_runtime_contract_response,
+        protocol_runtime_example,
+        validate_protocol_runtime_contract,
+    )
+
+    contract_path = tmp_path / "protocol-runtime-schema.md"
+    contract_path.write_text("# Protocol Runtime Contract\n", encoding="utf-8")
+    payload = protocol_runtime_contract_response(contract_path, include_example=True)
+    example = protocol_runtime_example()
+
+    assert payload["schema_version"] == PROJECT_VIEW_SCHEMA_VERSION
+    assert payload["contract_version"] == PROTOCOL_RUNTIME_CONTRACT_VERSION == "protocol-runtime/v1"
+    assert payload["status_command"] == "agentdeck protocol status"
+    assert payload["project_view_contract"] == "agentdeck contract project-view"
+    assert payload["workbench_contract"] == "agentdeck contract workbench"
+    assert payload["transport_kinds"] == ["acp", "acp-adapter", "tmux", "api"]
+    assert payload["response_fields"] == list(PROTOCOL_RUNTIME_RESPONSE_FIELDS)
+    assert payload["example_protocol_runtime"] == example
+    assert payload["example_response_fields"] == payload["response_fields"]
+    assert set(example) == set(PROTOCOL_RUNTIME_RESPONSE_FIELDS)
+    assert example["project"] == "example"
+    assert example["runtime_backend"] == "tmux"
+    assert validate_protocol_runtime_contract(example) == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (lambda p: p.pop("agent_sessions"), "missing protocol runtime field: agent_sessions"),
+        (lambda p: p["agent_sessions"].update({"count": True}), "agent_sessions.count must be a non-negative integer"),
+        (lambda p: p["transport_updates"]["items"][0].update({"sequence": True}), "transport_updates.items[0].sequence has invalid type"),
+        (lambda p: p["protocol_turns"]["items"][0].update({"state": "bogus"}), "protocol_turns.items[0].state is invalid"),
+        (lambda p: p["transport_updates"]["items"][0].update({"payload": "secret"}), "transport_updates.items[0] has unexpected field: payload"),
+        (lambda p: p["permission_requests"]["items"][0].update({"target": "secret"}), "permission_requests.items[0] has unexpected field: target"),
+        (lambda p: p["permission_requests"]["items"][0].update({"decision": "approve"}), "pending permission_requests items must have decision null"),
+        (lambda p: p["transport_updates"]["items"][0].update({"session_id": "ags_mismatch"}), "transport_updates.items[0].session_id must match protocol_turns"),
+        (lambda p: p["controls"][0].update({"command": "agentdeck protocol mutate"}), "controls[0].command is not allowed"),
+    ],
+)
+def test_protocol_runtime_validator_rejects_drift(mutate, expected: str) -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    mutate(payload)
+    result = validate_protocol_runtime_contract(payload)
+    assert expected in result["errors"]
+
+
+def test_protocol_runtime_accepts_versioned_transport_kind() -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    payload["agent_sessions"]["items"][0]["transport"] = "acp-adapter"
+    assert validate_protocol_runtime_contract(payload) == {"ok": True, "errors": []}
+
+
+def test_protocol_runtime_controls_require_each_exact_command_once() -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    payload["controls"].append(deepcopy(payload["controls"][0]))
+
+    result = validate_protocol_runtime_contract(payload)
+
+    assert "controls must contain exactly 3 items" in result["errors"]
+    assert "controls commands must be unique" in result["errors"]
+
+
+@pytest.mark.parametrize("bad_command", [[], {}, {"hostile"}])
+def test_protocol_runtime_controls_reject_non_string_commands_without_raising(bad_command) -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    payload["controls"][0]["command"] = bad_command
+
+    result = validate_protocol_runtime_contract(payload)
+
+    assert "controls[0].command must be a string" in result["errors"]
+
+
+def test_protocol_runtime_controls_do_not_invoke_hostile_command_hooks() -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    class HostileCommand:
+        called = False
+
+        def __hash__(self):
+            type(self).called = True
+            raise AssertionError("hash hook must not run")
+
+        def __eq__(self, other):
+            type(self).called = True
+            raise AssertionError("equality hook must not run")
+
+    payload = protocol_runtime_example()
+    payload["controls"][0]["command"] = HostileCommand()
+    result = validate_protocol_runtime_contract(payload)
+
+    assert "controls[0].command must be a string" in result["errors"]
+    assert HostileCommand.called is False
+
+
+def test_protocol_runtime_accepts_bounded_children_with_parent_outside_window() -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    session_template = payload["agent_sessions"]["items"][0]
+    payload["agent_sessions"] = {
+        "count": 21,
+        "by_state": {"ready": 21},
+        "items": [
+            {
+                **deepcopy(session_template),
+                "session_id": f"ags_window_{index:02d}",
+                "created_at": f"2026-07-04T00:01:{index:02d}+00:00",
+            }
+            for index in range(20)
+        ],
+    }
+    payload["protocol_turns"]["items"][0]["session_id"] = "ags_outside_window"
+    turn_template = payload["protocol_turns"]["items"][0]
+    payload["protocol_turns"] = {
+        "count": 21,
+        "by_state": {"waiting_permission": 21},
+        "items": [
+            {
+                **deepcopy(turn_template),
+                "turn_id": f"trn_window_{index:02d}",
+                "session_id": f"ags_window_{index:02d}",
+                "created_at": f"2026-07-04T00:02:{index:02d}+00:00",
+            }
+            for index in range(20)
+        ],
+    }
+    payload["transport_updates"]["items"][0].update(
+        {"session_id": "ags_outside_window", "turn_id": "trn_outside_window"}
+    )
+    payload["permission_requests"]["items"][0].update(
+        {"session_id": "ags_outside_window", "turn_id": "trn_outside_window"}
+    )
+
+    assert validate_protocol_runtime_contract(payload) == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (
+            lambda p: p["protocol_turns"]["items"][0].update({"session_id": "ags_missing"}),
+            "protocol_turns.items[0].session_id must reference complete agent_sessions",
+        ),
+        (
+            lambda p: p["transport_updates"]["items"][0].update({"session_id": "ags_missing"}),
+            "transport_updates.items[0].session_id must reference complete agent_sessions",
+        ),
+        (
+            lambda p: p["transport_updates"]["items"][0].update({"turn_id": "trn_missing"}),
+            "transport_updates.items[0].turn_id must reference complete protocol_turns",
+        ),
+        (
+            lambda p: p["permission_requests"]["items"][0].update({"session_id": "ags_missing"}),
+            "permission_requests.items[0].session_id must reference complete agent_sessions",
+        ),
+        (
+            lambda p: p["permission_requests"]["items"][0].update({"turn_id": "trn_missing"}),
+            "permission_requests.items[0].turn_id must reference complete protocol_turns",
+        ),
+    ],
+)
+def test_protocol_runtime_complete_windows_require_parent_references(mutate, expected: str) -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    mutate(payload)
+
+    assert expected in validate_protocol_runtime_contract(payload)["errors"]
+
+
+def test_protocol_runtime_rejects_unsupported_transport() -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    payload["agent_sessions"]["items"][0]["transport"] = "telepathy"
+
+    assert "agent_sessions.items[0].transport is invalid" in validate_protocol_runtime_contract(payload)["errors"]
+
+
 def _attach_leader_status_registry_card(payload: dict[str, object], status_card: dict[str, object]) -> None:
     workbench_card = workbench_example()
     refresh_control_id = next(
@@ -240,6 +439,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "run-loop-schema.md",
         "run-loop-all-schema.md",
         "workflow-schema.md",
+        "mission-schema.md",
         "demo-schema.md",
         "plans-schema.md",
         "release-schema.md",
@@ -249,6 +449,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "memory-schema.md",
         "learning-review-schema.md",
         "agent-runtime-schema.md",
+        "protocol-runtime-schema.md",
         "leader-chat-schema.md",
         "leader-status-schema.md",
         "leader-actions-schema.md",
@@ -270,7 +471,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 28
+    assert payload["count"] == 30
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -282,6 +483,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "run-loop",
         "run-loop-all",
         "workflow",
+        "mission",
         "demo",
         "plans",
         "release",
@@ -291,6 +493,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "memory",
         "learning-review",
         "agent-runtime",
+        "protocol-runtime",
         "leader-chat",
         "leader-status",
         "leader-actions",
@@ -519,6 +722,9 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
     }
     assert example["item_count"] == len(example["items"])
     assert example["group_count"] == len(example["groups"])
+    mission_items = [item for item in example["items"] if item["scope"] == "mission"]
+    assert len(mission_items) == 5
+    assert all(item["card"] == "mission_card" for item in mission_items)
     assert example["selection"] == {
         "requested_control_id": None,
         "matched": False,
@@ -527,9 +733,15 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
         "blocker": None,
         "next_command": None,
     }
-    assert example["items"][0]["control_id"].startswith("leader:leader_card:chat:leader:")
+    leader_chat_item = next(
+        item for item in example["items"]
+        if item["scope"] == "leader" and item["card"] == "leader_card" and item["kind"] == "chat"
+    )
+    assert leader_chat_item["control_id"].startswith("leader:leader_card:chat:leader:")
     assert example["groups"][0]["items"][0]["control_id"] == example["items"][0]["control_id"]
-    assert example["groups"][0] == {
+    leader_group = next(group for group in example["groups"] if group["group_id"] == "leader:leader_card")
+    leader_items = [item for item in example["items"] if item["scope"] == "leader" and item["card"] == "leader_card"]
+    assert leader_group == {
         "group_id": "leader:leader_card",
         "scope": "leader",
         "card": "leader_card",
@@ -537,7 +749,7 @@ def test_controls_contract_response_includes_example_without_drift(tmp_path: Pat
         "item_count": 7,
         "enabled_count": 5,
         "disabled_count": 2,
-        "items": example["items"][:7],
+        "items": leader_items,
     }
     terminal_group = next(group for group in example["groups"] if group["group_id"] == "terminal_session:terminal_session_card")
     assert terminal_group["label"] == "Terminal session"
@@ -984,6 +1196,23 @@ def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) 
         "blocker",
     ]
     assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
+    assert payload["transport_capability_fields"] == [
+        "structured_sessions",
+        "streaming_updates",
+        "structured_tools",
+        "permission_requests",
+        "resume_session",
+        "observable_terminal",
+    ]
+    assert payload["tmux_fallback_capabilities"] == {
+        "structured_sessions": False,
+        "streaming_updates": False,
+        "structured_tools": False,
+        "permission_requests": False,
+        "resume_session": False,
+        "observable_terminal": True,
+    }
+    assert not set(payload["transport_capability_fields"]) & set(payload["runtime_control_fields"])
     assert payload["workbench_contract"] == "agentdeck contract workbench"
 
 
@@ -1046,6 +1275,8 @@ def test_project_view_contract_payload_is_reusable_without_cli(tmp_path: Path) -
     assert payload["job_item_fields"] == list(PROJECT_VIEW_JOB_ITEM_FIELDS)
     assert payload["reply_item_fields"] == list(PROJECT_VIEW_REPLY_ITEM_FIELDS)
     assert payload["artifact_item_fields"] == list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS)
+    assert payload["missions_fields"] == list(PROJECT_VIEW_MISSIONS_FIELDS)
+    assert payload["mission_item_fields"] == list(PROJECT_VIEW_MISSION_ITEM_FIELDS)
 
 
 def test_artifacts_contract_payload_is_reusable_without_cli(tmp_path: Path) -> None:
@@ -1113,9 +1344,62 @@ def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> No
     assert set(payload["job_item_fields"]) == set(example["jobs"]["items"][0])
     assert set(payload["reply_item_fields"]) == set(example["replies"]["items"][0])
     assert set(payload["artifact_item_fields"]) == set(example["artifacts"]["items"][0])
+    assert set(payload["missions_fields"]) == set(example["missions"])
+    assert set(payload["mission_item_fields"]) == set(example["missions"]["items"][0])
     assert example["leader_actions"]["recommended_action_id"] == "act_example"
     assert example["leader_actions"]["items"][0]["is_recommended"] is True
     assert example["recovery"]["recommended_action"]["target_id"] == "act_example"
+    for summary, group in (("agent_sessions", "by_state"), ("protocol_turns", "by_state"), ("transport_updates", "by_kind"), ("permission_requests", "by_status")):
+        assert payload[f"{summary}_fields"] == list(example[summary])
+        assert payload[f"{summary[:-1] if summary.endswith('s') else summary}_item_fields"] == list(example[summary]["items"][0])
+        assert example[summary]["count"] == 1
+        assert example[summary][group]
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["agent_sessions", "protocol_turns", "transport_updates", "permission_requests"],
+)
+def test_validate_project_view_contract_requires_protocol_summary_fields(field: str) -> None:
+    payload = project_view_example()
+    payload.pop(field)
+
+    result = validate_project_view_contract(payload)
+
+    assert f"missing top-level field: {field}" in result["errors"]
+
+
+@pytest.mark.parametrize(("mutate", "expected"), [
+    (lambda p: p["agent_sessions"].update({"count": True}), "agent_sessions.count must be a non-negative integer"),
+    (lambda p: p["protocol_turns"].update({"by_state": {"created": -1}}), "protocol_turns.by_state values must be non-negative integers"),
+    (lambda p: p["transport_updates"]["items"][0].update({"payload": {}}), "transport_updates.items[0] has unexpected field: payload"),
+    (lambda p: p["permission_requests"]["items"][0].update({"target": "secret"}), "permission_requests.items[0] has unexpected field: target"),
+    (lambda p: p["agent_sessions"]["items"][0].update({"native_session_id": "secret"}), "agent_sessions.items[0] has unexpected field: native_session_id"),
+    (lambda p: p["protocol_turns"]["items"][0].update({"state": "bogus"}), "protocol_turns.items[0].state is invalid"),
+])
+def test_validate_project_view_contract_strict_protocol_summary_matrix(mutate, expected) -> None:
+    payload = project_view_example()
+    mutate(payload)
+    result = validate_project_view_contract(payload)
+    assert expected in result["errors"]
+
+
+@pytest.mark.parametrize(("mutate", "expected"), [
+    (lambda p: p["agent_sessions"].update({"count": 999}), "agent_sessions.count must equal sum(by_state)"),
+    (lambda p: p["protocol_turns"].update({"by_state": {"created": 1}}), "protocol_turns items distribution must match by_state"),
+    (lambda p: p["permission_requests"].update({"pending_count": 0}), "permission_requests.pending_count must equal by_status pending count"),
+    (lambda p: p["transport_updates"].update({"by_kind": {"unknown": 1}}), "transport_updates.by_kind has invalid key: unknown"),
+    (lambda p: p["agent_sessions"].update({"items": []}), "agent_sessions.items length must equal min(count, 20)"),
+    (lambda p: p["protocol_turns"]["items"].append(dict(p["protocol_turns"]["items"][0])), "protocol_turns.items contains duplicate turn_id: trn_example"),
+    (lambda p: p["permission_requests"]["items"].extend([{**p["permission_requests"]["items"][0], "permission_id": "prm_aaa", "created_at": "2026-07-03T00:00:00+00:00"}]), "permission_requests.items must be sorted by created_at and permission_id"),
+])
+def test_validate_project_view_protocol_summary_semantics(mutate, expected) -> None:
+    payload = project_view_example()
+    mutate(payload)
+
+    result = validate_project_view_contract(payload)
+
+    assert expected in result["errors"]
 
 
 def test_project_view_contract_response_matches_cli_shape(tmp_path: Path) -> None:
@@ -1178,6 +1462,127 @@ def test_project_view_contract_response_includes_example_without_drift(tmp_path:
     assert set(payload["example_reply_item_fields"]) == set(example["replies"]["items"][0])
     assert payload["example_artifact_item_fields"] == payload["artifact_item_fields"]
     assert set(payload["example_artifact_item_fields"]) == set(example["artifacts"]["items"][0])
+    assert payload["example_missions_fields"] == payload["missions_fields"]
+    assert set(payload["example_missions_fields"]) == set(example["missions"])
+    assert payload["example_mission_item_fields"] == payload["mission_item_fields"]
+    assert set(payload["example_mission_item_fields"]) == set(example["missions"]["items"][0])
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_error"),
+    [
+        (
+            lambda payload: payload["missions"].pop("latest_id"),
+            "missing missions field: latest_id",
+        ),
+        (
+            lambda payload: payload["missions"].update({"count": 2}),
+            "missions.count must equal len(missions.items)",
+        ),
+        (
+            lambda payload: payload["missions"].update({"by_status": {"running": 1}}),
+            "missions.by_status must match mission item statuses",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update(
+                {"schema_version": "mission/v0"}
+            ),
+            "missions.items[0].schema_version must be mission/v1",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update({"selected_agents": {}}),
+            "missions.items[0].selected_agents must be a list",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update({"startup_actions": {}}),
+            "missions.items[0].startup_actions must be a list",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update({"command": "raw secret"}),
+            "missions.items[0] must not contain raw field: command",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0]["selected_agents"][0].update(
+                {"command": "raw secret"}
+            ),
+            "missions.items[0].selected_agents[0] must not contain raw field: command",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0]["leader_backend"].update(
+                {"credentials": {"api_key": "leader-secret"}}
+            ),
+            "missions.items[0].leader_backend.credentials is forbidden",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0]["selected_agents"][0].update(
+                {"blocker": {"full_prompt": "selected-secret"}}
+            ),
+            "missions.items[0].selected_agents[0].blocker must be a string or null",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0]["startup_actions"][0].update(
+                {"effective_model": {"credentials": "startup-secret"}}
+            ),
+            "missions.items[0].startup_actions[0].effective_model must be a string or null",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update(
+                {"mission_id": "mis_bad; rm -rf /"}
+            ),
+            "missions.items[0].mission_id must match canonical mission id grammar",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update(
+                {"status_command": "agentdeck mission status --mission-id mis_other"}
+            ),
+            "missions.items[0].status_command must match canonical mission command",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0]["leader_backend"].update(
+                {"provider": "codex-cli", "model": "gpt-5.5"}
+            ),
+            "missions.items[0].leader_backend provider/model must match mission provider/model",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update(
+                {"selected_agents": [{"agent_id": "planner"}]}
+            ),
+            "missions.items[0].selected_agents[0] missing required compact field: provider",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update(
+                {"startup_actions": [{"agent_id": "planner", "action": "spawn"}]}
+            ),
+            "missions.items[0].startup_actions[0] missing required compact field: runtime_status",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update(
+                {"can_start": True, "selected_agents": [], "startup_actions": []}
+            ),
+            "missions.items[0].can_start requires at least two valid selected agents and startup actions",
+        ),
+        (
+            lambda payload: payload["missions"]["items"][0].update(
+                {"can_start": True, "blockers": ["worker unavailable"]}
+            ),
+            "missions.items[0].can_start requires empty blockers",
+        ),
+        (
+            lambda payload: payload["missions"].update({"count": -1}),
+            "missions.count must be a non-negative integer",
+        ),
+    ],
+)
+def test_validate_project_view_contract_rejects_mission_summary_drift(
+    mutate, expected_error
+) -> None:
+    payload = project_view_example()
+    mutate(payload)
+
+    result = validate_project_view_contract(payload)
+
+    assert result["ok"] is False
+    assert expected_error in result["errors"]
 
 
 def test_validate_project_view_contract_accepts_example() -> None:
@@ -1387,6 +1792,9 @@ def test_leader_chat_contract_payload_is_reusable_without_cli(tmp_path: Path) ->
     assert payload["contract_path"] == str(contract_path)
     assert payload["contract_exists"] is True
     assert payload["response_fields"] == list(LEADER_CHAT_RESPONSE_FIELDS)
+    from agentdeck.contracts import MISSION_STATUS_RESPONSE_FIELDS, MISSION_RUN_RESPONSE_FIELDS
+    assert payload["mission_status_card_fields"] == list(MISSION_STATUS_RESPONSE_FIELDS)
+    assert payload["mission_run_card_fields"] == list(MISSION_RUN_RESPONSE_FIELDS)
     assert payload["explanation_fields"] == list(LEADER_CHAT_EXPLANATION_FIELDS)
     assert payload["intent_card_fields"] == list(LEADER_CHAT_INTENT_CARD_FIELDS)
     assert payload["intent_control_fields"] == list(LEADER_CHAT_INTENT_CONTROL_FIELDS)
@@ -1766,6 +2174,10 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
 
     payload = workbench_contract_response(contract_path, include_example=True)
     example = workbench_example()
+    from agentdeck.contracts import WORKBENCH_MISSION_CARD_FIELDS
+    assert payload["mission_card_fields"] == list(WORKBENCH_MISSION_CARD_FIELDS)
+    assert isinstance(example["mission_card"], dict)
+    assert validate_workbench_contract(example) == {"ok": True, "errors": []}
     lineage_card_fields = [
         "mode",
         "title",
@@ -1961,7 +2373,11 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
     assert example["control_mode_card"]["available_modes"][2]["enabled"] is True
     assert example["control_mode_card"]["available_modes"][2]["blocker"] is None
     assert set(example["control_registry"][0]) == set(WORKBENCH_CONTROL_REGISTRY_ITEM_FIELDS)
-    assert example["control_registry"][0] == {
+    leader_chat_control = next(
+        item for item in example["control_registry"]
+        if item["scope"] == "leader" and item["card"] == "leader_card" and item["kind"] == "chat"
+    )
+    assert leader_chat_control == {
         "scope": "leader",
         "card": "leader_card",
         "kind": "chat",
@@ -1971,9 +2387,9 @@ def test_workbench_contract_response_includes_example_without_drift(tmp_path: Pa
         "enabled": False,
         "blocker": "requires message text",
         "agent_id": "leader",
-        "control_id": example["control_registry"][0]["control_id"],
+        "control_id": leader_chat_control["control_id"],
     }
-    assert example["control_registry"][0]["control_id"].startswith("leader:leader_card:chat:leader:")
+    assert leader_chat_control["control_id"].startswith("leader:leader_card:chat:leader:")
     assert {
         (item["scope"], item["card"], item["kind"], item["agent_id"])
         for item in example["control_registry"]
@@ -5157,6 +5573,500 @@ def test_workflow_contract_response_exposes_examples(tmp_path: Path) -> None:
     assert payload["example_run"]["confirmed"] is True
 
 
+def test_mission_contract_discovery_and_examples(tmp_path: Path) -> None:
+    from agentdeck.contracts import (
+        MISSION_PREVIEW_RESPONSE_FIELDS,
+        MISSION_RUN_HANDOFF_FIELDS,
+        MISSION_RUN_RESPONSE_FIELDS,
+        MISSION_RUN_TURN_FIELDS,
+        MISSION_SELECTED_AGENT_FIELDS,
+        MISSION_STATUS_RESPONSE_FIELDS,
+        mission_contract_response,
+        validate_mission_preview_contract,
+        validate_mission_run_contract,
+        validate_mission_status_contract,
+    )
+
+    payload = mission_contract_response(
+        tmp_path / "mission-schema.md", include_example=True
+    )
+
+    assert payload["name"] == "mission"
+    assert payload["preview_response_fields"] == list(MISSION_PREVIEW_RESPONSE_FIELDS)
+    assert payload["status_response_fields"] == list(MISSION_STATUS_RESPONSE_FIELDS)
+    assert payload["run_response_fields"] == list(MISSION_RUN_RESPONSE_FIELDS)
+    assert payload["run_turn_fields"] == list(MISSION_RUN_TURN_FIELDS)
+    assert payload["run_handoff_fields"] == list(MISSION_RUN_HANDOFF_FIELDS)
+    assert payload["selected_agent_fields"] == list(MISSION_SELECTED_AGENT_FIELDS)
+    assert set(payload["example_preview"]) == set(payload["preview_response_fields"])
+    assert set(payload["example_status"]) == set(payload["status_response_fields"])
+    assert set(payload["example_run"]) == set(payload["run_response_fields"])
+    assert validate_mission_preview_contract(payload["example_preview"])["ok"] is True
+    assert validate_mission_status_contract(payload["example_status"])["ok"] is True
+    assert validate_mission_run_contract(payload["example_run"])["ok"] is True
+    assert len(payload["example_preview"]["plan"]["steps"]) == 8
+
+
+@pytest.mark.parametrize(
+    ("example_name", "mutation"),
+    [
+        ("preview", lambda value: value.update(status="running")),
+        ("preview", lambda value: value["selected_agents"].pop()),
+        ("preview", lambda value: value["plan"]["steps"].pop()),
+        ("preview", lambda value: value.update(blockers=["worker unavailable"], can_start=True)),
+        (
+            "preview",
+            lambda value: (
+                value.update(blockers=["worker unavailable"], can_start=False),
+                value["controls"][0].update(enabled=True, blocker=None),
+            ),
+        ),
+        ("preview", lambda value: value.update(mission_id="mis_bad")),
+        ("preview", lambda value: value.update(confirmation_command="agentdeck mission run --mission-id mis_deadbeefdead --confirm")),
+        ("preview", lambda value: value["leader_backend"].update(provider="claude-cli")),
+        ("preview", lambda value: value["leader_backend"].update(provider_backend="cli")),
+        ("preview", lambda value: value["selected_agents"][0].update(secret="unsafe")),
+        ("preview", lambda value: value["startup_actions"][0].update(action="shell")),
+        ("preview", lambda value: value["controls"][0].update(safety="unrestricted")),
+    ],
+)
+def test_mission_preview_validator_rejects_drift(example_name, mutation) -> None:
+    from copy import deepcopy
+
+    from agentdeck.contracts import mission_example, validate_mission_preview_contract
+
+    payload = deepcopy(mission_example(example_name))
+    mutation(payload)
+
+    assert validate_mission_preview_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize("status", ["unknown", "failed"])
+def test_mission_status_validator_rejects_unknown_status(status: str) -> None:
+    from agentdeck.contracts import mission_example, validate_mission_status_contract
+
+    payload = mission_example("status")
+    payload["status"] = status
+
+    assert validate_mission_status_contract(payload)["ok"] is False
+
+
+def test_mission_run_validator_requires_confirmed_true() -> None:
+    from agentdeck.contracts import mission_example, validate_mission_run_contract
+
+    payload = mission_example("run")
+    payload.pop("confirmed")
+
+    assert validate_mission_run_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda turns: turns[0].update(prompt="unsafe"),
+        lambda turns: turns[1].update(step=3),
+        lambda turns: turns[0].update(agent_id="coder"),
+        lambda turns: turns[0]["handoff"].update(handoff_token="unsafe"),
+        lambda turns: turns.pop(),
+    ],
+)
+def test_mission_run_validator_rejects_compact_turn_drift(mutation) -> None:
+    from copy import deepcopy
+
+    from agentdeck.contracts import mission_example, validate_mission_run_contract
+
+    payload = deepcopy(mission_example("run"))
+    mutation(payload["turns"])
+
+    assert validate_mission_run_contract(payload)["ok"] is False
+
+
+def test_mission_run_validator_accepts_interrupted_partial_turns() -> None:
+    from agentdeck.contracts import mission_example, validate_mission_run_contract
+
+    payload = mission_example("run")
+    payload.update(
+        status="interrupted", current_step=2, stop_reason="interrupted",
+        completed_at=None, can_resume=True,
+    )
+    payload["turns"] = payload["turns"][:2]
+    payload["turns"][1].update(status="dispatched", handoff=None)
+    payload["controls"][0].update(enabled=True, blocker=None)
+
+    assert validate_mission_run_contract(payload) == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize(
+    "trace_command",
+    [
+        "agentdeck trace --id rep_0123456789ab; marker",
+        "agentdeck trace --id rep_0123456789ab\nmarker",
+        "agentdeck trace --id rep_0123456789ab --extra",
+        "agentdeck trace --id rep_0123456789ab marker",
+        "agentdeck trace --id rpl_0123456789ab",
+        "agentdeck trace --id rep_0123456789AB",
+        "agentdeck trace --id rep_0123456789a",
+        "agentdeck trace --id rep_0123456789abc",
+    ],
+)
+def test_mission_run_validator_rejects_unsafe_turn_trace_command(trace_command) -> None:
+    from agentdeck.contracts import mission_example, validate_mission_run_contract
+
+    payload = mission_example("run")
+    payload["turns"][0]["handoff"]["trace_command"] = trace_command
+
+    result = validate_mission_run_contract(payload)
+
+    assert result["ok"] is False
+    assert "marker" not in repr(result["errors"])
+
+
+def test_mission_status_validator_rejects_unsafe_attach_control() -> None:
+    from agentdeck.contracts import mission_example, validate_mission_status_contract
+
+    payload = mission_example("status")
+    payload["attach_command"] = "tmux attach -t agentdeck; rm -rf /"
+    payload["controls"][2]["command"] = payload["attach_command"]
+
+    assert validate_mission_status_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    ("validator_name", "value", "expected_error"),
+    [
+        ("preview", None, "mission_preview must be an object"),
+        ("preview", [], "mission_preview must be an object"),
+        ("status", None, "mission_status must be an object"),
+        ("status", [], "mission_status must be an object"),
+        ("run", None, "mission_run must be an object"),
+        ("run", [], "mission_run must be an object"),
+    ],
+)
+def test_mission_validators_reject_non_object_roots_without_raising(
+    validator_name, value, expected_error
+) -> None:
+    from agentdeck.contracts import (
+        validate_mission_preview_contract,
+        validate_mission_run_contract,
+        validate_mission_status_contract,
+    )
+
+    validator = {
+        "preview": validate_mission_preview_contract,
+        "status": validate_mission_status_contract,
+        "run": validate_mission_run_contract,
+    }[validator_name]
+
+    assert validator(value) == {"ok": False, "errors": [expected_error]}
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("plan_id",), "pln_example"),
+        (("plan_id",), "pln_deadbeefcafe;rm"),
+        (("plan_hash",), "sha256:abc"),
+        (("plan_hash",), "sha256:" + "A" * 64),
+        (("step_count",), True),
+        (("timeout_seconds",), True),
+        (("user_message",), {"credentials": "secret"}),
+        (("provider",), ["fake"]),
+        (("model",), ""),
+        (("plan", "goal"), ""),
+        (("plan", "summary"), {"prompt": "secret"}),
+        (("plan", "steps", 0, "agent_id"), {"credentials": "secret"}),
+        (("plan", "steps", 0, "role"), ""),
+        (("plan", "steps", 0, "task"), ["unsafe"]),
+        (("controls", 0, "label"), {"prompt": "secret"}),
+        (("controls", 0, "kind"), ["execute"]),
+        (("controls", 0, "command"), {"command": "unsafe"}),
+        (("controls", 0, "safety"), ["delegated"]),
+        (("controls", 0, "enabled"), 1),
+        (("controls", 0, "blocker"), {"credentials": "secret"}),
+        (("selected_agents", 0, "runtime_status"), {"env": "secret"}),
+        (("selected_agents", 0, "agent_id"), {"credentials": "secret"}),
+        (("startup_actions", 0, "action"), {"command": "unsafe"}),
+    ],
+)
+def test_mission_preview_rejects_invalid_scalar_and_nested_values(path, value) -> None:
+    from copy import deepcopy
+
+    from agentdeck.contracts import mission_example, validate_mission_preview_contract
+
+    payload = deepcopy(mission_example("preview"))
+    target = payload
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = value
+
+    assert validate_mission_preview_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("plan_id", {"credentials": "secret"}),
+        ("plan_hash", "sha256:" + "g" * 64),
+        ("current_step", True),
+        ("step_count", True),
+        ("timeout_seconds", True),
+        ("workflow_run_id", {"command": "unsafe"}),
+        ("confirmed_at", ""),
+        ("status", {"credentials": "secret"}),
+    ],
+)
+def test_mission_status_rejects_invalid_identifiers_progress_and_timestamps(
+    field, value
+) -> None:
+    from agentdeck.contracts import mission_example, validate_mission_status_contract
+
+    payload = mission_example("status")
+    payload[field] = value
+
+    assert validate_mission_status_contract(payload)["ok"] is False
+
+
+def _mission_status_payload(status: str) -> dict:
+    from agentdeck.contracts import mission_example
+
+    payload = mission_example("status")
+    payload.update(
+        {
+            "status": status,
+            "workflow_run_id": None,
+            "current_step": 0,
+            "blockers": [],
+            "stop_reason": None,
+            "confirmed_at": None,
+            "completed_at": None,
+            "can_resume": False,
+        }
+    )
+    resume = payload["controls"][0]
+    resume.update(enabled=False, blocker="mission status cannot resume")
+    if status in {"preparing", "running", "completed", "stopped", "interrupted"}:
+        payload["confirmed_at"] = "2026-07-11T00:00:01+00:00"
+    if status in {"running", "completed", "interrupted"}:
+        payload["workflow_run_id"] = "wfr_deadbeefcafe"
+    if status in {"running", "stopped", "interrupted"}:
+        payload["current_step"] = 4
+    if status in {"stopped", "interrupted"}:
+        payload["stop_reason"] = "timed_out"
+        payload["can_resume"] = True
+        resume.update(enabled=True, blocker=None)
+    if status == "completed":
+        payload["current_step"] = payload["step_count"]
+        payload["completed_at"] = "2026-07-11T00:08:00+00:00"
+    return payload
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "pending_confirmation",
+        "preparing",
+        "running",
+        "completed",
+        "stopped",
+        "interrupted",
+    ],
+)
+def test_mission_status_validator_accepts_each_coherent_lifecycle_status(status) -> None:
+    from agentdeck.contracts import validate_mission_status_contract
+
+    payload = _mission_status_payload(status)
+
+    assert validate_mission_status_contract(payload)["ok"] is True
+
+
+@pytest.mark.parametrize(
+    ("status", "changes"),
+    [
+        ("pending_confirmation", {"confirmed_at": "2026-07-11T00:00:01+00:00"}),
+        ("pending_confirmation", {"workflow_run_id": "wfr_deadbeefcafe"}),
+        ("preparing", {"confirmed_at": None}),
+        ("preparing", {"completed_at": "2026-07-11T00:08:00+00:00"}),
+        ("running", {"confirmed_at": None}),
+        ("running", {"workflow_run_id": None}),
+        ("running", {"stop_reason": "failed"}),
+        ("running", {"completed_at": "2026-07-11T00:08:00+00:00"}),
+        ("completed", {"current_step": 7}),
+        ("completed", {"completed_at": None}),
+        ("completed", {"stop_reason": "failed"}),
+        ("completed", {"workflow_run_id": None}),
+        ("stopped", {"stop_reason": None}),
+        ("stopped", {"confirmed_at": None}),
+        ("stopped", {"completed_at": "2026-07-11T00:08:00+00:00"}),
+        ("interrupted", {"stop_reason": None}),
+        ("interrupted", {"workflow_run_id": None}),
+        ("interrupted", {"completed_at": "2026-07-11T00:08:00+00:00"}),
+    ],
+)
+def test_mission_status_validator_rejects_incoherent_lifecycle(status, changes) -> None:
+    from agentdeck.contracts import validate_mission_status_contract
+
+    payload = _mission_status_payload(status)
+    payload.update(changes)
+
+    assert validate_mission_status_contract(payload)["ok"] is False
+
+
+def test_mission_status_resume_gate_accounts_for_blockers() -> None:
+    from agentdeck.contracts import validate_mission_status_contract
+
+    payload = _mission_status_payload("stopped")
+    payload["blockers"] = ["worker setup required"]
+    payload["can_resume"] = False
+    payload["controls"][0].update(enabled=False, blocker="worker setup required")
+
+    assert validate_mission_status_contract(payload)["ok"] is True
+
+    payload["can_resume"] = True
+    payload["controls"][0].update(enabled=True, blocker=None)
+    assert validate_mission_status_contract(payload)["ok"] is False
+
+
+def test_mission_run_rejects_pending_confirmation_and_nonliteral_confirmation() -> None:
+    from agentdeck.contracts import mission_example, validate_mission_run_contract
+
+    pending = mission_example("run")
+    pending["status"] = "pending_confirmation"
+    pending["workflow_run_id"] = None
+    pending["current_step"] = 0
+    pending["confirmed_at"] = None
+    pending["completed_at"] = None
+    pending["confirmed"] = True
+    assert validate_mission_run_contract(pending)["ok"] is False
+
+    not_literal = mission_example("run")
+    not_literal["confirmed"] = 1
+    assert validate_mission_run_contract(not_literal)["ok"] is False
+
+    unsafe_mode = mission_example("run")
+    unsafe_mode["mode"] = {"credentials": "secret"}
+    assert validate_mission_run_contract(unsafe_mode)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "value"),
+    [
+        ("startup", "runtime_status", "stopped"),
+        ("startup", "effective_model", "different-model"),
+        ("startup", "model_source", "different-source"),
+        ("plan", "role", "different-role"),
+    ],
+)
+def test_mission_preview_rejects_cross_row_provenance_drift(target, field, value) -> None:
+    from agentdeck.contracts import mission_example, validate_mission_preview_contract
+
+    payload = mission_example("preview")
+    if target == "startup":
+        payload["startup_actions"][0][field] = value
+    else:
+        payload["plan"]["steps"][0][field] = value
+
+    assert validate_mission_preview_contract(payload)["ok"] is False
+
+
+def test_mission_contract_item_field_tuples_are_stable_and_mission_owned() -> None:
+    from agentdeck.contracts import (
+        MISSION_CONTROL_FIELDS,
+        MISSION_SELECTED_AGENT_FIELDS,
+        MISSION_STARTUP_ACTION_FIELDS,
+    )
+
+    assert MISSION_CONTROL_FIELDS == (
+        "kind",
+        "label",
+        "command",
+        "safety",
+        "enabled",
+        "blocker",
+    )
+    assert MISSION_SELECTED_AGENT_FIELDS == (
+        "agent_id",
+        "provider",
+        "role",
+        "workspace_mode",
+        "runtime_status",
+        "effective_model",
+        "model_source",
+    )
+    assert MISSION_STARTUP_ACTION_FIELDS == (
+        "agent_id",
+        "action",
+        "runtime_status",
+        "effective_model",
+        "model_source",
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "mutate", "marker"),
+    [
+        (
+            "status",
+            lambda payload: payload.update(
+                status={"TOPSECRET_STATUS": "hidden"},
+                completed_at="TOPSECRET_COMPLETED_AT",
+            ),
+            "TOPSECRET",
+        ),
+        (
+            "preview",
+            lambda payload: payload["plan"]["steps"][0].update(
+                agent_id="TOPSECRET_AGENT_ID"
+            ),
+            "TOPSECRET_AGENT_ID",
+        ),
+        (
+            "preview",
+            lambda payload: payload["plan"]["steps"][0].update(
+                role={"TOPSECRET_ROLE": "hidden"}
+            ),
+            "TOPSECRET_ROLE",
+        ),
+        (
+            "preview",
+            lambda payload: payload["plan"]["steps"][0].update(
+                task=["TOPSECRET_TASK"]
+            ),
+            "TOPSECRET_TASK",
+        ),
+        (
+            "preview",
+            lambda payload: payload["controls"][0].update(
+                TOPSECRET_CONTROL="hidden"
+            ),
+            "TOPSECRET_CONTROL",
+        ),
+    ],
+)
+def test_mission_validation_errors_never_echo_rejected_payload_values(
+    kind, mutate, marker
+) -> None:
+    import json
+
+    from agentdeck.contracts import (
+        mission_example,
+        validate_mission_preview_contract,
+        validate_mission_status_contract,
+    )
+
+    payload = mission_example(kind)
+    mutate(payload)
+    validator = (
+        validate_mission_preview_contract
+        if kind == "preview"
+        else validate_mission_status_contract
+    )
+
+    result = validator(payload)
+
+    assert result["ok"] is False
+    assert marker not in json.dumps(result["errors"], ensure_ascii=False)
+
+
 def test_skill_contracts_expose_and_validate_planning_guidance() -> None:
     from copy import deepcopy
 
@@ -5274,3 +6184,110 @@ def test_validate_skill_lock_contract():
             "lock_path": ".agentdeck/skill-locks/a.json", "dependencies": []}
     assert validate_skill_lock_contract(good)["ok"]
     assert not validate_skill_lock_contract(dict(good, mode="x"))["ok"]
+
+
+def _workbench_mission_contract_card() -> dict[str, object]:
+    card = mission_example("status")
+    confirmation = mission_commands(str(card["mission_id"]))["confirmation_command"]
+    card["confirmation_command"] = confirmation
+    card["controls"] = [
+        {
+            "kind": "execute",
+            "label": "Confirm mission",
+            "command": confirmation,
+            "safety": "delegated",
+            "enabled": False,
+            "blocker": "mission status is stopped",
+        },
+        *card["controls"],
+    ]
+    return card
+
+
+def test_workbench_contract_rejects_mission_confirmation_control_status_drift() -> None:
+    payload = workbench_example()
+    payload["mission_card"] = _workbench_mission_contract_card()
+    payload["mission_card"]["controls"][0]["enabled"] = True
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result["ok"] is False
+    assert "mission_card confirmation control enabled conflicts with status" in result["errors"]
+
+
+def test_workbench_contract_allows_null_mission_card() -> None:
+    payload = workbench_example()
+    payload["mission_card"] = None
+    payload["project_view"]["missions"] = {
+        "count": 0, "by_status": {}, "latest_id": None, "items": []
+    }
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    assert validate_workbench_contract(payload) == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("mission_id", "mis_aaaaaaaaaaaa"),
+        ("status", "completed"),
+        ("plan_hash", "sha256:" + "b" * 64),
+        ("selected_agents", []),
+    ],
+)
+def test_workbench_contract_rejects_mission_card_project_view_drift(field, replacement) -> None:
+    payload = workbench_example()
+    payload["mission_card"][field] = replacement
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result["ok"] is False
+    assert f"mission_card.{field} must match project_view latest Mission" in result["errors"]
+
+
+def test_workbench_contract_rejects_mission_control_command_drift() -> None:
+    payload = workbench_example()
+    payload["mission_card"]["controls"][0]["command"] = "agentdeck workbench"
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result["ok"] is False
+    assert any("mission_card" in error for error in result["errors"])
+
+
+def test_project_view_and_workbench_contracts_reject_duplicate_mission_ids() -> None:
+    payload = workbench_example()
+    duplicate = deepcopy(payload["project_view"]["missions"]["items"][0])
+    payload["project_view"]["missions"]["items"].append(duplicate)
+    payload["project_view"]["missions"]["count"] = 2
+    payload["project_view"]["missions"]["by_status"] = {duplicate["status"]: 2}
+
+    project_result = validate_project_view_contract(payload["project_view"])
+    workbench_result = validate_workbench_contract(payload)
+
+    assert "missions.items mission_id must be unique" in project_result["errors"]
+    assert "project_view: missions.items mission_id must be unique" in workbench_result["errors"]
+
+
+def test_workbench_contract_rejects_mission_confirmation_blocker_drift() -> None:
+    payload = workbench_example()
+    payload["mission_card"]["controls"][0]["blocker"] = None
+    payload["control_registry"] = workbench_control_registry(payload)
+
+    result = validate_workbench_contract(payload)
+
+    assert result["ok"] is False
+    assert "mission_card disabled confirmation control needs blocker" in result["errors"]
+
+
+def test_leader_chat_contract_rejects_status_payload_in_run_card() -> None:
+    payload = leader_chat_example()
+    payload["mission_run_card"] = mission_example("status")
+
+    result = validate_leader_chat_contract(payload)
+
+    assert result["ok"] is False
+    assert any("mission_run_card" in error for error in result["errors"])

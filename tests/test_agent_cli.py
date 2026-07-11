@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 import json
 from pathlib import Path
 
+import pytest
+
 from agentdeck import cli
-from agentdeck.config import write_default_config
+from agentdeck.config import load_config, write_default_config
 from agentdeck.contracts import (
     AGENT_RUNTIME_AGENT_ITEM_FIELDS,
     AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
@@ -97,6 +100,26 @@ class FakeTmuxBackend:
     def pane_exists(self, _config, pane_id: str) -> bool:
         self.checked_panes.append(pane_id)
         return pane_id in self.existing_panes
+
+
+def test_contract_protocol_runtime_cli_matches_module(capsys) -> None:
+    from agentdeck.contracts import protocol_runtime_contract_response
+
+    assert cli.main(["contract", "protocol-runtime", "--example"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    contract_path = Path(cli.__file__).resolve().parents[2] / "docs" / "contracts" / "protocol-runtime-schema.md"
+    assert payload == protocol_runtime_contract_response(contract_path, include_example=True)
+
+
+def test_protocol_requires_a_subcommand(capsys) -> None:
+    with pytest.raises(SystemExit, match="2"):
+        cli.main(["protocol"])
+    assert "required" in capsys.readouterr().err
+
+
+def test_protocol_rejects_unknown_subcommands() -> None:
+    with pytest.raises(SystemExit, match="2"):
+        cli.main(["protocol", "mutate"])
 
 
 class WorkflowFakeBackend(FakeTmuxBackend):
@@ -264,6 +287,76 @@ def test_contract_workflow_cli_exposes_valid_examples(capsys) -> None:
     assert payload["example_status"]["mode"] == "workflow_status"
 
 
+def test_contract_mission_cli_exposes_valid_examples(capsys) -> None:
+    exit_code = cli.main(["contract", "mission", "--example"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["name"] == "mission"
+    assert payload["contract_exists"] is True
+    assert payload["example_preview"]["mode"] == "mission_preview"
+    assert payload["example_status"]["mode"] == "mission_status"
+    assert payload["example_run"]["mode"] == "mission_run"
+    assert set(payload["example_preview"]) == set(payload["preview_response_fields"])
+
+
+def test_contract_mission_cli_refuses_invalid_example_before_printing(
+    monkeypatch, capsys
+) -> None:
+    original = cli.mission_contract_response
+
+    def invalid_response(contract_path, include_example=False):
+        payload = original(contract_path, include_example=include_example)
+        payload["example_preview"]["status"] = "running"
+        return payload
+
+    monkeypatch.setattr(cli, "mission_contract_response", invalid_response)
+
+    assert cli.main(["contract", "mission", "--example"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Mission contract validation failed" in captured.err
+
+
+def test_contract_mission_cli_refuses_non_object_example_before_printing(
+    monkeypatch, capsys
+) -> None:
+    original = cli.mission_contract_response
+
+    def invalid_response(contract_path, include_example=False):
+        payload = original(contract_path, include_example=include_example)
+        payload["example_preview"] = []
+        return payload
+
+    monkeypatch.setattr(cli, "mission_contract_response", invalid_response)
+
+    assert cli.main(["contract", "mission", "--example"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Mission contract validation failed" in captured.err
+
+
+def test_contract_mission_cli_sanitizes_invalid_example_errors(
+    monkeypatch, capsys
+) -> None:
+    original = cli.mission_contract_response
+
+    def invalid_response(contract_path, include_example=False):
+        payload = original(contract_path, include_example=include_example)
+        payload["example_preview"]["plan"]["steps"][0]["agent_id"] = (
+            "TOPSECRET_AGENT_ID"
+        )
+        return payload
+
+    monkeypatch.setattr(cli, "mission_contract_response", invalid_response)
+
+    assert cli.main(["contract", "mission", "--example"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Mission contract validation failed" in captured.err
+    assert "TOPSECRET_AGENT_ID" not in captured.err
+
+
 def test_workflow_preview_surfaces_missing_runtime_binding_as_blocker(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -319,6 +412,94 @@ def test_workflow_run_requires_confirm_without_writing_state(
     assert captured.out == ""
     assert captured.err.strip() == "workflow run requires --confirm"
     assert store.state_path.read_bytes() == before
+
+
+def test_mission_run_and_resume_require_confirm_without_writing_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    before = store.state_path.read_bytes() if store.state_path.exists() else None
+
+    assert cli.main(["mission", "run", "--mission-id", "mis_deadbeefcafe"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "mission run requires --confirm"
+    assert cli.main(["mission", "resume", "--mission-id", "mis_deadbeefcafe"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "mission resume requires --confirm"
+    assert (store.state_path.read_bytes() if store.state_path.exists() else None) == before
+
+
+def test_mission_status_rejects_unknown_id_without_json(tmp_path, monkeypatch, capsys) -> None:
+    prepare_project(tmp_path, monkeypatch)
+
+    assert cli.main(["mission", "status", "--mission-id", "mis_deadbeefcafe"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "unknown mission: mis_deadbeefcafe"
+
+
+def test_mission_cli_keyboard_interrupt_persists_mission_and_workflow(tmp_path, monkeypatch, capsys) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    text = config_path.read_text(encoding="utf-8").replace('provider = "deepseek"', 'provider = "fake"', 1).replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
+    config_path.write_text(text, encoding="utf-8")
+    from agentdeck.config import load_config
+    from agentdeck.mission_orchestration import create_mission_preview
+    from agentdeck.providers import LeaderPlanRequest
+
+    class Provider:
+        name = "fake"
+        def plan(self, request: LeaderPlanRequest):
+            return {
+                "goal": "chain", "summary": "serial", "approval_required": True,
+                "dispatch_ready": False,
+                "steps": [
+                    {"step": step, "agent_id": "planner" if step % 2 else "reviewer", "role": "planning" if step % 2 else "review", "task": f"turn {step}", "risk": "review", "requires_approval": True}
+                    for step in range(1, 9)
+                ],
+            }
+
+    class InterruptingBackend(FakeTmuxBackend):
+        def __init__(self):
+            super().__init__()
+            self.by_agent = {}
+            self.did_interrupt = False
+        def spawn_agent(self, _config, agent, cwd):
+            pane = f"%{len(self.by_agent) + 1}"
+            self.by_agent[agent.agent_id] = pane
+            self.existing_panes.add(pane)
+            return pane
+        def capture_output(self, _config, pane_id, lines=200):
+            if lines < 400:
+                return "OpenAI Codex\nmodel: fake\n› Ask Codex anything" if pane_id == "%1" else "Claude Code\n❯ Try a task\n100% context left"
+            prompt = next(text for target, text in reversed(self.sent) if target == pane_id)
+            token = next(line.rsplit(":", 1)[1].strip() for line in prompt.splitlines() if "handoff token exactly" in line)
+            if token.endswith("_step_2") and not self.did_interrupt:
+                self.did_interrupt = True
+                raise KeyboardInterrupt
+            return f"handoff_token: {token}\nstatus: completed\nsummary: done\nverification: fake\nrisks: none\nnext_steps: continue"
+
+    store = StateStore(root)
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+    preview = create_mission_preview(config=load_config(root), store=store, provider=Provider(), user_message="让 Codex 和 Claude 接龙，共8轮", timeout_seconds=30)
+    backend = InterruptingBackend()
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: backend)
+
+    assert cli.main(["mission", "run", "--mission-id", preview["mission_id"], "--confirm"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "interrupted"
+    assert store.mission_by_id(preview["mission_id"])["status"] == "interrupted"
+    assert store.workflow_run_by_id(payload["workflow_run_id"])["status"] == "interrupted"
+    assert cli.main(["mission", "resume", "--mission-id", preview["mission_id"], "--confirm"]) == 0
+    resumed = json.loads(capsys.readouterr().out)
+    assert resumed["status"] == "completed"
+    assert len(backend.sent) == 8
+    assert len(store.load()["workflow_runs"]) == 1
 
 
 def test_workflow_run_completes_two_step_chain_with_one_confirmation(
@@ -4892,6 +5073,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "run-loop",
         "run-loop-all",
         "workflow",
+        "mission",
         "demo",
         "plans",
         "release",
@@ -4901,6 +5083,7 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "memory",
         "learning-review",
         "agent-runtime",
+        "protocol-runtime",
         "leader-chat",
         "leader-status",
         "leader-actions",
@@ -5587,8 +5770,9 @@ def test_contract_controls_example_exports_gui_ready_response(capsys) -> None:
     assert example["mode"] == "control_registry"
     assert example["item_count"] == len(example["items"])
     assert example["group_count"] == len(example["groups"])
-    assert example["groups"][0]["group_id"] == "leader:leader_card"
-    assert example["groups"][0]["label"] == "Leader"
+    assert any(group["group_id"] == "leader:leader_card" for group in example["groups"])
+    assert example["groups"][0]["group_id"] == "mission:mission_card"
+    assert example["groups"][0]["label"] == "Mission Card"
     assert example["groups"][0]["items"][0] == example["items"][0]
     assert payload["example_control_registry_card_fields"] == payload["control_registry_card_fields"]
     assert set(payload["example_control_registry_item_fields"]) == set(payload["control_registry_item_fields"])
@@ -5660,6 +5844,23 @@ def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None
         "spawn_command",
         "blocker",
     ]
+    assert payload["transport_capability_fields"] == [
+        "structured_sessions",
+        "streaming_updates",
+        "structured_tools",
+        "permission_requests",
+        "resume_session",
+        "observable_terminal",
+    ]
+    assert payload["tmux_fallback_capabilities"] == {
+        "structured_sessions": False,
+        "streaming_updates": False,
+        "structured_tools": False,
+        "permission_requests": False,
+        "resume_session": False,
+        "observable_terminal": True,
+    }
+    assert not set(payload["transport_capability_fields"]) & set(payload["runtime_control_fields"])
     assert payload["workbench_contract"] == "agentdeck contract workbench"
 
 
@@ -5693,6 +5894,9 @@ def test_contract_agent_runtime_example_exports_gui_ready_runtime_contract(capsy
     assert example["agents"][0]["runtime"]["pane_id"] == "%42"
     assert example["capture"]["output"] == "status: completed\n"
     assert example["terminal"]["attach_command"] == "tmux -L agentdeck-multi-agent-explore attach -t agentdeck"
+    assert example["ready"]["all_running"] is True
+    assert example["spawn_ready"]["spawned_count"] == 1
+    assert example["controls"][0]["safety"] == "inspect"
 
 
 def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:
@@ -6173,9 +6377,10 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "mode",
         "schema_version",
         "project_view",
-        "leader_actions",
-        "leader_card",
-        "provider_health",
+            "leader_actions",
+            "leader_card",
+            "mission_card",
+            "provider_health",
         "runtime_card",
         "agent_ready_card",
         "terminal_session_card",
@@ -9952,6 +10157,370 @@ def test_artifacts_outputs_project_view_artifact_summary_without_mutating_state(
     assert StateStore(root).load() == state
 
 
+def test_status_projects_compact_mission_summary_without_mutating_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    mission = store.create_mission(
+        user_message="让 Codex 和 Claude 接龙",
+        can_start=True,
+        blockers=[],
+        provider="fake",
+        model="fake-plan",
+        leader_backend={
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
+        plan_id="pln_demo",
+        plan_hash="sha256:plan",
+        selected_agents=[
+            {
+                "agent_id": "planner",
+                "provider": "codex-cli",
+                "role": "planning",
+                "workspace_mode": "shared",
+                "runtime_status": "running",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+            {
+                "agent_id": "reviewer",
+                "provider": "claude-cli",
+                "role": "review",
+                "workspace_mode": "shared",
+                "runtime_status": "configured",
+                "effective_model": "opus-4.8",
+                "model_source": "leader",
+                "blocker": "safe blocker text mentioning credentials",
+            },
+        ],
+        startup_actions=[
+            {
+                "agent_id": "planner",
+                "action": "reuse",
+                "runtime_status": "running",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+            {
+                "agent_id": "reviewer",
+                "action": "spawn",
+                "runtime_status": "configured",
+                "effective_model": "opus-4.8",
+                "model_source": "leader",
+                "blocker": None,
+            },
+        ],
+        step_count=2,
+        timeout_seconds=180,
+    )
+    state = store.load()
+    raw_mission = state["missions"][-1]
+    raw_mission["leader_backend"]["credentials"] = {"api_key": "leader-secret"}
+    raw_mission["selected_agents"][0].update(
+        {
+            "command": "codex --secret token",
+            "blocker": {"full_prompt": "selected-secret"},
+        }
+    )
+    raw_mission["selected_agents"][1].update(
+        {
+            "prompt": "full worker prompt",
+            "effective_model": [{"credentials": "selected-model-secret"}],
+        }
+    )
+    raw_mission["startup_actions"][0].update(
+        {
+            "launch_command": "codex --secret token",
+            "blocker": {"command": "startup-secret"},
+        }
+    )
+    raw_mission["startup_actions"][1].update(
+        {
+            "credentials": {"token": "secret"},
+            "effective_model": {"credentials": "startup-model-secret"},
+        }
+    )
+    raw_mission["launch_command"] = "codex --dangerously-use-secret token"
+    raw_mission["prompt"] = "full secret prompt"
+    raw_mission["credentials"] = {"api_key": "secret"}
+    store.save(state)
+    state_before = store.state_path.read_bytes()
+    events_before = store.events_path.read_bytes()
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    summary = payload["missions"]
+    assert summary["count"] == 1
+    assert summary["by_status"] == {"pending_confirmation": 1}
+    assert summary["latest_id"] == mission["mission_id"]
+    assert summary["items"][0] == {
+        "mission_id": mission["mission_id"],
+        "schema_version": "mission/v1",
+        "user_message": "让 Codex 和 Claude 接龙",
+        "status": "pending_confirmation",
+        "stop_reason": None,
+        "can_start": False,
+        "can_resume": False,
+        "blockers": ["invalid mission worker summaries"],
+        "provider": "fake",
+        "model": "fake-plan",
+        "leader_backend": mission["leader_backend"],
+        "plan_id": "pln_demo",
+        "plan_hash": "sha256:plan",
+        "workflow_run_id": None,
+        "current_step": 0,
+        "step_count": 2,
+        "timeout_seconds": 180,
+        "selected_agents": [
+            {
+                "agent_id": "planner",
+                "provider": "codex-cli",
+                "role": "planning",
+                "workspace_mode": "shared",
+                "runtime_status": "running",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+        ],
+        "startup_actions": [
+            {
+                "agent_id": "planner",
+                "action": "reuse",
+                "runtime_status": "running",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+        ],
+        "created_at": mission["created_at"],
+        "updated_at": mission["updated_at"],
+        "confirmed_at": None,
+        "completed_at": None,
+        "status_command": f"agentdeck mission status --mission-id {mission['mission_id']}",
+            "confirmation_command": f'agentdeck leader chat --message "批准执行 {mission["mission_id"]}"',
+        "resume_command": f"agentdeck mission resume --mission-id {mission['mission_id']} --confirm",
+    }
+    assert "launch_command" not in summary["items"][0]
+    assert "prompt" not in summary["items"][0]
+    assert "credentials" not in summary["items"][0]
+    assert all("command" not in item for item in summary["items"][0]["selected_agents"])
+    assert all("prompt" not in item for item in summary["items"][0]["selected_agents"])
+    assert all(
+        "launch_command" not in item for item in summary["items"][0]["startup_actions"]
+    )
+    assert all(
+        "credentials" not in item for item in summary["items"][0]["startup_actions"]
+    )
+    serialized_summary = json.dumps(summary, ensure_ascii=False)
+    for secret in (
+        "leader-secret",
+        "selected-secret",
+        "selected-model-secret",
+        "startup-secret",
+        "startup-model-secret",
+    ):
+        assert secret not in serialized_summary
+    assert store.state_path.read_bytes() == state_before
+    assert store.events_path.read_bytes() == events_before
+
+
+def test_status_handles_malformed_mission_rows_without_empty_worker_sentinels(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    mission = store.create_mission(
+        user_message="让 Codex 和 Claude 接龙",
+        can_start=False,
+        blockers=["no workers selected"],
+        provider="fake",
+        model="fake-plan",
+        leader_backend={
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
+        plan_id="pln_demo",
+        plan_hash="sha256:plan",
+        selected_agents=[],
+        startup_actions=[],
+        step_count=2,
+        timeout_seconds=180,
+    )
+    state = store.load()
+    state["missions"].insert(0, "not-a-mission")
+    unsafe_id_row = dict(state["missions"][-1])
+    unsafe_id_row["mission_id"] = "mis_bad; rm -rf /"
+    state["missions"].insert(1, unsafe_id_row)
+    state["missions"][-1]["can_start"] = True
+    state["missions"][-1]["blockers"] = []
+    state["missions"][-1]["selected_agents"] = [None, {"agent_id": "planner"}]
+    state["missions"][-1]["startup_actions"] = [{"agent_id": "planner"}]
+    store.save(state)
+
+    payload = cli.asdict(store.project_view(cli.load_config(root)))
+
+    summary = payload["missions"]
+    assert summary["count"] == 3
+    assert summary["latest_id"] == mission["mission_id"]
+    assert summary["by_status"] == {"pending_confirmation": 1}
+    assert len(summary["items"]) == 1
+    assert summary["items"][0]["selected_agents"] == []
+    assert summary["items"][0]["startup_actions"] == []
+    assert summary["items"][0]["can_start"] is False
+    assert "invalid mission worker summaries" in summary["items"][0]["blockers"]
+    assert "rm -rf" not in json.dumps(summary, ensure_ascii=False)
+    assert validate_project_view_contract(payload) == {
+        "ok": False,
+        "errors": ["missions.count must equal len(missions.items)"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("raw_blockers", "expected_blockers"),
+    [
+        ({"credentials": "dict-secret"}, ["invalid mission blockers"]),
+        ([{"credentials": "list-secret"}], ["invalid mission blockers"]),
+        (
+            ["valid blocker", {"full_prompt": "mixed-secret"}],
+            ["valid blocker", "invalid mission blockers"],
+        ),
+        (["legacy blocker"], ["legacy blocker"]),
+    ],
+)
+def test_project_view_normalizes_startable_mission_with_legacy_blockers(
+    tmp_path, monkeypatch, raw_blockers, expected_blockers
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    mission = store.create_mission(
+        user_message="让 Codex 和 Claude 接龙",
+        can_start=True,
+        blockers=[],
+        provider="fake",
+        model="fake-plan",
+        leader_backend={
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
+        plan_id="pln_demo",
+        plan_hash="sha256:plan",
+        selected_agents=[
+            {
+                "agent_id": "planner",
+                "provider": "codex-cli",
+                "role": "planning",
+                "workspace_mode": "shared",
+                "runtime_status": "configured",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+            {
+                "agent_id": "reviewer",
+                "provider": "claude-cli",
+                "role": "review",
+                "workspace_mode": "shared",
+                "runtime_status": "configured",
+                "effective_model": "opus-4.8",
+                "model_source": "configured",
+            },
+        ],
+        startup_actions=[
+            {
+                "agent_id": "planner",
+                "action": "spawn",
+                "runtime_status": "configured",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+            {
+                "agent_id": "reviewer",
+                "action": "spawn",
+                "runtime_status": "configured",
+                "effective_model": "opus-4.8",
+                "model_source": "configured",
+            },
+        ],
+        step_count=2,
+        timeout_seconds=180,
+    )
+    state = store.load()
+    state["missions"][0]["blockers"] = raw_blockers
+    store.save(state)
+
+    payload = cli.asdict(store.project_view(cli.load_config(root)))
+    item = payload["missions"]["items"][0]
+
+    assert item["mission_id"] == mission["mission_id"]
+    assert item["can_start"] is False
+    assert item["blockers"] == expected_blockers
+    assert all(
+        secret not in json.dumps(item, ensure_ascii=False)
+        for secret in ("dict-secret", "list-secret", "mixed-secret")
+    )
+    assert validate_project_view_contract(payload) == {"ok": True, "errors": []}
+
+
+def test_project_view_surfaces_non_list_missions_container_as_controlled_failure(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["missions"] = {"credentials": "container-secret"}
+    store.save(state)
+
+    payload = cli.asdict(store.project_view(cli.load_config(root)))
+
+    assert payload["missions"] == {
+        "count": -1,
+        "by_status": {},
+        "latest_id": None,
+        "items": [],
+    }
+    assert "container-secret" not in json.dumps(payload, ensure_ascii=False)
+    assert validate_project_view_contract(payload) == {
+        "ok": False,
+        "errors": ["missions.count must be a non-negative integer"],
+    }
+
+    exit_code = cli.main(["status"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "missions.count must be a non-negative integer" in captured.err
+
+
 def test_status_includes_project_state_summaries(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     store = StateStore(root)
@@ -10375,6 +10944,248 @@ def test_status_matches_project_view_contract_for_gui_clients(tmp_path, monkeypa
     assert expected_action <= set(payload["recovery"]["recommended_action"])
     assert payload["recovery"]["recommended_action"]["target_id"] == "act_contract"
     assert validate_project_view_contract(payload) == {"ok": True, "errors": []}
+
+
+def test_status_exposes_empty_protocol_summaries_without_writing_state_or_events(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state_before = store.state_path.read_bytes() if store.state_path.exists() else None
+    events_before = store.events_path.read_bytes() if store.events_path.exists() else None
+
+    exit_code = cli.main(["status"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["agent_sessions"] == {"count": 0, "by_state": {}, "items": []}
+    assert payload["protocol_turns"] == {"count": 0, "by_state": {}, "items": []}
+    assert payload["transport_updates"] == {"count": 0, "by_kind": {}, "items": []}
+    assert payload["permission_requests"] == {
+        "count": 0, "pending_count": 0, "by_status": {}, "items": [],
+    }
+    assert (store.state_path.read_bytes() if store.state_path.exists() else None) == state_before
+    assert (store.events_path.read_bytes() if store.events_path.exists() else None) == events_before
+
+
+def _agentdeck_tree_snapshot(root: Path) -> dict[str, tuple[bytes, int]]:
+    directory = root / ".agentdeck"
+    if not directory.exists():
+        return {}
+    return {
+        str(path.relative_to(directory)): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_protocol_status_is_exact_repeatable_read_only_project_view_projection(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    from agentdeck.contracts import (
+        PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        protocol_runtime_example,
+        validate_protocol_runtime_contract,
+    )
+
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    view = asdict(store.project_view(load_config(root)))
+    before = _agentdeck_tree_snapshot(root)
+    expected_controls = protocol_runtime_example()["controls"]
+
+    assert cli.main(["protocol", "status"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert cli.main(["protocol", "status"]) == 0
+    second = json.loads(capsys.readouterr().out)
+
+    assert first == second == {
+        "mode": "protocol_runtime_status",
+        "contract_version": PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        "project": view["project"],
+        "runtime_backend": view["runtime_backend"],
+        "agent_sessions": view["agent_sessions"],
+        "protocol_turns": view["protocol_turns"],
+        "transport_updates": view["transport_updates"],
+        "permission_requests": view["permission_requests"],
+        "controls": expected_controls,
+    }
+    assert validate_protocol_runtime_contract(first) == {"ok": True, "errors": []}
+    assert _agentdeck_tree_snapshot(root) == before
+
+
+def test_protocol_status_uses_one_validated_project_view_and_no_runtime_or_provider(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    calls = 0
+    original = cli._project_view_payload_or_error
+
+    def counted(config, store):
+        nonlocal calls
+        calls += 1
+        return original(config, store)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("protocol status must not invoke provider or tmux")
+
+    monkeypatch.setattr(cli, "_project_view_payload_or_error", counted)
+    monkeypatch.setattr(cli, "leader_provider", forbidden)
+    monkeypatch.setattr(cli, "TmuxBackend", forbidden)
+
+    assert cli.main(["protocol", "status"]) == 0
+    assert calls == 1
+    assert json.loads(capsys.readouterr().out)["mode"] == "protocol_runtime_status"
+
+
+def test_protocol_status_contract_failure_prints_no_partial_json(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli,
+        "validate_protocol_runtime_contract",
+        lambda _payload: {"ok": False, "errors": ["permission lineage corrupt"]},
+    )
+
+    assert cli.main(["protocol", "status"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "protocol runtime contract validation failed" in captured.err
+    assert "permission lineage corrupt" in captured.err
+
+
+def test_protocol_status_uninitialized_project_is_zero_write(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    before = _agentdeck_tree_snapshot(tmp_path)
+
+    assert cli.main(["protocol", "status"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Run: python -m agentdeck project init" in captured.err
+    assert _agentdeck_tree_snapshot(tmp_path) == before == {}
+
+
+def test_protocol_runtime_contract_index_status_command_is_executable(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    from agentdeck.contracts import protocol_runtime_contract_response
+
+    prepare_project(tmp_path, monkeypatch)
+    item = protocol_runtime_contract_response(
+        Path(cli.__file__).resolve().parents[2] / "docs" / "contracts" / "protocol-runtime-schema.md"
+    )
+
+    assert item["status_command"] == "agentdeck protocol status"
+    assert cli.main(item["status_command"].split()[1:]) == 0
+    assert json.loads(capsys.readouterr().out)["mode"] == "protocol_runtime_status"
+
+
+@pytest.mark.parametrize(("collection", "identity_field", "prefix"), [
+    ("agent_sessions", "session_id", "ags"),
+    ("protocol_turns", "turn_id", "trn"),
+    ("transport_updates", "update_id", "upd"),
+    ("permission_requests", "permission_id", "prm"),
+])
+def test_status_rejects_protocol_duplicate_hidden_by_latest_twenty_without_writes(
+    tmp_path, monkeypatch, capsys, collection, identity_field, prefix,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    templates = {
+        "agent_sessions": {"session_id": "ags_0", "agent_id": "planner", "provider": "codex", "transport": "tmux", "native_session_id": None, "workspace": str(root), "capabilities": {"structured_sessions": True, "streaming_updates": True, "structured_tools": True, "permission_requests": True, "resume_session": True, "observable_terminal": False}, "state": "created", "created_at": "now", "updated_at": "now"},
+        "protocol_turns": {"turn_id": "trn_0", "session_id": "ags_0", "message_id": "msg_0", "state": "created", "created_at": "now", "updated_at": "now"},
+        "transport_updates": {"update_id": "upd_0", "session_id": "ags_0", "turn_id": "trn_0", "sequence": 0, "kind": "text", "created_at": "now"},
+        "permission_requests": {"permission_id": "prm_0", "session_id": "ags_0", "turn_id": "trn_0", "tool_name": "read", "risk": "low", "status": "pending", "decision": None, "created_at": "now"},
+    }
+    state = store.load()
+    state[collection] = []
+    for index in range(21):
+        record = dict(templates[collection])
+        record[identity_field] = f"{prefix}_{index:02d}"
+        record["created_at"] = f"2026-07-11T00:00:{index:02d}+00:00"
+        if collection == "transport_updates":
+            record["sequence"] = index
+        state[collection].append(record)
+    state[collection][-1][identity_field] = state[collection][0][identity_field]
+    store.save(state)
+    state_before = store.state_path.read_bytes()
+    events_before = store.events_path.read_bytes() if store.events_path.exists() else None
+
+    with pytest.raises(ValueError, match=f"duplicate {identity_field}: {prefix}_00"):
+        cli.main(["status"])
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert store.state_path.read_bytes() == state_before
+    assert (store.events_path.read_bytes() if store.events_path.exists() else None) == events_before
+
+
+def test_status_rejects_protocol_lineage_corruption_hidden_by_latest_twenty_without_writes(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agent_sessions"] = [{
+        "session_id": "ags_0", "agent_id": "planner", "provider": "codex", "transport": "tmux",
+        "native_session_id": None, "workspace": str(root),
+        "capabilities": {"structured_sessions": True, "streaming_updates": True, "structured_tools": True,
+                         "permission_requests": True, "resume_session": True, "observable_terminal": False},
+        "state": "created", "created_at": "now", "updated_at": "now",
+    }]
+    state["protocol_turns"] = [{
+        "turn_id": "trn_0", "session_id": "ags_0", "message_id": "msg_0", "state": "created",
+        "created_at": "now", "updated_at": "now",
+    }]
+    state["transport_updates"] = [{
+        "update_id": f"upd_{index:02d}", "session_id": "ags_0", "turn_id": "trn_0",
+        "sequence": index, "kind": "text", "created_at": f"2026-07-11T00:00:{index:02d}+00:00",
+    } for index in range(21)]
+    state["transport_updates"][0]["turn_id"] = "trn_missing"
+    store.save(state)
+    state_before = store.state_path.read_bytes()
+    events_before = store.events_path.read_bytes() if store.events_path.exists() else None
+
+    with pytest.raises(ValueError, match="transport update turn reference missing"):
+        cli.main(["status"])
+
+    assert capsys.readouterr().out == ""
+    assert store.state_path.read_bytes() == state_before
+    assert (store.events_path.read_bytes() if store.events_path.exists() else None) == events_before
+
+
+def test_protocol_status_rejects_hidden_full_lineage_corruption_without_partial_json(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agent_sessions"] = [{
+        "session_id": "ags_0", "agent_id": "planner", "provider": "codex", "transport": "tmux",
+        "native_session_id": None, "workspace": str(root),
+        "capabilities": {"structured_sessions": True, "streaming_updates": True,
+                         "structured_tools": True, "permission_requests": True,
+                         "resume_session": True, "observable_terminal": False},
+        "state": "created", "created_at": "now", "updated_at": "now",
+    }]
+    state["protocol_turns"] = [{
+        "turn_id": "trn_0", "session_id": "ags_0", "message_id": "msg_0", "state": "created",
+        "created_at": "now", "updated_at": "now",
+    }]
+    state["transport_updates"] = [{
+        "update_id": f"upd_{index:02d}", "session_id": "ags_0", "turn_id": "trn_0",
+        "sequence": index, "kind": "text", "created_at": f"2026-07-11T00:00:{index:02d}+00:00",
+    } for index in range(21)]
+    state["transport_updates"][0]["turn_id"] = "trn_missing"
+    store.save(state)
+    before = _agentdeck_tree_snapshot(root)
+
+    assert cli.main(["protocol", "status"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "protocol runtime status failed" in captured.err
+    assert _agentdeck_tree_snapshot(root) == before
 
 
 def test_status_recovery_surfaces_leader_errors_when_no_work_is_pending(tmp_path, monkeypatch, capsys) -> None:

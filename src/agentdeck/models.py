@@ -94,6 +94,7 @@ class ProjectView:
     leader: dict[str, Any]
     agents: list[dict[str, Any]]
     state_path: str
+    missions: dict[str, Any] = field(default_factory=dict)
     plans: dict[str, Any] = field(default_factory=dict)
     approvals: dict[str, Any] = field(default_factory=dict)
     messages: dict[str, Any] = field(default_factory=dict)
@@ -106,5 +107,9 @@ class ProjectView:
     leader_actions: dict[str, Any] = field(default_factory=dict)
     skills: dict[str, Any] = field(default_factory=dict)
     memory: dict[str, Any] = field(default_factory=dict)
+    agent_sessions: dict[str, Any] = field(default_factory=dict)
+    protocol_turns: dict[str, Any] = field(default_factory=dict)
+    transport_updates: dict[str, Any] = field(default_factory=dict)
+    permission_requests: dict[str, Any] = field(default_factory=dict)
     inbox: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)

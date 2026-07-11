@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+from contextlib import suppress
 import shutil
 import subprocess
-import time
+import uuid
 
 from agentdeck.models import AgentSpec, RuntimeConfig
+from agentdeck.runtime.protocol import TransportCapabilities
 
 from .base import RuntimeDoctorResult
 
 
-INPUT_SUBMIT_DELAY_SECONDS = 0.15
+DETACHED_SESSION_WIDTH = 160
+DETACHED_SESSION_HEIGHT = 60
 
 
 class TmuxBackend:
+    def capabilities(self) -> TransportCapabilities:
+        return TransportCapabilities.tmux_fallback()
+
     def doctor(self) -> RuntimeDoctorResult:
         tmux_path = shutil.which("tmux")
         if not tmux_path:
@@ -33,6 +39,10 @@ class TmuxBackend:
             config.socket_name,
             "new-session",
             "-d",
+            "-x",
+            str(DETACHED_SESSION_WIDTH),
+            "-y",
+            str(DETACHED_SESSION_HEIGHT),
             "-s",
             config.session_name,
             "-n",
@@ -79,15 +89,44 @@ class TmuxBackend:
         return result.stdout
 
     def send_input(self, config: RuntimeConfig, pane_id: str, text: str) -> None:
-        subprocess.run(
-            ["tmux", "-L", config.socket_name, "send-keys", "-t", pane_id, "-l", text],
-            check=True,
-        )
-        time.sleep(INPUT_SUBMIT_DELAY_SECONDS)
-        subprocess.run(
-            ["tmux", "-L", config.socket_name, "send-keys", "-t", pane_id, "Enter"],
-            check=True,
-        )
+        if not isinstance(text, str):
+            raise TypeError("text must be a string")
+        submit_command = [
+            "tmux", "-L", config.socket_name, "send-keys", "-t", pane_id, "Enter",
+        ]
+        if not text:
+            subprocess.run(submit_command, check=True)
+            return
+        buffer_name = f"agentdeck-{uuid.uuid4().hex}"
+        try:
+            subprocess.run(
+                [
+                    "tmux", "-L", config.socket_name, "load-buffer",
+                    "-b", buffer_name, "-",
+                ],
+                check=True,
+                input=text,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    "tmux", "-L", config.socket_name, "paste-buffer", "-p",
+                    "-b", buffer_name, "-t", pane_id,
+                ],
+                check=True,
+            )
+            subprocess.run(submit_command, check=True)
+        finally:
+            with suppress(Exception):
+                subprocess.run(
+                    [
+                        "tmux", "-L", config.socket_name, "delete-buffer",
+                        "-b", buffer_name,
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
 
     def kill_pane(self, config: RuntimeConfig, pane_id: str) -> None:
         subprocess.run(

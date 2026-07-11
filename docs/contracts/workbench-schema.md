@@ -1,5 +1,13 @@
 # Workbench Snapshot Contract
 
+`mission_card` is `null` when ProjectView has no Mission; otherwise it is derived only from `project_view.missions.latest_id/items` plus the safe configured tmux session name. It reuses the Mission status projection and adds the canonical natural-language `confirmation_command`. Its five controls expose confirm, resume, status, attach, and workbench actions; confirm is enabled only for an unblocked pending Mission, resume only for an unblocked stopped/interrupted Mission. Rendering stays read-only: it does not inspect tmux, invoke a provider, execute a command, append an event, or mutate state.
+
+The independent stable field list is exposed as `mission_card_fields`; it is the Mission status field tuple plus `confirmation_command`. A disabled confirmation uses the first compact Mission blocker when one exists, falling back to the current status only when there is no blocker. This preserves actionable, sanitized readiness evidence without accepting nested blocker values.
+
+When `mission_card` is non-null, `validate_workbench_contract()` requires `project_view.missions.latest_id` to identify an item and compares every shared compact core field against that latest item, including identity, lifecycle, blockers, plan/workflow provenance, progress, selected Workers, timestamps, resumability, and canonical commands. Drift errors name only the field and never echo either value. A ProjectView with no Mission must keep `mission_card=null`; a ProjectView with a latest Mission must include the aligned card. The discovery example is constructed from the same Mission facts on both surfaces.
+
+Provider/model/Leader-backend provenance remains on the ProjectView Mission item; it is not duplicated into `mission_card`. The card validator compares only fields actually present on both compact surfaces.
+
 `agentdeck workbench` is the read-only, GUI-ready snapshot for the local AgentDeck control plane.
 
 It does not create plans, record chat turns, acknowledge inbox items, approve approvals, dispatch work, capture replies, or send tmux input. It composes already validated surfaces into one response so a terminal UI or GUI can render the current workspace without issuing several commands.
