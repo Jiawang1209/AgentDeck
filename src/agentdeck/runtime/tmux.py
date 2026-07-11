@@ -106,7 +106,7 @@ class TmuxBackend:
             )
             subprocess.run(
                 [
-                    "tmux", "-L", config.socket_name, "paste-buffer", "-p", "-d",
+                    "tmux", "-L", config.socket_name, "paste-buffer", "-p",
                     "-b", buffer_name, "-t", pane_id,
                 ],
                 check=True,
@@ -120,6 +120,8 @@ class TmuxBackend:
                         "-b", buffer_name,
                     ],
                     check=False,
+                    capture_output=True,
+                    text=True,
                 )
 
     def kill_pane(self, config: RuntimeConfig, pane_id: str) -> None:

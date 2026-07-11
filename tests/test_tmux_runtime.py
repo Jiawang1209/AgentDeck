@@ -62,7 +62,7 @@ def test_send_input_uses_private_bracketed_paste_then_one_enter(
         ),
         (
             [
-                "tmux", "-L", "demo", "paste-buffer", "-p", "-d",
+                "tmux", "-L", "demo", "paste-buffer", "-p",
                 "-b", buffer_name, "-t", "%1",
             ],
             {"check": True},
@@ -73,7 +73,7 @@ def test_send_input_uses_private_bracketed_paste_then_one_enter(
         ),
         (
             ["tmux", "-L", "demo", "delete-buffer", "-b", buffer_name],
-            {"check": False},
+            {"check": False, "capture_output": True, "text": True},
         ),
     ]
     assert all(prompt not in command for command, _kwargs in calls)
@@ -129,9 +129,39 @@ def test_send_input_cleans_private_buffer_without_masking_paste_failure(
     buffer_name = calls[0][0][-2]
     assert calls[-1] == (
         ["tmux", "-L", "demo", "delete-buffer", "-b", buffer_name],
-        {"check": False},
+        {"check": False, "capture_output": True, "text": True},
     )
     assert not any(command[-1] == "Enter" for command, _kwargs in calls)
+
+
+def test_send_input_silently_cleans_after_load_failure_and_preserves_error(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    load_error = tmux.subprocess.CalledProcessError(1, ["tmux", "load-buffer"])
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if "load-buffer" in command:
+            raise load_error
+        return SimpleNamespace(returncode=1, stdout="", stderr="unknown buffer")
+
+    monkeypatch.setattr(tmux.subprocess, "run", fake_run)
+
+    with pytest.raises(tmux.subprocess.CalledProcessError) as raised:
+        tmux.TmuxBackend().send_input(
+            RuntimeConfig(backend="tmux", session_name="demo", socket_name="demo"),
+            "%1",
+            "private prompt",
+        )
+
+    assert raised.value is load_error
+    buffer_name = calls[0][0][-2]
+    assert calls[-1] == (
+        ["tmux", "-L", "demo", "delete-buffer", "-b", buffer_name],
+        {"check": False, "capture_output": True, "text": True},
+    )
+    assert len(calls) == 2
 
 
 def test_send_input_rejects_non_string_before_tmux_side_effect(monkeypatch) -> None:

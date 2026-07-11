@@ -8,9 +8,9 @@
 
 - **类型**: real Mission acceptance fix + strict TDD + tmux input safety
 - **问题**: Codex CLI 0.131 的 chat composer 会把 `tmux send-keys -l` 的快速字符流识别为 paste burst；burst active 时紧随其后的 Enter 被 `append_newline_if_active` 吞为编辑区换行，sleep 又不会触发 composer flush，因此长多行 Mission prompt 仍可能停留在输入框而未提交。
-- **What**: 非空输入由 `TmuxBackend.send_input` 创建独立命名的 tmux buffer，通过 `load-buffer ... -` 的 stdin 原样加载文本，再用 `paste-buffer -p -d` 向目标 pane 发送 tmux 原生 bracketed paste，最后且仅最后发送一次 Enter；finally 额外执行容错 `delete-buffer`，覆盖 paste/Enter 失败和 `-d` 未生效路径。空字符串不创建 buffer，直接发送一次 Enter。正文不进入进程 argv；短、长、多行与 Unicode 输入统一走 bracketed-paste 路径。
-- **TDD 证据**: 短/两行/长 Unicode 多行契约先以旧实现缺少 `load-buffer` / `paste-buffer` 得到 3 failed / 2 passed RED；首版 bracketed-paste 后，空输入与失败清理审查用例再得到 5 failed / 2 passed RED，分别证明 tmux 3.6a 空 buffer 不可 paste、paste 失败会遗留正文。最小修复后 tmux runtime 7/7 GREEN。
-- **安全边界**: 非字符串仍在任何 tmux 副作用前拒绝；每次非空调用使用独立 buffer 避免并发争用默认 buffer，`-d` 与 finally cleanup 双重删除，cleanup 的普通异常被抑制以保证不覆盖原始 load/paste/Enter 异常；命令继续使用 argv 数组且不经 shell，prompt 完全通过 stdin，Enter 只发送一次，不改变 workflow、approval 或 runtime 授权语义。旧 delay helper 与常量被删除，因为等待不能结束 Codex composer 的内部 paste-burst 状态，继续保留会制造错误正确性暗示。
+- **What**: 非空输入由 `TmuxBackend.send_input` 创建独立命名的 tmux buffer，通过 `load-buffer ... -` 的 stdin 原样加载文本，再用 `paste-buffer -p` 向目标 pane 发送 tmux 原生 bracketed paste，最后且仅最后发送一次 Enter；finally 是 buffer 的唯一删除者，通过静默、容错 `delete-buffer` 覆盖 load/paste/Enter 任一路径。空字符串不创建 buffer，直接发送一次 Enter。正文不进入进程 argv；短、长、多行与 Unicode 输入统一走 bracketed-paste 路径。
+- **TDD 证据**: 短/两行/长 Unicode 多行契约先以旧实现缺少 `load-buffer` / `paste-buffer` 得到 3 failed / 2 passed RED；首版 bracketed-paste 后，空输入与失败清理审查用例再得到 5 failed / 2 passed RED，分别证明 tmux 3.6a 空 buffer 不可 paste、paste 失败会遗留正文；复审再以成功/paste 失败/load 失败得到 5 failed / 3 passed RED，证明 `-d` 与 finally 双删会向 stderr 输出 unknown buffer。最终 tmux runtime 8/8 GREEN。
+- **安全边界**: 非字符串仍在任何 tmux 副作用前拒绝；每次非空调用使用独立 buffer 避免并发争用默认 buffer，finally 统一删除且捕获 cleanup stdout/stderr，cleanup 的普通异常被抑制以保证不覆盖原始 load/paste/Enter 异常；命令继续使用 argv 数组且不经 shell，prompt 完全通过 stdin，Enter 只发送一次，不改变 workflow、approval 或 runtime 授权语义。旧 delay helper 与常量被删除，因为等待不能结束 Codex composer 的内部 paste-burst 状态，继续保留会制造错误正确性暗示。
 
 ### Recognize Codex rotating idle templates
 
