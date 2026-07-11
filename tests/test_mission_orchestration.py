@@ -759,6 +759,9 @@ def test_create_preview_selects_workers_freezes_serial_plan_and_never_touches_ru
     assert len(provider.requests) == 1
     request = provider.requests[0]
     assert [agent.agent_id for agent in request.config.agents] == ["planner", "reviewer"]
+    assert [agent.command for agent in request.config.agents] == ["codex", "claude"]
+    assert [agent.transport for agent in request.config.agents] == ["tmux", "tmux"]
+    assert [agent.transport_command for agent in request.config.agents] == [(), ()]
     assert "strictly serial" in request.task
     assert "exactly 8 steps" in request.task
     assert "planner, reviewer" in request.task

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agentdeck.models import RuntimeConfig
+from agentdeck.models import AgentSpec, RuntimeConfig
 from agentdeck.runtime import tmux
 from agentdeck.runtime.protocol import TransportCapabilities
 
@@ -35,6 +35,34 @@ def test_create_session_sets_detached_terminal_size(monkeypatch) -> None:
         "tmux", "-L", "demo", "new-session", "-d", "-x", "160", "-y", "60",
         "-s", "demo", "-n", "control",
     ]]
+
+
+def test_spawn_agent_uses_legacy_command_even_with_explicit_acp_transport(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="%7\n", stderr="")
+
+    monkeypatch.setattr(tmux.subprocess, "run", fake_run)
+    agent = AgentSpec(
+        agent_id="planner",
+        role="planning",
+        provider="codex",
+        command="codex --model legacy",
+        transport="acp",
+        transport_command=("must-not-run", "--flag"),
+    )
+
+    pane_id = tmux.TmuxBackend().spawn_agent(
+        RuntimeConfig(backend="tmux", session_name="demo", socket_name="demo"),
+        agent,
+        "/tmp/project",
+    )
+
+    assert pane_id == "%7"
+    assert calls[0][-1] == "codex --model legacy"
+    assert "must-not-run" not in calls[0]
 
 
 @pytest.mark.parametrize(

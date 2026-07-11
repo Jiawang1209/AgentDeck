@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agentdeck import cli
 from agentdeck.config import load_config, write_default_config
 from agentdeck.contracts import validate_trace_contract
@@ -83,11 +85,71 @@ def test_assign_role_updates_config_and_records_event(tmp_path, monkeypatch, cap
     assert '"event_type": "agent_role_assigned"' in events
 
 
+def test_assign_role_roundtrip_does_not_add_transport_keys_to_legacy_config(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    assert "transport" not in config_path.read_text(encoding="utf-8")
+
+    assert cli.main(
+        [
+            "agent", "assign-role", "--agent", "planner",
+            "--role", "architecture", "--role-prompt", "Plan only.",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    text = config_path.read_text(encoding="utf-8")
+    assert "transport =" not in text
+    assert "transport_command =" not in text
+    planner = next(agent for agent in load_config(root).agents if agent.agent_id == "planner")
+    assert planner.transport == "tmux"
+    assert planner.transport_command == ()
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        'transport = "ssh"\ntransport_command = ["agent"]',
+        'transport = "acp"\ntransport_command = [true]',
+        'transport = "acp"\ntransport_command = []',
+    ],
+)
+def test_assign_role_rejects_malformed_transport_without_rewriting_config(
+    tmp_path, monkeypatch, malformed
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    config_path = root / ".agentdeck" / "config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            'command = "codex"', f'command = "codex"\n{malformed}', 1
+        ),
+        encoding="utf-8",
+    )
+    before = config_path.read_bytes()
+
+    with pytest.raises(ValueError, match="transport"):
+        cli.main(
+            [
+                "agent", "assign-role", "--agent", "planner",
+                "--role", "architecture", "--role-prompt", "Plan only.",
+            ]
+        )
+
+    assert config_path.read_bytes() == before
+
+
 def test_dispatch_sends_role_prompt_task_and_records_event(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     bind_planner(root)
     fake = FakeTmuxBackend()
     monkeypatch.setattr(cli, "TmuxBackend", lambda: fake)
+
+    planner = next(agent for agent in load_config(root).agents if agent.agent_id == "planner")
+    assert planner.command == "codex"
+    assert planner.transport == "tmux"
+    assert planner.transport_command == ()
 
     exit_code = cli.main(["dispatch", "--agent", "planner", "--task", "设计消息账本"])
 
