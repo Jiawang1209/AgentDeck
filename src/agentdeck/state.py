@@ -23,6 +23,13 @@ from .mission import (
     mission_status_transition_allowed,
 )
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
+from .runtime.protocol import (
+    TransportCapabilities,
+    build_agent_session,
+    build_permission_request,
+    build_transport_update,
+    build_turn,
+)
 
 
 def leader_provider_backend(provider: str | None) -> str:
@@ -145,6 +152,10 @@ class StateStore:
                 "skill_loads": [],
                 "skill_suggestions": [],
                 "memory_suggestions": [],
+                "agent_sessions": [],
+                "protocol_turns": [],
+                "transport_updates": [],
+                "permission_requests": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -157,6 +168,154 @@ class StateStore:
     def append_event(self, event: EventRecord) -> None:
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
+
+    @staticmethod
+    def _unique_protocol_record(
+        records: list[dict[str, Any]], key: str, value: str, duplicate_error: str
+    ) -> dict[str, Any]:
+        matches = [item for item in records if isinstance(item, dict) and item.get(key) == value]
+        if len(matches) > 1:
+            raise ValueError(duplicate_error)
+        if not matches:
+            raise KeyError(value)
+        return matches[0]
+
+    @staticmethod
+    def _validate_protocol_identities(state: dict[str, Any]) -> None:
+        sessions = state.setdefault("agent_sessions", [])
+        turns = state.setdefault("protocol_turns", [])
+        session_ids = [item.get("session_id") for item in sessions if isinstance(item, dict)]
+        turn_ids = [item.get("turn_id") for item in turns if isinstance(item, dict)]
+        if len(session_ids) != len(set(session_ids)):
+            raise ValueError("duplicate agent session identity")
+        if len(turn_ids) != len(set(turn_ids)):
+            raise ValueError("duplicate protocol turn identity")
+
+    def record_agent_session(
+        self,
+        agent_id: str,
+        provider: str,
+        transport: str,
+        native_session_id: str | None,
+        workspace: str,
+        capabilities: TransportCapabilities,
+    ) -> dict[str, Any]:
+        state = self.load()
+        self._validate_protocol_identities(state)
+        record = build_agent_session(
+            agent_id, provider, transport, native_session_id, workspace, capabilities
+        )
+        state.setdefault("agent_sessions", []).append(record)
+        self.save(state)
+        self.append_event(EventRecord.create("agent_session_recorded", {
+            "session_id": record["session_id"],
+            "agent_id": record["agent_id"],
+            "transport": record["transport"],
+        }))
+        return record
+
+    def record_protocol_turn(self, session_id: str, message_id: str) -> dict[str, Any]:
+        state = self.load()
+        self._validate_protocol_identities(state)
+        self._unique_protocol_record(
+            state.setdefault("agent_sessions", []), "session_id", session_id,
+            "duplicate agent session identity",
+        )
+        record = build_turn(session_id, message_id)
+        state.setdefault("protocol_turns", []).append(record)
+        self.save(state)
+        self.append_event(EventRecord.create("protocol_turn_recorded", {
+            "turn_id": record["turn_id"],
+            "session_id": record["session_id"],
+            "message_id": record["message_id"],
+        }))
+        return record
+
+    def _validated_protocol_turn(
+        self, state: dict[str, Any], session_id: str, turn_id: str
+    ) -> dict[str, Any]:
+        self._validate_protocol_identities(state)
+        self._unique_protocol_record(
+            state.setdefault("agent_sessions", []), "session_id", session_id,
+            "duplicate agent session identity",
+        )
+        turn = self._unique_protocol_record(
+            state.setdefault("protocol_turns", []), "turn_id", turn_id,
+            "duplicate protocol turn identity",
+        )
+        if turn.get("session_id") != session_id:
+            raise ValueError("protocol turn session mismatch")
+        return turn
+
+    def record_transport_update(
+        self, session_id: str, turn_id: str, sequence: int, kind: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        state = self.load()
+        self._validated_protocol_turn(state, session_id, turn_id)
+        updates = state.setdefault("transport_updates", [])
+        if any(
+            isinstance(item, dict)
+            and item.get("turn_id") == turn_id
+            and item.get("sequence") == sequence
+            for item in updates
+        ):
+            raise ValueError("duplicate transport update sequence")
+        record = build_transport_update(session_id, turn_id, sequence, kind, payload)
+        updates.append(record)
+        self.save(state)
+        self.append_event(EventRecord.create("transport_update_recorded", {
+            "update_id": record["update_id"],
+            "session_id": record["session_id"],
+            "turn_id": record["turn_id"],
+            "sequence": record["sequence"],
+            "kind": record["kind"],
+        }))
+        return record
+
+    def record_permission_request(
+        self, session_id: str, turn_id: str, tool_name: str, target: str, risk: str
+    ) -> dict[str, Any]:
+        state = self.load()
+        self._validated_protocol_turn(state, session_id, turn_id)
+        record = build_permission_request(session_id, turn_id, tool_name, target, risk)
+        state.setdefault("permission_requests", []).append(record)
+        self.save(state)
+        self.append_event(EventRecord.create("permission_request_recorded", {
+            "permission_id": record["permission_id"],
+            "session_id": record["session_id"],
+            "turn_id": record["turn_id"],
+            "tool_name": record["tool_name"],
+            "risk": record["risk"],
+        }))
+        return record
+
+    def agent_session_by_id(self, session_id: str) -> dict[str, Any]:
+        state = self.load()
+        self._validate_protocol_identities(state)
+        return self._unique_protocol_record(
+            state.setdefault("agent_sessions", []), "session_id", session_id,
+            "duplicate agent session identity",
+        )
+
+    def protocol_turn_by_id(self, turn_id: str) -> dict[str, Any]:
+        state = self.load()
+        self._validate_protocol_identities(state)
+        return self._unique_protocol_record(
+            state.setdefault("protocol_turns", []), "turn_id", turn_id,
+            "duplicate protocol turn identity",
+        )
+
+    def list_agent_sessions(self) -> list[dict[str, Any]]:
+        return list(self.load().setdefault("agent_sessions", []))
+
+    def list_protocol_turns(self) -> list[dict[str, Any]]:
+        return list(self.load().setdefault("protocol_turns", []))
+
+    def list_transport_updates(self) -> list[dict[str, Any]]:
+        return list(self.load().setdefault("transport_updates", []))
+
+    def list_permission_requests(self) -> list[dict[str, Any]]:
+        return list(self.load().setdefault("permission_requests", []))
 
     def create_mission(
         self,

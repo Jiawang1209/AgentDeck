@@ -5,6 +5,7 @@ import math
 
 import pytest
 
+from agentdeck.state import StateStore
 from agentdeck.runtime.protocol import (
     AGENT_SESSION_STATES,
     PERMISSION_STATES,
@@ -196,3 +197,133 @@ def test_builders_are_pure_domain_helpers(monkeypatch: pytest.MonkeyPatch) -> No
     build_turn("ags_1", "msg_1")
     build_transport_update("ags_1", "trn_1", 0, "text", {})
     build_permission_request("ags_1", "trn_1", "shell", "cwd", "low")
+
+
+def _disk_snapshot(store: StateStore) -> tuple[bool, bytes | None, bool, bytes | None]:
+    return (
+        store.state_path.exists(),
+        store.state_path.read_bytes() if store.state_path.exists() else None,
+        store.events_path.exists(),
+        store.events_path.read_bytes() if store.events_path.exists() else None,
+    )
+
+
+def test_fresh_state_has_protocol_lineage_collections(tmp_path) -> None:
+    state = StateStore(tmp_path).load()
+    assert state["agent_sessions"] == []
+    assert state["protocol_turns"] == []
+    assert state["transport_updates"] == []
+    assert state["permission_requests"] == []
+
+
+def test_state_store_records_complete_protocol_lineage_and_redacted_events(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    session = store.record_agent_session("planner", "codex", "native", None, "/tmp/project", CAPABILITIES)
+    turn = store.record_protocol_turn(session["session_id"], "msg_123")
+    update = store.record_transport_update(session["session_id"], turn["turn_id"], 0, "tool_call", {"path": "/secret"})
+    permission = store.record_permission_request(session["session_id"], turn["turn_id"], "write_file", "/secret", "high")
+
+    assert store.agent_session_by_id(session["session_id"]) == session
+    assert store.protocol_turn_by_id(turn["turn_id"]) == turn
+    assert store.list_agent_sessions() == [session]
+    assert store.list_protocol_turns() == [turn]
+    assert store.list_transport_updates() == [update]
+    assert store.list_permission_requests() == [permission]
+    json.dumps(store.load())
+    events = [json.loads(line) for line in store.events_path.read_text().splitlines()]
+    assert [event["event_type"] for event in events] == [
+        "agent_session_recorded", "protocol_turn_recorded", "transport_update_recorded", "permission_request_recorded"
+    ]
+    assert events[0]["payload"] == {"session_id": session["session_id"], "agent_id": "planner", "transport": "native"}
+    assert events[1]["payload"] == {"turn_id": turn["turn_id"], "session_id": session["session_id"], "message_id": "msg_123"}
+    assert events[2]["payload"] == {"update_id": update["update_id"], "session_id": session["session_id"], "turn_id": turn["turn_id"], "sequence": 0, "kind": "tool_call"}
+    assert events[3]["payload"] == {"permission_id": permission["permission_id"], "session_id": session["session_id"], "turn_id": turn["turn_id"], "tool_name": "write_file", "risk": "high"}
+    assert "/secret" not in store.events_path.read_text()
+
+
+def test_protocol_state_methods_support_old_state_and_lists_are_independent(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    store.save({"agents": {}})
+    session = store.record_agent_session("planner", "codex", "native", None, "/tmp/project", CAPABILITIES)
+    listed = store.list_agent_sessions()
+    listed.clear()
+    assert store.list_agent_sessions() == [session]
+
+
+@pytest.mark.parametrize("operation", ["turn", "update", "permission"])
+def test_unknown_protocol_references_are_zero_write(tmp_path, operation: str) -> None:
+    store = StateStore(tmp_path)
+    before = _disk_snapshot(store)
+    with pytest.raises(KeyError):
+        if operation == "turn":
+            store.record_protocol_turn("ags_unknown", "msg_1")
+        elif operation == "update":
+            store.record_transport_update("ags_unknown", "trn_unknown", 0, "text", {})
+        else:
+            store.record_permission_request("ags_unknown", "trn_unknown", "shell", "cwd", "high")
+    assert _disk_snapshot(store) == before
+
+
+def test_mismatched_turn_references_and_duplicate_sequence_are_zero_write(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    first = store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    second = store.record_agent_session("b", "p", "t", None, "w", CAPABILITIES)
+    turn = store.record_protocol_turn(first["session_id"], "msg")
+    store.record_transport_update(first["session_id"], turn["turn_id"], 0, "text", {})
+    for call, message in [
+        (lambda: store.record_transport_update(second["session_id"], turn["turn_id"], 1, "text", {}), "protocol turn session mismatch"),
+        (lambda: store.record_permission_request(second["session_id"], turn["turn_id"], "shell", "cwd", "high"), "protocol turn session mismatch"),
+        (lambda: store.record_transport_update(first["session_id"], turn["turn_id"], 0, "text", {}), "duplicate transport update sequence"),
+    ]:
+        before = _disk_snapshot(store)
+        with pytest.raises(ValueError, match=message):
+            call()
+        assert _disk_snapshot(store) == before
+
+
+@pytest.mark.parametrize("collection,error", [
+    ("agent_sessions", "duplicate agent session identity"),
+    ("protocol_turns", "duplicate protocol turn identity"),
+])
+def test_corrupt_duplicate_protocol_identity_is_zero_write(tmp_path, collection: str, error: str) -> None:
+    store = StateStore(tmp_path)
+    session = build_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    turn = build_turn(session["session_id"], "msg")
+    state = store.load()
+    state["agent_sessions"] = [session]
+    state["protocol_turns"] = [turn]
+    state[collection].append(dict(state[collection][0]))
+    store.save(state)
+    before = _disk_snapshot(store)
+    with pytest.raises(ValueError, match=error):
+        store.record_permission_request(session["session_id"], turn["turn_id"], "shell", "cwd", "high")
+    assert _disk_snapshot(store) == before
+
+
+def test_builder_rejection_and_save_failure_do_not_append_events(tmp_path, monkeypatch) -> None:
+    store = StateStore(tmp_path)
+    before = _disk_snapshot(store)
+    with pytest.raises(ValueError):
+        store.record_agent_session("", "p", "t", None, "w", CAPABILITIES)
+    assert _disk_snapshot(store) == before
+
+    def fail_save(state):
+        raise OSError("save failed")
+
+    monkeypatch.setattr(store, "save", fail_save)
+    before_save_failure = _disk_snapshot(store)
+    with pytest.raises(OSError, match="save failed"):
+        store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    assert _disk_snapshot(store) == before_save_failure
+
+
+def test_event_failure_happens_after_state_save(tmp_path, monkeypatch) -> None:
+    store = StateStore(tmp_path)
+
+    def fail_event(event):
+        raise OSError("event failed")
+
+    monkeypatch.setattr(store, "append_event", fail_event)
+    with pytest.raises(OSError, match="event failed"):
+        store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    assert len(store.load()["agent_sessions"]) == 1

@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Persist protocol runtime lineage
+
+- **类型**: append-only protocol state + strict TDD
+- **What**: `StateStore` fresh state 新增 `agent_sessions`、`protocol_turns`、`transport_updates`、`permission_requests` 四个集合，并新增 session、turn、update、permission 的持久化、按 ID 查询和只读列表方法；旧 state 通过 `setdefault` 保持兼容，记录继续保持 JSON 可序列化。
+- **引用完整性**: 所有写入在 builder、save 和 event 前验证 session/turn 唯一且存在、turn 属于目标 session，并拒绝重复 `(turn_id, sequence)`；未知引用、session mismatch、损坏的重复 identity、重复 sequence 和 builder 输入错误均保持 state/events 文件存在状态与字节完全不变。
+- **审计边界**: 成功路径严格为 load → validate → build → append once → save once → append event；update event 不记录业务 payload，permission event 不记录可能敏感的 target。save 失败不会追加 event；event 失败发生在 state 已保存之后，本切片明确不宣称跨文件事务原子性。
+- **TDD 证据**: 新状态契约先得到 11 failed / 57 passed RED，失败精确对应 fresh keys 与四个 StateStore 写入方法缺失；最小实现后 `tests/test_protocol_runtime.py` 68/68 GREEN，相邻 `tests/test_agent_cli.py tests/test_workflow.py` 292/292 GREEN。
+
 ### Add protocol runtime domain records
 
 - **类型**: pure runtime domain + strict TDD
