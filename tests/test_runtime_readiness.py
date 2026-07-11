@@ -92,6 +92,23 @@ CLAUDE_21207_PHASE0_IDLE_SCREEN = (
     "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
 )
 
+CODEX_0131_PHASE0_TMUX_IDLE_SCREEN = (
+    "│ >_ OpenAI Codex (v0.131.0) │\n"
+    "│ model: gpt-5.5 medium /model to change │\n"
+    "│ directory: ~/…/agentdeck-protocol-v2-phase0-acceptance │\n"
+    "› Summarize recent commits\n"
+    "[gpt-5.6-sol medium] │ agentdeck-protocol-v2-phase0-acceptance\n"
+    "Context ██░░░░░░░░ 15% │ Usage █░░░░░░░░░ 6%"
+)
+
+CLAUDE_21207_PHASE0_TMUX_IDLE_SCREEN = (
+    "│ Opus 4.8 (1M context) · Claude Max · │ release notes │\n"
+    "│ user@example.com's Organization │ /release-notes for more │\n"
+    "│ ~/Desktop/agentdeck-protocol-v2-phase0-acceptance │ │\n"
+    "❯\u00a0\n"
+    "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
+)
+
 
 @pytest.mark.parametrize(
     ("provider", "output", "expected"),
@@ -119,6 +136,14 @@ def test_codex_phase0_real_idle_footer_is_ready() -> None:
 
 def test_claude_phase0_real_idle_chrome_survives_release_note_scroll() -> None:
     assert classify_worker_readiness("claude-cli", CLAUDE_21207_PHASE0_IDLE_SCREEN).status == "ready"
+
+
+def test_codex_phase0_tmux_box_idle_chrome_is_ready() -> None:
+    assert classify_worker_readiness("codex-cli", CODEX_0131_PHASE0_TMUX_IDLE_SCREEN).status == "ready"
+
+
+def test_claude_phase0_post_trust_tmux_box_idle_chrome_is_ready() -> None:
+    assert classify_worker_readiness("claude-cli", CLAUDE_21207_PHASE0_TMUX_IDLE_SCREEN).status == "ready"
 
 
 @pytest.mark.parametrize(
@@ -410,7 +435,6 @@ def test_claude_empty_prompt_without_trusted_cli_structure_is_not_idle(screen: s
 @pytest.mark.parametrize(
     "missing_line",
     [
-        "Accessing workspace:\n",
         "│ user@example.com's Organization │ /release-notes...          │\n",
         "│ /tmp/agentdeck-demo             │                            │\n",
         "❯\u00a0\n",
@@ -452,10 +476,6 @@ def test_claude_workspace_path_must_be_in_the_first_box_cell(
             "│ /tmp/agentdeck-demo             │                            │\n",
             "│ /tmp/agentdeck-demo             │                            │\n"
             "│ user@example.com's Organization │ /release-notes...          │\n",
-        ),
-        CLAUDE_21207_READY_SCREEN.replace(
-            "Accessing workspace:\n│ user@example.com's Organization",
-            "Accessing workspace: │ user@example.com's Organization",
         ),
     ],
 )

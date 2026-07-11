@@ -34,9 +34,17 @@ _CODEX_OFFICIAL_IDLE_PROMPT = re.compile(
     r"run\s+/review\s+on\s+my\s+current\s+changes|"
     r"use\s+/skills\s+to\s+list\s+available\s+skills)\s*$"
 )
-_CODEX_HEADER_CHROME = re.compile(r"^\s*openai codex(?:\s+\(v[^\r\n]+\))?\s*$")
-_CODEX_MODEL_CHROME = re.compile(r"^\s*model:\s*\S[^\r\n]*$")
-_CODEX_DIRECTORY_CHROME = re.compile(r"^\s*directory:\s*(?:/|~/|…/)\S[^\r\n]*$")
+_CODEX_HEADER_CHROME = re.compile(
+    r"^\s*(?:[│|]\s*>_\s*)?openai codex(?:\s+\(v[^\r\n│|]+\))?"
+    r"\s*(?:[│|])?\s*$"
+)
+_CODEX_MODEL_CHROME = re.compile(
+    r"^\s*(?:[│|]\s*)?model:\s*\S[^\r\n│|]*(?:[│|])?\s*$"
+)
+_CODEX_DIRECTORY_CHROME = re.compile(
+    r"^\s*(?:[│|]\s*)?directory:\s*(?:/|~/|…/)\S[^\r\n│|]*"
+    r"(?:[│|])?\s*$"
+)
 _CODEX_CONTEXT_FOOTER = re.compile(
     r"^\s*(?:\[[^\]\r\n]+\]\s+context:\s*\d+%\s+left(?:\s+usage:[^\r\n]+)?|"
     r"\S[^\r\n]*\s+·\s+\d+%\s+left|"
@@ -83,7 +91,6 @@ class WorkerReadinessBatch:
 
 def _has_ordered_claude_idle_chrome(lines: list[str]) -> bool:
     patterns = (
-        _CLAUDE_WORKSPACE_CHROME,
         _CLAUDE_ORGANIZATION_CHROME,
         _CLAUDE_WORKSPACE_PATH_CHROME,
         _CLAUDE_EMPTY_PROMPT,

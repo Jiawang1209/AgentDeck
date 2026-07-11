@@ -7,9 +7,9 @@
 ### Recognize the real Phase 0 Codex and Claude idle frames
 
 - **类型**: natural-language Mission acceptance fix + strict TDD + bounded readiness safety
-- **问题**: trust setup 完成后的真实两消息 Mission 仍在 step 0 以 `worker_readiness_timeout` 停止。Codex 0.131 的当前 footer 分成 model/project 行与 `Context <bars> <percent> │ Usage <bars> <percent>` 行，旧 matcher 不接受；Claude 2.1.20.7 的 release notes 会把 workspace header 推出通用 40 行 active frame，而且 MCP authentication warning 并非每次出现，旧 matcher 因而把两个已空闲 Worker 都误判为 starting。
-- **What**: Codex 继续使用 40 行有界 active frame，只新增真实 bars footer 的精确结构；Claude 使用独立的 80 行有界 frame，并继续要求有序 workspace header、organization box、workspace path box、空 `❯` prompt 和 mode footer，MCP warning 改为可选状态信息。没有使用无界 scrollback，也没有放宽 prompt、path 或 box 结构。
-- **TDD 证据**: 两段脱敏真实 idle frame 先得到 2 failed RED；最小修复后新用例 2/2 GREEN，完整 readiness suite 179/179 GREEN。现有负面矩阵继续覆盖当前非空输入、trust/login、fatal/startup、结构缺失/乱序、伪 workspace path 和超出 Codex 当前 frame 的旧 blocker。
+- **问题**: trust setup 完成后的真实两消息 Mission 仍在 step 0 以 `worker_readiness_timeout` 停止。Codex 0.131 的当前 footer 分成 model/project 行与 `Context <bars> <percent> │ Usage <bars> <percent>` 行，且 tmux capture 保留 header/model/directory 的 `│ ... │` box；Claude 2.1.20.7 的 release notes 会把 workspace header 推出通用 40 行 active frame，post-trust 启动还可能完全省略 `Accessing workspace:` 与 MCP warning。旧 matcher 因而把两个已空闲 Worker 都误判为 starting。
+- **What**: Codex 继续使用 40 行有界 active frame，只新增真实 bars footer 与精确 box-wrapped header/model/directory 结构；Claude 使用独立的 80 行有界 frame，并继续要求有序 organization box、workspace path box、空 `❯` prompt 和 mode footer，workspace label 与 MCP warning 均作为可选状态信息。没有使用无界 scrollback，也没有放宽 prompt、path 或 box 结构。
+- **TDD 证据**: 第一组脱敏真实 idle frame 先得到 2 failed RED；真实 tmux box/post-trust frame 随后再次得到 2 failed RED，防止理想化 fixture 掩盖 pane capture 差异。最小修复后两组新用例均 GREEN，完整 readiness suite 179/179 GREEN，runtime + Mission + Leader 相邻回归 407/407 GREEN；第三次失败项目的两段真实 capture 直接分类均为 `ready`。现有负面矩阵继续覆盖当前非空输入、trust/login、fatal/startup、结构缺失/乱序、伪 workspace path 和超出 Codex 当前 frame 的旧 blocker。
 - **安全边界**: 当前输入仍优先于 idle placeholder；setup/fatal/startup 仍优先于 ready；Claude frame 只从 40 有界扩大到 80，Codex 仍为 40，历史错误不会被重新当作当前状态。不改变 Mission 确认、dispatch、Worker 输入或 runtime 权限。
 
 ### Plan the protocol-native Phase 0 and Phase 1 implementation
