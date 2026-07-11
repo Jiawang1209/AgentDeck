@@ -17,6 +17,9 @@ from agentdeck.runtime.acp_mapping import MAX_ACP_MESSAGE_BYTES
 
 ACP_PROTOCOL_VERSION = 1
 MAX_ACP_STDERR_BYTES = 64 * 1024
+ACP_TRANSPORT_STATES = (
+    "new", "starting", "open", "cleaning", "cleanup_incomplete", "closed"
+)
 ACP_INHERITED_ENV_VARS = (
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
     "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "https_proxy",
@@ -148,7 +151,7 @@ class AcpTransport:
         self._process: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[bytes] | None = None
         self._stderr = b""
-        self._closed = False
+        self._lifecycle_state = "new"
         self._cleanup_task: asyncio.Task[None] | None = None
         self._cleanup_incomplete = False
         self._cleanup_diagnostics: list[AcpCleanupDiagnostic] = []
@@ -177,6 +180,10 @@ class AcpTransport:
         return self._process.pid
 
     @property
+    def lifecycle_state(self) -> str:
+        return self._lifecycle_state
+
+    @property
     def stderr_diagnostic(self) -> str:
         redacted = _SECRET_LINE.sub(b"[REDACTED]", self._stderr[:MAX_ACP_STDERR_BYTES])
         for value in self._diagnostic_redactions:
@@ -203,10 +210,11 @@ class AcpTransport:
         return bytes(captured)
 
     async def _start(self) -> None:
-        if self._connection is not None and "connection_close" not in self._cleanup_completed_stages:
-            return
-        if self._closed:
-            raise RuntimeError("ACP transport is closed")
+        if self._lifecycle_state != "new":
+            raise RuntimeError(
+                f"ACP transport cannot start from {self._lifecycle_state} state"
+            )
+        self._lifecycle_state = "starting"
         self._context = spawn_agent_process(
             self._client,
             self._argv[0],
@@ -222,8 +230,10 @@ class AcpTransport:
         try:
             self._connection, self._process = await self._context.__aenter__()
         except Exception as error:
+            self._lifecycle_state = "closed"
             raise AcpTransportError("failed to start ACP stdio transport") from error
         self._stderr_task = asyncio.create_task(self._capture_stderr())
+        self._lifecycle_state = "open"
 
     async def _request(self, operation: object, *, eof_is_ambiguous: bool = False) -> Any:
         try:
@@ -340,6 +350,11 @@ class AcpTransport:
         return AcpCancelDiagnostic(session_id=native_session_id, status=status)
 
     def _ensure_cleanup(self) -> asyncio.Task[None]:
+        if self._lifecycle_state == "new":
+            self._lifecycle_state = "closed"
+            return asyncio.create_task(asyncio.sleep(0))
+        if self._lifecycle_state == "closed":
+            return asyncio.create_task(asyncio.sleep(0))
         if self._cleanup_task is None or (
             self._cleanup_task.done() and self._cleanup_incomplete
         ):
@@ -350,9 +365,14 @@ class AcpTransport:
         await asyncio.shield(self._ensure_cleanup())
 
     async def _cleanup(self) -> None:
+        self._lifecycle_state = "cleaning"
         self._cleanup_incomplete = False
         process = self._process
-        if self._connection is not None:
+        if (
+            self._connection is not None
+            and "connection_close" not in self._cleanup_completed_stages
+            and (process is None or process.returncode is None)
+        ):
             self._record_cleanup(
                 "connection_close",
                 await _hard_bound(self._connection.close(), self._cancel_timeout),
@@ -380,6 +400,7 @@ class AcpTransport:
                     self._context.__aexit__(None, None, None), self._kill_grace
                 ),
             )
+            self._cleanup_completed_stages.add("context_exit")
         if self._stderr_task is not None and "stderr_join" not in self._cleanup_completed_stages:
             cancelled_by_cleanup = False
             if not self._stderr_task.done():
@@ -400,17 +421,16 @@ class AcpTransport:
             else:
                 self._stderr_task.add_done_callback(_consume_task)
                 self._record_cleanup("stderr_join", "timed_out")
+            self._cleanup_completed_stages.add("stderr_join")
         if process is not None:
             process_transport = getattr(process, "_transport", None)
             if process_transport is not None:
                 with contextlib.suppress(Exception):
                     process_transport.close()
-        required = {"connection_close", "context_exit", "stderr_join"}
-        self._cleanup_incomplete = (
-            (process is not None and process.returncode is None)
-            or not required.issubset(self._cleanup_completed_stages)
+        self._cleanup_incomplete = process is not None and process.returncode is None
+        self._lifecycle_state = (
+            "cleanup_incomplete" if self._cleanup_incomplete else "closed"
         )
-        self._closed = not self._cleanup_incomplete
 
     def _record_cleanup(self, stage: str, status: str) -> None:
         self._cleanup_diagnostics.append(AcpCleanupDiagnostic(stage=stage, status=status))
