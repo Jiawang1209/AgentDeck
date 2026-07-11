@@ -82,6 +82,14 @@ def _unsupported(capability: str) -> RequestError:
     )
 
 
+def _consume_detached_task_result(task: asyncio.Task[None]) -> None:
+    """Retrieve a detached settlement result so asyncio never emits an unhandled warning."""
+    try:
+        task.exception()
+    except asyncio.CancelledError:
+        pass
+
+
 class AgentDeckAcpClient:
     """Official-SDK Client callbacks with injected persistence and human decision edges."""
 
@@ -101,10 +109,11 @@ class AgentDeckAcpClient:
             )
         except TimeoutError:
             task.cancel()
-            try:
-                await asyncio.wait_for(task, timeout=0.1)
-            except (asyncio.CancelledError, TimeoutError):
-                pass
+            done, pending = await asyncio.wait({task}, timeout=0.1)
+            for completed in done:
+                _consume_detached_task_result(completed)
+            for detached in pending:
+                detached.add_done_callback(_consume_detached_task_result)
             raise RuntimeError("ACP permission cancellation settlement timed out") from None
 
     async def session_update(self, session_id: str, update: object, **_: Any) -> None:

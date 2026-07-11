@@ -9,6 +9,7 @@ import pytest
 from acp import schema
 from acp.exceptions import RequestError
 
+import agentdeck.runtime.acp_client as acp_client_module
 from agentdeck.runtime.acp_client import AgentDeckAcpClient, PermissionDecision
 from agentdeck.runtime.acp_mapping import MAX_ACP_TURN_PAYLOAD_BYTES, MAX_ACP_UPDATES_PER_TURN
 
@@ -299,6 +300,61 @@ async def test_cancel_settlement_failure_raises_and_never_records_approval() -> 
     assert sink.permissions[0]["decision"] is None
     assert all(decision.ledger_status != "approved" for decision in sink.final_decisions)
     sink.fail_cancel_settlement = False
+    sink.block_at = "none"
+    result = await client.request_permission("native-1", _tool(), _options())
+    assert result.outcome.outcome == "selected"
+
+
+class CancellationResistantSink(CancellingLedgerSink):
+    def __init__(self) -> None:
+        super().__init__("pending")
+        self.settlement_started = asyncio.Event()
+        self.settlement_cancelled = asyncio.Event()
+        self.settlement_release = asyncio.Event()
+        self.settlement_finished = asyncio.Event()
+
+    async def append_permission_decision(
+        self, session_id: str, tool_call_id: str, decision: PermissionDecision
+    ) -> None:
+        if decision.reason != "cancelled":
+            await super().append_permission_decision(session_id, tool_call_id, decision)
+            return
+        self.settlement_started.set()
+        while not self.settlement_release.is_set():
+            try:
+                await self.settlement_release.wait()
+            except asyncio.CancelledError:
+                self.settlement_cancelled.set()
+        await super().append_permission_decision(session_id, tool_call_id, decision)
+        self.settlement_finished.set()
+
+
+@async_test
+async def test_cancellation_resistant_settlement_has_a_hard_cleanup_bound(monkeypatch: Any) -> None:
+    monkeypatch.setattr(acp_client_module, "_CANCEL_SETTLEMENT_TIMEOUT_SECONDS", 0.01)
+    sink = CancellationResistantSink()
+    client = AgentDeckAcpClient(sink=sink, decide=lambda *_: PermissionDecision.select("allow"))
+    request = asyncio.create_task(client.request_permission("native-1", _tool(), _options()))
+    await sink.blocked.wait()
+    started = asyncio.get_running_loop().time()
+    request.cancel()
+    done, _ = await asyncio.wait({request}, timeout=0.25)
+    bounded_elapsed = asyncio.get_running_loop().time() - started
+    assert sink.settlement_started.is_set()
+    assert sink.settlement_cancelled.is_set()
+
+    sink.settlement_release.set()
+    await asyncio.wait_for(sink.settlement_finished.wait(), timeout=0.25)
+    result_or_error = await asyncio.wait_for(
+        asyncio.gather(request, return_exceptions=True), timeout=0.25
+    )
+    assert request in done
+    assert bounded_elapsed < 0.25
+    assert isinstance(result_or_error[0], RuntimeError)
+    assert sink.permissions[0]["decision"] == "denied"
+    assert sink.permissions[0]["reason"] == "cancelled"
+    assert all(decision.ledger_status != "approved" for decision in sink.final_decisions)
+
     sink.block_at = "none"
     result = await client.request_permission("native-1", _tool(), _options())
     assert result.outcome.outcome == "selected"
