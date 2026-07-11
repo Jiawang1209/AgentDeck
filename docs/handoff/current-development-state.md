@@ -71,7 +71,9 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-**STOP — no implementation slice is currently approved.** Natural-language Mission Phase 0 and protocol-model Phase 1 are complete. The next candidate product fork is Phase 2, a real ACP vertical slice, but it must first receive its own human-approved design spec and implementation plan. Do not begin ACP JSON-RPC, an ACP backend/adapter, automatic protocol emission, a project daemon, the default interactive REPL, global roaming, state migration, or Workspace Client work from this handoff.
+**STOP — Phase 2 design and implementation plan are written, but production implementation is not approved.** Review `docs/superpowers/specs/2026-07-12-agentdeck-acp-vertical-slice-design.md` and `docs/superpowers/plans/2026-07-12-agentdeck-acp-vertical-slice.md`. The recommended first target is the registry Agent `@agentclientprotocol/claude-agent-acp@0.58.1` through the official `agent-client-protocol==0.11.0` Python client. Do not begin Task 1 until a human explicitly approves both documents.
+
+The design is foreground-only and keeps tmux as the default backend. It does not authorize adapter/SDK installation, real Agent execution, automatic protocol emission from existing dispatch, a project daemon, the default interactive REPL, global roaming, state migration, Workspace Client work, or a multi-agent ACP Mission.
 
 The completed natural-language Mission and G-series work below is historical context only. It must not be treated as an active continuation request or redone.
 
@@ -95,9 +97,9 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0 and Phase 1 are complete. Current state is **STOP pending human direction**. There is no active G5 or natural-language Mission implementation follow-up.
+Phase 0 and Phase 1 are complete. Phase 2 research, standalone spec, and TDD implementation plan are complete. Current state is **STOP pending human review of the Phase 2 spec and plan**. There is no approved production implementation task, G5 continuation, or natural-language Mission follow-up.
 
-The next candidate slice is Phase 2 ACP vertical slice from `docs/superpowers/specs/2026-07-11-agentdeck-protocol-native-v2-design.md`. Before any implementation, a human must approve a new standalone spec and plan covering one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. Until then, preserve tmux as the active default backend and make no protocol transport or daemon changes.
+The proposed slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. It explicitly distinguishes `session/load` history replay from `session/resume` without replay, uses append-only lifecycle transitions rather than rewriting Phase 1 records, and makes non-interactive permission requests fail closed. Until both documents are approved, preserve tmux as the active default backend and make no protocol transport or daemon changes.
 
 Historical note: G1–G5 frontdesk, coordination-role, loop, worker-lifecycle, review-gate, release-preview, and natural-language discovery slices were completed before the Phase 0/1 protocol-native work. Their detailed behavior remains in `HISTORY.md` and the contract documents; they are not the current phase or next slice.
 
@@ -120,7 +122,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-STOP after reading current state. Do not redo Phase 0, Phase 1, Mission, or G-series work. Do not implement Phase 2 until a human has approved its standalone spec and plan.
+STOP after reading current state. Do not redo Phase 0, Phase 1, Mission, or G-series work. Review the 2026-07-12 Phase 2 ACP design and plan, but do not implement them until a human has explicitly approved both documents.
 ```
 
 ## Historical development log — not active

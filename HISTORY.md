@@ -4,6 +4,14 @@
 
 ## 2026-07-12
 
+### Design the Phase 2 ACP vertical slice
+
+- **官方事实刷新**: 以 2026-07-12 的 ACP v1 官方文档、official Python SDK、ACP Registry 和 `claude-agent-acp` 0.58.1 发布包为准重新核对 initialize、capability negotiation、session new/load/resume、prompt/update、permission request、completion 与 disconnect 语义；明确库/Schema artifact version 不是 wire protocol version，`session/load` 与 `session/resume` 必须分别按能力守门。
+- **目标 Agent**: 推荐以 registry 中的 `@agentclientprotocol/claude-agent-acp@0.58.1` 作为首个真实 Agent，通过官方 `agent-client-protocol==0.11.0` Python client 以无 shell stdio subprocess 接入。Claude Code 2.1.207、Codex 0.131.0 和 Node 22.23.0 已存在，但 adapter/SDK 尚未安装；现有 Claude 登录不被当作 adapter auth 已验证，必须由后续 opt-in live smoke 证明。
+- **设计**: 新增 `docs/superpowers/specs/2026-07-12-agentdeck-acp-vertical-slice-design.md`，比较 official SDK + adapter、手写 JSON-RPC、直接嵌入 Claude SDK 三种方案并选择前者；定义最小 foreground command surface、append-only lifecycle transitions、load replay 与 resume-no-replay 区分、stream bounds、stderr permission UI、non-TTY fail-closed、exact completion 与 sanitized real acceptance。
+- **计划**: 新增 `docs/superpowers/plans/2026-07-12-agentdeck-acp-vertical-slice.md`，拆成 12 个 TDD/commit 任务，覆盖依赖/配置、transition ledger、ProjectView、pure mapping、Client callbacks、stdio transport、preflight/contract、run、load/resume、观察面、真实 Claude acceptance 和阶段收口。
+- **批准门**: 本次只提交 spec、计划、handoff 与 HISTORY；未安装 ACP 依赖、未启动 adapter、未发送 Worker/tmux 输入、未修改生产代码。Phase 2 实现必须等待 human 明确批准两份文档，tmux 继续是默认 backend。
+
 ### Complete the protocol runtime model phase
 
 - **Phase 0 baseline**: 冻结 `docs/validation/2026-07-11-natural-language-mission-acceptance.md` 的真实 fresh-project PASS 证据：严格两条用户消息完成 Mission `mis_1d5c2a569173`、plan `pln_c13709530632`、workflow `wfr_7d309ae9c507` 的八步 Codex/Claude 顺序协作。
