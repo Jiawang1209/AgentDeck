@@ -4,6 +4,13 @@
 
 ## 2026-07-12
 
+### Prepare the real Claude ACP acceptance gate
+
+- Added an opt-in disposable-project acceptance test gated by `AGENTDECK_ACP_LIVE=1` and an exact existing executable path in `AGENTDECK_ACP_COMMAND`. It invokes the real CLI for init, preflight, run, exact TTY `reject_once`, file non-creation, load replay, resume, second prompt, and compact/durable ledger agreement.
+- The harness forbids installer and auto-download executables (`npx`, `npm`, `pip`), performs no authentication changes, and sanitizes bounded failure diagnostics. Default runs skip the live test; missing or non-executable paths report explicit setup blockers rather than passing.
+- Added a real read-only preflight rehearsal in a disposable project. With the installed ACP Python SDK 0.11.0 and Node >=22 ready, it proves the exact nonexistent `claude-agent-acp` executable is the only blocker and the complete project tree remains byte-for-byte unchanged.
+- Added `docs/validation/phase2-acp-live-acceptance-sop.md`. The reserved PASS report remains absent because `command -v claude-agent-acp` currently returns no executable. Task 11 is externally blocked on human installation/authentication; Task 12 must not start until the real live test passes.
+
 ### Integrate ACP runtime observation surfaces
 
 - **Observation truth**: governed ACP run/load/resume responses now rebuild final session state, complete transition count, and latest update/permission/transition identities from the validated persisted ledger. Protocol status, ProjectView, and workbench's embedded ProjectView expose the same counts, latest identities, and derived states.

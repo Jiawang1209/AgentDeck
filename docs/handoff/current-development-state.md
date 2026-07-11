@@ -71,7 +71,7 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-**STOP — Phase 2 design and implementation plan are written, but production implementation is not approved.** Review `docs/superpowers/specs/2026-07-12-agentdeck-acp-vertical-slice-design.md` and `docs/superpowers/plans/2026-07-12-agentdeck-acp-vertical-slice.md`. The recommended first target is the registry Agent `@agentclientprotocol/claude-agent-acp@0.58.1` through the official `agent-client-protocol==0.11.0` Python client. Do not begin Task 1 until a human explicitly approves both documents.
+**STOP — Phase 2 Tasks 1–10 are implemented; Task 11 is blocked on the external real adapter setup.** The opt-in live gate and operator SOP are ready. `command -v claude-agent-acp` currently returns no executable, while the ACP Python SDK 0.11.0 and Node >=22 preflight prerequisites are ready. A human must install and authenticate the adapter outside AgentDeck, then run the exact opt-in command in `docs/validation/phase2-acp-live-acceptance-sop.md`. Do not install an adapter, change authentication, use `npx`, write the reserved PASS report, or begin Task 12 until that real acceptance passes.
 
 The design is foreground-only and keeps tmux as the default backend. It does not authorize adapter/SDK installation, real Agent execution, automatic protocol emission from existing dispatch, a project daemon, the default interactive REPL, global roaming, state migration, Workspace Client work, or a multi-agent ACP Mission.
 
@@ -97,9 +97,9 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0 and Phase 1 are complete. Phase 2 research, standalone spec, and TDD implementation plan are complete. Current state is **STOP pending human review of the Phase 2 spec and plan**. There is no approved production implementation task, G5 continuation, or natural-language Mission follow-up.
+Phase 0 and Phase 1 are complete. Phase 2 Tasks 1–10 are implemented. Task 11 now has an opt-in real Claude ACP acceptance harness plus a read-only missing-executable rehearsal, but the live acceptance has not run because `claude-agent-acp` is not installed on PATH. Current state is **STOP on that external setup blocker**; Task 12 release documentation is not authorized until the live gate passes.
 
-The proposed slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. It explicitly distinguishes `session/load` history replay from `session/resume` without replay, uses append-only lifecycle transitions rather than rewriting Phase 1 records, and makes non-interactive permission requests fail closed. Until both documents are approved, preserve tmux as the active default backend and make no protocol transport or daemon changes.
+The implemented diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. It explicitly distinguishes `session/load` history replay from `session/resume` without replay, uses append-only lifecycle transitions rather than rewriting Phase 1 records, and makes non-interactive permission requests fail closed. Preserve tmux as the active default backend; do not route dispatch/Mission/workflow through ACP or add a daemon.
 
 Historical note: G1–G5 frontdesk, coordination-role, loop, worker-lifecycle, review-gate, release-preview, and natural-language discovery slices were completed before the Phase 0/1 protocol-native work. Their detailed behavior remains in `HISTORY.md` and the contract documents; they are not the current phase or next slice.
 
@@ -122,7 +122,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-STOP after reading current state. Do not redo Phase 0, Phase 1, Mission, or G-series work. Review the 2026-07-12 Phase 2 ACP design and plan, but do not implement them until a human has explicitly approved both documents.
+STOP after reading current state. Do not redo Phase 0, Phase 1, Mission, G-series work, or Phase 2 Tasks 1–10. Task 11 is blocked until a human installs/authenticates the exact adapter outside AgentDeck and runs the opt-in SOP. Do not auto-install, change authentication, use `npx`, write the PASS report, or begin Task 12 before that live gate passes.
 ```
 
 ## Historical development log — not active

@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import inspect
+import json
 import os
 from pathlib import Path
+import pty
+import re
+import select
+import subprocess
 import sys
+import time
 from typing import Any
 
 import pytest
@@ -15,9 +22,272 @@ from acp.exceptions import RequestError
 import agentdeck.runtime.acp_client as acp_client_module
 from agentdeck.runtime.acp_client import AgentDeckAcpClient, PermissionDecision
 from agentdeck.runtime.acp_mapping import MAX_ACP_TURN_PAYLOAD_BYTES, MAX_ACP_UPDATES_PER_TURN
+from agentdeck.state import StateStore
 
 
 FAKE_AGENT = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+
+
+def _live_acp_executable() -> Path:
+    if os.environ.get("AGENTDECK_ACP_LIVE") != "1":
+        pytest.skip("real ACP acceptance requires AGENTDECK_ACP_LIVE=1")
+    raw = os.environ.get("AGENTDECK_ACP_COMMAND", "")
+    if not raw:
+        pytest.skip("setup blocker: AGENTDECK_ACP_COMMAND is not set")
+    executable = Path(raw).expanduser()
+    if not executable.is_absolute() or not executable.is_file() or not os.access(executable, os.X_OK):
+        pytest.skip("setup blocker: AGENTDECK_ACP_COMMAND must be an exact existing executable path")
+    if executable.name in {"npx", "npm", "pip", "pip3"}:
+        pytest.skip("setup blocker: auto-download or installer commands are forbidden")
+    return executable.resolve()
+
+
+def _live_cli_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    source = str(Path(__file__).resolve().parents[1] / "src")
+    environment["PYTHONPATH"] = source + os.pathsep + environment.get("PYTHONPATH", "")
+    return environment
+
+
+def _sanitized_diagnostic(value: str) -> str:
+    encoded = value.encode("utf-8", errors="replace")
+    return f"bytes={len(encoded)} sha256={hashlib.sha256(encoded).hexdigest()}"
+
+
+def _json_document(value: str) -> dict[str, Any]:
+    decoder = json.JSONDecoder()
+    documents: list[tuple[int, dict[str, Any]]] = []
+    for match in re.finditer(r"\{", value):
+        try:
+            candidate, end = decoder.raw_decode(value[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            documents.append((end, candidate))
+    if not documents:
+        raise AssertionError("CLI emitted no JSON document; diagnostic=" + _sanitized_diagnostic(value))
+    return max(documents, key=lambda item: item[0])[1]
+
+
+def _live_cli(project: Path, *arguments: str) -> dict[str, Any]:
+    result = subprocess.run(
+        [sys.executable, "-m", "agentdeck", *arguments],
+        cwd=project,
+        env=_live_cli_environment(),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"CLI failed with exit {result.returncode}; diagnostic="
+            + _sanitized_diagnostic(result.stderr)
+        )
+    return _json_document(result.stdout)
+
+
+def _configure_live_acp(project: Path, adapter: Path) -> None:
+    config_path = project / ".agentdeck" / "config.toml"
+    original = config_path.read_text(encoding="utf-8")
+    needle = 'provider = "claude"\ncommand = "claude"'
+    replacement = (
+        needle
+        + '\ntransport = "acp"\ntransport_command = ['
+        + json.dumps(str(adapter))
+        + "]"
+    )
+    assert original.count(needle) == 1
+    config_path.write_text(original.replace(needle, replacement), encoding="utf-8")
+
+
+def _live_cli_tty_reject_once(project: Path, *arguments: str) -> dict[str, Any]:
+    master, slave = pty.openpty()
+    process = subprocess.Popen(
+        [sys.executable, "-m", "agentdeck", *arguments],
+        cwd=project,
+        env=_live_cli_environment(),
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        close_fds=True,
+    )
+    os.close(slave)
+    output = bytearray()
+    selected = False
+    deadline = time.monotonic() + 240
+    try:
+        while process.poll() is None and time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], 0.25)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output.extend(chunk)
+            if not selected:
+                text = output.decode("utf-8", errors="replace")
+                match = re.search(r"(?mi)^(\d+)\.\s+Reject once\s*$", text)
+                if match:
+                    os.write(master, (match.group(1) + "\n").encode())
+                    selected = True
+        if process.poll() is None:
+            process.kill()
+            raise AssertionError("live ACP CLI timed out")
+        while True:
+            ready, _, _ = select.select([master], [], [], 0)
+            if not ready:
+                break
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output.extend(chunk)
+    finally:
+        os.close(master)
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+    text = output.decode("utf-8", errors="replace")
+    if not selected:
+        raise AssertionError("ACP Agent did not request a reject-once permission")
+    if process.returncode != 0:
+        raise AssertionError(
+            f"interactive CLI failed with exit {process.returncode}; diagnostic="
+            + _sanitized_diagnostic(text)
+        )
+    return _json_document(text)
+
+
+def test_live_acp_gate_requires_explicit_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENTDECK_ACP_LIVE", raising=False)
+    monkeypatch.delenv("AGENTDECK_ACP_COMMAND", raising=False)
+    with pytest.raises(pytest.skip.Exception, match="AGENTDECK_ACP_LIVE=1"):
+        _live_acp_executable()
+
+
+def test_live_acp_gate_reports_missing_command_as_setup_blocker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTDECK_ACP_LIVE", "1")
+    monkeypatch.delenv("AGENTDECK_ACP_COMMAND", raising=False)
+    with pytest.raises(pytest.skip.Exception, match="AGENTDECK_ACP_COMMAND"):
+        _live_acp_executable()
+
+
+def test_live_acp_gate_reports_non_executable_path_as_setup_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = tmp_path / "claude-agent-acp"
+    adapter.write_text("not executable", encoding="utf-8")
+    monkeypatch.setenv("AGENTDECK_ACP_LIVE", "1")
+    monkeypatch.setenv("AGENTDECK_ACP_COMMAND", str(adapter))
+    with pytest.raises(pytest.skip.Exception, match="existing executable"):
+        _live_acp_executable()
+
+
+def test_real_preflight_rehearsal_reports_only_missing_claude_adapter_and_is_read_only(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "preflight-rehearsal"
+    project.mkdir()
+    (project / ".git").mkdir()
+    _live_cli(project, "project", "init")
+    missing = project / "missing" / "claude-agent-acp"
+    _configure_live_acp(project, missing)
+    before = {
+        path.relative_to(project): (path.is_dir(), path.read_bytes() if path.is_file() else b"")
+        for path in project.rglob("*")
+    }
+
+    payload = _live_cli(project, "protocol", "acp", "preflight", "--agent", "reviewer")
+
+    after = {
+        path.relative_to(project): (path.is_dir(), path.read_bytes() if path.is_file() else b"")
+        for path in project.rglob("*")
+    }
+    assert payload["ready"] is False
+    assert payload["adapter"]["argv"] == [str(missing)]
+    assert payload["adapter"]["present"] is False
+    assert payload["sdk"] == {
+        "module": "acp", "package": "agent-client-protocol", "present": True, "version": "0.11.0",
+    }
+    assert payload["node"]["required"] is True
+    assert payload["node"]["ready"] is True
+    assert payload["blockers"] == ["ACP adapter executable was not found"]
+    assert after == before
+
+
+@pytest.mark.skipif(
+    os.environ.get("AGENTDECK_ACP_LIVE") != "1",
+    reason="explicit opt-in required: set AGENTDECK_ACP_LIVE=1",
+)
+def test_live_claude_agent_vertical_slice(tmp_path: Path) -> None:
+    adapter = _live_acp_executable()
+    project = tmp_path / "live-acp-project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    _live_cli(project, "project", "init")
+    _configure_live_acp(project, adapter)
+
+    preflight = _live_cli(project, "protocol", "acp", "preflight", "--agent", "reviewer")
+    assert preflight["ready"] is True, f"ACP setup blocker: {preflight['blockers']}"
+    assert Path(preflight["adapter"]["executable_path"]) == adapter
+
+    forbidden = project / "agentdeck-acp-must-not-exist.txt"
+    prompt = (
+        "Reply briefly, then use your file-writing tool to create "
+        f"{forbidden.name} in the current workspace with harmless test content."
+    )
+    first = _live_cli_tty_reject_once(
+        project,
+        "protocol", "acp", "run", "--agent", "reviewer", "--prompt", prompt, "--confirm",
+    )
+    assert first["protocol_version"] == 1
+    assert first["turn_state"] in {"completed", "blocked"}
+    assert first["session_state"] == "disconnected"
+    assert first["disconnect_reason"] == "clean_exit"
+    assert first["permission_count"] >= 1
+    assert not forbidden.exists()
+
+    loaded = _live_cli(
+        project, "protocol", "acp", "load", "--session-id", first["session_id"], "--confirm"
+    )
+    assert loaded["session_id"] == first["session_id"]
+    assert loaded["native_session_id"] == first["native_session_id"]
+    assert loaded["turn_state"] == "completed"
+    assert loaded["stop_reason"] == "loaded"
+    assert loaded["session_state"] == "disconnected"
+
+    resumed = _live_cli(
+        project, "protocol", "acp", "resume", "--session-id", first["session_id"],
+        "--prompt", "Reply with a brief harmless acknowledgement.", "--confirm",
+    )
+    assert resumed["session_id"] == first["session_id"]
+    assert resumed["native_session_id"] == first["native_session_id"]
+    assert resumed["turn_state"] == "completed"
+    assert resumed["stop_reason"] == "end_turn"
+    assert resumed["session_state"] == "disconnected"
+
+    status = _live_cli(project, "protocol", "status")
+    ledger = StateStore(project).load()
+    assert status["agent_sessions"]["count"] == 1
+    assert status["protocol_turns"]["count"] == 3
+    assert [item["kind"] for item in ledger["protocol_turns"]] == [
+        "prompt", "load_replay", "prompt",
+    ]
+    assert status["permission_requests"]["count"] >= 1
+    assert all(item["state"] == "denied" for item in status["permission_requests"]["items"])
+    assert status["agent_sessions"]["items"][0]["session_id"] == first["session_id"]
+    assert ledger["agent_sessions"][0]["native_session_id"] == first["native_session_id"]
+    assert status["protocol_state_transitions"]["items"][-1]["to_state"] == "disconnected"
+    assert not forbidden.exists()
 
 
 def async_test(function: Any) -> Any:
