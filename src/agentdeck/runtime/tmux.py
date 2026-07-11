@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 import shutil
 import subprocess
 import uuid
@@ -86,27 +87,40 @@ class TmuxBackend:
     def send_input(self, config: RuntimeConfig, pane_id: str, text: str) -> None:
         if not isinstance(text, str):
             raise TypeError("text must be a string")
+        submit_command = [
+            "tmux", "-L", config.socket_name, "send-keys", "-t", pane_id, "Enter",
+        ]
+        if not text:
+            subprocess.run(submit_command, check=True)
+            return
         buffer_name = f"agentdeck-{uuid.uuid4().hex}"
-        subprocess.run(
-            [
-                "tmux", "-L", config.socket_name, "load-buffer",
-                "-b", buffer_name, "-",
-            ],
-            check=True,
-            input=text,
-            text=True,
-        )
-        subprocess.run(
-            [
-                "tmux", "-L", config.socket_name, "paste-buffer", "-p", "-d",
-                "-b", buffer_name, "-t", pane_id,
-            ],
-            check=True,
-        )
-        subprocess.run(
-            ["tmux", "-L", config.socket_name, "send-keys", "-t", pane_id, "Enter"],
-            check=True,
-        )
+        try:
+            subprocess.run(
+                [
+                    "tmux", "-L", config.socket_name, "load-buffer",
+                    "-b", buffer_name, "-",
+                ],
+                check=True,
+                input=text,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    "tmux", "-L", config.socket_name, "paste-buffer", "-p", "-d",
+                    "-b", buffer_name, "-t", pane_id,
+                ],
+                check=True,
+            )
+            subprocess.run(submit_command, check=True)
+        finally:
+            with suppress(Exception):
+                subprocess.run(
+                    [
+                        "tmux", "-L", config.socket_name, "delete-buffer",
+                        "-b", buffer_name,
+                    ],
+                    check=False,
+                )
 
     def kill_pane(self, config: RuntimeConfig, pane_id: str) -> None:
         subprocess.run(
