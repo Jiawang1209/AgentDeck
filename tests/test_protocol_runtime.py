@@ -105,6 +105,19 @@ def test_update_rejects_unknown_kind_and_bad_payload() -> None:
         build_transport_update("ags_1", "trn_1", 0, "text", [])
 
 
+def test_update_rejects_non_string_kind_without_equality_hooks() -> None:
+    class HostileKind:
+        equality_called = False
+
+        def __eq__(self, other):
+            type(self).equality_called = True
+            raise AssertionError("equality hook must not run")
+
+    with pytest.raises(ValueError, match=r"^kind must be one of UPDATE_KINDS$"):
+        build_transport_update("ags_1", "trn_1", 0, HostileKind(), {})
+    assert HostileKind.equality_called is False
+
+
 @pytest.mark.parametrize("bad_value", [{1, 2}, object(), (1, 2)])
 def test_update_rejects_non_json_payload_values(bad_value: object) -> None:
     with pytest.raises(TypeError, match=r"^payload must contain only JSON-safe values$"):

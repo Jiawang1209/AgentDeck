@@ -133,7 +133,7 @@ def build_transport_update(
     turn_id = _record_id("turn_id", turn_id, "trn_")
     if type(sequence) is not int or sequence < 0:
         raise ValueError("sequence must be a non-negative integer")
-    if kind not in UPDATE_KINDS or type(kind) is not str:
+    if type(kind) is not str or kind not in UPDATE_KINDS:
         raise ValueError("kind must be one of UPDATE_KINDS")
     if type(payload) is not dict:
         raise TypeError("payload must be a dict")
