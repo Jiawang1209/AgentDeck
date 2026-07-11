@@ -282,6 +282,34 @@ def test_acp_runtime_validator_rejects_drift(mutate, expected: str) -> None:
 @pytest.mark.parametrize(
     ("mutate", "expected"),
     [
+        (lambda p: p["agent"].update({"agent_id": ""}), "agent.agent_id must be a non-empty string"),
+        (lambda p: p["agent"].update({"provider": True}), "agent.provider must be a non-empty string"),
+        (lambda p: p["adapter"].update({"present": False}), "adapter.present must equal executable_path presence"),
+        (lambda p: p["adapter"].update({"executable_path": "relative/agent"}), "adapter.executable_path must be absolute"),
+        (lambda p: p["sdk"].update({"module": "agent_client_protocol"}), "sdk.module must be acp"),
+        (lambda p: p["sdk"].update({"package": "acp"}), "sdk.package must be agent-client-protocol"),
+        (lambda p: p["sdk"].update({"version": "0.10.0"}), "sdk.version must equal pinned version 0.11.0"),
+        (lambda p: p["sdk"].update({"present": False, "version": "0.11.0"}), "absent sdk must have version null"),
+        (lambda p: p["node"].update({"required": False, "minimum_major": 22}), "non-required node minimum_major must be null"),
+        (lambda p: p["node"].update({"required": True}), "required node minimum_major must be 22"),
+        (lambda p: (p["adapter"].update({"argv": ["claude-agent-acp"]}), p["node"].update({"required": True, "minimum_major": 22, "executable_path": "/example/bin/node", "version": "22.0.0", "ready": False})), "node.ready must equal executable and version requirement"),
+        (lambda p: p["node"].update({"version": "twenty-two"}), "node.version must be MAJOR.MINOR.PATCH"),
+        (lambda p: p["node"].update({"required": False, "ready": False}), "non-required node must be ready"),
+        (lambda p: p["controls"][0].update({"enabled": False}), "controls[0] must be enabled"),
+        (lambda p: p["controls"][0].update({"blocker": "blocked"}), "controls[0].blocker must be null"),
+    ],
+)
+def test_acp_runtime_validator_rejects_semantic_inconsistency(mutate, expected: str) -> None:
+    from agentdeck.contracts import acp_runtime_example, validate_acp_runtime_contract
+
+    payload = acp_runtime_example()
+    mutate(payload)
+    assert expected in validate_acp_runtime_contract(payload)["errors"]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
         (lambda p: p.pop("agent_sessions"), "missing protocol runtime field: agent_sessions"),
         (lambda p: p["agent_sessions"].update({"count": True}), "agent_sessions.count must be a non-negative integer"),
         (lambda p: p["transport_updates"]["items"][0].update({"sequence": True}), "transport_updates.items[0].sequence has invalid type"),

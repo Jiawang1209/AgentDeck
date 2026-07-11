@@ -10,6 +10,7 @@
 - **Read-only evidence**: preflight preserves exact argv, checks the official Python SDK through import metadata, resolves adapter/Node executables through `shutil.which`, and reads adjacent Node headers for the known `claude-agent-acp` Node >=22 prerequisite. It never starts an adapter or runs `--version`.
 - **Safety boundary**: missing project, invalid config, unknown Agent, and wrong transport fail with stderr and zero stdout; setup blockers return one validated `ready=false` JSON object. The command opens the existing store without creating layout and does not authenticate, mkdir, lock, write state/outbox/events, call providers, inspect tmux, or implement run/load/resume.
 - **TDD**: RED covered missing discovery/routes, SDK/executable blockers, Node <22, deterministic repeatability, no project creation, exact argv, sanitized example, inspect-only controls, and workbench/index discovery; focused tests passed after the minimal implementation.
+- **Semantic hardening**: the validator now enforces exact nested identities/types plus presence/path, pinned SDK `0.11.0`, Claude-target Node 22, parsed-version readiness, stable blocker derivation, top-level readiness, and enabled inspect-only control consistency. A mutation matrix covers every relation, and forced validation failure proves stdout remains empty.
 
 ### Add a bounded ACP stdio client transport
 

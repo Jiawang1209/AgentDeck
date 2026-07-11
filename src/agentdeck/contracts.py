@@ -339,6 +339,7 @@ PROTOCOL_RUNTIME_UPDATE_KINDS = (
 PROTOCOL_RUNTIME_PERMISSION_STATUSES = ("pending", "approved", "denied", "expired")
 
 ACP_RUNTIME_CONTRACT_VERSION = "acp-runtime/v1"
+ACP_RUNTIME_SDK_VERSION = "0.11.0"
 ACP_RUNTIME_PREFLIGHT_RESPONSE_FIELDS = (
     "mode", "contract_version", "project", "ready", "agent", "adapter",
     "sdk", "node", "blockers", "controls",
@@ -2802,7 +2803,7 @@ def acp_runtime_example() -> dict[str, object]:
             "present": True,
         },
         "sdk": {
-            "module": "acp", "package": "agent-client-protocol", "present": True, "version": "0.0.0-fake",
+            "module": "acp", "package": "agent-client-protocol", "present": True, "version": ACP_RUNTIME_SDK_VERSION,
         },
         "node": {"required": False, "minimum_major": None, "executable_path": None, "version": None, "ready": True},
         "blockers": [],
@@ -2844,7 +2845,10 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
             if field not in value: errors.append(f"missing {name} field: {field}")
         for field in sorted(set(value) - set(fields)): errors.append(f"{name} has unexpected field: {field}")
     agent = payload.get("agent")
-    if isinstance(agent, dict) and agent.get("transport") != "acp": errors.append("agent.transport must be acp")
+    if isinstance(agent, dict):
+        for field in ("agent_id", "provider"):
+            if type(agent.get(field)) is not str or not agent.get(field): errors.append(f"agent.{field} must be a non-empty string")
+        if agent.get("transport") != "acp": errors.append("agent.transport must be acp")
     adapter = payload.get("adapter")
     if isinstance(adapter, dict):
         argv = adapter.get("argv")
@@ -2853,10 +2857,19 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
         if type(adapter.get("present")) is not bool: errors.append("adapter.present must be a boolean")
         if adapter.get("executable_path") is not None and not isinstance(adapter.get("executable_path"), str):
             errors.append("adapter.executable_path has invalid type")
+        path = adapter.get("executable_path")
+        if isinstance(path, str) and not Path(path).is_absolute(): errors.append("adapter.executable_path must be absolute")
+        if type(adapter.get("present")) is bool and adapter.get("present") != (isinstance(path, str) and bool(path)):
+            errors.append("adapter.present must equal executable_path presence")
     sdk = payload.get("sdk")
     if isinstance(sdk, dict):
+        if sdk.get("module") != "acp": errors.append("sdk.module must be acp")
+        if sdk.get("package") != "agent-client-protocol": errors.append("sdk.package must be agent-client-protocol")
         if type(sdk.get("present")) is not bool: errors.append("sdk.present must be a boolean")
         if sdk.get("version") is not None and not isinstance(sdk.get("version"), str): errors.append("sdk.version has invalid type")
+        if sdk.get("present") is True and sdk.get("version") != ACP_RUNTIME_SDK_VERSION:
+            errors.append(f"sdk.version must equal pinned version {ACP_RUNTIME_SDK_VERSION}")
+        if sdk.get("present") is False and sdk.get("version") is not None: errors.append("absent sdk must have version null")
     node = payload.get("node")
     if isinstance(node, dict):
         if type(node.get("required")) is not bool: errors.append("node.required must be a boolean")
@@ -2865,6 +2878,29 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
             errors.append("node.minimum_major has invalid type")
         for field in ("executable_path", "version"):
             if node.get(field) is not None and not isinstance(node.get(field), str): errors.append(f"node.{field} has invalid type")
+        required = node.get("required") is True
+        if required and node.get("minimum_major") != 22: errors.append("required node minimum_major must be 22")
+        if not required and node.get("minimum_major") is not None: errors.append("non-required node minimum_major must be null")
+        version = node.get("version")
+        version_match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version) if isinstance(version, str) else None
+        if isinstance(version, str) and version_match is None: errors.append("node.version must be MAJOR.MINOR.PATCH")
+        node_path = node.get("executable_path")
+        if isinstance(node_path, str) and not Path(node_path).is_absolute(): errors.append("node.executable_path must be absolute")
+        if required:
+            expected_node_ready = bool(
+                isinstance(node_path, str) and node_path and version_match
+                and int(version_match.group(1)) >= 22
+            )
+            if node.get("ready") != expected_node_ready:
+                errors.append("node.ready must equal executable and version requirement")
+        else:
+            if any(node.get(field) is not None for field in ("executable_path", "version")):
+                errors.append("non-required node path and version must be null")
+            if node.get("ready") is not True: errors.append("non-required node must be ready")
+    if isinstance(adapter, dict) and isinstance(node, dict):
+        argv = adapter.get("argv")
+        first_target = bool(isinstance(argv, list) and argv and Path(argv[0]).name == "claude-agent-acp")
+        if node.get("required") != first_target: errors.append("node.required must match claude-agent-acp target")
     controls = payload.get("controls")
     if not isinstance(controls, list) or not controls: errors.append("controls must be a non-empty list")
     else:
@@ -2874,6 +2910,8 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
             if control.get("safety") != "inspect": errors.append(f"controls[{index}].safety must be inspect")
             if control.get("kind") != "inspect": errors.append(f"controls[{index}].kind must be inspect")
             if type(control.get("enabled")) is not bool: errors.append(f"controls[{index}].enabled must be a boolean")
+            elif control.get("enabled") is not True: errors.append(f"controls[{index}] must be enabled")
+            if control.get("blocker") is not None: errors.append(f"controls[{index}].blocker must be null")
             command = control.get("command")
             allowed = command in {"agentdeck contract acp-runtime", "agentdeck protocol status"}
             allowed = allowed or (
@@ -2881,6 +2919,16 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
                 and re.fullmatch(r"agentdeck protocol acp preflight --agent [A-Za-z0-9_.-]+", command) is not None
             )
             if not allowed: errors.append(f"controls[{index}].command is not allowed")
+    if isinstance(adapter, dict) and isinstance(sdk, dict) and isinstance(node, dict) and isinstance(blockers, list):
+        expected_blockers: list[str] = []
+        if sdk.get("present") is not True: expected_blockers.append("ACP Python SDK is not installed")
+        elif sdk.get("version") != ACP_RUNTIME_SDK_VERSION:
+            expected_blockers.append(f"ACP Python SDK version must be {ACP_RUNTIME_SDK_VERSION}")
+        if adapter.get("present") is not True: expected_blockers.append("ACP adapter executable was not found")
+        if node.get("required") is True and node.get("ready") is not True:
+            expected_blockers.append("claude-agent-acp requires Node >=22")
+        if blockers != expected_blockers: errors.append("blockers must exactly match failed readiness facts")
+        if payload.get("ready") != (not expected_blockers): errors.append("ready must equal all required facts being ready")
     return {"ok": not errors, "errors": errors}
 
 

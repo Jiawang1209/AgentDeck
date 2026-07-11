@@ -8,11 +8,11 @@
 agentdeck protocol acp preflight --agent <agent_id>
 ```
 
-Preflight opens an existing project without creating layout, resolves one configured Agent, requires `transport = "acp"`, preserves the exact `transport_command` argv, checks the `acp` Python module and `agent-client-protocol` package version through import metadata, and resolves executables through `shutil.which`.
+Preflight opens an existing project without creating layout, resolves one configured Agent, requires `transport = "acp"`, preserves the exact `transport_command` argv, checks the `acp` Python module and pinned `agent-client-protocol==0.11.0` package version through import metadata, and resolves executables through `shutil.which`.
 
 For the known first target `claude-agent-acp`, preflight also requires Node 22 or newer. Node version evidence is read from the installed Node headers adjacent to the resolved binary; AgentDeck never invokes `node --version` or any adapter command.
 
-The response fields are `mode`, `contract_version`, `project`, `ready`, `agent`, `adapter`, `sdk`, `node`, `blockers`, and `controls`. `ready` is true exactly when `blockers` is empty. Controls are inspect-only and are never authorization tokens.
+The response fields are `mode`, `contract_version`, `project`, `ready`, `agent`, `adapter`, `sdk`, `node`, `blockers`, and `controls`. The validator enforces exact nested fields/types and cross-field facts: presence matches absolute executable paths, absent SDK has no version, the present SDK matches the pin, the known Claude adapter requires Node 22 with a parseable version, Node readiness is derived rather than trusted, and blockers are the exact stable ordered projection of failed facts. Top-level `ready` is true exactly when every required fact is ready and `blockers` is empty. Controls are enabled inspect-only controls with null blockers and are never authorization tokens.
 
 The command does not spawn a process, authenticate, create or load a session, call a provider, inspect tmux, create directories, acquire runtime locks, write state/outbox/events, or change permissions. It validates the complete response before its single JSON stdout write. Command/config errors use stderr and produce no partial stdout.
 

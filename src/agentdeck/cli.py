@@ -27,6 +27,7 @@ from .config import (
 )
 from .contracts import (
     ACP_RUNTIME_CONTRACT_VERSION,
+    ACP_RUNTIME_SDK_VERSION,
     PROTOCOL_RUNTIME_CONTRACT_VERSION,
     agent_runtime_contract_response,
     acp_runtime_contract_response,
@@ -1092,6 +1093,8 @@ def protocol_acp_preflight_command(args: argparse.Namespace) -> int:
     blockers: list[str] = []
     if not sdk_present:
         blockers.append("ACP Python SDK is not installed")
+    elif sdk_version != ACP_RUNTIME_SDK_VERSION:
+        blockers.append(f"ACP Python SDK version must be {ACP_RUNTIME_SDK_VERSION}")
     if executable_path is None:
         blockers.append("ACP adapter executable was not found")
 

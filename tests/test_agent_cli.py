@@ -255,6 +255,21 @@ def test_acp_preflight_rejects_unknown_agent_and_wrong_transport(tmp_path: Path,
     assert "not configured for ACP transport" in captured.err
 
 
+def test_acp_preflight_validation_failure_has_no_stdout(tmp_path: Path, monkeypatch, capsys) -> None:
+    prepare_acp_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(cli.importlib.metadata, "version", lambda _name: "0.11.0")
+    monkeypatch.setattr(cli.shutil, "which", lambda command: f"/example/bin/{command}")
+    monkeypatch.setattr(
+        cli, "validate_acp_runtime_contract", lambda _payload: {"ok": False, "errors": ["forced invalid"]}
+    )
+
+    assert cli.main(["protocol", "acp", "preflight", "--agent", "planner"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "forced invalid" in captured.err
+
+
 def test_existing_agent_defaults_to_tmux_transport(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
