@@ -4653,3 +4653,4 @@
 - 新增 `protocol-runtime/v1` discovery、linked example 和严格 validator，复用 ProjectView 的四类 protocol summary 校验并补充 lineage、pending permission 与只读 controls 边界。
 - 新增 `agentdeck contract protocol-runtime [--example]`；仅发布契约，不实现后续 `agentdeck protocol status`。
 - 将 protocol runtime 加入 contract index，并新增 schema 文档与 TDD/CLI 覆盖。
+- 收紧 protocol runtime controls validator：必须恰好三项、命令唯一，且三条允许的只读命令各出现一次。

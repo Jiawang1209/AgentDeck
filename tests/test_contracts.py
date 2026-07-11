@@ -257,6 +257,18 @@ def test_protocol_runtime_transport_is_extensible_string() -> None:
     assert validate_protocol_runtime_contract(payload) == {"ok": True, "errors": []}
 
 
+def test_protocol_runtime_controls_require_each_exact_command_once() -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    payload["controls"].append(deepcopy(payload["controls"][0]))
+
+    result = validate_protocol_runtime_contract(payload)
+
+    assert "controls must contain exactly 3 items" in result["errors"]
+    assert "controls commands must be unique" in result["errors"]
+
+
 def _attach_leader_status_registry_card(payload: dict[str, object], status_card: dict[str, object]) -> None:
     workbench_card = workbench_example()
     refresh_control_id = next(

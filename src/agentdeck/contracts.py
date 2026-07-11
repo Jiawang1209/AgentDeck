@@ -6519,6 +6519,8 @@ def validate_protocol_runtime_contract(payload: object) -> dict[str, object]:
     if not isinstance(controls, list):
         errors.append("controls must be a list")
     else:
+        if len(controls) != 3:
+            errors.append("controls must contain exactly 3 items")
         for index, control in enumerate(controls):
             if not isinstance(control, dict):
                 errors.append(f"controls[{index}] must be an object")
@@ -6537,10 +6539,14 @@ def validate_protocol_runtime_contract(payload: object) -> dict[str, object]:
                 errors.append(f"controls[{index}].blocker must be null")
             if not isinstance(control.get("label"), str) or not control["label"].strip():
                 errors.append(f"controls[{index}].label must be a non-empty string")
-    if isinstance(controls, list) and {
-        control.get("command") for control in controls if isinstance(control, dict)
-    } != allowed_commands:
-        errors.append("controls must expose the exact protocol runtime inspect commands")
+    if isinstance(controls, list):
+        commands = [
+            control.get("command") for control in controls if isinstance(control, dict)
+        ]
+        if len(commands) != len(set(commands)):
+            errors.append("controls commands must be unique")
+        if set(commands) != allowed_commands:
+            errors.append("controls must expose the exact protocol runtime inspect commands")
     return {"ok": not errors, "errors": errors}
 
 
