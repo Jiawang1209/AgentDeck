@@ -10,6 +10,7 @@
 - **Load**: negotiate `loadSession`, record one ordered `load_replay` turn, complete it only after the load response, and persist reconnect/ready/disconnect lineage.
 - **Resume**: negotiate `sessionCapabilities.resume` without load fallback, reject pre-response replay, and run the subsequent governed prompt on the same session identity.
 - **Tests**: extend the official-SDK transport and deterministic fake ACP Agent with load/resume capability and replay scenarios; no real adapter is invoked.
+- **P1 lifecycle hardening**: every created load replay turn now reaches `completed`, `failed`, or `ambiguous`, including EOF, deterministic callback/bounds failures, timeout, and cancellation; cleanup still records a final session disconnect. The normal governed prompt-turn runner is shared by new-session run and post-resume prompt flow, preserving Task 8 permission, bounds, cancellation, completion, and durable-response semantics without a second simplified implementation.
 
 ### Run one governed ACP prompt turn
 

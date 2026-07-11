@@ -543,6 +543,31 @@ def test_acp_reconnect_missing_capability_writes_nothing(
     assert snapshot_tree_metadata(root) == before
 
 
+def test_acp_load_eof_terminalizes_replay_as_ambiguous(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    config_path = root / ".agentdeck" / "config.toml"
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    original = config_path.read_text(encoding="utf-8")
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda value: value)
+    def set_scenario(name: str) -> None:
+        config_path.write_text(original.replace(
+            f'transport_command = ["{sys.executable}", "--stdio"]',
+            f'transport_command = ["{sys.executable}", "{fixture}", "{name}"]',
+        ), encoding="utf-8")
+    set_scenario("stream_end_turn")
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "first", "--confirm"]) == 0
+    session_id = json.loads(capsys.readouterr().out)["session_id"]
+    set_scenario("load_eof_before_response")
+    assert cli.main(["protocol", "acp", "load", "--session-id", session_id, "--confirm"]) == 1
+    capsys.readouterr()
+    state = StateStore(root).load()
+    replay = state["protocol_turns"][-1]
+    assert replay["kind"] == "load_replay"
+    assert cli._derived_entity_state(state, "turn", replay["turn_id"], replay["state"]) == "ambiguous"
+    assert cli._derived_entity_state(state, "session", session_id, "created") == "disconnected"
+
+
 def test_acp_run_non_tty_permission_is_persisted_denied_before_completion(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

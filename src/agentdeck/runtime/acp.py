@@ -406,6 +406,9 @@ class AcpTransport:
             status = "sent"
         return AcpCancelDiagnostic(session_id=native_session_id, status=status)
 
+    async def cancel_session(self, native_session_id: str) -> AcpCancelDiagnostic:
+        return await self._send_bounded_cancel(native_session_id)
+
     def _ensure_cleanup(self) -> asyncio.Task[None]:
         if self._lifecycle_state == "new":
             self._lifecycle_state = "closed"

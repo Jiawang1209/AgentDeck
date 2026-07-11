@@ -1314,6 +1314,42 @@ def _derived_entity_state(state: dict[str, Any], entity_type: str, entity_id: st
     return current
 
 
+async def _governed_prompt_turn(
+    store: StateStore, session: dict[str, Any], transport: AcpTransport,
+    sink: _AcpRunLedgerSink, prompt: str,
+) -> tuple[dict[str, Any], str, bool]:
+    turn = store.record_protocol_turn(session["session_id"], new_id("msg"), "prompt")
+    store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", "prompt_submitted", {})
+    sink.activate(session["native_session_id"], session["session_id"], turn["turn_id"])
+    store.record_protocol_transition("session", session["session_id"], "ready", "busy", "prompt_started", {})
+    disconnect_reason = "clean_exit"
+    cancelled = False
+    try:
+        result = await transport.prompt(session["native_session_id"], prompt)
+        target_state, reason = map_stop_reason(result.stop_reason)
+        completion_payload = {"stop_reason": result.stop_reason}
+        completion_bytes = len(json.dumps(completion_payload, sort_keys=True).encode("utf-8"))
+        ensure_turn_within_bounds(sink.payload_bytes + completion_bytes, sink.sequence + 1)
+        store.record_transport_update(session["session_id"], turn["turn_id"], sink.sequence, "completion", completion_payload)
+        sink.sequence += 1
+        sink._transition_turn(target_state, reason)
+        store.record_protocol_transition("session", session["session_id"], "busy", "ready", "prompt_finished", {})
+    except AcpAmbiguousOutcome:
+        disconnect_reason = "unexpected_eof"
+        with contextlib.suppress(Exception):
+            sink.append_terminal_error("unexpected_eof")
+        sink._transition_turn("ambiguous", "unexpected_eof")
+        print("ACP prompt outcome is ambiguous", file=sys.stderr)
+    except (AcpRequestTimeout, AcpTransportError, asyncio.CancelledError, OSError, ValueError) as error:
+        cancelled = isinstance(error, asyncio.CancelledError)
+        disconnect_reason = "timeout" if isinstance(error, AcpRequestTimeout) else "failed"
+        with contextlib.suppress(Exception):
+            sink.append_terminal_error(disconnect_reason)
+        sink._transition_turn("failed", disconnect_reason)
+        print("ACP prompt failed: " + ("timeout" if isinstance(error, AcpRequestTimeout) else "runtime_error"), file=sys.stderr)
+    return turn, disconnect_reason, cancelled
+
+
 async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateStore, prompt: str) -> dict[str, Any]:
     sink = _AcpRunLedgerSink(store)
     client = AgentDeckAcpClient(
@@ -1343,20 +1379,9 @@ async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateS
                 "agent_identity": initialized.agent_identity,
             },
         )
-        turn = store.record_protocol_turn(session["session_id"], new_id("msg"), "prompt")
-        store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", "prompt_submitted", {})
-        sink.activate(native.native_session_id, session["session_id"], turn["turn_id"])
-        store.record_protocol_transition("session", session["session_id"], "ready", "busy", "prompt_started", {})
-        result = await transport.prompt(native.native_session_id, prompt)
-        stop_reason = result.stop_reason
-        target_state, reason = map_stop_reason(stop_reason)
-        completion_payload = {"stop_reason": stop_reason}
-        completion_bytes = len(json.dumps(completion_payload, sort_keys=True).encode("utf-8"))
-        ensure_turn_within_bounds(sink.payload_bytes + completion_bytes, sink.sequence + 1)
-        store.record_transport_update(session["session_id"], turn["turn_id"], sink.sequence, "completion", completion_payload)
-        sink.sequence += 1
-        sink._transition_turn(target_state, reason)
-        store.record_protocol_transition("session", session["session_id"], "busy", "ready", "prompt_finished", {})
+        turn, disconnect_reason, cancellation_requested = await _governed_prompt_turn(
+            store, session, transport, sink, prompt
+        )
     except AcpAmbiguousOutcome as error:
         disconnect_reason = "unexpected_eof"
         if turn is not None and sink.turn_state not in {"completed", "blocked", "failed", "ambiguous"}:
@@ -1547,6 +1572,26 @@ async def _load_acp_session(
         sink.sequence += 1
         sink._transition_turn("completed", "session_load_completed")
         store.record_protocol_transition("session", session["session_id"], "reconnecting", "ready", "session_load_completed", {"protocol_version": initialized.protocol_version, "agent_identity": initialized.agent_identity})
+    except asyncio.CancelledError:
+        if turn is not None and sink.turn_state not in {"completed", "blocked", "failed", "ambiguous"}:
+            await transport.cancel_session(session["native_session_id"])
+            with contextlib.suppress(Exception):
+                sink.append_terminal_error("cancelled")
+            sink._transition_turn("failed", "cancelled")
+        raise
+    except (AcpAmbiguousOutcome, AcpTransportError, AcpRequestTimeout, ValueError) as error:
+        if turn is not None and sink.turn_state not in {"completed", "blocked", "failed", "ambiguous"}:
+            deterministic = isinstance(error, (AcpRequestTimeout, ValueError)) or "callback rejected" in str(error)
+            if isinstance(error, AcpRequestTimeout):
+                await transport.cancel_session(session["native_session_id"])
+            target = "failed" if deterministic else "ambiguous"
+            reason = "timeout" if isinstance(error, AcpRequestTimeout) else (
+                "deterministic_error" if deterministic else "unknown_load_outcome"
+            )
+            with contextlib.suppress(Exception):
+                sink.append_terminal_error(reason)
+            sink._transition_turn(target, reason)
+        raise
     finally:
         await _close_reconnected_transport(transport, store, session["session_id"], "clean_exit")
     assert turn is not None
@@ -1564,6 +1609,8 @@ async def _resume_acp_session(
     )
     transport = AcpTransport(agent.transport_command, project_root(), client)
     turn: dict[str, Any] | None = None
+    cancellation_requested = False
+    disconnect_reason = "clean_exit"
     try:
         initialized = await transport.initialize()
         if not initialized.resume_session:
@@ -1571,23 +1618,18 @@ async def _resume_acp_session(
         store.record_protocol_transition("session", session["session_id"], "disconnected", "reconnecting", "session_resume_started", {})
         await transport.resume_session(session["native_session_id"])
         store.record_protocol_transition("session", session["session_id"], "reconnecting", "ready", "session_resume_completed", {"protocol_version": initialized.protocol_version, "agent_identity": initialized.agent_identity})
-        turn = store.record_protocol_turn(session["session_id"], new_id("msg"), "prompt")
-        store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", "prompt_submitted", {})
-        sink.activate(session["native_session_id"], session["session_id"], turn["turn_id"])
-        store.record_protocol_transition("session", session["session_id"], "ready", "busy", "prompt_started", {})
-        result = await transport.prompt(session["native_session_id"], prompt)
-        target_state, reason = map_stop_reason(result.stop_reason)
-        store.record_transport_update(session["session_id"], turn["turn_id"], sink.sequence, "completion", {"stop_reason": result.stop_reason})
-        sink.sequence += 1
-        sink._transition_turn(target_state, reason)
-        store.record_protocol_transition("session", session["session_id"], "busy", "ready", "prompt_finished", {})
+        turn, disconnect_reason, cancellation_requested = await _governed_prompt_turn(
+            store, session, transport, sink, prompt
+        )
     except AcpTransportError as error:
         if turn is not None and sink.turn_state not in {"completed", "blocked", "failed", "ambiguous"}:
             sink.append_terminal_error(str(error))
             sink._transition_turn("ambiguous", "unexpected_resume_replay" if str(error) == "unexpected_resume_replay" else "runtime_error")
         raise
     finally:
-        await _close_reconnected_transport(transport, store, session["session_id"], "clean_exit")
+        await _close_reconnected_transport(transport, store, session["session_id"], disconnect_reason)
+    if cancellation_requested:
+        raise asyncio.CancelledError
     assert turn is not None
     return _acp_reconnect_payload_from_state(store, session["session_id"], turn["turn_id"], "acp_resume")
 

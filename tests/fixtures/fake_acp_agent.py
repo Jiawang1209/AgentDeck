@@ -61,6 +61,8 @@ class FakeAgent:
         return schema.NewSessionResponse(sessionId="fake-session-1")
 
     async def load_session(self, cwd: str, session_id: str, mcp_servers=None, **kwargs):
+        if self.scenario == "load_eof_before_response":
+            os._exit(0)
         if self.scenario == "load_replay":
             for text in ("one", "two"):
                 await self.client.session_update(session_id, schema.AgentMessageChunk(
