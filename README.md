@@ -1,12 +1,12 @@
 # AgentDeck
 
-**一个 local-first、协议原生、可治理的多智能体工作台。**
+**一个 local-first、可治理，并面向协议原生演进的多智能体工作台。**
 
 AgentDeck 把一句自然语言目标变成一个可观看、可审计、可恢复的 Mission，再交给真实的 Codex、Claude 和其他 Agent 协作完成。
 
 我们的产品方向很明确：
 
-> 拥有 Hermes 般自然的交互体验、ACP 原生的通信能力、CCB 式真实多 Agent 协作，以及 AgentDeck 更强的编排与治理内核。
+> 北极星目标是拥有 Hermes 般自然的交互体验、ACP 原生通信、CCB 式真实多 Agent 协作，以及 AgentDeck 更强的编排与治理内核。
 
 AgentDeck 不是多模型聊天壳，也不是终端模拟器。它是一个控制平面：理解目标、选择 Agent、冻结执行范围、请求一次有意义的确认、组织交接，在出现新风险时暂停，并保存完整工作历史。
 
@@ -36,7 +36,7 @@ AgentDeck › 已开始。你可以离开，完成或阻塞时我会记录并汇
 - **一次范围确认**：确认冻结 Mission 后，普通步骤自动衔接，不要求用户一直守在电脑前。
 - **执行可治理**：新增权限、破坏性操作、计划漂移和风险升级会自动暂停。
 - **结构化通信**：ACP 将成为首选 Agent transport；tmux 保留为可视 fallback。
-- **后台可恢复**：项目 daemon 在客户端关闭后继续已确认任务，并从持久状态恢复。
+- **后台可恢复（目标）**：未来的项目 daemon 将在客户端关闭后继续已确认任务，并从持久状态恢复。
 - **学习可审计**：Skill 和 Memory 建议带有来源、预览、hash 和显式 apply/load 门槛。
 - **一份事实，多种界面**：CLI、TUI、Desktop 和未来 IDE 客户端消费同一份 ProjectView 与事件契约。
 
@@ -55,7 +55,7 @@ AgentDeck 已经具备本地控制平面的主要底座：
 
 下一代产品会在保留这些能力和审计历史的前提下，用协议原生 Runtime Kernel 替换脆弱的终端屏幕通信。
 
-当前 Phase 1 已交付只读协议运行时模型与状态面；tmux 仍是默认执行 backend，ACP transport 尚未实现。
+当前 Phase 1 已交付 protocol runtime model、只读状态面和 tmux fallback capability metadata；tmux 仍是默认执行 backend，尚不会由 dispatch 自动 emit protocol records，ACP transport/backend/adapter、permission bridge 与 daemon 均未实现。
 
 ## 体验当前 CLI
 
@@ -95,7 +95,7 @@ agentdeck controls
 
 `leader chat` 目前承担自然语言入口；未来默认 `agentdeck` 交互会话落地后，它仍会作为脚本化和调试接口保留。
 
-## 产品架构
+## 目标产品架构
 
 ```text
 Human / CLI / TUI / future Desktop or IDE
@@ -113,17 +113,17 @@ Human / CLI / TUI / future Desktop or IDE
       Codex / Claude / Gemini / OpenCode / others
 ```
 
-ACP 标准化 Agent 通信，但不会替代 AgentDeck 的 Mission、policy、scheduler、audit 和 recovery。
+未来 ACP transport 将标准化 Agent 通信，但不会替代 AgentDeck 的 Mission、policy、scheduler、audit 和 recovery。
 
 ## 安全模型
 
 - 计划在执行前必须可预览。
 - 一次确认只授权冻结的 Mission 范围。
 - 新权限和新风险会暂停执行。
-- ACP permission request 必须经过 AgentDeck approval。
+- 未来接入的 ACP permission request 必须经过 AgentDeck approval。
 - Skill、Memory、prompt 和 role definition 都不是权限授权。
 - 外源 Skill 与长期 Memory 不会被静默安装或写入。
-- runtime 和通信事件可以追溯到 project、Mission、Agent、session 与 turn。
+- Phase 1 protocol records 支持 project、Agent、session 与 turn lineage；当前 tmux dispatch 尚不自动生成这些记录。
 
 ## 路线图与文档
 
