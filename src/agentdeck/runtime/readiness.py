@@ -35,20 +35,26 @@ _CODEX_OFFICIAL_IDLE_PROMPT = re.compile(
     r"use\s+/skills\s+to\s+list\s+available\s+skills)\s*$"
 )
 _CODEX_HEADER_CHROME = re.compile(
-    r"^\s*(?:[│|]\s*>_\s*)?openai codex(?:\s+\(v[^\r\n│|]+\))?"
-    r"\s*(?:[│|])?\s*$"
+    r"^\s*(?:openai codex(?:\s+\(v[^\r\n│|]+\))?|"
+    r"(?P<header_box>[│|])\s*>_\s*openai codex"
+    r"(?:\s+\(v[^\r\n│|]+\))?\s*(?P=header_box))\s*$"
 )
 _CODEX_MODEL_CHROME = re.compile(
-    r"^\s*(?:[│|]\s*)?model:\s*\S[^\r\n│|]*(?:[│|])?\s*$"
+    r"^\s*(?:model:\s*\S[^\r\n│|]*|"
+    r"(?P<model_box>[│|])\s*model:\s*\S[^\r\n│|]*\s*(?P=model_box))\s*$"
 )
 _CODEX_DIRECTORY_CHROME = re.compile(
-    r"^\s*(?:[│|]\s*)?directory:\s*(?:/|~/|…/)\S[^\r\n│|]*"
-    r"(?:[│|])?\s*$"
+    r"^\s*(?:directory:\s*(?:/|~/|…/)\S[^\r\n│|]*|"
+    r"(?P<directory_box>[│|])\s*directory:\s*(?:/|~/|…/)"
+    r"\S[^\r\n│|]*\s*(?P=directory_box))\s*$"
 )
 _CODEX_CONTEXT_FOOTER = re.compile(
     r"^\s*(?:\[[^\]\r\n]+\]\s+context:\s*\d+%\s+left(?:\s+usage:[^\r\n]+)?|"
     r"\S[^\r\n]*\s+·\s+\d+%\s+left|"
-    r"context\s+[█░]+\s*\d+%\s*│\s*usage\s+[█░]+\s*\d+%[^\r\n]*)\s*$"
+    r"context\s+[█░]+\s*\d+%\s*│\s*usage\s+[█░]+\s*\d+%"
+    r"(?:\s+\(resets in [^)\r\n]+\))?"
+    r"(?:\s*│\s*weekly\s+[█░]+\s*\d+%"
+    r"(?:\s+\(resets in [^)\r\n]+\))?)?)\s*$"
 )
 _CLAUDE_EMPTY_PROMPT = re.compile(r"^\s*❯\s*$")
 _CLAUDE_MODE_FOOTER = re.compile(
@@ -66,6 +72,8 @@ _CLAUDE_WORKSPACE_PATH_CHROME = re.compile(
 _CLAUDE_MCP_AUTH_CHROME = re.compile(
     r"^\s*⚠\s+\d+\s+mcp servers? need authentication\s*·\s*run /mcp\s*$"
 )
+_CLAUDE_BOX_BOTTOM = re.compile(r"^\s*╰─{8,}╯\s*$")
+_CLAUDE_PROMPT_SEPARATOR = re.compile(r"^\s*─{8,}\s*$")
 
 
 @dataclass(frozen=True)
@@ -90,22 +98,40 @@ class WorkerReadinessBatch:
 
 
 def _has_ordered_claude_idle_chrome(lines: list[str]) -> bool:
-    patterns = (
-        _CLAUDE_ORGANIZATION_CHROME,
-        _CLAUDE_WORKSPACE_PATH_CHROME,
+    meaningful = [(index, line) for index, line in enumerate(lines) if line.strip()]
+    if len(meaningful) < 7:
+        return False
+    tail = meaningful[-4:]
+    tail_patterns = (
+        _CLAUDE_PROMPT_SEPARATOR,
         _CLAUDE_EMPTY_PROMPT,
+        _CLAUDE_PROMPT_SEPARATOR,
         _CLAUDE_MODE_FOOTER,
     )
-    indexes: list[int] = []
-    for pattern in patterns:
-        index = next(
-            (line_index for line_index, line in enumerate(lines) if pattern.fullmatch(line)),
-            None,
-        )
-        if index is None:
-            return False
-        indexes.append(index)
-    return all(left < right for left, right in zip(indexes, indexes[1:]))
+    if not all(
+        pattern.fullmatch(line)
+        for (_index, line), pattern in zip(tail, tail_patterns)
+    ):
+        return False
+    upper_separator_index = tail[0][0]
+    organization_index = next(
+        (index for index, line in meaningful if _CLAUDE_ORGANIZATION_CHROME.fullmatch(line)),
+        None,
+    )
+    path_index = next(
+        (index for index, line in meaningful if _CLAUDE_WORKSPACE_PATH_CHROME.fullmatch(line)),
+        None,
+    )
+    box_bottom_index = next(
+        (index for index, line in meaningful if _CLAUDE_BOX_BOTTOM.fullmatch(line)),
+        None,
+    )
+    return (
+        organization_index is not None
+        and path_index is not None
+        and box_bottom_index is not None
+        and organization_index < path_index < box_bottom_index < upper_separator_index
+    )
 
 
 def _has_ordered_codex_official_idle_chrome(lines: list[str]) -> bool:

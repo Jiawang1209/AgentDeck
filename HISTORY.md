@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Anchor Worker readiness to the current terminal frame
+
+- **类型**: code-quality review fix + strict TDD + readiness false-positive hardening
+- **问题**: Claude 的 80 行有界窗口仍会把旧 idle frame 后 10/40/60 行普通任务输出误判为当前 ready，且 organization/path/empty-prompt/mode-footer 四条可复制 prose 足以伪造 ready；Codex box chrome 的左右 delimiter 可独立缺失或混用，bars footer 还接受任意尾随文本。
+- **What**: Claude structured idle 现在要求最后四个非空行严格为水平分隔线、空 `❯`、水平分隔线、mode footer，并要求更早的 organization box、workspace path box、box 底边按序出现；因此 recency 由当前 frame 尾部结构决定，不依赖时间，也不继续扩大窗口。Codex header/model/directory 每行只接受无框 legacy 或成对同类 `│...│` / `|...|`，bars footer 只接受百分比、可选 resets 与可选 Weekly 的真实结构。
+- **TDD 证据**: 11 个聚焦审查案例先得到 7 failed / 4 passed RED，其中旧 Claude idle + 10/40/60 行输出、复制 UI prose、Codex 半框/混框/尾随均复现误报；最小修复后 11/11 GREEN，完整 readiness 189/189 GREEN，脱敏真实 Codex/Claude pane capture 仍直接分类为 ready。
+- **安全边界**: post-trust Claude 14 行真实 idle frame 保持 ready；旧 idle 后任意仍在窗口内的普通输出为 starting；复制 UI 字符串缺真实分隔/底边结构时为 starting。setup/login/fatal/startup 与当前非空输入继续优先，不改变 Mission 事实、确认、dispatch 或权限。
+
 ### Redact the Phase 0 acceptance project path
 
 - **问题与修复**: 规格审查发现验收报告 Environment 误写本机绝对路径，泄露本地用户名。durable 报告现只保留临时项目 basename；同步扫描本轮 README、HISTORY、handoff、CLAUDE、AGENT 与验收报告，不保留本机用户名、email 地址、token 值或 credential 值。

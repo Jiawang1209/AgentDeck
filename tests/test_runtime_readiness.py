@@ -69,7 +69,10 @@ CLAUDE_21207_READY_SCREEN = (
     "│ user@example.com's Organization │ /release-notes...          │\n"
     "│ /tmp/agentdeck-demo             │                            │\n"
     "⚠ 3 MCP servers need authentication · run /mcp\n"
+    "╰──────────────────────────────────────────────────────────────╯\n"
+    "────────────────────────────────────────────────────────────────\n"
     "❯\u00a0\n"
+    "────────────────────────────────────────────────────────────────\n"
     "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
 )
 
@@ -88,7 +91,10 @@ CLAUDE_21207_PHASE0_IDLE_SCREEN = (
     "│ user@example.com's Organization │ /release-notes │\n"
     "│ ~/Desktop/agentdeck-protocol-v2-phase0-acceptance │ │\n"
     + "\n".join(f"release note {index}" for index in range(36))
-    + "\n❯\u00a0\n"
+    + "\n╰──────────────────────────────────────────────────────────────╯\n"
+    "────────────────────────────────────────────────────────────────\n"
+    "❯\u00a0\n"
+    "────────────────────────────────────────────────────────────────\n"
     "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
 )
 
@@ -105,7 +111,10 @@ CLAUDE_21207_PHASE0_TMUX_IDLE_SCREEN = (
     "│ Opus 4.8 (1M context) · Claude Max · │ release notes │\n"
     "│ user@example.com's Organization │ /release-notes for more │\n"
     "│ ~/Desktop/agentdeck-protocol-v2-phase0-acceptance │ │\n"
+    "╰──────────────────────────────────────────────────────────────╯\n"
+    "────────────────────────────────────────────────────────────────\n"
     "❯\u00a0\n"
+    "────────────────────────────────────────────────────────────────\n"
     "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
 )
 
@@ -144,6 +153,51 @@ def test_codex_phase0_tmux_box_idle_chrome_is_ready() -> None:
 
 def test_claude_phase0_post_trust_tmux_box_idle_chrome_is_ready() -> None:
     assert classify_worker_readiness("claude-cli", CLAUDE_21207_PHASE0_TMUX_IDLE_SCREEN).status == "ready"
+
+
+@pytest.mark.parametrize("later_line_count", [10, 40, 60, 75, 76])
+def test_claude_old_idle_frame_followed_by_task_output_is_not_ready(
+    later_line_count: int,
+) -> None:
+    later_output = "\n".join(
+        f"ordinary completed task output {index}" for index in range(later_line_count)
+    )
+    screen = f"{CLAUDE_21207_PHASE0_TMUX_IDLE_SCREEN}\n{later_output}"
+
+    assert classify_worker_readiness("claude-cli", screen).status == "starting"
+
+
+def test_claude_copied_ui_prose_without_frame_separators_is_not_ready() -> None:
+    screen = (
+        "│ user@example.com's Organization │ copied prose │\n"
+        "│ ~/Desktop/copied-workspace │ copied prose │\n"
+        "❯\n"
+        "auto mode on"
+    )
+
+    assert classify_worker_readiness("claude-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    "screen",
+    [
+        CODEX_0131_PHASE0_TMUX_IDLE_SCREEN.replace(
+            "│ >_ OpenAI Codex (v0.131.0) │", ">_ OpenAI Codex (v0.131.0) │"
+        ),
+        CODEX_0131_PHASE0_TMUX_IDLE_SCREEN.replace(
+            "│ model: gpt-5.5 medium /model to change │",
+            "| model: gpt-5.5 medium /model to change │",
+        ),
+        CODEX_0131_PHASE0_TMUX_IDLE_SCREEN.replace(
+            "│ directory: ~/…/agentdeck-protocol-v2-phase0-acceptance │",
+            "│ directory: ~/…/agentdeck-protocol-v2-phase0-acceptance",
+        ),
+        CODEX_0131_PHASE0_TMUX_IDLE_SCREEN
+        + " arbitrary trailing footer prose",
+    ],
+)
+def test_codex_box_chrome_and_footer_reject_malformed_variants(screen: str) -> None:
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
 
 
 @pytest.mark.parametrize(
