@@ -98,6 +98,11 @@ class AgentDeckAcpClient:
         self._decide = decide
         self._permission_pending = False
         self._callback_error: Exception | None = None
+        self._update_count = 0
+
+    @property
+    def update_count(self) -> int:
+        return self._update_count
 
     def take_callback_error(self) -> Exception | None:
         error = self._callback_error
@@ -123,6 +128,7 @@ class AgentDeckAcpClient:
             raise RuntimeError("ACP permission cancellation settlement timed out") from None
 
     async def session_update(self, session_id: str, update: object, **_: Any) -> None:
+        self._update_count += 1
         kind, payload = map_session_update(update)
         try:
             await self._sink.append_update(session_id, kind, payload)

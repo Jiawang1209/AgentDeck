@@ -84,6 +84,8 @@ class AcpInitializeResult:
     client_capabilities: dict[str, object]
     capabilities: TransportCapabilities
     agent_identity: dict[str, str]
+    load_session: bool
+    resume_session: bool
 
 
 @dataclass(frozen=True)
@@ -295,6 +297,11 @@ class AcpTransport:
                     "version": response.agent_info.version if response.agent_info else None,
                 }.items() if value is not None
             },
+            load_session=response.agent_capabilities.load_session is True,
+            resume_session=(
+                response.agent_capabilities.session_capabilities is not None
+                and response.agent_capabilities.session_capabilities.resume is not None
+            ),
         )
 
     async def _connection_ended(self, error: Exception) -> bool:
@@ -319,6 +326,37 @@ class AcpTransport:
             self._connection.new_session(cwd=str(self._workspace), mcp_servers=[])
         )
         return AcpSessionResult(native_session_id=response.session_id)
+
+    async def load_session(self, native_session_id: str) -> AcpSessionResult:
+        if self._connection is None:
+            raise RuntimeError("ACP transport is not initialized")
+        if type(native_session_id) is not str or not native_session_id:
+            raise ValueError("native_session_id must be a non-empty string")
+        await self._request(self._connection.load_session(
+            cwd=str(self._workspace), session_id=native_session_id, mcp_servers=[]
+        ), eof_is_ambiguous=True)
+        callback_error = getattr(self._client, "take_callback_error", lambda: None)()
+        if callback_error is not None:
+            raise AcpTransportError("ACP client callback rejected a replay update") from callback_error
+        return AcpSessionResult(native_session_id=native_session_id)
+
+    async def resume_session(self, native_session_id: str) -> AcpSessionResult:
+        if self._connection is None:
+            raise RuntimeError("ACP transport is not initialized")
+        if type(native_session_id) is not str or not native_session_id:
+            raise ValueError("native_session_id must be a non-empty string")
+        before = getattr(self._client, "update_count", 0)
+        try:
+            await self._request(self._connection.resume_session(
+                session_id=native_session_id, cwd=str(self._workspace), mcp_servers=[]
+            ), eof_is_ambiguous=True)
+        except AcpTransportError:
+            if getattr(self._client, "update_count", 0) != before:
+                raise AcpTransportError("unexpected_resume_replay") from None
+            raise
+        if getattr(self._client, "update_count", 0) != before:
+            raise AcpTransportError("unexpected_resume_replay")
+        return AcpSessionResult(native_session_id=native_session_id)
 
     async def prompt(self, native_session_id: str, text: str) -> AcpPromptResult:
         if self._connection is None:

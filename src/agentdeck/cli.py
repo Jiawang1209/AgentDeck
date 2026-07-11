@@ -1474,6 +1474,124 @@ def _acp_run_payload_from_state(
     }
 
 
+async def _close_reconnected_transport(
+    transport: AcpTransport, store: StateStore, session_id: str, reason: str
+) -> None:
+    cleanup_failed = False
+    try:
+        await asyncio.shield(transport.close())
+    except BaseException:
+        cleanup_failed = True
+    state = store.load()
+    current = _derived_entity_state(state, "session", session_id, "created")
+    if current != "disconnected":
+        store.record_protocol_transition(
+            "session", session_id, current, "disconnected",
+            "cleanup_failed" if cleanup_failed else reason, {},
+        )
+
+
+def _acp_reconnect_payload_from_state(
+    store: StateStore, session_id: str, turn_id: str, mode: str
+) -> dict[str, Any]:
+    state = store.validated_protocol_state()
+    session = next(item for item in state["agent_sessions"] if item["session_id"] == session_id)
+    turn = next(item for item in state["protocol_turns"] if item["turn_id"] == turn_id)
+    updates = [item for item in state["transport_updates"] if item["turn_id"] == turn_id]
+    if [item["sequence"] for item in updates] != list(range(len(updates))):
+        raise ValueError("ACP reconnect update sequence is not contiguous")
+    transitions = [item for item in state["protocol_state_transitions"] if item["entity_type"] == "session" and item["entity_id"] == session_id]
+    ready = next(
+        item for item in reversed(transitions)
+        if item["to_state"] == "ready" and "protocol_version" in item["details"]
+    )
+    disconnected = transitions[-1]
+    if disconnected["to_state"] != "disconnected":
+        raise ValueError("ACP reconnect requires final disconnect")
+    completions = [item for item in updates if item["kind"] == "completion"]
+    stop_reason = completions[-1]["payload"]["stop_reason"] if completions else None
+    return {
+        "mode": mode, "contract_version": ACP_RUNTIME_CONTRACT_VERSION,
+        "agent_id": session["agent_id"], "session_id": session_id,
+        "native_session_id": session["native_session_id"],
+        "protocol_version": ready["details"]["protocol_version"],
+        "capabilities": session["capabilities"], "turn_id": turn_id,
+        "turn_state": _derived_entity_state(state, "turn", turn_id, turn["state"]),
+        "stop_reason": stop_reason, "update_count": len(updates),
+        "permission_count": len([item for item in state["permission_requests"] if item["turn_id"] == turn_id]),
+        "disconnect_reason": disconnected["reason"],
+        "controls": [
+            {"kind": "inspect", "label": "Inspect protocol runtime", "command": "agentdeck protocol status", "safety": "inspect", "enabled": True, "blocker": None},
+            {"kind": "inspect", "label": "Inspect ACP runtime contract", "command": "agentdeck contract acp-runtime", "safety": "inspect", "enabled": True, "blocker": None},
+        ],
+    }
+
+
+async def _load_acp_session(
+    config: ProjectConfig, agent: AgentSpec, store: StateStore, session: dict[str, Any]
+) -> dict[str, Any]:
+    sink = _AcpRunLedgerSink(store)
+    client = AgentDeckAcpClient(sink=sink, decide=lambda *_: PermissionDecision.cancelled("load_replay"))
+    transport = AcpTransport(agent.transport_command, project_root(), client)
+    turn: dict[str, Any] | None = None
+    try:
+        initialized = await transport.initialize()
+        if not initialized.load_session:
+            raise AcpTransportError("ACP Agent does not support loadSession")
+        store.record_protocol_transition("session", session["session_id"], "disconnected", "reconnecting", "session_load_started", {})
+        turn = store.record_protocol_turn(session["session_id"], new_id("msg"), "load_replay")
+        store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", "session_load_submitted", {})
+        sink.activate(session["native_session_id"], session["session_id"], turn["turn_id"])
+        await transport.load_session(session["native_session_id"])
+        store.record_transport_update(session["session_id"], turn["turn_id"], sink.sequence, "completion", {"stop_reason": "loaded"})
+        sink.sequence += 1
+        sink._transition_turn("completed", "session_load_completed")
+        store.record_protocol_transition("session", session["session_id"], "reconnecting", "ready", "session_load_completed", {"protocol_version": initialized.protocol_version, "agent_identity": initialized.agent_identity})
+    finally:
+        await _close_reconnected_transport(transport, store, session["session_id"], "clean_exit")
+    assert turn is not None
+    return _acp_reconnect_payload_from_state(store, session["session_id"], turn["turn_id"], "acp_load")
+
+
+async def _resume_acp_session(
+    config: ProjectConfig, agent: AgentSpec, store: StateStore,
+    session: dict[str, Any], prompt: str,
+) -> dict[str, Any]:
+    sink = _AcpRunLedgerSink(store)
+    client = AgentDeckAcpClient(
+        sink=sink,
+        decide=lambda pending, options: foreground_permission_decider(pending, options, stdin=sys.stdin, stderr=sys.stderr),
+    )
+    transport = AcpTransport(agent.transport_command, project_root(), client)
+    turn: dict[str, Any] | None = None
+    try:
+        initialized = await transport.initialize()
+        if not initialized.resume_session:
+            raise AcpTransportError("ACP Agent does not support sessionCapabilities.resume")
+        store.record_protocol_transition("session", session["session_id"], "disconnected", "reconnecting", "session_resume_started", {})
+        await transport.resume_session(session["native_session_id"])
+        store.record_protocol_transition("session", session["session_id"], "reconnecting", "ready", "session_resume_completed", {"protocol_version": initialized.protocol_version, "agent_identity": initialized.agent_identity})
+        turn = store.record_protocol_turn(session["session_id"], new_id("msg"), "prompt")
+        store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", "prompt_submitted", {})
+        sink.activate(session["native_session_id"], session["session_id"], turn["turn_id"])
+        store.record_protocol_transition("session", session["session_id"], "ready", "busy", "prompt_started", {})
+        result = await transport.prompt(session["native_session_id"], prompt)
+        target_state, reason = map_stop_reason(result.stop_reason)
+        store.record_transport_update(session["session_id"], turn["turn_id"], sink.sequence, "completion", {"stop_reason": result.stop_reason})
+        sink.sequence += 1
+        sink._transition_turn(target_state, reason)
+        store.record_protocol_transition("session", session["session_id"], "busy", "ready", "prompt_finished", {})
+    except AcpTransportError as error:
+        if turn is not None and sink.turn_state not in {"completed", "blocked", "failed", "ambiguous"}:
+            sink.append_terminal_error(str(error))
+            sink._transition_turn("ambiguous", "unexpected_resume_replay" if str(error) == "unexpected_resume_replay" else "runtime_error")
+        raise
+    finally:
+        await _close_reconnected_transport(transport, store, session["session_id"], "clean_exit")
+    assert turn is not None
+    return _acp_reconnect_payload_from_state(store, session["session_id"], turn["turn_id"], "acp_resume")
+
+
 def protocol_acp_run_command(args: argparse.Namespace) -> int:
     if not args.confirm:
         print("--confirm is required to start an ACP Agent", file=sys.stderr)
@@ -1512,6 +1630,61 @@ def protocol_acp_run_command(args: argparse.Namespace) -> int:
         return 1
     _print_json(payload)
     return 0
+
+
+def _resolve_acp_session(config: ProjectConfig, store: StateStore, session_id: str) -> tuple[dict[str, Any], AgentSpec]:
+    state = store.validated_protocol_state()
+    matches = [item for item in state["agent_sessions"] if item["session_id"] == session_id]
+    if len(matches) != 1:
+        raise ValueError(f"unknown or ambiguous ACP session: {session_id}")
+    session = matches[0]
+    if type(session.get("native_session_id")) is not str or not session["native_session_id"]:
+        raise ValueError("ACP session has no native session id")
+    agents = [item for item in config.agents if item.agent_id == session["agent_id"]]
+    if len(agents) != 1 or agents[0].transport != "acp":
+        raise ValueError("ACP session agent configuration is unavailable")
+    if str(Path(session["workspace"]).resolve()) != str(project_root().resolve()):
+        raise ValueError("ACP session workspace does not match the current project")
+    return session, agents[0]
+
+
+def _acp_reconnect_command(args: argparse.Namespace, *, resume: bool) -> int:
+    if not args.confirm:
+        print("--confirm is required to start an ACP Agent", file=sys.stderr)
+        return 1
+    if resume and (type(args.prompt) is not str or not args.prompt.strip()):
+        print("--prompt must be non-empty", file=sys.stderr)
+        return 1
+    try:
+        config = load_config(project_root())
+        store = StateStore.open_existing(project_root())
+        session, agent = _resolve_acp_session(config, store, args.session_id)
+    except (FileNotFoundError, KeyError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    blockers = _acp_readiness(agent)
+    if blockers:
+        print("ACP preflight is not ready: " + "; ".join(blockers), file=sys.stderr)
+        return 1
+    try:
+        payload = asyncio.run(_resume_acp_session(config, agent, store, session, args.prompt) if resume else _load_acp_session(config, agent, store, session))
+    except (AcpTransportError, ValueError, KeyError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    validation = validate_acp_runtime_contract(payload)
+    if not validation["ok"]:
+        print("ACP runtime contract validation failed", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def protocol_acp_load_command(args: argparse.Namespace) -> int:
+    return _acp_reconnect_command(args, resume=False)
+
+
+def protocol_acp_resume_command(args: argparse.Namespace) -> int:
+    return _acp_reconnect_command(args, resume=True)
 
 
 def leader_status_command(_args: argparse.Namespace) -> int:
@@ -15487,6 +15660,15 @@ def build_parser() -> argparse.ArgumentParser:
     protocol_acp_run.add_argument("--prompt", required=True, help="Prompt text")
     protocol_acp_run.add_argument("--confirm", action="store_true", help="Confirm external Agent activity")
     protocol_acp_run.set_defaults(func=protocol_acp_run_command)
+    protocol_acp_load = protocol_acp_subparsers.add_parser("load", help="Explicitly load an ACP session")
+    protocol_acp_load.add_argument("--session-id", required=True)
+    protocol_acp_load.add_argument("--confirm", action="store_true")
+    protocol_acp_load.set_defaults(func=protocol_acp_load_command)
+    protocol_acp_resume = protocol_acp_subparsers.add_parser("resume", help="Explicitly resume an ACP session and prompt")
+    protocol_acp_resume.add_argument("--session-id", required=True)
+    protocol_acp_resume.add_argument("--prompt", required=True)
+    protocol_acp_resume.add_argument("--confirm", action="store_true")
+    protocol_acp_resume.set_defaults(func=protocol_acp_resume_command)
 
     events = subparsers.add_parser("events", help="Show recent audit events")
     events.add_argument("--limit", type=int, default=20, help="Number of recent events to show")

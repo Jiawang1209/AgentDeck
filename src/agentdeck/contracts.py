@@ -2826,7 +2826,7 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
     errors: list[str] = []
     if not isinstance(payload, dict):
         return {"ok": False, "errors": ["ACP runtime payload must be an object"]}
-    if payload.get("mode") == "acp_run" and "project" not in payload:
+    if payload.get("mode") in {"acp_run", "acp_load", "acp_resume"} and "project" not in payload:
         if set(payload) != set(ACP_RUNTIME_RUN_RESPONSE_FIELDS):
             errors.extend(f"missing ACP runtime field: {field}" for field in sorted(set(ACP_RUNTIME_RUN_RESPONSE_FIELDS) - set(payload)))
             errors.extend(f"unexpected ACP runtime field: {field}" for field in sorted(set(payload) - set(ACP_RUNTIME_RUN_RESPONSE_FIELDS)))
@@ -2846,6 +2846,8 @@ def validate_acp_runtime_contract(payload: object) -> dict[str, object]:
             if type(payload.get("stop_reason")) is not str or not payload.get("stop_reason"): errors.append("completed or blocked run must have stop_reason")
         elif payload.get("stop_reason") is not None and (type(payload.get("stop_reason")) is not str or not payload.get("stop_reason")):
             errors.append("failed or ambiguous stop_reason must be null or non-empty")
+        if payload.get("mode") == "acp_load" and payload.get("stop_reason") != "loaded":
+            errors.append("load stop_reason must be loaded")
         for field in ("update_count", "permission_count"):
             if type(payload.get(field)) is not int or payload[field] < 0: errors.append(f"{field} must be a non-negative integer")
         controls = payload.get("controls")

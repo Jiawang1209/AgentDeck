@@ -372,6 +372,19 @@ def test_acp_run_requires_confirm_and_writes_nothing(tmp_path: Path, monkeypatch
     assert snapshot_tree_metadata(root) == before
 
 
+@pytest.mark.parametrize("command,extra", [("load", []), ("resume", ["--prompt", "again"])])
+def test_acp_reconnect_commands_require_confirm_and_write_nothing(
+    tmp_path: Path, monkeypatch, capsys, command: str, extra: list[str]
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch)
+    before = snapshot_tree_metadata(root)
+    assert cli.main(["protocol", "acp", command, "--session-id", "ags_missing", *extra]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--confirm" in captured.err
+    assert snapshot_tree_metadata(root) == before
+
+
 def test_acp_run_not_ready_preflight_spawns_nothing_and_writes_nothing(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -464,6 +477,70 @@ def test_acp_run_prints_one_validated_json_document(tmp_path: Path, monkeypatch,
     assert [item["to_state"] for item in state["protocol_state_transitions"]] == [
         "ready", "submitted", "busy", "streaming", "completed", "ready", "disconnected"
     ]
+
+
+def test_acp_load_replays_then_resume_prompts_same_identity(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    config_path = root / ".agentdeck" / "config.toml"
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    base = config_path.read_text(encoding="utf-8")
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+
+    def scenario(name: str) -> None:
+        text = base.replace(
+            f'transport_command = ["{sys.executable}", "--stdio"]',
+            f'transport_command = ["{sys.executable}", "{fixture}", "{name}"]',
+        )
+        config_path.write_text(text, encoding="utf-8")
+
+    scenario("stream_end_turn")
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "first", "--confirm"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    scenario("load_replay")
+    assert cli.main(["protocol", "acp", "load", "--session-id", first["session_id"], "--confirm"]) == 0
+    loaded = json.loads(capsys.readouterr().out)
+    assert loaded["mode"] == "acp_load"
+    assert loaded["session_id"] == first["session_id"]
+    assert loaded["native_session_id"] == first["native_session_id"]
+    scenario("stream_end_turn")
+    assert cli.main(["protocol", "acp", "resume", "--session-id", first["session_id"], "--prompt", "again", "--confirm"]) == 0
+    resumed = json.loads(capsys.readouterr().out)
+    assert resumed["mode"] == "acp_resume"
+    state = StateStore(root).load()
+    assert [turn["kind"] for turn in state["protocol_turns"]] == ["prompt", "load_replay", "prompt"]
+
+
+@pytest.mark.parametrize("command,scenario_name,extra,capability", [
+    ("load", "no_load_capability", [], "loadSession"),
+    ("resume", "no_resume_capability", ["--prompt", "again"], "resume"),
+])
+def test_acp_reconnect_missing_capability_writes_nothing(
+    tmp_path: Path, monkeypatch, capsys, command: str, scenario_name: str,
+    extra: list[str], capability: str,
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    config_path = root / ".agentdeck" / "config.toml"
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    original = config_path.read_text(encoding="utf-8")
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda value: value)
+    config_path.write_text(original.replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "stream_end_turn"]',
+    ), encoding="utf-8")
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "first", "--confirm"]) == 0
+    session_id = json.loads(capsys.readouterr().out)["session_id"]
+    config_path.write_text(original.replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "{scenario_name}"]',
+    ), encoding="utf-8")
+    before = snapshot_tree_metadata(root)
+    assert cli.main(["protocol", "acp", command, "--session-id", session_id, *extra, "--confirm"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert capability in captured.err
+    assert snapshot_tree_metadata(root) == before
 
 
 def test_acp_run_non_tty_permission_is_persisted_denied_before_completion(

@@ -4,6 +4,13 @@
 
 ## 2026-07-12
 
+### Load and resume ACP sessions explicitly
+
+- **What**: add confirmed `protocol acp load` and `protocol acp resume` commands with exact internal/native session, workspace, and configured-agent resolution.
+- **Load**: negotiate `loadSession`, record one ordered `load_replay` turn, complete it only after the load response, and persist reconnect/ready/disconnect lineage.
+- **Resume**: negotiate `sessionCapabilities.resume` without load fallback, reject pre-response replay, and run the subsequent governed prompt on the same session identity.
+- **Tests**: extend the official-SDK transport and deterministic fake ACP Agent with load/resume capability and replay scenarios; no real adapter is invoked.
+
 ### Run one governed ACP prompt turn
 
 - **What**: add `agentdeck protocol acp run --agent <id> --prompt <text> --confirm` for one foreground initialize/new/prompt lifecycle using the explicitly configured adapter argv. Native session identity, negotiated capabilities, prompt updates, exact stop reason, and disconnect are recorded through the existing append-only protocol ledger.

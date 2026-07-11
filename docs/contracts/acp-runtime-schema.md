@@ -2,6 +2,14 @@
 
 `agentdeck contract acp-runtime [--example]` publishes the discovery metadata for the Phase 2 ACP diagnostic surface. Its contract version is `acp-runtime/v1`.
 
+Confirmed reconnect commands are `agentdeck protocol acp load --session-id <ags_id> --confirm`
+and `agentdeck protocol acp resume --session-id <ags_id> --prompt <text> --confirm`.
+Both resolve exactly one persisted internal session, its opaque native session id, configured
+agent, and canonical workspace before starting a fresh stdio process. Load requires negotiated
+`loadSession` and owns replay in one `load_replay` turn. Resume requires
+`sessionCapabilities.resume`, rejects replay before its response, creates no replay turn, and
+then runs one normal prompt turn on the same identity. Neither path falls back to the other.
+
 ## Read-only preflight
 
 ```text

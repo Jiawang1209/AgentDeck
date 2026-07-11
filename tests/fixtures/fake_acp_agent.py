@@ -47,12 +47,35 @@ class FakeAgent:
             sys.stderr.flush()
         return schema.InitializeResponse(
             protocolVersion=2 if self.scenario == "version_mismatch" else 1,
-            agentCapabilities=schema.AgentCapabilities(),
+            agentCapabilities=schema.AgentCapabilities(
+                loadSession=self.scenario not in {"no_load_capability"},
+                sessionCapabilities=schema.SessionCapabilities(
+                    resume=schema.SessionResumeCapabilities()
+                    if self.scenario not in {"no_resume_capability"} else None
+                ),
+            ),
             agentInfo=schema.Implementation(name="fake", version="1.0.0"),
         )
 
     async def new_session(self, cwd: str, mcp_servers=None, **kwargs):
         return schema.NewSessionResponse(sessionId="fake-session-1")
+
+    async def load_session(self, cwd: str, session_id: str, mcp_servers=None, **kwargs):
+        if self.scenario == "load_replay":
+            for text in ("one", "two"):
+                await self.client.session_update(session_id, schema.AgentMessageChunk(
+                    sessionUpdate="agent_message_chunk",
+                    content=schema.TextContentBlock(type="text", text=text),
+                ))
+        return schema.LoadSessionResponse()
+
+    async def resume_session(self, session_id: str, cwd: str, mcp_servers=None, **kwargs):
+        if self.scenario == "resume_illegal_replay":
+            await self.client.session_update(session_id, schema.AgentMessageChunk(
+                sessionUpdate="agent_message_chunk",
+                content=schema.TextContentBlock(type="text", text="illegal"),
+            ))
+        return schema.ResumeSessionResponse()
 
     async def prompt(self, session_id: str, prompt: list[object], **kwargs):
         if self.scenario == "timeout":
@@ -108,7 +131,10 @@ async def main() -> None:
         return
     if scenario == "cancel_or_ignore_terminate":
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    await run_agent(FakeAgent(scenario, args), stdio_buffer_limit_bytes=64 * 1024)
+    await run_agent(
+        FakeAgent(scenario, args), use_unstable_protocol=True,
+        stdio_buffer_limit_bytes=64 * 1024,
+    )
 
 
 asyncio.run(main())

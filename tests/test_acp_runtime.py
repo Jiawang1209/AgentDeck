@@ -423,6 +423,36 @@ async def test_transport_initializes_streams_and_completes_prompt(tmp_path: Path
 
 
 @async_test
+async def test_transport_load_session_preserves_ordered_replay(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpTransport
+
+    client, sink = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "load_replay"), tmp_path, client
+    )
+    initialized = await transport.initialize()
+    await transport.load_session("fake-session-1")
+    await transport.close()
+
+    assert initialized.capabilities.resume_session is True
+    assert [item["payload"]["content"]["text"] for item in sink.updates] == ["one", "two"]
+
+
+@async_test
+async def test_transport_resume_rejects_update_before_response(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpTransport, AcpTransportError
+
+    client, _ = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, str(FAKE_AGENT), "resume_illegal_replay"), tmp_path, client
+    )
+    await transport.initialize()
+    with pytest.raises(AcpTransportError, match="unexpected_resume_replay"):
+        await transport.resume_session("fake-session-1")
+    await transport.close()
+
+
+@async_test
 async def test_transport_preserves_exact_argv_and_canonical_cwd(tmp_path: Path) -> None:
     from agentdeck.runtime.acp import AcpTransport
 
