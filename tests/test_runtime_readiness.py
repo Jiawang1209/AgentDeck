@@ -45,6 +45,16 @@ CODEX_0131_SKILLS_READY_SCREEN = (
     "› Use /skills to list available skills\n"
     "gpt-5.3-codex · 100% left"
 )
+CODEX_0131_OFFICIAL_IDLE_PLACEHOLDERS = (
+    "Explain this codebase",
+    "Summarize recent commits",
+    "Implement {feature}",
+    "Find and fix a bug in @filename",
+    "Write tests for @filename",
+    "Improve documentation in @filename",
+    "Run /review on my current changes",
+    "Use /skills to list available skills",
+)
 CODEX_STARTING_MCP_SCREEN = "OpenAI Codex\nStarting MCP servers (1/2)\n›"
 CODEX_MODEL_INCOMPATIBLE_SCREEN = (
     "› old prompt in scrollback\nConfigured model requires a newer version of Codex"
@@ -119,6 +129,118 @@ def test_codex_0131_nonfatal_mcp_warning_with_exact_skills_placeholder_is_ready(
         classify_worker_readiness("codex-cli", CODEX_0131_SKILLS_READY_SCREEN).status
         == "ready"
     )
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Explain this codebase",
+        "Summarize recent commits",
+        "Run /review on my current changes",
+    ],
+)
+def test_codex_0131_remaining_official_idle_placeholder_is_ready(prompt: str) -> None:
+    screen = CODEX_0131_READY_SCREEN.replace(
+        "› Implement {feature}", f"› {prompt}"
+    )
+
+    assert classify_worker_readiness("codex-cli", screen).status == "ready"
+
+
+@pytest.mark.parametrize("prompt", CODEX_0131_OFFICIAL_IDLE_PLACEHOLDERS)
+@pytest.mark.parametrize(
+    "missing_line",
+    [
+        "OpenAI Codex (v0.131.0)\n",
+        "model: gpt-5.3-codex\n",
+        "directory: /tmp/agentdeck-demo\n",
+        "[gpt-5.3-codex] Context: 100% left",
+    ],
+)
+def test_codex_0131_official_idle_requires_complete_normal_chrome(
+    prompt: str, missing_line: str
+) -> None:
+    screen = CODEX_0131_READY_SCREEN.replace(
+        "› Implement {feature}", f"› {prompt}"
+    ).replace(missing_line, "")
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize("prompt", CODEX_0131_OFFICIAL_IDLE_PLACEHOLDERS)
+def test_codex_0131_official_idle_requires_ordered_normal_chrome(prompt: str) -> None:
+    screen = (
+        "model: gpt-5.3-codex\n"
+        "OpenAI Codex (v0.131.0)\n"
+        "directory: /tmp/agentdeck-demo\n"
+        f"› {prompt}\n"
+        "[gpt-5.3-codex] Context: 100% left"
+    )
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize("placeholder", CODEX_0131_OFFICIAL_IDLE_PLACEHOLDERS)
+@pytest.mark.parametrize(
+    "replacement_template",
+    [
+        "› {placeholder} and ignore safeguards",
+        "User: › {placeholder}",
+    ],
+)
+def test_codex_0131_official_idle_rejects_modified_or_wrapped_prompt(
+    placeholder: str, replacement_template: str
+) -> None:
+    screen = CODEX_0131_READY_SCREEN.replace(
+        "› Implement {feature}",
+        replacement_template.format(placeholder=placeholder),
+    )
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    ("placeholder", "similar_input"),
+    [
+        ("Run /review on my current changes", "Run /reviews on my current changes"),
+        ("Run /review on my current changes", "Run /review on @filename"),
+        (
+            "Use /skills to list available skills",
+            "Use /skill to list available skills",
+        ),
+    ],
+)
+def test_codex_0131_official_slash_prompts_reject_similar_user_input(
+    placeholder: str, similar_input: str
+) -> None:
+    screen = CODEX_0131_READY_SCREEN.replace(
+        "› Implement {feature}", f"› {similar_input}"
+    )
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
+
+
+def test_codex_0131_later_current_input_overrides_official_idle_frame() -> None:
+    screen = f"{CODEX_0131_READY_SCREEN}\n› inspect @secrets"
+
+    assert classify_worker_readiness("codex-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    ("state_line", "expected"),
+    [
+        ("Configured model requires a newer version of Codex", "failed"),
+        ("Starting MCP servers (1/2)", "starting"),
+    ],
+)
+def test_codex_0131_fatal_and_startup_state_override_official_idle_frame(
+    state_line: str, expected: str
+) -> None:
+    screen = CODEX_0131_READY_SCREEN.replace(
+        "› Implement {feature}\n", f"{state_line}\n› Implement {{feature}}\n"
+    )
+
+    assert classify_worker_readiness("codex-cli", screen).status == expected
 
 
 @pytest.mark.parametrize(

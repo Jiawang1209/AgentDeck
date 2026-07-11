@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Unify the Codex 0.131 idle placeholder catalog
+
+- **类型**: real Mission acceptance fix + strict TDD + readiness safety
+- **问题**: Codex 0.131 的 `PLACEHOLDERS` 实际包含 8 条模板；此前通用 rotating matcher 只覆盖其中 4 条，`Use /skills to list available skills` 又走独立 special-case，仍漏掉 `Explain this codebase`、`Summarize recent commits` 和 `Run /review on my current changes`。更重要的是，非 `/skills` 模板仅凭宽松 header/model 证据即可 ready，没有统一要求真实 directory 与 context/model footer。
+- **What**: 用单一 `_CODEX_OFFICIAL_IDLE_PROMPT` exact normalized allowlist 覆盖 8 条官方模板，并统一通过 header → model → directory → exact prompt → context/model footer 的 ordered active-frame matcher。删除 `/skills` 专用 prompt 与 chrome 分支。旧 `Ask Codex...` 仅作为历史 CLI compatibility grammar 单独保留，不属于 0.131 catalog，也不放宽任何 catalog 条目的结构要求。
+- **TDD 证据**: 三条缺失模板先稳定得到 3 failed RED；8 条 catalog 的缺 header/model/directory/footer 与乱序矩阵随后暴露旧路径 16 failed / 24 passed RED。统一 matcher 后 readiness 180/180、全量 1327/1327 GREEN；compileall 与 diff check 干净。回归矩阵覆盖全部 8 条的追加指令、`User:` wrapper、slash/path 相似输入，以及后续当前输入与 fatal/startup 优先级。
+- **安全边界**: catalog prompt 只有在完整有序 normal chrome 中才 ready；模板追加文本、wrapper、`@secrets`、相似 `/review`/`/skills`、结构缺失或乱序、后续当前输入均保持 starting。fatal model、setup 与 startup grammar 继续优先，不改变 Mission、审批、dispatch 或 runtime 授权语义。
+
 ### Recognize Codex skills idle chrome after nonfatal MCP warnings
 
 - **类型**: real Mission acceptance fix + strict TDD + readiness safety
