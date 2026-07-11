@@ -73,6 +73,25 @@ CLAUDE_21207_READY_SCREEN = (
     "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
 )
 
+CODEX_0131_PHASE0_IDLE_SCREEN = (
+    "OpenAI Codex (v0.131.0)\n"
+    "model: gpt-5.5 medium /model to change\n"
+    "directory: ~/…/agentdeck-protocol-v2-phase0-acceptance\n"
+    "⚠ MCP startup incomplete (failed: github)\n"
+    "› Explain this codebase\n"
+    "[gpt-5.6-sol medium] │ agentdeck-protocol-v2-phase0-acceptance\n"
+    "Context ██░░░░░░░░ 15% │ Usage █░░░░░░░░░ 5%"
+)
+
+CLAUDE_21207_PHASE0_IDLE_SCREEN = (
+    "Accessing workspace:\n"
+    "│ user@example.com's Organization │ /release-notes │\n"
+    "│ ~/Desktop/agentdeck-protocol-v2-phase0-acceptance │ │\n"
+    + "\n".join(f"release note {index}" for index in range(36))
+    + "\n❯\u00a0\n"
+    "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
+)
+
 
 @pytest.mark.parametrize(
     ("provider", "output", "expected"),
@@ -92,6 +111,14 @@ def test_classify_worker_readiness(provider: str, output: str, expected: str) ->
 
     assert evidence.status == expected
     assert evidence.reason is None or len(evidence.reason) < 120
+
+
+def test_codex_phase0_real_idle_footer_is_ready() -> None:
+    assert classify_worker_readiness("codex-cli", CODEX_0131_PHASE0_IDLE_SCREEN).status == "ready"
+
+
+def test_claude_phase0_real_idle_chrome_survives_release_note_scroll() -> None:
+    assert classify_worker_readiness("claude-cli", CLAUDE_21207_PHASE0_IDLE_SCREEN).status == "ready"
 
 
 @pytest.mark.parametrize(
@@ -386,7 +413,6 @@ def test_claude_empty_prompt_without_trusted_cli_structure_is_not_idle(screen: s
         "Accessing workspace:\n",
         "│ user@example.com's Organization │ /release-notes...          │\n",
         "│ /tmp/agentdeck-demo             │                            │\n",
-        "⚠ 3 MCP servers need authentication · run /mcp\n",
         "❯\u00a0\n",
         "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
     ],
@@ -426,16 +452,6 @@ def test_claude_workspace_path_must_be_in_the_first_box_cell(
             "│ /tmp/agentdeck-demo             │                            │\n",
             "│ /tmp/agentdeck-demo             │                            │\n"
             "│ user@example.com's Organization │ /release-notes...          │\n",
-        ),
-        CLAUDE_21207_READY_SCREEN.replace(
-            "│ /tmp/agentdeck-demo             │                            │\n"
-            "⚠ 3 MCP servers need authentication · run /mcp\n",
-            "⚠ 3 MCP servers need authentication · run /mcp\n"
-            "│ /tmp/agentdeck-demo             │                            │\n",
-        ),
-        CLAUDE_21207_READY_SCREEN.replace(
-            "⚠ 3 MCP servers need authentication · run /mcp\n❯\u00a0\n",
-            "❯\u00a0\n⚠ 3 MCP servers need authentication · run /mcp\n",
         ),
         CLAUDE_21207_READY_SCREEN.replace(
             "Accessing workspace:\n│ user@example.com's Organization",

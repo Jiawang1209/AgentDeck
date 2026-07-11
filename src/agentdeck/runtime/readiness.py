@@ -25,6 +25,7 @@ WorkerReadinessStatus = Literal[
 _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 _TERMINAL_STATUSES = frozenset({"setup_required", "failed", "pane_lost"})
 _ACTIVE_FRAME_LINE_COUNT = 40
+_CLAUDE_ACTIVE_FRAME_LINE_COUNT = 80
 _CODEX_LEGACY_IDLE_PROMPT = re.compile(r"^\s*›\s+ask\s+codex\b.*$")
 _CODEX_OFFICIAL_IDLE_PROMPT = re.compile(
     r"^\s*›\s+(?:explain\s+this\s+codebase|summarize\s+recent\s+commits|"
@@ -38,7 +39,8 @@ _CODEX_MODEL_CHROME = re.compile(r"^\s*model:\s*\S[^\r\n]*$")
 _CODEX_DIRECTORY_CHROME = re.compile(r"^\s*directory:\s*(?:/|~/|…/)\S[^\r\n]*$")
 _CODEX_CONTEXT_FOOTER = re.compile(
     r"^\s*(?:\[[^\]\r\n]+\]\s+context:\s*\d+%\s+left(?:\s+usage:[^\r\n]+)?|"
-    r"\S[^\r\n]*\s+·\s+\d+%\s+left)\s*$"
+    r"\S[^\r\n]*\s+·\s+\d+%\s+left|"
+    r"context\s+[█░]+\s*\d+%\s*│\s*usage\s+[█░]+\s*\d+%[^\r\n]*)\s*$"
 )
 _CLAUDE_EMPTY_PROMPT = re.compile(r"^\s*❯\s*$")
 _CLAUDE_MODE_FOOTER = re.compile(
@@ -84,7 +86,6 @@ def _has_ordered_claude_idle_chrome(lines: list[str]) -> bool:
         _CLAUDE_WORKSPACE_CHROME,
         _CLAUDE_ORGANIZATION_CHROME,
         _CLAUDE_WORKSPACE_PATH_CHROME,
-        _CLAUDE_MCP_AUTH_CHROME,
         _CLAUDE_EMPTY_PROMPT,
         _CLAUDE_MODE_FOOTER,
     )
@@ -128,7 +129,12 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
 
     family = provider_family(provider)
     normalized_lines = _ANSI_ESCAPE.sub("", output).lower().splitlines()
-    active_lines = normalized_lines[-_ACTIVE_FRAME_LINE_COUNT:]
+    active_line_count = (
+        _CLAUDE_ACTIVE_FRAME_LINE_COUNT
+        if family == "claude"
+        else _ACTIVE_FRAME_LINE_COUNT
+    )
+    active_lines = normalized_lines[-active_line_count:]
     active_frame = "\n".join(active_lines)
     if family == "codex":
         prompt_glyph = "›"
