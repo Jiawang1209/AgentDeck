@@ -235,17 +235,45 @@ def _seed_chat_mission(root: Path, monkeypatch, capsys) -> str:
     return json.loads(capsys.readouterr().out)["mission_preview_card"]["mission_id"]
 
 
+def _completed_chat_workflow(store: StateStore, mission_id: str) -> str:
+    from agentdeck.workflow import authorized_steps
+
+    mission = store.mission_by_id(mission_id)
+    plan = store.plan_by_id(str(mission["plan_id"]))
+    run = store.create_workflow_run(
+        plan_id=str(mission["plan_id"]),
+        plan_hash=str(mission["plan_hash"]),
+        timeout_seconds=180,
+        authorized_steps=authorized_steps(plan),
+    )
+    turns = []
+    for step in range(1, 9):
+        agent_id = "planner" if step % 2 else "reviewer"
+        turns.append({
+            "step": step, "agent_id": agent_id, "status": "completed",
+            "handoff": {
+                "step": step, "agent_id": agent_id, "status": "completed",
+                "summary": f"turn {step}", "verification": "fake", "risks": "none",
+                "next_steps": "continue", "artifact_paths": [],
+                "trace_command": f"agentdeck trace --id rpl_fake{step}",
+            },
+        })
+    store.update_workflow_run(run["run_id"], status="completed", current_step=8, turns=turns)
+    return str(run["run_id"])
+
+
 def test_leader_chat_named_mission_confirmation_embeds_run_card(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     mission_id = _seed_chat_mission(root, monkeypatch, capsys)
 
     def fake_run(**kwargs):
+        run_id = _completed_chat_workflow(kwargs["store"], kwargs["mission_id"])
         kwargs["store"].update_mission(
             kwargs["mission_id"], status="preparing",
             confirmed_at="2026-07-11T00:00:00+00:00",
         )
         kwargs["store"].update_mission(
-            kwargs["mission_id"], status="running", workflow_run_id="wfr_deadbeefcafe",
+            kwargs["mission_id"], status="running", workflow_run_id=run_id,
         )
         mission = kwargs["store"].update_mission(kwargs["mission_id"], status="completed", current_step=8)
         return cli.mission_status_payload(kwargs["config"], kwargs["store"], mission, mode="mission_run", confirmed=True)
@@ -266,8 +294,9 @@ def test_leader_chat_idless_confirmation_runs_the_only_pending_mission(tmp_path,
 
     def fake_run(**kwargs):
         calls.append(kwargs["mission_id"])
+        run_id = _completed_chat_workflow(kwargs["store"], kwargs["mission_id"])
         kwargs["store"].update_mission(kwargs["mission_id"], status="preparing", confirmed_at="2026-07-11T00:00:00+00:00")
-        kwargs["store"].update_mission(kwargs["mission_id"], status="running", workflow_run_id="wfr_deadbeefcafe")
+        kwargs["store"].update_mission(kwargs["mission_id"], status="running", workflow_run_id=run_id)
         mission = kwargs["store"].update_mission(kwargs["mission_id"], status="completed", current_step=8)
         return cli.mission_status_payload(kwargs["config"], kwargs["store"], mission, mode="mission_run", confirmed=True)
 
@@ -462,8 +491,9 @@ def test_leader_chat_resumes_unique_stopped_mission_and_selects_status_after_com
     store.update_mission(mission_id, status="stopped", stop_reason="timed_out")
 
     def fake_resume(**kwargs):
+        run_id = _completed_chat_workflow(kwargs["store"], kwargs["mission_id"])
         kwargs["store"].update_mission(kwargs["mission_id"], status="preparing", stop_reason=None)
-        kwargs["store"].update_mission(kwargs["mission_id"], status="running", workflow_run_id="wfr_deadbeefcafe")
+        kwargs["store"].update_mission(kwargs["mission_id"], status="running", workflow_run_id=run_id)
         mission = kwargs["store"].update_mission(kwargs["mission_id"], status="completed", current_step=8)
         return cli.mission_status_payload(kwargs["config"], kwargs["store"], mission, mode="mission_resume", confirmed=True)
 
@@ -479,8 +509,9 @@ def test_leader_chat_completed_reconfirmation_is_idempotent(tmp_path, monkeypatc
     root = prepare_project(tmp_path, monkeypatch)
     mission_id = _seed_chat_mission(root, monkeypatch, capsys)
     store = StateStore(root)
+    run_id = _completed_chat_workflow(store, mission_id)
     store.update_mission(mission_id, status="preparing", confirmed_at="2026-07-11T00:00:00+00:00")
-    store.update_mission(mission_id, status="running", workflow_run_id="wfr_deadbeefcafe")
+    store.update_mission(mission_id, status="running", workflow_run_id=run_id)
     store.update_mission(mission_id, status="completed", current_step=8)
     events_before = [event for event in store.list_events(limit=100) if event["event_type"] != "leader_chat_turn"]
     monkeypatch.setattr(cli, "TmuxBackend", lambda: (_ for _ in ()).throw(AssertionError("no duplicate runtime")))

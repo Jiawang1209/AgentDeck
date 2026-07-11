@@ -2266,7 +2266,12 @@ MISSION_STATUS_RESPONSE_FIELDS = (
     "status_command", "resume_command", "attach_command", "workbench_command",
     "controls", "safety", "requires_explicit_user",
 )
-MISSION_RUN_RESPONSE_FIELDS = (*MISSION_STATUS_RESPONSE_FIELDS, "confirmed")
+MISSION_RUN_RESPONSE_FIELDS = (*MISSION_STATUS_RESPONSE_FIELDS, "confirmed", "turns")
+MISSION_RUN_TURN_FIELDS = ("step", "agent_id", "status", "handoff")
+MISSION_RUN_HANDOFF_FIELDS = (
+    "step", "agent_id", "status", "summary", "verification", "risks",
+    "next_steps", "artifact_paths", "trace_command",
+)
 WORKBENCH_MISSION_CARD_FIELDS = (*MISSION_STATUS_RESPONSE_FIELDS, "confirmation_command")
 MISSION_SELECTED_AGENT_FIELDS = (
     "agent_id", "provider", "role", "workspace_mode", "runtime_status",
@@ -4944,6 +4949,10 @@ def mission_example(kind: str) -> dict[str, object]:
         "requires_explicit_user": True,
     }
     if kind == "run":
+        summaries = (
+            "赵钱孙李", "周吴郑王", "冯陈褚卫", "蒋沈韩杨",
+            "朱秦尤许", "何吕施张", "孔曹严华", "金魏陶姜",
+        )
         payload.update(
             {
                 "mode": "mission_run",
@@ -4974,6 +4983,25 @@ def mission_example(kind: str) -> dict[str, object]:
                 ],
                 "safety": "delegated",
                 "confirmed": True,
+                "turns": [
+                    {
+                        "step": step,
+                        "agent_id": "planner" if step % 2 else "reviewer",
+                        "status": "completed",
+                        "handoff": {
+                            "step": step,
+                            "agent_id": "planner" if step % 2 else "reviewer",
+                            "status": "completed",
+                            "summary": summaries[step - 1],
+                            "verification": "deterministic example",
+                            "risks": "none",
+                            "next_steps": "continue" if step < 8 else "done",
+                            "artifact_paths": [],
+                            "trace_command": f"agentdeck trace --id rpl_example{step}",
+                        },
+                    }
+                    for step in range(1, 9)
+                ],
             }
         )
     return payload
@@ -5413,8 +5441,60 @@ def validate_mission_run_contract(payload: object) -> dict[str, object]:
         errors.append("mission_run.confirmed must be true")
     if payload.get("status") == "pending_confirmation":
         errors.append("mission_run.status cannot be pending_confirmation")
+    turns = payload.get("turns")
+    selected = payload.get("selected_agents")
+    selected_ids = {
+        item.get("agent_id") for item in selected if isinstance(item, dict)
+    } if isinstance(selected, list) else set()
+    step_count = payload.get("step_count")
+    if not isinstance(turns, list):
+        errors.append("mission_run.turns must be a list")
+        turns = []
+    elif isinstance(step_count, int) and not isinstance(step_count, bool) and len(turns) > step_count:
+        errors.append("mission_run.turns cannot exceed step_count")
+    for index, turn in enumerate(turns):
+        prefix = f"mission_run.turns[{index}]"
+        if not isinstance(turn, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        _mission_exact_fields(errors, prefix, turn, MISSION_RUN_TURN_FIELDS)
+        if turn.get("step") != index + 1:
+            errors.append(f"{prefix}.step must be contiguous from 1")
+        if turn.get("agent_id") not in selected_ids:
+            errors.append(f"{prefix}.agent_id must be a frozen selected agent")
+        if turn.get("status") not in WORKFLOW_TURN_STATUSES:
+            errors.append(f"{prefix}.status is invalid")
+        handoff = turn.get("handoff")
+        if handoff is None:
+            if turn.get("status") in ("completed", "blocked", "failed"):
+                errors.append(f"{prefix}.handoff is required for a terminal worker reply")
+            continue
+        if not isinstance(handoff, dict):
+            errors.append(f"{prefix}.handoff must be an object or null")
+            continue
+        _mission_exact_fields(errors, f"{prefix}.handoff", handoff, MISSION_RUN_HANDOFF_FIELDS)
+        if handoff.get("step") != turn.get("step") or handoff.get("agent_id") != turn.get("agent_id"):
+            errors.append(f"{prefix}.handoff must match its turn")
+        if handoff.get("status") != turn.get("status"):
+            errors.append(f"{prefix}.handoff.status must match its turn")
+        for field in ("summary", "verification", "risks", "next_steps"):
+            if not isinstance(handoff.get(field), str) or not handoff.get(field):
+                errors.append(f"{prefix}.handoff.{field} must be a non-empty string")
+        if not isinstance(handoff.get("artifact_paths"), list) or not all(
+            isinstance(item, str) and item for item in handoff.get("artifact_paths", [])
+        ):
+            errors.append(f"{prefix}.handoff.artifact_paths must be a string list")
+        if not isinstance(handoff.get("trace_command"), str) or not handoff.get("trace_command", "").startswith("agentdeck trace --id "):
+            errors.append(f"{prefix}.handoff.trace_command must be a trace command")
+    if payload.get("status") == "completed" and (
+        not isinstance(step_count, int)
+        or len(turns) != step_count
+        or any(not isinstance(item, dict) or item.get("status") != "completed" for item in turns)
+    ):
+        errors.append("mission_run completed status requires every turn completed")
     status_projection = dict(payload)
     status_projection.pop("confirmed", None)
+    status_projection.pop("turns", None)
     status_projection["mode"] = "mission_status"
     status_projection["safety"] = "inspect"
     status_validation = validate_mission_status_contract(status_projection)
@@ -5435,6 +5515,8 @@ def mission_contract_payload(contract_path: Path) -> dict[str, object]:
         "preview_response_fields": list(MISSION_PREVIEW_RESPONSE_FIELDS),
         "status_response_fields": list(MISSION_STATUS_RESPONSE_FIELDS),
         "run_response_fields": list(MISSION_RUN_RESPONSE_FIELDS),
+        "run_turn_fields": list(MISSION_RUN_TURN_FIELDS),
+        "run_handoff_fields": list(MISSION_RUN_HANDOFF_FIELDS),
         "selected_agent_fields": list(MISSION_SELECTED_AGENT_FIELDS),
         "startup_action_fields": list(MISSION_STARTUP_ACTION_FIELDS),
         "plan_fields": list(MISSION_PLAN_FIELDS),

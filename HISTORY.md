@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Rehearse the one-confirmation natural-language Mission flow
+
+- **类型**: golden rehearsal + contract evolution + strict TDD
+- **问题**: 真实 Mission runner 已能执行八轮串行 workflow，但用户通过两次自然语言 Leader chat 完成确认后，最终 `mission_run_card` 只展示生命周期状态，无法直接观看每一轮 Worker 与 compact handoff，百家姓接龙的端到端产品目标缺少一个连续、可重复的公共 CLI 证据。
+- **What**: 新增恰好两条 human message 的 deterministic 演练：自然语言创建 Mission、自然语言批准同一 Mission，并由真实 runner/workflow 让 planner/reviewer 交替八轮。run/resume card 新增只读 `turns` 投影；每轮只包含 step/agent/status 和既有 compact handoff，discovery example、validator、Leader chat 嵌入与 Mission contract 文档同源更新。status/workbench 保持不含 turns。
+- **TDD 证据**: 连续演练先 RED 为 `KeyError: turns`，同时已实际完成八轮，确认唯一缺口是最终卡投影。最小实现后断言八个百家姓 summary、8 messages/replies/turns/sends、1 Mission/plan/workflow、2 chat turns 和精确 step audit；敏感字段拒绝、completed 全轮约束与 interrupted partial 合法性均有 contract 回归。Mission focused 52/52、contracts 380/380、Leader CLI 173/173、Mission/Leader/CLI/contracts/workflow 交叉 1023/1023、全量 1192/1192 通过。
+- **安全边界**: `turns` 仅出现在已确认的 run/resume response；严格拒绝非连续 step、非 frozen Worker、额外字段和 terminal handoff 漂移。raw prompt、handoff token、message/job/reply id、full output、credentials 和 secrets 不进入投影；配置 bytes 不变，演练不创建 approval、skill load 或 manual leader action。
+
 ### Harden Mission surface recovery
 
 - **类型**: important fix + strict TDD + state-integrity hardening

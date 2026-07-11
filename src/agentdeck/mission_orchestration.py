@@ -369,7 +369,6 @@ def mission_status_payload(
     mode: str = "mission_status",
     confirmed: bool | None = None,
 ) -> dict[str, object]:
-    del store  # status is a pure projection of the authoritative record
     mission_id = str(mission.get("mission_id") or "")
     commands = mission_commands(mission_id)
     blockers = list(mission.get("blockers") or [])
@@ -427,6 +426,37 @@ def mission_status_payload(
     }
     if mode != "mission_status":
         payload["confirmed"] = True if confirmed is None else confirmed
+        turns: list[dict[str, object]] = []
+        workflow_run_id = mission.get("workflow_run_id")
+        if isinstance(workflow_run_id, str) and workflow_run_id:
+            try:
+                workflow = store.workflow_run_by_id(workflow_run_id)
+            except KeyError as exc:
+                if mission.get("status") not in {"stopped", "interrupted"}:
+                    raise MissionRunError("mission workflow state invalid") from exc
+                workflow = {"turns": []}
+            for raw_turn in workflow.get("turns", []):
+                if not isinstance(raw_turn, dict):
+                    raise MissionRunError("mission workflow turns invalid")
+                raw_handoff = raw_turn.get("handoff")
+                handoff = None
+                if isinstance(raw_handoff, dict):
+                    handoff = {
+                        field: raw_handoff.get(field)
+                        for field in (
+                            "step", "agent_id", "status", "summary", "verification",
+                            "risks", "next_steps", "artifact_paths", "trace_command",
+                        )
+                    }
+                turns.append(
+                    {
+                        "step": raw_turn.get("step"),
+                        "agent_id": raw_turn.get("agent_id"),
+                        "status": raw_turn.get("status"),
+                        "handoff": handoff,
+                    }
+                )
+        payload["turns"] = turns
         validation = validate_mission_run_contract(payload)
     else:
         validation = validate_mission_status_contract(payload)

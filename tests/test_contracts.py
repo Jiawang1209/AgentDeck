@@ -5315,7 +5315,9 @@ def test_workflow_contract_response_exposes_examples(tmp_path: Path) -> None:
 def test_mission_contract_discovery_and_examples(tmp_path: Path) -> None:
     from agentdeck.contracts import (
         MISSION_PREVIEW_RESPONSE_FIELDS,
+        MISSION_RUN_HANDOFF_FIELDS,
         MISSION_RUN_RESPONSE_FIELDS,
+        MISSION_RUN_TURN_FIELDS,
         MISSION_SELECTED_AGENT_FIELDS,
         MISSION_STATUS_RESPONSE_FIELDS,
         mission_contract_response,
@@ -5332,6 +5334,8 @@ def test_mission_contract_discovery_and_examples(tmp_path: Path) -> None:
     assert payload["preview_response_fields"] == list(MISSION_PREVIEW_RESPONSE_FIELDS)
     assert payload["status_response_fields"] == list(MISSION_STATUS_RESPONSE_FIELDS)
     assert payload["run_response_fields"] == list(MISSION_RUN_RESPONSE_FIELDS)
+    assert payload["run_turn_fields"] == list(MISSION_RUN_TURN_FIELDS)
+    assert payload["run_handoff_fields"] == list(MISSION_RUN_HANDOFF_FIELDS)
     assert payload["selected_agent_fields"] == list(MISSION_SELECTED_AGENT_FIELDS)
     assert set(payload["example_preview"]) == set(payload["preview_response_fields"])
     assert set(payload["example_status"]) == set(payload["status_response_fields"])
@@ -5393,6 +5397,42 @@ def test_mission_run_validator_requires_confirmed_true() -> None:
     payload.pop("confirmed")
 
     assert validate_mission_run_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda turns: turns[0].update(prompt="unsafe"),
+        lambda turns: turns[1].update(step=3),
+        lambda turns: turns[0].update(agent_id="coder"),
+        lambda turns: turns[0]["handoff"].update(handoff_token="unsafe"),
+        lambda turns: turns.pop(),
+    ],
+)
+def test_mission_run_validator_rejects_compact_turn_drift(mutation) -> None:
+    from copy import deepcopy
+
+    from agentdeck.contracts import mission_example, validate_mission_run_contract
+
+    payload = deepcopy(mission_example("run"))
+    mutation(payload["turns"])
+
+    assert validate_mission_run_contract(payload)["ok"] is False
+
+
+def test_mission_run_validator_accepts_interrupted_partial_turns() -> None:
+    from agentdeck.contracts import mission_example, validate_mission_run_contract
+
+    payload = mission_example("run")
+    payload.update(
+        status="interrupted", current_step=2, stop_reason="interrupted",
+        completed_at=None, can_resume=True,
+    )
+    payload["turns"] = payload["turns"][:2]
+    payload["turns"][1].update(status="dispatched", handoff=None)
+    payload["controls"][0].update(enabled=True, blocker=None)
+
+    assert validate_mission_run_contract(payload) == {"ok": True, "errors": []}
 
 
 def test_mission_status_validator_rejects_unsafe_attach_control() -> None:

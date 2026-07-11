@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
+import json
 from pathlib import Path
 import subprocess
 import threading
@@ -143,6 +144,32 @@ class CorrelatedMissionBackend(MissionBackend):
         )
 
 
+class BaijiaxingMissionBackend(CorrelatedMissionBackend):
+    summaries = (
+        "赵钱孙李", "周吴郑王", "冯陈褚卫", "蒋沈韩杨",
+        "朱秦尤许", "何吕施张", "孔曹严华", "金魏陶姜",
+    )
+
+    def capture_output(self, config, pane_id: str, lines: int = 200) -> str:
+        if lines < 400:
+            return super().capture_output(config, pane_id, lines)
+        prompt = next(text for target, text in reversed(self.sent) if target == pane_id)
+        token = next(
+            line.rsplit(":", 1)[1].strip()
+            for line in prompt.splitlines()
+            if line.startswith("Complete only this task. Use this handoff token exactly:")
+        )
+        summary = self.summaries[len(self.sent) - 1]
+        return (
+            f"handoff_token: {token}\n"
+            "status: completed\n"
+            f"summary: {summary}\n"
+            "verification: deterministic rehearsal\n"
+            "risks: none\n"
+            "next_steps: continue"
+        )
+
+
 def seeded_mission(tmp_path: Path, monkeypatch):
     root, config, store, _ = project(tmp_path)
     monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
@@ -163,6 +190,20 @@ def ready_batch(*agent_ids: str) -> WorkerReadinessBatch:
     )
 
 
+def complete_fake_workflow(store: StateStore, run_id: str) -> dict[str, object]:
+    turns = []
+    for step in range(1, 9):
+        agent_id = "planner" if step % 2 else "reviewer"
+        handoff = {
+            "step": step, "agent_id": agent_id, "status": "completed",
+            "summary": f"turn {step}", "verification": "fake", "risks": "none",
+            "next_steps": "continue", "artifact_paths": [],
+            "trace_command": f"agentdeck trace --id rpl_fake{step}",
+        }
+        turns.append({"step": step, "agent_id": agent_id, "status": "completed", "handoff": handoff})
+    return store.update_workflow_run(run_id, status="completed", current_step=8, turns=turns)
+
+
 def test_run_mission_spawns_only_frozen_workers_and_completes(tmp_path, monkeypatch) -> None:
     _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
     backend = MissionBackend()
@@ -172,9 +213,7 @@ def test_run_mission_spawns_only_frozen_workers_and_completes(tmp_path, monkeypa
     )
     monkeypatch.setattr(
         "agentdeck.mission_orchestration.run_sequential_workflow",
-        lambda **kwargs: store.update_workflow_run(
-            kwargs["run_id"], status="completed", current_step=8, turns=[]
-        ),
+        lambda **kwargs: complete_fake_workflow(store, kwargs["run_id"]),
     )
 
     result = run_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
@@ -201,9 +240,7 @@ def test_concurrent_confirm_creates_one_runtime_and_one_workflow(tmp_path, monke
     monkeypatch.setattr(
         orchestration,
         "run_sequential_workflow",
-        lambda **kwargs: store.update_workflow_run(
-            kwargs["run_id"], status="completed", current_step=8, turns=[]
-        ),
+        lambda **kwargs: complete_fake_workflow(store, kwargs["run_id"]),
     )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -297,9 +334,7 @@ def test_partial_spawn_failure_keeps_first_binding_and_dispatches_zero(tmp_path,
     )
     monkeypatch.setattr(
         "agentdeck.mission_orchestration.run_sequential_workflow",
-        lambda **kwargs: store.update_workflow_run(
-            kwargs["run_id"], status="completed", current_step=8, turns=[]
-        ),
+        lambda **kwargs: complete_fake_workflow(store, kwargs["run_id"]),
     )
     resumed = resume_mission(
         config=config, store=store, backend=backend, mission_id=preview["mission_id"]
@@ -545,7 +580,7 @@ def test_resume_reuses_existing_workflow_and_duplicate_completion_is_idempotent(
     monkeypatch.setattr("agentdeck.mission_orchestration.wait_for_worker_readiness", lambda **kwargs: ready_batch("planner", "reviewer"))
     monkeypatch.setattr(
         "agentdeck.mission_orchestration.run_sequential_workflow",
-        lambda **kwargs: store.update_workflow_run(kwargs["run_id"], status="completed", current_step=8, turns=[]),
+        lambda **kwargs: complete_fake_workflow(store, kwargs["run_id"]),
     )
 
     result = resume_mission(config=config, store=store, backend=backend, mission_id=preview["mission_id"])
@@ -607,6 +642,65 @@ def test_run_mission_executes_real_eight_turn_correlated_workflow(tmp_path, monk
     }
     assert all(set(event["payload"]) == allowed[event["event_type"]] for event in mission_events)
     assert not any(token in repr(mission_events).lower() for token in ("prompt", "command", "output", "credential", "secret"))
+
+
+def test_two_natural_language_messages_complete_baijiaxing_mission(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from agentdeck import cli
+
+    root, _config, _store, config_path = project(tmp_path)
+    monkeypatch.chdir(root)
+    config_before = config_path.read_bytes()
+    provider = RecordingProvider()
+    backend = BaijiaxingMissionBackend()
+    monkeypatch.setattr(cli, "leader_provider", lambda _name: provider)
+    monkeypatch.setattr(cli, "TmuxBackend", lambda: backend)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}"
+    )
+
+    assert cli.main(["leader", "chat", "--message", MESSAGE]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    mission_id = preview["mission_preview_card"]["mission_id"]
+    assert cli.main(
+        ["leader", "chat", "--message", f"批准执行 {mission_id}"]
+    ) == 0
+    completed = json.loads(capsys.readouterr().out)
+
+    assert completed["mode"] == "mission_run"
+    assert completed["mission_run_card"]["status"] == "completed"
+    assert [turn["agent_id"] for turn in completed["mission_run_card"]["turns"]] == [
+        "planner", "reviewer", "planner", "reviewer",
+        "planner", "reviewer", "planner", "reviewer",
+    ]
+    assert [turn["handoff"]["summary"] for turn in completed["mission_run_card"]["turns"]] == list(
+        BaijiaxingMissionBackend.summaries
+    )
+    assert not any(
+        token in repr(completed["mission_run_card"]["turns"]).lower()
+        for token in ("handoff_token", "prompt", "full_output", "credential", "secret")
+    )
+
+    store = StateStore(root)
+    state = store.load()
+    workflow = state["workflow_runs"][0]
+    assert len(state["missions"]) == len(state["plans"]) == len(state["workflow_runs"]) == 1
+    assert len(state["messages"]) == len(state["replies"]) == len(workflow["turns"]) == len(backend.sent) == 8
+    assert len(state["chat_turns"]) == 2
+    assert state["approvals"] == []
+    assert state["skill_loads"] == []
+    assert state["leader_actions"] == []
+    assert len(state["jobs"]) == 8
+    event_types = [event["event_type"] for event in store.all_events()]
+    for event_type in (
+        "mission_preview_created", "mission_confirmed", "mission_workflow_started",
+        "mission_completed",
+    ):
+        assert event_types.count(event_type) == 1
+    assert event_types.count("workflow_step_dispatched") == 8
+    assert event_types.count("workflow_step_completed") == 8
+    assert config_path.read_bytes() == config_before
 
 
 def test_real_interrupted_step_two_resumes_without_duplicate_dispatch(tmp_path, monkeypatch) -> None:
