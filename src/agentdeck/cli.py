@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, replace
 import argparse
 import hashlib
@@ -23,6 +24,7 @@ from .config import (
     write_default_config,
 )
 from .contracts import (
+    PROTOCOL_RUNTIME_CONTRACT_VERSION,
     agent_runtime_contract_response,
     approval_contract_response,
     artifacts_contract_response,
@@ -53,6 +55,7 @@ from .contracts import (
     plan_board_contract_response,
     project_view_contract_response,
     protocol_runtime_contract_response,
+    protocol_runtime_example,
     runtime_agent_controls,
     run_loop_contract_response,
     run_loop_all_contract_response,
@@ -86,6 +89,7 @@ from .contracts import (
     validate_plan_board_contract,
     validate_release_contract,
     validate_project_view_contract,
+    validate_protocol_runtime_contract,
     validate_run_loop_contract,
     validate_run_start_contract,
     validate_trace_contract,
@@ -990,6 +994,43 @@ def status_command(_args: argparse.Namespace) -> int:
     store = StateStore(root)
     payload = _project_view_payload_or_error(config, store)
     if payload is None:
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def protocol_status_command(_args: argparse.Namespace) -> int:
+    root = project_root()
+    try:
+        config = load_config(root)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        print("Run: python -m agentdeck project init", file=sys.stderr)
+        return 1
+    store = StateStore.open_existing(root)
+    try:
+        project_view = _project_view_payload_or_error(config, store)
+    except ValueError as exc:
+        print(f"protocol runtime status failed: {exc}", file=sys.stderr)
+        return 1
+    if project_view is None:
+        return 1
+    payload = {
+        "mode": "protocol_runtime_status",
+        "contract_version": PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        "project": project_view["project"],
+        "runtime_backend": project_view["runtime_backend"],
+        "agent_sessions": project_view["agent_sessions"],
+        "protocol_turns": project_view["protocol_turns"],
+        "transport_updates": project_view["transport_updates"],
+        "permission_requests": project_view["permission_requests"],
+        "controls": deepcopy(protocol_runtime_example()["controls"]),
+    }
+    validation = validate_protocol_runtime_contract(payload)
+    if not validation["ok"]:
+        print("protocol runtime contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
         return 1
     _print_json(payload)
     return 0
@@ -14939,6 +14980,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="Show project configuration and runtime state")
     status.set_defaults(func=status_command)
+
+    protocol = subparsers.add_parser("protocol", help="Inspect protocol runtime state")
+    protocol_subparsers = protocol.add_subparsers(dest="protocol_command", required=True)
+    protocol_status = protocol_subparsers.add_parser(
+        "status", help="Show read-only protocol runtime status"
+    )
+    protocol_status.set_defaults(func=protocol_status_command)
 
     events = subparsers.add_parser("events", help="Show recent audit events")
     events.add_argument("--limit", type=int, default=20, help="Number of recent events to show")

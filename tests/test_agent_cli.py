@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 import json
 from pathlib import Path
 
 import pytest
 
 from agentdeck import cli
-from agentdeck.config import write_default_config
+from agentdeck.config import load_config, write_default_config
 from agentdeck.contracts import (
     AGENT_RUNTIME_AGENT_ITEM_FIELDS,
     AGENT_RUNTIME_CAPTURE_RESPONSE_FIELDS,
@@ -108,6 +109,17 @@ def test_contract_protocol_runtime_cli_matches_module(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     contract_path = Path(cli.__file__).resolve().parents[2] / "docs" / "contracts" / "protocol-runtime-schema.md"
     assert payload == protocol_runtime_contract_response(contract_path, include_example=True)
+
+
+def test_protocol_requires_a_subcommand(capsys) -> None:
+    with pytest.raises(SystemExit, match="2"):
+        cli.main(["protocol"])
+    assert "required" in capsys.readouterr().err
+
+
+def test_protocol_rejects_unknown_subcommands() -> None:
+    with pytest.raises(SystemExit, match="2"):
+        cli.main(["protocol", "mutate"])
 
 
 class WorkflowFakeBackend(FakeTmuxBackend):
@@ -10936,6 +10948,119 @@ def test_status_exposes_empty_protocol_summaries_without_writing_state_or_events
     assert (store.events_path.read_bytes() if store.events_path.exists() else None) == events_before
 
 
+def _agentdeck_tree_snapshot(root: Path) -> dict[str, tuple[bytes, int]]:
+    directory = root / ".agentdeck"
+    if not directory.exists():
+        return {}
+    return {
+        str(path.relative_to(directory)): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_protocol_status_is_exact_repeatable_read_only_project_view_projection(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    from agentdeck.contracts import (
+        PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        protocol_runtime_example,
+        validate_protocol_runtime_contract,
+    )
+
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    view = asdict(store.project_view(load_config(root)))
+    before = _agentdeck_tree_snapshot(root)
+    expected_controls = protocol_runtime_example()["controls"]
+
+    assert cli.main(["protocol", "status"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert cli.main(["protocol", "status"]) == 0
+    second = json.loads(capsys.readouterr().out)
+
+    assert first == second == {
+        "mode": "protocol_runtime_status",
+        "contract_version": PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        "project": view["project"],
+        "runtime_backend": view["runtime_backend"],
+        "agent_sessions": view["agent_sessions"],
+        "protocol_turns": view["protocol_turns"],
+        "transport_updates": view["transport_updates"],
+        "permission_requests": view["permission_requests"],
+        "controls": expected_controls,
+    }
+    assert validate_protocol_runtime_contract(first) == {"ok": True, "errors": []}
+    assert _agentdeck_tree_snapshot(root) == before
+
+
+def test_protocol_status_uses_one_validated_project_view_and_no_runtime_or_provider(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    calls = 0
+    original = cli._project_view_payload_or_error
+
+    def counted(config, store):
+        nonlocal calls
+        calls += 1
+        return original(config, store)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("protocol status must not invoke provider or tmux")
+
+    monkeypatch.setattr(cli, "_project_view_payload_or_error", counted)
+    monkeypatch.setattr(cli, "leader_provider", forbidden)
+    monkeypatch.setattr(cli, "TmuxBackend", forbidden)
+
+    assert cli.main(["protocol", "status"]) == 0
+    assert calls == 1
+    assert json.loads(capsys.readouterr().out)["mode"] == "protocol_runtime_status"
+
+
+def test_protocol_status_contract_failure_prints_no_partial_json(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli,
+        "validate_protocol_runtime_contract",
+        lambda _payload: {"ok": False, "errors": ["permission lineage corrupt"]},
+    )
+
+    assert cli.main(["protocol", "status"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "protocol runtime contract validation failed" in captured.err
+    assert "permission lineage corrupt" in captured.err
+
+
+def test_protocol_status_uninitialized_project_is_zero_write(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    before = _agentdeck_tree_snapshot(tmp_path)
+
+    assert cli.main(["protocol", "status"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Run: python -m agentdeck project init" in captured.err
+    assert _agentdeck_tree_snapshot(tmp_path) == before == {}
+
+
+def test_protocol_runtime_contract_index_status_command_is_executable(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    from agentdeck.contracts import protocol_runtime_contract_response
+
+    prepare_project(tmp_path, monkeypatch)
+    item = protocol_runtime_contract_response(
+        Path(cli.__file__).resolve().parents[2] / "docs" / "contracts" / "protocol-runtime-schema.md"
+    )
+
+    assert item["status_command"] == "agentdeck protocol status"
+    assert cli.main(item["status_command"].split()[1:]) == 0
+    assert json.loads(capsys.readouterr().out)["mode"] == "protocol_runtime_status"
+
+
 @pytest.mark.parametrize(("collection", "identity_field", "prefix"), [
     ("agent_sessions", "session_id", "ags"),
     ("protocol_turns", "turn_id", "trn"),
@@ -11008,6 +11133,39 @@ def test_status_rejects_protocol_lineage_corruption_hidden_by_latest_twenty_with
     assert capsys.readouterr().out == ""
     assert store.state_path.read_bytes() == state_before
     assert (store.events_path.read_bytes() if store.events_path.exists() else None) == events_before
+
+
+def test_protocol_status_rejects_hidden_full_lineage_corruption_without_partial_json(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    state = store.load()
+    state["agent_sessions"] = [{
+        "session_id": "ags_0", "agent_id": "planner", "provider": "codex", "transport": "tmux",
+        "native_session_id": None, "workspace": str(root),
+        "capabilities": {"structured_sessions": True, "streaming_updates": True,
+                         "structured_tools": True, "permission_requests": True,
+                         "resume_session": True, "observable_terminal": False},
+        "state": "created", "created_at": "now", "updated_at": "now",
+    }]
+    state["protocol_turns"] = [{
+        "turn_id": "trn_0", "session_id": "ags_0", "message_id": "msg_0", "state": "created",
+        "created_at": "now", "updated_at": "now",
+    }]
+    state["transport_updates"] = [{
+        "update_id": f"upd_{index:02d}", "session_id": "ags_0", "turn_id": "trn_0",
+        "sequence": index, "kind": "text", "created_at": f"2026-07-11T00:00:{index:02d}+00:00",
+    } for index in range(21)]
+    state["transport_updates"][0]["turn_id"] = "trn_missing"
+    store.save(state)
+    before = _agentdeck_tree_snapshot(root)
+
+    assert cli.main(["protocol", "status"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "protocol runtime status failed" in captured.err
+    assert _agentdeck_tree_snapshot(root) == before
 
 
 def test_status_recovery_surfaces_leader_errors_when_no_work_is_pending(tmp_path, monkeypatch, capsys) -> None:

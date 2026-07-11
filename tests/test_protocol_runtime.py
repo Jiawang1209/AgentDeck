@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import threading
+from copy import deepcopy
 from dataclasses import asdict
 
 import pytest
@@ -24,6 +25,40 @@ from agentdeck.runtime.protocol import (
 
 
 CAPABILITIES = TransportCapabilities(True, True, True, True, True, False)
+
+
+def test_state_store_default_constructor_still_creates_project_layout(tmp_path) -> None:
+    store = StateStore(tmp_path)
+
+    assert store.deck_dir == tmp_path / ".agentdeck"
+    assert store.events_path.exists()
+    assert (store.deck_dir / "state" / "approvals.jsonl").exists()
+
+
+def test_state_store_open_existing_binds_paths_without_touching_layout(tmp_path) -> None:
+    created = StateStore(tmp_path)
+    before = {
+        path: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in created.deck_dir.rglob("*") if path.is_file()
+    }
+
+    opened = StateStore.open_existing(tmp_path)
+
+    assert opened.root == tmp_path
+    assert opened.deck_dir == created.deck_dir
+    assert opened.state_path == created.state_path
+    assert opened.events_path == created.events_path
+    assert {
+        path: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in created.deck_dir.rglob("*") if path.is_file()
+    } == before
+
+
+def test_state_store_open_existing_missing_layout_does_not_create_it(tmp_path) -> None:
+    opened = StateStore.open_existing(tmp_path)
+
+    assert opened.deck_dir == tmp_path / ".agentdeck"
+    assert not opened.deck_dir.exists()
 
 
 def _project_config(root) -> ProjectConfig:
@@ -100,6 +135,44 @@ def test_project_view_exposes_compact_protocol_lineage_without_private_values(tm
     assert not _contains_string(payload, "private-native-session")
     assert not _contains_string(payload, "private-update-payload")
     assert not _contains_string(payload, "private-target-path")
+
+
+def test_populated_project_view_projects_to_valid_protocol_runtime_status_without_raw_values(
+    tmp_path,
+) -> None:
+    from agentdeck.contracts import (
+        PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        protocol_runtime_example,
+        validate_protocol_runtime_contract,
+    )
+
+    store = StateStore(tmp_path)
+    session = store.record_agent_session(
+        "planner", "codex", "tmux", "private-native-session", str(tmp_path), CAPABILITIES,
+    )
+    turn = store.record_protocol_turn(session["session_id"], "msg_protocol")
+    store.record_transport_update(
+        session["session_id"], turn["turn_id"], 1, "tool_call", {"raw": "private-update"},
+    )
+    store.record_permission_request(
+        session["session_id"], turn["turn_id"], "write_file", "private-target", "high",
+    )
+    view = asdict(store.project_view(_project_config(tmp_path)))
+    payload = {
+        "mode": "protocol_runtime_status",
+        "contract_version": PROTOCOL_RUNTIME_CONTRACT_VERSION,
+        "project": view["project"],
+        "runtime_backend": view["runtime_backend"],
+        **{name: view[name] for name in (
+            "agent_sessions", "protocol_turns", "transport_updates", "permission_requests",
+        )},
+        "controls": deepcopy(protocol_runtime_example()["controls"]),
+    }
+
+    assert validate_protocol_runtime_contract(payload) == {"ok": True, "errors": []}
+    assert not _contains_string(payload, "private-native-session")
+    assert not _contains_string(payload, "private-update")
+    assert not _contains_string(payload, "private-target")
 
 
 def test_project_view_protocol_summaries_are_sorted_counted_and_bounded(tmp_path) -> None:

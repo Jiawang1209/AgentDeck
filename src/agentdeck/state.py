@@ -135,11 +135,19 @@ def leader_coordination_roles(provider: str | None, model: str | None) -> list[d
 
 
 class StateStore:
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, *, ensure_layout: bool = True) -> None:
         self.root = root or project_root()
-        self.deck_dir = ensure_project_layout(self.root)
+        self.deck_dir = (
+            ensure_project_layout(self.root)
+            if ensure_layout
+            else agentdeck_dir(self.root)
+        )
         self.state_path = self.deck_dir / "state" / "state.json"
         self.events_path = self.deck_dir / "state" / "events.jsonl"
+
+    @classmethod
+    def open_existing(cls, root: Path | None = None) -> StateStore:
+        return cls(root, ensure_layout=False)
 
     def load(self) -> dict[str, Any]:
         if not self.state_path.exists():
