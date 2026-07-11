@@ -19,10 +19,17 @@ class FakeAgent:
         self.client = None
         self.cancelled = asyncio.Event()
 
+    def log_request(self, method: str, **facts: object) -> None:
+        if self.scenario != "full_reconnect_log" or not self.args:
+            return
+        with Path(self.args[0]).open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"method": method, **facts}, sort_keys=True) + "\n")
+
     def on_connect(self, conn: object) -> None:
         self.client = conn
 
     async def initialize(self, protocol_version: int, client_capabilities=None, client_info=None, **kwargs):
+        self.log_request("initialize", protocol_version=protocol_version)
         if self.scenario == "eof_initialize":
             os._exit(0)
         if self.scenario == "record_argv":
@@ -58,12 +65,14 @@ class FakeAgent:
         )
 
     async def new_session(self, cwd: str, mcp_servers=None, **kwargs):
+        self.log_request("new", cwd=cwd, mcp_servers=mcp_servers or [])
         return schema.NewSessionResponse(sessionId="fake-session-1")
 
     async def load_session(self, cwd: str, session_id: str, mcp_servers=None, **kwargs):
+        self.log_request("load", cwd=cwd, session_id=session_id, mcp_servers=mcp_servers or [])
         if self.scenario == "load_eof_before_response":
             os._exit(0)
-        if self.scenario == "load_replay":
+        if self.scenario in {"load_replay", "full_reconnect", "full_reconnect_log"}:
             for text in ("one", "two"):
                 await self.client.session_update(session_id, schema.AgentMessageChunk(
                     sessionUpdate="agent_message_chunk",
@@ -72,6 +81,7 @@ class FakeAgent:
         return schema.LoadSessionResponse()
 
     async def resume_session(self, session_id: str, cwd: str, mcp_servers=None, **kwargs):
+        self.log_request("resume", cwd=cwd, session_id=session_id, mcp_servers=mcp_servers or [])
         if self.scenario == "resume_illegal_replay":
             await self.client.session_update(session_id, schema.AgentMessageChunk(
                 sessionUpdate="agent_message_chunk",
@@ -80,6 +90,7 @@ class FakeAgent:
         return schema.ResumeSessionResponse()
 
     async def prompt(self, session_id: str, prompt: list[object], **kwargs):
+        self.log_request("prompt", session_id=session_id, block_count=len(prompt))
         if self.scenario == "timeout":
             await self.cancelled.wait()
             return schema.PromptResponse(stopReason="cancelled")

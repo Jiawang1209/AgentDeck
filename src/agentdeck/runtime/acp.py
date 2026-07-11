@@ -264,6 +264,7 @@ class AcpTransport:
 
     async def initialize(self) -> AcpInitializeResult:
         await self._start()
+        getattr(self._client, "seal_updates", lambda: None)()
         capabilities = schema.ClientCapabilities(fs=None, terminal=False)
         info = schema.Implementation(name="agentdeck", title="AgentDeck", version=__version__)
         try:
@@ -332,9 +333,17 @@ class AcpTransport:
             raise RuntimeError("ACP transport is not initialized")
         if type(native_session_id) is not str or not native_session_id:
             raise ValueError("native_session_id must be a non-empty string")
-        await self._request(self._connection.load_session(
-            cwd=str(self._workspace), session_id=native_session_id, mcp_servers=[]
-        ), eof_is_ambiguous=True)
+        getattr(self._client, "begin_load_replay", lambda: None)()
+        try:
+            await self._request(self._connection.load_session(
+                cwd=str(self._workspace), session_id=native_session_id, mcp_servers=[]
+            ), eof_is_ambiguous=True)
+            # ACP load replays notifications before returning; let already-dispatched
+            # notification tasks settle before sealing the response boundary.
+            await asyncio.sleep(0)
+        finally:
+            getattr(self._client, "seal_updates", lambda: None)()
+        await asyncio.sleep(0)
         callback_error = getattr(self._client, "take_callback_error", lambda: None)()
         if callback_error is not None:
             raise AcpTransportError("ACP client callback rejected a replay update") from callback_error
@@ -346,6 +355,7 @@ class AcpTransport:
         if type(native_session_id) is not str or not native_session_id:
             raise ValueError("native_session_id must be a non-empty string")
         before = getattr(self._client, "update_count", 0)
+        getattr(self._client, "seal_updates", lambda: None)()
         try:
             await self._request(self._connection.resume_session(
                 session_id=native_session_id, cwd=str(self._workspace), mcp_servers=[]
@@ -354,9 +364,18 @@ class AcpTransport:
             if getattr(self._client, "update_count", 0) != before:
                 raise AcpTransportError("unexpected_resume_replay") from None
             raise
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
         if getattr(self._client, "update_count", 0) != before:
             raise AcpTransportError("unexpected_resume_replay")
         return AcpSessionResult(native_session_id=native_session_id)
+
+    async def prepare_prompt(self) -> None:
+        await asyncio.sleep(0)
+        callback_error = getattr(self._client, "take_callback_error", lambda: None)()
+        if callback_error is not None:
+            raise AcpTransportError("ACP update arrived outside an active prompt") from callback_error
+        getattr(self._client, "begin_prompt", lambda: None)()
 
     async def prompt(self, native_session_id: str, text: str) -> AcpPromptResult:
         if self._connection is None:
@@ -365,6 +384,7 @@ class AcpTransport:
             raise ValueError("native_session_id must be a non-empty string")
         if type(text) is not str or not text:
             raise ValueError("prompt text must be a non-empty string")
+        getattr(self._client, "begin_prompt", lambda: None)()
         operation = self._connection.prompt(
             session_id=native_session_id,
             prompt=[schema.TextContentBlock(type="text", text=text)],
@@ -380,6 +400,11 @@ class AcpTransport:
                     self._connection.cancel(session_id=native_session_id), timeout=1.0
                 )
             raise
+        finally:
+            # Notifications issued before the response are dispatched as tasks by the
+            # SDK. Drain them, then atomically seal before another lifecycle can start.
+            await asyncio.sleep(0)
+            getattr(self._client, "seal_updates", lambda: None)()
         callback_error = getattr(self._client, "take_callback_error", lambda: None)()
         if callback_error is not None:
             error = AcpTransportError("ACP client callback rejected a streamed update")

@@ -1314,10 +1314,20 @@ def _derived_entity_state(state: dict[str, Any], entity_type: str, entity_id: st
     return current
 
 
+def _acp_adapter_provenance(agent: AgentSpec) -> dict[str, str]:
+    encoded = json.dumps(list(agent.transport_command), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    executable = _resolved_executable(agent.transport_command[0]) or agent.transport_command[0]
+    return {
+        "argv_hash": hashlib.sha256(encoded).hexdigest(),
+        "executable_identity": hashlib.sha256(str(Path(executable).expanduser().resolve(strict=False)).encode("utf-8")).hexdigest(),
+    }
+
+
 async def _governed_prompt_turn(
     store: StateStore, session: dict[str, Any], transport: AcpTransport,
     sink: _AcpRunLedgerSink, prompt: str,
 ) -> tuple[dict[str, Any], str, bool]:
+    await transport.prepare_prompt()
     turn = store.record_protocol_turn(session["session_id"], new_id("msg"), "prompt")
     store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", "prompt_submitted", {})
     sink.activate(session["native_session_id"], session["session_id"], turn["turn_id"])
@@ -1350,6 +1360,27 @@ async def _governed_prompt_turn(
     return turn, disconnect_reason, cancelled
 
 
+async def _settle_acp_transport_cleanup(transport: AcpTransport) -> tuple[bool, bool]:
+    cleanup_failed = False
+    cancellation_requested = False
+    cleanup_task = transport.ensure_cleanup_task()
+    while not cleanup_task.done():
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            cancellation_requested = True
+            continue
+        except BaseException:
+            cleanup_failed = True
+            break
+    if cleanup_task.done() and not cleanup_task.cancelled():
+        try:
+            cleanup_task.result()
+        except BaseException:
+            cleanup_failed = True
+    return cleanup_failed, cancellation_requested
+
+
 async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateStore, prompt: str) -> dict[str, Any]:
     sink = _AcpRunLedgerSink(store)
     client = AgentDeckAcpClient(
@@ -1377,6 +1408,7 @@ async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateS
             "session_new_completed", {
                 "protocol_version": initialized.protocol_version,
                 "agent_identity": initialized.agent_identity,
+                "adapter_provenance": _acp_adapter_provenance(agent),
             },
         )
         turn, disconnect_reason, cancellation_requested = await _governed_prompt_turn(
@@ -1403,22 +1435,8 @@ async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateS
             file=sys.stderr,
         )
     finally:
-        cleanup_failed = False
-        cleanup_task = transport.ensure_cleanup_task()
-        while not cleanup_task.done():
-            try:
-                await asyncio.shield(cleanup_task)
-            except asyncio.CancelledError:
-                cancellation_requested = True
-                continue
-            except BaseException:
-                cleanup_failed = True
-                break
-        if cleanup_task.done() and not cleanup_task.cancelled():
-            try:
-                cleanup_task.result()
-            except BaseException:
-                cleanup_failed = True
+        cleanup_failed, cleanup_cancelled = await _settle_acp_transport_cleanup(transport)
+        cancellation_requested = cancellation_requested or cleanup_cancelled
         if cleanup_failed:
             print("ACP cleanup failed", file=sys.stderr)
         summary = transport.stderr_summary
@@ -1501,12 +1519,8 @@ def _acp_run_payload_from_state(
 
 async def _close_reconnected_transport(
     transport: AcpTransport, store: StateStore, session_id: str, reason: str
-) -> None:
-    cleanup_failed = False
-    try:
-        await asyncio.shield(transport.close())
-    except BaseException:
-        cleanup_failed = True
+) -> bool:
+    cleanup_failed, cancellation_requested = await _settle_acp_transport_cleanup(transport)
     state = store.load()
     current = _derived_entity_state(state, "session", session_id, "created")
     if current != "disconnected":
@@ -1514,34 +1528,60 @@ async def _close_reconnected_transport(
             "session", session_id, current, "disconnected",
             "cleanup_failed" if cleanup_failed else reason, {},
         )
+    return cancellation_requested
 
 
 def _acp_reconnect_payload_from_state(
     store: StateStore, session_id: str, turn_id: str, mode: str
 ) -> dict[str, Any]:
     state = store.validated_protocol_state()
-    session = next(item for item in state["agent_sessions"] if item["session_id"] == session_id)
-    turn = next(item for item in state["protocol_turns"] if item["turn_id"] == turn_id)
+    sessions = [item for item in state["agent_sessions"] if item["session_id"] == session_id]
+    turns = [item for item in state["protocol_turns"] if item["turn_id"] == turn_id]
+    if len(sessions) != 1 or len(turns) != 1:
+        raise ValueError("ACP reconnect identities must resolve exactly once")
+    session, turn = sessions[0], turns[0]
+    if turn["session_id"] != session_id:
+        raise ValueError("ACP reconnect turn does not belong to session")
     updates = [item for item in state["transport_updates"] if item["turn_id"] == turn_id]
     if [item["sequence"] for item in updates] != list(range(len(updates))):
         raise ValueError("ACP reconnect update sequence is not contiguous")
     transitions = [item for item in state["protocol_state_transitions"] if item["entity_type"] == "session" and item["entity_id"] == session_id]
-    ready = next(
-        item for item in reversed(transitions)
+    ready_items = [
+        item for item in transitions
         if item["to_state"] == "ready" and "protocol_version" in item["details"]
-    )
+    ]
+    if not ready_items:
+        raise ValueError("ACP reconnect requires a negotiated ready transition")
+    ready = ready_items[-1]
+    if transitions.count(ready) != 1:
+        raise ValueError("ACP reconnect ready transition is ambiguous")
+    if not transitions:
+        raise ValueError("ACP reconnect requires session transitions")
     disconnected = transitions[-1]
     if disconnected["to_state"] != "disconnected":
         raise ValueError("ACP reconnect requires final disconnect")
     completions = [item for item in updates if item["kind"] == "completion"]
+    turn_state = _derived_entity_state(state, "turn", turn_id, turn["state"])
+    if turn_state not in {"completed", "blocked", "failed", "ambiguous"} or (
+        turn_state in {"completed", "blocked"} and len(completions) != 1
+    ) or (turn_state in {"failed", "ambiguous"} and len(completions) > 1):
+        raise ValueError("ACP reconnect terminal turn has invalid completion cardinality")
     stop_reason = completions[-1]["payload"]["stop_reason"] if completions else None
+    if mode == "acp_load" and (turn["kind"] != "load_replay" or stop_reason != "loaded" or turn_state != "completed"):
+        raise ValueError("ACP load replay terminal facts are inconsistent")
+    if mode == "acp_resume" and (
+        turn["kind"] != "prompt" or (
+            stop_reason is not None and map_stop_reason(stop_reason)[0] != turn_state
+        ) or (turn_state in {"completed", "blocked"} and stop_reason is None)
+    ):
+        raise ValueError("ACP resumed prompt terminal facts are inconsistent")
     return {
         "mode": mode, "contract_version": ACP_RUNTIME_CONTRACT_VERSION,
         "agent_id": session["agent_id"], "session_id": session_id,
         "native_session_id": session["native_session_id"],
         "protocol_version": ready["details"]["protocol_version"],
         "capabilities": session["capabilities"], "turn_id": turn_id,
-        "turn_state": _derived_entity_state(state, "turn", turn_id, turn["state"]),
+        "turn_state": turn_state,
         "stop_reason": stop_reason, "update_count": len(updates),
         "permission_count": len([item for item in state["permission_requests"] if item["turn_id"] == turn_id]),
         "disconnect_reason": disconnected["reason"],
@@ -1593,7 +1633,9 @@ async def _load_acp_session(
             sink._transition_turn(target, reason)
         raise
     finally:
-        await _close_reconnected_transport(transport, store, session["session_id"], "clean_exit")
+        cleanup_cancelled = await _close_reconnected_transport(transport, store, session["session_id"], "clean_exit")
+    if cleanup_cancelled:
+        raise asyncio.CancelledError
     assert turn is not None
     return _acp_reconnect_payload_from_state(store, session["session_id"], turn["turn_id"], "acp_load")
 
@@ -1627,7 +1669,8 @@ async def _resume_acp_session(
             sink._transition_turn("ambiguous", "unexpected_resume_replay" if str(error) == "unexpected_resume_replay" else "runtime_error")
         raise
     finally:
-        await _close_reconnected_transport(transport, store, session["session_id"], disconnect_reason)
+        cleanup_cancelled = await _close_reconnected_transport(transport, store, session["session_id"], disconnect_reason)
+        cancellation_requested = cancellation_requested or cleanup_cancelled
     if cancellation_requested:
         raise asyncio.CancelledError
     assert turn is not None
@@ -1680,13 +1723,24 @@ def _resolve_acp_session(config: ProjectConfig, store: StateStore, session_id: s
     if len(matches) != 1:
         raise ValueError(f"unknown or ambiguous ACP session: {session_id}")
     session = matches[0]
+    if session.get("transport") != "acp-adapter":
+        raise ValueError("session is not an ACP adapter session")
     if type(session.get("native_session_id")) is not str or not session["native_session_id"]:
         raise ValueError("ACP session has no native session id")
     agents = [item for item in config.agents if item.agent_id == session["agent_id"]]
     if len(agents) != 1 or agents[0].transport != "acp":
         raise ValueError("ACP session agent configuration is unavailable")
+    if session.get("provider") != agents[0].provider:
+        raise ValueError("ACP session provider does not match current agent configuration")
     if str(Path(session["workspace"]).resolve()) != str(project_root().resolve()):
         raise ValueError("ACP session workspace does not match the current project")
+    created = [
+        item for item in state["protocol_state_transitions"]
+        if item["entity_type"] == "session" and item["entity_id"] == session_id
+        and item["reason"] == "session_new_completed"
+    ]
+    if len(created) != 1 or created[0].get("details", {}).get("adapter_provenance") != _acp_adapter_provenance(agents[0]):
+        raise ValueError("ACP adapter configuration provenance has changed")
     return session, agents[0]
 
 

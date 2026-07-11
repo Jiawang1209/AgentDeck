@@ -99,6 +99,23 @@ class AgentDeckAcpClient:
         self._permission_pending = False
         self._callback_error: Exception | None = None
         self._update_count = 0
+        self._update_phase = "prompt"
+        self._phase_generation = 0
+
+    def begin_load_replay(self) -> int:
+        self._phase_generation += 1
+        self._update_phase = "load_replay"
+        return self._phase_generation
+
+    def begin_prompt(self) -> int:
+        self._phase_generation += 1
+        self._update_phase = "prompt"
+        return self._phase_generation
+
+    def seal_updates(self) -> int:
+        self._phase_generation += 1
+        self._update_phase = "sealed"
+        return self._phase_generation
 
     @property
     def update_count(self) -> int:
@@ -129,6 +146,10 @@ class AgentDeckAcpClient:
 
     async def session_update(self, session_id: str, update: object, **_: Any) -> None:
         self._update_count += 1
+        if self._update_phase not in {"load_replay", "prompt"}:
+            error = RuntimeError("unexpected ACP update during sealed phase")
+            self._callback_error = error
+            raise error
         kind, payload = map_session_update(update)
         try:
             await self._sink.append_update(session_id, kind, payload)

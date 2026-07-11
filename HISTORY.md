@@ -11,6 +11,7 @@
 - **Resume**: negotiate `sessionCapabilities.resume` without load fallback, reject pre-response replay, and run the subsequent governed prompt on the same session identity.
 - **Tests**: extend the official-SDK transport and deterministic fake ACP Agent with load/resume capability and replay scenarios; no real adapter is invoked.
 - **P1 lifecycle hardening**: every created load replay turn now reaches `completed`, `failed`, or `ambiguous`, including EOF, deterministic callback/bounds failures, timeout, and cancellation; cleanup still records a final session disconnect. The normal governed prompt-turn runner is shared by new-session run and post-resume prompt flow, preserving Task 8 permission, bounds, cancellation, completion, and durable-response semantics without a second simplified implementation.
+- **P1 quality gate**: add generation/phase-gated ACP update ownership across load, sealed resume, and prompt activation; compact hashed adapter provenance blocks provider/transport/workspace/command drift before spawn or writes; reconnect cleanup now reuses Task 8's cancellation-safe ownership loop; durable reconnect payloads resolve exact identities and validate ownership, sequence, transition, completion, and stop-reason facts. Fake request-log acceptance proves exact initialize/load and initialize/resume/prompt calls without fallback, new-session calls, or prompt-text persistence.
 
 ### Run one governed ACP prompt turn
 

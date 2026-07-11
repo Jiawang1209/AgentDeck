@@ -9,6 +9,10 @@ agent, and canonical workspace before starting a fresh stdio process. Load requi
 `loadSession` and owns replay in one `load_replay` turn. Resume requires
 `sessionCapabilities.resume`, rejects replay before its response, creates no replay turn, and
 then runs one normal prompt turn on the same identity. Neither path falls back to the other.
+The creating transition stores compact adapter provenance (`argv_hash` and hashed executable
+identity, never raw arguments). Reconnect requires the persisted `acp-adapter` transport,
+provider, agent, workspace, and adapter provenance to match current configuration before spawn;
+drift is a zero-write blocker.
 
 ## Read-only preflight
 

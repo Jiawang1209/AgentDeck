@@ -453,6 +453,20 @@ async def test_transport_resume_rejects_update_before_response(tmp_path: Path) -
 
 
 @async_test
+async def test_client_phase_gate_rejects_update_after_load_is_sealed() -> None:
+    client, _ = _transport_client()
+    client.begin_load_replay()
+    client.seal_updates()
+    update = schema.AgentMessageChunk(
+        sessionUpdate="agent_message_chunk",
+        content=schema.TextContentBlock(type="text", text="late"),
+    )
+    with pytest.raises(RuntimeError, match="unexpected ACP update during sealed phase"):
+        await client.session_update("fake-session-1", update)
+    assert client.take_callback_error() is not None
+
+
+@async_test
 async def test_transport_preserves_exact_argv_and_canonical_cwd(tmp_path: Path) -> None:
     from agentdeck.runtime.acp import AcpTransport
 
