@@ -18,6 +18,7 @@ from .mission import (
     mission_binding_reusable,
     mission_commands,
     mission_intent,
+    normalize_mission_plan_metadata,
     is_canonical_mission_id,
     select_mission_agents,
     selected_agent_summaries,
@@ -283,6 +284,8 @@ def create_mission_preview(
         validate_mission_plan(plan, selected_agent_ids, timeout_seconds)
         if len(plan["steps"]) != step_count:
             raise ValueError("unexpected mission step count")
+        plan = normalize_mission_plan_metadata(plan, step_count)
+        validate_mission_plan(plan, selected_agent_ids, timeout_seconds)
     except Exception:
         raise MissionPreviewError("mission preview plan invalid") from None
 

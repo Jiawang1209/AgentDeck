@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import FrozenInstanceError
 import multiprocessing
 from pathlib import Path
@@ -18,7 +19,7 @@ from agentdeck.mission import (
     selected_agent_summaries,
     startup_action_summaries,
     validate_mission_plan,
-    _requires_per_step_approval,
+    normalize_mission_plan_metadata,
 )
 from agentdeck.models import (
     AgentRuntimeBinding,
@@ -932,65 +933,29 @@ def test_validate_mission_plan_allows_unrelated_parallelism_metadata() -> None:
     assert validate_mission_plan(plan, ("planner", "reviewer"), 30) is plan
 
 
-@pytest.mark.parametrize(
-    "field",
-    ["goal", "summary"],
-)
-@pytest.mark.parametrize(
-    "value",
-    [
-        "Approval is required before every step",
-        "Every step requires approval",
-        "Each step must receive human approval",
-        "每个步骤都需要人工批准",
-        "每一步开始前必须获得批准",
-        "必须在每一步前人工审批",
-    ],
-)
-def test_validate_mission_plan_rejects_explicit_per_step_approval_language(
-    field: str, value: str
-) -> None:
-    plan = valid_plan()
-    plan[field] = value
+def test_normalize_mission_plan_metadata_is_canonical_and_does_not_mutate_input() -> None:
+    plan = {
+        "goal": "SECRET provider goal",
+        "summary": "Every step requires human approval",
+        "steps": [
+            {"step": 1, "agent_id": "planner", "role": "planning", "task": "approve invoice"},
+            {"step": 2, "agent_id": "reviewer", "role": "review", "task": "record result"},
+        ],
+        "approval_required": True,
+        "dispatch_ready": False,
+    }
+    original = deepcopy(plan)
 
-    with pytest.raises(ValueError, match="per-step approval"):
-        validate_mission_plan(plan, ("planner", "reviewer"), 30)
+    normalized = normalize_mission_plan_metadata(plan, 2)
 
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        "Each step processes an approved invoice",
-        "Each step records prior approval metadata",
-        "每一步记录人工批准状态",
-        "各步骤读取审批结果",
-        "Review and approve the invoice",
-    ],
-)
-def test_per_step_approval_guard_allows_business_approval_language(value: str) -> None:
-    assert _requires_per_step_approval(value) is False
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        "Approval is required before every step",
-        "Every step requires approval",
-        "Each step must receive human approval",
-        "每个步骤都需要人工批准",
-        "每一步开始前必须获得批准",
-        "必须在每一步前人工审批",
-    ],
-)
-def test_per_step_approval_guard_rejects_obligatory_step_approval(value: str) -> None:
-    assert _requires_per_step_approval(value) is True
-
-
-def test_validate_mission_plan_does_not_scan_step_tasks_for_approval_guard() -> None:
-    plan = valid_plan()
-    plan["steps"][0]["task"] = "Every step requires approval"
-
-    assert validate_mission_plan(plan, ("planner", "reviewer"), 30) is plan
+    assert normalized == {
+        "goal": "Fixed sequential 2-step Mission.",
+        "summary": "One overall Mission confirmation authorizes all 2 steps; no per-step approval.",
+        "steps": original["steps"],
+    }
+    assert normalized["steps"] is not plan["steps"]
+    assert normalized["steps"][0] is not plan["steps"][0]
+    assert plan == original
 
 
 def test_summaries_are_compact_and_startup_actions_distinguish_reuse_from_spawn() -> None:

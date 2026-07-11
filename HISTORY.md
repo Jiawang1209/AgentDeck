@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Normalize Mission planning metadata
+
+- **类型**: review pivot + deterministic provenance + strict TDD
+- **问题**: 用自然语言 regex 判断 provider `goal` / `summary` 的审批语义仍存在漏判与误判空间，也会把不受信任的 provider prose 当作可持久化、可展示的 Mission 事实。
+- **What**: 删除审批话术 guard，新增不修改输入的纯 `normalize_mission_plan_metadata(plan, step_count)`。provider plan 先通过既有 schema/串行结构校验，再只保留深拷贝的 validated steps，并把 `goal` / `summary` 替换为 AgentDeck canonical compact strings：fixed sequential N-step、one overall Mission confirmation、no per-step approval；归一化结果再次通过结构校验后才 record plan/Mission。
+- **TDD 证据**: per-step summary 原先被 guard 拒绝、business/SECRET summary 原样进入 preview/state 的三项回归先 3/3 RED；最小归一化后 3/3 GREEN，pure helper 1/1 验证输出确定且输入/steps 不 mutation；Mission domain/orchestration 182/182、全量 1204/1204 GREEN，compileall 与 diff check 干净。
+- **安全边界**: provider `goal` / `summary` 不再作为授权或事实展示，不进入 payload/state/events；Mission `user_message` 继续保存用户原始目标，step task 完整保留。一次确认只授权已验证且冻结的固定串行 steps，不改变 Worker/runtime/tool 权限。
+
 ### Refine Mission approval guard
 
 - **类型**: review fix + strict TDD

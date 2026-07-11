@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import re
 import shlex
 from dataclasses import dataclass, replace
@@ -576,24 +577,21 @@ def mission_binding_reusable(
     return status == "running" and pane_id is not None
 
 
-def _requires_per_step_approval(text: str) -> bool:
-    if not isinstance(text, str):
-        return False
-
-    english_step_scope = re.search(r"\b(?:each|every)\s+step\b", text, re.IGNORECASE)
-    english_approval = re.search(r"\b(?:approval|approve)\b", text, re.IGNORECASE)
-    english_obligation = re.search(
-        r"\b(?:must|mandatory|required?|requires?|needed?|needs?)\b",
-        text,
-        re.IGNORECASE,
-    )
-    if english_step_scope and english_approval and english_obligation:
-        return True
-
-    chinese_step_scope = re.search(r"(?:每一步|每步|每个步骤|各步骤)", text)
-    chinese_approval = re.search(r"(?:人工批准|人工审批|批准|审批)", text)
-    chinese_obligation = re.search(r"(?:必须|需要|要求|前需|需)", text)
-    return bool(chinese_step_scope and chinese_approval and chinese_obligation)
+def normalize_mission_plan_metadata(
+    plan: Mapping[str, Any], step_count: int
+) -> dict[str, Any]:
+    if not isinstance(plan, Mapping) or not isinstance(plan.get("steps"), list):
+        raise ValueError("mission plan steps must be a list")
+    if type(step_count) is not int or step_count <= 0:
+        raise ValueError("mission step count must be positive")
+    return {
+        "goal": f"Fixed sequential {step_count}-step Mission.",
+        "summary": (
+            f"One overall Mission confirmation authorizes all {step_count} steps; "
+            "no per-step approval."
+        ),
+        "steps": deepcopy(plan["steps"]),
+    }
 
 
 def validate_mission_plan(
@@ -609,11 +607,6 @@ def validate_mission_plan(
     forbidden_metadata = ("parallel", "dag", "cycle", "dynamic_steps")
     if any(key in plan for key in forbidden_metadata):
         raise ValueError("mission plan cannot contain dynamic or parallel metadata")
-
-    for field in ("goal", "summary"):
-        value = plan.get(field)
-        if isinstance(value, str) and _requires_per_step_approval(value):
-            raise ValueError("mission plan cannot require per-step approval")
 
     steps = plan.get("steps")
     if not isinstance(steps, list):

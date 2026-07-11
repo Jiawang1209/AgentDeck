@@ -1272,39 +1272,45 @@ def test_forbidden_plan_metadata_presence_fails_closed_before_any_write(
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
+    "provider_summary",
     [
-        ("goal", "Approval is required before every step"),
-        ("summary", "Every step requires human approval before dispatch"),
-        ("summary", "每个步骤都需要人工批准"),
-        ("goal", "必须在每一步前人工审批"),
+        "Every step requires human approval before dispatch",
+        "Each step processes an approved invoice",
+        "SECRET_PROVIDER_SUMMARY",
     ],
 )
-def test_per_step_approval_plan_language_fails_closed_before_any_write(
-    tmp_path, monkeypatch, field, value
+def test_provider_summary_is_normalized_before_preview_and_persistence(
+    tmp_path, monkeypatch, provider_summary
 ) -> None:
     _root, config, store, _config_path = project(tmp_path)
     plan = eight_step_plan()
-    plan[field] = value
+    plan["goal"] = f"provider goal {provider_summary}"
+    plan["summary"] = provider_summary
     provider = RecordingProvider(plan)
-    state_before = store.state_path.read_bytes() if store.state_path.exists() else None
-    events_before = store.events_path.read_bytes()
     monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
 
-    with pytest.raises(ValueError, match="^mission preview plan invalid$"):
-        create_mission_preview(
-            config=config,
-            store=store,
-            provider=provider,
-            user_message=MESSAGE,
-            timeout_seconds=180,
-        )
+    result = create_mission_preview(
+        config=config,
+        store=store,
+        provider=provider,
+        user_message=MESSAGE,
+        timeout_seconds=180,
+    )
 
-    assert store.list_plans() == []
-    assert store.list_missions() == []
-    assert store.events_path.read_bytes() == events_before
-    if state_before is not None:
-        assert store.state_path.read_bytes() == state_before
+    canonical = {
+        "goal": "Fixed sequential 8-step Mission.",
+        "summary": "One overall Mission confirmation authorizes all 8 steps; no per-step approval.",
+    }
+    assert result["plan"]["goal"] == canonical["goal"]
+    assert result["plan"]["summary"] == canonical["summary"]
+    saved_plan = store.plan_by_id(result["plan_id"])["plan"]
+    assert saved_plan["goal"] == canonical["goal"]
+    assert saved_plan["summary"] == canonical["summary"]
+    serialized = json.dumps(
+        {"payload": result, "state": store.load(), "events": store.list_events(limit=10)},
+        ensure_ascii=False,
+    )
+    assert provider_summary not in serialized
 
 
 def test_duplicate_request_creates_distinct_audited_previews(tmp_path, monkeypatch) -> None:
