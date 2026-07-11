@@ -5844,6 +5844,23 @@ def test_contract_agent_runtime_discovers_schema_for_gui_clients(capsys) -> None
         "spawn_command",
         "blocker",
     ]
+    assert payload["transport_capability_fields"] == [
+        "structured_sessions",
+        "streaming_updates",
+        "structured_tools",
+        "permission_requests",
+        "resume_session",
+        "observable_terminal",
+    ]
+    assert payload["tmux_fallback_capabilities"] == {
+        "structured_sessions": False,
+        "streaming_updates": False,
+        "structured_tools": False,
+        "permission_requests": False,
+        "resume_session": False,
+        "observable_terminal": True,
+    }
+    assert not set(payload["transport_capability_fields"]) & set(payload["runtime_control_fields"])
     assert payload["workbench_contract"] == "agentdeck contract workbench"
 
 
@@ -5877,6 +5894,9 @@ def test_contract_agent_runtime_example_exports_gui_ready_runtime_contract(capsy
     assert example["agents"][0]["runtime"]["pane_id"] == "%42"
     assert example["capture"]["output"] == "status: completed\n"
     assert example["terminal"]["attach_command"] == "tmux -L agentdeck-multi-agent-explore attach -t agentdeck"
+    assert example["ready"]["all_running"] is True
+    assert example["spawn_ready"]["spawned_count"] == 1
+    assert example["controls"][0]["safety"] == "inspect"
 
 
 def test_contract_project_view_discovers_schema_for_gui_clients(capsys) -> None:

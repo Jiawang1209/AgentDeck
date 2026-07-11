@@ -6,6 +6,16 @@ import pytest
 
 from agentdeck.models import RuntimeConfig
 from agentdeck.runtime import tmux
+from agentdeck.runtime.protocol import TransportCapabilities
+
+
+def test_tmux_backend_declares_fallback_capabilities() -> None:
+    capabilities = tmux.TmuxBackend().capabilities()
+
+    assert capabilities == TransportCapabilities.tmux_fallback()
+    assert capabilities.observable_terminal is True
+    assert capabilities.structured_sessions is False
+    assert capabilities.permission_requests is False
 
 
 def test_create_session_sets_detached_terminal_size(monkeypatch) -> None:

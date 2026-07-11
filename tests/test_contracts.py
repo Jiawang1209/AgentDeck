@@ -1196,6 +1196,23 @@ def test_agent_runtime_contract_payload_is_reusable_without_cli(tmp_path: Path) 
         "blocker",
     ]
     assert payload["runtime_control_fields"] == list(WORKBENCH_RUNTIME_CONTROL_FIELDS)
+    assert payload["transport_capability_fields"] == [
+        "structured_sessions",
+        "streaming_updates",
+        "structured_tools",
+        "permission_requests",
+        "resume_session",
+        "observable_terminal",
+    ]
+    assert payload["tmux_fallback_capabilities"] == {
+        "structured_sessions": False,
+        "streaming_updates": False,
+        "structured_tools": False,
+        "permission_requests": False,
+        "resume_session": False,
+        "observable_terminal": True,
+    }
+    assert not set(payload["transport_capability_fields"]) & set(payload["runtime_control_fields"])
     assert payload["workbench_contract"] == "agentdeck contract workbench"
 
 

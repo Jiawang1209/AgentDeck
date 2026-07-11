@@ -2,7 +2,7 @@
 
 `agentdeck contract agent-runtime` is the read-only discovery surface for GUI, TUI, natural-language, and automation clients that need to control visible agent panes through AgentDeck commands.
 
-It does not read `.agentdeck/` state, does not inspect tmux panes, does not spawn or stop agents, and does not send tmux input. It only describes the command templates and stable response fields that clients can render as human-triggered controls.
+It does not read `.agentdeck/` state, does not inspect tmux panes, does not spawn or stop agents, and does not send tmux input. It only describes the command templates, stable response fields, and informational transport capabilities that clients can render. Capability metadata is not an authorization control and does not change readiness, pane creation, send, capture, or approval behavior.
 
 ## Discovery
 
@@ -35,6 +35,22 @@ The contract command returns:
   "ready_response_fields": [],
   "spawn_ready_response_fields": [],
   "spawn_ready_result_fields": [],
+  "transport_capability_fields": [
+    "structured_sessions",
+    "streaming_updates",
+    "structured_tools",
+    "permission_requests",
+    "resume_session",
+    "observable_terminal"
+  ],
+  "tmux_fallback_capabilities": {
+    "structured_sessions": false,
+    "streaming_updates": false,
+    "structured_tools": false,
+    "permission_requests": false,
+    "resume_session": false,
+    "observable_terminal": true
+  },
   "runtime_control_fields": [],
   "project_view_schema_version": "project-view/v1",
   "project_view_contract": "agentdeck contract project-view",
@@ -43,6 +59,8 @@ The contract command returns:
 ```
 
 Use `agentdeck contract agent-runtime --example` to include a stable GUI-ready fixture with one running agent, a ready response, a spawn-ready response, a terminal response, a capture response, and reusable runtime controls.
+
+`tmux_fallback_capabilities` declares tmux as an observable terminal fallback only. In particular, it does not claim structured sessions or permission requests, does not claim ACP compatibility, and is never projected into `runtime_control_fields`.
 
 ## Agent Item Fields
 

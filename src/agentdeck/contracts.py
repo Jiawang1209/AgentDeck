@@ -20,7 +20,7 @@ from .mission import (
 )
 from .models import PROJECT_VIEW_SCHEMA_VERSION
 from .state import leader_backend_identity
-from .runtime.protocol import TRANSPORT_KINDS
+from .runtime.protocol import TRANSPORT_KINDS, TransportCapabilities
 
 
 CONTRACT_INDEX_RESPONSE_FIELDS = (
@@ -5977,6 +5977,7 @@ def controls_contract_response(contract_path: Path, include_example: bool = Fals
 
 
 def agent_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
+    tmux_fallback_capabilities = TransportCapabilities.tmux_fallback().summary()
     return {
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "list_command": "agentdeck agent list",
@@ -5998,6 +5999,8 @@ def agent_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
         "ready_response_fields": list(AGENT_RUNTIME_READY_RESPONSE_FIELDS),
         "spawn_ready_response_fields": list(AGENT_RUNTIME_SPAWN_READY_RESPONSE_FIELDS),
         "spawn_ready_result_fields": list(AGENT_RUNTIME_SPAWN_READY_RESULT_FIELDS),
+        "transport_capability_fields": list(tmux_fallback_capabilities),
+        "tmux_fallback_capabilities": tmux_fallback_capabilities,
         "runtime_control_fields": list(WORKBENCH_RUNTIME_CONTROL_FIELDS),
         "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view_contract": "agentdeck contract project-view",

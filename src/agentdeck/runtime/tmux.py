@@ -6,6 +6,7 @@ import subprocess
 import uuid
 
 from agentdeck.models import AgentSpec, RuntimeConfig
+from agentdeck.runtime.protocol import TransportCapabilities
 
 from .base import RuntimeDoctorResult
 
@@ -15,6 +16,9 @@ DETACHED_SESSION_HEIGHT = 60
 
 
 class TmuxBackend:
+    def capabilities(self) -> TransportCapabilities:
+        return TransportCapabilities.tmux_fallback()
+
     def doctor(self) -> RuntimeDoctorResult:
         tmux_path = shutil.which("tmux")
         if not tmux_path:

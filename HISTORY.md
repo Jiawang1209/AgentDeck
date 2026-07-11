@@ -4667,3 +4667,8 @@
 - 在 ProjectView 裁剪前用全量 ID maps 校验 protocol cross-lineage，同时允许 bounded latest-20 summaries 引用窗口外的合法父记录。
 - 将 `protocol-runtime/v1` transport 固定为 `acp`、`acp-adapter`、`tmux`、`api`，并同步 builder、ProjectView、contract discovery 与 schema。
 - 完善 bounded lineage contract：父 summary 完整时必须解析父 ID，父窗口被 latest-20 截断时允许窗口外引用；可见父 turn 始终要求 session 一致。
+
+### Declare tmux fallback transport capabilities
+
+- `RuntimeBackend` 新增 transport capability 声明接口，`TmuxBackend` 明确返回仅支持可观察终端的 `TransportCapabilities.tmux_fallback()`。
+- `agentdeck contract agent-runtime` 新增只读 `transport_capability_fields` 与 `tmux_fallback_capabilities` discovery metadata；这些字段不进入 authorization controls，也不改变 readiness、pane、send、capture 或 approval 行为。
