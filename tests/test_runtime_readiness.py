@@ -40,11 +40,12 @@ CLAUDE_TRUST_SCREEN = (
 )
 CLAUDE_LOGIN_SCREEN = "Claude Code\nNot logged in. Run /login to continue."
 CLAUDE_21207_READY_SCREEN = (
-    "│ Organization │ Example Org            │\n"
-    "│ Workspace    │ /tmp/agentdeck-demo    │\n"
-    "MCP server example needs authentication\n"
-    "❯\n"
-    "auto mode on (shift+tab to cycle)"
+    "Accessing workspace:\n"
+    "│ user@example.com's Organization │ /release-notes...          │\n"
+    "│ /tmp/agentdeck-demo             │                            │\n"
+    "⚠ 3 MCP servers need authentication · run /mcp\n"
+    "❯\u00a0\n"
+    "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
 )
 
 
@@ -126,7 +127,7 @@ def test_codex_write_tests_like_user_input_is_not_idle(prompt: str) -> None:
     ["❯", "\u00a0❯\u00a0"],
 )
 def test_claude_21207_structured_empty_prompt_is_ready(prompt: str) -> None:
-    screen = CLAUDE_21207_READY_SCREEN.replace("❯\n", f"{prompt}\n")
+    screen = CLAUDE_21207_READY_SCREEN.replace("❯\u00a0\n", f"{prompt}\n")
 
     assert classify_worker_readiness("claude-cli", screen).status == "ready"
 
@@ -142,16 +143,36 @@ def test_claude_empty_prompt_with_permissions_mode_footer_is_ready() -> None:
 @pytest.mark.parametrize(
     "screen",
     [
-        CLAUDE_21207_READY_SCREEN.replace("❯\n", "❯ user input\n"),
+        CLAUDE_21207_READY_SCREEN.replace("❯\u00a0\n", "❯ user input\n"),
         CLAUDE_21207_READY_SCREEN.rsplit("\n", 1)[0],
         (
-            "Documentation example\nWorkspace: /tmp/agentdeck-demo\n"
-            "MCP server example needs authentication\n❯\n"
-            'The footer says "auto mode on (shift+tab to cycle)" when enabled.'
+            'Documentation says "Accessing workspace:"\n'
+            "Example │ Organization │ /release-notes │\n"
+            'Quote: "⚠ 3 MCP servers need authentication · run /mcp"\n'
+            "❯\n"
+            'The footer says "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents".'
         ),
     ],
 )
 def test_claude_empty_prompt_without_trusted_cli_structure_is_not_idle(screen: str) -> None:
+    assert classify_worker_readiness("claude-cli", screen).status == "starting"
+
+
+@pytest.mark.parametrize(
+    "missing_line",
+    [
+        "Accessing workspace:\n",
+        "│ user@example.com's Organization │ /release-notes...          │\n",
+        "⚠ 3 MCP servers need authentication · run /mcp\n",
+        "❯\u00a0\n",
+        "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+    ],
+)
+def test_claude_real_idle_chrome_requires_every_structural_signal(
+    missing_line: str,
+) -> None:
+    screen = CLAUDE_21207_READY_SCREEN.replace(missing_line, "")
+
     assert classify_worker_readiness("claude-cli", screen).status == "starting"
 
 

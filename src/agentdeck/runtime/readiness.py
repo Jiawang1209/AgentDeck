@@ -31,12 +31,17 @@ _CODEX_IDLE_PROMPT = re.compile(
 )
 _CLAUDE_EMPTY_PROMPT = re.compile(r"^\s*❯\s*$")
 _CLAUDE_MODE_FOOTER = re.compile(
-    r"^\s*(?:auto mode on(?:\s*\([^\r\n]*\))?|permissions? mode(?:\s*:\s*|\s+)[^\r\n]+)\s*$"
+    r"^\s*(?:⏵⏵\s*)?(?:auto mode on(?:\s*\([^\r\n]*\))?|"
+    r"permissions? mode(?:\s*:\s*|\s+)[^·\r\n]+)"
+    r"(?:\s*·\s*←\s+for agents)?\s*$"
 )
 _CLAUDE_ORGANIZATION_CHROME = re.compile(
-    r"(?:^|[│|])\s*organization\s*(?::|[│|])"
+    r"^\s*[│|][^│|\r\n]*organization[^│|\r\n]*[│|][^│|\r\n]+[│|]\s*$"
 )
-_CLAUDE_WORKSPACE_CHROME = re.compile(r"(?:^|[│|])\s*workspace\s*(?::|[│|])")
+_CLAUDE_WORKSPACE_CHROME = re.compile(r"^\s*accessing workspace:\s*$")
+_CLAUDE_MCP_AUTH_CHROME = re.compile(
+    r"^\s*⚠\s+\d+\s+mcp servers? need authentication\s*·\s*run /mcp\s*$"
+)
 
 
 @dataclass(frozen=True)
@@ -80,8 +85,8 @@ def classify_worker_readiness(provider: str, output: str) -> WorkerReadinessEvid
         prompt_glyph = "❯"
         has_structured_idle_chrome = (
             any(_CLAUDE_ORGANIZATION_CHROME.search(line) for line in active_lines)
-            and any(_CLAUDE_WORKSPACE_CHROME.search(line) for line in active_lines)
-            and any("mcp" in line for line in active_lines)
+            and any(_CLAUDE_WORKSPACE_CHROME.fullmatch(line) for line in active_lines)
+            and any(_CLAUDE_MCP_AUTH_CHROME.fullmatch(line) for line in active_lines)
             and any(_CLAUDE_MODE_FOOTER.fullmatch(line) for line in active_lines)
         )
         has_normal_chrome = (

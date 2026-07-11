@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Match Claude real idle chrome
+
+- **类型**: real pane acceptance fix + strict TDD + readiness safety
+- **问题**: 首轮 Claude 2.1.207 sanitized fixture 假设了 `Organization` / `Workspace` 标签和无装饰 mode footer；真实 pane 实际使用独立 `Accessing workspace:`、带账户名的 Organization box、path box、精确 MCP auth warning、NBSP empty prompt，以及 `⏵⏵ ... · ← for agents` footer，因此仍被判为 starting。
+- **What**: Claude structured-idle grammar 与真实 chrome 对齐：workspace 必须是独立 full-line marker，organization 必须位于 box delimiter 行，MCP 必须匹配计数 + `run /mcp` 的 auth UI，prompt 必须 standalone empty，mode footer允许固定 `⏵⏵` 前缀和 `· ← for agents` 后缀。旧 Claude Code/context 路径与 permissions-mode footer 保持兼容。
+- **TDD 证据**: exact 2.1.207 sanitized frame 的 empty/NBSP prompt 与 permissions footer 先 3 failed / 8 passed RED，五类结构缺失、普通文档引用和非空 prompt 反例均保持拒绝。最小修复后 readiness 88/88、runtime + Mission 交叉 272/272、全量 1229/1229 GREEN，compileall 与 diff check 干净。
+- **安全边界**: workspace、organization、MCP、empty prompt、trusted footer 任一缺失都保持 starting；普通 prose/quoted UI line 不成为 chrome，trust/login 独立 system grammar 仍优先于 idle evidence。
+
 ### Recognize real Codex and Claude idle prompts
 
 - **类型**: real acceptance fix + strict TDD + readiness safety
