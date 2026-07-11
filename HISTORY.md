@@ -14,6 +14,8 @@
 - **Review hardening**: permission admission now checks the prospective count and payload budget before any write, then atomically records pending request, redacted update, waiting transition, and outbox events. Exact-boundary, +1 overflow, and pre-existing-outbox tests prove failed admission is full-tree zero-write.
 - **Persisted response truth**: protocol version and negotiated Agent identity are persisted in the new-session transition, capabilities remain on AgentSession, stop reason comes only from the completion update, and disconnect reason comes from the final session transition. The final JSON is rebuilt after a fresh state reload with no execution-local facts.
 - **Failure matrix**: fake-process CLI tests now cover TTY reject-once, TTY EOF/Ctrl-C settlement, non-TTY denial, prompt timeout plus cancel, EOF ambiguity, permission-bound exhaustion without orphan records, disconnect on every created-session path, and validator failure with empty stdout.
+- **Terminal reserve and integrity**: streaming now reserves one update plus 512 bytes for completion or compact error. Post-creation failures terminalize writable turns, and final response reconstruction rejects corrupt global identities/lineage, sequence gaps, conflicting completion facts, stop-reason/state mismatch, or a non-final disconnect.
+- **Diagnostic privacy and cleanup**: raw adapter stderr is no longer exposed. CLI diagnostics contain only bounded counts/truncation/hash facts; cleanup exceptions persist `cleanup_failed`, preserve the operation error as primary, and never print raw exception, prompt, tool, credential, or native-session content.
 
 ### Publish ACP runtime preflight and contract
 

@@ -42,6 +42,7 @@ from .runtime.protocol import (
 from .runtime.acp_mapping import (
     MAX_ACP_TURN_PAYLOAD_BYTES,
     MAX_ACP_UPDATES_PER_TURN,
+    MAX_ACP_TERMINAL_UPDATE_BYTES,
 )
 
 
@@ -607,11 +608,11 @@ class StateStore:
             )
             total_bytes = existing_bytes + payload_bytes
             total_updates = len(turn_updates) + 1
-            if total_bytes > MAX_ACP_TURN_PAYLOAD_BYTES:
+            if total_bytes + MAX_ACP_TERMINAL_UPDATE_BYTES > MAX_ACP_TURN_PAYLOAD_BYTES:
                 raise ValueError(
                     f"ACP turn payload exceeds {MAX_ACP_TURN_PAYLOAD_BYTES} bytes"
                 )
-            if total_updates > MAX_ACP_UPDATES_PER_TURN:
+            if total_updates + 1 > MAX_ACP_UPDATES_PER_TURN:
                 raise ValueError(
                     f"ACP turn updates exceed {MAX_ACP_UPDATES_PER_TURN}"
                 )
@@ -679,6 +680,13 @@ class StateStore:
             state.setdefault("protocol_turns", []), "turn_id", turn_id,
             "duplicate protocol turn identity",
         )
+
+    def validated_protocol_state(self) -> dict[str, Any]:
+        """Load and globally validate all protocol identities and transition lineage."""
+        state = self.load()
+        self._validate_protocol_identities(state)
+        self._validate_protocol_transition_history(state)
+        return state
 
     def list_agent_sessions(self) -> list[dict[str, Any]]:
         return list(self.load().setdefault("agent_sessions", []))

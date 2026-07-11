@@ -620,8 +620,8 @@ async def test_transport_uses_reviewed_environment_plus_explicit_test_injection(
         "anthropic": "reviewed-provider-value",
     }
     assert "reviewed-provider-value" not in repr(transport)
-    assert "harmless-sentinel" not in transport.stderr_diagnostic
-    assert "[REDACTED]" in transport.stderr_diagnostic
+    assert "harmless-sentinel" not in repr(transport.stderr_summary)
+    assert transport.stderr_summary["present"] is True
 
 
 @async_test
@@ -720,10 +720,11 @@ async def test_transport_bounds_and_redacts_stderr(tmp_path: Path, monkeypatch: 
     )
     await transport.initialize()
     await transport.close()
-    diagnostic = transport.stderr_diagnostic
-    assert len(diagnostic.encode()) <= MAX_ACP_STDERR_BYTES
-    assert secret not in diagnostic
-    assert "[REDACTED]" in diagnostic
+    diagnostic = transport.stderr_summary
+    assert diagnostic["byte_count"] <= MAX_ACP_STDERR_BYTES
+    assert secret not in repr(diagnostic)
+    assert diagnostic["present"] is True
+    assert isinstance(diagnostic["sha256"], str)
     assert "ACP_TEST_SECRET" not in repr(transport)
 
 

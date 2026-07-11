@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import asdict, replace
 import argparse
 import asyncio
+import contextlib
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -130,7 +131,9 @@ from .history import render_history_markdown
 from .runtime import TmuxBackend
 from .runtime.acp import AcpAmbiguousOutcome, AcpRequestTimeout, AcpTransport, AcpTransportError
 from .runtime.acp_client import AgentDeckAcpClient, PermissionDecision
-from .runtime.acp_mapping import ensure_turn_within_bounds, map_stop_reason
+from .runtime.acp_mapping import (
+    MAX_ACP_TERMINAL_UPDATE_BYTES, ensure_turn_within_bounds, map_stop_reason,
+)
 from .tui import TuiModel, run_tui
 from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import, resolve_skill_dependencies
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
@@ -1250,13 +1253,27 @@ class _AcpRunLedgerSink:
     async def append_update(self, native_session_id: str, kind: str, payload: dict[str, Any]) -> object:
         session_id, turn_id = self._correlate(native_session_id)
         encoded = len(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"))
-        ensure_turn_within_bounds(self.payload_bytes + encoded, self.sequence + 1)
+        ensure_turn_within_bounds(
+            self.payload_bytes + encoded + MAX_ACP_TERMINAL_UPDATE_BYTES,
+            self.sequence + 2,
+        )
         if self.turn_state == "submitted":
             self._transition_turn("streaming", "session_update_received")
         record = self.store.record_transport_update(session_id, turn_id, self.sequence, kind, payload)
         self.sequence += 1
         self.payload_bytes += encoded
         return record
+
+    def append_terminal_error(self, reason: str) -> None:
+        assert self.session_id is not None and self.turn_id is not None
+        payload = {"reason": reason}
+        encoded = len(json.dumps(payload, sort_keys=True).encode("utf-8"))
+        ensure_turn_within_bounds(self.payload_bytes + encoded, self.sequence + 1)
+        self.store.record_transport_update(
+            self.session_id, self.turn_id, self.sequence, "error", payload
+        )
+        self.sequence += 1
+        self.payload_bytes += encoded
 
     async def append_permission(
         self, native_session_id: str, summary: dict[str, Any], options: list[schema.PermissionOption]
@@ -1342,22 +1359,40 @@ async def _run_acp_prompt(config: ProjectConfig, agent: AgentSpec, store: StateS
     except AcpAmbiguousOutcome as error:
         disconnect_reason = "unexpected_eof"
         if turn is not None and sink.turn_state not in {"completed", "blocked", "failed", "ambiguous"}:
+            with contextlib.suppress(Exception):
+                sink.append_terminal_error("unexpected_eof")
             sink._transition_turn("ambiguous", "unexpected_eof")
-        print(str(error), file=sys.stderr)
-    except (AcpRequestTimeout, AcpTransportError, asyncio.CancelledError) as error:
+        print("ACP prompt outcome is ambiguous", file=sys.stderr)
+    except (AcpRequestTimeout, AcpTransportError, asyncio.CancelledError, OSError, ValueError) as error:
         disconnect_reason = "timeout" if isinstance(error, AcpRequestTimeout) else "failed"
         if turn is not None and sink.turn_state not in {"completed", "blocked", "failed", "ambiguous"}:
+            with contextlib.suppress(Exception):
+                sink.append_terminal_error(disconnect_reason)
             sink._transition_turn("failed", disconnect_reason)
-        print(str(error), file=sys.stderr)
+        print(
+            "ACP prompt failed: " + (
+                "timeout" if isinstance(error, AcpRequestTimeout) else "runtime_error"
+            ),
+            file=sys.stderr,
+        )
     finally:
-        await transport.close()
-        if transport.stderr_diagnostic:
-            print(transport.stderr_diagnostic, file=sys.stderr)
+        cleanup_failed = False
+        try:
+            await transport.close()
+        except Exception:
+            cleanup_failed = True
+            print("ACP cleanup failed", file=sys.stderr)
+        summary = transport.stderr_summary
+        if summary["present"]:
+            print("ACP adapter diagnostic: " + json.dumps(summary, sort_keys=True), file=sys.stderr)
         if session is not None:
             state = store.load()
             current = _derived_entity_state(state, "session", session["session_id"], "created")
             if current != "disconnected":
-                store.record_protocol_transition("session", session["session_id"], current, "disconnected", disconnect_reason, {})
+                store.record_protocol_transition(
+                    "session", session["session_id"], current, "disconnected",
+                    "cleanup_failed" if cleanup_failed else disconnect_reason, {},
+                )
     if session is None or turn is None or initialized is None:
         raise AcpTransportError("ACP run failed before a native session was created")
     return _acp_run_payload_from_state(store, session["session_id"], turn["turn_id"])
@@ -1367,25 +1402,47 @@ def _acp_run_payload_from_state(
     store: StateStore, session_id: str, turn_id: str
 ) -> dict[str, Any]:
     """Rebuild the public run response exclusively from durable protocol facts."""
-    state = store.load()
-    session = next(item for item in state["agent_sessions"] if item["session_id"] == session_id)
-    turn = next(item for item in state["protocol_turns"] if item["turn_id"] == turn_id)
+    state = store.validated_protocol_state()
+    sessions = [item for item in state["agent_sessions"] if item["session_id"] == session_id]
+    turns = [item for item in state["protocol_turns"] if item["turn_id"] == turn_id]
+    if len(sessions) != 1 or len(turns) != 1:
+        raise ValueError("ACP run identities must resolve exactly once")
+    session, turn = sessions[0], turns[0]
+    if turn["session_id"] != session_id:
+        raise ValueError("ACP run turn does not belong to session")
     transitions = state["protocol_state_transitions"]
-    ready = next(
+    ready_items = [
         item for item in transitions
         if item["entity_type"] == "session" and item["entity_id"] == session_id
         and item["reason"] == "session_new_completed"
-    )
-    disconnected = next(
-        item for item in reversed(transitions)
+    ]
+    if len(ready_items) != 1:
+        raise ValueError("ACP run requires one negotiated session transition")
+    ready = ready_items[0]
+    session_transitions = [
+        item for item in transitions
         if item["entity_type"] == "session" and item["entity_id"] == session_id
-        and item["to_state"] == "disconnected"
-    )
+    ]
+    disconnected_items = [
+        item for item in session_transitions
+        if item["to_state"] == "disconnected"
+    ]
+    if len(disconnected_items) != 1 or session_transitions[-1] != disconnected_items[0]:
+        raise ValueError("ACP run requires one final disconnect transition")
+    disconnected = disconnected_items[0]
     turn_state = _derived_entity_state(state, "turn", turn_id, turn["state"])
     updates = [item for item in state["transport_updates"] if item["turn_id"] == turn_id]
+    if [item["sequence"] for item in updates] != list(range(len(updates))):
+        raise ValueError("ACP run update sequence is not contiguous")
     permissions = [item for item in state["permission_requests"] if item["turn_id"] == turn_id]
     completions = [item for item in updates if item["kind"] == "completion"]
+    if len(completions) > 1:
+        raise ValueError("ACP run has conflicting completion updates")
+    if turn_state in {"completed", "blocked"} and len(completions) != 1:
+        raise ValueError("ACP terminal turn requires exactly one completion update")
     stop_reason = completions[-1]["payload"]["stop_reason"] if completions else None
+    if stop_reason is not None and map_stop_reason(stop_reason)[0] != turn_state:
+        raise ValueError("ACP stop reason conflicts with persisted turn state")
     return {
         "mode": "acp_run", "contract_version": ACP_RUNTIME_CONTRACT_VERSION,
         "agent_id": session["agent_id"], "session_id": session["session_id"],

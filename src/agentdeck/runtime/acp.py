@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 import os
+import hashlib
 from pathlib import Path
 import re
 from types import TracebackType
@@ -154,6 +155,7 @@ class AcpTransport:
         self._process: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[bytes] | None = None
         self._stderr = b""
+        self._stderr_truncated = False
         self._lifecycle_state = "new"
         self._cleanup_task: asyncio.Task[None] | None = None
         self._cleanup_incomplete = False
@@ -187,11 +189,15 @@ class AcpTransport:
         return self._lifecycle_state
 
     @property
-    def stderr_diagnostic(self) -> str:
-        redacted = _SECRET_LINE.sub(b"[REDACTED]", self._stderr[:MAX_ACP_STDERR_BYTES])
-        for value in self._diagnostic_redactions:
-            redacted = redacted.replace(value, b"[REDACTED]")
-        return redacted.decode("utf-8", errors="replace")
+    def stderr_summary(self) -> dict[str, object]:
+        captured = self._stderr[:MAX_ACP_STDERR_BYTES]
+        return {
+            "present": bool(captured),
+            "byte_count": len(captured),
+            "truncated": self._stderr_truncated,
+            "line_count": captured.count(b"\n") + (1 if captured and not captured.endswith(b"\n") else 0),
+            "sha256": hashlib.sha256(captured).hexdigest() if captured else None,
+        }
 
     @property
     def cleanup_diagnostics(self) -> tuple[AcpCleanupDiagnostic, ...]:
@@ -210,6 +216,8 @@ class AcpTransport:
             remaining = MAX_ACP_STDERR_BYTES - len(captured)
             if remaining > 0:
                 captured.extend(chunk[:remaining])
+            if len(chunk) > max(remaining, 0):
+                self._stderr_truncated = True
         return bytes(captured)
 
     async def _start(self) -> None:

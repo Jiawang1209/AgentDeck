@@ -666,6 +666,61 @@ def test_acp_run_permission_bound_exhaustion_leaves_no_orphan_permission(
     assert state["protocol_event_outbox"] == []
 
 
+def test_acp_run_cleanup_failure_still_disconnects_without_raw_exception(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = prepare_acp_project(tmp_path, monkeypatch, command=sys.executable)
+    fixture = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+    path = root / ".agentdeck" / "config.toml"
+    path.write_text(path.read_text().replace(
+        f'transport_command = ["{sys.executable}", "--stdio"]',
+        f'transport_command = ["{sys.executable}", "{fixture}", "stream_end_turn"]',
+    ))
+    monkeypatch.setattr(cli, "_probe_acp_sdk", lambda: (True, "0.11.0"))
+    monkeypatch.setattr(cli, "_resolved_executable", lambda command: command)
+    real_transport = cli.AcpTransport
+
+    class CloseFailureTransport(real_transport):
+        async def close(self):
+            await super().close()
+            raise RuntimeError("raw-secret-native-id")
+
+    monkeypatch.setattr(cli, "AcpTransport", CloseFailureTransport)
+    assert cli.main(["protocol", "acp", "run", "--agent", "planner", "--prompt", "private-prompt", "--confirm"]) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["disconnect_reason"] == "cleanup_failed"
+    assert "raw-secret-native-id" not in captured.err
+    assert "private-prompt" not in captured.err
+
+
+@pytest.mark.parametrize("corruption", ["duplicate_session", "sequence_gap", "completion_conflict", "disconnect_not_final"])
+def test_acp_run_payload_rejects_corrupt_global_ledger(
+    tmp_path: Path, corruption: str,
+) -> None:
+    store = StateStore(tmp_path)
+    capabilities = TransportCapabilities(True, True, True, True, False, False)
+    session = store.record_agent_session("planner", "fake", "acp-adapter", "native", str(tmp_path), capabilities)
+    store.record_protocol_transition("session", session["session_id"], "created", "ready", "session_new_completed", {"protocol_version": 1, "agent_identity": {"name": "fake"}})
+    turn = store.record_protocol_turn(session["session_id"], "msg")
+    store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", None, {})
+    store.record_transport_update(session["session_id"], turn["turn_id"], 0, "completion", {"stop_reason": "end_turn"})
+    store.record_protocol_transition("turn", turn["turn_id"], "submitted", "completed", "end_turn", {})
+    store.record_protocol_transition("session", session["session_id"], "ready", "disconnected", "clean_exit", {})
+    state = store.load()
+    if corruption == "duplicate_session": state["agent_sessions"].append(dict(state["agent_sessions"][0]))
+    elif corruption == "sequence_gap": state["transport_updates"][0]["sequence"] = 1
+    elif corruption == "completion_conflict":
+        duplicate = dict(state["transport_updates"][0]); duplicate["update_id"] = "upd_conflict0000"; duplicate["sequence"] = 1
+        state["transport_updates"].append(duplicate)
+    else:
+        state["protocol_state_transitions"].append({**state["protocol_state_transitions"][-1], "transition_id": "pst_corrupt00000", "from_state": "disconnected", "to_state": "reconnecting", "reason": "bad"})
+    store.save(state)
+
+    with pytest.raises((ValueError, KeyError)):
+        cli._acp_run_payload_from_state(store, session["session_id"], turn["turn_id"])
+
+
 def test_existing_agent_defaults_to_tmux_transport(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()

@@ -1176,8 +1176,8 @@ def test_acp_permission_pending_is_one_atomic_mutation_with_exact_bounds(
     store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", None, {})
     payload = {"permission_id": "prm_" + "x" * 12, "tool_call_id": "call-1", "risk": "high"}
     encoded = len(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"))
-    monkeypatch.setattr("agentdeck.state.MAX_ACP_TURN_PAYLOAD_BYTES", encoded)
-    monkeypatch.setattr("agentdeck.state.MAX_ACP_UPDATES_PER_TURN", 1)
+    monkeypatch.setattr("agentdeck.state.MAX_ACP_TURN_PAYLOAD_BYTES", encoded + 512)
+    monkeypatch.setattr("agentdeck.state.MAX_ACP_UPDATES_PER_TURN", 2)
 
     result = store.record_acp_permission_pending(
         session["session_id"], turn["turn_id"], 0,
