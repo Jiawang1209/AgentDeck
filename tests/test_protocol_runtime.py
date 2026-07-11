@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 
 import pytest
 
@@ -214,6 +215,7 @@ def test_fresh_state_has_protocol_lineage_collections(tmp_path) -> None:
     assert state["protocol_turns"] == []
     assert state["transport_updates"] == []
     assert state["permission_requests"] == []
+    assert state["protocol_event_outbox"] == []
 
 
 def test_state_store_records_complete_protocol_lineage_and_redacted_events(tmp_path) -> None:
@@ -317,13 +319,130 @@ def test_builder_rejection_and_save_failure_do_not_append_events(tmp_path, monke
     assert _disk_snapshot(store) == before_save_failure
 
 
-def test_event_failure_happens_after_state_save(tmp_path, monkeypatch) -> None:
+def test_event_failure_returns_record_with_durable_outbox_and_flushes_once(tmp_path, monkeypatch) -> None:
     store = StateStore(tmp_path)
+    real_append_event = store.append_event
 
     def fail_event(event):
         raise OSError("event failed")
 
     monkeypatch.setattr(store, "append_event", fail_event)
-    with pytest.raises(OSError, match="event failed"):
-        store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
-    assert len(store.load()["agent_sessions"]) == 1
+    record = store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    state = store.load()
+    assert state["agent_sessions"] == [record]
+    assert len(state["protocol_event_outbox"]) == 1
+    assert store.events_path.read_text() == ""
+
+    monkeypatch.setattr(store, "append_event", real_append_event)
+    assert store.flush_protocol_event_outbox() == 1
+    assert store.flush_protocol_event_outbox() == 0
+    assert store.load()["protocol_event_outbox"] == []
+    events = [json.loads(line) for line in store.events_path.read_text().splitlines()]
+    assert len(events) == 1
+    assert events[0]["payload"]["session_id"] == record["session_id"]
+
+
+def test_outbox_replay_deduplicates_event_already_in_ledger(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    record = store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    event = json.loads(store.events_path.read_text().splitlines()[0])
+    state = store.load()
+    state["protocol_event_outbox"] = [event]
+    store.save(state)
+
+    assert store.flush_protocol_event_outbox() == 0
+    assert store.load()["protocol_event_outbox"] == []
+    assert len(store.list_agent_sessions()) == 1
+    assert store.list_agent_sessions()[0]["session_id"] == record["session_id"]
+    assert len(store.events_path.read_text().splitlines()) == 1
+
+
+def test_outbox_clear_save_failure_is_recoverable_without_duplicate_event(tmp_path, monkeypatch) -> None:
+    store = StateStore(tmp_path)
+    real_append_event = store.append_event
+    monkeypatch.setattr(store, "append_event", lambda event: (_ for _ in ()).throw(OSError("event failed")))
+    store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    monkeypatch.setattr(store, "append_event", real_append_event)
+    real_save = store.save
+    calls = 0
+
+    def fail_clear_once(state):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("clear failed")
+        return real_save(state)
+
+    monkeypatch.setattr(store, "save", fail_clear_once)
+    with pytest.raises(OSError, match="clear failed"):
+        store.flush_protocol_event_outbox()
+    assert len(store.events_path.read_text().splitlines()) == 1
+    assert len(store.load()["protocol_event_outbox"]) == 1
+    assert store.flush_protocol_event_outbox() == 0
+    assert len(store.events_path.read_text().splitlines()) == 1
+    assert store.load()["protocol_event_outbox"] == []
+
+
+def test_concurrent_protocol_mutations_do_not_lose_records(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    barrier = threading.Barrier(3)
+    records = []
+
+    def record(agent_id: str) -> None:
+        barrier.wait()
+        records.append(store.record_agent_session(agent_id, "p", "t", None, "w", CAPABILITIES))
+
+    threads = [threading.Thread(target=record, args=(agent_id,)) for agent_id in ("a", "b")]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert all(not thread.is_alive() for thread in threads)
+    assert {item["session_id"] for item in store.list_agent_sessions()} == {
+        item["session_id"] for item in records
+    }
+    assert len(records) == 2
+    assert len(store.events_path.read_text().splitlines()) == 2
+
+
+@pytest.mark.parametrize(("builder_name", "record_kind"), [
+    ("build_agent_session", "session"),
+    ("build_turn", "turn"),
+    ("build_transport_update", "update"),
+    ("build_permission_request", "permission"),
+])
+def test_builder_candidate_id_collisions_are_zero_write(
+    tmp_path, monkeypatch, builder_name: str, record_kind: str
+) -> None:
+    store = StateStore(tmp_path)
+    session = store.record_agent_session("a", "p", "t", None, "w", CAPABILITIES)
+    turn = store.record_protocol_turn(session["session_id"], "msg")
+    update = store.record_transport_update(session["session_id"], turn["turn_id"], 0, "text", {})
+    permission = store.record_permission_request(session["session_id"], turn["turn_id"], "shell", "cwd", "low")
+    existing = {"session": session, "turn": turn, "update": update, "permission": permission}[record_kind]
+    real_builder = {
+        "session": build_agent_session,
+        "turn": build_turn,
+        "update": build_transport_update,
+        "permission": build_permission_request,
+    }[record_kind]
+
+    def colliding_builder(*args, **kwargs):
+        candidate = real_builder(*args, **kwargs)
+        id_key = {"session": "session_id", "turn": "turn_id", "update": "update_id", "permission": "permission_id"}[record_kind]
+        candidate[id_key] = existing[id_key]
+        return candidate
+
+    monkeypatch.setattr(f"agentdeck.state.{builder_name}", colliding_builder)
+    before = _disk_snapshot(store)
+    with pytest.raises(ValueError, match="duplicate .* identity"):
+        if record_kind == "session":
+            store.record_agent_session("b", "p", "t", None, "w", CAPABILITIES)
+        elif record_kind == "turn":
+            store.record_protocol_turn(session["session_id"], "msg2")
+        elif record_kind == "update":
+            store.record_transport_update(session["session_id"], turn["turn_id"], 1, "text", {})
+        else:
+            store.record_permission_request(session["session_id"], turn["turn_id"], "shell", "other", "low")
+    assert _disk_snapshot(store) == before

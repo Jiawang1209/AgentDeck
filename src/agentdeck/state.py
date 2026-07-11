@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import copy
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
@@ -156,6 +157,7 @@ class StateStore:
                 "protocol_turns": [],
                 "transport_updates": [],
                 "permission_requests": [],
+                "protocol_event_outbox": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -184,12 +186,92 @@ class StateStore:
     def _validate_protocol_identities(state: dict[str, Any]) -> None:
         sessions = state.setdefault("agent_sessions", [])
         turns = state.setdefault("protocol_turns", [])
+        updates = state.setdefault("transport_updates", [])
+        permissions = state.setdefault("permission_requests", [])
+        state.setdefault("protocol_event_outbox", [])
         session_ids = [item.get("session_id") for item in sessions if isinstance(item, dict)]
         turn_ids = [item.get("turn_id") for item in turns if isinstance(item, dict)]
+        update_ids = [item.get("update_id") for item in updates if isinstance(item, dict)]
+        permission_ids = [item.get("permission_id") for item in permissions if isinstance(item, dict)]
         if len(session_ids) != len(set(session_ids)):
             raise ValueError("duplicate agent session identity")
         if len(turn_ids) != len(set(turn_ids)):
             raise ValueError("duplicate protocol turn identity")
+        if len(update_ids) != len(set(update_ids)):
+            raise ValueError("duplicate transport update identity")
+        if len(permission_ids) != len(set(permission_ids)):
+            raise ValueError("duplicate permission request identity")
+
+    @contextmanager
+    def _protocol_mutation_lock(self):
+        lock_path = self.state_path.parent / "protocol-mutation.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+    def _protocol_event_ids(self) -> set[str]:
+        event_ids: set[str] = set()
+        if not self.events_path.exists():
+            return event_ids
+        for line in self.events_path.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and isinstance(event.get("event_id"), str):
+                event_ids.add(event["event_id"])
+        return event_ids
+
+    def _flush_protocol_event_outbox_locked(self) -> int:
+        state = self.load()
+        outbox = state.setdefault("protocol_event_outbox", [])
+        if not outbox:
+            return 0
+        existing_ids = self._protocol_event_ids()
+        appended = 0
+        for item in outbox:
+            event_id = item.get("event_id") if isinstance(item, dict) else None
+            if event_id in existing_ids:
+                continue
+            event = EventRecord(**item)
+            self.append_event(event)
+            existing_ids.add(event.event_id)
+            appended += 1
+        state["protocol_event_outbox"] = []
+        self.save(state)
+        return appended
+
+    def flush_protocol_event_outbox(self) -> int:
+        with self._protocol_mutation_lock():
+            return self._flush_protocol_event_outbox_locked()
+
+    def _save_protocol_record(
+        self,
+        state: dict[str, Any],
+        collection: str,
+        record: dict[str, Any],
+        event: EventRecord,
+    ) -> dict[str, Any]:
+        state.setdefault(collection, []).append(record)
+        state.setdefault("protocol_event_outbox", []).append(asdict(event))
+        self.save(state)
+        try:
+            self.append_event(event)
+        except OSError:
+            return record
+        state["protocol_event_outbox"] = [
+            item for item in state["protocol_event_outbox"]
+            if item.get("event_id") != event.event_id
+        ]
+        try:
+            self.save(state)
+        except OSError:
+            pass
+        return record
 
     def record_agent_session(
         self,
@@ -200,36 +282,40 @@ class StateStore:
         workspace: str,
         capabilities: TransportCapabilities,
     ) -> dict[str, Any]:
-        state = self.load()
-        self._validate_protocol_identities(state)
-        record = build_agent_session(
-            agent_id, provider, transport, native_session_id, workspace, capabilities
-        )
-        state.setdefault("agent_sessions", []).append(record)
-        self.save(state)
-        self.append_event(EventRecord.create("agent_session_recorded", {
-            "session_id": record["session_id"],
-            "agent_id": record["agent_id"],
-            "transport": record["transport"],
-        }))
-        return record
+        with self._protocol_mutation_lock():
+            self._flush_protocol_event_outbox_locked()
+            state = self.load()
+            self._validate_protocol_identities(state)
+            record = build_agent_session(
+                agent_id, provider, transport, native_session_id, workspace, capabilities
+            )
+            if any(item.get("session_id") == record["session_id"] for item in state["agent_sessions"]):
+                raise ValueError("duplicate agent session identity")
+            event = EventRecord.create("agent_session_recorded", {
+                "session_id": record["session_id"],
+                "agent_id": record["agent_id"],
+                "transport": record["transport"],
+            })
+            return self._save_protocol_record(state, "agent_sessions", record, event)
 
     def record_protocol_turn(self, session_id: str, message_id: str) -> dict[str, Any]:
-        state = self.load()
-        self._validate_protocol_identities(state)
-        self._unique_protocol_record(
-            state.setdefault("agent_sessions", []), "session_id", session_id,
-            "duplicate agent session identity",
-        )
-        record = build_turn(session_id, message_id)
-        state.setdefault("protocol_turns", []).append(record)
-        self.save(state)
-        self.append_event(EventRecord.create("protocol_turn_recorded", {
-            "turn_id": record["turn_id"],
-            "session_id": record["session_id"],
-            "message_id": record["message_id"],
-        }))
-        return record
+        with self._protocol_mutation_lock():
+            self._flush_protocol_event_outbox_locked()
+            state = self.load()
+            self._validate_protocol_identities(state)
+            self._unique_protocol_record(
+                state.setdefault("agent_sessions", []), "session_id", session_id,
+                "duplicate agent session identity",
+            )
+            record = build_turn(session_id, message_id)
+            if any(item.get("turn_id") == record["turn_id"] for item in state["protocol_turns"]):
+                raise ValueError("duplicate protocol turn identity")
+            event = EventRecord.create("protocol_turn_recorded", {
+                "turn_id": record["turn_id"],
+                "session_id": record["session_id"],
+                "message_id": record["message_id"],
+            })
+            return self._save_protocol_record(state, "protocol_turns", record, event)
 
     def _validated_protocol_turn(
         self, state: dict[str, Any], session_id: str, turn_id: str
@@ -250,44 +336,49 @@ class StateStore:
     def record_transport_update(
         self, session_id: str, turn_id: str, sequence: int, kind: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        state = self.load()
-        self._validated_protocol_turn(state, session_id, turn_id)
-        updates = state.setdefault("transport_updates", [])
-        if any(
-            isinstance(item, dict)
-            and item.get("turn_id") == turn_id
-            and item.get("sequence") == sequence
-            for item in updates
-        ):
-            raise ValueError("duplicate transport update sequence")
-        record = build_transport_update(session_id, turn_id, sequence, kind, payload)
-        updates.append(record)
-        self.save(state)
-        self.append_event(EventRecord.create("transport_update_recorded", {
-            "update_id": record["update_id"],
-            "session_id": record["session_id"],
-            "turn_id": record["turn_id"],
-            "sequence": record["sequence"],
-            "kind": record["kind"],
-        }))
-        return record
+        with self._protocol_mutation_lock():
+            self._flush_protocol_event_outbox_locked()
+            state = self.load()
+            self._validated_protocol_turn(state, session_id, turn_id)
+            updates = state.setdefault("transport_updates", [])
+            if any(
+                isinstance(item, dict)
+                and item.get("turn_id") == turn_id
+                and item.get("sequence") == sequence
+                for item in updates
+            ):
+                raise ValueError("duplicate transport update sequence")
+            record = build_transport_update(session_id, turn_id, sequence, kind, payload)
+            if any(item.get("update_id") == record["update_id"] for item in updates):
+                raise ValueError("duplicate transport update identity")
+            event = EventRecord.create("transport_update_recorded", {
+                "update_id": record["update_id"],
+                "session_id": record["session_id"],
+                "turn_id": record["turn_id"],
+                "sequence": record["sequence"],
+                "kind": record["kind"],
+            })
+            return self._save_protocol_record(state, "transport_updates", record, event)
 
     def record_permission_request(
         self, session_id: str, turn_id: str, tool_name: str, target: str, risk: str
     ) -> dict[str, Any]:
-        state = self.load()
-        self._validated_protocol_turn(state, session_id, turn_id)
-        record = build_permission_request(session_id, turn_id, tool_name, target, risk)
-        state.setdefault("permission_requests", []).append(record)
-        self.save(state)
-        self.append_event(EventRecord.create("permission_request_recorded", {
-            "permission_id": record["permission_id"],
-            "session_id": record["session_id"],
-            "turn_id": record["turn_id"],
-            "tool_name": record["tool_name"],
-            "risk": record["risk"],
-        }))
-        return record
+        with self._protocol_mutation_lock():
+            self._flush_protocol_event_outbox_locked()
+            state = self.load()
+            self._validated_protocol_turn(state, session_id, turn_id)
+            record = build_permission_request(session_id, turn_id, tool_name, target, risk)
+            permissions = state.setdefault("permission_requests", [])
+            if any(item.get("permission_id") == record["permission_id"] for item in permissions):
+                raise ValueError("duplicate permission request identity")
+            event = EventRecord.create("permission_request_recorded", {
+                "permission_id": record["permission_id"],
+                "session_id": record["session_id"],
+                "turn_id": record["turn_id"],
+                "tool_name": record["tool_name"],
+                "risk": record["risk"],
+            })
+            return self._save_protocol_record(state, "permission_requests", record, event)
 
     def agent_session_by_id(self, session_id: str) -> dict[str, Any]:
         state = self.load()
