@@ -41,15 +41,18 @@ def _consume_task(task: asyncio.Task[Any]) -> None:
         task.exception()
 
 
-async def _hard_bound(operation: object, timeout: float) -> bool:
+async def _hard_bound(operation: object, timeout: float) -> str:
     task = asyncio.create_task(operation)  # type: ignore[arg-type]
     done, _ = await asyncio.wait({task}, timeout=timeout)
     if task in done:
-        _consume_task(task)
-        return True
+        try:
+            task.result()
+        except BaseException:
+            return "failed"
+        return "completed"
     task.cancel()
     task.add_done_callback(_consume_task)
-    return False
+    return "timed_out"
 
 
 class AcpTransportError(RuntimeError):
@@ -93,6 +96,12 @@ class AcpPromptResult:
     stop_reason: str
     outcome: str
     disconnect_reason: str
+
+
+@dataclass(frozen=True)
+class AcpCleanupDiagnostic:
+    stage: str
+    status: str
 
 
 class AcpTransport:
@@ -141,6 +150,9 @@ class AcpTransport:
         self._stderr = b""
         self._closed = False
         self._cleanup_task: asyncio.Task[None] | None = None
+        self._cleanup_incomplete = False
+        self._cleanup_diagnostics: list[AcpCleanupDiagnostic] = []
+        self._cleanup_completed_stages: set[str] = set()
         if test_env is not None and (
             type(test_env) is not dict
             or any(type(k) is not str or type(v) is not str for k, v in test_env.items())
@@ -171,6 +183,10 @@ class AcpTransport:
             redacted = redacted.replace(value, b"[REDACTED]")
         return redacted.decode("utf-8", errors="replace")
 
+    @property
+    def cleanup_diagnostics(self) -> tuple[AcpCleanupDiagnostic, ...]:
+        return tuple(self._cleanup_diagnostics)
+
     async def _capture_stderr(self) -> bytes:
         assert self._process is not None
         stream = self._process.stderr
@@ -187,7 +203,7 @@ class AcpTransport:
         return bytes(captured)
 
     async def _start(self) -> None:
-        if self._connection is not None:
+        if self._connection is not None and "connection_close" not in self._cleanup_completed_stages:
             return
         if self._closed:
             raise RuntimeError("ACP transport is closed")
@@ -241,7 +257,11 @@ class AcpTransport:
                     f"unsupported ACP protocol version {response.protocol_version}; expected 1"
                 )
         except BaseException:
-            await asyncio.shield(self._ensure_cleanup())
+            try:
+                await asyncio.shield(self._ensure_cleanup())
+            except BaseException:
+                # The operation error remains primary; cleanup diagnostics are inspectable.
+                pass
             raise
         return AcpInitializeResult(
             protocol_version=response.protocol_version,
@@ -320,7 +340,9 @@ class AcpTransport:
         return AcpCancelDiagnostic(session_id=native_session_id, status=status)
 
     def _ensure_cleanup(self) -> asyncio.Task[None]:
-        if self._cleanup_task is None:
+        if self._cleanup_task is None or (
+            self._cleanup_task.done() and self._cleanup_incomplete
+        ):
             self._cleanup_task = asyncio.create_task(self._cleanup())
         return self._cleanup_task
 
@@ -328,41 +350,82 @@ class AcpTransport:
         await asyncio.shield(self._ensure_cleanup())
 
     async def _cleanup(self) -> None:
+        self._cleanup_incomplete = False
         process = self._process
         if self._connection is not None:
-            await _hard_bound(self._connection.close(), self._cancel_timeout)
-        if process is not None and process.stdin is not None:
-            with contextlib.suppress(Exception):
-                process.stdin.close()
-        if process is not None and process.returncode is None:
-            try:
-                await asyncio.wait_for(process.wait(), timeout=self._close_grace)
-            except TimeoutError:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=self._terminate_grace)
-                except TimeoutError:
-                    process.kill()
-                    await asyncio.wait_for(process.wait(), timeout=self._kill_grace)
-        if self._context is not None:
-            await _hard_bound(
-                self._context.__aexit__(None, None, None), self._kill_grace
+            self._record_cleanup(
+                "connection_close",
+                await _hard_bound(self._connection.close(), self._cancel_timeout),
             )
-        if self._stderr_task is not None:
+        if process is not None and process.stdin is not None:
+            try:
+                process.stdin.close()
+            except Exception:
+                self._record_cleanup("stdin_close", "failed")
+        if process is not None and process.returncode is None:
+            graceful = await _hard_bound(process.wait(), self._close_grace)
+            self._record_cleanup("process_wait", graceful)
+            if graceful != "completed" and process.returncode is None:
+                self._signal_process(process, "terminate")
+                terminated = await _hard_bound(process.wait(), self._terminate_grace)
+                self._record_cleanup("process_terminate_wait", terminated)
+                if terminated != "completed" and process.returncode is None:
+                    self._signal_process(process, "kill")
+                    killed = await _hard_bound(process.wait(), self._kill_grace)
+                    self._record_cleanup("process_kill_wait", killed)
+        if self._context is not None and "context_exit" not in self._cleanup_completed_stages:
+            self._record_cleanup(
+                "context_exit",
+                await _hard_bound(
+                    self._context.__aexit__(None, None, None), self._kill_grace
+                ),
+            )
+        if self._stderr_task is not None and "stderr_join" not in self._cleanup_completed_stages:
+            cancelled_by_cleanup = False
             if not self._stderr_task.done():
                 self._stderr_task.cancel()
+                cancelled_by_cleanup = True
             done, _ = await asyncio.wait({self._stderr_task}, timeout=self._kill_grace)
             if self._stderr_task in done:
-                with contextlib.suppress(BaseException):
+                try:
                     self._stderr = self._stderr_task.result()
+                except asyncio.CancelledError:
+                    self._record_cleanup(
+                        "stderr_join", "completed" if cancelled_by_cleanup else "failed"
+                    )
+                except BaseException:
+                    self._record_cleanup("stderr_join", "failed")
+                else:
+                    self._record_cleanup("stderr_join", "completed")
             else:
                 self._stderr_task.add_done_callback(_consume_task)
+                self._record_cleanup("stderr_join", "timed_out")
         if process is not None:
             process_transport = getattr(process, "_transport", None)
             if process_transport is not None:
                 with contextlib.suppress(Exception):
                     process_transport.close()
-        self._closed = True
+        required = {"connection_close", "context_exit", "stderr_join"}
+        self._cleanup_incomplete = (
+            (process is not None and process.returncode is None)
+            or not required.issubset(self._cleanup_completed_stages)
+        )
+        self._closed = not self._cleanup_incomplete
+
+    def _record_cleanup(self, stage: str, status: str) -> None:
+        self._cleanup_diagnostics.append(AcpCleanupDiagnostic(stage=stage, status=status))
+        if status == "completed":
+            self._cleanup_completed_stages.add(stage)
+
+    def _signal_process(self, process: asyncio.subprocess.Process, signal: str) -> None:
+        try:
+            getattr(process, signal)()
+        except ProcessLookupError:
+            self._record_cleanup(f"process_{signal}", "completed")
+        except Exception:
+            self._record_cleanup(f"process_{signal}", "failed")
+        else:
+            self._record_cleanup(f"process_{signal}", "completed")
 
     async def __aenter__(self) -> AcpTransport:
         await self.initialize()

@@ -636,11 +636,10 @@ async def test_close_is_shielded_concurrent_retryable_and_bounds_stderr_descenda
             await original_close()
             return
         entered.set()
-        while not release.is_set():
-            try:
-                await release.wait()
-            except asyncio.CancelledError:
-                continue
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
         await original_close()
 
     transport._connection.close = resistant_close
@@ -649,6 +648,8 @@ async def test_close_is_shielded_concurrent_retryable_and_bounds_stderr_descenda
     first.cancel()
     with pytest.raises(asyncio.CancelledError):
         await first
+    assert transport._closed is False
+    await asyncio.shield(transport._cleanup_task)
     assert transport._closed is False
     await asyncio.gather(transport.close(), transport.close())
     assert transport._closed is True
@@ -691,6 +692,114 @@ async def test_close_caller_cancellation_during_process_wait_does_not_stop_clean
     assert transport._closed is True
     with pytest.raises(ProcessLookupError):
         os.kill(child_pid, 0)
+
+
+@async_test
+async def test_cleanup_toctou_stage_failures_do_not_short_circuit_and_can_retry(
+    tmp_path: Path
+) -> None:
+    from agentdeck.runtime.acp import AcpTransport
+
+    class Pipe:
+        def close(self) -> None:
+            raise RuntimeError("pipe close failed")
+
+    class Process:
+        pid = 999999
+        returncode = None
+        stdin = Pipe()
+        _transport = None
+
+        async def wait(self) -> int:
+            raise RuntimeError("wait failed")
+
+        def terminate(self) -> None:
+            raise ProcessLookupError
+
+        def kill(self) -> None:
+            raise RuntimeError("kill failed secret")
+
+    class Flaky:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def close(self) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("close failed secret")
+
+        async def __aexit__(self, *_: Any) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("context failed secret")
+
+    client, _ = _transport_client()
+    transport = AcpTransport(
+        (sys.executable, "unused"), tmp_path, client,
+        cancel_timeout=0.01, close_grace=0.01, terminate_grace=0.01, kill_grace=0.01,
+    )
+    connection = Flaky()
+    context = Flaky()
+    process = Process()
+    transport._connection = connection
+    transport._context = context
+    transport._process = process
+
+    async def stderr_failure() -> bytes:
+        raise RuntimeError("stderr failed secret")
+
+    transport._stderr_task = asyncio.create_task(stderr_failure())
+    await transport.close()
+    assert transport._closed is False
+    assert {item.stage for item in transport.cleanup_diagnostics} >= {
+        "connection_close", "stdin_close", "process_wait", "process_terminate",
+        "process_kill", "context_exit", "stderr_join",
+    }
+    assert "secret" not in repr(transport.cleanup_diagnostics)
+
+    process.returncode = 0
+    transport._stderr_task = asyncio.create_task(asyncio.sleep(0, result=b""))
+    await transport.close()
+    assert transport._closed is True
+    assert connection.calls == 2
+    assert context.calls == 2
+
+
+@async_test
+async def test_initialize_preserves_primary_error_when_cleanup_stages_fail(tmp_path: Path) -> None:
+    from agentdeck.runtime.acp import AcpAmbiguousOutcome, AcpTransport
+
+    class Connection:
+        async def initialize(self, **_: Any) -> None:
+            raise RuntimeError("connection closed: primary operation marker")
+
+        async def close(self) -> None:
+            raise RuntimeError("cleanup close marker")
+
+    class Context:
+        async def __aexit__(self, *_: Any) -> None:
+            raise RuntimeError("cleanup context marker")
+
+    class Process:
+        pid = 999998
+        returncode = 0
+        stdin = None
+        _transport = None
+
+    client, _ = _transport_client()
+    transport = AcpTransport((sys.executable, "unused"), tmp_path, client)
+    transport._connection = Connection()
+    transport._context = Context()
+    transport._process = Process()
+
+    async def failed_stderr() -> bytes:
+        raise RuntimeError("cleanup stderr marker")
+
+    transport._stderr_task = asyncio.create_task(failed_stderr())
+    with pytest.raises(AcpAmbiguousOutcome, match="active operation") as caught:
+        await transport.initialize()
+    assert "cleanup" not in str(caught.value)
+    assert {item.status for item in transport.cleanup_diagnostics} == {"failed"}
 
 
 @async_test
