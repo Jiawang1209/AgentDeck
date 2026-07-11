@@ -12,6 +12,7 @@
 - **只读与 fail-safe**: fresh project 返回四个 count=0 的稳定对象；status/ProjectView 不写 state/events、不调用 provider、不读取 tmux、不改变 permission。损坏的集合或 row 明确失败，不静默缩减 count；ProjectView example、mandatory top-level validator 与 additive-v1 文档同步。`src/agentdeck/contracts.py` 的修改仅限既有 ProjectView 字段/example/validator 同步，不新增 protocol-runtime contract、discovery 或 CLI 路由。
 - **TDD 证据**: protocol ProjectView 测试先因四字段缺失得到 3 failed / 78 passed RED，最小实现后 81/81 GREEN；contract/example/read-only status 测试随后先得到预期字段缺失 RED，再同步既有 ProjectView contract。
 - **规格审查 2**: source projection 现在逐类严格验证 required 字段、non-empty string、domain enum、非 bool sequence、optional decision、exact 六项 bool capabilities 和 native session 类型；corrupt row 使 status 在输出前失败。既有 ProjectView discovery 新增四组 summary/item field lists，example 改为同源完整 session→turn→update→permission chain；validator 对 summary/item exact allowlist、非负 int（拒 bool）、计数 map、20 上限、字段类型/enum 和敏感 extra 字段严格守门。审查矩阵先得到 13 failed RED，最小加固后 14/14 GREEN。
+- **质量审查 1**: protocol summary validator 进一步校验 `count == sum(by_*)`、`items` 长度等于 `min(count, 20)`、enum-only map keys、permission pending 同源、count<=20 时 item 分布与 map 精确一致，并拒绝乱序和重复 domain ID；count>20 仍只验证 latest items 的字段/enum/顺序，不错误要求其局部分布等于全量 map。七项语义矩阵先全部 RED，加固后 14/14 GREEN。
 
 ### Persist protocol runtime lineage
 

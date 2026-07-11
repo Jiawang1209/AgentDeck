@@ -1174,6 +1174,24 @@ def test_validate_project_view_contract_strict_protocol_summary_matrix(mutate, e
     assert expected in result["errors"]
 
 
+@pytest.mark.parametrize(("mutate", "expected"), [
+    (lambda p: p["agent_sessions"].update({"count": 999}), "agent_sessions.count must equal sum(by_state)"),
+    (lambda p: p["protocol_turns"].update({"by_state": {"created": 1}}), "protocol_turns items distribution must match by_state"),
+    (lambda p: p["permission_requests"].update({"pending_count": 0}), "permission_requests.pending_count must equal by_status pending count"),
+    (lambda p: p["transport_updates"].update({"by_kind": {"unknown": 1}}), "transport_updates.by_kind has invalid key: unknown"),
+    (lambda p: p["agent_sessions"].update({"items": []}), "agent_sessions.items length must equal min(count, 20)"),
+    (lambda p: p["protocol_turns"]["items"].append(dict(p["protocol_turns"]["items"][0])), "protocol_turns.items contains duplicate turn_id: trn_example"),
+    (lambda p: p["permission_requests"]["items"].extend([{**p["permission_requests"]["items"][0], "permission_id": "prm_aaa", "created_at": "2026-07-03T00:00:00+00:00"}]), "permission_requests.items must be sorted by created_at and permission_id"),
+])
+def test_validate_project_view_protocol_summary_semantics(mutate, expected) -> None:
+    payload = project_view_example()
+    mutate(payload)
+
+    result = validate_project_view_contract(payload)
+
+    assert expected in result["errors"]
+
+
 def test_project_view_contract_response_matches_cli_shape(tmp_path: Path) -> None:
     contract_path = tmp_path / "project-view-schema.md"
     contract_path.write_text("# ProjectView Contract\n", encoding="utf-8")

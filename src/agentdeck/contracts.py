@@ -6279,10 +6279,10 @@ def _validate_project_view_protocol_summaries(
     errors: list[str], payload: dict[str, object]
 ) -> None:
     specs = {
-        "agent_sessions": (PROJECT_VIEW_AGENT_SESSIONS_FIELDS, PROJECT_VIEW_AGENT_SESSION_ITEM_FIELDS, "by_state"),
-        "protocol_turns": (PROJECT_VIEW_PROTOCOL_TURNS_FIELDS, PROJECT_VIEW_PROTOCOL_TURN_ITEM_FIELDS, "by_state"),
-        "transport_updates": (PROJECT_VIEW_TRANSPORT_UPDATES_FIELDS, PROJECT_VIEW_TRANSPORT_UPDATE_ITEM_FIELDS, "by_kind"),
-        "permission_requests": (PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS, PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS, "by_status"),
+        "agent_sessions": (PROJECT_VIEW_AGENT_SESSIONS_FIELDS, PROJECT_VIEW_AGENT_SESSION_ITEM_FIELDS, "by_state", "state", "session_id"),
+        "protocol_turns": (PROJECT_VIEW_PROTOCOL_TURNS_FIELDS, PROJECT_VIEW_PROTOCOL_TURN_ITEM_FIELDS, "by_state", "state", "turn_id"),
+        "transport_updates": (PROJECT_VIEW_TRANSPORT_UPDATES_FIELDS, PROJECT_VIEW_TRANSPORT_UPDATE_ITEM_FIELDS, "by_kind", "kind", "update_id"),
+        "permission_requests": (PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS, PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS, "by_status", "status", "permission_id"),
     }
     enum_fields = {
         ("agent_sessions", "state"): {"created", "connecting", "ready", "busy", "reconnecting", "stopped", "failed"},
@@ -6290,7 +6290,7 @@ def _validate_project_view_protocol_summaries(
         ("transport_updates", "kind"): {"progress", "text", "tool_call", "tool_result", "permission_request", "artifact", "completion", "error"},
         ("permission_requests", "status"): {"pending", "approved", "denied", "expired"},
     }
-    for name, (required_fields, item_fields, group_field) in specs.items():
+    for name, (required_fields, item_fields, group_field, item_group_field, identity_field) in specs.items():
         summary = payload.get(name)
         if not isinstance(summary, dict):
             if name in payload:
@@ -6310,15 +6310,41 @@ def _validate_project_view_protocol_summaries(
             for key, value in counts.items()
         ):
             errors.append(f"{name}.{group_field} values must be non-negative integers")
+        else:
+            allowed_keys = enum_fields[(name, item_group_field)]
+            for key in sorted(set(counts) - allowed_keys):
+                errors.append(f"{name}.{group_field} has invalid key: {key}")
+            count = summary.get("count")
+            if type(count) is int and count >= 0 and count != sum(counts.values()):
+                errors.append(f"{name}.count must equal sum({group_field})")
+            if name == "permission_requests":
+                pending_count = summary.get("pending_count")
+                if type(pending_count) is int and pending_count >= 0 and pending_count != counts.get("pending", 0):
+                    errors.append("permission_requests.pending_count must equal by_status pending count")
         if not isinstance(summary.get("items"), list):
             errors.append(f"{name}.items must be a list")
         elif len(summary["items"]) > 20:
             errors.append(f"{name}.items must contain at most 20 items")
         else:
+            count = summary.get("count")
+            if type(count) is int and count >= 0 and len(summary["items"]) != min(count, 20):
+                errors.append(f"{name}.items length must equal min(count, 20)")
+            identities: set[object] = set()
+            order: list[tuple[object, object]] = []
+            item_counts: dict[str, int] = {}
             for index, item in enumerate(summary["items"]):
                 if not isinstance(item, dict):
                     errors.append(f"{name}.items[{index}] must be an object")
                     continue
+                identity = item.get(identity_field)
+                if isinstance(identity, str):
+                    if identity in identities:
+                        errors.append(f"{name}.items contains duplicate {identity_field}: {identity}")
+                    identities.add(identity)
+                order.append((item.get("created_at"), identity))
+                group_value = item.get(item_group_field)
+                if isinstance(group_value, str):
+                    item_counts[group_value] = item_counts.get(group_value, 0) + 1
                 for field in sorted(set(item) - set(item_fields)):
                     errors.append(f"{name}.items[{index}] has unexpected field: {field}")
                 for field in item_fields:
@@ -6345,6 +6371,16 @@ def _validate_project_view_protocol_summaries(
                     allowed = enum_fields.get((name, field))
                     if allowed is not None and item.get(field) not in allowed:
                         errors.append(f"{name}.items[{index}].{field} is invalid")
+            if all(isinstance(created_at, str) and isinstance(identity, str) for created_at, identity in order):
+                if order != sorted(order):
+                    errors.append(f"{name}.items must be sorted by created_at and {identity_field}")
+            if (
+                type(summary.get("count")) is int
+                and summary["count"] <= 20
+                and isinstance(summary.get(group_field), dict)
+                and item_counts != summary[group_field]
+            ):
+                errors.append(f"{name} items distribution must match {group_field}")
 
 
 def _validate_project_view_mission_items(
