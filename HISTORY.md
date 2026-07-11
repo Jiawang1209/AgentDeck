@@ -12,6 +12,7 @@
 - **Contracts**: 原子同步 additive `project-view/v1` 与 `protocol-runtime/v1` discovery/example/validator，公开 entity types、state vocabularies 和 latest-window=20；schema version 按既有 additive-v1 策略保持不变。
 - **TDD**: 红测先证明缺失 transition summary、未派生 current state 和窗口外 corruption 未拦截；实现后覆盖 count/maps/latest20、stable ordering、duplicate/semantic invariants、bool impostor、敏感字段 redaction 与 byte-for-byte read-only。
 - **Review hardening**: transition history validator 预建严格 session/turn/permission ID maps，再单次遍历 transitions，整体复杂度收敛为 O(S+T+P+X)，spy + 100-entity matrix 证明不再逐 transition 扫描实体集合。`protocol-runtime/v1` validator 对完整窗口新增 entity existence/type、base-state chain continuity 与 final derived-state cross-check；bounded `count>20` 继续允许窗口外 parent，不制造错误引用失败。
+- **Review parity**: 抽取同源 compact transition lineage helper，由 `validate_project_view_contract()` 与 `validate_protocol_runtime_contract()` 共同调用；两入口现在对 missing/wrong-type entity、stale chain、final current-state mismatch 和 bounded-window parent omission 产生一致语义与错误。
 
 ### Record append-only protocol lifecycle transitions
 

@@ -272,6 +272,39 @@ def test_protocol_runtime_validator_cross_checks_complete_transition_window(muta
     assert any(expected in error for error in result["errors"])
 
 
+@pytest.mark.parametrize(("mutate", "expected"), [
+    (lambda p: p["protocol_state_transitions"]["items"][0].update({"entity_id": "trn_missing"}), "must reference complete protocol_turns"),
+    (lambda p: p["protocol_state_transitions"]["items"][0].update({"entity_id": True}), "entity_id has invalid type"),
+    (lambda p: p["protocol_state_transitions"]["items"][1].update({"from_state": "created"}), "transition chain is stale"),
+    (lambda p: p["protocol_turns"]["items"][0].update({"state": "streaming"}), "derived state must match protocol_turns"),
+])
+def test_project_view_validator_cross_checks_complete_transition_window(mutate, expected) -> None:
+    payload = project_view_example()
+    mutate(payload)
+
+    result = validate_project_view_contract(payload)
+
+    assert any(expected in error for error in result["errors"])
+
+
+def test_project_view_and_protocol_runtime_share_transition_lineage_errors() -> None:
+    project_view = project_view_example()
+    project_view["protocol_state_transitions"]["items"][1]["from_state"] = "created"
+    runtime = protocol_runtime_example()
+    runtime["protocol_state_transitions"] = deepcopy(project_view["protocol_state_transitions"])
+
+    project_errors = {
+        error for error in validate_project_view_contract(project_view)["errors"]
+        if "protocol_state_transitions" in error
+    }
+    runtime_errors = {
+        error for error in validate_protocol_runtime_contract(runtime)["errors"]
+        if "protocol_state_transitions" in error
+    }
+
+    assert project_errors == runtime_errors
+
+
 def test_protocol_runtime_validator_allows_parent_outside_bounded_window() -> None:
     payload = protocol_runtime_example()
     payload["protocol_turns"] = {"count": 21, "by_state": {"waiting_permission": 21}, "items": [
