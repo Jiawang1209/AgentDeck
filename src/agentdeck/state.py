@@ -25,6 +25,10 @@ from .mission import (
 )
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
 from .runtime.protocol import (
+    AGENT_SESSION_STATES,
+    PERMISSION_STATES,
+    TURN_STATES,
+    UPDATE_KINDS,
     TransportCapabilities,
     build_agent_session,
     build_permission_request,
@@ -1751,11 +1755,13 @@ class StateStore:
                 raise ValueError(f"invalid protocol summary item at index {index}")
             for field in item_fields:
                 value = record.get(field)
-                if field == "decision" and (value is None or isinstance(value, str)):
+                if field == "decision" and (
+                    value is None or isinstance(value, str) and bool(value.strip())
+                ):
                     continue
                 if field == "sequence" and isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                     continue
-                if not isinstance(value, str):
+                if not isinstance(value, str) or not value.strip():
                     raise ValueError(f"invalid protocol summary field: {field}")
             item = {field: record.get(field) for field in item_fields}
             prepared.append(transform(record) if transform is not None else item)
@@ -1771,9 +1777,23 @@ class StateStore:
         )
 
         def compact(record: dict[str, Any]) -> dict[str, Any]:
+            for field in ("session_id", "agent_id", "provider", "transport", "workspace", "created_at", "updated_at"):
+                if not isinstance(record.get(field), str) or not record[field].strip():
+                    raise ValueError(f"invalid agent session field: {field}")
+            if record.get("state") not in AGENT_SESSION_STATES:
+                raise ValueError("invalid agent session state")
+            native_session_id = record.get("native_session_id")
+            if native_session_id is not None and (
+                not isinstance(native_session_id, str) or not native_session_id.strip()
+            ):
+                raise ValueError("invalid agent session native_session_id")
             capabilities = record.get("capabilities")
-            if not isinstance(capabilities, dict):
-                raise ValueError("agent session capabilities must be an object")
+            if (
+                not isinstance(capabilities, dict)
+                or set(capabilities) != set(capability_fields)
+                or any(type(capabilities[field]) is not bool for field in capability_fields)
+            ):
+                raise ValueError("invalid agent session capabilities")
             return {
                 "session_id": record.get("session_id"),
                 "agent_id": record.get("agent_id"),
@@ -1794,6 +1814,10 @@ class StateStore:
 
     @staticmethod
     def _protocol_turn_summaries(records: object) -> dict[str, Any]:
+        if isinstance(records, list):
+            for record in records:
+                if isinstance(record, dict) and record.get("state") not in TURN_STATES:
+                    raise ValueError("invalid protocol turn state")
         items, by_state = StateStore._protocol_summary_items(
             records, identity_field="turn_id", group_field="state",
             item_fields=("turn_id", "session_id", "message_id", "state", "created_at", "updated_at"),
@@ -1802,6 +1826,14 @@ class StateStore:
 
     @staticmethod
     def _transport_update_summaries(records: object) -> dict[str, Any]:
+        if isinstance(records, list):
+            for record in records:
+                if isinstance(record, dict) and record.get("kind") not in UPDATE_KINDS:
+                    raise ValueError("invalid transport update kind")
+                if isinstance(record, dict) and (
+                    type(record.get("sequence")) is not int or record["sequence"] < 0
+                ):
+                    raise ValueError("invalid transport update sequence")
         items, by_kind = StateStore._protocol_summary_items(
             records, identity_field="update_id", group_field="kind",
             item_fields=("update_id", "session_id", "turn_id", "sequence", "kind", "created_at"),
@@ -1810,6 +1842,10 @@ class StateStore:
 
     @staticmethod
     def _permission_request_summaries(records: object) -> dict[str, Any]:
+        if isinstance(records, list):
+            for record in records:
+                if isinstance(record, dict) and record.get("status") not in PERMISSION_STATES:
+                    raise ValueError("invalid permission request status")
         items, by_status = StateStore._protocol_summary_items(
             records, identity_field="permission_id", group_field="status",
             item_fields=(

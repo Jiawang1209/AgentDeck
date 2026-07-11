@@ -147,6 +147,24 @@ def test_project_view_rejects_corrupt_protocol_rows_instead_of_hiding_them(tmp_p
         store.project_view(_project_config(tmp_path))
 
 
+@pytest.mark.parametrize(("collection", "record", "error"), [
+    ("agent_sessions", {"session_id": "ags_1", "agent_id": "", "provider": "codex", "transport": "native", "native_session_id": None, "workspace": "/tmp", "capabilities": CAPABILITIES.summary(), "state": "created", "created_at": "now", "updated_at": "now"}, "invalid agent session field: agent_id"),
+    ("agent_sessions", {"session_id": "ags_1", "agent_id": "a", "provider": "codex", "transport": "native", "native_session_id": "", "workspace": "/tmp", "capabilities": CAPABILITIES.summary(), "state": "created", "created_at": "now", "updated_at": "now"}, "invalid agent session native_session_id"),
+    ("agent_sessions", {"session_id": "ags_1", "agent_id": "a", "provider": "codex", "transport": "native", "native_session_id": None, "workspace": "/tmp", "capabilities": {**CAPABILITIES.summary(), "secret": True}, "state": "created", "created_at": "now", "updated_at": "now"}, "invalid agent session capabilities"),
+    ("protocol_turns", {"turn_id": "trn_1", "session_id": "ags_1", "message_id": "msg_1", "state": "bogus", "created_at": "now", "updated_at": "now"}, "invalid protocol turn state"),
+    ("transport_updates", {"update_id": "upd_1", "session_id": "ags_1", "turn_id": "trn_1", "sequence": True, "kind": "text", "created_at": "now"}, "invalid transport update sequence"),
+    ("permission_requests", {"permission_id": "prm_1", "session_id": "ags_1", "turn_id": "trn_1", "tool_name": "shell", "risk": "high", "status": "bogus", "decision": None, "created_at": "now"}, "invalid permission request status"),
+])
+def test_project_view_protocol_source_validation_matrix(tmp_path, collection, record, error) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state[collection] = [record]
+    store.save(state)
+
+    with pytest.raises(ValueError, match=error):
+        store.project_view(_project_config(tmp_path))
+
+
 def test_protocol_constants_are_stable() -> None:
     assert AGENT_SESSION_STATES == ("created", "connecting", "ready", "busy", "reconnecting", "stopped", "failed")
     assert TURN_STATES == ("created", "submitted", "streaming", "waiting_permission", "completed", "blocked", "failed", "ambiguous")

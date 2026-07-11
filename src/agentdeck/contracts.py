@@ -277,6 +277,24 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "recovery",
 )
 
+PROJECT_VIEW_AGENT_SESSIONS_FIELDS = ("count", "by_state", "items")
+PROJECT_VIEW_AGENT_SESSION_ITEM_FIELDS = (
+    "session_id", "agent_id", "provider", "transport", "state", "capabilities",
+    "native_session_present", "workspace", "created_at", "updated_at",
+)
+PROJECT_VIEW_PROTOCOL_TURNS_FIELDS = ("count", "by_state", "items")
+PROJECT_VIEW_PROTOCOL_TURN_ITEM_FIELDS = (
+    "turn_id", "session_id", "message_id", "state", "created_at", "updated_at",
+)
+PROJECT_VIEW_TRANSPORT_UPDATES_FIELDS = ("count", "by_kind", "items")
+PROJECT_VIEW_TRANSPORT_UPDATE_ITEM_FIELDS = (
+    "update_id", "session_id", "turn_id", "sequence", "kind", "created_at",
+)
+PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS = ("count", "pending_count", "by_status", "items")
+PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS = (
+    "permission_id", "session_id", "turn_id", "tool_name", "risk", "status", "decision", "created_at",
+)
+
 PROJECT_VIEW_LEADER_FIELDS = (
     "agent_id",
     "provider",
@@ -2563,6 +2581,14 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "reply_item_fields": list(PROJECT_VIEW_REPLY_ITEM_FIELDS),
         "artifact_item_fields": list(PROJECT_VIEW_ARTIFACT_ITEM_FIELDS),
         "release_item_fields": list(PROJECT_VIEW_RELEASE_ITEM_FIELDS),
+        "agent_sessions_fields": list(PROJECT_VIEW_AGENT_SESSIONS_FIELDS),
+        "agent_session_item_fields": list(PROJECT_VIEW_AGENT_SESSION_ITEM_FIELDS),
+        "protocol_turns_fields": list(PROJECT_VIEW_PROTOCOL_TURNS_FIELDS),
+        "protocol_turn_item_fields": list(PROJECT_VIEW_PROTOCOL_TURN_ITEM_FIELDS),
+        "transport_updates_fields": list(PROJECT_VIEW_TRANSPORT_UPDATES_FIELDS),
+        "transport_update_item_fields": list(PROJECT_VIEW_TRANSPORT_UPDATE_ITEM_FIELDS),
+        "permission_requests_fields": list(PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS),
+        "permission_request_item_fields": list(PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS),
     }
 
 
@@ -2591,6 +2617,9 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_reply_item_fields"] = list(example["replies"]["items"][0])
         payload["example_artifact_item_fields"] = list(example["artifacts"]["items"][0])
         payload["example_release_item_fields"] = list(example["releases"]["items"][0])
+        for name in ("agent_sessions", "protocol_turns", "transport_updates", "permission_requests"):
+            payload[f"example_{name}_fields"] = list(example[name])
+            payload[f"example_{name[:-1]}_item_fields"] = list(example[name]["items"][0])
         payload["example_project_view"] = example
     return payload
 
@@ -6250,27 +6279,72 @@ def _validate_project_view_protocol_summaries(
     errors: list[str], payload: dict[str, object]
 ) -> None:
     specs = {
-        "agent_sessions": ("by_state", False),
-        "protocol_turns": ("by_state", False),
-        "transport_updates": ("by_kind", False),
-        "permission_requests": ("by_status", True),
+        "agent_sessions": (PROJECT_VIEW_AGENT_SESSIONS_FIELDS, PROJECT_VIEW_AGENT_SESSION_ITEM_FIELDS, "by_state"),
+        "protocol_turns": (PROJECT_VIEW_PROTOCOL_TURNS_FIELDS, PROJECT_VIEW_PROTOCOL_TURN_ITEM_FIELDS, "by_state"),
+        "transport_updates": (PROJECT_VIEW_TRANSPORT_UPDATES_FIELDS, PROJECT_VIEW_TRANSPORT_UPDATE_ITEM_FIELDS, "by_kind"),
+        "permission_requests": (PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS, PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS, "by_status"),
     }
-    for name, (group_field, has_pending_count) in specs.items():
+    enum_fields = {
+        ("agent_sessions", "state"): {"created", "connecting", "ready", "busy", "reconnecting", "stopped", "failed"},
+        ("protocol_turns", "state"): {"created", "submitted", "streaming", "waiting_permission", "completed", "blocked", "failed", "ambiguous"},
+        ("transport_updates", "kind"): {"progress", "text", "tool_call", "tool_result", "permission_request", "artifact", "completion", "error"},
+        ("permission_requests", "status"): {"pending", "approved", "denied", "expired"},
+    }
+    for name, (required_fields, item_fields, group_field) in specs.items():
         summary = payload.get(name)
         if not isinstance(summary, dict):
             if name in payload:
                 errors.append(f"{name} must be an object")
             continue
-        required = ["count", group_field, "items"]
-        if has_pending_count:
-            required.insert(1, "pending_count")
-        for field in required:
+        for field in required_fields:
             if field not in summary:
                 errors.append(f"missing {name} field: {field}")
+        for field in sorted(set(summary) - set(required_fields)):
+            errors.append(f"{name} has unexpected field: {field}")
+        for field in ("count", "pending_count"):
+            if field in summary and (type(summary[field]) is not int or summary[field] < 0):
+                errors.append(f"{name}.{field} must be a non-negative integer")
+        counts = summary.get(group_field)
+        if not isinstance(counts, dict) or any(
+            not isinstance(key, str) or not key or type(value) is not int or value < 0
+            for key, value in counts.items()
+        ):
+            errors.append(f"{name}.{group_field} values must be non-negative integers")
         if not isinstance(summary.get("items"), list):
             errors.append(f"{name}.items must be a list")
         elif len(summary["items"]) > 20:
             errors.append(f"{name}.items must contain at most 20 items")
+        else:
+            for index, item in enumerate(summary["items"]):
+                if not isinstance(item, dict):
+                    errors.append(f"{name}.items[{index}] must be an object")
+                    continue
+                for field in sorted(set(item) - set(item_fields)):
+                    errors.append(f"{name}.items[{index}] has unexpected field: {field}")
+                for field in item_fields:
+                    if field not in item:
+                        errors.append(f"{name}.items[{index}] missing field: {field}")
+                        continue
+                    value = item[field]
+                    if field == "native_session_present":
+                        valid = type(value) is bool
+                    elif field == "sequence":
+                        valid = type(value) is int and value >= 0
+                    elif field == "decision":
+                        valid = value is None or isinstance(value, str)
+                    elif field == "capabilities":
+                        valid = isinstance(value, dict) and set(value) == {
+                            "structured_sessions", "streaming_updates", "structured_tools",
+                            "permission_requests", "resume_session", "observable_terminal",
+                        } and all(type(flag) is bool for flag in value.values())
+                    else:
+                        valid = isinstance(value, str) and bool(value.strip())
+                    if not valid:
+                        errors.append(f"{name}.items[{index}].{field} has invalid type")
+                for field in ("state", "kind", "status"):
+                    allowed = enum_fields.get((name, field))
+                    if allowed is not None and item.get(field) not in allowed:
+                        errors.append(f"{name}.items[{index}].{field} is invalid")
 
 
 def _validate_project_view_mission_items(
@@ -11330,14 +11404,30 @@ def project_view_example() -> dict[str, object]:
                 }
             ],
         },
-        "agent_sessions": {"count": 0, "by_state": {}, "items": []},
-        "protocol_turns": {"count": 0, "by_state": {}, "items": []},
-        "transport_updates": {"count": 0, "by_kind": {}, "items": []},
+        "agent_sessions": {"count": 1, "by_state": {"ready": 1}, "items": [{
+            "session_id": "ags_example", "agent_id": "planner", "provider": "codex-cli",
+            "transport": "native", "state": "ready", "capabilities": {
+                "structured_sessions": True, "streaming_updates": True,
+                "structured_tools": True, "permission_requests": True,
+                "resume_session": True, "observable_terminal": False,
+            }, "native_session_present": True, "workspace": "/workspace/agentdeck-example",
+            "created_at": "2026-07-04T00:00:00+00:00", "updated_at": "2026-07-04T00:00:01+00:00",
+        }]},
+        "protocol_turns": {"count": 1, "by_state": {"waiting_permission": 1}, "items": [{
+            "turn_id": "trn_example", "session_id": "ags_example", "message_id": "msg_example",
+            "state": "waiting_permission", "created_at": "2026-07-04T00:00:02+00:00",
+            "updated_at": "2026-07-04T00:00:03+00:00",
+        }]},
+        "transport_updates": {"count": 1, "by_kind": {"permission_request": 1}, "items": [{
+            "update_id": "upd_example", "session_id": "ags_example", "turn_id": "trn_example",
+            "sequence": 0, "kind": "permission_request", "created_at": "2026-07-04T00:00:04+00:00",
+        }]},
         "permission_requests": {
-            "count": 0,
-            "pending_count": 0,
-            "by_status": {},
-            "items": [],
+            "count": 1, "pending_count": 1, "by_status": {"pending": 1}, "items": [{
+                "permission_id": "prm_example", "session_id": "ags_example", "turn_id": "trn_example",
+                "tool_name": "write_file", "risk": "high", "status": "pending", "decision": None,
+                "created_at": "2026-07-04T00:00:05+00:00",
+            }],
         },
         "inbox": {"total": 0, "by_agent": {}, "by_status": {}, "heads": {}},
         "recovery": {

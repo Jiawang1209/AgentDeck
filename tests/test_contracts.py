@@ -1139,12 +1139,11 @@ def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> No
     assert example["leader_actions"]["recommended_action_id"] == "act_example"
     assert example["leader_actions"]["items"][0]["is_recommended"] is True
     assert example["recovery"]["recommended_action"]["target_id"] == "act_example"
-    assert example["agent_sessions"] == {"count": 0, "by_state": {}, "items": []}
-    assert example["protocol_turns"] == {"count": 0, "by_state": {}, "items": []}
-    assert example["transport_updates"] == {"count": 0, "by_kind": {}, "items": []}
-    assert example["permission_requests"] == {
-        "count": 0, "pending_count": 0, "by_status": {}, "items": [],
-    }
+    for summary, group in (("agent_sessions", "by_state"), ("protocol_turns", "by_state"), ("transport_updates", "by_kind"), ("permission_requests", "by_status")):
+        assert payload[f"{summary}_fields"] == list(example[summary])
+        assert payload[f"{summary[:-1] if summary.endswith('s') else summary}_item_fields"] == list(example[summary]["items"][0])
+        assert example[summary]["count"] == 1
+        assert example[summary][group]
 
 
 @pytest.mark.parametrize(
@@ -1158,6 +1157,21 @@ def test_validate_project_view_contract_requires_protocol_summary_fields(field: 
     result = validate_project_view_contract(payload)
 
     assert f"missing top-level field: {field}" in result["errors"]
+
+
+@pytest.mark.parametrize(("mutate", "expected"), [
+    (lambda p: p["agent_sessions"].update({"count": True}), "agent_sessions.count must be a non-negative integer"),
+    (lambda p: p["protocol_turns"].update({"by_state": {"created": -1}}), "protocol_turns.by_state values must be non-negative integers"),
+    (lambda p: p["transport_updates"]["items"][0].update({"payload": {}}), "transport_updates.items[0] has unexpected field: payload"),
+    (lambda p: p["permission_requests"]["items"][0].update({"target": "secret"}), "permission_requests.items[0] has unexpected field: target"),
+    (lambda p: p["agent_sessions"]["items"][0].update({"native_session_id": "secret"}), "agent_sessions.items[0] has unexpected field: native_session_id"),
+    (lambda p: p["protocol_turns"]["items"][0].update({"state": "bogus"}), "protocol_turns.items[0].state is invalid"),
+])
+def test_validate_project_view_contract_strict_protocol_summary_matrix(mutate, expected) -> None:
+    payload = project_view_example()
+    mutate(payload)
+    result = validate_project_view_contract(payload)
+    assert expected in result["errors"]
 
 
 def test_project_view_contract_response_matches_cli_shape(tmp_path: Path) -> None:
