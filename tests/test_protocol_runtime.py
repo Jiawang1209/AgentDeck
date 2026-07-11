@@ -851,6 +851,28 @@ def test_project_view_validates_corrupt_transition_outside_latest_window(tmp_pat
     assert _tree_snapshot(store) == before
 
 
+def test_transition_history_validation_builds_entity_indexes_once(tmp_path, monkeypatch) -> None:
+    store = StateStore(tmp_path)
+    for index in range(100):
+        session = store.record_agent_session(
+            f"agent-{index}", "codex", "acp", f"native-{index}", str(tmp_path), CAPABILITIES
+        )
+        store.record_protocol_transition("session", session["session_id"], "created", "ready", None, {})
+
+    lookup_calls = 0
+    original = StateStore._protocol_transition_entity
+
+    def counted_lookup(*args, **kwargs):
+        nonlocal lookup_calls
+        lookup_calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(StateStore, "_protocol_transition_entity", counted_lookup)
+    StateStore._validate_protocol_transition_history(store.load())
+
+    assert lookup_calls == 0
+
+
 @pytest.mark.parametrize("rejection", ["unknown", "stale", "illegal", "duplicate"])
 def test_protocol_transition_rejections_are_tree_zero_write_with_pending_outbox(
     tmp_path, monkeypatch, rejection: str,

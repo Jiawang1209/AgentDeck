@@ -6548,6 +6548,10 @@ def validate_protocol_runtime_contract(payload: object) -> dict[str, object]:
         type(summaries["protocol_turns"].get("count")) is int
         and summaries["protocol_turns"]["count"] <= 20
     )
+    transitions_complete = (
+        type(summaries["protocol_state_transitions"].get("count")) is int
+        and summaries["protocol_state_transitions"]["count"] <= PROTOCOL_RUNTIME_TRANSITION_LATEST_LIMIT
+    )
     for index, turn in enumerate(summaries["protocol_turns"].get("items", [])):
         if (
             isinstance(turn, dict)
@@ -6574,6 +6578,65 @@ def validate_protocol_runtime_contract(payload: object) -> dict[str, object]:
                 errors.append(f"{name}.items[{index}].session_id must match protocol_turns")
             if name == "permission_requests" and item.get("status") == "pending" and item.get("decision") is not None:
                 errors.append("pending permission_requests items must have decision null")
+
+    entity_summaries = {
+        "session": (summaries["agent_sessions"], "session_id", "state", "created", agent_sessions_complete),
+        "turn": (summaries["protocol_turns"], "turn_id", "state", "created", protocol_turns_complete),
+        "permission": (summaries["permission_requests"], "permission_id", "status", "pending", (
+            type(summaries["permission_requests"].get("count")) is int
+            and summaries["permission_requests"]["count"] <= 20
+        )),
+    }
+    visible_entities: dict[str, dict[str, dict[str, object]]] = {}
+    for entity_type, (summary, identity_field, _state_field, _initial, _complete) in entity_summaries.items():
+        visible_entities[entity_type] = {
+            item[identity_field]: item
+            for item in summary.get("items", [])
+            if isinstance(item, dict) and type(item.get(identity_field)) is str
+        }
+    chains: dict[tuple[str, str], list[tuple[int, dict[str, object]]]] = {}
+    for index, transition in enumerate(summaries["protocol_state_transitions"].get("items", [])):
+        if not isinstance(transition, dict):
+            continue
+        entity_type = transition.get("entity_type")
+        entity_id = transition.get("entity_id")
+        if type(entity_id) is not str:
+            errors.append(f"protocol_state_transitions.items[{index}].entity_id has invalid type")
+            continue
+        if entity_type not in entity_summaries:
+            continue
+        summary, _identity_field, _state_field, _initial, entity_summary_complete = entity_summaries[entity_type]
+        entity = visible_entities[entity_type].get(entity_id)
+        if entity is None and entity_summary_complete:
+            collection = "agent_sessions" if entity_type == "session" else (
+                "protocol_turns" if entity_type == "turn" else "permission_requests"
+            )
+            errors.append(
+                f"protocol_state_transitions.items[{index}].entity_id must reference complete "
+                f"{collection}"
+            )
+        chains.setdefault((entity_type, entity_id), []).append((index, transition))
+
+    for (entity_type, entity_id), chain in chains.items():
+        _summary, _identity_field, state_field, initial_state, entity_summary_complete = entity_summaries[entity_type]
+        if transitions_complete and chain[0][1].get("from_state") != initial_state:
+            errors.append(
+                f"protocol_state_transitions.items[{chain[0][0]}] transition chain is stale from base state"
+            )
+        for (previous_index, previous), (index, transition) in zip(chain, chain[1:]):
+            if transition.get("from_state") != previous.get("to_state"):
+                errors.append(
+                    f"protocol_state_transitions.items[{index}] transition chain is stale after index {previous_index}"
+                )
+        entity = visible_entities[entity_type].get(entity_id)
+        if transitions_complete and entity_summary_complete and entity is not None:
+            if chain[-1][1].get("to_state") != entity.get(state_field):
+                collection = "permission_requests" if entity_type == "permission" else (
+                    "agent_sessions" if entity_type == "session" else "protocol_turns"
+                )
+                errors.append(
+                    f"protocol_state_transitions derived state must match {collection} item {entity_id}"
+                )
 
     controls = payload.get("controls")
     allowed_commands = {
@@ -11700,17 +11763,28 @@ def project_view_example() -> dict[str, object]:
             }],
         },
         "protocol_state_transitions": {
-            "count": 1,
-            "by_entity_type": {"turn": 1},
-            "items": [{
-                "transition_id": "pst_example",
-                "entity_type": "turn",
-                "entity_id": "trn_example",
-                "from_state": "streaming",
-                "to_state": "waiting_permission",
-                "reason": "permission_requested",
-                "created_at": "2026-07-04T00:00:04+00:00",
-            }],
+            "count": 3,
+            "by_entity_type": {"turn": 3},
+            "items": [
+                {
+                    "transition_id": "pst_example1", "entity_type": "turn",
+                    "entity_id": "trn_example", "from_state": "created",
+                    "to_state": "submitted", "reason": "prompt_submitted",
+                    "created_at": "2026-07-04T00:00:02+00:00",
+                },
+                {
+                    "transition_id": "pst_example2", "entity_type": "turn",
+                    "entity_id": "trn_example", "from_state": "submitted",
+                    "to_state": "streaming", "reason": "update_received",
+                    "created_at": "2026-07-04T00:00:03+00:00",
+                },
+                {
+                    "transition_id": "pst_example3", "entity_type": "turn",
+                    "entity_id": "trn_example", "from_state": "streaming",
+                    "to_state": "waiting_permission", "reason": "permission_requested",
+                    "created_at": "2026-07-04T00:00:04+00:00",
+                },
+            ],
         },
         "inbox": {"total": 0, "by_agent": {}, "by_status": {}, "heads": {}},
         "recovery": {

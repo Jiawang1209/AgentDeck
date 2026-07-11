@@ -161,6 +161,7 @@ from agentdeck.contracts import (
     project_view_contract_payload,
     project_view_contract_response,
     project_view_example,
+    protocol_runtime_example,
     release_contract_payload,
     release_contract_response,
     release_example,
@@ -188,6 +189,7 @@ from agentdeck.contracts import (
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_project_view_contract,
+    validate_protocol_runtime_contract,
     validate_release_contract,
     validate_run_start_contract,
     validate_trace_contract,
@@ -253,6 +255,42 @@ def test_protocol_runtime_validator_rejects_drift(mutate, expected: str) -> None
     mutate(payload)
     result = validate_protocol_runtime_contract(payload)
     assert expected in result["errors"]
+
+
+@pytest.mark.parametrize(("mutate", "expected"), [
+    (lambda p: p["protocol_state_transitions"]["items"][0].update({"entity_id": "trn_missing"}), "must reference complete protocol_turns"),
+    (lambda p: p["protocol_state_transitions"]["items"][0].update({"entity_id": True}), "entity_id has invalid type"),
+    (lambda p: p["protocol_state_transitions"]["items"][1].update({"from_state": "created"}), "transition chain is stale"),
+    (lambda p: p["protocol_turns"]["items"][0].update({"state": "streaming"}), "derived state must match protocol_turns"),
+])
+def test_protocol_runtime_validator_cross_checks_complete_transition_window(mutate, expected) -> None:
+    payload = protocol_runtime_example()
+    mutate(payload)
+
+    result = validate_protocol_runtime_contract(payload)
+
+    assert any(expected in error for error in result["errors"])
+
+
+def test_protocol_runtime_validator_allows_parent_outside_bounded_window() -> None:
+    payload = protocol_runtime_example()
+    payload["protocol_turns"] = {"count": 21, "by_state": {"waiting_permission": 21}, "items": [
+        {**payload["protocol_turns"]["items"][0], "turn_id": f"trn_{index:02d}"}
+        for index in range(1, 21)
+    ]}
+    payload["protocol_state_transitions"] = {
+        "count": 21,
+        "by_entity_type": {"turn": 21},
+        "items": [
+            {**payload["protocol_state_transitions"]["items"][-1],
+             "transition_id": f"pst_{index:02d}", "entity_id": "trn_outside"}
+            for index in range(1, 21)
+        ],
+    }
+
+    result = validate_protocol_runtime_contract(payload)
+
+    assert not any("must reference complete protocol_turns" in error for error in result["errors"])
 
 
 def test_protocol_runtime_accepts_versioned_transport_kind() -> None:

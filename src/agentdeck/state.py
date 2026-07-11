@@ -412,25 +412,41 @@ class StateStore:
         if type(transitions) is not list:
             raise TypeError("protocol_state_transitions must be a list")
         current_states: dict[tuple[str, str], str] = {}
-        state_vocabularies = {
-            "session": AGENT_SESSION_STATES,
-            "turn": TURN_STATES,
-            "permission": PERMISSION_STATES,
+        entity_specs = {
+            "session": ("agent_sessions", "session_id", "state", AGENT_SESSION_STATES, "duplicate agent session identity"),
+            "turn": ("protocol_turns", "turn_id", "state", TURN_STATES, "duplicate protocol turn identity"),
+            "permission": ("permission_requests", "permission_id", "status", PERMISSION_STATES, "duplicate permission request identity"),
         }
+        entity_maps: dict[str, dict[str, dict[str, Any]]] = {}
+        for entity_type, (collection, identity_field, state_field, vocabulary, duplicate_error) in entity_specs.items():
+            records = state.setdefault(collection, [])
+            if type(records) is not list:
+                raise TypeError(f"{collection} must be a list")
+            indexed: dict[str, dict[str, Any]] = {}
+            for record in records:
+                if type(record) is not dict:
+                    raise TypeError(f"{collection} items must be objects")
+                identity = record.get(identity_field)
+                if type(identity) is not str or not identity:
+                    raise ValueError(f"invalid {identity_field}")
+                if identity in indexed:
+                    raise ValueError(duplicate_error)
+                base_state = record.get(state_field)
+                if type(base_state) is not str or base_state not in vocabulary:
+                    raise ValueError("invalid protocol base state")
+                indexed[identity] = record
+            entity_maps[entity_type] = indexed
         for item in transitions:
             validate_protocol_transition_record(item)
             entity_type = item["entity_type"]
             entity_id = item["entity_id"]
             key = (entity_type, entity_id)
             if key not in current_states:
-                entity = StateStore._protocol_transition_entity(
-                    state, entity_type, entity_id
-                )
-                state_field = "status" if entity_type == "permission" else "state"
-                base_state = entity.get(state_field)
-                if type(base_state) is not str or base_state not in state_vocabularies[entity_type]:
-                    raise ValueError("invalid protocol base state")
-                current_states[key] = base_state
+                entity = entity_maps[entity_type].get(entity_id)
+                if entity is None:
+                    raise KeyError(entity_id)
+                state_field = entity_specs[entity_type][2]
+                current_states[key] = entity[state_field]
             if item["from_state"] != current_states[key]:
                 raise ValueError("stale protocol transition from_state")
             current_states[key] = item["to_state"]
