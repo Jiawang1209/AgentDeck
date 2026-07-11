@@ -321,6 +321,20 @@ def test_protocol_runtime_accepts_bounded_children_with_parent_outside_window() 
         ],
     }
     payload["protocol_turns"]["items"][0]["session_id"] = "ags_outside_window"
+    turn_template = payload["protocol_turns"]["items"][0]
+    payload["protocol_turns"] = {
+        "count": 21,
+        "by_state": {"waiting_permission": 21},
+        "items": [
+            {
+                **deepcopy(turn_template),
+                "turn_id": f"trn_window_{index:02d}",
+                "session_id": f"ags_window_{index:02d}",
+                "created_at": f"2026-07-04T00:02:{index:02d}+00:00",
+            }
+            for index in range(20)
+        ],
+    }
     payload["transport_updates"]["items"][0].update(
         {"session_id": "ags_outside_window", "turn_id": "trn_outside_window"}
     )
@@ -329,6 +343,40 @@ def test_protocol_runtime_accepts_bounded_children_with_parent_outside_window() 
     )
 
     assert validate_protocol_runtime_contract(payload) == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (
+            lambda p: p["protocol_turns"]["items"][0].update({"session_id": "ags_missing"}),
+            "protocol_turns.items[0].session_id must reference complete agent_sessions",
+        ),
+        (
+            lambda p: p["transport_updates"]["items"][0].update({"session_id": "ags_missing"}),
+            "transport_updates.items[0].session_id must reference complete agent_sessions",
+        ),
+        (
+            lambda p: p["transport_updates"]["items"][0].update({"turn_id": "trn_missing"}),
+            "transport_updates.items[0].turn_id must reference complete protocol_turns",
+        ),
+        (
+            lambda p: p["permission_requests"]["items"][0].update({"session_id": "ags_missing"}),
+            "permission_requests.items[0].session_id must reference complete agent_sessions",
+        ),
+        (
+            lambda p: p["permission_requests"]["items"][0].update({"turn_id": "trn_missing"}),
+            "permission_requests.items[0].turn_id must reference complete protocol_turns",
+        ),
+    ],
+)
+def test_protocol_runtime_complete_windows_require_parent_references(mutate, expected: str) -> None:
+    from agentdeck.contracts import protocol_runtime_example, validate_protocol_runtime_contract
+
+    payload = protocol_runtime_example()
+    mutate(payload)
+
+    assert expected in validate_protocol_runtime_contract(payload)["errors"]
 
 
 def test_protocol_runtime_rejects_unsupported_transport() -> None:

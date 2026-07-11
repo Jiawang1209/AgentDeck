@@ -4657,3 +4657,4 @@
 - 加固 hostile control command 类型边界；先验证 exact `str`，再做 allowlist 与唯一性比较，避免触发外部 hash/equality hooks。
 - 在 ProjectView 裁剪前用全量 ID maps 校验 protocol cross-lineage，同时允许 bounded latest-20 summaries 引用窗口外的合法父记录。
 - 将 `protocol-runtime/v1` transport 固定为 `acp`、`acp-adapter`、`tmux`、`api`，并同步 builder、ProjectView、contract discovery 与 schema。
+- 完善 bounded lineage contract：父 summary 完整时必须解析父 ID，父窗口被 latest-20 截断时允许窗口外引用；可见父 turn 始终要求 session 一致。

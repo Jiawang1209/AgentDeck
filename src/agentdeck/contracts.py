@@ -6503,11 +6503,36 @@ def validate_protocol_runtime_contract(payload: object) -> dict[str, object]:
         for item in summaries["protocol_turns"].get("items", [])
         if isinstance(item, dict) and isinstance(item.get("turn_id"), str)
     }
+    agent_sessions_complete = (
+        type(summaries["agent_sessions"].get("count")) is int
+        and summaries["agent_sessions"]["count"] <= 20
+    )
+    protocol_turns_complete = (
+        type(summaries["protocol_turns"].get("count")) is int
+        and summaries["protocol_turns"]["count"] <= 20
+    )
+    for index, turn in enumerate(summaries["protocol_turns"].get("items", [])):
+        if (
+            isinstance(turn, dict)
+            and agent_sessions_complete
+            and turn.get("session_id") not in sessions
+        ):
+            errors.append(
+                f"protocol_turns.items[{index}].session_id must reference complete agent_sessions"
+            )
     for name in ("transport_updates", "permission_requests"):
         for index, item in enumerate(summaries[name].get("items", [])):
             if not isinstance(item, dict):
                 continue
             turn = turns.get(item.get("turn_id"))
+            if agent_sessions_complete and item.get("session_id") not in sessions:
+                errors.append(
+                    f"{name}.items[{index}].session_id must reference complete agent_sessions"
+                )
+            if protocol_turns_complete and turn is None:
+                errors.append(
+                    f"{name}.items[{index}].turn_id must reference complete protocol_turns"
+                )
             if turn is not None and item.get("session_id") != turn.get("session_id"):
                 errors.append(f"{name}.items[{index}].session_id must match protocol_turns")
             if name == "permission_requests" and item.get("status") == "pending" and item.get("decision") is not None:
