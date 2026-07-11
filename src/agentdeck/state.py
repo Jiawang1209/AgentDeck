@@ -1916,6 +1916,10 @@ class StateStore:
                     value is None or isinstance(value, str) and bool(value.strip())
                 ):
                     continue
+                if field == "reason" and (
+                    value is None or isinstance(value, str) and bool(value.strip())
+                ):
+                    continue
                 if field == "sequence" and isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                     continue
                 if not isinstance(value, str) or not value.strip():
@@ -2016,6 +2020,24 @@ class StateStore:
             "count": len(records),
             "pending_count": by_status.get("pending", 0),
             "by_status": by_status,
+            "items": items,
+        }
+
+    @staticmethod
+    def _protocol_transition_summaries(records: object) -> dict[str, Any]:
+        item_fields = (
+            "transition_id", "entity_type", "entity_id", "from_state",
+            "to_state", "reason", "created_at",
+        )
+        items, by_entity_type = StateStore._protocol_summary_items(
+            records,
+            identity_field="transition_id",
+            group_field="entity_type",
+            item_fields=item_fields,
+        )
+        return {
+            "count": len(records),
+            "by_entity_type": by_entity_type,
             "items": items,
         }
 
@@ -2756,11 +2778,34 @@ class StateStore:
 
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
-        agent_sessions = self._agent_session_summaries(state.get("agent_sessions", []))
-        protocol_turns = self._protocol_turn_summaries(state.get("protocol_turns", []))
-        transport_updates = self._transport_update_summaries(state.get("transport_updates", []))
-        permission_requests = self._permission_request_summaries(state.get("permission_requests", []))
+        # Preserve source-row validation precedence before cross-record lineage
+        # checks, then validate every transition before deriving current state.
+        self._agent_session_summaries(state.get("agent_sessions", []))
+        self._protocol_turn_summaries(state.get("protocol_turns", []))
+        self._transport_update_summaries(state.get("transport_updates", []))
+        self._permission_request_summaries(state.get("permission_requests", []))
         self._validate_protocol_lineage(state)
+        current_states = self._validate_protocol_transition_history(state)
+        sessions = copy.deepcopy(state.get("agent_sessions", []))
+        turns = copy.deepcopy(state.get("protocol_turns", []))
+        permissions = copy.deepcopy(state.get("permission_requests", []))
+        for entity_type, records, identity_field, state_field in (
+            ("session", sessions, "session_id", "state"),
+            ("turn", turns, "turn_id", "state"),
+            ("permission", permissions, "permission_id", "status"),
+        ):
+            for record in records:
+                identity = record.get(identity_field)
+                record[state_field] = current_states.get(
+                    (entity_type, identity), record.get(state_field)
+                )
+        agent_sessions = self._agent_session_summaries(sessions)
+        protocol_turns = self._protocol_turn_summaries(turns)
+        transport_updates = self._transport_update_summaries(state.get("transport_updates", []))
+        permission_requests = self._permission_request_summaries(permissions)
+        protocol_state_transitions = self._protocol_transition_summaries(
+            state.get("protocol_state_transitions", [])
+        )
         bindings = state.get("agents", {})
         agents = []
         for agent in config.agents:
@@ -2813,6 +2858,7 @@ class StateStore:
             protocol_turns=protocol_turns,
             transport_updates=transport_updates,
             permission_requests=permission_requests,
+            protocol_state_transitions=protocol_state_transitions,
             inbox=self._inbox_summary(state.get("inbox", {})),
             recovery=self._recovery_summary(state, config),
         )

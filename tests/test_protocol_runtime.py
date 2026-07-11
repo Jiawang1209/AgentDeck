@@ -167,9 +167,10 @@ def test_populated_project_view_projects_to_valid_protocol_runtime_status_withou
         "contract_version": PROTOCOL_RUNTIME_CONTRACT_VERSION,
         "project": view["project"],
         "runtime_backend": view["runtime_backend"],
-        **{name: view[name] for name in (
-            "agent_sessions", "protocol_turns", "transport_updates", "permission_requests",
-        )},
+            **{name: view[name] for name in (
+                "agent_sessions", "protocol_turns", "transport_updates", "permission_requests",
+                "protocol_state_transitions",
+            )},
         "controls": deepcopy(protocol_runtime_example()["controls"]),
     }
 
@@ -782,6 +783,72 @@ def test_protocol_transitions_are_append_only_and_derive_current_state(tmp_path)
         key: transitions[-1][key]
         for key in ("transition_id", "entity_type", "entity_id", "from_state", "to_state", "reason")
     }
+
+
+def test_project_view_derives_compact_current_protocol_states(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    session = store.record_agent_session("planner", "codex", "acp", "native-secret", str(tmp_path), CAPABILITIES)
+    turn = store.record_protocol_turn(session["session_id"], "msg_1")
+    permission = store.record_permission_request(
+        session["session_id"], turn["turn_id"], "shell", "sensitive-target", "high"
+    )
+    store.record_protocol_transition("session", session["session_id"], "created", "ready", None, {"credential": "secret"})
+    store.record_protocol_transition("session", session["session_id"], "ready", "disconnected", "clean_exit", {})
+    store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", None, {})
+    store.record_protocol_transition("turn", turn["turn_id"], "submitted", "completed", "end_turn", {})
+    store.record_protocol_transition("permission", permission["permission_id"], "pending", "denied", "reject_once", {"option": "secret"})
+
+    before = _tree_snapshot(store)
+    view = asdict(store.project_view(_project_config(tmp_path)))
+
+    assert view["agent_sessions"]["items"][0]["state"] == "disconnected"
+    assert view["agent_sessions"]["by_state"] == {"disconnected": 1}
+    assert view["protocol_turns"]["items"][0]["state"] == "completed"
+    assert view["protocol_turns"]["by_state"] == {"completed": 1}
+    assert view["permission_requests"]["items"][0]["status"] == "denied"
+    assert view["permission_requests"]["pending_count"] == 0
+    assert view["permission_requests"]["by_status"] == {"denied": 1}
+    assert view["protocol_state_transitions"]["count"] == 5
+    assert all("details" not in item for item in view["protocol_state_transitions"]["items"])
+    assert "secret" not in json.dumps(view["protocol_state_transitions"])
+    assert _tree_snapshot(store) == before
+
+
+def test_project_view_transition_window_is_latest_20_in_stable_order(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    expected_ids = []
+    for index in range(21):
+        session = store.record_agent_session(
+            f"agent-{index}", "codex", "acp", f"native-{index}", str(tmp_path), CAPABILITIES
+        )
+        transition = store.record_protocol_transition(
+            "session", session["session_id"], "created", "ready", f"ready-{index}", {}
+        )
+        expected_ids.append(transition["transition_id"])
+
+    summary = asdict(store.project_view(_project_config(tmp_path)))["protocol_state_transitions"]
+
+    assert summary["count"] == 21
+    assert summary["by_entity_type"] == {"session": 21}
+    assert [item["transition_id"] for item in summary["items"]] == expected_ids[-20:]
+
+
+def test_project_view_validates_corrupt_transition_outside_latest_window(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    for index in range(21):
+        session = store.record_agent_session(
+            f"agent-{index}", "codex", "acp", f"native-{index}", str(tmp_path), CAPABILITIES
+        )
+        store.record_protocol_transition("session", session["session_id"], "created", "ready", None, {})
+    state = store.load()
+    state["protocol_state_transitions"][0]["from_state"] = "connecting"
+    store.save(state)
+    before = _tree_snapshot(store)
+
+    with pytest.raises(ValueError, match="stale protocol transition from_state"):
+        store.project_view(_project_config(tmp_path))
+
+    assert _tree_snapshot(store) == before
 
 
 @pytest.mark.parametrize("rejection", ["unknown", "stale", "illegal", "duplicate"])

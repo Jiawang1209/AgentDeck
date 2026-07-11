@@ -4,6 +4,14 @@
 
 ## 2026-07-12
 
+### Project protocol lifecycle transitions
+
+- **ProjectView**: 新增 `protocol_state_transitions` compact summary（count、按 entity type 计数、稳定 latest 20）；session/turn/permission summary 的 current state/status 从 immutable base record 与完整 transition history 派生。
+- **Fail closed**: ProjectView 在裁剪窗口前 O(n) 验证完整 transition history，拒绝窗口外 corruption、duplicate、dangling entity、非法 edge 与 stale chain；legacy 无 transitions state 保持 base 状态兼容。
+- **Redaction/read-only**: transition item 仅投影 identity、entity、edge、compact reason 与 timestamp，不暴露 `details`、native credentials、update payload 或 permission options/target；渲染不写 state/event。
+- **Contracts**: 原子同步 additive `project-view/v1` 与 `protocol-runtime/v1` discovery/example/validator，公开 entity types、state vocabularies 和 latest-window=20；schema version 按既有 additive-v1 策略保持不变。
+- **TDD**: 红测先证明缺失 transition summary、未派生 current state 和窗口外 corruption 未拦截；实现后覆盖 count/maps/latest20、stable ordering、duplicate/semantic invariants、bool impostor、敏感字段 redaction 与 byte-for-byte read-only。
+
 ### Record append-only protocol lifecycle transitions
 
 - **类型**: Phase 2 ACP lifecycle foundation + strict TDD

@@ -20,7 +20,7 @@ from .mission import (
 )
 from .models import PROJECT_VIEW_SCHEMA_VERSION
 from .state import leader_backend_identity
-from .runtime.protocol import TRANSPORT_KINDS, TransportCapabilities
+from .runtime.protocol import PROTOCOL_TRANSITION_EDGES, TRANSPORT_KINDS, TransportCapabilities
 
 
 CONTRACT_INDEX_RESPONSE_FIELDS = (
@@ -280,6 +280,7 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "protocol_turns",
     "transport_updates",
     "permission_requests",
+    "protocol_state_transitions",
     "inbox",
     "recovery",
 )
@@ -301,11 +302,17 @@ PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS = ("count", "pending_count", "by_status"
 PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS = (
     "permission_id", "session_id", "turn_id", "tool_name", "risk", "status", "decision", "created_at",
 )
+PROJECT_VIEW_PROTOCOL_STATE_TRANSITIONS_FIELDS = ("count", "by_entity_type", "items")
+PROJECT_VIEW_PROTOCOL_STATE_TRANSITION_ITEM_FIELDS = (
+    "transition_id", "entity_type", "entity_id", "from_state", "to_state",
+    "reason", "created_at",
+)
 
 PROTOCOL_RUNTIME_CONTRACT_VERSION = "protocol-runtime/v1"
 PROTOCOL_RUNTIME_RESPONSE_FIELDS = (
     "mode", "contract_version", "project", "runtime_backend", "agent_sessions",
-    "protocol_turns", "transport_updates", "permission_requests", "controls",
+    "protocol_turns", "transport_updates", "permission_requests",
+    "protocol_state_transitions", "controls",
 )
 PROTOCOL_RUNTIME_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
 PROTOCOL_RUNTIME_CAPABILITY_FIELDS = (
@@ -313,8 +320,10 @@ PROTOCOL_RUNTIME_CAPABILITY_FIELDS = (
     "permission_requests", "resume_session", "observable_terminal",
 )
 PROTOCOL_RUNTIME_SESSION_STATES = (
-    "created", "connecting", "ready", "busy", "reconnecting", "stopped", "failed",
+    "created", "connecting", "ready", "busy", "reconnecting", "disconnected", "stopped", "failed",
 )
+PROTOCOL_RUNTIME_TRANSITION_ENTITY_TYPES = ("session", "turn", "permission")
+PROTOCOL_RUNTIME_TRANSITION_LATEST_LIMIT = 20
 PROTOCOL_RUNTIME_TURN_STATES = (
     "created", "submitted", "streaming", "waiting_permission", "completed", "blocked", "failed", "ambiguous",
 )
@@ -2617,6 +2626,8 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "transport_update_item_fields": list(PROJECT_VIEW_TRANSPORT_UPDATE_ITEM_FIELDS),
         "permission_requests_fields": list(PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS),
         "permission_request_item_fields": list(PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS),
+        "protocol_state_transitions_fields": list(PROJECT_VIEW_PROTOCOL_STATE_TRANSITIONS_FIELDS),
+        "protocol_state_transition_item_fields": list(PROJECT_VIEW_PROTOCOL_STATE_TRANSITION_ITEM_FIELDS),
     }
 
 
@@ -2645,7 +2656,7 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_reply_item_fields"] = list(example["replies"]["items"][0])
         payload["example_artifact_item_fields"] = list(example["artifacts"]["items"][0])
         payload["example_release_item_fields"] = list(example["releases"]["items"][0])
-        for name in ("agent_sessions", "protocol_turns", "transport_updates", "permission_requests"):
+        for name in ("agent_sessions", "protocol_turns", "transport_updates", "permission_requests", "protocol_state_transitions"):
             payload[f"example_{name}_fields"] = list(example[name])
             payload[f"example_{name[:-1]}_item_fields"] = list(example[name]["items"][0])
         payload["example_project_view"] = example
@@ -2668,12 +2679,16 @@ def protocol_runtime_contract_payload(contract_path: Path) -> dict[str, object]:
         "transport_update_item_fields": list(PROJECT_VIEW_TRANSPORT_UPDATE_ITEM_FIELDS),
         "permission_requests_fields": list(PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS),
         "permission_request_item_fields": list(PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS),
+        "protocol_state_transitions_fields": list(PROJECT_VIEW_PROTOCOL_STATE_TRANSITIONS_FIELDS),
+        "protocol_state_transition_item_fields": list(PROJECT_VIEW_PROTOCOL_STATE_TRANSITION_ITEM_FIELDS),
         "capability_fields": list(PROTOCOL_RUNTIME_CAPABILITY_FIELDS),
         "control_fields": list(PROTOCOL_RUNTIME_CONTROL_FIELDS),
         "session_states": list(PROTOCOL_RUNTIME_SESSION_STATES),
         "turn_states": list(PROTOCOL_RUNTIME_TURN_STATES),
         "update_kinds": list(PROTOCOL_RUNTIME_UPDATE_KINDS),
         "permission_statuses": list(PROTOCOL_RUNTIME_PERMISSION_STATUSES),
+        "transition_entity_types": list(PROTOCOL_RUNTIME_TRANSITION_ENTITY_TYPES),
+        "transition_latest_limit": PROTOCOL_RUNTIME_TRANSITION_LATEST_LIMIT,
         "transport_kinds": list(TRANSPORT_KINDS),
         "project_view_contract": "agentdeck contract project-view",
         "workbench_contract": "agentdeck contract workbench",
@@ -6369,12 +6384,14 @@ def _validate_project_view_protocol_summaries(
         "protocol_turns": (PROJECT_VIEW_PROTOCOL_TURNS_FIELDS, PROJECT_VIEW_PROTOCOL_TURN_ITEM_FIELDS, "by_state", "state", "turn_id"),
         "transport_updates": (PROJECT_VIEW_TRANSPORT_UPDATES_FIELDS, PROJECT_VIEW_TRANSPORT_UPDATE_ITEM_FIELDS, "by_kind", "kind", "update_id"),
         "permission_requests": (PROJECT_VIEW_PERMISSION_REQUESTS_FIELDS, PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS, "by_status", "status", "permission_id"),
+        "protocol_state_transitions": (PROJECT_VIEW_PROTOCOL_STATE_TRANSITIONS_FIELDS, PROJECT_VIEW_PROTOCOL_STATE_TRANSITION_ITEM_FIELDS, "by_entity_type", "entity_type", "transition_id"),
     }
     enum_fields = {
         ("agent_sessions", "state"): set(PROTOCOL_RUNTIME_SESSION_STATES),
         ("protocol_turns", "state"): set(PROTOCOL_RUNTIME_TURN_STATES),
         ("transport_updates", "kind"): set(PROTOCOL_RUNTIME_UPDATE_KINDS),
         ("permission_requests", "status"): set(PROTOCOL_RUNTIME_PERMISSION_STATUSES),
+        ("protocol_state_transitions", "entity_type"): set(PROTOCOL_RUNTIME_TRANSITION_ENTITY_TYPES),
     }
     for name, (required_fields, item_fields, group_field, item_group_field, identity_field) in specs.items():
         summary = payload.get(name)
@@ -6444,6 +6461,8 @@ def _validate_project_view_protocol_summaries(
                         valid = type(value) is int and value >= 0
                     elif field == "decision":
                         valid = value is None or isinstance(value, str)
+                    elif field == "reason":
+                        valid = value is None or (isinstance(value, str) and bool(value.strip()))
                     elif field == "capabilities":
                         valid = isinstance(value, dict) and set(value) == {
                             "structured_sessions", "streaming_updates", "structured_tools",
@@ -6453,7 +6472,7 @@ def _validate_project_view_protocol_summaries(
                         valid = isinstance(value, str) and bool(value.strip())
                     if not valid:
                         errors.append(f"{name}.items[{index}].{field} has invalid type")
-                for field in ("state", "kind", "status"):
+                for field in ("state", "kind", "status", "entity_type"):
                     allowed = enum_fields.get((name, field))
                     if allowed is not None and item.get(field) not in allowed:
                         errors.append(f"{name}.items[{index}].{field} is invalid")
@@ -6461,6 +6480,21 @@ def _validate_project_view_protocol_summaries(
                     type(item.get("transport")) is not str or item.get("transport") not in TRANSPORT_KINDS
                 ):
                     errors.append(f"{name}.items[{index}].transport is invalid")
+                if name == "protocol_state_transitions" and isinstance(item.get("entity_type"), str):
+                    entity_type = item["entity_type"]
+                    expected_prefix = {"session": "ags_", "turn": "trn_", "permission": "prm_"}.get(entity_type)
+                    entity_id = item.get("entity_id")
+                    if expected_prefix is not None and (
+                        type(entity_id) is not str or not entity_id.startswith(expected_prefix)
+                    ):
+                        errors.append(
+                            f"protocol_state_transitions.items[{index}].entity_id does not match entity_type"
+                        )
+                    edge = (item.get("from_state"), item.get("to_state"))
+                    if entity_type in PROTOCOL_TRANSITION_EDGES and edge not in PROTOCOL_TRANSITION_EDGES[entity_type]:
+                        errors.append(
+                            f"protocol_state_transitions.items[{index}] has invalid state edge"
+                        )
             if all(isinstance(created_at, str) and isinstance(identity, str) for created_at, identity in order):
                 if order != sorted(order):
                     errors.append(f"{name}.items must be sorted by created_at and {identity_field}")
@@ -6494,7 +6528,7 @@ def validate_protocol_runtime_contract(payload: object) -> dict[str, object]:
     _validate_project_view_protocol_summaries(errors, payload)
     summaries = {
         name: payload.get(name) if isinstance(payload.get(name), dict) else {}
-        for name in ("agent_sessions", "protocol_turns", "transport_updates", "permission_requests")
+        for name in ("agent_sessions", "protocol_turns", "transport_updates", "permission_requests", "protocol_state_transitions")
     }
     sessions = {
         item.get("session_id"): item
@@ -11665,6 +11699,19 @@ def project_view_example() -> dict[str, object]:
                 "created_at": "2026-07-04T00:00:05+00:00",
             }],
         },
+        "protocol_state_transitions": {
+            "count": 1,
+            "by_entity_type": {"turn": 1},
+            "items": [{
+                "transition_id": "pst_example",
+                "entity_type": "turn",
+                "entity_id": "trn_example",
+                "from_state": "streaming",
+                "to_state": "waiting_permission",
+                "reason": "permission_requested",
+                "created_at": "2026-07-04T00:00:04+00:00",
+            }],
+        },
         "inbox": {"total": 0, "by_agent": {}, "by_status": {}, "heads": {}},
         "recovery": {
             "status": "action_required",
@@ -15707,6 +15754,7 @@ def protocol_runtime_example() -> dict[str, object]:
         "protocol_turns": deepcopy(project_view["protocol_turns"]),
         "transport_updates": deepcopy(project_view["transport_updates"]),
         "permission_requests": deepcopy(project_view["permission_requests"]),
+        "protocol_state_transitions": deepcopy(project_view["protocol_state_transitions"]),
         "controls": [
             {"kind": "inspect", "label": "Inspect protocol runtime", "command": "agentdeck protocol status", "safety": "inspect", "enabled": True, "blocker": None},
             {"kind": "inspect", "label": "Inspect ProjectView", "command": "agentdeck status", "safety": "inspect", "enabled": True, "blocker": None},

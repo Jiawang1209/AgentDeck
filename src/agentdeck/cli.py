@@ -1024,6 +1024,7 @@ def protocol_status_command(_args: argparse.Namespace) -> int:
         "protocol_turns": project_view["protocol_turns"],
         "transport_updates": project_view["transport_updates"],
         "permission_requests": project_view["permission_requests"],
+        "protocol_state_transitions": project_view["protocol_state_transitions"],
         "controls": deepcopy(protocol_runtime_example()["controls"]),
     }
     validation = validate_protocol_runtime_contract(payload)

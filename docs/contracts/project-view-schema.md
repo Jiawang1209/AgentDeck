@@ -83,12 +83,23 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
   "leader_actions": {},
   "skills": {},
   "memory": {},
+  "agent_sessions": {},
+  "protocol_turns": {},
+  "transport_updates": {},
+  "permission_requests": {},
+  "protocol_state_transitions": {},
   "inbox": {},
   "recovery": {}
 }
 ```
 
 All ProjectView fields are read-only summaries. Commands that mutate state, send tmux input, dispatch work, or apply approvals must remain explicit commands with approval semantics.
+
+## Protocol lifecycle summaries
+
+ProjectView exposes compact `agent_sessions`, `protocol_turns`, `transport_updates`, `permission_requests`, and `protocol_state_transitions` summaries. The transition summary contains `count`, `by_entity_type`, and the stable latest 20 items ordered by `created_at` then `transition_id`. Each item is restricted to `transition_id`, `entity_type`, `entity_id`, `from_state`, `to_state`, `reason`, and `created_at`; persisted `details`, native credentials, update payloads, permission options, and targets are never projected.
+
+Before projection, the complete transition history is validated in O(n), including identities, entity references, ordering-dependent `from_state` continuity, legal edges, and duplicate rejection. Session `state`, turn `state`, and permission `status` in their base summaries are derived from the immutable base row plus the full validated transition history. Only these compact copies change; ProjectView rendering performs no writes. Legacy state with no transitions retains its base state/status. This additive contract remains `project-view/v1` under the repository's existing additive-v1 compatibility policy.
 
 `leader` includes the configured Leader identity and `leader_backend`, a normalized logical Leader identity for the current provider/model. This lets GUI and natural-language shells render fake/API-backed/CLI-backed Leader provenance before any plan exists. It is not a tmux pane binding, provider readiness proof, dispatch permission, or execution authorization.
 

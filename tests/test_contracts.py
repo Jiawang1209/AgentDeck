@@ -217,6 +217,8 @@ def test_protocol_runtime_contract_discovery_and_example(tmp_path: Path) -> None
     assert payload["project_view_contract"] == "agentdeck contract project-view"
     assert payload["workbench_contract"] == "agentdeck contract workbench"
     assert payload["transport_kinds"] == ["acp", "acp-adapter", "tmux", "api"]
+    assert payload["transition_entity_types"] == ["session", "turn", "permission"]
+    assert payload["transition_latest_limit"] == 20
     assert payload["response_fields"] == list(PROTOCOL_RUNTIME_RESPONSE_FIELDS)
     assert payload["example_protocol_runtime"] == example
     assert payload["example_response_fields"] == payload["response_fields"]
@@ -236,6 +238,10 @@ def test_protocol_runtime_contract_discovery_and_example(tmp_path: Path) -> None
         (lambda p: p["transport_updates"]["items"][0].update({"payload": "secret"}), "transport_updates.items[0] has unexpected field: payload"),
         (lambda p: p["permission_requests"]["items"][0].update({"target": "secret"}), "permission_requests.items[0] has unexpected field: target"),
         (lambda p: p["permission_requests"]["items"][0].update({"decision": "approve"}), "pending permission_requests items must have decision null"),
+        (lambda p: p["protocol_state_transitions"].update({"count": True}), "protocol_state_transitions.count must be a non-negative integer"),
+        (lambda p: p["protocol_state_transitions"]["items"][0].update({"details": {"secret": True}}), "protocol_state_transitions.items[0] has unexpected field: details"),
+        (lambda p: p["protocol_state_transitions"]["items"][0].update({"reason": True}), "protocol_state_transitions.items[0].reason has invalid type"),
+        (lambda p: p["protocol_state_transitions"]["items"][0].update({"to_state": "ready"}), "protocol_state_transitions.items[0] has invalid state edge"),
         (lambda p: p["transport_updates"]["items"][0].update({"session_id": "ags_mismatch"}), "transport_updates.items[0].session_id must match protocol_turns"),
         (lambda p: p["controls"][0].update({"command": "agentdeck protocol mutate"}), "controls[0].command is not allowed"),
     ],
@@ -1358,7 +1364,7 @@ def test_project_view_example_matches_contract_field_lists(tmp_path: Path) -> No
 
 @pytest.mark.parametrize(
     "field",
-    ["agent_sessions", "protocol_turns", "transport_updates", "permission_requests"],
+    ["agent_sessions", "protocol_turns", "transport_updates", "permission_requests", "protocol_state_transitions"],
 )
 def test_validate_project_view_contract_requires_protocol_summary_fields(field: str) -> None:
     payload = project_view_example()
@@ -1376,6 +1382,8 @@ def test_validate_project_view_contract_requires_protocol_summary_fields(field: 
     (lambda p: p["permission_requests"]["items"][0].update({"target": "secret"}), "permission_requests.items[0] has unexpected field: target"),
     (lambda p: p["agent_sessions"]["items"][0].update({"native_session_id": "secret"}), "agent_sessions.items[0] has unexpected field: native_session_id"),
     (lambda p: p["protocol_turns"]["items"][0].update({"state": "bogus"}), "protocol_turns.items[0].state is invalid"),
+    (lambda p: p["protocol_state_transitions"]["items"][0].update({"entity_type": "bogus"}), "protocol_state_transitions.items[0].entity_type is invalid"),
+    (lambda p: p["protocol_state_transitions"]["items"][0].update({"transition_id": True}), "protocol_state_transitions.items[0].transition_id has invalid type"),
 ])
 def test_validate_project_view_contract_strict_protocol_summary_matrix(mutate, expected) -> None:
     payload = project_view_example()

@@ -113,5 +113,6 @@ class ProjectView:
     protocol_turns: dict[str, Any] = field(default_factory=dict)
     transport_updates: dict[str, Any] = field(default_factory=dict)
     permission_requests: dict[str, Any] = field(default_factory=dict)
+    protocol_state_transitions: dict[str, Any] = field(default_factory=dict)
     inbox: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)

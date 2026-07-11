@@ -11066,6 +11066,7 @@ def test_protocol_status_is_exact_repeatable_read_only_project_view_projection(
         "protocol_turns": view["protocol_turns"],
         "transport_updates": view["transport_updates"],
         "permission_requests": view["permission_requests"],
+        "protocol_state_transitions": view["protocol_state_transitions"],
         "controls": expected_controls,
     }
     assert validate_protocol_runtime_contract(first) == {"ok": True, "errors": []}
