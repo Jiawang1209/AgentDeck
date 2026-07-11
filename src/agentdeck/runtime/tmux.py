@@ -2,33 +2,15 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import time
+import uuid
 
 from agentdeck.models import AgentSpec, RuntimeConfig
 
 from .base import RuntimeDoctorResult
 
 
-MIN_INPUT_SUBMIT_DELAY_SECONDS = 0.25
-INPUT_SUBMIT_DELAY_SECONDS_PER_CHARACTER = 0.001
-MAX_INPUT_SUBMIT_DELAY_SECONDS = 1.5
-# Compatibility name for callers that only need the short-input floor.
-INPUT_SUBMIT_DELAY_SECONDS = MIN_INPUT_SUBMIT_DELAY_SECONDS
 DETACHED_SESSION_WIDTH = 160
 DETACHED_SESSION_HEIGHT = 60
-
-
-def input_submit_delay(text: str) -> float:
-    """Return a bounded paste-settle delay before submitting literal tmux input."""
-    if not isinstance(text, str):
-        raise TypeError("text must be a string")
-    return min(
-        MAX_INPUT_SUBMIT_DELAY_SECONDS,
-        max(
-            MIN_INPUT_SUBMIT_DELAY_SECONDS,
-            len(text) * INPUT_SUBMIT_DELAY_SECONDS_PER_CHARACTER,
-        ),
-    )
 
 
 class TmuxBackend:
@@ -102,12 +84,25 @@ class TmuxBackend:
         return result.stdout
 
     def send_input(self, config: RuntimeConfig, pane_id: str, text: str) -> None:
-        submit_delay = input_submit_delay(text)
+        if not isinstance(text, str):
+            raise TypeError("text must be a string")
+        buffer_name = f"agentdeck-{uuid.uuid4().hex}"
         subprocess.run(
-            ["tmux", "-L", config.socket_name, "send-keys", "-t", pane_id, "-l", text],
+            [
+                "tmux", "-L", config.socket_name, "load-buffer",
+                "-b", buffer_name, "-",
+            ],
+            check=True,
+            input=text,
+            text=True,
+        )
+        subprocess.run(
+            [
+                "tmux", "-L", config.socket_name, "paste-buffer", "-p", "-d",
+                "-b", buffer_name, "-t", pane_id,
+            ],
             check=True,
         )
-        time.sleep(submit_delay)
         subprocess.run(
             ["tmux", "-L", config.socket_name, "send-keys", "-t", pane_id, "Enter"],
             check=True,
