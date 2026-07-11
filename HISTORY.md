@@ -4,6 +4,14 @@
 
 ## 2026-07-12
 
+### Bridge ACP updates and permissions fail closed
+
+- **What**: add the official-SDK `AgentDeckAcpClient` callback boundary with injected `AcpLedgerSink` and `PermissionDecider`. Typed session updates cross the Task 4 allowlisted mapper exactly once; the sink remains the source of session/turn correlation, monotonic sequence, completion, and cumulative bounds enforcement.
+- **Permission order**: validate the current request, append a compact pending permission, invoke the foreground decider, append its approved/denied transition, then return the typed ACP selected/cancelled response. Only an exact current `allow_once` or `reject_once` option can be selected; unknown, duplicate, `allow_always`, and `reject_always` choices fail closed.
+- **Cancellation and concurrency**: non-TTY/EOF/timeout/Ctrl-C/cancel behavior comes from the injected decision edge or its interruption result and is persisted as denied before returning cancelled. A second concurrent permission request is rejected before creating another pending record; the callback never infers or auto-grants approval.
+- **Unadvertised capabilities**: every official SDK filesystem, terminal, elicitation, and extension callback returns an explicit unsupported JSON-RPC error without disk or process side effects. This slice adds no subprocess, CLI, provider, or tmux behavior.
+- **TDD**: RED began at the missing callback module; tests cover allow/reject once, disabled and unknown choices, cancellation/interruption paths, wrong session, completed turn, concurrent permission, exact update sequencing, bound propagation, and unsupported callback no-I/O guarantees.
+
 ### Map ACP wire facts into the protocol ledger
 
 - **What**: add a pure ACP 0.11.0 mapping boundary for negotiated resume capability, typed session updates, stop reasons, compact permission facts, and exact 64 KiB message / 2 MiB turn / 256 update limits.
