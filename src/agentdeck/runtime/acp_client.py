@@ -97,34 +97,38 @@ class AgentDeckAcpClient:
         self._sink = sink
         self._decide = decide
         self._permission_pending = False
-        self._callback_error: Exception | None = None
+        self._callback_errors: dict[int, Exception] = {}
         self._update_count = 0
         self._update_phase = "prompt"
         self._phase_generation = 0
+        self._phase_lock = asyncio.Lock()
 
-    def begin_load_replay(self) -> int:
-        self._phase_generation += 1
-        self._update_phase = "load_replay"
-        return self._phase_generation
+    async def switch_update_phase(self, phase: str) -> int:
+        if phase not in {"load_replay", "prompt", "sealed"}:
+            raise ValueError("invalid ACP update phase")
+        async with self._phase_lock:
+            self._phase_generation += 1
+            self._update_phase = phase
+            return self._phase_generation
 
-    def begin_prompt(self) -> int:
+    async def acquire_prompt_phase(self) -> int:
+        await self._phase_lock.acquire()
         self._phase_generation += 1
         self._update_phase = "prompt"
         return self._phase_generation
 
-    def seal_updates(self) -> int:
-        self._phase_generation += 1
-        self._update_phase = "sealed"
-        return self._phase_generation
+    def release_phase_switch(self) -> None:
+        self._phase_lock.release()
 
     @property
     def update_count(self) -> int:
         return self._update_count
 
     def take_callback_error(self) -> Exception | None:
-        error = self._callback_error
-        self._callback_error = None
-        return error
+        if not self._callback_errors:
+            return None
+        generation = min(self._callback_errors)
+        return self._callback_errors.pop(generation)
 
     async def _settle_cancelled(self, session_id: str, tool_call_id: str) -> None:
         """Bound and shield the idempotent fail-closed settlement write."""
@@ -145,17 +149,27 @@ class AgentDeckAcpClient:
             raise RuntimeError("ACP permission cancellation settlement timed out") from None
 
     async def session_update(self, session_id: str, update: object, **_: Any) -> None:
+        captured_generation = self._phase_generation
+        captured_phase = self._update_phase
         self._update_count += 1
-        if self._update_phase not in {"load_replay", "prompt"}:
-            error = RuntimeError("unexpected ACP update during sealed phase")
-            self._callback_error = error
-            raise error
+        # Deliberate admission boundary: callbacks already dispatched by the SDK retain
+        # their captured generation even if a later lifecycle opens before they run.
+        await asyncio.sleep(0)
         kind, payload = map_session_update(update)
-        try:
-            await self._sink.append_update(session_id, kind, payload)
-        except Exception as error:
-            self._callback_error = error
-            raise
+        async with self._phase_lock:
+            if (
+                captured_generation != self._phase_generation
+                or captured_phase != self._update_phase
+                or captured_phase not in {"load_replay", "prompt"}
+            ):
+                error = RuntimeError("unexpected ACP update during sealed phase or stale generation")
+                self._callback_errors.setdefault(captured_generation, error)
+                raise error
+            try:
+                await self._sink.append_update(session_id, kind, payload)
+            except Exception as error:
+                self._callback_errors.setdefault(captured_generation, error)
+                raise
 
     async def request_permission(
         self,

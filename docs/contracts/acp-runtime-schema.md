@@ -14,6 +14,14 @@ identity, never raw arguments). Reconnect requires the persisted `acp-adapter` t
 provider, agent, workspace, and adapter provenance to match current configuration before spawn;
 drift is a zero-write blocker.
 
+Update ownership uses a callback-captured lifecycle generation and an async phase lock. A
+callback dispatched while load/resume is sealed cannot be admitted later merely because a
+prompt generation has opened. ACP updates carry no originating request id, however: a wire
+message that truly arrives only after `session/prompt` is in flight must be treated as prompt
+traffic by protocol ordering. An adapter that asynchronously emits old replay at that point is
+an uncorrelatable protocol violation and is covered by adapter conformance/order tests; the
+runtime does not claim to infer provenance absent from the wire message.
+
 ## Read-only preflight
 
 ```text

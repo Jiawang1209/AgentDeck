@@ -455,14 +455,38 @@ async def test_transport_resume_rejects_update_before_response(tmp_path: Path) -
 @async_test
 async def test_client_phase_gate_rejects_update_after_load_is_sealed() -> None:
     client, _ = _transport_client()
-    client.begin_load_replay()
-    client.seal_updates()
+    await client.switch_update_phase("load_replay")
+    await client.switch_update_phase("sealed")
     update = schema.AgentMessageChunk(
         sessionUpdate="agent_message_chunk",
         content=schema.TextContentBlock(type="text", text="late"),
     )
     with pytest.raises(RuntimeError, match="unexpected ACP update during sealed phase"):
         await client.session_update("fake-session-1", update)
+    assert client.take_callback_error() is not None
+
+
+@pytest.mark.parametrize("update", [
+    schema.AgentMessageChunk(sessionUpdate="agent_message_chunk", content=schema.TextContentBlock(type="text", text="late")),
+    schema.UserMessageChunk(sessionUpdate="user_message_chunk", content=schema.TextContentBlock(type="text", text="late")),
+    schema.ToolCallStart(sessionUpdate="tool_call", toolCallId="late-call", title="Late", kind="read"),
+])
+@async_test
+async def test_callback_captured_while_sealed_cannot_enter_new_prompt_generation(update: object) -> None:
+    client, sink = _transport_client()
+    await client.switch_update_phase("sealed")
+    await client._phase_lock.acquire()
+    try:
+        callback = asyncio.create_task(client.session_update("fake-session-1", update))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        client._phase_generation += 1
+        client._update_phase = "prompt"
+    finally:
+        client._phase_lock.release()
+    with pytest.raises(RuntimeError, match="stale generation"):
+        await callback
+    assert sink.updates == []
     assert client.take_callback_error() is not None
 
 

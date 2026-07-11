@@ -613,6 +613,7 @@ def test_acp_reconnect_wire_sequence_never_falls_back_or_creates_new_session(tmp
     ]
     assert all(row.get("session_id", "fake-session-1") == "fake-session-1" for row in rows)
     assert all(row.get("mcp_servers", []) == [] for row in rows)
+    assert [row["cwd"] for row in rows if "cwd" in row] == [str(root.resolve())] * 3
     assert "secret-one" not in marker.read_text() and "secret-two" not in marker.read_text()
 
 

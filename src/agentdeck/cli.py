@@ -1327,7 +1327,6 @@ async def _governed_prompt_turn(
     store: StateStore, session: dict[str, Any], transport: AcpTransport,
     sink: _AcpRunLedgerSink, prompt: str,
 ) -> tuple[dict[str, Any], str, bool]:
-    await transport.prepare_prompt()
     turn = store.record_protocol_turn(session["session_id"], new_id("msg"), "prompt")
     store.record_protocol_transition("turn", turn["turn_id"], "created", "submitted", "prompt_submitted", {})
     sink.activate(session["native_session_id"], session["session_id"], turn["turn_id"])
