@@ -763,6 +763,9 @@ def test_create_preview_selects_workers_freezes_serial_plan_and_never_touches_ru
     assert "exactly 8 steps" in request.task
     assert "planner, reviewer" in request.task
     assert "only after the previous step has completed" in request.task
+    assert "one overall Mission confirmation" in request.task
+    assert "must not request per-step approval" in request.task
+    assert "Every step must require human approval" not in request.task
     assert config_path.read_bytes() == config_before
     state = store.load()
     assert state.get("workflow_runs", []) == []
@@ -1242,6 +1245,42 @@ def test_provider_exceptions_are_sanitized_and_write_nothing(
     ],
 )
 def test_forbidden_plan_metadata_presence_fails_closed_before_any_write(
+    tmp_path, monkeypatch, field, value
+) -> None:
+    _root, config, store, _config_path = project(tmp_path)
+    plan = eight_step_plan()
+    plan[field] = value
+    provider = RecordingProvider(plan)
+    state_before = store.state_path.read_bytes() if store.state_path.exists() else None
+    events_before = store.events_path.read_bytes()
+    monkeypatch.setattr("agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}")
+
+    with pytest.raises(ValueError, match="^mission preview plan invalid$"):
+        create_mission_preview(
+            config=config,
+            store=store,
+            provider=provider,
+            user_message=MESSAGE,
+            timeout_seconds=180,
+        )
+
+    assert store.list_plans() == []
+    assert store.list_missions() == []
+    assert store.events_path.read_bytes() == events_before
+    if state_before is not None:
+        assert store.state_path.read_bytes() == state_before
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("goal", "Complete the chain with per-step human approval"),
+        ("summary", "Every step requires human approval before dispatch"),
+        ("summary", "每一步人工批准后再继续"),
+        ("goal", "逐步批准全部八轮"),
+    ],
+)
+def test_per_step_approval_plan_language_fails_closed_before_any_write(
     tmp_path, monkeypatch, field, value
 ) -> None:
     _root, config, store, _config_path = project(tmp_path)

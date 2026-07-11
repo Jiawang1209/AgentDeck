@@ -68,7 +68,8 @@ def mission_planning_task(
         "Each step may start only after the previous step has completed. "
         f"Use only these selected worker IDs: {allowed}. "
         "Do not add parallel, dynamic, DAG, or cyclic execution metadata. "
-        "Every step must require human approval as planning provenance; this preview does not dispatch. "
+        "The user gives one overall Mission confirmation that authorizes the entire fixed sequence; "
+        "the plan must not request per-step approval. This preview does not dispatch. "
         f"User request: {user_message}"
     )
 

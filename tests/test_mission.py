@@ -931,6 +931,32 @@ def test_validate_mission_plan_allows_unrelated_parallelism_metadata() -> None:
     assert validate_mission_plan(plan, ("planner", "reviewer"), 30) is plan
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("goal", "Use per-step human approval"),
+        ("summary", "Every step requires human approval"),
+        ("goal", "每一步人工批准"),
+        ("summary", "逐步批准后执行"),
+    ],
+)
+def test_validate_mission_plan_rejects_explicit_per_step_approval_language(
+    field: str, value: str
+) -> None:
+    plan = valid_plan()
+    plan[field] = value
+
+    with pytest.raises(ValueError, match="per-step approval"):
+        validate_mission_plan(plan, ("planner", "reviewer"), 30)
+
+
+def test_validate_mission_plan_allows_ordinary_approval_business_language() -> None:
+    plan = valid_plan()
+    plan["steps"][0]["task"] = "Review and approve the invoice"
+
+    assert validate_mission_plan(plan, ("planner", "reviewer"), 30) is plan
+
+
 def test_summaries_are_compact_and_startup_actions_distinguish_reuse_from_spawn() -> None:
     planner = agent("planner", "codex", command="codex --model secret-model")
     reviewer = agent("reviewer", "claude", command="claude --dangerously-skip-permissions")

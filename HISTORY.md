@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Clarify one-confirmation Mission planning
+
+- **类型**: acceptance fix + strict TDD
+- **问题**: 真实 Codex preview 把旧 planning prompt 的 `Every step must require human approval` 复述为逐步人工批准，与用户只确认一次、随后自动完成固定串行序列的 Mission 契约冲突。
+- **What**: Leader planning request 现在明确 `one overall Mission confirmation` 授权整个 fixed sequence，并明确 `must not request per-step approval`。共享 Mission plan validator 对 provider `goal` / `summary` 中明确的英文 per-step/every-step human approval 和中文“每一步人工批准/逐步批准”话术 fail closed；普通 step task 中的业务审批文字仍合法。
+- **TDD 证据**: provider request 三项契约断言与八组中英文 provider plan 反例先 9/9 RED；最小 prompt/validator 修复后 focused 9/9、Mission domain/orchestration 187/187、全量 1209/1209 GREEN，并验证非法 plan 在 plan/Mission/event 写入前拒绝；compileall 与 diff check 干净。
+- **安全边界**: 一次整体确认仍只授权已冻结的串行步骤，不扩大 Worker、provider、runtime 或 tool 权限；validator 仅检查 `goal` / `summary` 的强模式，不扫描用户任务或 step task，不回显被拒绝内容。
+
 ### Harden Mission turn trace controls
 
 - **类型**: contract security fix + strict TDD

@@ -590,6 +590,20 @@ def validate_mission_plan(
     if any(key in plan for key in forbidden_metadata):
         raise ValueError("mission plan cannot contain dynamic or parallel metadata")
 
+    per_step_approval_patterns = (
+        r"\bper[- ]step\s+(?:human\s+)?approval\b",
+        r"\b(?:every|each)\s+step\b.{0,48}\b(?:human\s+)?approv(?:al|e|ed|es)\b",
+        r"每一步.{0,24}(?:人工)?批准",
+        r"逐步批准",
+    )
+    for field in ("goal", "summary"):
+        value = plan.get(field)
+        if isinstance(value, str) and any(
+            re.search(pattern, value, re.IGNORECASE)
+            for pattern in per_step_approval_patterns
+        ):
+            raise ValueError("mission plan cannot require per-step approval")
+
     steps = plan.get("steps")
     if not isinstance(steps, list):
         raise ValueError("mission plan steps must be a list")

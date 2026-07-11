@@ -39,7 +39,7 @@ Plan ids use `pln_<12 lowercase hex>`. Plan hashes use exactly `sha256:<64 lower
 - navigation: `status_command`, `workbench_command`, `controls`
 - safety: `safety=inspect`, `requires_explicit_user=true`
 
-The example plan is a fixed serial eight-step sequence. `step_count` must equal `len(plan.steps)`, steps must be numbered 1 through N, only frozen selected agents may appear, and at least two selected agents must participate. Dynamic, parallel, DAG, or cycle metadata is rejected by the shared Mission plan validator.
+The example plan is a fixed serial eight-step sequence. `step_count` must equal `len(plan.steps)`, steps must be numbered 1 through N, only frozen selected agents may appear, and at least two selected agents must participate. Dynamic, parallel, DAG, or cycle metadata is rejected by the shared Mission plan validator. The Leader planning request states that one overall Mission confirmation authorizes the complete fixed sequence and explicitly forbids per-step approval. Provider plan `goal` / `summary` text that explicitly asks for per-step human approval is rejected before any plan, Mission, or event write; ordinary business approval wording inside a step task is not treated as orchestration approval.
 
 `can_start` is true exactly when `blockers` is empty. The confirmation control is enabled exactly when `can_start` is true; a disabled control must carry a compact blocker.
 
