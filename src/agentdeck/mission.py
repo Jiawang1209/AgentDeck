@@ -576,6 +576,26 @@ def mission_binding_reusable(
     return status == "running" and pane_id is not None
 
 
+def _requires_per_step_approval(text: str) -> bool:
+    if not isinstance(text, str):
+        return False
+
+    english_step_scope = re.search(r"\b(?:each|every)\s+step\b", text, re.IGNORECASE)
+    english_approval = re.search(r"\b(?:approval|approve)\b", text, re.IGNORECASE)
+    english_obligation = re.search(
+        r"\b(?:must|mandatory|required?|requires?|needed?|needs?)\b",
+        text,
+        re.IGNORECASE,
+    )
+    if english_step_scope and english_approval and english_obligation:
+        return True
+
+    chinese_step_scope = re.search(r"(?:每一步|每步|每个步骤|各步骤)", text)
+    chinese_approval = re.search(r"(?:人工批准|人工审批|批准|审批)", text)
+    chinese_obligation = re.search(r"(?:必须|需要|要求|前需|需)", text)
+    return bool(chinese_step_scope and chinese_approval and chinese_obligation)
+
+
 def validate_mission_plan(
     plan: dict[str, Any],
     selected_agent_ids: Sequence[str],
@@ -590,18 +610,9 @@ def validate_mission_plan(
     if any(key in plan for key in forbidden_metadata):
         raise ValueError("mission plan cannot contain dynamic or parallel metadata")
 
-    per_step_approval_patterns = (
-        r"\bper[- ]step\s+(?:human\s+)?approval\b",
-        r"\b(?:every|each)\s+step\b.{0,48}\b(?:human\s+)?approv(?:al|e|ed|es)\b",
-        r"每一步.{0,24}(?:人工)?批准",
-        r"逐步批准",
-    )
     for field in ("goal", "summary"):
         value = plan.get(field)
-        if isinstance(value, str) and any(
-            re.search(pattern, value, re.IGNORECASE)
-            for pattern in per_step_approval_patterns
-        ):
+        if isinstance(value, str) and _requires_per_step_approval(value):
             raise ValueError("mission plan cannot require per-step approval")
 
     steps = plan.get("steps")

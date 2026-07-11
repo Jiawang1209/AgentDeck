@@ -1274,10 +1274,10 @@ def test_forbidden_plan_metadata_presence_fails_closed_before_any_write(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("goal", "Complete the chain with per-step human approval"),
+        ("goal", "Approval is required before every step"),
         ("summary", "Every step requires human approval before dispatch"),
-        ("summary", "每一步人工批准后再继续"),
-        ("goal", "逐步批准全部八轮"),
+        ("summary", "每个步骤都需要人工批准"),
+        ("goal", "必须在每一步前人工审批"),
     ],
 )
 def test_per_step_approval_plan_language_fails_closed_before_any_write(

@@ -18,6 +18,7 @@ from agentdeck.mission import (
     selected_agent_summaries,
     startup_action_summaries,
     validate_mission_plan,
+    _requires_per_step_approval,
 )
 from agentdeck.models import (
     AgentRuntimeBinding,
@@ -932,12 +933,18 @@ def test_validate_mission_plan_allows_unrelated_parallelism_metadata() -> None:
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
+    "field",
+    ["goal", "summary"],
+)
+@pytest.mark.parametrize(
+    "value",
     [
-        ("goal", "Use per-step human approval"),
-        ("summary", "Every step requires human approval"),
-        ("goal", "每一步人工批准"),
-        ("summary", "逐步批准后执行"),
+        "Approval is required before every step",
+        "Every step requires approval",
+        "Each step must receive human approval",
+        "每个步骤都需要人工批准",
+        "每一步开始前必须获得批准",
+        "必须在每一步前人工审批",
     ],
 )
 def test_validate_mission_plan_rejects_explicit_per_step_approval_language(
@@ -950,9 +957,38 @@ def test_validate_mission_plan_rejects_explicit_per_step_approval_language(
         validate_mission_plan(plan, ("planner", "reviewer"), 30)
 
 
-def test_validate_mission_plan_allows_ordinary_approval_business_language() -> None:
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Each step processes an approved invoice",
+        "Each step records prior approval metadata",
+        "每一步记录人工批准状态",
+        "各步骤读取审批结果",
+        "Review and approve the invoice",
+    ],
+)
+def test_per_step_approval_guard_allows_business_approval_language(value: str) -> None:
+    assert _requires_per_step_approval(value) is False
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Approval is required before every step",
+        "Every step requires approval",
+        "Each step must receive human approval",
+        "每个步骤都需要人工批准",
+        "每一步开始前必须获得批准",
+        "必须在每一步前人工审批",
+    ],
+)
+def test_per_step_approval_guard_rejects_obligatory_step_approval(value: str) -> None:
+    assert _requires_per_step_approval(value) is True
+
+
+def test_validate_mission_plan_does_not_scan_step_tasks_for_approval_guard() -> None:
     plan = valid_plan()
-    plan["steps"][0]["task"] = "Review and approve the invoice"
+    plan["steps"][0]["task"] = "Every step requires approval"
 
     assert validate_mission_plan(plan, ("planner", "reviewer"), 30) is plan
 

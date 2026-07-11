@@ -4,6 +4,14 @@
 
 ## 2026-07-11
 
+### Refine Mission approval guard
+
+- **类型**: review fix + strict TDD
+- **问题**: 首版 per-step approval guard 只靠相邻关键词，既漏掉 `Approval is required before every step` / `每个步骤都需要人工批准` 等双向表达，也会误拒绝仅描述既有审批状态或元数据的文本。
+- **What**: 抽出纯 `_requires_per_step_approval(text)`；英文仅在 each/every step、approval/approve 与 must/required/require/need/mandatory 三类语义同时出现时命中，中文仅在每一步/每步/每个步骤/各步骤、批准/审批与必须/需要/需/要求三类语义同时出现时命中，词序不限。validator 仍只检查 provider plan 的 `goal` / `summary`。
+- **TDD 证据**: pure helper 缺失首先 collection RED；新增 goal/summary 双字段拒绝、双语双向 helper 和 business-metadata allow 回归后 focused 24/24、Mission domain/orchestration 206/206、全量 1228/1228 GREEN；compileall 与 diff check 干净。
+- **安全边界**: `approved invoice`、prior approval metadata、记录人工批准状态、读取审批结果和普通业务 approve 不构成 Mission 执行授权；step task 完全不进入该 guard，错误文本保持固定且不回显 provider 内容。
+
 ### Clarify one-confirmation Mission planning
 
 - **类型**: acceptance fix + strict TDD
