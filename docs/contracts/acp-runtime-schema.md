@@ -2,6 +2,12 @@
 
 `agentdeck contract acp-runtime [--example]` publishes the discovery metadata for the Phase 2 ACP diagnostic surface. Its contract version is `acp-runtime/v1`.
 
+The foreground implementation and fake-Agent conformance are available, but the real
+`claude-agent-acp` acceptance is blocked on human-managed adapter installation and
+authentication. This contract is not live-acceptance evidence and does not make Phase 2
+complete. The operator-only gate is documented in
+`docs/validation/phase2-acp-live-acceptance-sop.md`; no PASS report exists until that gate passes.
+
 Confirmed reconnect commands are `agentdeck protocol acp load --session-id <ags_id> --confirm`
 and `agentdeck protocol acp resume --session-id <ags_id> --prompt <text> --confirm`.
 Both resolve exactly one persisted internal session, its opaque native session id, configured

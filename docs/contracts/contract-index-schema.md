@@ -68,4 +68,6 @@ The index currently lists these contract names in order:
 
 `acp-runtime` is discoverable through `agentdeck contract acp-runtime [--example]`; its live read-only preflight is `agentdeck protocol acp preflight --agent <agent_id>`, and its durable schema is `docs/contracts/acp-runtime-schema.md`.
 
+The contract/example and preflight are not proof of real-adapter acceptance. The explicit human-run gate and current blocker procedure are in `docs/validation/phase2-acp-live-acceptance-sop.md`.
+
 When a new GUI-consumable contract command is added, update `CONTRACT_INDEX_SPECS` in `src/agentdeck/contracts.py`, this document, and the contract index tests in the same commit.
