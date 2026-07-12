@@ -4,6 +4,14 @@
 
 ## 2026-07-12
 
+### Validate the real Claude ACP vertical slice
+
+- **Real adapter PASS**: the explicit live gate passed against the human-installed and already-authenticated `@agentclientprotocol/claude-agent-acp@0.58.1` with Node `v22.23.0`, Python `3.12.13`, ACP protocol v1, and `agent-client-protocol==0.11.0`. The final opt-in run was `1 passed in 23.86s`.
+- **Covered lifecycle**: a disposable project completed new/prompt with formal `end_turn`, exact current `reject_once` with file non-creation, clean disconnect, exact load with durable replay, exact resume without pre-prompt replay, a second prompt with `end_turn`, and final global-count/ledger agreement while preserving one native session identity.
+- **Permission isolation**: the operator's Claude user setting used `permissions.defaultMode=auto`, which correctly auto-approved the first write attempt before an ACP permission request could exist. The live harness now creates only a disposable project-local `.claude/settings.local.json` with `defaultMode=default`, leaving user settings and authentication untouched; a focused RED/GREEN test freezes this boundary.
+- **Contract correction**: the final live assertion now reads the documented permission item field `status`, not nonexistent `state`.
+- **Sanitized evidence**: `docs/validation/phase2-claude-agent-acp-vertical-slice.md` records versions, AgentDeck internal IDs, result states, file non-creation, and commands without transcript, raw tool input, token/email/auth/API-key/environment data, native session identity, or absolute home paths.
+
 ### Prepare pre-Task 12 live-acceptance readiness documentation
 
 - **Gate state**: Phase 2 Tasks 1–10 are code-complete, foreground ACP v1 behavior is covered by deterministic fake-Agent conformance, and Task 11's opt-in harness/SOP is ready. This is pre-Task 12 live-acceptance preparation, not Task 12 execution and not Phase 2 completion. Task 12 remains **NOT STARTED / PENDING** until the real live gate passes and its reserved PASS report exists.

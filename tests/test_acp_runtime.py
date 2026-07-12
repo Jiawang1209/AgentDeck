@@ -450,6 +450,12 @@ def _configure_live_acp(project: Path, adapter: Path) -> None:
     )
     assert original.count(needle) == 1
     config_path.write_text(original.replace(needle, replacement), encoding="utf-8")
+    claude_dir = project / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    (claude_dir / "settings.local.json").write_text(
+        json.dumps({"permissions": {"defaultMode": "default"}}, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _live_cli_tty_reject_once(project: Path, *arguments: str) -> dict[str, Any]:
@@ -460,6 +466,26 @@ def _live_cli_tty_reject_once(project: Path, *arguments: str) -> dict[str, Any]:
         return _json_document(capture.text())
     except AssertionError as error:
         raise AssertionError("PTY emitted no valid JSON document; " + capture.diagnostic()) from error
+
+
+def test_live_acp_configuration_forces_project_local_default_permission_mode(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "live-acp-project"
+    project.mkdir()
+    config_dir = project / ".agentdeck"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        '[agents.reviewer]\nprovider = "claude"\ncommand = "claude"\n',
+        encoding="utf-8",
+    )
+
+    _configure_live_acp(project, Path("/exact/claude-agent-acp"))
+
+    settings = json.loads(
+        (project / ".claude" / "settings.local.json").read_text(encoding="utf-8")
+    )
+    assert settings == {"permissions": {"defaultMode": "default"}}
 
 
 def test_live_acp_gate_requires_explicit_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -591,7 +617,7 @@ def test_live_claude_agent_vertical_slice(tmp_path: Path) -> None:
     assert status["protocol_state_transitions"]["count"] == len(
         ledger["protocol_state_transitions"]
     )
-    assert all(item["state"] == "denied" for item in status["permission_requests"]["items"])
+    assert all(item["status"] == "denied" for item in status["permission_requests"]["items"])
     assert status["agent_sessions"]["items"][0]["session_id"] == first["session_id"]
     assert ledger["agent_sessions"][0]["native_session_id"] == first["native_session_id"]
     assert status["protocol_state_transitions"]["items"][-1]["to_state"] == "disconnected"
