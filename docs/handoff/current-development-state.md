@@ -12,7 +12,7 @@ Phase 1 adds pure transport capability, agent session, protocol turn, transport 
 
 tmux remains the active default backend. Its capability metadata describes only the observable fallback it actually provides; it is not ACP-compatible metadata and does not authorize execution. Existing tmux dispatch does **not** automatically emit protocol records. Phase 1 has not implemented an ACP backend or adapter subprocess, automatic emission, a project daemon, a backend switch, or a provider-native permission bridge.
 
-The next product fork is the Phase 2 ACP vertical slice. It must begin with its own human-approved spec and implementation plan; Phase 1 completion does not authorize that work or imply ACP has landed.
+Phase 2 subsequently delivered one human-approved foreground ACP vertical slice. It does not change the Phase 1 boundary for existing tmux dispatch or imply that Mission/workflow now use ACP.
 
 ## Sequential workflow core — implemented
 
@@ -71,7 +71,7 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-**Pre-Task 12 live-acceptance preparation.** Phase 2 Tasks 1–10 are code-complete and Task 11's opt-in gate/operator SOP are ready, but real acceptance remains **BLOCKED** because `command -v claude-agent-acp` returns no executable. Task 12 is **NOT STARTED / PENDING** and may begin only after the real live gate passes and the reserved PASS report is created. The ACP Python SDK 0.11.0 and Node >=22 prerequisites are ready. A human must install and authenticate the adapter outside AgentDeck, then run the exact opt-in command in `docs/validation/phase2-acp-live-acceptance-sop.md`. Do not install an adapter, change authentication, use `npx`/`npm`/`pip`, auto-download anything, or write the reserved PASS report before that real acceptance passes.
+**Phase 2 ACP vertical slice complete.** Tasks 1–12 are complete, the real opt-in gate passed against the human-installed and already-authenticated `@agentclientprotocol/claude-agent-acp@0.58.1`, and the sanitized PASS report is `docs/validation/phase2-claude-agent-acp-vertical-slice.md`. Fresh full verification and independent final review passed. The next action is a human integration decision; do not merge or push without explicit instruction. Do not install adapters, change authentication, use `npx`/`npm`/`pip`, or auto-download anything during normal AgentDeck operation or verification.
 
 The design is foreground-only and keeps tmux as the default backend. It does not authorize adapter/SDK installation, real Agent execution, automatic protocol emission from existing dispatch, a project daemon, the default interactive REPL, global roaming, state migration, Workspace Client work, or a multi-agent ACP Mission.
 
@@ -97,7 +97,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0 and Phase 1 are complete. Phase 2 Tasks 1–10 are code-complete. Task 11 has an opt-in real Claude ACP acceptance harness plus a read-only missing-executable rehearsal; the gate is ready, but live acceptance has not run because `claude-agent-acp` is not installed on PATH. Current work is live-acceptance readiness documentation only. Task 12 is **NOT STARTED / PENDING** until Task 11 produces a real PASS and the reserved PASS report. The phase remains **BLOCKED on external setup**, not Phase 2 complete.
+Phase 0, Phase 1, and Phase 2 Tasks 1–12 are complete. Deterministic fake-Agent conformance and the real Claude ACP acceptance both pass; release documentation, fresh full verification, and independent final review are complete. The branch is ready for the human's integration decision and remains unmerged/unpushed.
 
 The implemented diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. It explicitly distinguishes `session/load` history replay from `session/resume` without replay, uses append-only lifecycle transitions rather than rewriting Phase 1 records, and makes non-interactive permission requests fail closed. Preserve tmux as the active default backend; do not route dispatch/Mission/workflow through ACP or add a daemon.
 
@@ -122,7 +122,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-STOP after reading current state. Do not redo Phase 0, Phase 1, Mission, G-series work, or Phase 2 Tasks 1–10. Task 11 is blocked until a human installs/authenticates the exact adapter outside AgentDeck and runs the opt-in SOP. Task 12 is NOT STARTED and may begin only after the live test passes and the PASS report exists. Do not auto-install, change authentication, use `npx`/`npm`/`pip`, auto-download, pre-write the PASS report, or perform Task 12 work while the gate is blocked.
+STOP after reading current state. Do not redo Phase 0, Phase 1, Mission, G-series work, or Phase 2 Tasks 1–12. The real ACP gate, release verification, independent review, and sanitized PASS report are complete. Await a human integration or next-product-slice decision; do not merge/push, auto-install, change authentication, use `npx`/`npm`/`pip`, auto-download, route dispatch/Mission/workflow through ACP, or expand into daemon/default-REPL/global-roaming/Workspace-Client work without explicit approval.
 ```
 
 ## Historical development log — not active

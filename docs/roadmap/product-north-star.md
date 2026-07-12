@@ -124,7 +124,7 @@ When the user returns, AgentDeck summarizes completed turns, current work, failu
 
 1. Freeze the current natural-language Mission Golden Demo as the compatibility baseline.
 2. Introduce transport, agent-session, turn, update, and permission contracts without changing user behavior.
-3. Complete one real ACP vertical slice.
+3. Complete one real foreground ACP vertical slice. **Complete (2026-07-12);** this does not yet route Mission/workflow through ACP.
 4. Add the project daemon and default `agentdeck` conversation.
 5. Run a confirmed Codex-and-Claude Mission over ACP with permission bridging and recovery.
 6. Add global project roaming and opt-in notifications.

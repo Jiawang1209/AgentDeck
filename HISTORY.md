@@ -4,6 +4,13 @@
 
 ## 2026-07-12
 
+### Complete the ACP vertical slice phase
+
+- **Phase status**: Phase 2 now has one validated foreground ACP v1 vertical slice. It is explicitly configured, single-Agent, foreground-only, and confirmation-gated; it does not route existing tmux dispatch, Mission, or workflow through ACP and does not implement a daemon, default REPL, global roaming, Workspace Client, or multi-agent ACP Mission.
+- **Documentation**: README, CLAUDE/AGENT constraints, active handoff, and the product delivery sequence now point to the real sanitized PASS evidence and remove the obsolete adapter-missing / pre-Task 12 blocker.
+- **Contract smoke**: `agentdeck contract acp-runtime --example` validates `schema_version=project-view/v1` and `contract_version=acp-runtime/v1` through `jq`.
+- **Fresh release verification**: full pytest is `1742 passed, 1 skipped`; `python -m compileall src tests -q` and `git diff --check` pass. The one default skip is the explicitly opt-in real adapter test, which passed separately and is recorded in `docs/validation/phase2-claude-agent-acp-vertical-slice.md`.
+
 ### Validate the real Claude ACP vertical slice
 
 - **Real adapter PASS**: the explicit live gate passed against the human-installed and already-authenticated `@agentclientprotocol/claude-agent-acp@0.58.1` with Node `v22.23.0`, Python `3.12.13`, ACP protocol v1, and `agent-client-protocol==0.11.0`. The final opt-in run was `1 passed in 23.86s`.

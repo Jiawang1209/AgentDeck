@@ -8,7 +8,7 @@ AgentDeck 是一个 local-first 多智能体终端工作台。目标是用任意
 
 2026-07-11 自然语言 Mission Phase 0 已通过全新项目真实验收：两条用户消息驱动 Codex/Claude 完成 8 步冻结顺序，证据见 `docs/validation/2026-07-11-natural-language-mission-acceptance.md`。首次目录 trust 仍是 human setup，不得由 Worker 任务输入或静默 Enter 绕过。
 
-Protocol-native Phase 1 已实现协议 records、append-only lineage、compact ProjectView、`protocol-runtime/v1` contract、只读 `agentdeck protocol status` 和 runtime capability metadata。Phase 2 Tasks 1–10 已实现显式配置下的 foreground ACP v1 diagnostic slice，并完成 fake-Agent conformance；Task 11 live gate 已就绪，但本机缺少由人类安装、认证的 `claude-agent-acp`，真实验收仍 **BLOCKED**。当前只能做 pre-Task 12 live-acceptance readiness；Task 12 是 **NOT STARTED / PENDING**，只能在真实 live PASS 且 PASS 报告创建后开始，不得称 Phase 2 complete。`protocol status` 与 ACP preflight 必须保持只读：不得写 state/event、调用 provider、读取或输入 tmux、改变 permission、启动 adapter 或认证。能力元数据只描述 transport 能力，不是授权；tmux 是当前 active default backend，只能标为 observable fallback，绝不得标成 ACP compatible。dispatch、Mission、workflow 尚未路由到 ACP，automatic emission 和 project daemon 均未实现。
+Protocol-native Phase 1 已实现协议 records、append-only lineage、compact ProjectView、`protocol-runtime/v1` contract、只读 `agentdeck protocol status` 和 runtime capability metadata。Phase 2 foreground ACP v1 vertical slice 已完成 fake-Agent conformance，并于 2026-07-12 通过真实 `@agentclientprotocol/claude-agent-acp@0.58.1` 验收；证据见 `docs/validation/phase2-claude-agent-acp-vertical-slice.md`。完成范围仅是显式配置、显式确认的单 Agent 前台 `run/load/resume` 路径。`protocol status` 与 ACP preflight 必须保持只读：不得写 state/event、调用 provider、读取或输入 tmux、改变 permission、启动 adapter 或认证。能力元数据只描述 transport 能力，不是授权；tmux 是当前 active default backend，只能标为 observable fallback，绝不得标成 ACP compatible。dispatch、Mission、workflow 尚未路由到 ACP，automatic emission、project daemon、默认 REPL、global roaming、Workspace Client 和多 Agent ACP Mission 均未实现。
 
 Skill 是北极星的一部分：AgentDeck 后续应支持内置 skill、项目本地 skill 和显式 allowlist 的外源 skill，但 skill 必须通过 Skill Registry 加载并记录 path/source、hash、content snapshot、调用者和用途；skill 是可审计工作流上下文，不是绕过 approval、runtime safety 或 tool 权限的后门。
 
@@ -104,7 +104,7 @@ pytest tests/test_dispatch_cli.py -q
 python -m compileall src
 ```
 
-真实 ACP gate 只能由人类先在 AgentDeck 外安装并认证 adapter，再按 `docs/validation/phase2-acp-live-acceptance-sop.md` 显式运行。不得使用 `npx`、`npm`、`pip` 或自动下载/安装，不得自动修改认证；adapter 缺失时只记录 blocker。
+真实 ACP gate 只能由人类先在 AgentDeck 外安装并认证 adapter，再按 `docs/validation/phase2-acp-live-acceptance-sop.md` 显式运行。不得使用 `npx`、`npm`、`pip` 或自动下载/安装，不得自动修改认证；2026-07-12 PASS 证据在 `docs/validation/phase2-claude-agent-acp-vertical-slice.md`，未来重跑仍遵守同一边界。
 
 所有开发、验证和 CLI 调试都应在 `agentdeck` 环境中执行。
 

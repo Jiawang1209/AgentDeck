@@ -55,7 +55,7 @@ AgentDeck 已经具备本地控制平面的主要底座：
 
 下一代产品会在保留这些能力和审计历史的前提下，用协议原生 Runtime Kernel 替换脆弱的终端屏幕通信。
 
-当前 Phase 2 foreground ACP v1 implementation 与 fake-Agent conformance 已就绪；真实 `claude-agent-acp` live acceptance 因 adapter 尚未由人类安装和认证而 **BLOCKED**。tmux 仍是默认 backend，dispatch、Mission、workflow 与 daemon 均未路由或实现为 ACP 路径。
+Phase 2 foreground ACP v1 vertical slice 已通过 fake-Agent conformance 和真实 `@agentclientprotocol/claude-agent-acp@0.58.1` 验收：显式 `run/load/resume` 覆盖 streamed update、`reject_once` permission、正式 stop reason、disconnect、load replay 与 resume 后第二轮 prompt。它仍是单 Agent、前台、显式确认的诊断路径；tmux 继续是默认 backend，dispatch、Mission、workflow 尚未路由到 ACP，daemon、默认 `agentdeck` REPL、global roaming、Workspace Client 与多 Agent ACP Mission 尚未实现。
 
 ## 体验当前 CLI
 
@@ -133,6 +133,7 @@ Human / CLI / TUI / future Desktop or IDE
 - [Protocol Runtime Contract](docs/contracts/protocol-runtime-schema.md)
 - [ACP Runtime Contract](docs/contracts/acp-runtime-schema.md)
 - [ACP Live Acceptance SOP](docs/validation/phase2-acp-live-acceptance-sop.md)
+- [ACP Live Acceptance PASS](docs/validation/phase2-claude-agent-acp-vertical-slice.md)
 - [当前开发状态](docs/handoff/current-development-state.md)
 - [Contract 索引](docs/contracts/contract-index-schema.md)
 - [架构文档](docs/architecture/)
