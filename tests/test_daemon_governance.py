@@ -29,11 +29,63 @@ from agentdeck.daemon.service import (
     permission_state_for_attempt,
 )
 from agentdeck.models import AgentRuntimeBinding
-from agentdeck.state import StateStore
+from agentdeck.state import StateStore, canonical_snapshot_hash
 from agentdeck.runtime.protocol import TransportCapabilities
 
 
 NOW = datetime(2026, 7, 14, 2, 0, tzinfo=timezone.utc)
+
+
+def _admitted_mission(root, *, status: str) -> dict[str, object]:
+    digest = "sha256:" + "a" * 64
+    mission_scope = {
+        "mission_id": "mis_0123456789ab", "schema_version": "mission/v1",
+        "plan_id": "pln_111111111111", "plan_hash": digest,
+        "goal_hash": digest, "summary_hash": digest,
+        "steps": [
+            {"step_id": "step_1", "position": 1, "agent_id": "worker-a", "role": "implementation", "task_hash": digest},
+            {"step_id": "step_2", "position": 2, "agent_id": "worker-b", "role": "review", "task_hash": digest},
+        ],
+        "project_scope_hash": canonical_snapshot_hash({"project_root": str(root.resolve())}),
+        "action_classes": ["worker_task", "declared_local_verification"],
+        "skill_provenance": [], "memory_provenance": [],
+        "declared_tests_hash": None, "acceptance_criteria_hash": None,
+    }
+    workers = [
+        {
+            "agent_id": agent_id, "role": role, "provider": provider,
+            "workspace_mode": "shared", "configured_transport": transport,
+            "capability_provenance": {
+                "source": "project_config", "transport": transport,
+                "adapter_configuration": "present" if transport == "acp" else "not_applicable",
+            },
+        }
+        for agent_id, role, provider, transport in (
+            ("worker-a", "implementation", "codex", "acp"),
+            ("worker-b", "review", "claude", "tmux"),
+        )
+    ]
+    policy = {
+        "approval_mode": "confirm", "autonomous_allowed_agents": [],
+        "autonomous_max_approvals": 0, "policy_source": "project_config",
+    }
+    snapshot = {
+        "mission": mission_scope, "workers": workers, "policy": policy,
+        "limits": {"step_count": 2, "timeout_seconds": 60, "retry_limit": 0, "worker_budget": 2},
+        "mission_hash": canonical_snapshot_hash(mission_scope),
+        "policy_hash": canonical_snapshot_hash(policy),
+    }
+    snapshot["execution_hash"] = canonical_snapshot_hash(snapshot)
+    return {
+        "mission_id": "mis_0123456789ab", "status": status,
+        "stop_reason": "human_pause" if status == "stopped" else None,
+        "current_step": 1, "snapshot_hash": snapshot["execution_hash"],
+        "execution_snapshot": snapshot, "updated_at": NOW.isoformat(),
+        "daemon_admission": {
+            "state": "admitted", "snapshot_hash": snapshot["execution_hash"],
+            "blocker": None, "recovery_command": None, "updated_at": NOW.isoformat(),
+        },
+    }
 
 
 def _seed_acp_worker_runtime(
@@ -389,6 +441,56 @@ def test_pending_permission_is_derived_from_bound_authoritative_transition() -> 
     assert permission_state_for_attempt(state, attempt) == "approved"
 
 
+def test_latest_of_multiple_attempt_permissions_is_authoritative() -> None:
+    attempt = {
+        "attempt_id": "mat_000000000001",
+        "mission_id": "mis_0123456789ab",
+        "agent_id": "worker-a",
+    }
+    state = {
+        "mission_permission_bindings": [
+            {**attempt, "permission_id": "prm_000000000002"},
+            {**attempt, "permission_id": "prm_000000000001"},
+        ],
+        "permission_requests": [
+            {
+                "permission_id": "prm_000000000002",
+                "session_id": "ags_session1",
+                "status": "pending",
+                "created_at": NOW.isoformat(),
+            },
+            {
+                "permission_id": "prm_000000000001",
+                "session_id": "ags_session1",
+                "status": "pending",
+                "created_at": NOW.isoformat(),
+            },
+        ],
+        "agent_sessions": [
+            {"session_id": "ags_session1", "agent_id": "worker-a"}
+        ],
+        "protocol_state_transitions": [
+            {
+                "entity_type": "permission",
+                "entity_id": "prm_000000000002",
+                "from_state": "pending",
+                "to_state": "approved",
+            }
+        ],
+        "transport_updates": [
+            {
+                "kind": "permission_request", "sequence": 0,
+                "payload": {"permission_id": "prm_000000000002"},
+            },
+            {
+                "kind": "permission_request", "sequence": 1,
+                "payload": {"permission_id": "prm_000000000001"},
+            },
+        ],
+    }
+    assert permission_state_for_attempt(state, attempt) == "pending"
+
+
 def test_permission_binding_lineage_drift_fails_closed() -> None:
     attempt = {
         "attempt_id": "mat_000000000001",
@@ -493,18 +595,7 @@ def test_durable_governance_preview_consumes_once_and_rejects_drift(tmp_path) ->
 def test_production_mission_pause_rpc_requires_exact_preview(tmp_path) -> None:
     store = StateStore(tmp_path)
     state = store.load()
-    state["missions"] = [{
-        "mission_id": "mis_0123456789ab",
-        "status": "running",
-        "stop_reason": None,
-        "current_step": 1,
-        "snapshot_hash": "sha256:" + "a" * 64,
-        "updated_at": NOW.isoformat(),
-        "can_start": True,
-        "blockers": [],
-        "workflow_run_id": "run_1",
-        "confirmed_at": NOW.isoformat(),
-    }]
+    state["missions"] = [_admitted_mission(tmp_path, status="running")]
     state["mission_attempts"] = []
     store.save(state)
 
@@ -534,18 +625,7 @@ def test_production_mission_pause_rpc_requires_exact_preview(tmp_path) -> None:
 def test_production_mission_pause_rejects_active_attempt_without_writes(tmp_path) -> None:
     store = StateStore(tmp_path)
     state = store.load()
-    state["missions"] = [{
-        "mission_id": "mis_0123456789ab",
-        "status": "running",
-        "stop_reason": None,
-        "current_step": 1,
-        "snapshot_hash": "sha256:" + "a" * 64,
-        "updated_at": NOW.isoformat(),
-        "can_start": True,
-        "blockers": [],
-        "workflow_run_id": "run_1",
-        "confirmed_at": NOW.isoformat(),
-    }]
+    state["missions"] = [_admitted_mission(tmp_path, status="running")]
     state["mission_attempts"] = [
         _attempt("mat_000000000001", "submitted", claim="adm_1", receipt="accepted")
     ]
@@ -748,14 +828,7 @@ def test_production_mission_control_actions_are_exact_bound(
 ) -> None:
     store = StateStore(tmp_path)
     state = store.load()
-    state["missions"] = [{
-        "mission_id": "mis_0123456789ab",
-        "status": initial,
-        "stop_reason": "human_pause" if initial == "stopped" else None,
-        "current_step": 1,
-        "snapshot_hash": "sha256:" + "a" * 64,
-        "updated_at": NOW.isoformat(),
-    }]
+    state["missions"] = [_admitted_mission(tmp_path, status=initial)]
     store.save(state)
     preview = apply_mission_state_request(
         store,
@@ -1017,6 +1090,64 @@ def test_return_control_runtime_drift_persists_ambiguous_blocker(tmp_path) -> No
     assert "runtime" in decision["blocker"]
     view = store.project_view(load_config(tmp_path))
     assert any("worker reconciliation ambiguous" in item for item in view.conversation["blockers"])
+
+
+def test_return_control_rejects_closed_acp_session_evidence(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    _seed_acp_worker_runtime(store, tmp_path)
+    state = store.load()
+    state["conversation_sessions"] = [{
+        "conversation_id": "cvs_session1", "created_at": NOW.isoformat()
+    }]
+    state["conversation_state_transitions"] = [
+        {
+            "transition_id": "cst_created", "conversation_id": "cvs_session1",
+            "entity_type": "conversation", "entity_id": "cvs_session1",
+            "from_state": None, "to_state": "created", "reason": "started",
+            "created_at": NOW.isoformat(),
+        },
+        {
+            "transition_id": "cst_ready", "conversation_id": "cvs_session1",
+            "entity_type": "conversation", "entity_id": "cvs_session1",
+            "from_state": "created", "to_state": "ready", "reason": "ready",
+            "created_at": NOW.isoformat(),
+        },
+    ]
+    store.save(state)
+    target = {"agent_id": "worker-a"}
+    preview = apply_worker_ownership_request(
+        store, action="takeover", params=target, generation=8, now=NOW
+    )
+    apply_worker_ownership_request(
+        store,
+        action="takeover",
+        params={**target, "preview_id": preview["preview_id"]},
+        generation=8,
+        now=NOW,
+    )
+    protocol = store.validated_protocol_state()
+    session = protocol["agent_sessions"][0]
+    store.record_protocol_transition(
+        "session",
+        session["session_id"],
+        "ready",
+        "disconnected",
+        "transport_closed",
+        {},
+    )
+
+    with pytest.raises(ServiceError, match="reconciliation"):
+        apply_worker_ownership_request(
+            store,
+            action="return_control",
+            params={
+                **target,
+                "reported_changes": {"summary": "no changes", "paths": []},
+            },
+            generation=8,
+            now=NOW,
+        )
+    assert store.load()["worker_reconciliation_decisions"][-1]["status"] == "ambiguous"
 
 
 def test_tmux_return_control_revalidates_project_pane_runtime(

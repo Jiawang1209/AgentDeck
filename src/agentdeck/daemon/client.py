@@ -9,6 +9,7 @@ import fcntl
 import math
 import os
 from pathlib import Path
+import re
 import secrets
 import socket
 import stat
@@ -987,6 +988,58 @@ async def admit_confirmed_mission(
         return result
     except (DaemonClientError, DaemonUnavailable, OSError):
         return persist_unavailable()
+    finally:
+        if lease_id is not None and generation is not None:
+            try:
+                await client.request(
+                    "controller.release",
+                    {"lease_id": lease_id, "generation": generation},
+                    lease_id=lease_id,
+                    lease_generation=generation,
+                )
+            except Exception:
+                pass
+        await client.close()
+
+
+async def govern_mission(
+    root: Path,
+    config: Any,
+    *,
+    mission_id: str,
+    action: str,
+    preview_id: str | None = None,
+    connect_factory: Callable[..., Awaitable[Any]] = connect_or_start,
+) -> dict[str, object]:
+    """Use the verified daemon controller for one exact-preview Mission action."""
+    if (
+        type(mission_id) is not str
+        or re.fullmatch(r"mis_[0-9a-f]{12}", mission_id) is None
+        or action not in {"resume", "cancel"}
+        or (preview_id is not None and (type(preview_id) is not str or not preview_id))
+    ):
+        raise DaemonClientError("Mission governance request is invalid")
+    client = await connect_factory(root, config)
+    lease_id: str | None = None
+    generation: int | None = None
+    try:
+        acquired = await client.request(
+            "controller.acquire",
+            {"client_id": f"client_mission_governance_{secrets.token_hex(12)}"},
+        )
+        lease_id = acquired.get("lease_id")
+        generation = acquired.get("generation")
+        if type(lease_id) is not str or type(generation) is not int:
+            raise DaemonClientError("Mission governance controller lease is invalid")
+        params: dict[str, object] = {"mission_id": mission_id}
+        if preview_id is not None:
+            params["preview_id"] = preview_id
+        return await client.request(
+            f"mission.{action}",
+            params,
+            lease_id=lease_id,
+            lease_generation=generation,
+        )
     finally:
         if lease_id is not None and generation is not None:
             try:

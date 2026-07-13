@@ -4,6 +4,13 @@
 
 ## 2026-07-14
 
+### Close Task 12 daemon authority and lifecycle review gaps
+
+- **No foreground bypass for frozen Missions**: direct CLI, Leader Chat, ProjectView, workbench, and flattened controls classify Mission authority consistently. A daemon-admitted stopped Mission resumes only through a verified daemon controller lease and exact two-call preview/confirm command; malformed or partial snapshot/admission state is inspect-only and zero-write. Snapshot-less M1 Missions retain their explicit legacy foreground compatibility path. Natural-language initial confirmation now shares the daemon admission path instead of invoking the tmux runner.
+- **Sequential ACP permissions**: one attempt may bind multiple permission requests in transport order. Every permission/tool-call/binding has independent exact retry, recovery validation, and consume-once effect authority; one completed permission does not suppress the next. Conflicts and simulated crashes remain full-tree zero-write.
+- **Durable close and stop boundaries**: daemon ACP completion always closes the transport and persists its AgentSession as `disconnected`; return-control rejects that closed runtime evidence. stop/force-stop signal shutdown after the durable release/stop commit rather than after response delivery, so BrokenPipe cannot strand an accepted daemon. Service close cooperatively cancels active Worker tasks and drains queued completions without leaks.
+- **Contracts and regression**: Mission command/control validation accepts only an exact `gov_<12 hex>` resume confirmation with `safety=explicit_user`; daemon-runtime, Mission, ProjectView, workbench, bilingual README, and handoff document the same authority boundary. Fresh verification is 133 focused tests, 1,324 broad tests, and 2,630 full-suite tests with one skip; compileall, `git diff --check`, and the no-temporary-daemon process audit pass.
+
 ### Govern background Mission authority
 
 - **Three independent effect gates**: background effects now pass frozen Mission scope, permission policy, and runtime ownership as separate deterministic decisions. Controller possession, ACP recommendations, Worker prose, and role context remain non-authoritative context and cannot convert a pending permission into approval.

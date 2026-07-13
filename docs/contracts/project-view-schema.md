@@ -491,6 +491,13 @@ expiry later than the current UTC instant. Expired, terminal, naive, or malforme
 lease facts project `false`; rendering ProjectView never expires, repairs, or
 writes the lease.
 
+Mission resume authority is also projected fail-closed. `can_resume` requires
+either a snapshot-less legacy M1 Mission or a complete
+`daemon_admission.state=admitted` frozen Mission. A partial snapshot/admission
+lineage adds `daemon-managed Mission requires daemon governance resume preview`
+and disables foreground resume; admitted resume enters the controller-lease-
+bound daemon preview flow.
+
 - Treat ProjectView as the default state source.
 - Treat `recovery.recommended_action` as the default next-step affordance.
 - Treat `requires_explicit_user=true` as a hard UI gate.

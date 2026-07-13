@@ -12,6 +12,7 @@ from agentdeck.daemon.client import (
     CLIENT_METHODS,
     DaemonUnavailable,
     admit_confirmed_mission,
+    govern_mission,
 )
 from agentdeck.daemon.service import (
     DaemonWorkerCoordinator,
@@ -414,6 +415,7 @@ def test_acp_worker_stays_admitting_until_prompt_result_is_atomically_persisted(
 def test_acp_shutdown_while_prompt_is_in_flight_leaves_durable_admission_claim() -> None:
     prompt_started: asyncio.Event
     never_returns: asyncio.Event
+    prompt_cancelled: asyncio.Event
 
     class Store:
         durable_state = "prepared"
@@ -441,13 +443,17 @@ def test_acp_shutdown_while_prompt_is_in_flight_leaves_durable_admission_claim()
         async def complete(self, claimed, receipt):
             del claimed, receipt
             prompt_started.set()
-            await never_returns.wait()
-            raise AssertionError("unreachable")
+            try:
+                await never_returns.wait()
+                raise AssertionError("unreachable")
+            finally:
+                prompt_cancelled.set()
 
     async def case() -> None:
-        nonlocal prompt_started, never_returns
+        nonlocal prompt_started, never_returns, prompt_cancelled
         prompt_started = asyncio.Event()
         never_returns = asyncio.Event()
+        prompt_cancelled = asyncio.Event()
         service = ProjectDaemonService(
             server=FakeServer([]), reconcile_all=lambda: None,
             flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
@@ -464,6 +470,8 @@ def test_acp_shutdown_while_prompt_is_in_flight_leaves_durable_admission_claim()
         await asyncio.wait_for(prompt_started.wait(), timeout=0.2)
         await service.close()
         assert store.durable_state == "admitting"
+        assert prompt_cancelled.is_set()
+        assert service.active_worker_task_count == 0
 
     asyncio.run(case())
 
@@ -668,6 +676,46 @@ def test_lost_admission_response_reports_existing_durable_admission() -> None:
     )
     assert result["accepted"] is True
     assert result["state"] == "admitted"
+
+
+def test_mission_governance_client_uses_controller_and_exact_preview() -> None:
+    calls: list[tuple[str, dict[str, object], str | None, int | None]] = []
+
+    class Client:
+        async def request(
+            self, method, params, *, lease_id=None, lease_generation=None
+        ):
+            calls.append((method, dict(params), lease_id, lease_generation))
+            if method == "controller.acquire":
+                return {"lease_id": "lse_" + "1" * 24, "generation": 7}
+            if method == "mission.resume":
+                return {
+                    "accepted": True, "mission_id": MISSION_ID,
+                    "state": "running", "preview_id": "gov_0123456789ab",
+                }
+            return {"released": True}
+
+        async def close(self):
+            calls.append(("close", {}, None, None))
+
+    async def connect(*_args, **_kwargs):
+        return Client()
+
+    result = asyncio.run(
+        govern_mission(
+            Path("."), object(), mission_id=MISSION_ID, action="resume",
+            preview_id="gov_0123456789ab", connect_factory=connect,
+        )
+    )
+    assert result["state"] == "running"
+    assert calls[1] == (
+        "mission.resume",
+        {"mission_id": MISSION_ID, "preview_id": "gov_0123456789ab"},
+        "lse_" + "1" * 24,
+        7,
+    )
+    assert calls[-2][0] == "controller.release"
+    assert calls[-1][0] == "close"
 
 
 def test_previous_handoff_resolves_exact_frozen_predecessor() -> None:

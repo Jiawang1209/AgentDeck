@@ -5618,9 +5618,15 @@ def _validate_mission_controls(
             "inspect",
             True,
         )
-        expected_commands[str(payload.get("resume_command"))] = (
+        resume_command = str(payload.get("resume_command"))
+        governed_resume = re.fullmatch(
+            r"agentdeck mission resume --mission-id mis_[0-9a-f]{12} "
+            r"--preview-id gov_[0-9a-f]{12} --confirm",
+            resume_command,
+        ) is not None
+        expected_commands[resume_command] = (
             "execute",
-            "delegated",
+            "explicit_user" if governed_resume else "delegated",
             payload.get("can_resume") is True,
         )
     seen: set[str] = set()
@@ -5675,7 +5681,18 @@ def _validate_mission_identity_and_commands(
     if preview:
         expected["confirmation_command"] = commands["confirmation_command"]
     else:
-        expected["resume_command"] = commands["resume_command"]
+        resume_command = payload.get("resume_command")
+        exact_preview_command = (
+            isinstance(resume_command, str)
+            and re.fullmatch(
+                rf"agentdeck mission resume --mission-id {re.escape(str(mission_id))} "
+                r"--preview-id gov_[0-9a-f]{12} --confirm",
+                resume_command,
+            )
+            is not None
+        )
+        if not exact_preview_command:
+            expected["resume_command"] = commands["resume_command"]
     for field, command in expected.items():
         if payload.get(field) != command:
             errors.append(f"{prefix}.{field} must match mission_id")

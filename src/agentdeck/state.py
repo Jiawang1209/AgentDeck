@@ -28,11 +28,13 @@ from .daemon.lease import (
     validate_lease_transition,
 )
 from .mission import (
+    DAEMON_MISSION_RESUME_BLOCKER,
     MISSION_SCHEMA_VERSION,
     MISSION_STATUSES,
     MISSION_INVALID_BLOCKERS_BLOCKER,
     compact_mission_blockers,
     compact_mission_worker_entries,
+    daemon_mission_authority_state,
     is_canonical_mission_id,
     mission_commands,
     mission_status_transition_allowed,
@@ -3375,8 +3377,6 @@ class StateStore:
                     "transition": copy.deepcopy(transitions[0]),
                     "binding": copy.deepcopy(retry_bindings[0]),
                 }
-            if any(item["attempt_id"] == attempt_id for item in validated):
-                raise ValueError("duplicate durable recovery permission binding")
             result, _events = self._stage_acp_permission_pending_locked(
                 state, session_id, turn_id, sequence, tool_name=tool_name,
                 target=target, risk=risk, tool_call_id=tool_call_id,
@@ -4521,11 +4521,7 @@ class StateStore:
             validate_mission_permission_binding(item)
             for item in permission_bindings_raw
         ]
-        for collection, label in (
-            (replies, "reply"),
-            (handoffs, "handoff"),
-            (permission_bindings, "permission"),
-        ):
+        for collection, label in ((replies, "reply"), (handoffs, "handoff")):
             identities = [item["attempt_id"] for item in collection]
             if len(identities) != len(set(identities)):
                 raise ValueError(f"duplicate durable recovery {label} evidence")
@@ -4533,6 +4529,13 @@ class StateStore:
                 attempt = attempt_by_id.get(item["attempt_id"])
                 if attempt is None or attempt["mission_id"] != item["mission_id"]:
                     raise ValueError(f"durable recovery {label} reference is invalid")
+        permission_ids = [item["permission_id"] for item in permission_bindings]
+        if len(permission_ids) != len(set(permission_ids)):
+            raise ValueError("duplicate durable recovery permission evidence")
+        for item in permission_bindings:
+            attempt = attempt_by_id.get(item["attempt_id"])
+            if attempt is None or attempt["mission_id"] != item["mission_id"]:
+                raise ValueError("durable recovery permission reference is invalid")
         for item in decisions_raw:
             validate_recovery_record(item)
         self._validate_protocol_identities(state)
@@ -5049,11 +5052,7 @@ class StateStore:
                 raise ValueError("mission permission agent scope mismatch")
             records = persisted.setdefault("mission_permission_bindings", [])
             validated = [validate_mission_permission_binding(item) for item in records]
-            if any(
-                item["attempt_id"] == attempt_id
-                or item["permission_id"] == permission_id
-                for item in validated
-            ):
+            if any(item["permission_id"] == permission_id for item in validated):
                 raise ValueError("duplicate durable recovery permission binding")
             candidate = validate_mission_permission_binding(
                 {
@@ -7507,6 +7506,12 @@ class StateStore:
                 and _INVALID_DAEMON_ADMISSION_BLOCKER not in blockers
             ):
                 blockers.append(_INVALID_DAEMON_ADMISSION_BLOCKER)
+            authority_state = daemon_mission_authority_state(mission)
+            if (
+                authority_state == "incomplete"
+                and DAEMON_MISSION_RESUME_BLOCKER not in blockers
+            ):
+                blockers.append(DAEMON_MISSION_RESUME_BLOCKER)
             items.append(
                 {
                     "mission_id": mission_id,
@@ -7515,7 +7520,11 @@ class StateStore:
                     "status": status,
                     "stop_reason": mission.get("stop_reason"),
                     "can_start": raw_can_start and workers_ready and not blockers,
-                    "can_resume": status in {MISSION_STATUSES[4], MISSION_STATUSES[5]} and not blockers,
+                    "can_resume": (
+                        status in {MISSION_STATUSES[4], MISSION_STATUSES[5]}
+                        and not blockers
+                        and authority_state in {"legacy", "admitted"}
+                    ),
                     "blockers": blockers,
                     "provider": provider,
                     "model": model,

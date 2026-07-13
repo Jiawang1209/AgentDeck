@@ -177,46 +177,66 @@ def permission_state_for_attempt(
     ]
     if not bindings:
         return "none"
-    if len(bindings) != 1 or bindings[0].get("mission_id") != mission_id:
+    if any(item.get("mission_id") != mission_id for item in bindings):
         raise ServiceError("Mission permission binding is invalid")
-    permission_id = bindings[0].get("permission_id")
-    permissions = [
-        item
-        for item in records("permission_requests")
-        if type(item) is dict and item.get("permission_id") == permission_id
-    ]
-    if len(permissions) != 1:
-        raise ServiceError("Mission permission request is invalid")
-    permission = permissions[0]
-    sessions = [
-        item
-        for item in records("agent_sessions")
-        if type(item) is dict and item.get("session_id") == permission.get("session_id")
-    ]
-    if len(sessions) != 1 or sessions[0].get("agent_id") != agent_id:
-        raise ServiceError("Mission permission agent scope is invalid")
-    current = permission.get("status")
-    if current != "pending":
-        raise ServiceError("Mission permission base state is invalid")
-    for transition in records("protocol_state_transitions"):
-        if (
-            type(transition) is not dict
-            or transition.get("entity_type") != "permission"
-            or transition.get("entity_id") != permission_id
-        ):
-            continue
-        if transition.get("from_state") != current:
-            raise ServiceError("Mission permission history is invalid")
+    derived: list[tuple[int, int, str, str, str]] = []
+    for binding in bindings:
+        permission_id = binding.get("permission_id")
+        permissions = [
+            item
+            for item in records("permission_requests")
+            if type(item) is dict and item.get("permission_id") == permission_id
+        ]
+        if len(permissions) != 1:
+            raise ServiceError("Mission permission request is invalid")
+        permission = permissions[0]
+        sessions = [
+            item
+            for item in records("agent_sessions")
+            if type(item) is dict and item.get("session_id") == permission.get("session_id")
+        ]
+        if len(sessions) != 1 or sessions[0].get("agent_id") != agent_id:
+            raise ServiceError("Mission permission agent scope is invalid")
+        current = permission.get("status")
         if current != "pending":
-            raise ServiceError("Mission permission history is invalid")
-        next_state = transition.get("to_state")
-        if next_state not in {"approved", "denied", "expired"}:
-            raise ServiceError("Mission permission history is invalid")
-        current = next_state
-    return str(current)
+            raise ServiceError("Mission permission base state is invalid")
+        for transition in records("protocol_state_transitions"):
+            if (
+                type(transition) is not dict
+                or transition.get("entity_type") != "permission"
+                or transition.get("entity_id") != permission_id
+            ):
+                continue
+            if transition.get("from_state") != current or current != "pending":
+                raise ServiceError("Mission permission history is invalid")
+            next_state = transition.get("to_state")
+            if next_state not in {"approved", "denied", "expired"}:
+                raise ServiceError("Mission permission history is invalid")
+            current = next_state
+        update_sequences = [
+            item.get("sequence")
+            for item in records("transport_updates")
+            if type(item) is dict
+            and item.get("kind") == "permission_request"
+            and type(item.get("payload")) is dict
+            and item["payload"].get("permission_id") == permission_id
+            and type(item.get("sequence")) is int
+        ]
+        derived.append(
+            (
+                1 if len(update_sequences) == 1 else 0,
+                int(update_sequences[0]) if len(update_sequences) == 1 else -1,
+                str(permission.get("created_at")),
+                str(permission_id),
+                str(current),
+            )
+        )
+    return sorted(derived)[-1][4]
 
 
 def _mission_pause_facts(store: object, mission_id: str) -> dict[str, object]:
+    from ..state import validate_execution_snapshot
+
     if not callable(getattr(store, "load", None)):
         raise ServiceError("Mission pause store is invalid")
     state = store.load()
@@ -227,6 +247,18 @@ def _mission_pause_facts(store: object, mission_id: str) -> dict[str, object]:
     if len(missions) != 1:
         raise ServiceError("Mission pause target is invalid")
     mission = missions[0]
+    admission = mission.get("daemon_admission")
+    try:
+        snapshot = validate_execution_snapshot(mission.get("execution_snapshot"))
+    except (TypeError, ValueError):
+        raise ServiceError("Mission daemon authority is incomplete") from None
+    if (
+        type(admission) is not dict
+        or admission.get("state") != "admitted"
+        or admission.get("snapshot_hash") != mission.get("snapshot_hash")
+        or snapshot["execution_hash"] != mission.get("snapshot_hash")
+    ):
+        raise ServiceError("Mission daemon authority is incomplete")
     attempts = [
         {
             "attempt_id": item.get("attempt_id"),
@@ -1788,6 +1820,11 @@ class ProjectDaemonService:
     def request_shutdown(self) -> None:
         self._shutdown.set()
         self._wakeup.set()
+
+    @property
+    def active_worker_task_count(self) -> int:
+        """Expose cooperative Worker shutdown state without leaking task objects."""
+        return len(self._worker_tasks)
 
     async def wait_for_work(self, *, timeout_seconds: float) -> None:
         if (

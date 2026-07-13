@@ -14,8 +14,10 @@ from .contracts import (
     validate_mission_status_contract,
 )
 from .mission import (
+    DAEMON_MISSION_RESUME_BLOCKER,
     MISSION_SCHEMA_VERSION,
     compact_mission_worker_entries,
+    daemon_mission_authority_state,
     effective_mission_agent_for_binding,
     mission_binding_reusable,
     mission_commands,
@@ -690,7 +692,14 @@ def mission_status_payload(
     mission_id = str(mission.get("mission_id") or "")
     commands = mission_commands(mission_id)
     blockers = list(mission.get("blockers") or [])
-    can_resume = mission.get("status") in {"stopped", "interrupted"} and not blockers
+    authority_state = daemon_mission_authority_state(mission)
+    if authority_state == "incomplete" and DAEMON_MISSION_RESUME_BLOCKER not in blockers:
+        blockers.append(DAEMON_MISSION_RESUME_BLOCKER)
+    can_resume = (
+        mission.get("status") in {"stopped", "interrupted"}
+        and not blockers
+        and authority_state in {"legacy", "admitted"}
+    )
     resume_blocker = (
         None
         if can_resume
@@ -1044,6 +1053,8 @@ def _execute_mission(
     mission_id: str, readiness_timeout_seconds: int, resuming: bool,
 ) -> dict[str, object]:
     mission = store.mission_by_id(mission_id)
+    if resuming and daemon_mission_authority_state(mission) != "legacy":
+        raise MissionRunError("daemon-managed Mission requires daemon governance resume")
     if mission.get("status") in {"preparing", "running", "completed"}:
         return mission_status_payload(config, store, mission, mode="mission_resume" if resuming else "mission_run")
     if resuming and mission.get("status") not in {"stopped", "interrupted"}:

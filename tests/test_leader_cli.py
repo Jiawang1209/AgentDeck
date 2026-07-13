@@ -281,7 +281,12 @@ def test_leader_chat_named_mission_confirmation_embeds_run_card(tmp_path, monkey
         mission = kwargs["store"].update_mission(kwargs["mission_id"], status="completed", current_step=8)
         return cli.mission_status_payload(kwargs["config"], kwargs["store"], mission, mode="mission_run", confirmed=True)
 
-    monkeypatch.setattr(cli, "run_mission", fake_run)
+    monkeypatch.setattr(
+        cli, "_admit_mission_card",
+        lambda config, store, mission: fake_run(
+            config=config, store=store, mission_id=mission["mission_id"]
+        ),
+    )
     assert cli.main(["leader", "chat", "--message", f"批准执行 {mission_id}"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "mission_run"
@@ -303,7 +308,12 @@ def test_leader_chat_idless_confirmation_runs_the_only_pending_mission(tmp_path,
         mission = kwargs["store"].update_mission(kwargs["mission_id"], status="completed", current_step=8)
         return cli.mission_status_payload(kwargs["config"], kwargs["store"], mission, mode="mission_run", confirmed=True)
 
-    monkeypatch.setattr(cli, "run_mission", fake_run)
+    monkeypatch.setattr(
+        cli, "_admit_mission_card",
+        lambda config, store, mission: fake_run(
+            config=config, store=store, mission_id=mission["mission_id"]
+        ),
+    )
     assert cli.main(["leader", "chat", "--message", "批准执行"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert calls == [mission_id]
@@ -508,6 +518,47 @@ def test_leader_chat_resumes_unique_stopped_mission_and_selects_status_after_com
     assert payload["next_command"] == payload["mission_run_card"]["status_command"]
 
 
+def test_leader_chat_daemon_mission_resume_returns_exact_governance_preview(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    mission_id = _seed_chat_mission(root, monkeypatch, capsys)
+    store = StateStore(root)
+    store.update_mission(mission_id, status="stopped", stop_reason="human_pause")
+    state = store.load()
+    mission = next(item for item in state["missions"] if item["mission_id"] == mission_id)
+    mission["snapshot_hash"] = "sha256:" + "a" * 64
+    mission["execution_snapshot"] = {"execution_hash": mission["snapshot_hash"]}
+    mission["confirmed_at"] = "2026-07-11T00:00:00+00:00"
+    mission["daemon_admission"] = {
+        "state": "admitted", "snapshot_hash": mission["snapshot_hash"],
+        "blocker": None, "recovery_command": None, "updated_at": mission["updated_at"],
+    }
+    store.save(state)
+
+    async def preview(*_args, **kwargs):
+        assert kwargs == {
+            "mission_id": mission_id, "action": "resume", "preview_id": None
+        }
+        return {"preview_id": "gov_0123456789ab", "state": "pending"}
+
+    monkeypatch.setattr(cli, "govern_mission", preview)
+    monkeypatch.setattr(
+        cli, "TmuxBackend",
+        lambda: (_ for _ in ()).throw(AssertionError("foreground runtime forbidden")),
+    )
+    assert cli.main(
+        ["leader", "chat", "--message", f"继续 mission {mission_id}"]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    command = payload["mission_run_card"]["resume_command"]
+    assert command == (
+        f"agentdeck mission resume --mission-id {mission_id} "
+        "--preview-id gov_0123456789ab --confirm"
+    )
+    assert payload["next_command"] == command
+
+
 def test_leader_chat_completed_reconfirmation_is_idempotent(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     mission_id = _seed_chat_mission(root, monkeypatch, capsys)
@@ -544,7 +595,12 @@ def test_leader_chat_runtime_exception_recovers_active_mission_and_workflow(tmp_
         )
         raise RuntimeError("SECRET runtime detail")
 
-    monkeypatch.setattr(cli, "run_mission", exploding_run)
+    monkeypatch.setattr(
+        cli, "_admit_mission_card",
+        lambda config, store, mission: exploding_run(
+            config=config, store=store, mission_id=mission["mission_id"]
+        ),
+    )
     assert cli.main(["leader", "chat", "--message", f"批准执行 {mission_id}"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["mission_run_card"]["status"] == "interrupted"
@@ -567,7 +623,12 @@ def test_leader_chat_recovery_failure_is_stable_and_sanitized(tmp_path, monkeypa
         )
         raise RuntimeError("SECRET operation")
 
-    monkeypatch.setattr(cli, "run_mission", exploding_run)
+    monkeypatch.setattr(
+        cli, "_admit_mission_card",
+        lambda config, store, mission: exploding_run(
+            config=config, store=store, mission_id=mission["mission_id"]
+        ),
+    )
     monkeypatch.setattr(cli, "interrupt_mission", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("SECRET recovery")))
     assert cli.main(["leader", "chat", "--message", f"批准执行 {mission_id}"]) == 1
     captured = capsys.readouterr()

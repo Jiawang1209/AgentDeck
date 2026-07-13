@@ -132,7 +132,7 @@ from .contracts import (
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, new_id, utc_now
-from .mission import mission_intent, workbench_mission_card
+from .mission import daemon_mission_authority_state, mission_intent, workbench_mission_card
 from .mission_orchestration import (
     MissionPreviewError,
     MissionRunError,
@@ -161,7 +161,7 @@ from .conversation.transports import WorkerRuntimeFacts, WorkerTransportRouter, 
 from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import, resolve_skill_dependencies
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
-from .daemon.client import DaemonClient, DaemonUnavailable, admit_confirmed_mission, connect_or_start, install_bounded_daemon_stdio_from_env
+from .daemon.client import DaemonClient, DaemonUnavailable, admit_confirmed_mission, connect_or_start, govern_mission, install_bounded_daemon_stdio_from_env
 from .daemon.lifecycle import (
     acquire_daemon_ownership, bind_daemon_endpoint, can_stop_daemon,
     daemon_keepalive_reasons,
@@ -1420,6 +1420,7 @@ class _DaemonAcpWorkerSink:
         self.sequence = 0
         self.payload_bytes = 0
         self.turn_state = "created"
+        self.session_state = "created"
         self.permission_seen = False
         self.fragments: list[str] = []
         self._permission_authority: dict[str, dict[str, object]] = {}
@@ -1478,6 +1479,7 @@ class _DaemonAcpWorkerSink:
         self.session_id = str(persisted["session_id"])
         self.turn_id = str(persisted["turn_id"])
         self.turn_state = "submitted"
+        self.session_state = "busy"
 
     def _correlate(self, native_session_id: str) -> tuple[str, str]:
         if (
@@ -1650,6 +1652,26 @@ class _DaemonAcpWorkerSink:
 
         await self._mutate(persist)
         self.turn_state = turn_to
+        self.session_state = "ready"
+
+    async def disconnect(self, reason: str) -> None:
+        """Persist the daemon-owned ACP process boundary after transport close."""
+        if self.session_id is None or self.session_state == "disconnected":
+            return
+        if self.session_state not in {"busy", "ready"}:
+            raise ServiceError("daemon ACP disconnect lineage is invalid")
+        session_from = self.session_state
+        await self._mutate(
+            lambda: self.store.record_protocol_transition(
+                "session",
+                self.session_id,
+                session_from,
+                "disconnected",
+                f"daemon_transport_closed:{reason}",
+                {},
+            )
+        )
+        self.session_state = "disconnected"
 
 
 def _derived_entity_state(state: dict[str, Any], entity_type: str, entity_id: str, base: str) -> str:
@@ -6355,6 +6377,15 @@ def _validate_daemon_stop_gate(
         raise DaemonClientRequestError("daemon has active keepalive work", "stop_blocked")
 
 
+def _commit_daemon_shutdown(commit: Any, stop_event: asyncio.Event) -> object:
+    """Signal process shutdown only after the durable stop commit succeeds."""
+    if not callable(commit) or not isinstance(stop_event, asyncio.Event):
+        raise TypeError("daemon shutdown commit boundary is invalid")
+    result = commit()
+    stop_event.set()
+    return result
+
+
 async def _request_daemon_stop(
     root: Path, config: ProjectConfig, *,
     lease_id: str | None, lease_generation: int | None,
@@ -6763,7 +6794,9 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                         generation=generation,
                         now=now,
                     )
-                    commit_and_flush(transition)
+                    _commit_daemon_shutdown(
+                        lambda: commit_and_flush(transition), stop_event
+                    )
                     return {"accepted": True, "state": "stopping"}
                 if method == "daemon.force-stop":
                     try:
@@ -6783,13 +6816,14 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                         )
                         if current is None:
                             raise LeaseError("controller lease required")
-                        commit_and_flush(
-                            release_controller(
-                                current,
-                                lease_id=lease_id,
-                                generation=generation,
-                                now=now,
-                            )
+                        transition = release_controller(
+                            current,
+                            lease_id=lease_id,
+                            generation=generation,
+                            now=now,
+                        )
+                        _commit_daemon_shutdown(
+                            lambda: commit_and_flush(transition), stop_event
                         )
                     return result
             except LeaseError as exc:
@@ -6802,15 +6836,6 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             result = await service.submit_mutation(lambda: apply_mutation(method, params))
             assert isinstance(result, dict)
             return result
-
-        def mutation_response_sent_handler(
-            method: str, result: dict[str, object]
-        ) -> None:
-            if method in {"daemon.stop", "daemon.force-stop"} and (
-                result.get("accepted") is True
-                and result.get("state") == "stopping"
-            ):
-                stop_event.set()
 
         server = DaemonServer(
             endpoint=ownership.endpoint.socket_path, instance_id=ownership.instance_id,
@@ -6833,7 +6858,6 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             status_provider=current_status,
             mutation_handler=mutation_handler,
             lease_validator=lease_validator,
-            mutation_response_sent_handler=mutation_response_sent_handler,
         )
         def flush_pending_outboxes() -> None:
             state = store.load()
@@ -6984,8 +7008,8 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         while not stop_event.is_set():
             await service.tick()
             # A queued RPC mutation resolves its server-side Future from tick().
-            # Yield once so the response can be written and response-sent hooks
-            # (notably daemon.stop) can run before background lease refresh.
+            # Yield once so a queued RPC mutation can write its response before
+            # a durably committed stop request closes the server.
             await asyncio.sleep(0)
             activity_generation = server.activity_generation
             if activity_generation != last_activity_generation:
@@ -11297,7 +11321,9 @@ def _select_chat_mission(store: StateStore, route: str, mission_id: str | None) 
         if route == "run"
         else [
             item for item in missions
-            if item.get("status") in ("stopped", "interrupted") and not item.get("blockers")
+            if item.get("status") in ("stopped", "interrupted")
+            and not item.get("blockers")
+            and daemon_mission_authority_state(item) in {"legacy", "admitted"}
         ]
     )
     if not wanted:
@@ -11305,6 +11331,80 @@ def _select_chat_mission(store: StateStore, route: str, mission_id: str | None) 
     if len(wanted) != 1:
         raise RuntimeError("mission selection is ambiguous")
     return wanted[0]
+
+
+def _admit_mission_card(
+    config: ProjectConfig,
+    store: StateStore,
+    mission: dict[str, object],
+    *,
+    include_admission: bool = False,
+) -> dict[str, object]:
+    mission_id = str(mission["mission_id"])
+    if mission.get("status") == "pending_confirmation":
+        mission = confirm_mission_for_daemon(
+            config=config, store=store, mission_id=mission_id
+        )
+    elif (
+        mission.get("status") != "preparing"
+        or type(mission.get("snapshot_hash")) is not str
+        or type(mission.get("execution_snapshot")) is not dict
+    ):
+        raise MissionRunError("mission is not awaiting daemon admission")
+    admission = asyncio.run(
+        admit_confirmed_mission(
+            Path(config.root), config, mission, state_store=store
+        )
+    )
+    card = mission_status_payload(
+        config, store, store.mission_by_id(mission_id),
+        mode="mission_run", confirmed=True,
+    )
+    if include_admission:
+        card["daemon_admission"] = admission
+    return card
+
+
+def _governed_resume_card(
+    config: ProjectConfig,
+    store: StateStore,
+    mission: dict[str, object],
+    *,
+    preview_id: str | None = None,
+) -> dict[str, object]:
+    mission_id = str(mission["mission_id"])
+    if daemon_mission_authority_state(mission) != "admitted":
+        raise MissionRunError("daemon-managed Mission resume authority is incomplete")
+    governance = asyncio.run(
+        govern_mission(
+            Path(config.root), config,
+            mission_id=mission_id, action="resume", preview_id=preview_id,
+        )
+    )
+    card = mission_status_payload(
+        config, store, store.mission_by_id(mission_id),
+        mode="mission_resume", confirmed=True,
+    )
+    if preview_id is None:
+        exact_preview_id = governance.get("preview_id")
+        if type(exact_preview_id) is not str or not exact_preview_id:
+            raise MissionRunError("daemon Mission resume preview is invalid")
+        command = (
+            f"agentdeck mission resume --mission-id {mission_id} "
+            f"--preview-id {exact_preview_id} --confirm"
+        )
+        card["resume_command"] = command
+        for control in card["controls"]:
+            if control.get("kind") == "execute" and control.get("label") == "Resume mission":
+                control.update(
+                    {
+                        "label": "Confirm exact daemon resume preview",
+                        "command": command,
+                        "safety": "explicit_user",
+                    }
+                )
+                break
+    return card
 
 
 def _leader_chat_mission_response(
@@ -11327,19 +11427,15 @@ def _leader_chat_mission_response(
                     config, store, mission, mode="mission_run", confirmed=True
                 )
             else:
-                card = run_mission(
-                    config=config,
-                    store=store,
-                    backend=TmuxBackend(),
+                card = _admit_mission_card(config, store, mission)
+        else:
+            if daemon_mission_authority_state(mission) == "legacy":
+                card = resume_mission(
+                    config=config, store=store, backend=TmuxBackend(),
                     mission_id=mission_id,
                 )
-        else:
-            card = resume_mission(
-                config=config,
-                store=store,
-                backend=TmuxBackend(),
-                mission_id=mission_id,
-            )
+            else:
+                card = _governed_resume_card(config, store, mission)
     except KeyboardInterrupt:
         card = _mission_execution_recovery_payload(config, store, mission_id, mode)
         if card is None:
@@ -11353,7 +11449,7 @@ def _leader_chat_mission_response(
         if card is None:
             print(f"mission {route} failed", file=sys.stderr)
             return 1
-    next_command = (
+    next_command = str(
         card["resume_command"] if card.get("can_resume") is True else card["status_command"]
     )
     turn = store.record_chat_turn(
@@ -17137,25 +17233,9 @@ def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int
     if not resume:
         try:
             mission = store.mission_by_id(args.mission_id)
-            if mission.get("status") == "pending_confirmation":
-                mission = confirm_mission_for_daemon(
-                    config=config, store=store, mission_id=args.mission_id
-                )
-            elif (
-                mission.get("status") != "preparing"
-                or type(mission.get("snapshot_hash")) is not str
-                or type(mission.get("execution_snapshot")) is not dict
-            ):
-                raise MissionRunError("mission is not awaiting daemon admission")
-            admission = asyncio.run(
-                admit_confirmed_mission(
-                    Path(config.root), config, mission, state_store=store
-                )
+            payload = _admit_mission_card(
+                config, store, mission, include_admission=True
             )
-            payload = mission_status_payload(
-                config, store, mission, mode="mission_run", confirmed=True
-            )
-            payload["daemon_admission"] = admission
         except KeyError:
             print(f"unknown mission: {args.mission_id}", file=sys.stderr)
             return 1
@@ -17164,14 +17244,19 @@ def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int
             return 1
         _print_json(payload)
         return 0
-    operation = resume_mission if resume else run_mission
     try:
-        payload = operation(
-            config=config,
-            store=store,
-            backend=TmuxBackend(),
-            mission_id=args.mission_id,
-        )
+        mission = store.mission_by_id(args.mission_id)
+        if daemon_mission_authority_state(mission) == "legacy":
+            if args.preview_id is not None:
+                raise MissionRunError("legacy Mission has no daemon preview")
+            payload = resume_mission(
+                config=config, store=store, backend=TmuxBackend(),
+                mission_id=args.mission_id,
+            )
+        else:
+            payload = _governed_resume_card(
+                config, store, mission, preview_id=args.preview_id
+            )
     except KeyboardInterrupt:
         payload = _mission_execution_recovery_payload(
             config, store, args.mission_id,
@@ -17525,6 +17610,7 @@ def build_parser() -> argparse.ArgumentParser:
     mission_run.set_defaults(func=mission_run_command)
     mission_resume = mission_subparsers.add_parser("resume", help="Resume a stopped frozen mission")
     mission_resume.add_argument("--mission-id", required=True, help="Mission id")
+    mission_resume.add_argument("--preview-id", help="Exact daemon governance preview id")
     mission_resume.add_argument("--confirm", action="store_true", help="Confirm mission resume")
     mission_resume.set_defaults(func=mission_resume_command)
 

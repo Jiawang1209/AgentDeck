@@ -1064,6 +1064,75 @@ def test_mission_acp_permission_and_attempt_binding_commit_in_one_save(
     )
     assert retried == result
     assert store.state_path.read_bytes() == before_retry
+
+    store.record_protocol_transition(
+        "permission",
+        result["permission"]["permission_id"],
+        "pending",
+        "approved",
+        "human",
+        {},
+    )
+    store.record_protocol_transition(
+        "turn",
+        turn["turn_id"],
+        "waiting_permission",
+        "streaming",
+        "permission_settled",
+        {},
+    )
+    second = store.record_mission_acp_permission_pending(
+        attempt_id=ATTEMPT_ID,
+        session_id=session["session_id"],
+        turn_id=turn["turn_id"],
+        sequence=1,
+        tool_name="execute",
+        target="pytest -q",
+        risk="declared_verification",
+        tool_call_id="call-2",
+    )
+    persisted = store.load()
+    assert [
+        item["permission_id"]
+        for item in persisted["mission_permission_bindings"]
+    ] == [
+        result["permission"]["permission_id"],
+        second["permission"]["permission_id"],
+    ]
+    assert second["permission"]["permission_id"] != result["permission"]["permission_id"]
+    assert reconcile_startup(store, enable_scheduler=lambda: None)[0][
+        "classification"
+    ] == "ambiguous"
+    store.record_protocol_transition(
+        "permission",
+        second["permission"]["permission_id"],
+        "pending",
+        "approved",
+        "human",
+        {},
+    )
+    store.record_protocol_transition(
+        "turn", turn["turn_id"], "waiting_permission", "streaming",
+        "permission_settled", {},
+    )
+    before_crash = store.state_path.read_bytes()
+
+    def fail_second_save(_state: dict[str, object]) -> None:
+        raise OSError("simulated second permission crash")
+
+    store._atomic_save = fail_second_save  # type: ignore[method-assign]
+    with pytest.raises(OSError, match="second permission crash"):
+        store.record_mission_acp_permission_pending(
+            attempt_id=ATTEMPT_ID,
+            session_id=session["session_id"],
+            turn_id=turn["turn_id"],
+            sequence=2,
+            tool_name="edit",
+            target="src/second.py",
+            risk="project_write",
+            tool_call_id="call-3",
+        )
+    assert store.state_path.read_bytes() == before_crash
     with pytest.raises(ValueError, match="conflict"):
         store.record_mission_acp_permission_pending(
             attempt_id=ATTEMPT_ID,
@@ -1075,7 +1144,7 @@ def test_mission_acp_permission_and_attempt_binding_commit_in_one_save(
             risk="high",
             tool_call_id="call-1",
         )
-    assert store.state_path.read_bytes() == before_retry
+    assert store.state_path.read_bytes() == before_crash
 
 
 def test_mission_acp_permission_atomic_save_failure_is_full_tree_zero_write(
@@ -1355,6 +1424,24 @@ def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
             assert decision.option_id == "allow"
             replay = await sink.decide(pending, options)
             assert replay.reason == "governance_blocked:permission_consumed"
+            await sink.append_permission_decision(
+                "native-daemon-1", "call-1", decision
+            )
+            await sink.finish("end_turn")
+            await sink.disconnect("transport_closed")
+            protocol = store.validated_protocol_state()
+            session_id = str(sink.session_id)
+            session_record = next(
+                item
+                for item in protocol["agent_sessions"]
+                if item["session_id"] == session_id
+            )
+            assert store._derived_protocol_state(
+                protocol,
+                "session",
+                session_id,
+                session_record,
+            ) == "disconnected"
         finally:
             await service.close()
             await pumping
@@ -1521,6 +1608,67 @@ def test_acp_effect_consumption_save_failure_never_authorizes(tmp_path: Path) ->
         )
     assert store.state_path.read_bytes() == before
     assert store.load().get("mission_acp_effect_consumptions", []) == []
+
+
+def test_two_sequential_acp_permissions_are_each_consumed_once(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "worker", "codex", "acp-adapter", "native", str(tmp_path), capabilities
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "created", "ready", "ready", {}
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "ready", "busy", "prompt", {}
+    )
+    dispatch_key = store.load()["mission_attempts"][0]["dispatch_key"]
+    turn = store.record_protocol_turn(session["session_id"], dispatch_key)
+    store.record_protocol_transition(
+        "turn", turn["turn_id"], "created", "submitted", "submitted", {}
+    )
+
+    permission_ids: list[str] = []
+    for sequence, (tool, target) in enumerate(
+        (("edit", "src/app.py"), ("execute", "pytest -q"))
+    ):
+        pending = store.record_mission_acp_permission_pending(
+            attempt_id=ATTEMPT_ID,
+            session_id=session["session_id"],
+            turn_id=turn["turn_id"],
+            sequence=sequence,
+            tool_name=tool,
+            target=target,
+            risk="project_write" if tool == "edit" else "declared_verification",
+            tool_call_id=f"call-{sequence + 1}",
+        )
+        permission_id = pending["permission"]["permission_id"]
+        permission_ids.append(permission_id)
+        store.record_protocol_transition(
+            "permission", permission_id, "pending", "approved", "human", {}
+        )
+        first = store.authorize_mission_acp_effect(
+            attempt_id=ATTEMPT_ID, permission_id=permission_id
+        )
+        assert first["allowed"] is True
+        replay = store.authorize_mission_acp_effect(
+            attempt_id=ATTEMPT_ID, permission_id=permission_id
+        )
+        assert replay["allowed"] is False
+        assert replay["gate"] == "permission_consumed"
+        if sequence == 0:
+            store.record_protocol_transition(
+                "turn",
+                turn["turn_id"],
+                "waiting_permission",
+                "streaming",
+                "permission_settled",
+                {},
+            )
+
+    consumptions = store.load()["mission_acp_effect_consumptions"]
+    assert [item["permission_id"] for item in consumptions] == permission_ids
 
 
 @pytest.mark.parametrize("forged_status", ["approved", "denied", "expired"])

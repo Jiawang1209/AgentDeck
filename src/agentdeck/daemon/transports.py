@@ -352,6 +352,11 @@ class AcpWorkerTransport:
                 await transport.close()
             except Exception:
                 pass
+            disconnect = getattr(sink, "disconnect", None)
+            if callable(disconnect):
+                disconnected = disconnect("admission_failed")
+                if inspect.isawaitable(disconnected):
+                    await disconnected
             if isinstance(error, WorkerTransportError):
                 raise
             raise WorkerTransportError("ACP Worker admission failed") from error
@@ -414,7 +419,13 @@ class AcpWorkerTransport:
             raise WorkerTransportError("ACP Worker completion failed") from error
         finally:
             self._active.pop(attempt_id, None)
+            disconnect_reason = "transport_closed"
             try:
                 await active.transport.close()
             except Exception:
-                pass
+                disconnect_reason = "transport_close_failed"
+            disconnect = getattr(active.sink, "disconnect", None)
+            if callable(disconnect):
+                disconnected = disconnect(disconnect_reason)
+                if inspect.isawaitable(disconnected):
+                    await disconnected

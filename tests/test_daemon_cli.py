@@ -301,6 +301,29 @@ def test_daemon_stop_never_signals_an_unverified_endpoint(
     assert "verified daemon is unavailable" in capsys.readouterr().err
 
 
+def test_daemon_shutdown_signal_is_bound_to_durable_commit_not_rpc_ack() -> None:
+    async def case() -> None:
+        stop_event = asyncio.Event()
+        committed: list[str] = []
+        result = cli._commit_daemon_shutdown(
+            lambda: committed.append("durable") or {"state": "stopping"},
+            stop_event,
+        )
+        assert result == {"state": "stopping"}
+        assert committed == ["durable"]
+        assert stop_event.is_set()
+
+        failed_event = asyncio.Event()
+        with pytest.raises(OSError, match="durable write failed"):
+            cli._commit_daemon_shutdown(
+                lambda: (_ for _ in ()).throw(OSError("durable write failed")),
+                failed_event,
+            )
+        assert failed_event.is_set() is False
+
+    asyncio.run(case())
+
+
 def test_daemon_stop_requires_explicit_lease_options_as_a_pair(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

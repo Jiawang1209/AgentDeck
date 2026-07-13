@@ -647,81 +647,102 @@ def recovery_facts_from_persisted_state(
         for item in state.get("mission_permission_bindings", [])
         if type(item) is dict and item.get("attempt_id") == current_attempt_id
     ]
-    if len(permission_bindings) > 1:
-        raise RecoveryError("duplicate durable recovery permission binding")
     permission_state = "none"
     if permission_bindings:
-        permission_binding = permission_bindings[0]
-        if current is None or permission_binding["mission_id"] != mission_id:
+        if current is None or any(
+            item["mission_id"] != mission_id for item in permission_bindings
+        ):
             raise RecoveryError("durable recovery permission lineage is invalid")
-        permissions = [
-            item
-            for item in state.get("permission_requests", [])
-            if type(item) is dict
-            and item.get("permission_id") == permission_binding["permission_id"]
-        ]
-        if len(permissions) != 1:
-            raise RecoveryError("durable recovery permission record is missing")
-        permission = permissions[0]
-        sessions = [
-            item
-            for item in state.get("agent_sessions", [])
-            if type(item) is dict and item.get("session_id") == permission.get("session_id")
-        ]
-        if len(sessions) != 1 or sessions[0].get("agent_id") != current_agent_id:
-            raise RecoveryError("durable recovery permission agent scope mismatch")
-        session = sessions[0]
-        workers = [
-            item for item in snapshot["workers"]
-            if item["agent_id"] == current_agent_id
-        ] if snapshot is not None else []
-        caps = session.get("capabilities")
-        workspace = session.get("workspace")
-        if (
-            current is None
-            or current.get("configured_transport") != "acp"
-            or len(workers) != 1
-            or workers[0]["configured_transport"] != "acp"
-            or session.get("provider") != workers[0]["provider"]
-            or session.get("transport") != "acp-adapter"
-            or type(workspace) is not str
-            or canonical_snapshot_hash({"project_root": workspace})
-            != snapshot["mission"]["project_scope_hash"]
-            or type(session.get("native_session_id")) is not str
-            or type(caps) is not dict
-            or any(
-                caps.get(name) is not True
-                for name in (
-                    "structured_sessions", "streaming_updates",
-                    "structured_tools", "permission_requests",
+        derived_permissions: list[tuple[int, int, str, str, str]] = []
+        for permission_binding in permission_bindings:
+            permissions = [
+                item
+                for item in state.get("permission_requests", [])
+                if type(item) is dict
+                and item.get("permission_id") == permission_binding["permission_id"]
+            ]
+            if len(permissions) != 1:
+                raise RecoveryError("durable recovery permission record is missing")
+            permission = permissions[0]
+            sessions = [
+                item
+                for item in state.get("agent_sessions", [])
+                if type(item) is dict
+                and item.get("session_id") == permission.get("session_id")
+            ]
+            if len(sessions) != 1 or sessions[0].get("agent_id") != current_agent_id:
+                raise RecoveryError("durable recovery permission agent scope mismatch")
+            session = sessions[0]
+            workers = [
+                item for item in snapshot["workers"]
+                if item["agent_id"] == current_agent_id
+            ] if snapshot is not None else []
+            caps = session.get("capabilities")
+            workspace = session.get("workspace")
+            if (
+                current.get("configured_transport") != "acp"
+                or len(workers) != 1
+                or workers[0]["configured_transport"] != "acp"
+                or session.get("provider") != workers[0]["provider"]
+                or session.get("transport") != "acp-adapter"
+                or type(workspace) is not str
+                or canonical_snapshot_hash({"project_root": workspace})
+                != snapshot["mission"]["project_scope_hash"]
+                or type(session.get("native_session_id")) is not str
+                or type(caps) is not dict
+                or any(
+                    caps.get(name) is not True
+                    for name in (
+                        "structured_sessions", "streaming_updates",
+                        "structured_tools", "permission_requests",
+                    )
+                )
+                or caps.get("observable_terminal") is not False
+            ):
+                raise RecoveryError("durable recovery permission agent scope mismatch")
+            turns = [
+                item for item in state.get("protocol_turns", [])
+                if type(item) is dict and item.get("turn_id") == permission.get("turn_id")
+            ]
+            if (
+                len(turns) != 1
+                or turns[0].get("session_id") != session.get("session_id")
+                or turns[0].get("kind") != "prompt"
+                or turns[0].get("message_id") != current.get("dispatch_key")
+            ):
+                raise RecoveryError("durable recovery permission turn scope mismatch")
+            current_permission_state = permission.get("status")
+            for transition in state.get("protocol_state_transitions", []):
+                if (
+                    type(transition) is dict
+                    and transition.get("entity_type") == "permission"
+                    and transition.get("entity_id") == permission_binding["permission_id"]
+                ):
+                    if transition.get("from_state") != current_permission_state:
+                        raise RecoveryError(
+                            "durable recovery permission history is invalid"
+                        )
+                    current_permission_state = transition.get("to_state")
+            update_sequences = [
+                item.get("sequence")
+                for item in state.get("transport_updates", [])
+                if type(item) is dict
+                and item.get("kind") == "permission_request"
+                and type(item.get("payload")) is dict
+                and item["payload"].get("permission_id")
+                == permission_binding["permission_id"]
+                and type(item.get("sequence")) is int
+            ]
+            derived_permissions.append(
+                (
+                    1 if len(update_sequences) == 1 else 0,
+                    int(update_sequences[0]) if len(update_sequences) == 1 else -1,
+                    str(permission.get("created_at")),
+                    str(permission_binding["permission_id"]),
+                    str(current_permission_state),
                 )
             )
-            or caps.get("observable_terminal") is not False
-        ):
-            raise RecoveryError("durable recovery permission agent scope mismatch")
-        turns = [
-            item for item in state.get("protocol_turns", [])
-            if type(item) is dict and item.get("turn_id") == permission.get("turn_id")
-        ]
-        if (
-            len(turns) != 1
-            or turns[0].get("session_id") != session.get("session_id")
-            or turns[0].get("kind") != "prompt"
-            or turns[0].get("message_id") != current.get("dispatch_key")
-        ):
-            raise RecoveryError("durable recovery permission turn scope mismatch")
-        permission_state = permission.get("status")
-        for transition in state.get("protocol_state_transitions", []):
-            if (
-                type(transition) is dict
-                and transition.get("entity_type") == "permission"
-                and transition.get("entity_id") == permission_binding["permission_id"]
-            ):
-                if transition.get("from_state") != permission_state:
-                    raise RecoveryError(
-                        "durable recovery permission history is invalid"
-                    )
-                permission_state = transition.get("to_state")
+        permission_state = sorted(derived_permissions)[-1][4]
 
     base_records = {
         key: state.get(key, [])

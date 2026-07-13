@@ -22,9 +22,10 @@ agentdeck leader chat --message "批准执行 <id>"
 agentdeck mission run --mission-id <id> --confirm
 agentdeck mission status --mission-id <id>
 agentdeck mission resume --mission-id <id> --confirm
+agentdeck mission resume --mission-id <id> --preview-id <gov_id> --confirm
 ```
 
-Mission ids use `mis_<12 lowercase hex>`. Status, confirmation, and resume commands must contain the same canonical id. Preview confirmation is expressed as the natural-language Leader Chat command; resume retains explicit `--confirm`.
+Mission ids use `mis_<12 lowercase hex>`. Status, confirmation, and resume commands must contain the same canonical id. A legacy M1 Mission retains its explicit foreground `--confirm` resume. A daemon-admitted Mission uses the first resume call only to obtain an exact controller-lease-bound preview; its returned `resume_command` includes that `gov_<12 lowercase hex>` in `--preview-id` and must be explicitly run to consume the preview. An incomplete snapshot/admission lineage is inspect-only and cannot fall back to foreground tmux execution.
 
 Plan ids use `pln_<12 lowercase hex>`. Plan hashes use exactly `sha256:<64 lowercase hex>`. These values are validated before a command or plan reference can be accepted.
 
@@ -72,7 +73,7 @@ Every control has the exact fields:
 kind, label, command, safety, enabled, blocker
 ```
 
-Inspect commands use `kind=inspect` and `safety=inspect`. Confirmation/resume commands use `kind=execute` and `safety=delegated`. Controls may reference only the commands declared in the enclosing payload, must expose every declared command once or more without omissions, and cannot use unrestricted safety claims.
+Inspect commands use `kind=inspect` and `safety=inspect`. Initial confirmation and legacy resume commands use `kind=execute` and `safety=delegated`. An exact daemon resume confirmation uses `kind=execute` and `safety=explicit_user`; its command must contain the same Mission id and returned preview id. Controls may reference only the commands declared in the enclosing payload, must expose every declared command once or more without omissions, and cannot use unrestricted safety claims.
 
 Control `kind`, `label`, `command`, and `safety` are non-empty strings; `enabled` is a literal boolean; `blocker` is null or a non-empty string. Dict/list payloads, nested command/prompt/credential objects, and non-scalar substitutes are invalid rather than serialized or inspected.
 
@@ -102,7 +103,7 @@ Lifecycle fields are validated together:
 - `stopped`: `confirmed_at` and `stop_reason` are non-empty; `workflow_run_id` remains optional because setup may fail before a workflow exists; `completed_at` is null.
 - `interrupted`: `confirmed_at`, `workflow_run_id`, and `stop_reason` are non-empty; `completed_at` is null.
 
-For `stopped`/`interrupted`, `can_resume` is true only when blockers are empty. The resume control must use the same enabled value and must explain a disabled state with a non-empty blocker.
+For `stopped`/`interrupted`, `can_resume` is true only when blockers are empty. A daemon-admitted Mission routes that enabled control through daemon governance; an incomplete daemon authority adds `daemon-managed Mission requires daemon governance resume preview`, disables resume, and never claims or dispatches in the foreground. The resume control must use the same enabled value and must explain a disabled state with a non-empty blocker.
 
 `MISSION_RUN_RESPONSE_FIELDS` is the exact status field set plus `confirmed` and `turns`. A run response uses `mode=mission_run` (or `mission_resume` for resume), `safety=delegated`, `requires_explicit_user=true`, and `confirmed=true`. It must also remain a valid status projection after changing only mode/safety and removing `confirmed` and `turns`. Plain Mission status and workbench cards do not include turns.
 

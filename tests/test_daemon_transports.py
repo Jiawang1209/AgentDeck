@@ -274,6 +274,7 @@ def test_acp_transport_can_delegate_permission_to_daemon_ledger(tmp_path: Path) 
             self.permission_seen = False
             self.pending: list[dict[str, Any]] = []
             self.decisions: list[object] = []
+            self.disconnects: list[str] = []
 
         async def activate(self, native_session_id: str, _initialized: object) -> None:
             assert native_session_id == "native-worker-1"
@@ -302,6 +303,9 @@ def test_acp_transport_can_delegate_permission_to_daemon_ledger(tmp_path: Path) 
             decision: object,
         ) -> None:
             self.decisions.append(decision)
+
+        async def disconnect(self, reason: str) -> None:
+            self.disconnects.append(reason)
 
     ledger = Ledger()
 
@@ -340,4 +344,5 @@ def test_acp_transport_can_delegate_permission_to_daemon_ledger(tmp_path: Path) 
     assert result.validated is True
     assert len(ledger.pending) == 1
     assert len(ledger.decisions) == 1
+    assert ledger.disconnects == ["transport_closed"]
     assert created[0].calls[-1] == "close"

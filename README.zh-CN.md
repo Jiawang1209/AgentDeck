@@ -58,6 +58,8 @@ agentdeck contract worker-transport --example
 
 Phase 3 M2a 现已提供经过身份验证的单项目 daemon 基础、`agentdeck daemon status/start/stop/logs`，以及 compact ProjectView/workbench discovery contracts。`daemon status` 严格零写且不会连接 socket，只把持久化状态显示为 last-known/unverified。离线 ProjectView 会严格解析 lease，只有 active namespace 且当前未过期的 lease 才令 `controller_present=true`；expired、terminal、naive 或 malformed lease 都显示 false，且检查完全零写。daemon 自身的 idle loop 会在每次 poll 重新读取 keepalive 事实：客户端连接使其保持 ready，Mission/Worker/审批/权限/reply/decision/recovery/outbox/shutdown/write 等非客户端工作使其保持 busy，只有 reasons 为空才开始 idle grace。进程内单调 activity generation 会在每次 accept 和每个 protocol-valid request 时增长，因此即使客户端在两次 poll 之间完成连接并关闭，也会重新开始完整 grace；close 本身不会重复计数。`agentdeck daemon stop --confirm` 会建立 verified client，并在需要时通过唯一免 lease 的 bootstrap RPC `controller.acquire` 获取临时 controller，再发送受 lease 约束的 stop RPC；已经持有 controller 的调用者也可显式追加 `--lease-id <lease_id> --lease-generation <generation>`。daemon 会持久 flush grant/renew/release/expiry 审计事件，并从当前未过期 lease 实时派生 `controller_present`。临时 controller 的 stop 若被拒绝，客户端会先调用 lease-gated `controller.release` 再报告 blocker；用户显式提供的 credential 绝不自动 release。正常 stop 仍在 acknowledgement 前 release，并只在响应 drain 后退出。ProjectView/workbench 不暴露 lease credential，客户端也不会发送进程信号。M2a 还不会在后台推进 Mission；scheduler 会明确显示 inactive，直到 M2b 完成冻结执行快照、确定性调度、Worker supervision 与 recovery。完整 transcript 恢复、全局项目漫游、Desktop/IDE Workspace Client、自动安装/认证 adapter，以及原生同会话 TUI attach 仍属于后续工作。
 
+Task 12 更新：daemon 已可推进 admitted frozen Mission。恢复必须通过 controller lease 约束的两阶段 preview/confirm，不会回落到前台 runner；不完整的 frozen authority 只能查看。stop/force-stop 在 durable release/stop commit 后立即触发退出，不依赖 acknowledgement 是否送达。同一 daemon ACP prompt 可顺序绑定并一次性消费多个 permission，进程关闭会把 AgentSession 持久化为 disconnected。
+
 ## 架构
 
 ```text

@@ -18,6 +18,7 @@ from agentdeck.mission_orchestration import (
     mission_status_payload,
     resume_mission,
     run_mission,
+    MissionRunError,
 )
 from agentdeck.runtime.readiness import WorkerReadiness, WorkerReadinessBatch
 from agentdeck.providers import LeaderPlanRequest
@@ -343,6 +344,38 @@ def test_partial_spawn_failure_keeps_first_binding_and_dispatches_zero(tmp_path,
     assert backend.spawned == ["planner", "reviewer", "reviewer"]
 
 
+def test_daemon_managed_mission_cannot_resume_through_foreground_runtime(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
+    mission_id = preview["mission_id"]
+    store.update_mission(mission_id, status="stopped", stop_reason="human_pause")
+    state = store.load()
+    mission = next(item for item in state["missions"] if item["mission_id"] == mission_id)
+    mission["snapshot_hash"] = "sha256:" + "a" * 64
+    mission["execution_snapshot"] = {"execution_hash": mission["snapshot_hash"]}
+    mission["daemon_admission"] = {
+        "state": "admitted", "snapshot_hash": mission["snapshot_hash"],
+        "blocker": None, "recovery_command": None, "updated_at": mission["updated_at"],
+    }
+    store.save(state)
+    before_state = store.state_path.read_bytes()
+    before_events = store.events_path.read_bytes()
+    backend = MissionBackend()
+
+    with pytest.raises(
+        MissionRunError, match="daemon-managed Mission requires daemon governance resume"
+    ):
+        resume_mission(
+            config=config, store=store, backend=backend, mission_id=mission_id
+        )
+
+    assert backend.created == 0
+    assert backend.spawned == []
+    assert store.state_path.read_bytes() == before_state
+    assert store.events_path.read_bytes() == before_events
+
+
 def test_setup_required_stops_before_workflow_dispatch(tmp_path, monkeypatch) -> None:
     _root, config, store, preview = seeded_mission(tmp_path, monkeypatch)
     backend = MissionBackend()
@@ -656,6 +689,14 @@ def test_two_natural_language_messages_complete_baijiaxing_mission(
     backend = BaijiaxingMissionBackend()
     monkeypatch.setattr(cli, "leader_provider", lambda _name: provider)
     monkeypatch.setattr(cli, "TmuxBackend", lambda: backend)
+    monkeypatch.setattr(
+        cli,
+        "_admit_mission_card",
+        lambda config, store, mission: run_mission(
+            config=config, store=store, backend=backend,
+            mission_id=str(mission["mission_id"]),
+        ),
+    )
     monkeypatch.setattr(
         "agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}"
     )

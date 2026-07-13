@@ -20,8 +20,9 @@ rendered control is never authority: `controller_present` is freshly derived
 from the current unexpired lease, and the daemon revalidates the lease, endpoint
 and durable identity, other clients, keepalive facts, and requested action. It
 then commits and durably flushes the lease release before returning an accepted
-response. Its server-owned stop event is set only after that response has been
-drained to the requester. Raw PID, socket path, nonce, lease credentials,
+response. That durable commit—not successful response delivery—sets the
+server-owned stop event, so a lost or broken acknowledgement cannot leave an
+accepted stop running. Raw PID, socket path, nonce, lease credentials,
 credentials, and home-directory paths are excluded.
 
 The daemon reloads its persisted keepalive view on every idle poll. Client-only
@@ -57,6 +58,20 @@ permission/tool-call/effect tuple; only then may the daemon return ACP
 `allow_once`. Exact replay returns `permission_consumed` without another write
 or authorization, conflicting lineage fails closed, and failure before the
 atomic commit grants nothing. The resulting gate decision is durably auditable.
+
+One ACP prompt may request multiple permissions sequentially. Each request is
+bound by its own permission id, tool-call id, transport sequence, and attempt
+binding; exact retry is idempotent, each approved effect is consumed once, and
+one permission never suppresses or authorizes a later request on the same
+attempt. Transport close is a durable lifecycle boundary: the daemon records
+the ACP AgentSession as `disconnected`, and takeover/return-control cannot treat
+that closed session as ready runtime evidence.
+
+Daemon-admitted Mission resume is likewise a controller-lease-gated two-call
+preview/confirm operation. CLI, Leader Chat, workbench, and flattened controls
+must not invoke the foreground Mission runner for a frozen Mission. Incomplete
+snapshot/admission records remain inspect-only; only snapshot-less M1 Missions
+retain the compatibility foreground resume path.
 
 `worker.takeover` records a bounded baseline for the exact controller
 generation: ACP session/turn lineage, artifact lineage, and a content-hashed

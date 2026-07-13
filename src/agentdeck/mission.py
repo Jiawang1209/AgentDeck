@@ -11,6 +11,25 @@ from .models import AgentRuntimeBinding, AgentSpec, LeaderConfig, ProjectConfig
 
 
 MISSION_SCHEMA_VERSION = "mission/v1"
+DAEMON_MISSION_RESUME_BLOCKER = (
+    "daemon-managed Mission requires daemon governance resume preview"
+)
+
+
+def daemon_mission_authority_state(mission: Mapping[str, object]) -> str:
+    """Classify legacy versus complete/incomplete daemon execution authority."""
+    has_hash = type(mission.get("snapshot_hash")) is str
+    has_snapshot = type(mission.get("execution_snapshot")) is dict
+    admission = mission.get("daemon_admission")
+    admission_state = admission.get("state") if isinstance(admission, Mapping) else None
+    if has_hash and has_snapshot and admission_state == "admitted":
+        return "admitted"
+    if has_hash or has_snapshot or admission_state in {
+        "admitted",
+        "confirmed_not_admitted",
+    }:
+        return "incomplete"
+    return "legacy"
 MISSION_STATUSES = (
     "pending_confirmation",
     "preparing",
@@ -78,7 +97,11 @@ def workbench_mission_card(item: Mapping[str, object], session_name: str) -> dic
     if re.fullmatch(r"[A-Za-z0-9_.:-]+", session_name) is None:
         raise ValueError("invalid tmux session name")
     blockers = [value for value in item.get("blockers", []) if isinstance(value, str)] if isinstance(item.get("blockers"), list) else []
-    can_resume = item.get("status") in {"stopped", "interrupted"} and not blockers
+    can_resume = (
+        item.get("can_resume") is True
+        if "can_resume" in item
+        else item.get("status") in {"stopped", "interrupted"} and not blockers
+    )
     can_confirm = item.get("status") == "pending_confirmation" and not blockers
     resume_blocker = None if can_resume else blockers[0] if blockers else f"mission status is {item.get('status')}"
     confirm_blocker = None if can_confirm else blockers[0] if blockers else f"mission status is {item.get('status')}"
