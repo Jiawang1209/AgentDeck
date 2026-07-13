@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 import threading
 from copy import deepcopy
 from dataclasses import asdict
@@ -37,6 +38,69 @@ def test_state_store_default_constructor_still_creates_project_layout(tmp_path) 
     assert store.deck_dir == tmp_path / ".agentdeck"
     assert store.events_path.exists()
     assert (store.deck_dir / "state" / "approvals.jsonl").exists()
+
+
+def test_public_save_never_exposes_a_truncated_state_file(
+    tmp_path, monkeypatch
+) -> None:
+    store = StateStore(tmp_path)
+    before = store.load()
+    after = deepcopy(before)
+    after["plans"] = [{"plan_id": "pln_atomic_boundary"}]
+    write_paused = threading.Event()
+    release_write = threading.Event()
+    errors: list[BaseException] = []
+    original_open = Path.open
+
+    class PausingWriter:
+        def __init__(self, handle) -> None:
+            self.handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.handle, name)
+
+        def write(self, value):
+            write_paused.set()
+            if not release_write.wait(timeout=2):
+                raise AssertionError("state writer was not released")
+            return self.handle.write(value)
+
+    def pausing_open(path, mode="r", *args, **kwargs):
+        handle = original_open(path, mode, *args, **kwargs)
+        direct_write = path == store.state_path and mode == "w"
+        atomic_write = (
+            path.parent == store.state_path.parent
+            and path.name.startswith(f".{store.state_path.name}.")
+            and mode == "wb"
+        )
+        return PausingWriter(handle) if direct_write or atomic_write else handle
+
+    monkeypatch.setattr(Path, "open", pausing_open)
+
+    def save() -> None:
+        try:
+            store.save(after)
+        except BaseException as exc:
+            errors.append(exc)
+
+    writer = threading.Thread(target=save)
+    writer.start()
+    try:
+        assert write_paused.wait(timeout=1)
+        assert store.load() == before
+    finally:
+        release_write.set()
+        writer.join(timeout=2)
+
+    assert not writer.is_alive()
+    assert errors == []
+    assert store.load() == after
 
 
 def test_state_store_open_existing_binds_paths_without_touching_layout(tmp_path) -> None:

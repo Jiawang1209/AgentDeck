@@ -18,6 +18,41 @@ def test_tmux_backend_declares_fallback_capabilities() -> None:
     assert capabilities.permission_requests is False
 
 
+def test_every_tmux_subprocess_call_has_one_bounded_timeout(monkeypatch) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        stdout = "%1\n" if "split-window" in command else ""
+        if "display-message" in command:
+            stdout = "%1\n"
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(tmux.shutil, "which", lambda _name: "/fake/tmux")
+    monkeypatch.setattr(tmux.subprocess, "run", fake_run)
+    backend = tmux.TmuxBackend()
+    config = RuntimeConfig(
+        backend="tmux", session_name="demo", socket_name="demo"
+    )
+    agent = AgentSpec(
+        agent_id="planner",
+        role="planning",
+        provider="codex",
+        command="codex",
+    )
+
+    backend.doctor()
+    backend.create_session(config)
+    backend.spawn_agent(config, agent, "/tmp/project")
+    backend.capture_output(config, "%1")
+    backend.send_input(config, "%1", "prompt")
+    backend.kill_pane(config, "%1")
+    backend.pane_exists(config, "%1")
+
+    assert len(calls) == 10
+    assert {kwargs.get("timeout") for _command, kwargs in calls} == {5.0}
+
+
 def test_create_session_sets_detached_terminal_size(monkeypatch) -> None:
     calls: list[list[str]] = []
 
@@ -96,22 +131,32 @@ def test_send_input_uses_private_bracketed_paste_then_one_enter(
     assert calls == [
         (
             ["tmux", "-L", "demo", "load-buffer", "-b", buffer_name, "-"],
-            {"check": True, "input": prompt, "text": True},
+                {
+                    "check": True,
+                    "input": prompt,
+                    "text": True,
+                    "timeout": 5.0,
+                },
         ),
         (
             [
                 "tmux", "-L", "demo", "paste-buffer", "-p",
                 "-b", buffer_name, "-t", "%1",
             ],
-            {"check": True},
+                {"check": True, "timeout": 5.0},
         ),
         (
             ["tmux", "-L", "demo", "send-keys", "-t", "%1", "Enter"],
-            {"check": True},
+                {"check": True, "timeout": 5.0},
         ),
         (
             ["tmux", "-L", "demo", "delete-buffer", "-b", buffer_name],
-            {"check": False, "capture_output": True, "text": True},
+                {
+                    "check": False,
+                    "capture_output": True,
+                    "text": True,
+                    "timeout": 5.0,
+                },
         ),
     ]
     assert all(prompt not in command for command, _kwargs in calls)
@@ -135,7 +180,7 @@ def test_send_empty_input_submits_one_enter_without_creating_a_buffer(monkeypatc
     assert calls == [
         (
             ["tmux", "-L", "demo", "send-keys", "-t", "%1", "Enter"],
-            {"check": True},
+            {"check": True, "timeout": 5.0},
         ),
     ]
 
@@ -167,7 +212,12 @@ def test_send_input_cleans_private_buffer_without_masking_paste_failure(
     buffer_name = calls[0][0][-2]
     assert calls[-1] == (
         ["tmux", "-L", "demo", "delete-buffer", "-b", buffer_name],
-        {"check": False, "capture_output": True, "text": True},
+        {
+            "check": False,
+            "capture_output": True,
+            "text": True,
+            "timeout": 5.0,
+        },
     )
     assert not any(command[-1] == "Enter" for command, _kwargs in calls)
 
@@ -197,7 +247,12 @@ def test_send_input_silently_cleans_after_load_failure_and_preserves_error(
     buffer_name = calls[0][0][-2]
     assert calls[-1] == (
         ["tmux", "-L", "demo", "delete-buffer", "-b", buffer_name],
-        {"check": False, "capture_output": True, "text": True},
+        {
+            "check": False,
+            "capture_output": True,
+            "text": True,
+            "timeout": 5.0,
+        },
     )
     assert len(calls) == 2
 

@@ -1443,10 +1443,7 @@ class StateStore:
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
     def save(self, state: dict[str, Any]) -> None:
-        self.state_path.write_text(
-            json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        self._atomic_save(state)
 
     def append_event(self, event: EventRecord) -> None:
         with self.events_path.open("a", encoding="utf-8") as handle:

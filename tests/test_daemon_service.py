@@ -23,7 +23,7 @@ from agentdeck.daemon.service import (
     validate_confirmed_mission_admission,
 )
 from agentdeck.daemon.supervisor import SubmittedReceipt, TransportResult
-from agentdeck.daemon.transports import AcpWorkerTransport
+from agentdeck.daemon.transports import AcpWorkerTransport, WorkerTransportError
 
 
 MISSION_ID = "mis_0123456789ab"
@@ -507,6 +507,103 @@ def test_worker_coordinator_persists_receipt_before_starting_completion() -> Non
                 break
         assert calls.index("persist:submitted") < calls.index("io:complete")
         assert calls[-1] == "persist:tmux-combined"
+        await service.close()
+
+    asyncio.run(case())
+
+
+def test_tmux_admission_timeout_persists_ambiguous_attempt() -> None:
+    attempt = {
+        "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,
+        "step_id": "step_1", "agent_id": "planner", "configured_transport": "tmux",
+        "dispatch_key": "dsp_" + "a" * 32, "state": "prepared",
+    }
+
+    class Store:
+        state = "prepared"
+
+        def claim_mission_attempt_admission(self, **_kwargs):
+            self.state = "admitting"
+            return {**attempt, "state": "admitting", "admission_claim_id": "adm_0123456789ab"}
+
+        def mark_mission_attempt_admission_ambiguous(self, **kwargs):
+            assert kwargs["reason"] == "admission_outcome_unknown"
+            self.state = "ambiguous"
+
+    store = Store()
+
+    class Transport:
+        async def admit(self, _claimed):
+            raise WorkerTransportError("tmux Worker admission failed")
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer([]), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        DaemonWorkerCoordinator(
+            service=service, store=store, transport_for=lambda _attempt: Transport()
+        ).launch(attempt)
+        for _ in range(10):
+            await asyncio.sleep(0)
+            await service.tick()
+            if store.state == "ambiguous":
+                break
+        assert store.state == "ambiguous"
+        await service.close()
+
+    asyncio.run(case())
+
+
+def test_tmux_capture_timeout_persists_failed_completion() -> None:
+    attempt = {
+        "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,
+        "step_id": "step_1", "agent_id": "planner", "configured_transport": "tmux",
+        "dispatch_key": "dsp_" + "a" * 32, "state": "prepared",
+    }
+
+    class Store:
+        completion: dict[str, object] | None = None
+
+        def claim_mission_attempt_admission(self, **_kwargs):
+            return {**attempt, "state": "admitting", "admission_claim_id": "adm_0123456789ab"}
+
+        def record_mission_attempt_submitted(self, **_kwargs):
+            return {**attempt, "state": "submitted", "admission_claim_id": "adm_0123456789ab"}
+
+        def record_tmux_mission_attempt_completion(self, **kwargs):
+            self.completion = kwargs
+
+    store = Store()
+
+    class Transport:
+        async def admit(self, claimed):
+            return SubmittedReceipt("receipt-1", claimed["dispatch_key"], "sent")
+
+        async def complete(self, _submitted, _receipt):
+            raise WorkerTransportError("tmux Worker capture failed")
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer([]), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        DaemonWorkerCoordinator(
+            service=service, store=store, transport_for=lambda _attempt: Transport()
+        ).launch(attempt)
+        for _ in range(20):
+            await asyncio.sleep(0)
+            await service.tick()
+            if store.completion is not None:
+                break
+        assert store.completion is not None
+        assert store.completion["succeeded"] is False
+        assert store.completion["summary"] == "Worker transport failed"
+        assert store.completion["canonical_handoff"] is None
         await service.close()
 
     asyncio.run(case())

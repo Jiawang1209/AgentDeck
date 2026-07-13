@@ -1214,7 +1214,7 @@ def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
                 runtime = next(
                     (
                         item.get("runtime", {})
-                        for item in project_view.get("agents", [])
+                        for item in project_view.agents
                         if isinstance(item, dict)
                         and item.get("agent_id") == agent.agent_id
                     ),

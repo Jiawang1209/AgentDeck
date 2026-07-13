@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 from typing import Any
 
@@ -137,6 +138,51 @@ def test_tmux_transport_times_out_without_fallback_or_extra_poll() -> None:
     asyncio.run(run())
     assert len(backend.sent) == 1
     assert len(backend.captures) == 2
+
+
+def test_tmux_subprocess_timeout_maps_to_worker_transport_error() -> None:
+    timeout = subprocess.TimeoutExpired(["tmux", "send-keys"], 5.0)
+
+    class TimeoutBackend(RecordingTmuxBackend):
+        def send_input(self, *_args) -> None:
+            raise timeout
+
+    transport = TmuxWorkerTransport(
+        config=RuntimeConfig(), pane_id="%2", prompt="prompt",
+        backend=TimeoutBackend([]),
+    )
+
+    async def run() -> None:
+        with pytest.raises(
+            WorkerTransportError, match="tmux Worker admission failed"
+        ) as raised:
+            await transport.admit(_attempt("tmux"))
+        assert raised.value.__cause__ is timeout
+
+    asyncio.run(run())
+
+
+def test_tmux_capture_timeout_maps_to_worker_transport_error() -> None:
+    timeout = subprocess.TimeoutExpired(["tmux", "capture-pane"], 5.0)
+
+    class TimeoutBackend(RecordingTmuxBackend):
+        def capture_output(self, *_args) -> str:
+            raise timeout
+
+    transport = TmuxWorkerTransport(
+        config=RuntimeConfig(), pane_id="%2", prompt="prompt",
+        backend=TimeoutBackend([]), max_polls=1,
+    )
+
+    async def run() -> None:
+        receipt = await transport.admit(_attempt("tmux"))
+        with pytest.raises(
+            WorkerTransportError, match="tmux Worker capture failed"
+        ) as raised:
+            await transport.complete(_attempt("tmux"), receipt)
+        assert raised.value.__cause__ is timeout
+
+    asyncio.run(run())
 
 
 class FakeAcpTransport:

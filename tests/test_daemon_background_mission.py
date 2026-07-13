@@ -307,6 +307,124 @@ def test_real_daemon_cleanup_runs_after_early_post_admission_failure() -> None:
         shutil.rmtree(parent, ignore_errors=True)
 
 
+def test_real_daemon_reaps_blocked_tmux_command_before_process_exit(
+    monkeypatch,
+) -> None:
+    parent = Path(tempfile.mkdtemp(prefix="agentdeck-m2-tmux-timeout-", dir="/tmp"))
+    root = parent.resolve() / "repo"
+    daemon_pid: int | None = None
+    try:
+        root.mkdir(parents=True)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        config_path = root / ".agentdeck" / "config.toml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                'provider = "deepseek"', 'provider = "fake"', 1
+            ).replace('model = "deepseek-chat"', 'model = "fake-plan"', 1),
+            encoding="utf-8",
+        )
+        fake_bin = parent / "bin"
+        fake_bin.mkdir()
+        fake_tmux = fake_bin / "tmux"
+        fake_tmux_pid_path = parent / "fake-tmux.pid"
+        fake_tmux.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os\n"
+            "from pathlib import Path\n"
+            "import time\n"
+            "with Path(os.environ['AGENTDECK_FAKE_TMUX_PID']).open('a') as stream:\n"
+            "    stream.write(str(os.getpid()) + '\\n')\n"
+            "while True:\n"
+            "    time.sleep(60)\n",
+            encoding="utf-8",
+        )
+        fake_tmux.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+        monkeypatch.setenv(
+            "AGENTDECK_FAKE_TMUX_PID", str(fake_tmux_pid_path)
+        )
+        config = load_config(root)
+        store = StateStore(root)
+        state = store.load()
+        state["agents"]["planner"] = {
+            "agent_id": "planner",
+            "pane_id": "%1",
+            "session_name": config.runtime.session_name,
+            "cwd": str(root),
+            "status": "running",
+        }
+        state["agents"]["reviewer"] = {
+            "agent_id": "reviewer",
+            "pane_id": "%2",
+            "session_name": config.runtime.session_name,
+            "cwd": str(root),
+            "status": "running",
+        }
+        store.save(state)
+        preview = create_mission_preview(
+            config=config,
+            store=store,
+            provider=TwoWorkerProvider(),
+            user_message="让 Codex 和 Claude 严格串行完成两步审阅，共2轮",
+            timeout_seconds=30,
+        )
+        confirmed = confirm_mission_for_daemon(
+            config=config, store=store, mission_id=preview["mission_id"]
+        )
+
+        async def admit_and_signal_stop() -> None:
+            nonlocal daemon_pid
+            client = await connect_or_start(root, config)
+            await client.close()
+            admitted = await admit_confirmed_mission(
+                root, config, confirmed, state_store=store
+            )
+            assert admitted["accepted"] is True
+            daemon_pid = int(json.loads(
+                daemon_endpoint(root).metadata_path.read_text(encoding="utf-8")
+            )["pid"])
+            deadline = time.monotonic() + 3
+            while not fake_tmux_pid_path.exists() and time.monotonic() < deadline:
+                await asyncio.sleep(0.02)
+            assert fake_tmux_pid_path.exists()
+            os.kill(daemon_pid, signal.SIGTERM)
+
+        started = time.monotonic()
+        asyncio.run(admit_and_signal_stop())
+        assert daemon_pid is not None
+        _wait_for_daemon_shutdown(root, daemon_pid, timeout=12)
+        assert time.monotonic() - started < 12
+        fake_tmux_pids = [
+            int(value)
+            for value in fake_tmux_pid_path.read_text(encoding="utf-8").splitlines()
+        ]
+        assert fake_tmux_pids
+        for child_pid in fake_tmux_pids:
+            with pytest.raises(ProcessLookupError):
+                os.kill(child_pid, 0)
+        attempt = store.load()["mission_attempts"][0]
+        assert attempt["state"] == "admitting"
+    finally:
+        if daemon_pid is None:
+            daemon_pid = _discover_daemon_pid(root)
+        if daemon_pid is not None:
+            try:
+                os.kill(daemon_pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                _stop_and_await_daemon(root, daemon_pid, force_terminate=True)
+        if fake_tmux_pid_path.exists():
+            for value in fake_tmux_pid_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    os.kill(int(value), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        assert daemon_client_module._detached_reaper_count() == 0
+        shutil.rmtree(parent, ignore_errors=True)
+
+
 def test_real_daemon_mission_resume_preview_confirm_uses_released_successor() -> None:
     parent = Path(tempfile.mkdtemp(prefix="agentdeck-m2-govern-", dir="/tmp"))
     root = parent.resolve() / "repo"

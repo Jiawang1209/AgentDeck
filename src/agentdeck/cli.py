@@ -7075,7 +7075,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             pane_id = next(
                 (
                     item.get("runtime", {}).get("pane_id")
-                    for item in project_view.get("agents", [])
+                    for item in project_view.agents
                     if isinstance(item, dict)
                     and item.get("agent_id") == effective_agent.agent_id
                     and isinstance(item.get("runtime"), dict)
