@@ -7,6 +7,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -48,6 +49,41 @@ class DaemonUnavailable(DaemonClientError):
     """No verified daemon is reachable at the expected endpoint."""
 
 
+def _validate_timeout(value: object) -> float:
+    if (
+        type(value) not in {int, float}
+        or not math.isfinite(float(value))
+        or value <= 0
+    ):
+        raise DaemonUnavailable("daemon timeout must be a positive finite number")
+    return float(value)
+
+
+def _connect_remaining(deadline: float) -> float:
+    remaining = deadline - asyncio.get_running_loop().time()
+    if remaining <= 0:
+        raise asyncio.TimeoutError
+    return remaining
+
+
+def _startup_remaining(deadline: float) -> float:
+    remaining = deadline - asyncio.get_running_loop().time()
+    if remaining <= 0:
+        raise DaemonUnavailable("daemon did not become ready")
+    return remaining
+
+
+async def _close_writer_before_deadline(writer: Any, deadline: float) -> None:
+    writer.close()
+    remaining = deadline - asyncio.get_running_loop().time()
+    if remaining <= 0:
+        return
+    try:
+        await asyncio.wait_for(writer.wait_closed(), timeout=remaining)
+    except (asyncio.TimeoutError, ConnectionError, BrokenPipeError):
+        pass
+
+
 class DaemonClient:
     def __init__(
         self,
@@ -81,17 +117,22 @@ class DaemonClient:
         max_frame_bytes: int = 1024 * 1024,
         timeout_seconds: float = 10,
     ) -> "DaemonClient":
+        _validate_timeout(timeout_seconds)
+        deadline = asyncio.get_running_loop().time() + float(timeout_seconds)
         endpoint = daemon_endpoint(root)
         metadata = _read_metadata(endpoint.metadata_path)
         if metadata["project_root_hash"] != project_root_hash(root):
             raise DaemonUnavailable("daemon project identity is unverified")
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise DaemonUnavailable("daemon identity is unverified")
         return await cls.connect(
             endpoint.socket_path,
             expected_project_root_hash=str(metadata["project_root_hash"]),
             expected_start_nonce_hash=str(metadata["start_nonce_hash"]),
             expected_instance_id=str(metadata["instance_id"]),
             max_frame_bytes=max_frame_bytes,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=remaining,
         )
 
     @classmethod
@@ -106,12 +147,15 @@ class DaemonClient:
         max_frame_bytes: int = 1024 * 1024,
         timeout_seconds: float = 10,
     ) -> "DaemonClient":
+        _validate_timeout(timeout_seconds)
+        deadline = asyncio.get_running_loop().time() + float(timeout_seconds)
+        writer: asyncio.StreamWriter | None = None
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(
                     str(endpoint), limit=max_frame_bytes + 1
                 ),
-                timeout=timeout_seconds,
+                timeout=_connect_remaining(deadline),
             )
         except (FileNotFoundError, ConnectionError, OSError, asyncio.TimeoutError):
             raise DaemonUnavailable("daemon endpoint is unavailable") from None
@@ -124,9 +168,13 @@ class DaemonClient:
                 protocol_version=protocol_version,
             )
             writer.write(encode_request(handshake, max_bytes=max_frame_bytes))
-            await asyncio.wait_for(writer.drain(), timeout=timeout_seconds)
+            await asyncio.wait_for(
+                writer.drain(), timeout=_connect_remaining(deadline)
+            )
             response = decode_response(
-                await _read_frame(reader, max_frame_bytes, timeout_seconds),
+                await _read_frame(
+                    reader, max_frame_bytes, _connect_remaining(deadline)
+                ),
                 max_bytes=max_frame_bytes,
             )
             if response.request_id != handshake_id or not response.ok or response.result is None:
@@ -142,9 +190,13 @@ class DaemonClient:
                     allowed_methods=CLIENT_METHODS,
                 )
             )
-            await asyncio.wait_for(writer.drain(), timeout=timeout_seconds)
+            await asyncio.wait_for(
+                writer.drain(), timeout=_connect_remaining(deadline)
+            )
             status_response = decode_response(
-                await _read_frame(reader, max_frame_bytes, timeout_seconds),
+                await _read_frame(
+                    reader, max_frame_bytes, _connect_remaining(deadline)
+                ),
                 max_bytes=max_frame_bytes,
             )
             status = status_response.result
@@ -168,18 +220,15 @@ class DaemonClient:
                 max_frame_bytes=max_frame_bytes,
                 compatible=compatible,
                 instance_id=str(status["instance_id"]),
-                request_timeout_seconds=timeout_seconds,
+                request_timeout_seconds=float(timeout_seconds),
             )
         except asyncio.CancelledError:
-            writer.close()
-            await writer.wait_closed()
+            if writer is not None:
+                await _close_writer_before_deadline(writer, deadline)
             raise
         except (DaemonClientError, RpcProtocolError, ConnectionError, asyncio.TimeoutError):
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except (ConnectionError, BrokenPipeError):
-                pass
+            if writer is not None:
+                await _close_writer_before_deadline(writer, deadline)
             raise DaemonUnavailable("daemon identity is unverified") from None
 
     async def request(
@@ -603,7 +652,7 @@ async def connect_or_start(
     cap = _validate_log_cap(log_cap_bytes)
     if type(retry_interval) not in {int, float} or retry_interval <= 0:
         raise DaemonUnavailable("daemon retry interval is invalid")
-    timeout_seconds = config.daemon.start_timeout_seconds
+    timeout_seconds = _validate_timeout(config.daemon.start_timeout_seconds)
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     try:
         return await DaemonClient.connect_verified(
@@ -613,6 +662,7 @@ async def connect_or_start(
         )
     except DaemonUnavailable:
         pass
+    _startup_remaining(deadline)
     _validate_log_targets(canonical)
     argv = (
         sys.executable,
@@ -634,9 +684,7 @@ async def connect_or_start(
     )
 
     while True:
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            raise DaemonUnavailable("daemon did not become ready")
+        remaining = _startup_remaining(deadline)
         try:
             return await DaemonClient.connect_verified(
                 canonical,
@@ -646,16 +694,16 @@ async def connect_or_start(
         except DaemonUnavailable:
             pass
 
+        remaining = _startup_remaining(deadline)
         spawn_lock = _try_spawn_lock(canonical)
         if spawn_lock is None:
-            await asyncio.sleep(min(float(retry_interval), max(0, remaining)))
+            remaining = _startup_remaining(deadline)
+            await asyncio.sleep(min(float(retry_interval), remaining))
             continue
         try:
             # The endpoint may have become ready between the failed connection
             # and the short-lived spawn election.
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                raise DaemonUnavailable("daemon did not become ready")
+            remaining = _startup_remaining(deadline)
             try:
                 return await DaemonClient.connect_verified(
                     canonical,
@@ -665,9 +713,7 @@ async def connect_or_start(
             except DaemonUnavailable:
                 pass
 
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                raise DaemonUnavailable("daemon did not become ready")
+            remaining = _startup_remaining(deadline)
             try:
                 await asyncio.wait_for(
                     spawn_factory(
@@ -685,9 +731,7 @@ async def connect_or_start(
                 raise DaemonUnavailable("daemon spawn timed out") from None
 
             while True:
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    raise DaemonUnavailable("daemon did not become ready")
+                remaining = _startup_remaining(deadline)
                 try:
                     return await DaemonClient.connect_verified(
                         canonical,
@@ -695,8 +739,7 @@ async def connect_or_start(
                         timeout_seconds=min(0.25, remaining),
                     )
                 except DaemonUnavailable:
-                    await asyncio.sleep(
-                        min(float(retry_interval), max(0, remaining))
-                    )
+                    remaining = _startup_remaining(deadline)
+                    await asyncio.sleep(min(float(retry_interval), remaining))
         finally:
             _release_spawn_lock(spawn_lock)

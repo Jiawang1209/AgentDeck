@@ -34,8 +34,10 @@ from agentdeck.daemon.protocol import (
     RpcEvent,
     RpcProtocolError,
     RpcRequest,
+    RpcResponse,
     decode_request,
     encode_request,
+    encode_response,
 )
 from agentdeck.daemon.server import DaemonServer
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION, DaemonConfig
@@ -130,6 +132,88 @@ def test_verified_client_handshake_status_and_request_correlation(short_project:
         finally:
             await server.close()
             cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_connect_phases_share_one_absolute_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phase_delay = 0.02
+    timeout = 0.055
+    root_hash = "a" * 64
+    nonce_hash = "b" * 64
+
+    class SlowTransport:
+        def __init__(self) -> None:
+            self.frames: asyncio.Queue[bytes] = asyncio.Queue()
+            self.closed = False
+
+        def write(self, payload: bytes) -> None:
+            request = decode_request(
+                payload, max_bytes=MAX_FRAME, allowed_methods=METHODS
+            )
+            if request.method == "handshake":
+                result = {
+                    "protocol_version": DAEMON_RPC_PROTOCOL_VERSION,
+                    "daemon_version": __version__,
+                    "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+                    "compatible": True,
+                    "write_enabled": True,
+                    "capabilities": ["status", "mutate", "subscribe"],
+                }
+            else:
+                result = {
+                    "mode": "daemon_status",
+                    "compatible": True,
+                    "protocol_version": DAEMON_RPC_PROTOCOL_VERSION,
+                    "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+                    "instance_id": "dmn_slow",
+                    "project_root_hash": root_hash,
+                    "start_nonce_hash": nonce_hash,
+                }
+            self.frames.put_nowait(
+                encode_response(
+                    RpcResponse(request.request_id, True, result, None),
+                    max_bytes=MAX_FRAME,
+                )
+            )
+
+        async def drain(self) -> None:
+            await asyncio.sleep(phase_delay)
+
+        async def readuntil(self, separator: bytes) -> bytes:
+            assert separator == b"\n"
+            await asyncio.sleep(phase_delay)
+            return await self.frames.get()
+
+        def close(self) -> None:
+            self.closed = True
+
+        async def wait_closed(self) -> None:
+            return None
+
+    async def exercise() -> None:
+        transport = SlowTransport()
+
+        async def slow_open(*args: object, **kwargs: object):
+            del args, kwargs
+            await asyncio.sleep(phase_delay)
+            return transport, transport
+
+        monkeypatch.setattr(client_module.asyncio, "open_unix_connection", slow_open)
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(DaemonUnavailable, match="unverified"):
+            await DaemonClient.connect(
+                Path("/tmp/unused.sock"),
+                expected_project_root_hash=root_hash,
+                expected_start_nonce_hash=nonce_hash,
+                max_frame_bytes=MAX_FRAME,
+                timeout_seconds=timeout,
+            )
+        elapsed = asyncio.get_running_loop().time() - started
+        assert elapsed <= timeout + 0.025
+        assert transport.closed is True
 
     _run(exercise())
 
@@ -789,6 +873,51 @@ def test_concurrent_connect_or_start_spawns_once_and_shares_instance(
             assert loop_errors == []
         finally:
             loop.set_exception_handler(previous_handler)
+
+    _run(exercise())
+
+
+def test_connect_or_start_refreshes_remaining_after_failed_connect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        calls = 0
+
+        async def slow_second_connect(
+            cls: type[DaemonClient], root: Path, **kwargs: object
+        ) -> DaemonClient:
+            nonlocal calls
+            del cls, root, kwargs
+            calls += 1
+            if calls == 2:
+                await asyncio.sleep(0.06)
+            raise DaemonUnavailable("not ready")
+
+        async def never_spawn(*args: object, **kwargs: object):
+            raise AssertionError((args, kwargs))
+
+        monkeypatch.setattr(
+            DaemonClient, "connect_verified", classmethod(slow_second_connect)
+        )
+        monkeypatch.setattr(client_module, "_validate_log_targets", lambda root: None)
+        monkeypatch.setattr(client_module, "_try_spawn_lock", lambda root: None)
+        config = SimpleNamespace(
+            daemon=SimpleNamespace(
+                start_timeout_seconds=0.05,
+                max_frame_bytes=MAX_FRAME,
+            )
+        )
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(DaemonUnavailable, match="ready"):
+            await connect_or_start(
+                tmp_path,
+                config,
+                spawn_factory=never_spawn,
+                retry_interval=0.05,
+            )
+        elapsed = asyncio.get_running_loop().time() - started
+        assert elapsed <= 0.085
+        assert calls == 2
 
     _run(exercise())
 
