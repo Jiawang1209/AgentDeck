@@ -71,9 +71,9 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-**Review the written Phase 3 M2 Project Daemon design, then write—but do not yet execute—the implementation plan.** M1 is complete, verified, and merged into local `main` at `cd8fd655`. The human approved the full M2 product design: one on-demand authoritative project daemon, frozen-scope background Mission advancement, AgentDeck-mediated Worker completion/handoff, explicit ACP/tmux routing, compact recovery, fail-closed ambiguity, and one controller among multiple observers. The written spec is `docs/superpowers/specs/2026-07-13-agentdeck-project-daemon-design.md`.
+**Review the written Phase 3 M2 implementation plan and choose its execution mode; do not implement before a new explicit `/goal`.** M1 is complete, verified, and merged into local `main` at `cd8fd655`. The human approved the M2 written spec at `docs/superpowers/specs/2026-07-13-agentdeck-project-daemon-design.md`. The strict 14-task TDD plan is `docs/superpowers/plans/2026-07-13-agentdeck-project-daemon.md` and covers M2a daemon foundation, M2b recoverable background Mission, and M2c real acceptance.
 
-No M2 production code is authorized before the human reviews and approves the written spec and its separate implementation plan. A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
+No M2 production code is authorized before the human reviews the implementation plan, chooses inline or subagent-driven execution, and creates a new explicit `/goal`. A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
 
 The completed natural-language Mission and G-series work below is historical context only. It must not be treated as an active continuation request or redone.
 
@@ -97,7 +97,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0, Phase 1, Phase 2, and Phase 3 M1 are complete. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. Phase 3 M2 now has a human-approved conversational design and a written spec awaiting explicit written-spec review. No daemon production code has started.
+Phase 0, Phase 1, Phase 2, and Phase 3 M1 are complete. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. Phase 3 M2 now has an approved written spec and a detailed implementation plan awaiting human execution-mode selection and a new `/goal`. No daemon production code has started.
 
 The completed Phase 2 diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. M1 composes that ACP client with explicit Leader/Worker transport and foreground conversation contracts while preserving tmux compatibility. M2 is designed to move confirmed Mission advancement into a recoverable project daemon; it must reuse these primitives rather than create a parallel authority.
 
@@ -122,7 +122,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-Review `docs/superpowers/specs/2026-07-13-agentdeck-project-daemon-design.md`. If the human approves the written spec, create the detailed M2 implementation plan using the writing-plans workflow, but do not implement until a new explicit `/goal` chooses an execution mode. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
+Review `docs/superpowers/plans/2026-07-13-agentdeck-project-daemon.md`, choose subagent-driven or inline execution, and create a new explicit `/goal` before any production change. Execute all 14 tasks in order with the required TDD, regressions, HISTORY updates, and local commits. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
 ```
 
 ## Historical development log — not active

@@ -4,6 +4,14 @@
 
 ## 2026-07-13
 
+### Plan the Phase 3 M2 Project Daemon implementation
+
+- **Plan**: added a strict 14-task TDD sequence for M2a daemon lifecycle/RPC/lease/contracts, M2b frozen Mission scheduling/Worker supervision/recovery/governance/reconnection/migration, and M2c crash matrix plus real Codex/Claude acceptance.
+- **Implementation boundaries**: the plan creates focused `daemon/` modules and extends existing StateStore, Mission, ACP/tmux, ProjectView, contracts, and conversation primitives without creating a parallel business ledger or letting Workers schedule one another.
+- **Safety and recovery**: every external action is prepared before dispatch, unknown outcomes become `ambiguous`, client disconnect does not cancel confirmed work, and exact permission/ownership/reroute/stop controls are revalidated by the daemon.
+- **Delivery discipline**: each semantic task requires RED, minimal GREEN, named regressions, compile/diff checks, HISTORY, and a local commit. The final gate requires a full crash matrix, full suite, and sanitized disposable live evidence before M2 can be called complete.
+- **Deliverable**: `docs/superpowers/plans/2026-07-13-agentdeck-project-daemon.md`.
+
 ### Design the Phase 3 M2 authoritative Project Daemon
 
 - **Product outcome**: approved a project-local background coordinator so one explicitly confirmed frozen Mission can continue after the interactive `agentdeck` client disconnects, pause on new authority/risk/ambiguity, and render deterministic recovery when the user returns.
