@@ -155,7 +155,7 @@ class DaemonClient:
             return client
         except asyncio.CancelledError:
             if client is not None:
-                await client.close()
+                await client._close_before_deadline(deadline)
             raise
         except (
             DaemonIdentityError,
@@ -166,7 +166,7 @@ class DaemonClient:
             asyncio.TimeoutError,
         ):
             if client is not None:
-                await client.close()
+                await client._close_before_deadline(deadline)
             raise DaemonUnavailable("daemon identity is unverified") from None
         finally:
             if connected_socket is not None:
@@ -408,18 +408,36 @@ class DaemonClient:
                 future.set_exception(DaemonClientError(str(error)))
         self._writer.close()
 
-    async def close(self) -> None:
+    async def _close_before_deadline(self, deadline: float) -> None:
         if self._terminal_error is None:
             self._mark_terminal(DaemonClientError("daemon client is closed"))
         if not self._reader_task.done():
             self._reader_task.cancel()
-            await asyncio.gather(self._reader_task, return_exceptions=True)
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(self._reader_task, return_exceptions=True),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                return
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            return
         try:
             await asyncio.wait_for(
-                self._writer.wait_closed(), timeout=self.request_timeout_seconds
+                self._writer.wait_closed(), timeout=remaining
             )
         except (asyncio.TimeoutError, ConnectionError, BrokenPipeError):
             pass
+
+    async def close(self) -> None:
+        deadline = (
+            asyncio.get_running_loop().time() + self.request_timeout_seconds
+        )
+        await self._close_before_deadline(deadline)
 
 
 async def _read_frame(

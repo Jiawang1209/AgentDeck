@@ -69,29 +69,73 @@ def test_endpoint_binding_detects_visible_runtime_replacement(tmp_path: Path) ->
         binding.close()
 
 
-def test_endpoint_binding_chmod_never_targets_replacement_runtime() -> None:
+def test_endpoint_binding_quarantines_before_cleanup_and_preserves_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     project = Path(tempfile.mkdtemp(prefix="ad-bind-", dir="/tmp")).resolve()
     binding = bind_daemon_endpoint(project)
-    runtime = binding.endpoint.socket_path.parent
     held_socket = socket.socket(socket.AF_UNIX)
     held_socket.bind(str(binding.endpoint.socket_path))
     identity = binding.socket_identity()
-    parked = runtime.with_name("runtime-parked")
     outside = project.with_name(project.name + "-outside")
     outside.mkdir()
-    outside_socket = outside / "daemon.sock"
-    outside_socket.write_text("external", encoding="utf-8")
-    outside_socket.chmod(0o644)
-    try:
-        runtime.rename(parked)
-        runtime.symlink_to(outside, target_is_directory=True)
+    outside_target = outside / "target"
+    outside_target.write_text("external", encoding="utf-8")
+    real_rename = lifecycle.os.rename
+    injected = False
 
-        with pytest.raises(DaemonIdentityError, match="binding changed"):
-            binding.chmod_socket(identity, 0o600)
-        assert stat.S_IMODE(outside_socket.stat().st_mode) == 0o644
-        assert outside_socket.read_text(encoding="utf-8") == "external"
+    def inject_replacement(
+        source: str,
+        target: str,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        nonlocal injected
+        real_rename(
+            source,
+            target,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
+        if source == "daemon.sock" and target.startswith(".daemon.sock.cleanup-"):
+            injected = True
+            assert dst_dir_fd is not None
+            os.symlink(outside_target, "daemon.sock", dir_fd=dst_dir_fd)
+
+    monkeypatch.setattr(lifecycle.os, "rename", inject_replacement)
+    try:
+        assert binding.unlink_socket_if_identity(identity)
+        assert injected is True
+        assert binding.endpoint.socket_path.is_symlink()
+        assert binding.endpoint.socket_path.resolve() == outside_target
+        assert outside_target.read_text(encoding="utf-8") == "external"
     finally:
         held_socket.close()
+        binding.close()
+        shutil.rmtree(project, ignore_errors=True)
+        shutil.rmtree(outside, ignore_errors=True)
+
+
+def test_endpoint_binding_restores_mismatched_quarantined_entry() -> None:
+    project = Path(tempfile.mkdtemp(prefix="ad-bind-", dir="/tmp")).resolve()
+    binding = bind_daemon_endpoint(project)
+    expected = socket.socket(socket.AF_UNIX)
+    expected.bind(str(binding.endpoint.socket_path))
+    identity = binding.socket_identity()
+    outside = project.with_name(project.name + "-outside")
+    outside.mkdir()
+    outside_target = outside / "target"
+    outside_target.write_text("external", encoding="utf-8")
+    binding.endpoint.socket_path.unlink()
+    binding.endpoint.socket_path.symlink_to(outside_target)
+    try:
+        assert not binding.unlink_socket_if_identity(identity)
+        assert binding.endpoint.socket_path.is_symlink()
+        assert binding.endpoint.socket_path.resolve() == outside_target
+        assert outside_target.read_text(encoding="utf-8") == "external"
+    finally:
+        expected.close()
         binding.close()
         shutil.rmtree(project, ignore_errors=True)
         shutil.rmtree(outside, ignore_errors=True)

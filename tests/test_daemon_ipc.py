@@ -205,6 +205,55 @@ def test_verified_client_rejects_runtime_swap_during_connect(
     _run(exercise())
 
 
+def test_post_connect_identity_failure_cleanup_uses_original_deadline(
+    short_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        owner, server = await _running_server(short_project)
+        real_connect = DaemonClient.connect.__func__
+        real_assert = lifecycle_module.DaemonEndpointBinding.assert_socket_identity
+        assertion_count = 0
+
+        async def delayed_connect(cls: type[DaemonClient], *args: object, **kwargs: object):
+            client = await real_connect(cls, *args, **kwargs)
+
+            async def blocked_wait_closed() -> None:
+                await asyncio.Event().wait()
+
+            client._writer.wait_closed = blocked_wait_closed  # type: ignore[method-assign]
+            await asyncio.sleep(0.04)
+            return client
+
+        def fail_post_connect(binding: object, identity: tuple[int, int]) -> None:
+            nonlocal assertion_count
+            assertion_count += 1
+            if assertion_count == 2:
+                raise lifecycle_module.DaemonIdentityError("daemon socket identity changed")
+            real_assert(binding, identity)
+
+        monkeypatch.setattr(DaemonClient, "connect", classmethod(delayed_connect))
+        monkeypatch.setattr(
+            lifecycle_module.DaemonEndpointBinding,
+            "assert_socket_identity",
+            fail_post_connect,
+        )
+        started = asyncio.get_running_loop().time()
+        try:
+            with pytest.raises(DaemonUnavailable):
+                await DaemonClient.connect_verified(
+                    short_project,
+                    max_frame_bytes=MAX_FRAME,
+                    timeout_seconds=0.06,
+                )
+            elapsed = asyncio.get_running_loop().time() - started
+            assert elapsed < 0.085
+        finally:
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
 def test_connect_phases_share_one_absolute_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -862,6 +911,68 @@ def test_server_bind_runtime_swap_never_chmods_or_unlinks_external_file(
             if runtime.is_symlink():
                 runtime.unlink()
                 parked.rename(runtime)
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_server_socket_is_created_0600_without_chmod_replacement_window(
+    short_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        owner = _owner(short_project)
+        outside = short_project / "outside-target"
+        outside.write_text("external", encoding="utf-8")
+        outside.chmod(0o644)
+        original = getattr(
+            lifecycle_module.DaemonEndpointBinding,
+            "assert_socket_mode",
+            None,
+        )
+        injected = False
+
+        def replace_before_mode_check(
+            binding: object, identity: tuple[int, int], mode: int
+        ) -> None:
+            nonlocal injected
+            injected = True
+            endpoint = binding.endpoint.socket_path
+            endpoint.unlink()
+            endpoint.symlink_to(outside)
+            assert original is not None
+            original(binding, identity, mode)
+
+        monkeypatch.setattr(
+            lifecycle_module.DaemonEndpointBinding,
+            "assert_socket_mode",
+            replace_before_mode_check,
+            raising=False,
+        )
+        before = os.umask(0)
+        os.umask(before)
+        server = DaemonServer(
+            endpoint=owner.endpoint.socket_path,
+            instance_id=owner.instance_id,
+            project_root_hash=owner.project_root_hash,
+            start_nonce_hash=owner.start_nonce_hash,
+            daemon_version=__version__,
+            project_view_schema_version=PROJECT_VIEW_SCHEMA_VERSION,
+            max_frame_bytes=MAX_FRAME,
+            allowed_methods=METHODS,
+            status_provider=lambda: {"mode": "daemon_status"},
+        )
+        try:
+            with pytest.raises(Exception):
+                await server.start()
+            after = os.umask(0)
+            os.umask(after)
+            assert after == before
+            assert injected is True
+            assert stat.S_IMODE(outside.stat().st_mode) == 0o644
+            assert outside.read_text(encoding="utf-8") == "external"
+        finally:
+            await server.close()
+            owner.endpoint.socket_path.unlink(missing_ok=True)
             cleanup_daemon_endpoint(owner)
 
     _run(exercise())

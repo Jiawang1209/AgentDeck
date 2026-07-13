@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
 import inspect
 import math
+import os
 from pathlib import Path
 import socket
 
@@ -146,10 +147,14 @@ class DaemonServer:
             binding.assert_socket_absent()
             listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             listener.setblocking(False)
-            listener.bind(str(self.endpoint))
+            previous_umask = os.umask(0o177)
+            try:
+                listener.bind(str(self.endpoint))
+            finally:
+                os.umask(previous_umask)
             bound_identity = binding.held_socket_identity()
             binding.assert_socket_identity(bound_identity)
-            binding.chmod_socket(bound_identity, 0o600)
+            binding.assert_socket_mode(bound_identity, 0o600)
             self._server = await asyncio.start_unix_server(
                 self._handle_connection,
                 sock=listener,

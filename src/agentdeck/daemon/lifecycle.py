@@ -128,33 +128,76 @@ class DaemonEndpointBinding:
         if self.socket_identity() != identity:
             raise DaemonIdentityError("daemon socket identity changed")
 
-    def chmod_socket(self, identity: tuple[int, int], mode: int) -> None:
-        self.assert_socket_identity(identity)
-        os.chmod(
-            "daemon.sock",
-            mode,
-            dir_fd=self._bound.runtime_fd,
-            follow_symlinks=False,
-        )
-        self.assert_socket_identity(identity)
-
-    def unlink_socket_if_identity(self, identity: tuple[int, int]) -> bool:
-        if self._bound.closed:
-            return False
+    def assert_socket_mode(self, identity: tuple[int, int], mode: int) -> None:
+        self.assert_runtime_identity()
         try:
             metadata = os.stat(
                 "daemon.sock",
                 dir_fd=self._bound.runtime_fd,
                 follow_symlinks=False,
             )
+        except FileNotFoundError as exc:
+            raise DaemonIdentityError("daemon socket is unavailable") from exc
+        if (
+            not stat.S_ISSOCK(metadata.st_mode)
+            or (metadata.st_dev, metadata.st_ino) != identity
+            or stat.S_IMODE(metadata.st_mode) != mode
+        ):
+            raise DaemonIdentityError("daemon socket identity or mode changed")
+        self.assert_runtime_identity()
+
+    def _restore_quarantine(self, quarantine: str) -> bool:
+        try:
+            os.link(
+                quarantine,
+                "daemon.sock",
+                src_dir_fd=self._bound.runtime_fd,
+                dst_dir_fd=self._bound.runtime_fd,
+                follow_symlinks=False,
+            )
+        except OSError:
+            return False
+        try:
+            os.unlink(quarantine, dir_fd=self._bound.runtime_fd)
+        except OSError:
+            return False
+        return True
+
+    def unlink_socket_if_identity(self, identity: tuple[int, int]) -> bool:
+        if self._bound.closed:
+            return False
+        quarantine = f".daemon.sock.cleanup-{uuid.uuid4().hex}"
+        try:
+            os.rename(
+                "daemon.sock",
+                quarantine,
+                src_dir_fd=self._bound.runtime_fd,
+                dst_dir_fd=self._bound.runtime_fd,
+            )
         except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+        try:
+            metadata = os.stat(
+                quarantine,
+                dir_fd=self._bound.runtime_fd,
+                follow_symlinks=False,
+            )
+        except OSError:
+            self._restore_quarantine(quarantine)
             return False
         if not stat.S_ISSOCK(metadata.st_mode) or (
             metadata.st_dev,
             metadata.st_ino,
         ) != identity:
+            self._restore_quarantine(quarantine)
             return False
-        os.unlink("daemon.sock", dir_fd=self._bound.runtime_fd)
+        try:
+            os.unlink(quarantine, dir_fd=self._bound.runtime_fd)
+        except OSError:
+            self._restore_quarantine(quarantine)
+            return False
         return True
 
     def close(self) -> None:
