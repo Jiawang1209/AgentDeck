@@ -43,6 +43,7 @@ CLIENT_METHODS = frozenset(
         "status",
         "subscribe",
         "mission.pause",
+        "mission.admit",
         "controller.acquire",
         "controller.renew",
         "controller.release",
@@ -884,3 +885,89 @@ async def connect_or_start(
                     await asyncio.sleep(min(float(retry_interval), remaining))
         finally:
             _release_spawn_lock(spawn_lock)
+
+
+async def admit_confirmed_mission(
+    root: Path,
+    config: Any,
+    mission: Mapping[str, object],
+    *,
+    connect_factory: Callable[..., Awaitable[Any]] = connect_or_start,
+) -> dict[str, object]:
+    """Submit one already-frozen Mission without a foreground fallback."""
+    mission_id = mission.get("mission_id") if isinstance(mission, Mapping) else None
+    snapshot_hash = (
+        mission.get("snapshot_hash") if isinstance(mission, Mapping) else None
+    )
+    snapshot = (
+        mission.get("execution_snapshot") if isinstance(mission, Mapping) else None
+    )
+    if (
+        type(mission_id) is not str
+        or type(snapshot_hash) is not str
+        or type(snapshot) is not dict
+        or mission.get("status") != "preparing"
+    ):
+        raise DaemonClientError("confirmed Mission admission is invalid")
+    unavailable = {
+        "accepted": False,
+        "mission_id": mission_id,
+        "snapshot_hash": snapshot_hash,
+        "state": "confirmed_not_admitted",
+        "blocker": "verified project daemon is unavailable",
+        "recovery_control": {
+            "kind": "retry_admission",
+            "command": (
+                f"agentdeck mission run --mission-id {mission_id} --confirm"
+            ),
+            "safety": "explicit_user",
+        },
+    }
+    try:
+        client = await connect_factory(root, config)
+    except (DaemonClientError, DaemonUnavailable, OSError):
+        return unavailable
+    lease_id: str | None = None
+    generation: int | None = None
+    try:
+        acquired = await client.request(
+            "controller.acquire",
+            {"client_id": f"client_mission_{secrets.token_hex(12)}"},
+        )
+        lease_id = acquired.get("lease_id")
+        generation = acquired.get("generation")
+        if type(lease_id) is not str or type(generation) is not int:
+            return unavailable
+        result = await client.request(
+            "mission.admit",
+            {
+                "mission_id": mission_id,
+                "snapshot_hash": snapshot_hash,
+                "execution_snapshot": snapshot,
+            },
+            lease_id=lease_id,
+            lease_generation=generation,
+        )
+        expected = {
+            "accepted": True,
+            "mission_id": mission_id,
+            "snapshot_hash": snapshot_hash,
+            "state": "admitted",
+        }
+        if result != expected:
+            return unavailable
+        return result
+    except (DaemonClientError, DaemonUnavailable, OSError):
+        return unavailable
+    finally:
+        if lease_id is not None and generation is not None:
+            try:
+                await client.request(
+                    "controller.release",
+                    {"lease_id": lease_id, "generation": generation},
+                    lease_id=lease_id,
+                    lease_generation=generation,
+                )
+            except Exception:
+                pass
+        await client.close()

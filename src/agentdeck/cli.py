@@ -136,6 +136,7 @@ from .mission_orchestration import (
     MissionPreviewError,
     MissionRunError,
     create_mission_preview,
+    confirm_mission_for_daemon,
     interrupt_mission,
     mission_status_payload,
     resume_mission,
@@ -159,7 +160,7 @@ from .conversation.transports import WorkerRuntimeFacts, WorkerTransportRouter, 
 from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import, resolve_skill_dependencies
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
-from .daemon.client import DaemonClient, DaemonUnavailable, connect_or_start, install_bounded_daemon_stdio_from_env
+from .daemon.client import DaemonClient, DaemonUnavailable, admit_confirmed_mission, connect_or_start, install_bounded_daemon_stdio_from_env
 from .daemon.lifecycle import (
     acquire_daemon_ownership, bind_daemon_endpoint, can_stop_daemon,
     daemon_keepalive_reasons,
@@ -179,6 +180,8 @@ from .daemon.lease import (
 )
 from .daemon.protocol import DAEMON_RPC_PROTOCOL_VERSION
 from .daemon.server import DaemonClientRequestError, DaemonServer
+from .daemon.recovery import reconcile_startup
+from .daemon.service import ProjectDaemonService, ServiceError, validate_confirmed_mission_admission
 
 
 def _print_json(payload: object) -> None:
@@ -6231,6 +6234,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(signum, stop_event.set)
     server: DaemonServer | None = None
+    service: ProjectDaemonService | None = None
     created_at: str | None = None
     try:
         status: dict[str, object] = {}
@@ -6303,6 +6307,24 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         async def mutation_handler(method: str, params: dict[str, object]) -> dict[str, object]:
             try:
                 now = datetime.now(timezone.utc)
+                if method == "mission.admit":
+                    if service is None:
+                        raise DaemonClientRequestError(
+                            "daemon service is unavailable", "unavailable"
+                        )
+                    try:
+                        result = await service.submit_mutation(
+                            lambda: validate_confirmed_mission_admission(store, params)
+                        )
+                    except ServiceError as exc:
+                        raise DaemonClientRequestError(
+                            str(exc), "mission_admission_blocked"
+                        ) from None
+                    if not isinstance(result, dict):
+                        raise DaemonClientRequestError(
+                            "Mission admission result is invalid", "invalid_result"
+                        )
+                    return result
                 if method == "controller.acquire" and set(params) == {"client_id"}:
                     transition = grant_controller(
                         client_id=params["client_id"],  # type: ignore[arg-type]
@@ -6394,6 +6416,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             max_frame_bytes=config.daemon.max_frame_bytes,
             allowed_methods={
                 "handshake", "status", "subscribe", "mission.pause",
+                "mission.admit",
                 "controller.acquire", "controller.renew", "controller.release",
                 "daemon.stop",
             },
@@ -6403,7 +6426,31 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             lease_validator=lease_validator,
             mutation_response_sent_handler=mutation_response_sent_handler,
         )
-        await server.start()
+        def flush_pending_outboxes() -> None:
+            state = store.load()
+            flushes = (
+                ("daemon_event_outbox", store.flush_daemon_event_outbox),
+                ("conversation_event_outbox", store.flush_conversation_event_outbox),
+                ("protocol_event_outbox", store.flush_protocol_event_outbox),
+            )
+            for field, flush in flushes:
+                pending = state.get(field, [])
+                if type(pending) is not list:
+                    raise ValueError("daemon outbox state is invalid")
+                if pending:
+                    flush()
+                    state = store.load()
+
+        service = ProjectDaemonService(
+            server=server,
+            reconcile_all=lambda: reconcile_startup(
+                store, enable_scheduler=lambda: None
+            ),
+            flush_safe_outboxes=flush_pending_outboxes,
+            load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
         status.update({
             "mode": "daemon_status", "state": "ready", "health": "healthy",
             "client_count": 0,
@@ -6428,6 +6475,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         current_state = "ready"
         last_activity_generation = server.activity_generation
         while not stop_event.is_set():
+            await service.tick()
             activity_generation = server.activity_generation
             if activity_generation != last_activity_generation:
                 idle_since = None
@@ -6473,7 +6521,9 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                 pass
         return 0
     finally:
-        if server is not None:
+        if service is not None:
+            await service.close()
+        elif server is not None:
             await server.close()
         if created_at is not None:
             stopped_at = utc_now()
@@ -16576,6 +16626,36 @@ def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int
     config, store, exit_code = _load_project_or_error()
     if config is None or store is None:
         return exit_code
+    if not resume:
+        try:
+            mission = store.mission_by_id(args.mission_id)
+            if mission.get("status") == "pending_confirmation":
+                mission = confirm_mission_for_daemon(
+                    config=config, store=store, mission_id=args.mission_id
+                )
+            elif (
+                mission.get("status") != "preparing"
+                or type(mission.get("snapshot_hash")) is not str
+                or type(mission.get("execution_snapshot")) is not dict
+            ):
+                raise MissionRunError("mission is not awaiting daemon admission")
+            admission = asyncio.run(
+                admit_confirmed_mission(
+                    Path(config.root), config, mission
+                )
+            )
+            payload = mission_status_payload(
+                config, store, mission, mode="mission_run", confirmed=True
+            )
+            payload["daemon_admission"] = admission
+        except KeyError:
+            print(f"unknown mission: {args.mission_id}", file=sys.stderr)
+            return 1
+        except (MissionRunError, ValueError):
+            print("mission run failed", file=sys.stderr)
+            return 1
+        _print_json(payload)
+        return 0
     operation = resume_mission if resume else run_mission
     try:
         payload = operation(

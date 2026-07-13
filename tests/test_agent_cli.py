@@ -1445,7 +1445,7 @@ def test_mission_status_rejects_unknown_id_without_json(tmp_path, monkeypatch, c
     assert captured.err.strip() == "unknown mission: mis_deadbeefcafe"
 
 
-def test_mission_cli_keyboard_interrupt_persists_mission_and_workflow(tmp_path, monkeypatch, capsys) -> None:
+def test_mission_cli_submits_frozen_mission_without_foreground_worker_io(tmp_path, monkeypatch, capsys) -> None:
     root = prepare_project(tmp_path, monkeypatch)
     config_path = root / ".agentdeck" / "config.toml"
     text = config_path.read_text(encoding="utf-8").replace('provider = "deepseek"', 'provider = "fake"', 1).replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
@@ -1491,18 +1491,24 @@ def test_mission_cli_keyboard_interrupt_persists_mission_and_workflow(tmp_path, 
     preview = create_mission_preview(config=load_config(root), store=store, provider=Provider(), user_message="让 Codex 和 Claude 接龙，共8轮", timeout_seconds=30)
     backend = InterruptingBackend()
     monkeypatch.setattr(cli, "TmuxBackend", lambda: backend)
+    async def fake_admit(_root, _config, mission):
+        return {
+            "accepted": True,
+            "mission_id": mission["mission_id"],
+            "snapshot_hash": mission["snapshot_hash"],
+            "state": "admitted",
+        }
+    monkeypatch.setattr(cli, "admit_confirmed_mission", fake_admit)
 
     assert cli.main(["mission", "run", "--mission-id", preview["mission_id"], "--confirm"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["status"] == "interrupted"
-    assert store.mission_by_id(preview["mission_id"])["status"] == "interrupted"
-    assert store.workflow_run_by_id(payload["workflow_run_id"])["status"] == "interrupted"
-    assert cli.main(["mission", "resume", "--mission-id", preview["mission_id"], "--confirm"]) == 0
-    resumed = json.loads(capsys.readouterr().out)
-    assert resumed["status"] == "completed"
-    assert len(backend.sent) == 8
-    assert len(store.load()["workflow_runs"]) == 1
+    assert payload["status"] == "preparing"
+    assert payload["daemon_admission"]["accepted"] is True
+    assert payload["daemon_admission"]["state"] == "admitted"
+    assert store.mission_by_id(preview["mission_id"])["status"] == "preparing"
+    assert backend.sent == []
+    assert store.load().get("workflow_runs", []) == []
 
 
 def test_workflow_run_completes_two_step_chain_with_one_confirmation(

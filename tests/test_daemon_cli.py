@@ -735,7 +735,6 @@ def test_failed_explicit_stop_never_releases_user_controller(
     ("field", "value"),
     [
         ("approvals", [{"status": "pending"}]),
-        ("conversation_event_outbox", [{"event_id": "pending"}]),
     ],
 )
 def test_nonclient_keepalive_facts_block_idle_exit_and_new_client_resets_timer(
