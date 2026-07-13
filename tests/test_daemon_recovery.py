@@ -13,12 +13,96 @@ from agentdeck.daemon.recovery import (
     RecoveryFacts,
     reconcile_gate,
     reconcile_startup,
+    recovery_facts_from_persisted_state,
 )
-from agentdeck.state import StateStore
+from agentdeck.runtime.protocol import TransportCapabilities
+from agentdeck.state import StateStore, canonical_snapshot_hash
 
 
 MISSION_ID = "mis_aaaaaaaaaaaa"
 ATTEMPT_ID = "mat_bbbbbbbbbbbb"
+
+
+def frozen_snapshot(mission_id: str = MISSION_ID) -> dict[str, object]:
+    digest = "sha256:" + "a" * 64
+    mission = {
+        "mission_id": mission_id,
+        "schema_version": "mission/v1",
+        "plan_id": "pln_" + "1" * 12,
+        "plan_hash": digest,
+        "goal_hash": digest,
+        "summary_hash": digest,
+        "steps": [
+            {
+                "step_id": "step_1",
+                "position": 1,
+                "agent_id": "worker",
+                "role": "implementation",
+                "task_hash": digest,
+            },
+            {
+                "step_id": "step_2",
+                "position": 2,
+                "agent_id": "reviewer",
+                "role": "review",
+                "task_hash": digest,
+            },
+        ],
+        "project_scope_hash": digest,
+        "action_classes": ["worker_task", "declared_local_verification"],
+        "skill_provenance": [],
+        "memory_provenance": [],
+        "declared_tests_hash": None,
+        "acceptance_criteria_hash": None,
+    }
+    workers = [
+        {
+            "agent_id": "worker",
+            "role": "implementation",
+            "provider": "codex",
+            "workspace_mode": "shared",
+            "configured_transport": "acp",
+            "capability_provenance": {
+                "source": "project_config",
+                "transport": "acp",
+                "adapter_configuration": "present",
+            },
+        },
+        {
+            "agent_id": "reviewer",
+            "role": "review",
+            "provider": "claude",
+            "workspace_mode": "shared",
+            "configured_transport": "tmux",
+            "capability_provenance": {
+                "source": "project_config",
+                "transport": "tmux",
+                "adapter_configuration": "not_applicable",
+            },
+        },
+    ]
+    policy = {
+        "approval_mode": "confirm",
+        "autonomous_allowed_agents": [],
+        "autonomous_max_approvals": 0,
+        "policy_source": "project_config",
+    }
+    limits = {
+        "step_count": 2,
+        "timeout_seconds": 60,
+        "retry_limit": 0,
+        "worker_budget": 2,
+    }
+    snapshot = {
+        "mission": mission,
+        "workers": workers,
+        "policy": policy,
+        "limits": limits,
+        "mission_hash": canonical_snapshot_hash(mission),
+        "policy_hash": canonical_snapshot_hash(policy),
+    }
+    snapshot["execution_hash"] = canonical_snapshot_hash(snapshot)
+    return snapshot
 
 
 def facts(**overrides: object) -> RecoveryFacts:
@@ -283,11 +367,13 @@ class RecordingStore(StateStore):
 
 def _seed_missions(store: StateStore) -> None:
     state = store.load()
+    snapshot = frozen_snapshot()
     state["missions"] = [
         {
             "mission_id": MISSION_ID,
             "status": "running",
-            "snapshot_hash": "sha256:" + "f" * 64,
+            "snapshot_hash": snapshot["execution_hash"],
+            "execution_snapshot": snapshot,
         },
         {"mission_id": "mis_cccccccccccc", "status": "completed"},
     ]
@@ -300,7 +386,7 @@ def _seed_missions(store: StateStore) -> None:
             "configured_transport": "acp",
             "dispatch_key": "dsp_" + "d" * 32,
             "admission_claim_id": "adm_" + "e" * 12,
-            "snapshot_hash": "sha256:" + "f" * 64,
+            "snapshot_hash": snapshot["execution_hash"],
             "state": "submitted",
             "created_at": "2026-07-13T01:00:00+00:00",
             "updated_at": "2026-07-13T01:01:00+00:00",
@@ -340,15 +426,7 @@ def _seed_missions(store: StateStore) -> None:
         {
             "mission_id": MISSION_ID,
             "attempt_id": ATTEMPT_ID,
-            "reply": None,
-            "handoff": None,
-            "permission": None,
-            "route": {
-                "configured_transport": "acp",
-                "transport_state": "ready",
-                "snapshot_hash": "sha256:" + "f" * 64,
-                "ownership_state": "agentdeck_owned",
-            },
+            "agent_id": "worker",
         }
     ]
     store.save(state)
@@ -566,19 +644,148 @@ def test_startup_rejects_multiple_active_attempts_before_classification(
     assert store.load().get("recovery_decisions", []) == []
 
 
+@pytest.mark.parametrize("orphan", ["attempt", "evidence"])
+def test_startup_rejects_orphan_attempt_or_evidence(
+    tmp_path: Path, orphan: str
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    if orphan == "attempt":
+        state["mission_attempts"][0]["mission_id"] = "mis_" + "6" * 12
+    else:
+        state["mission_recovery_evidence"][0]["mission_id"] = "mis_" + "6" * 12
+    store.save(state)
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: pytest.fail("enabled"))
+
+
+def test_startup_rejects_cross_mission_attempt_binding(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    other = deepcopy(state["mission_attempts"][0])
+    other.update(
+        {
+            "attempt_id": "mat_" + "6" * 12,
+            "mission_id": "mis_cccccccccccc",
+            "dispatch_key": "dsp_" + "6" * 32,
+            "admission_claim_id": None,
+            "state": "failed",
+            "receipt_summary": None,
+            "blocker": None,
+            "terminal_reason": "failed",
+        }
+    )
+    state["mission_attempts"].append(other)
+    state["mission_recovery_evidence"][0]["attempt_id"] = other["attempt_id"]
+    store.save(state)
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: pytest.fail("enabled"))
+
+
 def test_startup_rejects_persisted_handoff_without_reply_record(tmp_path: Path) -> None:
     store = StateStore(tmp_path)
     _seed_missions(store)
     state = store.load()
-    state["mission_recovery_evidence"][0]["handoff"] = {
+    state["mission_handoffs"] = [{
+        "mission_id": MISSION_ID,
+        "attempt_id": ATTEMPT_ID,
         "handoff_id": "hof_" + "3" * 12,
         "reply_id": "mrp_" + "4" * 12,
         "state": "recorded",
-    }
+    }]
     store.save(state)
     with pytest.raises(RecoveryError, match="durable recovery evidence"):
         reconcile_startup(store, enable_scheduler=lambda: pytest.fail("enabled"))
     assert store.load().get("recovery_decisions", []) == []
+
+
+def test_startup_rejects_permission_binding_without_authoritative_request(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    state["mission_permission_bindings"] = [
+        {
+            "mission_id": MISSION_ID,
+            "attempt_id": ATTEMPT_ID,
+            "permission_id": "prm_" + "5" * 12,
+        }
+    ]
+    store.save(state)
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: pytest.fail("enabled"))
+
+
+def test_startup_rejects_reply_evidence_without_controlled_audit_history(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    state["mission_attempts"][0]["state"] = "succeeded"
+    state["mission_worker_replies"] = [
+        {
+            "mission_id": MISSION_ID,
+            "attempt_id": ATTEMPT_ID,
+            "reply_id": "mrp_" + "4" * 12,
+            "dispatch_key": "dsp_" + "d" * 32,
+            "state": "received",
+        }
+    ]
+    store.save(state)
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: pytest.fail("enabled"))
+
+
+def test_controlled_permission_binding_tracks_authoritative_status_transitions(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "worker", "codex", "acp", "native", str(tmp_path), capabilities
+    )
+    turn = store.record_protocol_turn(session["session_id"], "msg_permission")
+    permission = store.record_permission_request(
+        session["session_id"], turn["turn_id"], "shell", str(tmp_path), "high"
+    )
+    binding = store.bind_mission_permission_evidence(
+        attempt_id=ATTEMPT_ID, permission_id=permission["permission_id"]
+    )
+    assert binding["mission_id"] == MISSION_ID
+    waiting = reconcile_startup(store, enable_scheduler=lambda: None)
+    assert waiting[0]["classification"] == "waiting_human"
+
+    store.record_protocol_transition(
+        "permission",
+        permission["permission_id"],
+        "pending",
+        "approved",
+        "approved",
+        {},
+    )
+    resumed = reconcile_startup(store, enable_scheduler=lambda: None)
+    assert resumed[0]["classification"] == "resumable"
+    assert resumed[0]["next_transition"] == "await_worker"
+
+
+@pytest.mark.parametrize("forged_field", ["configured_transport", "ownership_state"])
+def test_startup_rejects_forged_route_or_ownership_projection(
+    tmp_path: Path, forged_field: str
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    state["mission_recovery_evidence"][0][forged_field] = (
+        "tmux" if forged_field == "configured_transport" else "agentdeck_owned"
+    )
+    store.save(state)
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: pytest.fail("enabled"))
 
 
 def test_startup_multi_mission_corruption_disables_scheduler_and_writes_no_classification(
@@ -596,10 +803,9 @@ def test_startup_multi_mission_corruption_disables_scheduler_and_writes_no_class
     )
     state["mission_recovery_evidence"].append(
         {
-            **deepcopy(state["mission_recovery_evidence"][0]),
             "mission_id": "mis_777777777777",
             "attempt_id": None,
-            "route": {"corrupt": True},
+            "agent_id": "forged",
         }
     )
     store.save(state)
@@ -631,3 +837,68 @@ def test_startup_compare_and_swap_rejects_state_drift_before_scheduler(
         reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
     assert enabled == []
     assert store.load().get("recovery_decisions", []) == []
+
+
+def test_recovery_token_covers_protocol_transition_authority(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "other", "codex", "acp", "native", str(tmp_path), capabilities
+    )
+    turn = store.record_protocol_turn(session["session_id"], "msg_other")
+    permission = store.record_permission_request(
+        session["session_id"], turn["turn_id"], "shell", str(tmp_path), "low"
+    )
+    store.record_protocol_transition(
+        "permission", permission["permission_id"], "pending", "approved", None, {}
+    )
+    store.flush_protocol_event_outbox()
+    snapshot, token = store.load_recovery_snapshot()
+    decision = reconcile_gate(
+        recovery_facts_from_persisted_state(snapshot, MISSION_ID)
+    )
+    state = store.load()
+    state["protocol_state_transitions"][0]["details"] = {"drift": "same outcome"}
+    store.save(state)
+    with pytest.raises(ValueError, match="recovery authority drift"):
+        store.commit_recovery_decisions([decision], expected_recovery_token=token)
+
+
+def test_controlled_reply_and_handoff_transitions_drive_recovery(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    store.flush_protocol_event_outbox()
+    state = store.load()
+    state["mission_attempts"][0].update(
+        {
+            "state": "succeeded",
+            "updated_at": "2026-07-13T01:02:00+00:00",
+        }
+    )
+    store.save(state)
+    received = store.record_mission_reply_evidence(
+        attempt_id=ATTEMPT_ID,
+        dispatch_key="dsp_" + "d" * 32,
+        state="received",
+    )
+    validated = store.record_mission_reply_evidence(
+        attempt_id=ATTEMPT_ID,
+        dispatch_key="dsp_" + "d" * 32,
+        state="validated",
+        expected_reply_id=received["reply_id"],
+    )
+    pending = store.record_mission_handoff_evidence(
+        attempt_id=ATTEMPT_ID,
+        reply_id=validated["reply_id"],
+        state="pending",
+    )
+    store.record_mission_handoff_evidence(
+        attempt_id=ATTEMPT_ID,
+        reply_id=validated["reply_id"],
+        state="recorded",
+        expected_handoff_id=pending["handoff_id"],
+    )
+    result = reconcile_startup(store, enable_scheduler=lambda: None)
+    assert result[0]["classification"] == "resumable"
+    assert result[0]["next_transition"] == "activate_next"

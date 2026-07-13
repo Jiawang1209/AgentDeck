@@ -221,6 +221,20 @@ def canonical_snapshot_hash(value: object) -> str:
     return f"sha256:{hashlib.sha256(_canonical_snapshot_bytes(value)).hexdigest()}"
 
 
+def _recovery_authority_hash(value: object) -> str:
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError):
+        raise ValueError("recovery authority encoding is invalid") from None
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
 def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
     if type(value) is not dict or set(value) != _MISSION_ATTEMPT_FIELDS:
         raise ValueError("mission attempt state invalid")
@@ -1091,6 +1105,9 @@ class StateStore:
                 "daemon_event_outbox": [],
                 "recovery_decisions": [],
                 "mission_recovery_evidence": [],
+                "mission_worker_replies": [],
+                "mission_handoffs": [],
+                "mission_permission_bindings": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -2146,6 +2163,26 @@ class StateStore:
                     "snapshot_hash": snapshot["execution_hash"],
                 }
             )
+            from .daemon.recovery import validate_mission_recovery_evidence_record
+
+            recovery_evidence = state.setdefault("mission_recovery_evidence", [])
+            if type(recovery_evidence) is not list:
+                raise TypeError("mission_recovery_evidence must be a list")
+            validated_evidence = [
+                validate_mission_recovery_evidence_record(item)
+                for item in recovery_evidence
+            ]
+            if any(item["mission_id"] == mission_id for item in validated_evidence):
+                raise ValueError("duplicate durable recovery evidence")
+            recovery_evidence.append(
+                validate_mission_recovery_evidence_record(
+                    {
+                        "mission_id": mission_id,
+                        "attempt_id": None,
+                        "agent_id": None,
+                    }
+                )
+            )
             state.setdefault("protocol_event_outbox", []).append(asdict(event))
             self._atomic_save(state)
             return copy.deepcopy(mission)
@@ -2382,15 +2419,7 @@ class StateStore:
                     {
                         "mission_id": mission_id,
                         "attempt_id": attempt["attempt_id"],
-                        "reply": None,
-                        "handoff": None,
-                        "permission": None,
-                        "route": {
-                            "configured_transport": configured_transport,
-                            "transport_state": "ready",
-                            "snapshot_hash": attempt["snapshot_hash"],
-                            "ownership_state": "agentdeck_owned",
-                        },
+                        "agent_id": agent_id,
                     }
                 )
             )
@@ -2418,13 +2447,20 @@ class StateStore:
         self, state: dict[str, Any]
     ) -> str:
         from .daemon.recovery import (
+            recovery_facts_from_persisted_state,
+            validate_mission_handoff_evidence_record,
+            validate_mission_permission_binding,
             validate_mission_recovery_evidence_record,
+            validate_mission_reply_evidence_record,
             validate_recovery_record,
         )
 
         missions = state.setdefault("missions", [])
         attempts_raw = state.setdefault("mission_attempts", [])
         evidence_raw = state.setdefault("mission_recovery_evidence", [])
+        replies_raw = state.setdefault("mission_worker_replies", [])
+        handoffs_raw = state.setdefault("mission_handoffs", [])
+        permission_bindings_raw = state.setdefault("mission_permission_bindings", [])
         decisions_raw = state.setdefault("recovery_decisions", [])
         outbox = state.setdefault("protocol_event_outbox", [])
         daemon_outbox = state.setdefault("daemon_event_outbox", [])
@@ -2435,6 +2471,12 @@ class StateStore:
             raise ValueError("mission attempt state invalid")
         if type(evidence_raw) is not list:
             raise TypeError("mission_recovery_evidence must be a list")
+        if type(replies_raw) is not list:
+            raise TypeError("mission_worker_replies must be a list")
+        if type(handoffs_raw) is not list:
+            raise TypeError("mission_handoffs must be a list")
+        if type(permission_bindings_raw) is not list:
+            raise TypeError("mission_permission_bindings must be a list")
         if type(decisions_raw) is not list:
             raise TypeError("recovery_decisions must be a list")
         mission_ids: list[str] = []
@@ -2450,22 +2492,146 @@ class StateStore:
             raise ValueError("duplicate mission identity")
         attempts = [_validate_mission_attempt_record(item) for item in attempts_raw]
         _require_unique_mission_attempt_lineage(attempts)
+        attempt_by_id = {item["attempt_id"]: item for item in attempts}
+        if any(item["mission_id"] not in set(mission_ids) for item in attempts):
+            raise ValueError("mission attempt reference is invalid")
         evidence = [
             validate_mission_recovery_evidence_record(item) for item in evidence_raw
         ]
         evidence_missions = [item["mission_id"] for item in evidence]
         if len(evidence_missions) != len(set(evidence_missions)):
             raise ValueError("duplicate durable recovery evidence")
+        for item in evidence:
+            if item["mission_id"] not in set(mission_ids):
+                raise ValueError("durable recovery Mission reference is invalid")
+            attempt_id = item["attempt_id"]
+            if attempt_id is not None:
+                attempt = attempt_by_id.get(attempt_id)
+                if (
+                    attempt is None
+                    or attempt["mission_id"] != item["mission_id"]
+                    or attempt["agent_id"] != item["agent_id"]
+                ):
+                    raise ValueError("durable recovery attempt reference is invalid")
+        replies = [validate_mission_reply_evidence_record(item) for item in replies_raw]
+        handoffs = [
+            validate_mission_handoff_evidence_record(item) for item in handoffs_raw
+        ]
+        permission_bindings = [
+            validate_mission_permission_binding(item)
+            for item in permission_bindings_raw
+        ]
+        for collection, label in (
+            (replies, "reply"),
+            (handoffs, "handoff"),
+            (permission_bindings, "permission"),
+        ):
+            identities = [item["attempt_id"] for item in collection]
+            if len(identities) != len(set(identities)):
+                raise ValueError(f"duplicate durable recovery {label} evidence")
+            for item in collection:
+                attempt = attempt_by_id.get(item["attempt_id"])
+                if attempt is None or attempt["mission_id"] != item["mission_id"]:
+                    raise ValueError(f"durable recovery {label} reference is invalid")
         for item in decisions_raw:
             validate_recovery_record(item)
+        self._validate_protocol_identities(state)
+        self._validate_protocol_lineage(state)
         _validated_protocol_event_outbox_ids(outbox)
+        journal_events = self.all_events()
+        for event in journal_events:
+            try:
+                validate_daemon_event_record(event)
+            except LeaseError:
+                raise ValueError("protocol event journal is malformed") from None
+        recovery_audit_events = [
+            event
+            for event in [*journal_events, *outbox]
+            if event.get("event_type")
+            in {
+                "mission_reply_evidence_recorded",
+                "mission_handoff_evidence_recorded",
+                "mission_permission_bound",
+            }
+        ]
+
+        def require_audit_history(
+            *,
+            event_type: str,
+            identity_key: str,
+            record: dict[str, object],
+            states: list[str],
+        ) -> None:
+            matching = [
+                event
+                for event in recovery_audit_events
+                if event.get("event_type") == event_type
+                and type(event.get("payload")) is dict
+                and event["payload"].get(identity_key) == record[identity_key]
+                and event["payload"].get("mission_id") == record["mission_id"]
+                and event["payload"].get("attempt_id") == record["attempt_id"]
+            ]
+            observed = [event["payload"].get("state") for event in matching]
+            if observed != states:
+                raise ValueError("durable recovery evidence audit history is invalid")
+
+        for reply in replies:
+            expected_states = ["received"]
+            if reply["state"] in {"validated", "invalid"}:
+                expected_states.append(reply["state"])
+            require_audit_history(
+                event_type="mission_reply_evidence_recorded",
+                identity_key="reply_id",
+                record=reply,
+                states=expected_states,
+            )
+        for handoff in handoffs:
+            expected_states = ["pending"]
+            if handoff["state"] == "recorded":
+                expected_states.append("recorded")
+            require_audit_history(
+                event_type="mission_handoff_evidence_recorded",
+                identity_key="handoff_id",
+                record=handoff,
+                states=expected_states,
+            )
+        for binding in permission_bindings:
+            matching = [
+                event
+                for event in recovery_audit_events
+                if event.get("event_type") == "mission_permission_bound"
+                and event.get("payload") == binding
+            ]
+            if len(matching) != 1:
+                raise ValueError("durable recovery evidence audit history is invalid")
         validate_daemon_event_outbox(daemon_outbox)
         self._conversation_collections(state)
         claim_lineage = self._protocol_admission_claim_history(outbox, attempts)
+        for mission_id in mission_ids:
+            mission = next(item for item in missions if item["mission_id"] == mission_id)
+            if mission["status"] not in {"completed", "stopped", "interrupted"}:
+                recovery_facts_from_persisted_state(state, mission_id)
         authority = {
             "missions": missions,
             "mission_attempts": attempts,
             "mission_recovery_evidence": evidence,
+            "mission_worker_replies": replies,
+            "mission_handoffs": handoffs,
+            "mission_permission_bindings": permission_bindings,
+            "permission_requests": state.setdefault("permission_requests", []),
+            "agent_sessions": state.setdefault("agent_sessions", []),
+            "protocol_state_transitions": state.setdefault(
+                "protocol_state_transitions", []
+            ),
+            "conversation_sessions": state.setdefault("conversation_sessions", []),
+            "conversation_turns": state.setdefault("conversation_turns", []),
+            "conversation_preview_bindings": state.setdefault(
+                "conversation_preview_bindings", []
+            ),
+            "conversation_state_transitions": state.setdefault(
+                "conversation_state_transitions", []
+            ),
+            "recovery_audit_events": recovery_audit_events,
             "recovery_decisions": decisions_raw,
             "protocol_event_outbox": outbox,
             "daemon_event_outbox": daemon_outbox,
@@ -2474,7 +2640,7 @@ class StateStore:
                 key: list(value) for key, value in sorted(claim_lineage.items())
             },
         }
-        return canonical_snapshot_hash(authority)
+        return _recovery_authority_hash(authority)
 
     def load_recovery_snapshot(self) -> tuple[dict[str, Any], str]:
         """Read and validate one lock-consistent recovery authority snapshot."""
@@ -2616,6 +2782,234 @@ class StateStore:
             outbox.extend(events)
             self._atomic_save(state)
             return copy.deepcopy(records)
+
+    def _append_recovery_audit_locked(
+        self, state: dict[str, Any], event_type: str, payload: dict[str, Any]
+    ) -> None:
+        event = asdict(EventRecord.create(event_type, payload))
+        try:
+            event_id = validate_daemon_event_record(event)
+        except LeaseError:
+            raise ValueError("protocol event record is invalid") from None
+        outbox = state.setdefault("protocol_event_outbox", [])
+        outbox_ids = _validated_protocol_event_outbox_ids(outbox)
+        if event_id in outbox_ids or event_id in self._strict_protocol_journal_event_ids():
+            raise ValueError("duplicate protocol event identity")
+        outbox.append(event)
+
+    def record_mission_reply_evidence(
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        state: str,
+        expected_reply_id: str | None = None,
+    ) -> dict[str, object]:
+        from .daemon.recovery import validate_mission_reply_evidence_record
+
+        if state not in {"received", "validated", "invalid"}:
+            raise ValueError("mission reply evidence transition is invalid")
+        with self._protocol_mutation_lock():
+            persisted = self.load()
+            self._validated_recovery_snapshot_locked(persisted)
+            attempts = [
+                _validate_mission_attempt_record(item)
+                for item in persisted.setdefault("mission_attempts", [])
+            ]
+            matches = [item for item in attempts if item["attempt_id"] == attempt_id]
+            if len(matches) != 1:
+                raise ValueError("mission reply attempt reference is invalid")
+            attempt = matches[0]
+            if (
+                attempt["dispatch_key"] != dispatch_key
+                or attempt["state"] not in {"completed", "succeeded"}
+            ):
+                raise ValueError("mission reply attempt authority is invalid")
+            records = persisted.setdefault("mission_worker_replies", [])
+            validated = [validate_mission_reply_evidence_record(item) for item in records]
+            current = [item for item in validated if item["attempt_id"] == attempt_id]
+            if not current:
+                if state != "received" or expected_reply_id is not None:
+                    raise ValueError("mission reply evidence transition is invalid")
+                candidate = validate_mission_reply_evidence_record(
+                    {
+                        "mission_id": attempt["mission_id"],
+                        "attempt_id": attempt_id,
+                        "reply_id": new_id("mrp"),
+                        "dispatch_key": dispatch_key,
+                        "state": "received",
+                    }
+                )
+                records.append(candidate)
+            elif len(current) == 1:
+                prior = current[0]
+                if (
+                    expected_reply_id != prior["reply_id"]
+                    or prior["dispatch_key"] != dispatch_key
+                    or prior["state"] != "received"
+                    or state not in {"validated", "invalid"}
+                ):
+                    raise ValueError("mission reply evidence transition is invalid")
+                candidate = validate_mission_reply_evidence_record(
+                    {**prior, "state": state}
+                )
+                index = next(
+                    index
+                    for index, item in enumerate(records)
+                    if item.get("attempt_id") == attempt_id
+                )
+                records[index] = candidate
+            else:
+                raise ValueError("duplicate durable recovery reply evidence")
+            self._append_recovery_audit_locked(
+                persisted,
+                "mission_reply_evidence_recorded",
+                {
+                    "attempt_id": attempt_id,
+                    "mission_id": candidate["mission_id"],
+                    "reply_id": candidate["reply_id"],
+                    "state": candidate["state"],
+                },
+            )
+            self._atomic_save(persisted)
+            return copy.deepcopy(candidate)
+
+    def record_mission_handoff_evidence(
+        self,
+        *,
+        attempt_id: str,
+        reply_id: str,
+        state: str,
+        expected_handoff_id: str | None = None,
+    ) -> dict[str, object]:
+        from .daemon.recovery import (
+            validate_mission_handoff_evidence_record,
+            validate_mission_reply_evidence_record,
+        )
+
+        if state not in {"pending", "recorded"}:
+            raise ValueError("mission handoff evidence transition is invalid")
+        with self._protocol_mutation_lock():
+            persisted = self.load()
+            self._validated_recovery_snapshot_locked(persisted)
+            replies = [
+                validate_mission_reply_evidence_record(item)
+                for item in persisted.setdefault("mission_worker_replies", [])
+            ]
+            reply_matches = [
+                item
+                for item in replies
+                if item["attempt_id"] == attempt_id and item["reply_id"] == reply_id
+            ]
+            if len(reply_matches) != 1 or reply_matches[0]["state"] != "validated":
+                raise ValueError("mission handoff reply authority is invalid")
+            reply = reply_matches[0]
+            records = persisted.setdefault("mission_handoffs", [])
+            validated = [
+                validate_mission_handoff_evidence_record(item) for item in records
+            ]
+            current = [item for item in validated if item["attempt_id"] == attempt_id]
+            if not current:
+                if state != "pending" or expected_handoff_id is not None:
+                    raise ValueError("mission handoff evidence transition is invalid")
+                candidate = validate_mission_handoff_evidence_record(
+                    {
+                        "mission_id": reply["mission_id"],
+                        "attempt_id": attempt_id,
+                        "handoff_id": new_id("hof"),
+                        "reply_id": reply_id,
+                        "state": "pending",
+                    }
+                )
+                records.append(candidate)
+            elif len(current) == 1:
+                prior = current[0]
+                if (
+                    expected_handoff_id != prior["handoff_id"]
+                    or prior["reply_id"] != reply_id
+                    or prior["state"] != "pending"
+                    or state != "recorded"
+                ):
+                    raise ValueError("mission handoff evidence transition is invalid")
+                candidate = validate_mission_handoff_evidence_record(
+                    {**prior, "state": "recorded"}
+                )
+                index = next(
+                    index
+                    for index, item in enumerate(records)
+                    if item.get("attempt_id") == attempt_id
+                )
+                records[index] = candidate
+            else:
+                raise ValueError("duplicate durable recovery handoff evidence")
+            self._append_recovery_audit_locked(
+                persisted,
+                "mission_handoff_evidence_recorded",
+                {
+                    "attempt_id": attempt_id,
+                    "handoff_id": candidate["handoff_id"],
+                    "mission_id": candidate["mission_id"],
+                    "reply_id": reply_id,
+                    "state": candidate["state"],
+                },
+            )
+            self._atomic_save(persisted)
+            return copy.deepcopy(candidate)
+
+    def bind_mission_permission_evidence(
+        self, *, attempt_id: str, permission_id: str
+    ) -> dict[str, object]:
+        from .daemon.recovery import validate_mission_permission_binding
+
+        with self._protocol_mutation_lock():
+            persisted = self.load()
+            self._validated_recovery_snapshot_locked(persisted)
+            attempts = [
+                _validate_mission_attempt_record(item)
+                for item in persisted.setdefault("mission_attempts", [])
+            ]
+            attempt_matches = [
+                item for item in attempts if item["attempt_id"] == attempt_id
+            ]
+            if len(attempt_matches) != 1:
+                raise ValueError("mission permission attempt reference is invalid")
+            attempt = attempt_matches[0]
+            permissions = [
+                item
+                for item in persisted.setdefault("permission_requests", [])
+                if item.get("permission_id") == permission_id
+            ]
+            if len(permissions) != 1:
+                raise ValueError("mission permission request reference is invalid")
+            permission = permissions[0]
+            sessions = [
+                item
+                for item in persisted.setdefault("agent_sessions", [])
+                if item.get("session_id") == permission.get("session_id")
+            ]
+            if len(sessions) != 1 or sessions[0].get("agent_id") != attempt["agent_id"]:
+                raise ValueError("mission permission agent scope mismatch")
+            records = persisted.setdefault("mission_permission_bindings", [])
+            validated = [validate_mission_permission_binding(item) for item in records]
+            if any(
+                item["attempt_id"] == attempt_id
+                or item["permission_id"] == permission_id
+                for item in validated
+            ):
+                raise ValueError("duplicate durable recovery permission binding")
+            candidate = validate_mission_permission_binding(
+                {
+                    "mission_id": attempt["mission_id"],
+                    "attempt_id": attempt_id,
+                    "permission_id": permission_id,
+                }
+            )
+            records.append(candidate)
+            self._append_recovery_audit_locked(
+                persisted, "mission_permission_bound", dict(candidate)
+            )
+            self._atomic_save(persisted)
+            return copy.deepcopy(candidate)
 
     def _transition_mission_attempt_admission(
         self,

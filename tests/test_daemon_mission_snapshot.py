@@ -11,6 +11,7 @@ import pytest
 from agentdeck import cli
 from agentdeck import state as state_module
 from agentdeck.config import load_config, write_default_config
+from agentdeck.daemon.recovery import reconcile_startup
 from agentdeck.mission_orchestration import (
     MissionRunError,
     attempt_dispatch_key,
@@ -207,6 +208,31 @@ def test_confirmed_mission_freezes_compact_execution_authority(tmp_path, monkeyp
     assert persisted["execution_snapshot"] == snapshot
     snapshot["mission"]["steps"][0]["role"] = "tampered"
     assert store.mission_by_id(preview["mission_id"])["execution_snapshot"] != snapshot
+
+
+def test_confirmed_mission_recovers_before_first_attempt(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirmed = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    assert store.load()["mission_recovery_evidence"] == [
+        {
+            "mission_id": preview["mission_id"],
+            "attempt_id": None,
+            "agent_id": None,
+        }
+    ]
+    enabled: list[bool] = []
+    result = reconcile_startup(
+        store, enable_scheduler=lambda: enabled.append(True)
+    )
+    assert enabled == [True]
+    assert result[0]["classification"] == "resumable"
+    assert result[0]["next_transition"] == "prepare_dispatch"
+    assert result[0]["attempt_id"] is None
+    assert confirmed["snapshot_hash"] == store.mission_by_id(preview["mission_id"])[
+        "snapshot_hash"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -546,15 +572,7 @@ def test_prepare_attempt_commits_exact_pre_dispatch_record_and_event(tmp_path, m
         {
             "mission_id": preview["mission_id"],
             "attempt_id": attempt["attempt_id"],
-            "reply": None,
-            "handoff": None,
-            "permission": None,
-            "route": {
-                "configured_transport": "acp",
-                "transport_state": "ready",
-                "snapshot_hash": confirmed["snapshot_hash"],
-                "ownership_state": "agentdeck_owned",
-            },
+            "agent_id": "planner",
         }
     ]
     events = store.load()["protocol_event_outbox"]

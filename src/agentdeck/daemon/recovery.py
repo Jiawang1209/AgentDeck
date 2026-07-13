@@ -13,6 +13,7 @@ from datetime import datetime
 import re
 from typing import Literal, Protocol
 
+from ..conversation.lifecycle import validate_conversation_history
 from ..mission import MISSION_STATUSES, is_canonical_mission_id
 
 
@@ -125,13 +126,10 @@ _RECOVERY_RECORD_FIELDS = frozenset(
         "classified_at",
     }
 )
-_DURABLE_EVIDENCE_FIELDS = frozenset(
-    {"mission_id", "attempt_id", "reply", "handoff", "permission", "route"}
-)
+_DURABLE_EVIDENCE_FIELDS = frozenset({"mission_id", "attempt_id", "agent_id"})
 _REPLY_ID = re.compile(r"mrp_[0-9a-f]{12}")
 _HANDOFF_ID = re.compile(r"hof_[0-9a-f]{12}")
 _PERMISSION_ID = re.compile(r"prm_[0-9a-f]{12}")
-_SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
@@ -405,86 +403,78 @@ def validate_recovery_record(value: object) -> dict[str, object]:
 
 
 def validate_mission_recovery_evidence_record(value: object) -> dict[str, object]:
-    """Validate one compact persisted reply/handoff/permission/route projection."""
+    """Validate one controlled Mission/current-attempt recovery binding."""
     if type(value) is not dict or set(value) != _DURABLE_EVIDENCE_FIELDS:
         raise ValueError("durable recovery evidence is invalid")
     mission_id = value.get("mission_id")
     attempt_id = value.get("attempt_id")
+    agent_id = value.get("agent_id")
     if not is_canonical_mission_id(mission_id) or (
         attempt_id is not None
         and (type(attempt_id) is not str or _ATTEMPT_ID.fullmatch(attempt_id) is None)
     ):
         raise ValueError("durable recovery evidence is invalid")
-
-    reply = value.get("reply")
-    if reply is not None and (
-        type(reply) is not dict
-        or set(reply) != {"reply_id", "state", "dispatch_key"}
-        or type(reply.get("reply_id")) is not str
-        or _REPLY_ID.fullmatch(reply["reply_id"]) is None
-        or reply.get("state") not in {"received", "validated", "invalid"}
-        or type(reply.get("dispatch_key")) is not str
-        or re.fullmatch(r"dsp_[0-9a-f]{32}", reply["dispatch_key"]) is None
-    ):
-        raise ValueError("durable recovery reply evidence is invalid")
-
-    handoff = value.get("handoff")
-    if handoff is not None and (
-        type(handoff) is not dict
-        or set(handoff) != {"handoff_id", "reply_id", "state"}
-        or type(handoff.get("handoff_id")) is not str
-        or _HANDOFF_ID.fullmatch(handoff["handoff_id"]) is None
-        or type(handoff.get("reply_id")) is not str
-        or _REPLY_ID.fullmatch(handoff["reply_id"]) is None
-        or handoff.get("state") not in {"pending", "recorded"}
-    ):
-        raise ValueError("durable recovery handoff evidence is invalid")
-    if handoff is not None and (
-        reply is None
-        or handoff["reply_id"] != reply["reply_id"]
-        or reply["state"] != "validated"
-    ):
-        raise ValueError("durable recovery handoff reply lineage is invalid")
-
-    permission = value.get("permission")
-    if permission is not None and (
-        type(permission) is not dict
-        or set(permission) != {"permission_id", "state"}
-        or type(permission.get("permission_id")) is not str
-        or _PERMISSION_ID.fullmatch(permission["permission_id"]) is None
-        or permission.get("state")
-        not in {"pending", "approved", "denied", "expired"}
-    ):
-        raise ValueError("durable recovery permission evidence is invalid")
-
-    route = value.get("route")
-    if (
-        type(route) is not dict
-        or set(route)
-        != {
-            "configured_transport",
-            "transport_state",
-            "snapshot_hash",
-            "ownership_state",
-        }
-        or route.get("configured_transport") not in {None, "acp", "tmux"}
-        or route.get("transport_state") not in {"ready", "missing", "invalid"}
-        or type(route.get("snapshot_hash")) is not str
-        or _SHA256.fullmatch(route["snapshot_hash"]) is None
-        or route.get("ownership_state")
-        not in {"agentdeck_owned", "human_owned", "conflict"}
-    ):
-        raise ValueError("durable recovery route evidence is invalid")
-    if attempt_id is None and (reply is not None or handoff is not None):
+    if attempt_id is None:
+        if agent_id is not None:
+            raise ValueError("durable recovery attempt lineage is invalid")
+    elif type(agent_id) is not str or not agent_id:
         raise ValueError("durable recovery attempt lineage is invalid")
     return {
         "mission_id": mission_id,
         "attempt_id": attempt_id,
-        "reply": None if reply is None else dict(reply),
-        "handoff": None if handoff is None else dict(handoff),
-        "permission": None if permission is None else dict(permission),
-        "route": dict(route),
+        "agent_id": agent_id,
     }
+
+
+def validate_mission_reply_evidence_record(value: object) -> dict[str, object]:
+    fields = {"mission_id", "attempt_id", "reply_id", "dispatch_key", "state"}
+    if (
+        type(value) is not dict
+        or set(value) != fields
+        or not is_canonical_mission_id(value.get("mission_id"))
+        or type(value.get("attempt_id")) is not str
+        or _ATTEMPT_ID.fullmatch(value["attempt_id"]) is None
+        or type(value.get("reply_id")) is not str
+        or _REPLY_ID.fullmatch(value["reply_id"]) is None
+        or type(value.get("dispatch_key")) is not str
+        or re.fullmatch(r"dsp_[0-9a-f]{32}", value["dispatch_key"]) is None
+        or value.get("state") not in {"received", "validated", "invalid"}
+    ):
+        raise ValueError("durable recovery reply evidence is invalid")
+    return dict(value)
+
+
+def validate_mission_handoff_evidence_record(value: object) -> dict[str, object]:
+    fields = {"mission_id", "attempt_id", "handoff_id", "reply_id", "state"}
+    if (
+        type(value) is not dict
+        or set(value) != fields
+        or not is_canonical_mission_id(value.get("mission_id"))
+        or type(value.get("attempt_id")) is not str
+        or _ATTEMPT_ID.fullmatch(value["attempt_id"]) is None
+        or type(value.get("handoff_id")) is not str
+        or _HANDOFF_ID.fullmatch(value["handoff_id"]) is None
+        or type(value.get("reply_id")) is not str
+        or _REPLY_ID.fullmatch(value["reply_id"]) is None
+        or value.get("state") not in {"pending", "recorded"}
+    ):
+        raise ValueError("durable recovery handoff evidence is invalid")
+    return dict(value)
+
+
+def validate_mission_permission_binding(value: object) -> dict[str, object]:
+    fields = {"mission_id", "attempt_id", "permission_id"}
+    if (
+        type(value) is not dict
+        or set(value) != fields
+        or not is_canonical_mission_id(value.get("mission_id"))
+        or type(value.get("attempt_id")) is not str
+        or _ATTEMPT_ID.fullmatch(value["attempt_id"]) is None
+        or type(value.get("permission_id")) is not str
+        or _PERMISSION_ID.fullmatch(value["permission_id"]) is None
+    ):
+        raise ValueError("durable recovery permission binding is invalid")
+    return dict(value)
 
 
 def recovery_facts_from_persisted_state(
@@ -527,48 +517,165 @@ def recovery_facts_from_persisted_state(
         default=None,
     )
     current_attempt_id = current.get("attempt_id") if current is not None else None
-    durable = [
+    bindings = [
         validate_mission_recovery_evidence_record(item)
         for item in evidence_items
         if type(item) is dict and item.get("mission_id") == mission_id
     ]
-    if len(durable) != 1 or durable[0]["attempt_id"] != current_attempt_id:
+    if len(bindings) != 1 or bindings[0]["attempt_id"] != current_attempt_id:
         raise RecoveryError("durable recovery evidence mismatch")
-    evidence = durable[0]
-    route = evidence["route"]
-    assert isinstance(route, dict)
-    reply = evidence["reply"]
-    handoff = evidence["handoff"]
-    permission = evidence["permission"]
+    binding = bindings[0]
+    current_agent_id = current.get("agent_id") if current is not None else None
+    if binding["agent_id"] != current_agent_id:
+        raise RecoveryError("durable recovery attempt binding mismatch")
+
+    try:
+        from ..state import validate_execution_snapshot
+
+        snapshot = validate_execution_snapshot(mission.get("execution_snapshot"))
+    except (TypeError, ValueError):
+        snapshot = None
+    mission_snapshot_hash = mission.get("snapshot_hash")
+    snapshot_state = (
+        "missing"
+        if snapshot is None or type(mission_snapshot_hash) is not str
+        else "drift"
+        if snapshot["execution_hash"] != mission_snapshot_hash
+        else "valid"
+    )
+
+    target_agent_id: str | None = None
+    transport_state = "missing"
+    lineage_state = "valid"
+    if snapshot is not None:
+        steps = snapshot["mission"]["steps"]
+        if current is None:
+            if steps:
+                target_agent_id = steps[0]["agent_id"]
+        else:
+            matches = [
+                item
+                for item in steps
+                if item["step_id"] == current.get("step_id")
+            ]
+            if len(matches) != 1 or matches[0]["agent_id"] != current_agent_id:
+                lineage_state = "conflict"
+            else:
+                target_agent_id = current_agent_id  # type: ignore[assignment]
+        workers = {
+            item["agent_id"]: item for item in snapshot["workers"]
+        }
+        worker = workers.get(target_agent_id)
+        if worker is not None:
+            if current is not None and worker["configured_transport"] != current.get(
+                "configured_transport"
+            ):
+                transport_state = "invalid"
+            else:
+                transport_state = "ready"
+
+    reply_records = [
+        validate_mission_reply_evidence_record(item)
+        for item in state.get("mission_worker_replies", [])
+        if type(item) is dict and item.get("attempt_id") == current_attempt_id
+    ]
+    if len(reply_records) > 1:
+        raise RecoveryError("duplicate durable recovery reply evidence")
+    reply = reply_records[0] if reply_records else None
+    if reply is not None and (
+        current is None
+        or reply["mission_id"] != mission_id
+        or reply["dispatch_key"] != current.get("dispatch_key")
+    ):
+        raise RecoveryError("durable recovery reply lineage is invalid")
+    handoff_records = [
+        validate_mission_handoff_evidence_record(item)
+        for item in state.get("mission_handoffs", [])
+        if type(item) is dict and item.get("attempt_id") == current_attempt_id
+    ]
+    if len(handoff_records) > 1:
+        raise RecoveryError("duplicate durable recovery handoff evidence")
+    handoff = handoff_records[0] if handoff_records else None
+    if handoff is not None and (
+        reply is None
+        or handoff["mission_id"] != mission_id
+        or handoff["reply_id"] != reply["reply_id"]
+        or reply["state"] != "validated"
+    ):
+        raise RecoveryError("durable recovery handoff reply lineage is invalid")
+
+    permission_bindings = [
+        validate_mission_permission_binding(item)
+        for item in state.get("mission_permission_bindings", [])
+        if type(item) is dict and item.get("attempt_id") == current_attempt_id
+    ]
+    if len(permission_bindings) > 1:
+        raise RecoveryError("duplicate durable recovery permission binding")
+    permission_state = "none"
+    if permission_bindings:
+        permission_binding = permission_bindings[0]
+        if current is None or permission_binding["mission_id"] != mission_id:
+            raise RecoveryError("durable recovery permission lineage is invalid")
+        permissions = [
+            item
+            for item in state.get("permission_requests", [])
+            if type(item) is dict
+            and item.get("permission_id") == permission_binding["permission_id"]
+        ]
+        if len(permissions) != 1:
+            raise RecoveryError("durable recovery permission record is missing")
+        permission = permissions[0]
+        sessions = [
+            item
+            for item in state.get("agent_sessions", [])
+            if type(item) is dict and item.get("session_id") == permission.get("session_id")
+        ]
+        if len(sessions) != 1 or sessions[0].get("agent_id") != current_agent_id:
+            raise RecoveryError("durable recovery permission agent scope mismatch")
+        permission_state = permission.get("status")
+        for transition in state.get("protocol_state_transitions", []):
+            if (
+                type(transition) is dict
+                and transition.get("entity_type") == "permission"
+                and transition.get("entity_id") == permission_binding["permission_id"]
+            ):
+                if transition.get("from_state") != permission_state:
+                    raise RecoveryError(
+                        "durable recovery permission history is invalid"
+                    )
+                permission_state = transition.get("to_state")
+
+    base_records = {
+        key: state.get(key, [])
+        for key in (
+            "conversation_sessions",
+            "conversation_turns",
+            "conversation_preview_bindings",
+        )
+    }
+    try:
+        conversation = validate_conversation_history(
+            base_records, state.get("conversation_state_transitions", [])
+        )
+    except (TypeError, ValueError):
+        raise RecoveryError("durable recovery ownership history is invalid") from None
+    ownership_raw = conversation["ownership_states"].get(
+        target_agent_id, "agentdeck_owned"
+    )
+    ownership_state = (
+        ownership_raw
+        if ownership_raw in {"agentdeck_owned", "human_owned"}
+        else "conflict"
+    )
 
     if current is not None:
-        if route["configured_transport"] != current.get("configured_transport"):
-            transport_state = "invalid"
-        else:
-            transport_state = route["transport_state"]
-        if reply is not None and reply["dispatch_key"] != current.get("dispatch_key"):
-            raise RecoveryError("durable recovery reply lineage is invalid")
         receipt_state = "recorded" if current.get("receipt_summary") is not None else "none"
         attempt_state = current.get("state")
     else:
-        if route["configured_transport"] is not None:
-            raise RecoveryError("durable recovery route attempt lineage is invalid")
-        transport_state = route["transport_state"]
         receipt_state = "none"
         attempt_state = "none"
-
-    mission_snapshot_hash = mission.get("snapshot_hash")
-    route_snapshot_hash = route["snapshot_hash"]
-    attempt_snapshot_hash = (
-        current.get("snapshot_hash") if current is not None else mission_snapshot_hash
-    )
-    snapshot_state = (
-        "missing"
-        if type(mission_snapshot_hash) is not str
-        else "valid"
-        if mission_snapshot_hash == route_snapshot_hash == attempt_snapshot_hash
-        else "drift"
-    )
+    if current is not None and current.get("snapshot_hash") != mission_snapshot_hash:
+        snapshot_state = "drift"
     return RecoveryFacts(
         mission_id=mission_id,
         mission_state=mission["status"],  # type: ignore[arg-type]
@@ -577,11 +684,11 @@ def recovery_facts_from_persisted_state(
         receipt_state=receipt_state,  # type: ignore[arg-type]
         reply_state="none" if reply is None else reply["state"],  # type: ignore[arg-type]
         handoff_state="none" if handoff is None else handoff["state"],  # type: ignore[arg-type]
-        permission_state="none" if permission is None else permission["state"],  # type: ignore[arg-type]
+        permission_state=permission_state,  # type: ignore[arg-type]
         transport_state=transport_state,  # type: ignore[arg-type]
         snapshot_state=snapshot_state,  # type: ignore[arg-type]
-        lineage_state="valid",
-        ownership_state=route["ownership_state"],  # type: ignore[arg-type]
+        lineage_state=lineage_state,  # type: ignore[arg-type]
+        ownership_state=ownership_state,  # type: ignore[arg-type]
     )
 
 
