@@ -4,6 +4,7 @@ import json
 import re
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from .models import EventRecord, ProjectConfig, utc_now
@@ -24,6 +25,48 @@ REPLY_FIELDS = (
     "next_steps",
 )
 REPLY_STATUSES = {"completed", "blocked", "failed"}
+
+
+@dataclass(frozen=True)
+class CanonicalArtifact:
+    path: str
+    content_hash: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.path) is not str
+            or not self.path
+            or type(self.content_hash) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", self.content_hash) is None
+        ):
+            raise ValueError("invalid Worker artifact evidence")
+
+
+@dataclass(frozen=True)
+class CanonicalHandoff:
+    handoff_token: str
+    status: str
+    summary: str
+    verification: str
+    risks: str
+    next_steps: str
+    artifacts: tuple[CanonicalArtifact, ...]
+    trace_ids: tuple[str, ...]
+
+    def compact(self) -> dict[str, Any]:
+        return {
+            "handoff_token": self.handoff_token,
+            "status": self.status,
+            "summary": self.summary,
+            "verification": self.verification,
+            "risks": self.risks,
+            "next_steps": self.next_steps,
+            "artifacts": [
+                {"path": item.path, "content_hash": item.content_hash}
+                for item in self.artifacts
+            ],
+            "trace_ids": list(self.trace_ids),
+        }
 
 
 def _validated_compact_reply(reply: dict[str, Any]) -> dict[str, str]:
@@ -55,22 +98,18 @@ def validate_correlated_workflow_reply(
     }
 
 
-def validate_compact_worker_outcome(
+def build_canonical_handoff(
     *,
     reply: dict[str, Any],
     artifacts: list[dict[str, Any]],
     trace_ids: list[str],
     expected_handoff_token: str,
-) -> dict[str, Any]:
-    """Validate and project a Worker result onto the durable handoff allowlist."""
+) -> CanonicalHandoff:
+    """Build the sole validated compact handoff record used by every transport."""
     correlated = validate_correlated_workflow_reply(reply, expected_handoff_token)
-    compact: dict[str, Any] = {
-        field: correlated[field]
-        for field in ("status", "summary", "verification", "risks", "next_steps")
-    }
     if type(artifacts) is not list:
         raise ValueError("worker artifacts must be a list")
-    compact_artifacts: list[dict[str, str]] = []
+    compact_artifacts: list[CanonicalArtifact] = []
     for artifact in artifacts:
         if type(artifact) is not dict or set(artifact) != {"path", "content_hash"}:
             raise ValueError("worker artifact evidence is invalid")
@@ -83,16 +122,39 @@ def validate_compact_worker_outcome(
             or re.fullmatch(r"sha256:[0-9a-f]{64}", content_hash) is None
         ):
             raise ValueError("worker artifact evidence is invalid")
-        compact_artifacts.append({"path": path, "content_hash": content_hash})
+        compact_artifacts.append(CanonicalArtifact(path, content_hash))
     if (
         type(trace_ids) is not list
         or any(type(item) is not str or not item for item in trace_ids)
         or len(trace_ids) != len(set(trace_ids))
     ):
         raise ValueError("worker trace ids are invalid")
-    compact["artifacts"] = compact_artifacts
-    compact["trace_ids"] = list(trace_ids)
-    return compact
+    return CanonicalHandoff(
+        handoff_token=expected_handoff_token,
+        status=correlated["status"],
+        summary=correlated["summary"],
+        verification=correlated["verification"],
+        risks=correlated["risks"],
+        next_steps=correlated["next_steps"],
+        artifacts=tuple(compact_artifacts),
+        trace_ids=tuple(trace_ids),
+    )
+
+
+def validate_compact_worker_outcome(
+    *,
+    reply: dict[str, Any],
+    artifacts: list[dict[str, Any]],
+    trace_ids: list[str],
+    expected_handoff_token: str,
+) -> dict[str, Any]:
+    """Compatibility projection of the canonical compact handoff record."""
+    return build_canonical_handoff(
+        reply=reply,
+        artifacts=artifacts,
+        trace_ids=trace_ids,
+        expected_handoff_token=expected_handoff_token,
+    ).compact()
 
 
 def authorized_steps(plan_record: dict[str, Any]) -> list[dict[str, Any]]:
@@ -149,13 +211,47 @@ def build_compact_handoff(
     reply_id: str,
     artifact_paths: list[str],
 ) -> dict[str, Any]:
-    compact_reply = _validated_compact_reply(reply)
+    token = reply.get("handoff_token")
+    canonical = build_canonical_handoff(
+        reply=reply,
+        expected_handoff_token=token if type(token) is str else "",
+        artifacts=[],
+        trace_ids=[reply_id],
+    )
+    return render_legacy_handoff(
+        canonical,
+        step=step,
+        agent_id=agent_id,
+        artifact_paths=artifact_paths,
+    )
+
+
+def render_legacy_handoff(
+    canonical: CanonicalHandoff,
+    *,
+    step: int,
+    agent_id: str,
+    artifact_paths: list[str],
+) -> dict[str, Any]:
+    """Render the historic workflow shape from one validated canonical record."""
+    if not isinstance(canonical, CanonicalHandoff):
+        raise TypeError("canonical handoff is required")
+    if type(step) is not int or step < 1 or type(agent_id) is not str or not agent_id:
+        raise ValueError("legacy workflow handoff identity is invalid")
+    if type(artifact_paths) is not list or any(
+        type(path) is not str or not path for path in artifact_paths
+    ):
+        raise ValueError("legacy workflow artifact paths are invalid")
+    compact = canonical.compact()
     return {
         "step": step,
         "agent_id": agent_id,
-        **compact_reply,
+        **{
+            field: compact[field]
+            for field in ("status", "summary", "verification", "risks", "next_steps")
+        },
         "artifact_paths": list(artifact_paths),
-        "trace_command": f"agentdeck trace --id {reply_id}",
+        "trace_command": f"agentdeck trace --id {canonical.trace_ids[0]}",
     }
 
 

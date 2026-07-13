@@ -149,6 +149,7 @@ def test_build_compact_handoff_excludes_full_reply_text() -> None:
         step=1,
         agent_id="planner",
         reply={
+            "handoff_token": "wfr_demo_step_1",
             "status": "completed",
             "summary": "done",
             "verification": "pytest",
