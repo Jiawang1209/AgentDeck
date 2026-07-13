@@ -80,6 +80,14 @@
 - **Privacy and bounds**: pre-init setup stays memory-only; full input/response text exists only in an in-process context capped at 24 items and 128 KiB. Durable conversation bases/events contain compact IDs, states, reasons, counts, and hashes rather than transcript content.
 - **TDD evidence**: session/router/Mission/state/orchestration regressions are 98 passed; compileall and `git diff --check` pass.
 
+### Make bare agentdeck the foreground terminal conversation
+
+- **Primary entry**: bare `agentdeck` now starts `TerminalConversationUI` only on an interactive TTY. Existing subcommands remain deterministic; non-TTY bare invocation exits 2 before config/store/session/runtime construction with empty stdout and a bounded scripting hint.
+- **Terminal semantics**: input Ctrl-C clears once and exits on a second idle Ctrl-C within 1.5 seconds; Ctrl-C during `session.handle()` cancels only the active turn and keeps the session open. EOF, `/quit`, `quit`, `exit`, and `退出` close safely. Responses render as bounded JSON without partial documents.
+- **Governed execution**: initialized TTY sessions inject the existing `run_mission(..., TmuxBackend())` path as the exact preview executor. The UI does not create a second approval/workflow/dispatch engine.
+- **First-run flow**: a pre-init conversation remains zero-write through setup preview, then natural exact confirmation performs the existing config/state/project audit initialization, binds the same Session, records compact lineage, and makes deterministic status immediately available. Post-init conversation-audit failure never rolls back the project.
+- **TDD and smoke evidence**: terminal/session/legacy CLI regression is 367 passed; real piped bare invocation is exit 2 with empty stdout and unchanged disposable tree; `agentdeck --help`, compileall, and `git diff --check` pass.
+
 ### Design the Phase 3 M1 foreground conversation
 
 - **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.

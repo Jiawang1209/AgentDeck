@@ -8,7 +8,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
-from ..config import load_config
+from ..config import load_config, write_default_config
 from ..mission_orchestration import (
     create_mission_preview_from_candidate,
     mission_planning_task,
@@ -35,6 +35,7 @@ from .router import (
     ConversationRouter,
     RoutingContext,
     build_project_setup_preview,
+    confirm_project_setup,
     execute_bound_preview,
 )
 
@@ -96,6 +97,9 @@ class ConversationSession:
                 ),
             )
         )
+
+    def cancel_current_turn(self) -> None:
+        self.cancel_token.cancel()
 
     def _transition(
         self,
@@ -188,7 +192,11 @@ class ConversationSession:
         elif decision.kind == "leader_request":
             response = self._handle_leader(text)
         elif decision.kind == "confirm_preview":
-            response = self._confirm_preview(decision.preview_id)
+            response = (
+                self._confirm_setup()
+                if self.config is None or self.store is None
+                else self._confirm_preview(decision.preview_id)
+            )
         elif decision.kind == "exit":
             response = ConversationResponse("exit", {"closed": True})
         else:
@@ -198,6 +206,54 @@ class ConversationSession:
             )
         self._remember(text, response)
         return response
+
+    def _confirm_setup(self) -> ConversationResponse:
+        binding = self._pending_binding()
+        if binding is None:
+            return ConversationResponse("blocked", {"blocker": "no pending preview"})
+
+        def initialize(root: Path) -> dict[str, object]:
+            path = write_default_config(root)
+            store = StateStore(root)
+            state = store.load()
+            store.save(state)
+            store.append_event(
+                EventRecord.create(
+                    "project_initialized", {"config_path": str(path)}
+                )
+            )
+            self.config = load_config(root)
+            self.store = store
+            self._record_session_start()
+            return {
+                "project_root": str(root),
+                "agentdeck_dir": str(root / ".agentdeck"),
+                "config_path": str(path),
+            }
+
+        def append_audit(_result: dict[str, object]) -> None:
+            assert self.store is not None
+            self.store.append_event(
+                EventRecord.create(
+                    "project_initialized_from_conversation",
+                    {
+                        "conversation_id": self.conversation_id,
+                        "project_root_hash": hashlib.sha256(
+                            str(self.root).encode("utf-8")
+                        ).hexdigest(),
+                    },
+                )
+            )
+
+        result = confirm_project_setup(
+            binding,
+            self.root,
+            now=datetime.now(timezone.utc),
+            initialize=initialize,
+            append_audit=append_audit,
+        )
+        self._preinit_preview = None
+        return ConversationResponse("project_initialized", dict(result))
 
     def _record_compact_terminal_turn(self, state: str, reason: str) -> None:
         if self.store is None:
@@ -304,6 +360,7 @@ class ConversationSession:
 
     def _handle_leader(self, text: str) -> ConversationResponse:
         assert self.config is not None and self.store is not None
+        self.cancel_token = CancellationToken()
         turn_id = new_id("cvt")
         created = utc_now()
         turn = build_turn_record(

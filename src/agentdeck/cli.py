@@ -138,6 +138,8 @@ from .runtime.acp_mapping import (
     MAX_ACP_TERMINAL_UPDATE_BYTES, ensure_turn_within_bounds, map_stop_reason,
 )
 from .tui import TuiModel, run_tui
+from .conversation.session import ConversationSession
+from .conversation.terminal_ui import TerminalConversationUI
 from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import, resolve_skill_dependencies
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
@@ -157,6 +159,27 @@ def _repo_root() -> Path:
 
 def _trace_command(trace_id: object) -> str:
     return f"agentdeck trace --id {trace_id}"
+
+
+def _foreground_conversation_session() -> ConversationSession:
+    root = project_root()
+    try:
+        config = load_config(root)
+    except FileNotFoundError:
+        return ConversationSession(root=root)
+    store = StateStore.open_existing(root)
+    backend = TmuxBackend()
+    return ConversationSession(
+        root=root,
+        config=config,
+        store=store,
+        preview_executor=lambda mission_id: run_mission(
+            config=config,
+            store=store,
+            backend=backend,
+            mission_id=mission_id,
+        ),
+    )
 
 
 def _leader_chat_intent_card(payload: dict[str, object]) -> dict[str, object]:
@@ -16572,6 +16595,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if not hasattr(args, "func"):
-        parser.print_help()
-        return 2
+        if not sys.stdin.isatty():
+            print(
+                'bare agentdeck requires an interactive TTY; scripts should use '
+                'agentdeck leader chat --message "..." or another deterministic subcommand',
+                file=sys.stderr,
+            )
+            return 2
+        return TerminalConversationUI(_foreground_conversation_session()).run()
     return args.func(args)

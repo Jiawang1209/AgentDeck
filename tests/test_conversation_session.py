@@ -79,6 +79,25 @@ def test_uninitialized_session_and_setup_preview_are_zero_write(tmp_path: Path) 
     assert not (tmp_path / ".agentdeck").exists()
 
 
+def test_natural_setup_confirmation_initializes_same_session(tmp_path: Path) -> None:
+    session = ConversationSession(root=tmp_path)
+    session.handle("请初始化并开始工作")
+
+    confirmed = session.handle("确认执行当前预览")
+    status = session.handle("/status")
+
+    assert confirmed.kind == "project_initialized"
+    assert confirmed.payload["status"] == "initialized"
+    assert (tmp_path / ".agentdeck" / "config.toml").exists()
+    assert session.config is not None
+    assert session.store is not None
+    assert status.kind == "deterministic"
+    assert any(
+        event["event_type"] == "project_initialized_from_conversation"
+        for event in session.store.all_events()
+    )
+
+
 def test_deterministic_status_does_not_call_missing_leader(tmp_path: Path) -> None:
     config, store = _project(tmp_path)
     gateway = _Gateway()
