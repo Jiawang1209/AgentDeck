@@ -1425,6 +1425,43 @@ class StateStore:
             duplicate_error="duplicate daemon event identity",
         )
 
+    def controller_lease_terminal_state(
+        self, *, lease_id: str, generation: int
+    ) -> str | None:
+        """Return durable release/expiry evidence for one lease generation."""
+        if type(lease_id) is not str or not lease_id or type(generation) is not int:
+            raise ValueError("controller lease identity is invalid")
+        with self._protocol_mutation_lock():
+            state = self.load()
+            outbox = state.setdefault("daemon_event_outbox", [])
+            validate_daemon_event_outbox(outbox)
+            journal_ids = self._daemon_journal_event_ids()
+            records: list[dict[str, Any]] = []
+            if self.events_path.exists():
+                for line in self.events_path.read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        record = json.loads(line)
+                        validate_daemon_event_record(record)
+                        records.append(record)
+            for record in outbox:
+                event_id = validate_daemon_event_record(record)
+                if event_id not in journal_ids:
+                    records.append(record)
+            matching = [
+                record["event_type"]
+                for record in records
+                if record.get("event_type")
+                in {"controller_lease_released", "controller_lease_expired"}
+                and type(record.get("payload")) is dict
+                and record["payload"].get("lease_id") == lease_id
+                and record["payload"].get("generation") == generation
+            ]
+            if "controller_lease_released" in matching:
+                return "released"
+            if "controller_lease_expired" in matching:
+                return "expired"
+            return None
+
     def _strict_protocol_journal_event_ids(self) -> set[str]:
         return _strict_event_journal_ids(
             self.events_path,
@@ -3958,6 +3995,182 @@ class StateStore:
             )
             self._atomic_save(state)
             return copy.deepcopy(candidate)
+
+    def record_acp_mission_attempt_completion(
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        expected_claim_id: str,
+        receipt_summary: str,
+        succeeded: bool,
+        summary: str,
+    ) -> dict[str, object]:
+        """Commit an ACP session receipt and its prompt result as one fence.
+
+        ACP session creation alone is not durable Worker submission evidence:
+        the same process still has to obtain the prompt result.  Keeping the
+        attempt ``admitting`` until both values exist prevents recovery from
+        waiting forever on a result that can no longer arrive after a crash.
+        """
+        from .daemon.recovery import validate_mission_reply_evidence_record
+
+        if (
+            type(attempt_id) is not str
+            or re.fullmatch(r"mat_[0-9a-f]{12}", attempt_id) is None
+            or type(dispatch_key) is not str
+            or re.fullmatch(r"dsp_[0-9a-f]{32}", dispatch_key) is None
+            or type(expected_claim_id) is not str
+            or re.fullmatch(r"adm_[0-9a-f]{12}", expected_claim_id) is None
+            or type(receipt_summary) is not str
+            or not receipt_summary
+            or type(succeeded) is not bool
+            or type(summary) is not str
+            or not summary
+        ):
+            raise ValueError("ACP mission attempt completion is invalid")
+        with self._protocol_mutation_lock():
+            state = self.load()
+            attempts_raw = state.setdefault("mission_attempts", [])
+            if type(attempts_raw) is not list:
+                raise ValueError("mission attempt state invalid")
+            attempts = [_validate_mission_attempt_record(item) for item in attempts_raw]
+            _require_unique_mission_attempt_lineage(attempts)
+            outbox = state.setdefault("protocol_event_outbox", [])
+            self._protocol_admission_claim_history(outbox, attempts)
+            matches = [item for item in attempts if item["attempt_id"] == attempt_id]
+            if (
+                len(matches) != 1
+                or matches[0]["dispatch_key"] != dispatch_key
+                or matches[0]["admission_claim_id"] != expected_claim_id
+                or matches[0]["configured_transport"] != "acp"
+            ):
+                raise ValueError("ACP mission attempt completion authority invalid")
+            persisted = matches[0]
+            replies = state.setdefault("mission_worker_replies", [])
+            if type(replies) is not list:
+                raise ValueError("mission reply evidence state invalid")
+            validated_replies = [
+                validate_mission_reply_evidence_record(item) for item in replies
+            ]
+            attempt_replies = [
+                item for item in validated_replies if item["attempt_id"] == attempt_id
+            ]
+            expected_state = "succeeded" if succeeded else "failed"
+            expected_summary = f"{receipt_summary}; result: {summary}"
+            if persisted["state"] != "admitting":
+                reply_matches = (
+                    len(attempt_replies) == 1
+                    and attempt_replies[0]["dispatch_key"] == dispatch_key
+                    and attempt_replies[0]["state"] in {"received", "validated"}
+                )
+                if (
+                    persisted["state"] == expected_state
+                    and persisted["receipt_summary"] == expected_summary
+                    and persisted["terminal_reason"]
+                    == (None if succeeded else "worker_failed")
+                    and persisted["blocker"]
+                    == (None if succeeded else "worker_failed")
+                    and (reply_matches if succeeded else not attempt_replies)
+                ):
+                    return {
+                        "attempt": copy.deepcopy(persisted),
+                        "reply": copy.deepcopy(attempt_replies[0]) if succeeded else None,
+                        "receipt_summary": receipt_summary,
+                    }
+                raise ValueError("ACP mission attempt completion conflict")
+            now = utc_now()
+            candidate = _validate_mission_attempt_record(
+                {
+                    **persisted,
+                    "state": "succeeded" if succeeded else "failed",
+                    "updated_at": now,
+                    "receipt_summary": expected_summary,
+                    "terminal_reason": None if succeeded else "worker_failed",
+                    "blocker": None if succeeded else "worker_failed",
+                }
+            )
+            submitted_event = asdict(
+                EventRecord(
+                    event_id=new_id("evt"),
+                    event_type="mission_attempt_submitted",
+                    created_at=now,
+                    payload={
+                        "attempt_id": attempt_id,
+                        "mission_id": candidate["mission_id"],
+                        "step_id": candidate["step_id"],
+                        "dispatch_key": dispatch_key,
+                        "admission_claim_id": expected_claim_id,
+                        "reason": None,
+                    },
+                )
+            )
+            try:
+                submitted_event_id = validate_daemon_event_record(submitted_event)
+            except LeaseError:
+                raise ValueError("protocol event record is invalid") from None
+            if (
+                submitted_event_id in _validated_protocol_event_outbox_ids(outbox)
+                or submitted_event_id in self._strict_protocol_journal_event_ids()
+            ):
+                raise ValueError("duplicate protocol event identity")
+            candidate_attempts = [
+                candidate if item["attempt_id"] == attempt_id else item
+                for item in attempts
+            ]
+            self._protocol_admission_claim_history(
+                [*outbox, submitted_event], candidate_attempts
+            )
+
+            reply: dict[str, object] | None = None
+            if attempt_replies:
+                raise ValueError("duplicate durable recovery reply evidence")
+            if succeeded:
+                reply = validate_mission_reply_evidence_record(
+                    {
+                        "mission_id": candidate["mission_id"],
+                        "attempt_id": attempt_id,
+                        "reply_id": new_id("mrp"),
+                        "dispatch_key": dispatch_key,
+                        "state": "received",
+                    }
+                )
+
+            index = next(
+                index
+                for index, item in enumerate(attempts_raw)
+                if type(item) is dict and item.get("attempt_id") == attempt_id
+            )
+            attempts_raw[index] = candidate
+            outbox.append(submitted_event)
+            self._append_recovery_audit_locked(
+                state,
+                "mission_attempt_result_recorded",
+                {
+                    "mission_id": candidate["mission_id"],
+                    "attempt_id": attempt_id,
+                    "dispatch_key": dispatch_key,
+                    "state": candidate["state"],
+                },
+            )
+            if reply is not None:
+                replies.append(reply)
+                self._append_recovery_audit_locked(
+                    state,
+                    "mission_reply_evidence_recorded",
+                    {
+                        "attempt_id": attempt_id,
+                        "mission_id": candidate["mission_id"],
+                        "reply_id": reply["reply_id"],
+                        "state": reply["state"],
+                    },
+                )
+            self._atomic_save(state)
+            return {
+                "attempt": copy.deepcopy(candidate),
+                "reply": copy.deepcopy(reply),
+                "receipt_summary": receipt_summary,
+            }
 
     def advance_mission_after_handoff(
         self, mission_id: str, *, attempt_id: str, handoff_id: str

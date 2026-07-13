@@ -1349,6 +1349,199 @@ def test_claim_lifecycle_allows_claimed_submitted_ambiguous_sequence(tmp_path) -
     ]
 
 
+def test_acp_completion_persists_receipt_result_and_reply_with_one_atomic_save(
+    tmp_path, monkeypatch
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+    )
+    save_calls = 0
+    original_save = store._atomic_save
+
+    def counted_save(candidate):
+        nonlocal save_calls
+        save_calls += 1
+        original_save(candidate)
+
+    monkeypatch.setattr(store, "_atomic_save", counted_save)
+    result = store.record_acp_mission_attempt_completion(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=str(claimed["admission_claim_id"]),
+        receipt_summary="session-created",
+        succeeded=True,
+        summary="implementation finished",
+    )
+
+    persisted = store.load()
+    assert save_calls == 1
+    assert result["attempt"]["state"] == "succeeded"
+    assert result["reply"]["state"] == "received"
+    assert persisted["mission_attempts"][0]["state"] == "succeeded"
+    assert persisted["mission_worker_replies"][0]["state"] == "received"
+    assert [item["event_type"] for item in persisted["protocol_event_outbox"]] == [
+        "mission_attempt_admission_claimed",
+        "mission_attempt_submitted",
+        "mission_attempt_result_recorded",
+        "mission_reply_evidence_recorded",
+    ]
+
+
+def test_failed_acp_completion_is_one_terminal_save_without_reply(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
+    )
+    result = store.record_acp_mission_attempt_completion(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=str(claimed["admission_claim_id"]),
+        receipt_summary="session-created",
+        succeeded=False,
+        summary="Worker transport failed",
+    )
+
+    persisted = store.load()
+    assert result["attempt"]["state"] == "failed"
+    assert result["reply"] is None
+    assert persisted["mission_worker_replies"] == []
+    assert [item["event_type"] for item in persisted["protocol_event_outbox"]] == [
+        "mission_attempt_admission_claimed",
+        "mission_attempt_submitted",
+        "mission_attempt_result_recorded",
+    ]
+
+
+def test_acp_completion_wrong_claim_is_zero_write(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
+    )
+    before = store.state_path.read_bytes()
+    with pytest.raises(ValueError, match="authority"):
+        store.record_acp_mission_attempt_completion(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id="adm_" + "f" * 12,
+            receipt_summary="session-created",
+            succeeded=True,
+            summary="done",
+        )
+    assert store.state_path.read_bytes() == before
+
+
+def test_identical_acp_completion_retry_is_idempotent_and_adds_no_events(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
+    )
+    arguments = {
+        "attempt_id": "mat_0123456789ab",
+        "dispatch_key": "dsp_" + "1" * 32,
+        "expected_claim_id": str(claimed["admission_claim_id"]),
+        "receipt_summary": "session-created",
+        "succeeded": True,
+        "summary": "done",
+    }
+    first = store.record_acp_mission_attempt_completion(**arguments)
+    before = store.state_path.read_bytes()
+    second = store.record_acp_mission_attempt_completion(**arguments)
+
+    assert second == first
+    assert store.state_path.read_bytes() == before
+
+
+def test_identical_acp_completion_retry_remains_idempotent_after_reply_validation(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
+    )
+    arguments = {
+        "attempt_id": "mat_0123456789ab",
+        "dispatch_key": "dsp_" + "1" * 32,
+        "expected_claim_id": str(claimed["admission_claim_id"]),
+        "receipt_summary": "session-created",
+        "succeeded": True,
+        "summary": "done",
+    }
+    completed = store.record_acp_mission_attempt_completion(**arguments)
+    reply = completed["reply"]
+    assert isinstance(reply, dict)
+    from dataclasses import asdict
+    from agentdeck.models import EventRecord
+
+    state = store.load()
+    state["mission_worker_replies"][0]["state"] = "validated"
+    state["protocol_event_outbox"].append(
+        asdict(EventRecord.create(
+            "mission_reply_evidence_recorded",
+            {
+                "attempt_id": "mat_0123456789ab",
+                "mission_id": "mis_0123456789ab",
+                "reply_id": reply["reply_id"],
+                "state": "validated",
+            },
+        ))
+    )
+    store.save(state)
+    before = store.state_path.read_bytes()
+    repeated = store.record_acp_mission_attempt_completion(**arguments)
+
+    assert repeated["attempt"] == completed["attempt"]
+    assert repeated["reply"]["state"] == "validated"
+    assert store.state_path.read_bytes() == before
+
+
+def test_conflicting_acp_completion_retry_is_zero_write(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
+    )
+    store.record_acp_mission_attempt_completion(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=str(claimed["admission_claim_id"]),
+        receipt_summary="session-created",
+        succeeded=True,
+        summary="done",
+    )
+    before = store.state_path.read_bytes()
+    with pytest.raises(ValueError, match="conflict"):
+        store.record_acp_mission_attempt_completion(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=str(claimed["admission_claim_id"]),
+            receipt_summary="session-created",
+            succeeded=False,
+            summary="Worker transport failed",
+        )
+    assert store.state_path.read_bytes() == before
+
+
 @pytest.mark.parametrize(
     "overlap_stage", ["claimed", "released", "submitted", "ambiguous"]
 )

@@ -211,6 +211,54 @@ class DaemonWorkerCoordinator:
         )
         self.refresh_recovery()
 
+        if claimed["configured_transport"] == "acp":
+            async def execute_acp() -> tuple[bool, object]:
+                try:
+                    receipt = await transport.admit(dict(claimed))
+                    result = await transport.complete(dict(claimed), receipt)
+                    return True, (receipt, result)
+                except Exception as exc:
+                    return False, exc
+
+            def acp_completed(outcome: tuple[bool, object]) -> None:
+                ok, value = outcome
+                if not ok or not isinstance(value, tuple) or len(value) != 2:
+                    self.store.mark_mission_attempt_admission_ambiguous(
+                        attempt_id=claimed["attempt_id"], dispatch_key=claimed["dispatch_key"],
+                        expected_claim_id=claimed["admission_claim_id"], reason="admission_outcome_unknown",
+                    )
+                    return
+                receipt, result = value
+                if not isinstance(receipt, SubmittedReceipt) or receipt.dispatch_key != claimed["dispatch_key"]:
+                    self.store.mark_mission_attempt_admission_ambiguous(
+                        attempt_id=claimed["attempt_id"], dispatch_key=claimed["dispatch_key"],
+                        expected_claim_id=claimed["admission_claim_id"], reason="admission_outcome_unknown",
+                    )
+                    return
+                succeeded = bool(
+                    isinstance(result, TransportResult)
+                    and result.validated
+                    and result.stop_reason == "end_turn"
+                    and result.reply.get("handoff_token") == claimed["dispatch_key"]
+                    and result.reply.get("status") == "completed"
+                )
+                result_summary = (
+                    str(result.reply.get("summary") or "Worker completed")
+                    if isinstance(result, TransportResult)
+                    else "Worker transport failed"
+                )
+                self.store.record_acp_mission_attempt_completion(
+                    attempt_id=claimed["attempt_id"], dispatch_key=claimed["dispatch_key"],
+                    expected_claim_id=claimed["admission_claim_id"],
+                    receipt_summary=receipt.summary,
+                    succeeded=succeeded,
+                    summary=result_summary if succeeded else "Worker transport failed",
+                )
+                self.refresh_recovery()
+
+            self.service.start_worker_io(execute_acp(), on_completion=acp_completed)
+            return
+
         async def admit() -> tuple[bool, object]:
             try:
                 return True, await transport.admit(dict(claimed))
@@ -471,6 +519,8 @@ class ProjectDaemonService:
         self._started = False
         self._closed = False
         self._shutdown = asyncio.Event()
+        self._wakeup = asyncio.Event()
+        self._scheduler_due = False
 
     @property
     def started(self) -> bool:
@@ -496,6 +546,7 @@ class ProjectDaemonService:
             raise ServiceError("daemon service is not accepting mutations")
         future = asyncio.get_running_loop().create_future()
         self._queue.put_nowait((callback, future))
+        self._wakeup.set()
         return future
 
     def start_worker_io(
@@ -521,6 +572,7 @@ class ProjectDaemonService:
             else:
                 callback = lambda: on_completion(result)
             self._queue.put_nowait((callback, None))
+            self._wakeup.set()
 
         task = asyncio.create_task(run())
         self._worker_tasks.add(task)
@@ -530,9 +582,9 @@ class ProjectDaemonService:
         if not self.started:
             raise ServiceError("daemon service is not started")
         await _call(self._flush_safe_outboxes)
-        try:
-            callback, future = self._queue.get_nowait()
-        except asyncio.QueueEmpty:
+        self._wakeup.clear()
+
+        async def schedule_once() -> SchedulerDecision | None:
             facts = await _call(self._load_scheduler_facts)
             if facts is None:
                 return None
@@ -541,18 +593,51 @@ class ProjectDaemonService:
             decision = schedule_gate(facts)
             await _call(self._apply_transition, decision)
             return decision
+
+        if self._scheduler_due:
+            self._scheduler_due = False
+            decision = await schedule_once()
+            if decision is not None or self._queue.empty():
+                if not self._queue.empty():
+                    self._wakeup.set()
+                return decision
+        try:
+            callback, future = self._queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return await schedule_once()
+        if not self._queue.empty():
+            self._wakeup.set()
         try:
             result = await _call(callback)
         except Exception as exc:
             if future is not None and not future.done():
                 future.set_exception(exc)
+            self._scheduler_due = True
             return None
         if future is not None and not future.done():
             future.set_result(result)
+        self._scheduler_due = True
         return None
 
     def request_shutdown(self) -> None:
         self._shutdown.set()
+        self._wakeup.set()
+
+    async def wait_for_work(self, *, timeout_seconds: float) -> None:
+        if (
+            type(timeout_seconds) not in {int, float}
+            or not math.isfinite(float(timeout_seconds))
+            or timeout_seconds <= 0
+        ):
+            raise ServiceError("daemon service wait timeout is invalid")
+        if self._shutdown.is_set() or self._wakeup.is_set():
+            return
+        try:
+            await asyncio.wait_for(
+                self._wakeup.wait(), timeout=float(timeout_seconds)
+            )
+        except asyncio.TimeoutError:
+            pass
 
     async def run(self, *, poll_interval_seconds: float = 0.1) -> None:
         if (
@@ -565,12 +650,7 @@ class ProjectDaemonService:
         try:
             while not self._shutdown.is_set():
                 await self.tick()
-                try:
-                    await asyncio.wait_for(
-                        self._shutdown.wait(), timeout=float(poll_interval_seconds)
-                    )
-                except asyncio.TimeoutError:
-                    pass
+                await self.wait_for_work(timeout_seconds=float(poll_interval_seconds))
         finally:
             await self.close()
 
@@ -578,6 +658,7 @@ class ProjectDaemonService:
         if self._closed:
             return
         self._closed = True
+        self._wakeup.set()
         for task in tuple(self._worker_tasks):
             task.cancel()
         if self._worker_tasks:

@@ -479,7 +479,7 @@ class DaemonServer:
                     "invalid_request",
                 )
             return await self._start_mutation(request.method, params)
-        lease = params.pop("_lease", None)
+        lease = params.get("_lease")
         if not isinstance(lease, Mapping) or set(lease) != {"lease_id", "generation"}:
             raise DaemonClientRequestError("controller lease required", "lease_required")
         lease_id, generation = lease["lease_id"], lease["generation"]

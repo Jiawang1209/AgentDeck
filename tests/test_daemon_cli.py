@@ -586,6 +586,45 @@ def test_daemon_start_status_and_confirmed_stop_use_hidden_server(
                     time.sleep(0.02)
 
 
+def test_restarting_after_explicit_stop_does_not_reclassify_release_as_expiry(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    del tmp_path
+    with tempfile.TemporaryDirectory(prefix="adk6-restart-release-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        monkeypatch.chdir(root)
+        try:
+            assert cli.main(["daemon", "start"]) == 0
+            capsys.readouterr()
+            assert cli.main(["daemon", "stop", "--confirm"]) == 0
+            capsys.readouterr()
+            endpoint = root / ".agentdeck" / "runtime" / "daemon.sock"
+            deadline = time.monotonic() + 3
+            while endpoint.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert not endpoint.exists()
+
+            assert cli.main(["daemon", "start"]) == 0
+            capsys.readouterr()
+            time.sleep(0.2)
+            event_types = [
+                json.loads(line)["event_type"]
+                for line in StateStore(root).events_path.read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            assert event_types == [
+                "controller_lease_granted", "controller_lease_released",
+            ]
+        finally:
+            if (root / ".agentdeck" / "runtime" / "daemon.sock").exists():
+                cli.main(["daemon", "stop", "--confirm"])
+                capsys.readouterr()
+            _wait_for_reaper_empty()
+
+
 def test_active_controller_blocks_auto_acquire_but_can_renew_and_stop_explicitly(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

@@ -171,7 +171,12 @@ async def _case_mutations_and_worker_completions_share_one_service_owned_queue()
     assert first.done() and not second.done()
 
     await service.tick()
-    assert calls == ["server:start", "mutation:first", "mutation:second"]
+    assert calls == [
+        "server:start", "mutation:first", "effect:prepare_dispatch",
+    ]
+    assert not second.done()
+    await service.tick()
+    assert calls[-1] == "mutation:second"
     assert second.done()
     await service.close()
 
@@ -194,6 +199,56 @@ def test_long_worker_io_only_enqueues_completion_for_later_tick() -> None:
 
 def test_mutations_and_worker_completions_share_one_service_owned_queue() -> None:
     asyncio.run(_case_mutations_and_worker_completions_share_one_service_owned_queue())
+
+
+def test_self_replenishing_callback_queue_cannot_starve_scheduler() -> None:
+    calls: list[str] = []
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer(calls), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=pending_facts,
+            apply_transition=lambda decision: calls.append(f"effect:{decision.kind}"),
+        )
+        await service.start()
+
+        def mutation(number: int) -> None:
+            calls.append(f"mutation:{number}")
+            service.submit_mutation(lambda: mutation(number + 1))
+
+        service.submit_mutation(lambda: mutation(1))
+        await service.tick()
+        await service.tick()
+        assert calls == [
+            "server:start", "mutation:1", "effect:prepare_dispatch",
+        ]
+        await service.close()
+
+    asyncio.run(case())
+
+
+def test_scheduler_due_without_facts_loads_scheduler_only_once_per_tick() -> None:
+    loads = 0
+
+    def no_facts():
+        nonlocal loads
+        loads += 1
+        return None
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer([]), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=no_facts,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        service.submit_mutation(lambda: None)
+        await service.tick()
+        await service.tick()
+        assert loads == 1
+        await service.close()
+
+    asyncio.run(case())
 
 
 def test_worker_coordinator_persists_receipt_before_starting_completion() -> None:
@@ -252,6 +307,152 @@ def test_worker_coordinator_persists_receipt_before_starting_completion() -> Non
     asyncio.run(case())
 
 
+def test_acp_worker_stays_admitting_until_prompt_result_is_atomically_persisted() -> None:
+    calls: list[str] = []
+    prompt_release: asyncio.Event
+    attempt = {
+        "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,
+        "step_id": "step_1", "agent_id": "planner", "configured_transport": "acp",
+        "dispatch_key": "dsp_" + "a" * 32, "state": "prepared",
+    }
+
+    class Store:
+        durable_state = "prepared"
+
+        def claim_mission_attempt_admission(self, **kwargs):
+            del kwargs
+            self.durable_state = "admitting"
+            calls.append("persist:admitting")
+            return {
+                **attempt, "state": "admitting",
+                "admission_claim_id": "adm_0123456789ab",
+            }
+
+        def record_acp_mission_attempt_completion(self, **kwargs):
+            del kwargs
+            assert self.durable_state == "admitting"
+            self.durable_state = "succeeded"
+            calls.append("persist:acp-combined")
+            return {}
+
+        def record_mission_attempt_submitted(self, **kwargs):
+            raise AssertionError("ACP must not persist a standalone submitted fence")
+
+        def record_mission_attempt_result(self, **kwargs):
+            raise AssertionError("ACP must use the combined durable mutation")
+
+        def record_mission_reply_evidence(self, **kwargs):
+            raise AssertionError("ACP must use the combined durable mutation")
+
+    store = Store()
+
+    class Transport:
+        async def admit(self, claimed):
+            del claimed
+            calls.append("io:new-session")
+            return SubmittedReceipt("receipt-1", attempt["dispatch_key"], "session-created")
+
+        async def complete(self, claimed, receipt):
+            del claimed, receipt
+            calls.append("io:prompt-started")
+            await prompt_release.wait()
+            calls.append("io:prompt-result")
+            return TransportResult("end_turn", True, {
+                "handoff_token": attempt["dispatch_key"], "status": "completed",
+                "summary": "done", "verification": "ok", "risks": "none",
+                "next_steps": "continue",
+            })
+
+    async def case() -> None:
+        nonlocal prompt_release
+        prompt_release = asyncio.Event()
+        service = ProjectDaemonService(
+            server=FakeServer(calls), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        coordinator = DaemonWorkerCoordinator(
+            service=service, store=store, transport_for=lambda _attempt: Transport()
+        )
+        coordinator.launch(attempt)
+        for _ in range(10):
+            await asyncio.sleep(0)
+            if "io:prompt-started" in calls:
+                break
+        assert store.durable_state == "admitting"
+        assert "persist:acp-combined" not in calls
+
+        prompt_release.set()
+        for _ in range(10):
+            await asyncio.sleep(0)
+            await service.tick()
+            if "persist:acp-combined" in calls:
+                break
+        assert store.durable_state == "succeeded"
+        assert calls[-1] == "persist:acp-combined"
+        await service.close()
+
+    asyncio.run(case())
+
+
+def test_acp_shutdown_while_prompt_is_in_flight_leaves_durable_admission_claim() -> None:
+    prompt_started: asyncio.Event
+    never_returns: asyncio.Event
+
+    class Store:
+        durable_state = "prepared"
+
+        def claim_mission_attempt_admission(self, **kwargs):
+            del kwargs
+            self.durable_state = "admitting"
+            return {
+                "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,
+                "step_id": "step_1", "agent_id": "planner",
+                "configured_transport": "acp", "dispatch_key": "dsp_" + "b" * 32,
+                "state": "admitting", "admission_claim_id": "adm_0123456789ab",
+            }
+
+        def record_acp_mission_attempt_completion(self, **kwargs):
+            del kwargs
+            self.durable_state = "succeeded"
+
+    store = Store()
+
+    class Transport:
+        async def admit(self, claimed):
+            return SubmittedReceipt("receipt-1", claimed["dispatch_key"], "session-created")
+
+        async def complete(self, claimed, receipt):
+            del claimed, receipt
+            prompt_started.set()
+            await never_returns.wait()
+            raise AssertionError("unreachable")
+
+    async def case() -> None:
+        nonlocal prompt_started, never_returns
+        prompt_started = asyncio.Event()
+        never_returns = asyncio.Event()
+        service = ProjectDaemonService(
+            server=FakeServer([]), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        DaemonWorkerCoordinator(
+            service=service, store=store, transport_for=lambda _attempt: Transport()
+        ).launch({
+            "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,
+            "step_id": "step_1", "agent_id": "planner", "configured_transport": "acp",
+            "dispatch_key": "dsp_" + "b" * 32, "state": "prepared",
+        })
+        await asyncio.wait_for(prompt_started.wait(), timeout=0.2)
+        await service.close()
+        assert store.durable_state == "admitting"
+
+    asyncio.run(case())
+
+
 def test_run_owns_bounded_loop_and_shutdown() -> None:
     calls: list[str] = []
     service: ProjectDaemonService
@@ -269,6 +470,28 @@ def test_run_owns_bounded_loop_and_shutdown() -> None:
     )
     asyncio.run(service.run(poll_interval_seconds=0.001))
     assert calls == ["reconcile", "server:start", "prepare_dispatch", "server:close"]
+
+
+def test_queued_mutation_wakes_service_without_waiting_for_poll_deadline() -> None:
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer([]), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        run = asyncio.create_task(service.run(poll_interval_seconds=5))
+        while not service.started:
+            await asyncio.sleep(0)
+
+        def mutate() -> str:
+            service.request_shutdown()
+            return "applied"
+
+        result = await asyncio.wait_for(service.submit_mutation(mutate), timeout=0.2)
+        assert result == "applied"
+        await asyncio.wait_for(run, timeout=0.2)
+
+    asyncio.run(case())
 
 
 class AdmissionStore:

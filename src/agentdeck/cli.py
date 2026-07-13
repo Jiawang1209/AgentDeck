@@ -5,6 +5,7 @@ from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import argparse
 import asyncio
+from collections.abc import Mapping
 import contextlib
 import hashlib
 import importlib.metadata
@@ -6313,6 +6314,10 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             except LeaseError as exc:
                 if str(exc) != "controller lease expired":
                     raise
+                if store.controller_lease_terminal_state(
+                    lease_id=lease.lease_id, generation=lease.generation
+                ) == "released":
+                    return False
                 commit_and_flush(expire_controller(lease, now=now))
                 return False
             return True
@@ -6324,18 +6329,25 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                 raise LeaseError("stale controller lease")
             return lease_id, generation
 
-        async def mutation_handler(method: str, params: dict[str, object]) -> dict[str, object]:
+        def apply_mutation(method: str, params: dict[str, object]) -> dict[str, object]:
             try:
                 now = datetime.now(timezone.utc)
+                params = dict(params)
+                if method != "controller.acquire":
+                    authority = params.pop("_lease", None)
+                    if not isinstance(authority, Mapping):
+                        raise LeaseError("controller lease required")
+                    lease_id, generation = lease_params(dict(authority))
+                    _validate_daemon_controller_lease(
+                        store, lease_id, generation, now=now
+                    )
                 if method == "mission.admit":
                     if service is None:
                         raise DaemonClientRequestError(
                             "daemon service is unavailable", "unavailable"
                         )
                     try:
-                        result = await service.submit_mutation(
-                            lambda: admit_and_reconcile(params)
-                        )
+                        result = admit_and_reconcile(params)
                     except ServiceError as exc:
                         raise DaemonClientRequestError(
                             str(exc), "mission_admission_blocked"
@@ -6418,6 +6430,13 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             except LeaseError as exc:
                 raise DaemonClientRequestError(str(exc), "lease_required") from None
             raise DaemonClientRequestError("daemon mutation is unavailable", "unavailable")
+
+        async def mutation_handler(method: str, params: dict[str, object]) -> dict[str, object]:
+            if service is None:
+                raise DaemonClientRequestError("daemon service is unavailable", "unavailable")
+            result = await service.submit_mutation(lambda: apply_mutation(method, params))
+            assert isinstance(result, dict)
+            return result
 
         def mutation_response_sent_handler(
             method: str, result: dict[str, object]
@@ -6581,6 +6600,10 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         last_activity_generation = server.activity_generation
         while not stop_event.is_set():
             await service.tick()
+            # A queued RPC mutation resolves its server-side Future from tick().
+            # Yield once so the response can be written and response-sent hooks
+            # (notably daemon.stop) can run before background lease refresh.
+            await asyncio.sleep(0)
             activity_generation = server.activity_generation
             if activity_generation != last_activity_generation:
                 idle_since = None
@@ -6620,10 +6643,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                 current_state = desired_state
             if idle_since is not None and loop.time() - idle_since >= config.daemon.idle_grace_seconds:
                 break
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=0.1)
-            except asyncio.TimeoutError:
-                pass
+            await service.wait_for_work(timeout_seconds=0.1)
         return 0
     finally:
         if service is not None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 import gc
 import os
 from pathlib import Path
@@ -43,6 +44,8 @@ from agentdeck.daemon.protocol import (
     encode_response,
 )
 from agentdeck.daemon.server import DaemonServer
+from agentdeck.daemon.server import DaemonClientRequestError
+from agentdeck.daemon.service import ProjectDaemonService
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION, DaemonConfig
 
 
@@ -434,7 +437,12 @@ def test_observer_mutation_requires_current_lease_before_handler(short_project: 
                     lease_generation=7,
                 )
                 assert result == {"paused": True}
-                assert calls == [{"method": "mission.pause", "mission_id": "mis_1"}]
+                assert len(calls) == 1
+                assert calls[0]["method"] == "mission.pause"
+                assert calls[0]["mission_id"] == "mis_1"
+                assert dict(calls[0]["_lease"]) == {  # type: ignore[arg-type]
+                    "lease_id": "lse_current", "generation": 7,
+                }
             finally:
                 await client.close()
         finally:
@@ -526,11 +534,14 @@ def test_only_controller_acquire_can_be_lease_exempt(short_project: Path) -> Non
         finally:
             await server.close()
             cleanup_daemon_endpoint(owner)
-        assert calls == [
-            ("controller.acquire", {"client_id": "client-a"}),
-            ("controller.renew", {}),
-            ("controller.release", {}),
+        assert calls[0] == ("controller.acquire", {"client_id": "client-a"})
+        assert [method for method, _params in calls[1:]] == [
+            "controller.renew", "controller.release",
         ]
+        for _method, params in calls[1:]:
+            assert dict(params["_lease"]) == {  # type: ignore[arg-type]
+                "lease_id": "lse_" + "1" * 24, "generation": 1,
+            }
 
     _run(exercise())
 
@@ -871,6 +882,94 @@ def test_stale_lease_is_rejected_before_mutation_with_sanitized_reason(
                 await client.close()
         finally:
             await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_queued_mutation_revalidates_the_exact_lease_at_execution_time(
+    short_project: Path,
+) -> None:
+    authority = {"lease_id": "lse_current", "generation": 1}
+    writes: list[str] = []
+
+    def validate(lease_id: str, generation: int) -> None:
+        if (lease_id, generation) != (
+            authority["lease_id"], authority["generation"]
+        ):
+            raise LeaseError("stale controller lease")
+
+    async def exercise() -> None:
+        owner = _owner(short_project)
+        service: ProjectDaemonService
+
+        async def mutate(method: str, params: dict[str, object]) -> dict[str, object]:
+            def apply() -> dict[str, object]:
+                lease = params.get("_lease")
+                if not isinstance(lease, Mapping):
+                    raise DaemonClientRequestError(
+                        "controller lease required", "lease_required"
+                    )
+                try:
+                    validate(lease.get("lease_id"), lease.get("generation"))  # type: ignore[arg-type]
+                except LeaseError as exc:
+                    raise DaemonClientRequestError(
+                        str(exc), "lease_required"
+                    ) from None
+                writes.append(method)
+                return {"mutated": True}
+
+            result = await service.submit_mutation(apply)
+            assert isinstance(result, dict)
+            return result
+
+        server = DaemonServer(
+            endpoint=owner.endpoint.socket_path,
+            instance_id=owner.instance_id,
+            project_root_hash=owner.project_root_hash,
+            start_nonce_hash=owner.start_nonce_hash,
+            daemon_version=__version__,
+            project_view_schema_version=PROJECT_VIEW_SCHEMA_VERSION,
+            max_frame_bytes=MAX_FRAME,
+            allowed_methods=METHODS,
+            status_provider=lambda: {"mode": "daemon_status", "state": "ready"},
+            mutation_handler=mutate,
+            lease_validator=validate,
+        )
+        service = ProjectDaemonService(
+            server=server,
+            reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None,
+            load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        client = await DaemonClient.connect_verified(
+            short_project, max_frame_bytes=MAX_FRAME
+        )
+        request = asyncio.create_task(
+            client.request(
+                "mission.pause",
+                {"mission_id": "mis_queued"},
+                lease_id="lse_current",
+                lease_generation=1,
+            )
+        )
+        try:
+            for _ in range(20):
+                if service._queue.qsize() == 1:
+                    break
+                await asyncio.sleep(0)
+            assert service._queue.qsize() == 1
+            authority.update({"lease_id": "lse_replacement", "generation": 2})
+            await service.tick()
+            with pytest.raises(DaemonClientError, match="stale controller lease"):
+                await request
+            assert writes == []
+        finally:
+            await asyncio.gather(request, return_exceptions=True)
+            await client.close()
+            await service.close()
             cleanup_daemon_endpoint(owner)
 
     _run(exercise())
