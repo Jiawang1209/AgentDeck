@@ -485,6 +485,11 @@ paths. `scheduler` contains active Mission/step/next-transition facts and
 blockers. During M2a it is deliberately `inactive`; background Mission
 scheduling begins only in M2b. Both summaries are derived read-only from the
 durable state model and are the source for the corresponding workbench cards.
+`daemon.controller_present` is a time-aware read-only projection: the exact
+persisted lease must parse, use the active `lse_` namespace, and have an aware
+expiry later than the current UTC instant. Expired, terminal, naive, or malformed
+lease facts project `false`; rendering ProjectView never expires, repairs, or
+writes the lease.
 
 - Treat ProjectView as the default state source.
 - Treat `recovery.recommended_action` as the default next-step affordance.

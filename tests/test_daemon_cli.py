@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 import tempfile
 import shutil
+import socket
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -25,7 +26,7 @@ from agentdeck.daemon.lifecycle import (
     project_root_hash,
 )
 from agentdeck.daemon.client import DaemonClient, DaemonUnavailable
-from agentdeck.daemon.lease import LeaseError, grant_controller
+from agentdeck.daemon.lease import LeaseError, expire_controller, grant_controller
 from agentdeck.daemon.server import DaemonClientRequestError
 
 
@@ -209,6 +210,51 @@ def test_project_view_and_workbench_embed_same_source_daemon_cards(tmp_path: Pat
     assert workbench["mission_scheduler_card"]["state"] == project_view["scheduler"]["state"]
     assert workbench["client_session_card"]["schema_version"] == "client-session/v1"
     assert validate_workbench_contract(workbench) == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize(
+    ("lease_kind", "expected"),
+    [
+        ("active", True),
+        ("expired", False),
+        ("terminal", False),
+        ("naive", False),
+        ("malformed", False),
+    ],
+)
+def test_offline_project_view_controller_presence_is_time_aware_and_zero_write(
+    tmp_path: Path, monkeypatch, lease_kind: str, expected: bool,
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    if lease_kind == "active":
+        summary = grant_controller(
+            client_id="client-offline", now=now, ttl_seconds=60
+        ).current.summary()
+    else:
+        granted = grant_controller(
+            client_id="client-offline",
+            now=now - timedelta(seconds=60),
+            ttl_seconds=1,
+        )
+        if lease_kind == "terminal":
+            summary = expire_controller(granted.current, now=now).current.summary()
+        else:
+            summary = granted.current.summary()
+            if lease_kind == "naive":
+                summary["expires_at"] = now.replace(tzinfo=None).isoformat()
+            elif lease_kind == "malformed":
+                summary["expires_at"] = "not-a-timestamp"
+    state = StateStore(root).load()
+    state["controller_lease"] = summary
+    StateStore(root).save(state)
+    before = _tree(root)
+
+    project_view = asdict(StateStore(root).project_view(load_config(root)))
+
+    assert project_view["daemon"]["state"] == "stopped"
+    assert project_view["daemon"]["controller_present"] is expected
+    assert _tree(root) == before
 
 
 def test_daemon_logs_is_bounded_and_read_only(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -747,6 +793,52 @@ def test_nonclient_keepalive_facts_block_idle_exit_and_new_client_resets_timer(
                 state = StateStore(root).load()
                 state[field] = []
                 StateStore(root).save(state)
+                cli.main(["daemon", "stop", "--confirm"])
+                capsys.readouterr()
+
+
+def test_sub_poll_short_connection_resets_a_full_idle_grace_window(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    del tmp_path
+    with tempfile.TemporaryDirectory(prefix="adk6-activity-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        _configure_daemon(root, idle_grace_seconds=1)
+        monkeypatch.chdir(root)
+        daemon_pid = 0
+        try:
+            assert cli.main(["daemon", "start"]) == 0
+            capsys.readouterr()
+            daemon_pid = int(json.loads(
+                (root / ".agentdeck" / "runtime" / "daemon.json").read_text(
+                    encoding="utf-8"
+                )
+            )["pid"])
+            _wait_for_runtime_state(root, "idle_grace")
+            time.sleep(0.82)
+            started = time.monotonic()
+            short = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                short.connect(str(root / ".agentdeck" / "runtime" / "daemon.sock"))
+            finally:
+                short.close()
+            assert time.monotonic() - started < 0.1
+
+            time.sleep(0.3)
+            assert (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
+            deadline = time.monotonic() + 2
+            while (
+                (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.02)
+            assert not (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
+            _wait_for_process_exit(daemon_pid)
+            _wait_for_reaper_empty()
+        finally:
+            if (root / ".agentdeck" / "runtime" / "daemon.sock").exists():
                 cli.main(["daemon", "stop", "--confirm"])
                 capsys.readouterr()
 

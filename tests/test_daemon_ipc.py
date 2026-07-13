@@ -144,6 +144,32 @@ def test_verified_client_handshake_status_and_request_correlation(short_project:
     _run(exercise())
 
 
+def test_activity_generation_is_monotonic_for_accept_and_valid_requests_only(
+    short_project: Path,
+) -> None:
+    async def exercise() -> None:
+        owner, server = await _running_server(short_project)
+        try:
+            assert server.activity_generation == 0
+            client = await DaemonClient.connect_verified(
+                short_project, max_frame_bytes=MAX_FRAME, timeout_seconds=1
+            )
+            after_connect = server.activity_generation
+            assert after_connect >= 3  # accept + handshake + verified status
+            await client.request("status", {})
+            assert server.activity_generation == after_connect + 1
+            await client.subscribe()
+            assert server.activity_generation == after_connect + 2
+            await client.close()
+            await server.wait_connection_count(0, timeout_seconds=1)
+            assert server.activity_generation == after_connect + 2
+        finally:
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
 def test_verified_client_rejects_metadata_symlink(short_project: Path) -> None:
     async def exercise() -> None:
         owner, server = await _running_server(short_project)

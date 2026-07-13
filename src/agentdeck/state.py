@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 import copy
 from contextlib import contextmanager
 import fcntl
@@ -17,6 +18,7 @@ from .conversation.lifecycle import validate_conversation_history
 from .conversation.models import ConversationMutation
 from .daemon.lifecycle import validate_daemon_record
 from .daemon.lease import (
+    controller_lease_is_active,
     LeaseTransition,
     LeaseError,
     validate_daemon_event_record,
@@ -3429,8 +3431,9 @@ class StateStore:
             "state": daemon_state,
             "health": "unknown" if daemon_state in {"ready", "busy", "idle_grace"} else "unavailable",
             "client_count": 0,
-            "controller_present": isinstance(state.get("controller_lease"), dict)
-            and str(state["controller_lease"].get("lease_id", "")).startswith("lse_"),
+            "controller_present": controller_lease_is_active(
+                state.get("controller_lease"), now=datetime.now(timezone.utc)
+            ),
             "idle_exit_pending": daemon_state == "idle_grace",
             "protocol_version": "daemon-rpc/v1",
             "compatibility": "unverified",

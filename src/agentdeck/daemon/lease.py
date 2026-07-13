@@ -651,6 +651,23 @@ def controller_lease_from_summary(value: object) -> ControllerLease | None:
     return validate_controller_lease(lease)
 
 
+def controller_lease_is_active(
+    value: object, *, now: datetime,
+) -> bool:
+    try:
+        lease = controller_lease_from_summary(value)
+        if lease is None or _is_terminal_lease(lease):
+            return False
+        return validate_controller(
+            lease,
+            lease_id=lease.lease_id,
+            generation=lease.generation,
+            now=now,
+        )
+    except LeaseError:
+        return False
+
+
 def validate_lease_transition(
     persisted: object, transition: LeaseTransition
 ) -> LeaseTransition:

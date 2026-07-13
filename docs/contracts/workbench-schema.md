@@ -1064,7 +1064,10 @@ blocker; disabled controls must have a non-empty blocker. The live daemon derive
 `controller_present` from the current unexpired lease and refreshes expiry in its
 own poll loop. A rejected temporary-controller stop invokes lease-gated release;
 cleanup failure is surfaced as a blocker, while explicit caller credentials are
-never auto-released.
+never auto-released. The same time-aware pure predicate backs offline ProjectView
+without writing. A monotonic server activity generation resets idle grace for
+accepted connections and protocol-valid requests even when a short client has
+already closed before the next poll; close does not increment it again.
 
 - The command is read-only.
 - The command must pass `validate_workbench_contract()` before printing JSON.

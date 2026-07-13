@@ -133,10 +133,18 @@ class DaemonServer:
         self._close_tasks: set[asyncio.Task[None]] = set()
         self._handler_tasks: set[asyncio.Task[None]] = set()
         self._mutation_tasks: set[asyncio.Task[dict[str, object]]] = set()
+        self._activity_generation = 0
 
     @property
     def connection_count(self) -> int:
         return sum(not connection.closed for connection in self._connections)
+
+    @property
+    def activity_generation(self) -> int:
+        return self._activity_generation
+
+    def _record_activity(self) -> None:
+        self._activity_generation += 1
 
     @property
     def pending_close_task_count(self) -> int:
@@ -321,6 +329,7 @@ class DaemonServer:
             event_queue=asyncio.Queue(self.event_queue_size),
         )
         self._connections.add(connection)
+        self._record_activity()
         try:
             frame = await self._read_frame(reader)
             request = decode_request(
@@ -328,6 +337,7 @@ class DaemonServer:
                 max_bytes=self.max_frame_bytes,
                 allowed_methods={"handshake"},
             )
+            self._record_activity()
             handshake = negotiate_handshake(
                 request,
                 project_root_hash=self.project_root_hash,
@@ -365,6 +375,7 @@ class DaemonServer:
                 max_bytes=self.max_frame_bytes,
                 allowed_methods=self.allowed_methods,
             )
+            self._record_activity()
             try:
                 connection.request_queue.put_nowait(request)
             except asyncio.QueueFull:

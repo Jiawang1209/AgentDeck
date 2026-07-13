@@ -169,6 +169,7 @@ from .daemon.lease import (
     ControllerLease,
     LeaseError,
     LeaseTransition,
+    controller_lease_is_active,
     controller_lease_from_summary,
     expire_controller,
     grant_controller,
@@ -5925,21 +5926,10 @@ def _validate_daemon_controller_lease(
 def _controller_lease_is_active(
     state: dict[str, object], *, now: datetime | None = None,
 ) -> bool:
-    lease = controller_lease_from_summary(state.get("controller_lease"))
-    if lease is None or not lease.lease_id.startswith("lse_"):
-        return False
-    try:
-        validate_controller(
-            lease,
-            lease_id=lease.lease_id,
-            generation=lease.generation,
-            now=now or datetime.now(timezone.utc),
-        )
-    except LeaseError as exc:
-        if str(exc) == "controller lease expired":
-            return False
-        raise
-    return True
+    return controller_lease_is_active(
+        state.get("controller_lease"),
+        now=now or datetime.now(timezone.utc),
+    )
 
 
 def _daemon_keepalive_view(
@@ -6436,7 +6426,12 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         }, expected_project_root_hash=ownership.project_root_hash)
         idle_since: float | None = None
         current_state = "ready"
+        last_activity_generation = server.activity_generation
         while not stop_event.is_set():
+            activity_generation = server.activity_generation
+            if activity_generation != last_activity_generation:
+                idle_since = None
+                last_activity_generation = activity_generation
             status["controller_present"] = refresh_controller(
                 datetime.now(timezone.utc)
             )

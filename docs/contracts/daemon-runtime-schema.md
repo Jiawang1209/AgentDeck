@@ -28,9 +28,17 @@ The daemon reloads its persisted keepalive view on every idle poll. Client-only
 activity is `ready`; any non-client Mission, Worker, pending approval,
 permission, reply, recovery/decision/ambiguity, outbox, recovery, safe-shutdown,
 or atomic-write fact is `busy`. Idle grace begins only when the reason set is
-empty, and any new connection cancels the timer. Expired active leases are
+empty. The server maintains a monotonic, process-local activity generation:
+accepting a connection and decoding each protocol-valid request increments it
+once; close does not increment it. Any observed generation change resets a full
+grace window, including a short connection that starts and ends between idle
+polls. Expired active leases are
 committed once as terminal expiry transitions and synchronously flushed, so
 ProjectView does not retain a stale controller indefinitely. When an automatic
 temporary-controller stop is rejected, lease-gated `controller.release` must be
 confirmed before the original blocker is returned; cleanup failure is itself a
 blocker. Explicit caller credentials are not released by this cleanup path.
+Offline ProjectView uses the same pure current-lease predicate without writing:
+only a strictly parsed active-namespace lease with an aware future expiry sets
+`controller_present=true`; expired, terminal, naive, and malformed facts are
+false.

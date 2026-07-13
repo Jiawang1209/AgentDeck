@@ -4,6 +4,13 @@
 
 ## 2026-07-13
 
+### Finish Task 6 time-aware observation and sub-poll activity tracking
+
+- **Pure current-controller truth**: added `controller_lease_is_active()` in the dependency-neutral lease module and reused it from both StateStore ProjectView and live daemon status. The predicate strictly parses the compact lease, rejects the terminal namespace, validates aware timestamps and the current UTC deadline, and returns false for expired, terminal, naive, or malformed facts. Offline/stopped/crashed ProjectView rendering remains byte-for-byte zero-write and never repairs or expires state.
+- **Monotonic activity generation**: DaemonServer now owns one event-loop-local integer that increments exactly once when a connection is accepted and once for every successfully decoded protocol-valid request, including handshake, status, subscribe, and mutation requests. Connection close does not increment it. The idle loop compares the generation every poll and clears `idle_since` before its keepalive decision, so a connection that both opens and closes between polls still restarts a full idle-grace window.
+- **Boundary**: the generation is private runtime coordination, is not persisted, is not exposed through ProjectView or discovery contracts, and grants no lease or execution authority. This closes Task 6 only; background Mission scheduling remains Task 7+.
+- **TDD evidence**: RED showed expired/naive/malformed offline leases falsely projected active, a sub-100ms raw Unix client failed to extend grace, and DaemonServer lacked the generation contract. GREEN covers active/expired/terminal/naive/malformed offline projection with tree-byte equality, monotonic accept/handshake/status/subscribe increments, close-without-increment, and a real short connection surviving the original deadline for a complete new grace. The focused daemon CLI/contract/IPC/lease/process suite is 242 passed; the broad daemon/contracts/CLI/dashboard/conversation regression is 1199 passed. All three contract examples parse as JSON, compileall and `git diff --check` pass.
+
 ### Close Task 6 daemon lifetime and controller cleanup gaps
 
 - **Fresh authoritative idle gate**: the hidden daemon now reloads StateStore on every poll, derives the complete keepalive view, and feeds the shared `daemon_keepalive_reasons()` gate. Connected clients alone keep `ready`; any active Mission/Worker, pending approval/permission/reply/recovery/decision/ambiguity, durable outbox, recovery, safe shutdown, or atomic-write fact keeps `busy`; only an empty reason set starts `idle_grace`, and a new connection cancels the timer. This schedules no Mission and remains inside Task 6.
