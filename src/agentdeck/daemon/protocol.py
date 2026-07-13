@@ -331,8 +331,13 @@ def _thaw_json(value: object) -> object:
     return value
 
 
-def encode_request(request: RpcRequest, *, max_bytes: int) -> bytes:
-    _validate_request(request, READ_ONLY_METHODS)
+def encode_request(
+    request: RpcRequest,
+    *,
+    max_bytes: int,
+    allowed_methods: Collection[str] = READ_ONLY_METHODS,
+) -> bytes:
+    _validate_request(request, allowed_methods)
     return _encode_object(
         {
             "request_id": request.request_id,
