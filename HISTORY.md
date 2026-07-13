@@ -4,6 +4,14 @@
 
 ## 2026-07-13
 
+### Add single-controller daemon leases
+
+- **Immutable controller state machine**: added frozen observer, controller lease, takeover preview, audit event, and transition records covering first grant, renewal, expiry, explicit release, and preview-bound takeover. Observer registration never grants mutation authority, while each new controller generation increases monotonically.
+- **Fail-closed mutation authority**: every renewal and release revalidates the exact lease id and generation at the transition boundary; expiry is enforced at the deadline, backward time and naive datetimes are rejected, and TTL inputs reject booleans, nonnumbers, nonfinite/nonpositive values, and unrepresentable ranges with sanitized errors.
+- **Exact takeover confirmation**: takeover confirmation binds the requester, current lease id, current generation, compact lease facts, and preview timestamp into one digest; changed requesters, stale generations, altered timestamps/digests, or future previews fail closed without changing Worker ownership or Mission scope.
+- **Atomic compact persistence**: StateStore revalidates transitions against the persisted controller lease while holding the existing protocol mutation lock, then atomically commits only the six-field lease summary and compact audit event to `daemon_event_outbox`. Invalid, stale, malformed, or backward transitions are zero-write; legacy state receives the additive fields on first valid commit.
+- **TDD evidence**: the initial RED was the missing lease module; follow-up REDs covered audit action shape, lock-file zero-write, exact preview objects and timestamps, TTL overflow, forged backward renewal, non-ASCII secret diagnostics, and malformed persisted leases. The focused suite is 28 passed, the combined lease/conversation/protocol/daemon regression is 332 passed, and compileall plus `git diff --check` pass.
+
 ### Enforce one verified project daemon instance
 
 - **Canonical project endpoint**: added project-root canonicalization and a project-scoped runtime endpoint for daemon metadata, Unix socket, and startup lock, so symlink aliases resolve to one identity and one endpoint.

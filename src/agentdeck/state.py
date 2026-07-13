@@ -16,6 +16,7 @@ from .config import CONFIG_DIR, ensure_project_layout, project_root
 from .conversation.lifecycle import validate_conversation_history
 from .conversation.models import ConversationMutation
 from .daemon.lifecycle import validate_daemon_record
+from .daemon.lease import LeaseTransition, validate_lease_transition
 from .mission import (
     MISSION_SCHEMA_VERSION,
     MISSION_STATUSES,
@@ -189,6 +190,8 @@ class StateStore:
                 "conversation_state_transitions": [],
                 "conversation_event_outbox": [],
                 "daemon_runtime": None,
+                "controller_lease": None,
+                "daemon_event_outbox": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -216,6 +219,29 @@ class StateStore:
             state["daemon_runtime"] = dict(validated)
             self._atomic_save(state)
         return dict(validated)
+
+    def commit_controller_lease(
+        self, transition: LeaseTransition
+    ) -> dict[str, object]:
+        # Reject malformed current state and transitions before creating the lock path.
+        initial_state = self.load()
+        initial_outbox = initial_state.setdefault("daemon_event_outbox", [])
+        if type(initial_outbox) is not list:
+            raise TypeError("daemon_event_outbox must be a list")
+        validate_lease_transition(initial_state.get("controller_lease"), transition)
+        with self._protocol_mutation_lock():
+            state = self.load()
+            outbox = state.setdefault("daemon_event_outbox", [])
+            if type(outbox) is not list:
+                raise TypeError("daemon_event_outbox must be a list")
+            persisted = state.get("controller_lease")
+            validate_lease_transition(persisted, transition)
+            assert transition.current is not None
+            summary = transition.current.summary()
+            state["controller_lease"] = summary
+            outbox.append(transition.audit_event.summary())
+            self._atomic_save(state)
+        return dict(summary)
 
     def _atomic_save(self, state: dict[str, Any]) -> None:
         temporary = self.state_path.with_name(
