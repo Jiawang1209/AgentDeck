@@ -11,7 +11,7 @@ import pytest
 from agentdeck import cli
 from agentdeck import state as state_module
 from agentdeck.config import load_config, write_default_config
-from agentdeck.daemon.recovery import reconcile_startup
+from agentdeck.daemon.recovery import RecoveryError, reconcile_startup
 from agentdeck.mission_orchestration import (
     MissionRunError,
     attempt_dispatch_key,
@@ -314,7 +314,7 @@ def test_freeze_rejects_preview_authority_plan_fact_drift_with_full_tree_zero_wr
 def test_freeze_rejects_preview_authority_config_drift_with_full_tree_zero_write(
     tmp_path, monkeypatch, drift
 ) -> None:
-    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
     changed = (
         replace(
             config,
@@ -682,16 +682,17 @@ def test_pre_dispatch_stop_is_audited_and_recovery_valid(tmp_path, monkeypatch) 
 
 
 def test_forged_pre_dispatch_stop_without_audit_is_rejected(tmp_path, monkeypatch) -> None:
-    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
     confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
     prepare_attempt(config=config, store=store, mission_id=preview["mission_id"], step_id="step_1", agent_id="planner", configured_transport="acp")
     state = store.load()
     state["mission_attempts"][0].update({"state": "cancelled", "terminal_reason": "forged"})
     store.save(state)
-    before = _tree_bytes(root)
-    with pytest.raises(ValueError, match="mission admission claim history"):
-        store.load_recovery_snapshot()
-    assert _tree_bytes(root) == before
+    enabled: list[bool] = []
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
 
 
 @pytest.mark.parametrize("stage", ["admitting", "submitted"])
@@ -716,6 +717,62 @@ def test_released_claim_can_be_reclaimed_and_submitted(tmp_path, monkeypatch) ->
     store.release_mission_attempt_admission(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"], expected_claim_id=first["admission_claim_id"])
     second = store.claim_mission_attempt_admission(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"])
     store.record_mission_attempt_submitted(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"], expected_claim_id=second["admission_claim_id"], receipt_summary="admitted")
+    store.load_recovery_snapshot()
+
+
+def test_submitted_history_cannot_be_rewritten_to_prepared_without_claim(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    attempt = prepare_attempt(config=config, store=store, mission_id=preview["mission_id"], step_id="step_1", agent_id="planner", configured_transport="acp")
+    claimed = store.claim_mission_attempt_admission(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"])
+    store.record_mission_attempt_submitted(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"], expected_claim_id=claimed["admission_claim_id"], receipt_summary="admitted")
+    state = store.load()
+    state["mission_attempts"][0].update({
+        "state": "prepared", "admission_claim_id": None, "receipt_summary": None,
+        "updated_at": state["mission_attempts"][0]["created_at"],
+    })
+    store.save(state)
+    enabled: list[bool] = []
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
+
+
+def test_pre_dispatch_stop_permanently_closes_attempt_lineage(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    attempt = prepare_attempt(config=config, store=store, mission_id=preview["mission_id"], step_id="step_1", agent_id="planner", configured_transport="acp")
+    store.interrupt_prepared_mission_attempt(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"], target_state="cancelled", reason="human stop")
+    state = store.load()
+    state["protocol_event_outbox"].append({
+        "event_id": state_module.new_id("evt"),
+        "event_type": "mission_attempt_admission_claimed",
+        "created_at": state["mission_attempts"][0]["updated_at"],
+        "payload": {
+            "attempt_id": attempt["attempt_id"], "mission_id": preview["mission_id"],
+            "step_id": "step_1", "dispatch_key": attempt["dispatch_key"],
+            "admission_claim_id": "adm_" + "f" * 12,
+        },
+    })
+    store.save(state)
+    enabled: list[bool] = []
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
+
+
+def test_released_claim_can_remain_prepared_or_stop_safely(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    attempt = prepare_attempt(config=config, store=store, mission_id=preview["mission_id"], step_id="step_1", agent_id="planner", configured_transport="acp")
+    claimed = store.claim_mission_attempt_admission(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"])
+    store.release_mission_attempt_admission(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"], expected_claim_id=claimed["admission_claim_id"])
+    store.load_recovery_snapshot()
+    store.interrupt_prepared_mission_attempt(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"], target_state="interrupted", reason="stop after release")
     store.load_recovery_snapshot()
 
 

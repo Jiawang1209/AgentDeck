@@ -561,6 +561,7 @@ def _validate_mission_admission_claim_history(
             dispatch_key = payload.get("dispatch_key")
             key = (attempt_id, dispatch_key)
             attempt = attempt_by_lineage.get(key)
+            prior_claims = attempt_claims.get(key, [])
             if (
                 attempt is None
                 or payload.get("mission_id") != attempt["mission_id"]
@@ -569,6 +570,8 @@ def _validate_mission_admission_claim_history(
                 or type(payload.get("reason")) is not str
                 or not payload["reason"]
                 or key in pre_dispatch_stops
+                or key in externally_closed
+                or (prior_claims and stages.get(prior_claims[-1]) != "released")
             ):
                 raise ValueError("mission admission claim history is invalid")
             pre_dispatch_stops[key] = payload["state"]
@@ -603,6 +606,8 @@ def _validate_mission_admission_claim_history(
             or persisted_attempt["mission_id"] != mission_id
             or persisted_attempt["step_id"] != step_id
         ):
+            raise ValueError("mission admission claim history is invalid")
+        if claim_lineage in pre_dispatch_stops:
             raise ValueError("mission admission claim history is invalid")
         if claim_id in lineage and lineage[claim_id] != claim_lineage:
             raise ValueError("mission admission claim history is invalid")
@@ -658,10 +663,23 @@ def _validate_mission_admission_claim_history(
         claim_id = attempt["admission_claim_id"]
         attempt_key = (attempt["attempt_id"], attempt["dispatch_key"])
         if claim_id is None and attempt["state"] in {"cancelled", "interrupted"}:
-            if pre_dispatch_stops.get(attempt_key) != attempt["state"]:
+            claims = attempt_claims.get(attempt_key, [])
+            if (
+                pre_dispatch_stops.get(attempt_key) != attempt["state"]
+                or attempt_key in externally_closed
+                or (claims and stages.get(claims[-1]) != "released")
+            ):
                 raise ValueError("mission admission claim history is invalid")
             continue
         if claim_id is None:
+            claims = attempt_claims.get(attempt_key, [])
+            if (
+                attempt["state"] != "prepared"
+                or attempt_key in externally_closed
+                or attempt_key in pre_dispatch_stops
+                or (claims and stages.get(claims[-1]) != "released")
+            ):
+                raise ValueError("mission admission claim history is invalid")
             continue
         if lineage.get(claim_id) != (attempt["attempt_id"], attempt["dispatch_key"]):
             raise ValueError("mission admission claim history is invalid")
