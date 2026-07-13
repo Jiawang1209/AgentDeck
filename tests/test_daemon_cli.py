@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 import tempfile
 import shutil
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -23,7 +24,7 @@ from agentdeck.daemon.lifecycle import (
     cleanup_daemon_endpoint,
     project_root_hash,
 )
-from agentdeck.daemon.client import DaemonClient
+from agentdeck.daemon.client import DaemonClient, DaemonUnavailable
 from agentdeck.daemon.lease import LeaseError, grant_controller
 from agentdeck.daemon.server import DaemonClientRequestError
 
@@ -64,6 +65,71 @@ def _wait_for_reaper_empty(*, timeout_seconds: float = 3) -> None:
     ):
         time.sleep(0.01)
     assert daemon_client_module._detached_reaper_count() == 0
+
+
+def _configure_daemon(root: Path, **values: int) -> None:
+    config_path = root / ".agentdeck" / "config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + "\n[daemon]\n"
+        + "".join(f"{name} = {value}\n" for name, value in values.items()),
+        encoding="utf-8",
+    )
+
+
+def _wait_for_runtime_state(
+    root: Path, expected: str, *, timeout_seconds: float = 3
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        runtime = StateStore(root).load().get("daemon_runtime")
+        if isinstance(runtime, dict) and runtime.get("state") == expected:
+            return
+        time.sleep(0.02)
+    pytest.fail(f"daemon never reached {expected}")
+
+
+def _held_daemon_client(
+    root: Path, ready: threading.Event, release: threading.Event,
+) -> threading.Thread:
+    def run() -> None:
+        async def hold() -> None:
+            client = await DaemonClient.connect_verified(root, timeout_seconds=2)
+            ready.set()
+            try:
+                while not release.is_set():
+                    await asyncio.sleep(0.01)
+            finally:
+                await client.close()
+
+        asyncio.run(hold())
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    assert ready.wait(timeout=2)
+    return thread
+
+
+def _reacquire_and_release(root: Path, client_id: str) -> None:
+    async def exercise() -> None:
+        client = await DaemonClient.connect_verified(root, timeout_seconds=2)
+        try:
+            lease = await client.request(
+                "controller.acquire", {"client_id": client_id}
+            )
+            await client.request(
+                "controller.release",
+                {
+                    "lease_id": lease["lease_id"],
+                    "generation": lease["generation"],
+                },
+                lease_id=str(lease["lease_id"]),
+                lease_generation=int(lease["generation"]),
+            )
+        finally:
+            await client.close()
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("name", ["daemon-runtime", "mission-scheduler", "client-session"])
@@ -200,6 +266,43 @@ def test_daemon_stop_requires_explicit_lease_options_as_a_pair(
     ]) == 1
     assert "must be provided together" in capsys.readouterr().err
     assert _tree(root) == before
+
+
+@pytest.mark.parametrize("release_behavior", ["error", "malformed"])
+def test_temporary_controller_cleanup_failure_is_an_explicit_blocker(
+    tmp_path: Path, monkeypatch, release_behavior: str,
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+
+    class FakeClient:
+        async def request(self, method, _params, **_kwargs):
+            if method == "controller.acquire":
+                return {"lease_id": "lse_" + "1" * 24, "generation": 1}
+            if method == "daemon.stop":
+                raise DaemonUnavailable("daemon has active keepalive work")
+            assert method == "controller.release"
+            if release_behavior == "error":
+                raise DaemonUnavailable("daemon request failed")
+            return {}
+
+        async def close(self) -> None:
+            return None
+
+    async def connect(*_args, **_kwargs):
+        return FakeClient()
+
+    monkeypatch.setattr(DaemonClient, "connect_verified", connect)
+    with pytest.raises(
+        DaemonUnavailable,
+        match="daemon has active keepalive work; temporary controller cleanup failed",
+    ):
+        asyncio.run(_request_daemon_stop_for_test(root))
+
+
+async def _request_daemon_stop_for_test(root: Path) -> dict[str, object]:
+    return await cli._request_daemon_stop(
+        root, load_config(root), lease_id=None, lease_generation=None
+    )
 
 
 def test_daemon_stop_rejects_expired_controller_lease(tmp_path: Path, monkeypatch) -> None:
@@ -339,6 +442,33 @@ def test_daemon_stop_fails_closed_on_malformed_keepalive_state(
             )
     finally:
         cleanup_daemon_endpoint(ownership)
+
+
+@pytest.mark.parametrize(
+    ("state_update", "view_field"),
+    [
+        ({"missions": [{"status": "running"}]}, "active_mission_count"),
+        ({"agents": {"worker": {"status": "running"}}}, "active_worker_count"),
+        ({"approvals": [{"status": "pending"}]}, "pending_approval_count"),
+        ({"permission_requests": [{"status": "pending"}]}, "pending_permission_count"),
+        ({"inbox": {"worker": [{"status": "pending", "event_type": "task_reply"}]}}, "pending_reply_count"),
+        ({"recovery_decisions": [{"status": "pending"}]}, "pending_recovery_decision_count"),
+        ({"decisions": [{"status": "pending"}]}, "pending_decision_count"),
+        ({"decisions": [{"status": "ambiguous"}]}, "ambiguous_decision_count"),
+        ({"protocol_event_outbox": [{"event_id": "pending"}]}, "outbox_count"),
+        ({"recovery_active": True}, "recovery_active"),
+        ({"safe_shutdown_active": True}, "safe_shutdown_active"),
+        ({"atomic_write_active": True}, "atomic_write_active"),
+    ],
+)
+def test_daemon_keepalive_view_derives_each_persisted_lifetime_fact(
+    tmp_path: Path, monkeypatch, state_update: dict[str, object], view_field: str,
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+    state = StateStore(root).load()
+    state.update(state_update)
+    view = cli._daemon_keepalive_view(state, other_client_count=0)
+    assert view[view_field] in {1, True}
 
 
 def test_daemon_start_status_and_confirmed_stop_use_hidden_server(
@@ -500,6 +630,388 @@ def test_active_controller_blocks_auto_acquire_but_can_renew_and_stop_explicitly
                     "--lease-generation",
                     str(lease["generation"]),
                 ])
+                capsys.readouterr()
+
+
+def test_failed_explicit_stop_never_releases_user_controller(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    del tmp_path
+    with tempfile.TemporaryDirectory(prefix="adk6-explicit-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        monkeypatch.chdir(root)
+        lease: dict[str, object] = {}
+        try:
+            assert cli.main(["daemon", "start"]) == 0
+            capsys.readouterr()
+
+            async def acquire() -> dict[str, object]:
+                client = await DaemonClient.connect_verified(root, timeout_seconds=2)
+                try:
+                    return await client.request(
+                        "controller.acquire", {"client_id": "client-explicit"}
+                    )
+                finally:
+                    await client.close()
+
+            lease = asyncio.run(acquire())
+            state = StateStore(root).load()
+            state["approvals"] = [{"status": "pending"}]
+            StateStore(root).save(state)
+            command = [
+                "daemon", "stop", "--confirm", "--lease-id", str(lease["lease_id"]),
+                "--lease-generation", str(lease["generation"]),
+            ]
+            assert cli.main(command) == 1
+            assert capsys.readouterr().err == "daemon has active keepalive work\n"
+            assert cli._controller_lease_is_active(StateStore(root).load()) is True
+            state = StateStore(root).load()
+            state["approvals"] = []
+            StateStore(root).save(state)
+            assert cli.main(command) == 0
+            capsys.readouterr()
+            _wait_for_reaper_empty()
+        finally:
+            if (root / ".agentdeck" / "runtime" / "daemon.sock").exists() and lease:
+                state = StateStore(root).load()
+                state["approvals"] = []
+                StateStore(root).save(state)
+                cli.main([
+                    "daemon", "stop", "--confirm", "--lease-id", str(lease["lease_id"]),
+                    "--lease-generation", str(lease["generation"]),
+                ])
+                capsys.readouterr()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("approvals", [{"status": "pending"}]),
+        ("conversation_event_outbox", [{"event_id": "pending"}]),
+    ],
+)
+def test_nonclient_keepalive_facts_block_idle_exit_and_new_client_resets_timer(
+    tmp_path: Path, monkeypatch, capsys, field: str, value: object,
+) -> None:
+    del tmp_path
+    with tempfile.TemporaryDirectory(prefix="adk6-idle-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        _configure_daemon(root, idle_grace_seconds=1)
+        monkeypatch.chdir(root)
+        state = StateStore(root).load()
+        state[field] = value
+        StateStore(root).save(state)
+        daemon_pid = 0
+        try:
+            assert cli.main(["daemon", "start"]) == 0
+            capsys.readouterr()
+            daemon_pid = int(json.loads(
+                (root / ".agentdeck" / "runtime" / "daemon.json").read_text(
+                    encoding="utf-8"
+                )
+            )["pid"])
+            _wait_for_runtime_state(root, "busy")
+            time.sleep(1.2)
+            assert (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
+
+            state = StateStore(root).load()
+            state[field] = []
+            StateStore(root).save(state)
+            _wait_for_runtime_state(root, "idle_grace")
+
+            async def hold_past_original_deadline() -> None:
+                client = await DaemonClient.connect_verified(root, timeout_seconds=2)
+                try:
+                    await asyncio.sleep(1.2)
+                    assert (await client.request("status", {}))["state"] == "ready"
+                finally:
+                    await client.close()
+
+            asyncio.run(hold_past_original_deadline())
+            assert (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
+            deadline = time.monotonic() + 3
+            while (
+                (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.02)
+            assert not (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
+            _wait_for_process_exit(daemon_pid)
+            _wait_for_reaper_empty()
+        finally:
+            if (root / ".agentdeck" / "runtime" / "daemon.sock").exists():
+                state = StateStore(root).load()
+                state[field] = []
+                StateStore(root).save(state)
+                cli.main(["daemon", "stop", "--confirm"])
+                capsys.readouterr()
+
+
+def test_temporary_stop_controller_is_released_after_active_work_rejection(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    del tmp_path
+    with tempfile.TemporaryDirectory(prefix="adk6-release-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        monkeypatch.chdir(root)
+        try:
+            assert cli.main(["daemon", "start"]) == 0
+            capsys.readouterr()
+            state = StateStore(root).load()
+            state["approvals"] = [{"status": "pending"}]
+            StateStore(root).save(state)
+
+            assert cli.main(["daemon", "stop", "--confirm"]) == 1
+            stop_error = capsys.readouterr().err
+            assert stop_error == "daemon has active keepalive work\n"
+            state = StateStore(root).load()
+            assert cli._controller_lease_is_active(state) is False
+            assert state["daemon_event_outbox"] == []
+            assert [
+                json.loads(line)["event_type"]
+                for line in StateStore(root).events_path.read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ] == ["controller_lease_granted", "controller_lease_released"]
+
+            async def reacquire_and_release() -> None:
+                client = await DaemonClient.connect_verified(root, timeout_seconds=2)
+                try:
+                    lease = await client.request(
+                        "controller.acquire", {"client_id": "client-reacquire"}
+                    )
+                    await client.request(
+                        "controller.release",
+                        {
+                            "lease_id": lease["lease_id"],
+                            "generation": lease["generation"],
+                        },
+                        lease_id=str(lease["lease_id"]),
+                        lease_generation=int(lease["generation"]),
+                    )
+                finally:
+                    await client.close()
+
+            asyncio.run(reacquire_and_release())
+            state = StateStore(root).load()
+            state["approvals"] = []
+            StateStore(root).save(state)
+            assert cli.main(["daemon", "stop", "--confirm"]) == 0
+            capsys.readouterr()
+            _wait_for_reaper_empty()
+        finally:
+            if (root / ".agentdeck" / "runtime" / "daemon.sock").exists():
+                state = StateStore(root).load()
+                state["approvals"] = []
+                StateStore(root).save(state)
+                cli.main(["daemon", "stop", "--confirm"])
+                capsys.readouterr()
+
+
+def test_temporary_stop_controller_is_released_after_other_client_rejection(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    del tmp_path
+    with tempfile.TemporaryDirectory(prefix="adk6-release-client-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        monkeypatch.chdir(root)
+        ready = threading.Event()
+        release = threading.Event()
+        held: threading.Thread | None = None
+        try:
+            assert cli.main(["daemon", "start"]) == 0
+            capsys.readouterr()
+            held = _held_daemon_client(root, ready, release)
+            _wait_for_runtime_state(root, "ready")
+
+            assert cli.main(["daemon", "stop", "--confirm"]) == 1
+            assert capsys.readouterr().err == "daemon has active keepalive work\n"
+            assert cli._controller_lease_is_active(StateStore(root).load()) is False
+            assert StateStore(root).load()["daemon_event_outbox"] == []
+
+            release.set()
+            held.join(timeout=2)
+            assert not held.is_alive()
+            _reacquire_and_release(root, "client-after-other")
+            assert cli.main(["daemon", "stop", "--confirm"]) == 0
+            capsys.readouterr()
+            _wait_for_reaper_empty()
+        finally:
+            release.set()
+            if held is not None:
+                held.join(timeout=2)
+            if (root / ".agentdeck" / "runtime" / "daemon.sock").exists():
+                cli.main(["daemon", "stop", "--confirm"])
+                capsys.readouterr()
+
+
+def test_temporary_stop_controller_is_released_after_identity_rejection(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    del tmp_path
+    with tempfile.TemporaryDirectory(prefix="adk6-release-identity-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        monkeypatch.chdir(root)
+        ready = threading.Event()
+        release = threading.Event()
+        held: threading.Thread | None = None
+        original_runtime: dict[str, object] | None = None
+        try:
+            assert cli.main(["daemon", "start"]) == 0
+            capsys.readouterr()
+            held = _held_daemon_client(root, ready, release)
+            _wait_for_runtime_state(root, "ready")
+            state = StateStore(root).load()
+            original_runtime = dict(state["daemon_runtime"])
+            state["daemon_runtime"]["instance_id"] = "dmn_identity_drift"
+            StateStore(root).save(state)
+
+            assert cli.main(["daemon", "stop", "--confirm"]) == 1
+            assert capsys.readouterr().err == "daemon identity is unverified\n"
+            assert cli._controller_lease_is_active(StateStore(root).load()) is False
+            assert StateStore(root).load()["daemon_event_outbox"] == []
+
+            _reacquire_and_release(root, "client-after-identity")
+            state = StateStore(root).load()
+            state["daemon_runtime"] = original_runtime
+            StateStore(root).save(state)
+            release.set()
+            held.join(timeout=2)
+            assert not held.is_alive()
+            assert cli.main(["daemon", "stop", "--confirm"]) == 0
+            capsys.readouterr()
+            _wait_for_reaper_empty()
+        finally:
+            release.set()
+            if held is not None:
+                held.join(timeout=2)
+            if original_runtime is not None and (
+                root / ".agentdeck" / "runtime" / "daemon.sock"
+            ).exists():
+                state = StateStore(root).load()
+                state["daemon_runtime"] = original_runtime
+                StateStore(root).save(state)
+                cli.main(["daemon", "stop", "--confirm"])
+                capsys.readouterr()
+
+
+def test_live_status_tracks_controller_acquire_release_across_clients(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    del tmp_path
+    with tempfile.TemporaryDirectory(prefix="adk6-live-controller-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        monkeypatch.chdir(root)
+        try:
+            assert cli.main(["daemon", "start"]) == 0
+            capsys.readouterr()
+
+            async def exercise() -> None:
+                controller = await DaemonClient.connect_verified(root, timeout_seconds=2)
+                observer = await DaemonClient.connect_verified(root, timeout_seconds=2)
+                try:
+                    lease = await controller.request(
+                        "controller.acquire", {"client_id": "client-controller"}
+                    )
+                    assert (await observer.request("status", {}))["controller_present"] is True
+                    await controller.request(
+                        "controller.release",
+                        {
+                            "lease_id": lease["lease_id"],
+                            "generation": lease["generation"],
+                        },
+                        lease_id=str(lease["lease_id"]),
+                        lease_generation=int(lease["generation"]),
+                    )
+                    assert (await observer.request("status", {}))["controller_present"] is False
+                finally:
+                    await observer.close()
+                    await controller.close()
+
+            asyncio.run(exercise())
+            assert cli.main(["daemon", "stop", "--confirm"]) == 0
+            capsys.readouterr()
+            _wait_for_reaper_empty()
+        finally:
+            if (root / ".agentdeck" / "runtime" / "daemon.sock").exists():
+                cli.main(["daemon", "stop", "--confirm"])
+                capsys.readouterr()
+
+
+def test_expired_controller_is_refreshed_in_runtime_and_project_view(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    del tmp_path
+    with tempfile.TemporaryDirectory(prefix="adk6-expiry-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        _configure_daemon(root, controller_ttl_seconds=1)
+        monkeypatch.chdir(root)
+        try:
+            assert cli.main(["daemon", "start"]) == 0
+            capsys.readouterr()
+
+            async def acquire() -> None:
+                client = await DaemonClient.connect_verified(root, timeout_seconds=2)
+                try:
+                    await client.request(
+                        "controller.acquire", {"client_id": "client-expiring"}
+                    )
+                finally:
+                    await client.close()
+
+            asyncio.run(acquire())
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                state = StateStore(root).load()
+                lease_id = str(state.get("controller_lease", {}).get("lease_id", ""))
+                if lease_id.startswith("lst_"):
+                    break
+                time.sleep(0.02)
+            assert lease_id.startswith("lst_")
+            time.sleep(0.3)
+            state = StateStore(root).load()
+            assert state["daemon_event_outbox"] == []
+            event_types = [
+                json.loads(line)["event_type"]
+                for line in StateStore(root).events_path.read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            assert event_types == [
+                "controller_lease_granted", "controller_lease_expired"
+            ]
+            assert state["daemon_runtime"]["state"] == "idle_grace"
+            project_view = asdict(StateStore(root).project_view(load_config(root)))
+            assert project_view["daemon"]["controller_present"] is False
+
+            async def status() -> dict[str, object]:
+                client = await DaemonClient.connect_verified(root, timeout_seconds=2)
+                try:
+                    return await client.request("status", {})
+                finally:
+                    await client.close()
+
+            assert asyncio.run(status())["controller_present"] is False
+            assert cli.main(["daemon", "stop", "--confirm"]) == 0
+            capsys.readouterr()
+            _wait_for_reaper_empty()
+        finally:
+            if (root / ".agentdeck" / "runtime" / "daemon.sock").exists():
+                cli.main(["daemon", "stop", "--confirm"])
                 capsys.readouterr()
 
 

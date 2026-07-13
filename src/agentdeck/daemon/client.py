@@ -45,6 +45,7 @@ CLIENT_METHODS = frozenset(
         "mission.pause",
         "controller.acquire",
         "controller.renew",
+        "controller.release",
         "daemon.stop",
     }
 )

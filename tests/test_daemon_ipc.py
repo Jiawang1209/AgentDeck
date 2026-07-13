@@ -449,7 +449,9 @@ def test_only_controller_acquire_can_be_lease_exempt(short_project: Path) -> Non
         return {"lease_id": "lse_" + "1" * 24, "generation": 1}
 
     async def exercise() -> None:
-        allowed = METHODS | {"controller.acquire", "controller.renew"}
+        allowed = METHODS | {
+            "controller.acquire", "controller.renew", "controller.release"
+        }
         owner, server = await _running_server(
             short_project,
             mutation_handler=mutate,
@@ -482,6 +484,17 @@ def test_only_controller_acquire_can_be_lease_exempt(short_project: Path) -> Non
                     lease_generation=1,
                 )
                 assert renewed["generation"] == 1
+                with pytest.raises(
+                    DaemonClientError, match="controller lease required"
+                ):
+                    await client.request("controller.release", {})
+                released = await client.request(
+                    "controller.release",
+                    {},
+                    lease_id="lse_" + "1" * 24,
+                    lease_generation=1,
+                )
+                assert released["generation"] == 1
             finally:
                 await client.close()
         finally:
@@ -490,6 +503,7 @@ def test_only_controller_acquire_can_be_lease_exempt(short_project: Path) -> Non
         assert calls == [
             ("controller.acquire", {"client_id": "client-a"}),
             ("controller.renew", {}),
+            ("controller.release", {}),
         ]
 
     _run(exercise())

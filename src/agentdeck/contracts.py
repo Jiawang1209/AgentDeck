@@ -16791,6 +16791,8 @@ def _validate_daemon_controls(errors: list[str], value: object) -> None:
             type(blocker) is not str or not blocker.strip()
         ):
             errors.append(f"controls[{index}].blocker is required when disabled")
+        if control.get("enabled") is True and blocker is not None:
+            errors.append(f"controls[{index}].blocker must be null when enabled")
 
 
 def _validate_exact_daemon_contract(

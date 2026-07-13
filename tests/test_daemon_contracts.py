@@ -74,6 +74,8 @@ def test_daemon_contract_validators_reject_unknown_missing_and_unsafe_controls(
         lambda payload: payload["controls"][0].__setitem__("command", None),
         lambda payload: payload["controls"][0].__setitem__("enabled", 1),
         lambda payload: payload["controls"][0].__setitem__("blocker", []),
+        lambda payload: payload["controls"][0].__setitem__("blocker", "not actually enabled"),
+        lambda payload: payload["controls"][1].update(enabled=False, blocker=None),
         lambda payload: payload["controls"][1].__setitem__("blocker", ""),
         lambda payload: payload["controls"][0].__setitem__("extra", True),
     ],

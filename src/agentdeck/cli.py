@@ -162,6 +162,7 @@ from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_h
 from .daemon.client import DaemonClient, DaemonUnavailable, connect_or_start, install_bounded_daemon_stdio_from_env
 from .daemon.lifecycle import (
     acquire_daemon_ownership, bind_daemon_endpoint, can_stop_daemon,
+    daemon_keepalive_reasons,
     cleanup_daemon_endpoint, daemon_endpoint,
 )
 from .daemon.lease import (
@@ -169,6 +170,7 @@ from .daemon.lease import (
     LeaseError,
     LeaseTransition,
     controller_lease_from_summary,
+    expire_controller,
     grant_controller,
     release_controller,
     renew_controller,
@@ -5920,6 +5922,26 @@ def _validate_daemon_controller_lease(
     )
 
 
+def _controller_lease_is_active(
+    state: dict[str, object], *, now: datetime | None = None,
+) -> bool:
+    lease = controller_lease_from_summary(state.get("controller_lease"))
+    if lease is None or not lease.lease_id.startswith("lse_"):
+        return False
+    try:
+        validate_controller(
+            lease,
+            lease_id=lease.lease_id,
+            generation=lease.generation,
+            now=now or datetime.now(timezone.utc),
+        )
+    except LeaseError as exc:
+        if str(exc) == "controller lease expired":
+            return False
+        raise
+    return True
+
+
 def _daemon_keepalive_view(
     state: dict[str, object], *, other_client_count: int,
 ) -> dict[str, object]:
@@ -5983,6 +6005,22 @@ def _daemon_keepalive_view(
             "conversation_event_outbox",
         )
     )
+
+    decisions = list_field("decisions")
+    recovery_decisions = list_field("recovery_decisions")
+    if any(not isinstance(item, dict) for item in decisions + recovery_decisions):
+        raise DaemonClientRequestError(
+            "daemon keepalive state is invalid", "stop_blocked"
+        )
+
+    def flag(name: str) -> bool:
+        value = state.get(name, False)
+        if type(value) is not bool:
+            raise DaemonClientRequestError(
+                "daemon keepalive state is invalid", "stop_blocked"
+            )
+        return value
+
     return {
         "client_count": other_client_count,
         "active_mission_count": status_count(
@@ -5997,13 +6035,19 @@ def _daemon_keepalive_view(
             "permission_requests", {"pending"}
         ),
         "pending_reply_count": pending_replies,
-        "pending_recovery_decision_count": 0,
-        "pending_decision_count": 0,
-        "ambiguous_decision_count": 0,
+        "pending_recovery_decision_count": sum(
+            item.get("status") == "pending" for item in recovery_decisions
+        ),
+        "pending_decision_count": sum(
+            item.get("status") == "pending" for item in decisions
+        ),
+        "ambiguous_decision_count": sum(
+            item.get("status") == "ambiguous" for item in decisions
+        ),
         "outbox_count": outbox_count,
-        "recovery_active": False,
-        "safe_shutdown_active": False,
-        "atomic_write_active": False,
+        "recovery_active": flag("recovery_active"),
+        "safe_shutdown_active": flag("safe_shutdown_active"),
+        "atomic_write_active": flag("atomic_write_active"),
     }
 
 
@@ -6048,6 +6092,7 @@ async def _request_daemon_stop(
         root, max_frame_bytes=config.daemon.max_frame_bytes,
         timeout_seconds=config.daemon.start_timeout_seconds,
     )
+    temporary_controller = False
     try:
         if lease_id is None and lease_generation is None:
             acquired = await client.request(
@@ -6064,13 +6109,40 @@ async def _request_daemon_stop(
             )
             if type(lease_id) is not str or type(lease_generation) is not int:
                 raise DaemonUnavailable("daemon controller acquisition failed")
+            temporary_controller = True
         assert lease_id is not None and lease_generation is not None
-        return await client.request(
-            "daemon.stop",
-            {"lease_id": lease_id, "generation": lease_generation},
-            lease_id=lease_id,
-            lease_generation=lease_generation,
-        )
+        try:
+            result = await client.request(
+                "daemon.stop",
+                {"lease_id": lease_id, "generation": lease_generation},
+                lease_id=lease_id,
+                lease_generation=lease_generation,
+            )
+            if result != {"accepted": True, "state": "stopping"}:
+                raise DaemonUnavailable("verified daemon stop was rejected")
+            return result
+        except Exception as stop_error:
+            if not temporary_controller:
+                raise
+            try:
+                released = await client.request(
+                    "controller.release",
+                    {"lease_id": lease_id, "generation": lease_generation},
+                    lease_id=lease_id,
+                    lease_generation=lease_generation,
+                )
+                if (
+                    released.get("released") is not True
+                    or released.get("lease_id") != lease_id
+                    or released.get("generation") != lease_generation
+                    or type(released.get("expires_at")) is not str
+                ):
+                    raise DaemonUnavailable("temporary controller cleanup was not confirmed")
+            except Exception:
+                raise DaemonUnavailable(
+                    f"{stop_error}; temporary controller cleanup failed"
+                ) from None
+            raise
     finally:
         await client.close()
 
@@ -6098,7 +6170,7 @@ def daemon_stop_command(args: argparse.Namespace) -> int:
             "controller lease expired", "controller lease is already held",
             "daemon has active keepalive work",
             "daemon identity is unverified", "daemon keepalive state is invalid",
-        }:
+        } and not message.endswith("; temporary controller cleanup failed"):
             message = "verified daemon stop was rejected"
         print(message, file=sys.stderr)
         return 1
@@ -6175,10 +6247,24 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         def current_status() -> dict[str, object]:
             snapshot = dict(status)
             if server is not None:
-                snapshot["client_count"] = max(0, server.connection_count - 1)
-                if server.connection_count:
+                other_clients = max(0, server.connection_count - 1)
+                keepalive = _daemon_keepalive_view(
+                    store.load(), other_client_count=other_clients
+                )
+                snapshot.update(keepalive)
+                reasons = daemon_keepalive_reasons(keepalive)
+                nonclient_reasons = tuple(
+                    reason for reason in reasons if reason != "clients_connected"
+                )
+                if nonclient_reasons:
+                    snapshot["state"] = "busy"
+                    snapshot["idle_exit_pending"] = False
+                elif server.connection_count:
                     snapshot["state"] = "ready"
                     snapshot["idle_exit_pending"] = False
+                snapshot["controller_present"] = _controller_lease_is_active(
+                    store.load()
+                )
             return snapshot
 
         def lease_validator(lease_id: str, generation: int) -> None:
@@ -6197,6 +6283,25 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             current = transition.current
             assert current is not None
             return lease_result(current)
+
+        def refresh_controller(now: datetime) -> bool:
+            state = store.load()
+            lease = controller_lease_from_summary(state.get("controller_lease"))
+            if lease is None or not lease.lease_id.startswith("lse_"):
+                return False
+            try:
+                validate_controller(
+                    lease,
+                    lease_id=lease.lease_id,
+                    generation=lease.generation,
+                    now=now,
+                )
+            except LeaseError as exc:
+                if str(exc) != "controller lease expired":
+                    raise
+                commit_and_flush(expire_controller(lease, now=now))
+                return False
+            return True
 
         def lease_params(params: dict[str, object]) -> tuple[str, int]:
             lease_id = params.get("lease_id")
@@ -6235,6 +6340,22 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                         ttl_seconds=config.daemon.controller_ttl_seconds,
                     )
                     return commit_and_flush(transition)
+                if method == "controller.release" and set(params) == {
+                    "lease_id", "generation"
+                }:
+                    lease_id, generation = lease_params(params)
+                    current = controller_lease_from_summary(
+                        store.load().get("controller_lease")
+                    )
+                    if current is None:
+                        raise LeaseError("controller lease required")
+                    transition = release_controller(
+                        current,
+                        lease_id=lease_id,
+                        generation=generation,
+                        now=now,
+                    )
+                    return {"released": True, **commit_and_flush(transition)}
                 if method == "daemon.stop" and set(params) == {
                     "lease_id", "generation"
                 }:
@@ -6283,7 +6404,8 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             max_frame_bytes=config.daemon.max_frame_bytes,
             allowed_methods={
                 "handshake", "status", "subscribe", "mission.pause",
-                "controller.acquire", "controller.renew", "daemon.stop",
+                "controller.acquire", "controller.renew", "controller.release",
+                "daemon.stop",
             },
             lease_exempt_methods={"controller.acquire"},
             status_provider=current_status,
@@ -6294,7 +6416,8 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         await server.start()
         status.update({
             "mode": "daemon_status", "state": "ready", "health": "healthy",
-            "client_count": 0, "controller_present": store.load().get("controller_lease") is not None,
+            "client_count": 0,
+            "controller_present": _controller_lease_is_active(store.load()),
             "idle_exit_pending": False, "blockers": [],
             "active_mission_count": 0, "active_worker_count": 0,
             "pending_approval_count": 0, "pending_permission_count": 0,
@@ -6314,8 +6437,21 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         idle_since: float | None = None
         current_state = "ready"
         while not stop_event.is_set():
-            status["client_count"] = max(0, server.connection_count - 1)
-            if server.connection_count:
+            status["controller_present"] = refresh_controller(
+                datetime.now(timezone.utc)
+            )
+            keepalive = _daemon_keepalive_view(
+                store.load(), other_client_count=server.connection_count
+            )
+            status.update(keepalive)
+            reasons = daemon_keepalive_reasons(keepalive)
+            nonclient_reasons = tuple(
+                reason for reason in reasons if reason != "clients_connected"
+            )
+            if nonclient_reasons:
+                idle_since = None
+                desired_state = "busy"
+            elif server.connection_count:
                 idle_since = None
                 desired_state = "ready"
             elif idle_since is None:

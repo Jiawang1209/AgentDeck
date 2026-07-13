@@ -1059,7 +1059,12 @@ The daemon stop control displays `agentdeck daemon stop --confirm`. Its verified
 client obtains and later releases a temporary controller through internal RPC
 when needed; existing controller holders may supply the optional exact lease
 pair directly. The compact workbench never exposes either lease credential and
-the rendered control is not authority.
+the rendered control is not authority. Enabled daemon controls must have a null
+blocker; disabled controls must have a non-empty blocker. The live daemon derives
+`controller_present` from the current unexpired lease and refreshes expiry in its
+own poll loop. A rejected temporary-controller stop invokes lease-gated release;
+cleanup failure is surfaced as a blocker, while explicit caller credentials are
+never auto-released.
 
 - The command is read-only.
 - The command must pass `validate_workbench_contract()` before printing JSON.

@@ -15,7 +15,11 @@ frames are excluded.
 
 `controller.acquire` is the only lease-exempt mutation and exists solely to
 bootstrap a verified compatible client when no unexpired controller is held;
-it never performs takeover. `controller.renew` requires the exact current lease.
-Grant, renew, and release each commit through StateStore and synchronously flush
-the strict daemon event outbox before success is returned. These RPC credentials
-remain internal to the stop flow and do not add fields or controls to this card.
+it never performs takeover. `controller.renew` and `controller.release` require
+the exact current lease. Grant, renew, release, and expiry each commit through
+StateStore and synchronously flush the strict daemon event outbox before success
+is returned. A failed automatic stop releases only the temporary controller it
+acquired; credentials explicitly supplied by a caller are never auto-released.
+If cleanup cannot be confirmed, the CLI reports an explicit cleanup blocker.
+These RPC credentials remain internal to the stop flow and do not add fields or
+controls to this card.
