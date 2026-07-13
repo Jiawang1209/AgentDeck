@@ -64,3 +64,56 @@ def test_daemon_contract_validators_reject_unknown_missing_and_unsafe_controls(
         candidate = deepcopy(example)
         mutate(candidate)
         assert validator(candidate)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda payload: payload["controls"][0].__setitem__("kind", ""),
+        lambda payload: payload["controls"][0].__setitem__("label", 7),
+        lambda payload: payload["controls"][0].__setitem__("command", None),
+        lambda payload: payload["controls"][0].__setitem__("enabled", 1),
+        lambda payload: payload["controls"][0].__setitem__("blocker", []),
+        lambda payload: payload["controls"][1].__setitem__("blocker", ""),
+        lambda payload: payload["controls"][0].__setitem__("extra", True),
+    ],
+)
+def test_daemon_controls_are_strict_gui_controls(mutation) -> None:
+    payload = daemon_runtime_example()
+    mutation(payload)
+    assert validate_daemon_runtime_contract(payload)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda payload: payload.update(compatible=False, write_enabled=True),
+        lambda payload: payload.update(role="observer", write_enabled=True),
+        lambda payload: payload.update(role="observer", lease_generation=1),
+        lambda payload: payload.update(role="observer", client_id=None, write_enabled=False, lease_generation=None),
+        lambda payload: payload.update(role="controller", lease_generation=None),
+        lambda payload: payload.update(role="none", client_id="client_x"),
+        lambda payload: payload.update(client_id="   "),
+        lambda payload: payload.update(lease_generation=True),
+    ],
+)
+def test_client_session_role_compatibility_and_lease_combinations_are_strict(mutation) -> None:
+    payload = client_session_example()
+    mutation(payload)
+    assert validate_client_session_contract(payload)["ok"] is False
+
+
+def test_daemon_stop_control_requires_explicit_lease_arguments() -> None:
+    payload = daemon_runtime_example()
+    stop = next(control for control in payload["controls"] if control["kind"] == "stop")
+    assert stop == {
+        "kind": "stop",
+        "label": "Stop daemon",
+        "command": (
+            "agentdeck daemon stop --confirm --lease-id <lease_id> "
+            "--lease-generation <generation>"
+        ),
+        "safety": "explicit_runtime",
+        "enabled": False,
+        "blocker": "current controller lease id and generation required",
+    }

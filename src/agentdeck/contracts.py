@@ -16726,7 +16726,15 @@ def daemon_runtime_example() -> dict[str, object]:
         "blockers": [],
         "controls": [
             _daemon_control("inspect", "Inspect daemon", "agentdeck daemon status", "inspect"),
-            _daemon_control("stop", "Stop daemon", "agentdeck daemon stop --confirm", "explicit_runtime"),
+            _daemon_control(
+                "stop",
+                "Stop daemon",
+                "agentdeck daemon stop --confirm --lease-id <lease_id> "
+                "--lease-generation <generation>",
+                "explicit_runtime",
+                enabled=False,
+                blocker="current controller lease id and generation required",
+            ),
         ],
     }
 
@@ -16770,11 +16778,21 @@ def _validate_daemon_controls(errors: list[str], value: object) -> None:
         if not isinstance(control, dict) or set(control) != set(DAEMON_CONTROL_FIELDS):
             errors.append(f"controls[{index}] fields are invalid")
             continue
+        for name in ("kind", "label", "command"):
+            if type(control.get(name)) is not str or not str(control.get(name)).strip():
+                errors.append(f"controls[{index}].{name} must be a non-empty string")
         if control.get("safety") not in {"inspect", "explicit_user", "explicit_runtime"}:
             errors.append(f"controls[{index}].safety is invalid")
         if type(control.get("enabled")) is not bool:
             errors.append(f"controls[{index}].enabled must be boolean")
-        if not control.get("enabled") and not isinstance(control.get("blocker"), str):
+        blocker = control.get("blocker")
+        if blocker is not None and (
+            type(blocker) is not str or not blocker.strip()
+        ):
+            errors.append(f"controls[{index}].blocker must be a non-empty string or null")
+        if not control.get("enabled") and (
+            type(blocker) is not str or not blocker.strip()
+        ):
             errors.append(f"controls[{index}].blocker is required when disabled")
 
 
@@ -16850,7 +16868,9 @@ def validate_client_session_contract(payload: object) -> dict[str, object]:
         if payload.get("role") not in {"observer", "controller", "none"}:
             errors.append("role is invalid")
         client_id = payload.get("client_id")
-        if client_id is not None and (type(client_id) is not str or not client_id):
+        if client_id is not None and (
+            type(client_id) is not str or not client_id.strip()
+        ):
             errors.append("client_id is invalid")
         if payload.get("lease_generation") is not None and (
             type(payload.get("lease_generation")) is not int or payload.get("lease_generation", 0) < 1
@@ -16861,6 +16881,15 @@ def validate_client_session_contract(payload: object) -> dict[str, object]:
                 errors.append(f"{name} must be boolean")
         if payload.get("write_enabled") is True and payload.get("role") != "controller":
             errors.append("write_enabled requires controller role")
+        if payload.get("compatible") is False and payload.get("write_enabled") is not False:
+            errors.append("incompatible client session must be read-only")
+        if payload.get("role") == "observer" and (
+            type(client_id) is not str
+            or not client_id.strip()
+            or payload.get("write_enabled") is not False
+            or payload.get("lease_generation") is not None
+        ):
+            errors.append("observer role cannot carry write authority")
         if payload.get("role") == "controller" and (
             type(client_id) is not str or payload.get("lease_generation") is None
         ):

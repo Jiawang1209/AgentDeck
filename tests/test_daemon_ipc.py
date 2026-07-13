@@ -78,6 +78,7 @@ async def _running_server(
     queue_size: int = 8,
     mutation_handler=None,
     lease_validator=None,
+    mutation_response_sent_handler=None,
     read_timeout_seconds: float = 1,
     write_timeout_seconds: float = 1,
 ) -> tuple[object, DaemonServer]:
@@ -96,6 +97,7 @@ async def _running_server(
         status_provider=lambda: {"mode": "daemon_status", "state": "ready"},
         mutation_handler=mutation_handler,
         lease_validator=lease_validator,
+        mutation_response_sent_handler=mutation_response_sent_handler,
         read_timeout_seconds=read_timeout_seconds,
         write_timeout_seconds=write_timeout_seconds,
     )
@@ -403,6 +405,60 @@ def test_observer_mutation_requires_current_lease_before_handler(short_project: 
                 )
                 assert result == {"paused": True}
                 assert calls == [{"method": "mission.pause", "mission_id": "mis_1"}]
+            finally:
+                await client.close()
+        finally:
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_mutation_response_sent_hook_runs_after_ack_is_flushed(
+    short_project: Path,
+) -> None:
+    response_flushed = False
+    hook_called = asyncio.Event()
+
+    async def mutate(_method: str, _params: dict[str, object]) -> dict[str, object]:
+        return {"paused": True}
+
+    def after_response(method: str, result: dict[str, object]) -> None:
+        assert method == "mission.pause"
+        assert result == {"paused": True}
+        assert response_flushed is True
+        hook_called.set()
+
+    async def exercise() -> None:
+        nonlocal response_flushed
+        owner, server = await _running_server(
+            short_project,
+            mutation_handler=mutate,
+            lease_validator=lambda _lease_id, _generation: None,
+            mutation_response_sent_handler=after_response,
+        )
+        original_send_response = server._send_response
+
+        async def record_flush(connection, response):
+            nonlocal response_flushed
+            await original_send_response(connection, response)
+            if response.request_id != "req_handshake":
+                response_flushed = True
+
+        server._send_response = record_flush  # type: ignore[method-assign]
+        try:
+            client = await DaemonClient.connect_verified(
+                short_project, max_frame_bytes=MAX_FRAME, timeout_seconds=1
+            )
+            try:
+                result = await client.request(
+                    "mission.pause",
+                    {"mission_id": "mis_1"},
+                    lease_id="lse_current",
+                    lease_generation=7,
+                )
+                assert result == {"paused": True}
+                await asyncio.wait_for(hook_called.wait(), timeout=1)
             finally:
                 await client.close()
         finally:

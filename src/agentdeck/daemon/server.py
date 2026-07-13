@@ -33,6 +33,9 @@ MutationHandler = Callable[
     Mapping[str, object] | Awaitable[Mapping[str, object]],
 ]
 LeaseValidator = Callable[[str, int], object]
+MutationResponseSentHandler = Callable[
+    [str, dict[str, object]], object | Awaitable[object]
+]
 
 
 _DAEMON_BIND_LOCK = threading.RLock()
@@ -75,6 +78,7 @@ class DaemonServer:
         status_provider: StatusProvider,
         mutation_handler: MutationHandler | None = None,
         lease_validator: LeaseValidator | None = None,
+        mutation_response_sent_handler: MutationResponseSentHandler | None = None,
         request_queue_size: int = 128,
         event_queue_size: int = 128,
         read_timeout_seconds: float = 10,
@@ -108,6 +112,7 @@ class DaemonServer:
         self.status_provider = status_provider
         self.mutation_handler = mutation_handler
         self.lease_validator = lease_validator
+        self.mutation_response_sent_handler = mutation_response_sent_handler
         self.request_queue_size = request_queue_size
         self.event_queue_size = event_queue_size
         self.read_timeout_seconds = float(read_timeout_seconds)
@@ -364,6 +369,23 @@ class DaemonServer:
                 return
             response = await self._dispatch(connection, request)
             await self._send_response(connection, response)
+            if (
+                response.ok
+                and request.method not in {"status", "subscribe"}
+                and isinstance(response.result, Mapping)
+            ):
+                await self._mutation_response_sent(
+                    request.method, dict(response.result)
+                )
+
+    async def _mutation_response_sent(
+        self, method: str, result: dict[str, object]
+    ) -> None:
+        if self.mutation_response_sent_handler is None:
+            return
+        value = self.mutation_response_sent_handler(method, result)
+        if inspect.isawaitable(value):
+            await value
 
     async def _event_loop(self, connection: _Connection) -> None:
         while not connection.closed:

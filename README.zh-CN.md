@@ -56,7 +56,7 @@ agentdeck contract worker-transport --example
 
 自然语言本身永远不是执行授权。确认必须绑定精确执行事实；ACP 不会静默降级成 tmux；permission、approval、runtime safety 与 ownership gate 彼此独立。常见的内联 credential 赋值会在持久化 Mission provenance 中被遮蔽。
 
-Phase 3 M2a 现已提供经过身份验证的单项目 daemon 基础、`agentdeck daemon status/start/stop/logs`，以及 compact ProjectView/workbench discovery contracts；但它还不会在后台推进 Mission。M2a scheduler 会明确显示 inactive，直到 M2b 完成冻结执行快照、确定性调度、Worker supervision 与 recovery。完整 transcript 恢复、全局项目漫游、Desktop/IDE Workspace Client、自动安装/认证 adapter，以及原生同会话 TUI attach 仍属于后续工作。
+Phase 3 M2a 现已提供经过身份验证的单项目 daemon 基础、`agentdeck daemon status/start/stop/logs`，以及 compact ProjectView/workbench discovery contracts。`daemon status` 严格零写且不会连接 socket，只把持久化状态显示为 last-known/unverified。停止 daemon 是受 lease 约束的 daemon RPC，而不是客户端发送进程信号：`agentdeck daemon stop --confirm --lease-id <lease_id> --lease-generation <generation>`；daemon 接受停止前会重新校验 controller lease、endpoint/持久身份、其他客户端和 keepalive 工作。M2a 还不会在后台推进 Mission；scheduler 会明确显示 inactive，直到 M2b 完成冻结执行快照、确定性调度、Worker supervision 与 recovery。完整 transcript 恢复、全局项目漫游、Desktop/IDE Workspace Client、自动安装/认证 adapter，以及原生同会话 TUI attach 仍属于后续工作。
 
 ## 架构
 

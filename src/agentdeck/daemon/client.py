@@ -36,7 +36,9 @@ from .protocol import (
 )
 
 
-CLIENT_METHODS = frozenset({"handshake", "status", "subscribe", "mission.pause"})
+CLIENT_METHODS = frozenset(
+    {"handshake", "status", "subscribe", "mission.pause", "daemon.stop"}
+)
 DEFAULT_DAEMON_LOG_CAP_BYTES = 1024 * 1024
 _MIN_DAEMON_LOG_CAP_BYTES = 1024
 _MAX_DAEMON_LOG_CAP_BYTES = 64 * 1024 * 1024

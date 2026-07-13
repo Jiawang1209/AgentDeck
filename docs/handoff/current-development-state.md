@@ -97,7 +97,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0, Phase 1, Phase 2, and Phase 3 M1 are complete. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. Phase 3 M2 now has an approved written spec and a detailed implementation plan awaiting human execution-mode selection and a new `/goal`. No daemon production code has started.
+Phase 0, Phase 1, Phase 2, and Phase 3 M1 are complete. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. Phase 3 M2 has an approved written spec and detailed implementation plan. Tasks 1–6 are implemented as the M2a daemon foundation; Task 7 is the active next slice and must freeze Mission execution snapshots and attempt identities before scheduling work begins.
 
 The completed Phase 2 diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. M1 composes that ACP client with explicit Leader/Worker transport and foreground conversation contracts while preserving tmux compatibility. M2 is designed to move confirmed Mission advancement into a recoverable project daemon; it must reuse these primitives rather than create a parallel authority.
 
@@ -122,12 +122,12 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-Review `docs/superpowers/plans/2026-07-13-agentdeck-project-daemon.md`, choose subagent-driven or inline execution, and create a new explicit `/goal` before any production change. Execute all 14 tasks in order with the required TDD, regressions, HISTORY updates, and local commits. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
+Continue the approved Subagent-Driven plan in `docs/superpowers/plans/2026-07-13-agentdeck-project-daemon.md` at Task 7. Preserve Tasks 1–6, then execute the remaining tasks in order with the required TDD, regressions, HISTORY updates, reviews, and local commits. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
 ```
 
 ## Historical development log — not active
 
-Everything below this heading is retained only as historical implementation context. Any wording about a direction, work in progress, a next step, a chosen lane, or verification reflected the state at that earlier time; it is not a current instruction and must not override the STOP state above. Use `HISTORY.md` for the durable timeline. Do not resume or redo any item below unless a human explicitly approves a new goal and plan.
+Everything below this heading is retained only as historical implementation context. Any wording about a direction, work in progress, a next step, a chosen lane, or verification reflected the state at that earlier time; it is not a current instruction and must not override the active goal above. Use `HISTORY.md` for the durable timeline. Do not resume or redo any item below unless a human explicitly approves it.
 
 The explicit release command slice is already committed:
 

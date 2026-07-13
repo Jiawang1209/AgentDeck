@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict, replace
+from datetime import datetime, timezone
 import argparse
 import asyncio
 import contextlib
@@ -163,8 +164,9 @@ from .daemon.lifecycle import (
     acquire_daemon_ownership, bind_daemon_endpoint, can_stop_daemon,
     cleanup_daemon_endpoint, daemon_endpoint,
 )
+from .daemon.lease import controller_lease_from_summary, validate_controller
 from .daemon.protocol import DAEMON_RPC_PROTOCOL_VERSION
-from .daemon.server import DaemonServer
+from .daemon.server import DaemonClientRequestError, DaemonServer
 
 
 def _print_json(payload: object) -> None:
@@ -2590,7 +2592,6 @@ def _daemon_runtime_card(project_view: dict[str, object]) -> dict[str, object]:
     summary = project_view.get("daemon") if isinstance(project_view.get("daemon"), dict) else {}
     state = str(summary.get("state", "stopped"))
     blockers = list(summary.get("blockers", [])) if isinstance(summary.get("blockers"), list) else ["daemon state unavailable"]
-    stop_enabled = state in {"ready", "idle_grace"} and not blockers
     payload = {
         "schema_version": "daemon-runtime/v1",
         "mode": "daemon_runtime",
@@ -2605,9 +2606,19 @@ def _daemon_runtime_card(project_view: dict[str, object]) -> dict[str, object]:
         "controls": [
             _control(kind="inspect", label="Inspect daemon", command="agentdeck daemon status", safety="inspect"),
             _control(
-                kind="stop", label="Stop daemon", command="agentdeck daemon stop --confirm",
-                safety="explicit_runtime", enabled=stop_enabled,
-                blocker=None if stop_enabled else (blockers[0] if blockers else "daemon cannot stop safely"),
+                kind="stop",
+                label="Stop daemon",
+                command=(
+                    "agentdeck daemon stop --confirm --lease-id <lease_id> "
+                    "--lease-generation <generation>"
+                ),
+                safety="explicit_runtime",
+                enabled=False,
+                blocker=(
+                    blockers[0]
+                    if blockers
+                    else "current controller lease id and generation required"
+                ),
             ),
         ],
     }
@@ -5813,28 +5824,23 @@ def _endpoint_files_exist_without_mutation(root: Path) -> bool:
     return stat.S_ISREG(metadata.st_mode) and stat.S_ISSOCK(socket_metadata.st_mode)
 
 
-async def _verified_daemon_status(root: Path, config: ProjectConfig) -> tuple[dict[str, object], bool]:
-    client = await DaemonClient.connect_verified(
-        root, max_frame_bytes=config.daemon.max_frame_bytes,
-        timeout_seconds=config.daemon.start_timeout_seconds,
-    )
-    try:
-        return await client.request("status", {}), client.compatible
-    finally:
-        await client.close()
-
-
 def _daemon_status_payload(
     project_view: dict[str, object], live: dict[str, object] | None = None,
-    *, compatible: bool = False,
+    *, compatible: bool = False, endpoint_present: bool = False,
 ) -> dict[str, object]:
     summary = dict(project_view.get("daemon", {})) if isinstance(project_view.get("daemon"), dict) else {}
     if live is None and summary.get("state") in {"starting", "ready", "busy", "idle_grace", "stopping"}:
-        summary.update({
-            "state": "blocked", "health": "unavailable",
-            "compatibility": "unverified",
-            "blockers": ["verified daemon endpoint is unavailable"],
-        })
+        if endpoint_present:
+            summary.update({
+                "health": "unknown", "compatibility": "unverified",
+                "blockers": ["daemon endpoint is present; status is last-known and unverified"],
+            })
+        else:
+            summary.update({
+                "state": "blocked", "health": "unavailable",
+                "compatibility": "unverified",
+                "blockers": ["verified daemon endpoint is unavailable"],
+            })
     elif live is not None:
         summary.update({
             "state": live.get("state", "ready"),
@@ -5850,20 +5856,19 @@ def _daemon_status_payload(
 
 
 def daemon_status_command(_args: argparse.Namespace) -> int:
-    config, store, exit_code = _load_project_or_error()
-    if config is None or store is None:
-        return exit_code
+    root = project_root()
+    try:
+        config = load_config(root)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        print("Run: conda activate agentdeck && agentdeck project init", file=sys.stderr)
+        return 1
+    store = StateStore.open_existing(root)
     project_view = _project_view_payload_or_error(config, store)
     if project_view is None:
         return 1
-    live = None
-    compatible = False
-    if _endpoint_files_exist_without_mutation(Path(config.root)):
-        try:
-            live, compatible = asyncio.run(_verified_daemon_status(Path(config.root), config))
-        except DaemonUnavailable:
-            pass
-    payload = _daemon_status_payload(project_view, live, compatible=compatible)
+    endpoint_present = _endpoint_files_exist_without_mutation(Path(config.root))
+    payload = _daemon_status_payload(project_view, endpoint_present=endpoint_present)
     validation = validate_daemon_runtime_contract(payload)
     if not validation["ok"]:
         print("Daemon runtime contract validation failed", file=sys.stderr)
@@ -5896,10 +5901,155 @@ def daemon_start_command(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_daemon_controller_lease(
+    store: StateStore, lease_id: str, generation: int,
+    *, now: datetime | None = None,
+) -> None:
+    state = store.load()
+    lease = controller_lease_from_summary(state.get("controller_lease"))
+    validate_controller(
+        lease, lease_id=lease_id, generation=generation,
+        now=now or datetime.now(timezone.utc),
+    )
+
+
+def _daemon_keepalive_view(
+    state: dict[str, object], *, other_client_count: int,
+) -> dict[str, object]:
+    def list_field(name: str) -> list[object]:
+        value = state.get(name, [])
+        if not isinstance(value, list):
+            raise DaemonClientRequestError(
+                "daemon keepalive state is invalid", "stop_blocked"
+            )
+        return value
+
+    def dict_field(name: str) -> dict[str, object]:
+        value = state.get(name, {})
+        if not isinstance(value, dict):
+            raise DaemonClientRequestError(
+                "daemon keepalive state is invalid", "stop_blocked"
+            )
+        return value
+
+    def status_count(name: str, statuses: set[str]) -> int:
+        items = list_field(name)
+        if any(not isinstance(item, dict) for item in items):
+            raise DaemonClientRequestError(
+                "daemon keepalive state is invalid", "stop_blocked"
+            )
+        return sum(item.get("status") in statuses for item in items)
+
+    agents = dict_field("agents")
+    if any(not isinstance(value, dict) for value in agents.values()):
+        raise DaemonClientRequestError(
+            "daemon keepalive state is invalid", "stop_blocked"
+        )
+    inbox = dict_field("inbox")
+    if any(not isinstance(items, list) for items in inbox.values()):
+        raise DaemonClientRequestError(
+            "daemon keepalive state is invalid", "stop_blocked"
+        )
+    pending_replies = sum(
+        1
+        for items in inbox.values()
+        if isinstance(items, list)
+        for item in items
+        if isinstance(item, dict)
+        and item.get("status") == "pending"
+        and item.get("event_type") == "task_reply"
+    )
+    if any(
+        not isinstance(item, dict)
+        for items in inbox.values()
+        if isinstance(items, list)
+        for item in items
+    ):
+        raise DaemonClientRequestError(
+            "daemon keepalive state is invalid", "stop_blocked"
+        )
+    outbox_count = sum(
+        len(list_field(name))
+        for name in (
+            "daemon_event_outbox",
+            "protocol_event_outbox",
+            "conversation_event_outbox",
+        )
+    )
+    return {
+        "client_count": other_client_count,
+        "active_mission_count": status_count(
+            "missions", {"preparing", "running", "interrupted"}
+        ),
+        "active_worker_count": sum(
+            1 for value in agents.values()
+            if isinstance(value, dict) and value.get("status") == "running"
+        ),
+        "pending_approval_count": status_count("approvals", {"pending"}),
+        "pending_permission_count": status_count(
+            "permission_requests", {"pending"}
+        ),
+        "pending_reply_count": pending_replies,
+        "pending_recovery_decision_count": 0,
+        "pending_decision_count": 0,
+        "ambiguous_decision_count": 0,
+        "outbox_count": outbox_count,
+        "recovery_active": False,
+        "safe_shutdown_active": False,
+        "atomic_write_active": False,
+    }
+
+
+def _validate_daemon_stop_gate(
+    root: Path, ownership: object, store: StateStore, *, other_client_count: int,
+) -> None:
+    if type(other_client_count) is not int or other_client_count < 0:
+        raise DaemonClientRequestError("daemon client count is invalid", "stop_blocked")
+    binding = None
+    try:
+        binding = bind_daemon_endpoint(root)
+        metadata = binding.read_metadata()
+    except Exception:
+        raise DaemonClientRequestError("daemon identity is unverified", "stop_blocked") from None
+    finally:
+        if binding is not None:
+            binding.close()
+    expected = {
+        "instance_id": getattr(ownership, "instance_id", None),
+        "project_root_hash": getattr(ownership, "project_root_hash", None),
+        "start_nonce_hash": getattr(ownership, "start_nonce_hash", None),
+        "pid": getattr(ownership, "pid", None),
+    }
+    state = store.load()
+    daemon_record = state.get("daemon_runtime")
+    if metadata != expected or not isinstance(daemon_record, dict) or any(
+        daemon_record.get(name) != expected[name]
+        for name in ("instance_id", "project_root_hash", "start_nonce_hash")
+    ):
+        raise DaemonClientRequestError("daemon identity is unverified", "stop_blocked")
+    if not can_stop_daemon(
+        _daemon_keepalive_view(state, other_client_count=other_client_count)
+    ):
+        raise DaemonClientRequestError("daemon has active keepalive work", "stop_blocked")
+
+
+async def _request_daemon_stop(
+    root: Path, config: ProjectConfig, *, lease_id: str, lease_generation: int,
+) -> dict[str, object]:
+    client = await DaemonClient.connect_verified(
+        root, max_frame_bytes=config.daemon.max_frame_bytes,
+        timeout_seconds=config.daemon.start_timeout_seconds,
+    )
+    try:
+        return await client.request(
+            "daemon.stop", {}, lease_id=lease_id,
+            lease_generation=lease_generation,
+        )
+    finally:
+        await client.close()
+
+
 def daemon_stop_command(args: argparse.Namespace) -> int:
-    if not args.confirm:
-        print("daemon stop requires --confirm", file=sys.stderr)
-        return 1
     config, _store, exit_code = _load_project_or_error()
     if config is None:
         return exit_code
@@ -5908,44 +6058,24 @@ def daemon_stop_command(args: argparse.Namespace) -> int:
         print("verified daemon is unavailable", file=sys.stderr)
         return 1
     try:
-        live, compatible = asyncio.run(_verified_daemon_status(root, config))
-    except DaemonUnavailable:
-        print("verified daemon is unavailable", file=sys.stderr)
+        result = asyncio.run(_request_daemon_stop(
+            root, config, lease_id=args.lease_id,
+            lease_generation=args.lease_generation,
+        ))
+    except Exception as exc:
+        message = str(exc)
+        if message not in {
+            "controller lease required", "stale controller lease",
+            "controller lease expired", "daemon has active keepalive work",
+            "daemon identity is unverified", "daemon keepalive state is invalid",
+        }:
+            message = "verified daemon stop was rejected"
+        print(message, file=sys.stderr)
         return 1
-    if not compatible:
-        print("incompatible daemon is read-only", file=sys.stderr)
+    if result != {"accepted": True, "state": "stopping"}:
+        print("verified daemon stop was rejected", file=sys.stderr)
         return 1
-    keepalive_view = {
-        name: live.get(name, 0)
-        for name in (
-            "active_mission_count", "active_worker_count", "pending_approval_count",
-            "pending_permission_count", "pending_reply_count",
-            "pending_recovery_decision_count", "pending_decision_count",
-            "ambiguous_decision_count", "outbox_count",
-        )
-    }
-    keepalive_view.update({
-        name: live.get(name, False)
-        for name in ("recovery_active", "safe_shutdown_active", "atomic_write_active")
-    })
-    if not can_stop_daemon(keepalive_view):
-        print("daemon has active keepalive work", file=sys.stderr)
-        return 1
-    binding = None
-    try:
-        binding = bind_daemon_endpoint(root)
-        metadata = binding.read_metadata()
-        if metadata is None or metadata.get("instance_id") != live.get("instance_id"):
-            print("verified daemon identity changed", file=sys.stderr)
-            return 1
-        os.kill(int(metadata["pid"]), signal.SIGTERM)
-    except (OSError, ValueError):
-        print("verified daemon could not be stopped", file=sys.stderr)
-        return 1
-    finally:
-        if binding is not None:
-            binding.close()
-    _print_json({"ok": True, "mode": "daemon_stop", "stopped": True})
+    _print_json({"ok": True, "mode": "daemon_stop", "accepted": True})
     return 0
 
 
@@ -6021,19 +6151,44 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                     snapshot["idle_exit_pending"] = False
             return snapshot
 
+        def lease_validator(lease_id: str, generation: int) -> None:
+            _validate_daemon_controller_lease(store, lease_id, generation)
+
+        async def mutation_handler(method: str, params: dict[str, object]) -> dict[str, object]:
+            if method != "daemon.stop" or params:
+                raise DaemonClientRequestError("daemon mutation is unavailable", "unavailable")
+            assert server is not None
+            _validate_daemon_stop_gate(
+                root, ownership, store,
+                other_client_count=max(0, server.connection_count - 1),
+            )
+            return {"accepted": True, "state": "stopping"}
+
+        def mutation_response_sent_handler(
+            method: str, result: dict[str, object]
+        ) -> None:
+            if method == "daemon.stop" and result == {
+                "accepted": True,
+                "state": "stopping",
+            }:
+                stop_event.set()
+
         server = DaemonServer(
             endpoint=ownership.endpoint.socket_path, instance_id=ownership.instance_id,
             project_root_hash=ownership.project_root_hash,
             start_nonce_hash=ownership.start_nonce_hash, daemon_version=__version__,
             project_view_schema_version=PROJECT_VIEW_SCHEMA_VERSION,
             max_frame_bytes=config.daemon.max_frame_bytes,
-            allowed_methods={"handshake", "status", "subscribe", "mission.pause"},
+            allowed_methods={"handshake", "status", "subscribe", "mission.pause", "daemon.stop"},
             status_provider=current_status,
+            mutation_handler=mutation_handler,
+            lease_validator=lease_validator,
+            mutation_response_sent_handler=mutation_response_sent_handler,
         )
         await server.start()
         status.update({
             "mode": "daemon_status", "state": "ready", "health": "healthy",
-            "client_count": 0, "controller_present": False,
+            "client_count": 0, "controller_present": store.load().get("controller_lease") is not None,
             "idle_exit_pending": False, "blockers": [],
             "active_mission_count": 0, "active_worker_count": 0,
             "pending_approval_count": 0, "pending_permission_count": 0,
@@ -17220,7 +17375,9 @@ def build_parser() -> argparse.ArgumentParser:
     daemon_start = daemon_subparsers.add_parser("start", help="Start or connect to the project daemon")
     daemon_start.set_defaults(func=daemon_start_command)
     daemon_stop = daemon_subparsers.add_parser("stop", help="Safely stop the verified project daemon")
-    daemon_stop.add_argument("--confirm", action="store_true", help="Confirm the explicit runtime stop")
+    daemon_stop.add_argument("--confirm", action="store_true", required=True, help="Confirm the explicit runtime stop")
+    daemon_stop.add_argument("--lease-id", required=True, help="Current controller lease id")
+    daemon_stop.add_argument("--lease-generation", required=True, type=int, help="Current controller lease generation")
     daemon_stop.set_defaults(func=daemon_stop_command)
     daemon_logs = daemon_subparsers.add_parser("logs", help="Read bounded project daemon logs")
     daemon_logs.add_argument("--lines", type=int, default=100, help="Read the last 1-1000 lines")

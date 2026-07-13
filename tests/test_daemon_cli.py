@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import time
 import tempfile
+import shutil
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -12,7 +14,15 @@ from agentdeck import cli
 from agentdeck.config import load_config, write_default_config
 from agentdeck.contracts import validate_workbench_contract
 from agentdeck.state import StateStore
-from agentdeck.daemon.lifecycle import build_daemon_record, project_root_hash
+from agentdeck.daemon.lifecycle import (
+    acquire_daemon_ownership,
+    build_daemon_record,
+    cleanup_daemon_endpoint,
+    project_root_hash,
+)
+from agentdeck.daemon.lease import LeaseError, grant_controller
+from agentdeck.daemon.server import DaemonClientRequestError
+from agentdeck.models import EventRecord
 
 
 def _project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -47,6 +57,27 @@ def test_daemon_status_is_read_only_when_endpoint_is_absent(tmp_path: Path, monk
     assert payload["schema_version"] == "daemon-runtime/v1"
     assert payload["state"] == "stopped"
     assert _tree(root) == before
+
+
+def test_daemon_status_is_zero_write_for_config_only_partial_project(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+    for path in tuple((root / ".agentdeck").iterdir()):
+        if path.name == "config.toml":
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    state_dir = root / ".agentdeck" / "state"
+    assert not state_dir.exists()
+    before = _tree(root)
+
+    assert cli.main(["daemon", "status"]) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "stopped"
+    assert _tree(root) == before
+    assert not state_dir.exists()
 
 
 def test_daemon_status_does_not_report_stale_durable_ready_as_healthy(
@@ -127,8 +158,150 @@ def test_daemon_stop_never_signals_an_unverified_endpoint(
     (runtime / "daemon.sock").write_text("not a socket\n", encoding="utf-8")
     monkeypatch.setattr(cli.os, "kill", lambda *_args: pytest.fail("must not signal"))
 
-    assert cli.main(["daemon", "stop", "--confirm"]) == 1
+    assert cli.main([
+        "daemon", "stop", "--confirm", "--lease-id", "lse_" + "0" * 24,
+        "--lease-generation", "1",
+    ]) == 1
     assert "verified daemon is unavailable" in capsys.readouterr().err
+
+
+def test_daemon_stop_rejects_expired_controller_lease(tmp_path: Path, monkeypatch) -> None:
+    root = _project(tmp_path, monkeypatch)
+    issued_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+    transition = grant_controller(
+        client_id="client-test", now=issued_at, ttl_seconds=1
+    )
+    store = StateStore(root)
+    store.commit_controller_lease(transition)
+
+    with pytest.raises(LeaseError, match="controller lease expired"):
+        cli._validate_daemon_controller_lease(
+            store,
+            transition.current.lease_id,
+            transition.current.generation,
+            now=issued_at + timedelta(seconds=2),
+        )
+
+
+@pytest.mark.parametrize(
+    ("state_update", "other_client_count"),
+    [
+        ({"approvals": [{"status": "pending"}]}, 0),
+        ({}, 1),
+    ],
+)
+def test_daemon_stop_rejects_active_keepalive_work(
+    tmp_path: Path,
+    monkeypatch,
+    state_update: dict[str, object],
+    other_client_count: int,
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+    ownership = acquire_daemon_ownership(
+        root,
+        start_nonce="test-stop-gate",
+        health_probe=lambda _metadata: None,
+    )
+    try:
+        store = StateStore(root)
+        now = datetime.now(timezone.utc).isoformat()
+        store.record_daemon_state(
+            {
+                "instance_id": ownership.instance_id,
+                "project_root_hash": ownership.project_root_hash,
+                "start_nonce_hash": ownership.start_nonce_hash,
+                "state": "ready",
+                "created_at": now,
+                "updated_at": now,
+            },
+            expected_project_root_hash=ownership.project_root_hash,
+        )
+        state = store.load()
+        state.update(state_update)
+        store.save(state)
+
+        with pytest.raises(
+            DaemonClientRequestError, match="daemon has active keepalive work"
+        ):
+            cli._validate_daemon_stop_gate(
+                root,
+                ownership,
+                store,
+                other_client_count=other_client_count,
+            )
+    finally:
+        cleanup_daemon_endpoint(ownership)
+
+
+def test_daemon_stop_rejects_persisted_identity_drift(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+    ownership = acquire_daemon_ownership(
+        root,
+        start_nonce="test-identity-drift",
+        health_probe=lambda _metadata: None,
+    )
+    try:
+        store = StateStore(root)
+        now = datetime.now(timezone.utc).isoformat()
+        store.record_daemon_state(
+            {
+                "instance_id": "dmn_different",
+                "project_root_hash": ownership.project_root_hash,
+                "start_nonce_hash": ownership.start_nonce_hash,
+                "state": "ready",
+                "created_at": now,
+                "updated_at": now,
+            },
+            expected_project_root_hash=ownership.project_root_hash,
+        )
+
+        with pytest.raises(
+            DaemonClientRequestError, match="daemon identity is unverified"
+        ):
+            cli._validate_daemon_stop_gate(
+                root, ownership, store, other_client_count=0
+            )
+    finally:
+        cleanup_daemon_endpoint(ownership)
+
+
+def test_daemon_stop_fails_closed_on_malformed_keepalive_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+    ownership = acquire_daemon_ownership(
+        root,
+        start_nonce="test-malformed-keepalive",
+        health_probe=lambda _metadata: None,
+    )
+    try:
+        store = StateStore(root)
+        now = datetime.now(timezone.utc).isoformat()
+        store.record_daemon_state(
+            {
+                "instance_id": ownership.instance_id,
+                "project_root_hash": ownership.project_root_hash,
+                "start_nonce_hash": ownership.start_nonce_hash,
+                "state": "ready",
+                "created_at": now,
+                "updated_at": now,
+            },
+            expected_project_root_hash=ownership.project_root_hash,
+        )
+        state = store.load()
+        state["approvals"] = {}
+        store.save(state)
+
+        with pytest.raises(
+            DaemonClientRequestError, match="daemon keepalive state is invalid"
+        ):
+            cli._validate_daemon_stop_gate(
+                root, ownership, store, other_client_count=0
+            )
+    finally:
+        cleanup_daemon_endpoint(ownership)
 
 
 def test_daemon_start_status_and_confirmed_stop_use_hidden_server(
@@ -141,6 +314,16 @@ def test_daemon_start_status_and_confirmed_stop_use_hidden_server(
         write_default_config(root)
         monkeypatch.chdir(root)
         try:
+            transition = grant_controller(
+                client_id="client-test", now=datetime.now(timezone.utc), ttl_seconds=300
+            )
+            store = StateStore(root)
+            store.commit_controller_lease(transition)
+            event = transition.audit_event.summary()
+            store.append_event(EventRecord(**event))
+            state = store.load()
+            state["daemon_event_outbox"] = []
+            store.save(state)
             assert cli.main(["daemon", "start"]) == 0
             started = json.loads(capsys.readouterr().out)
             assert started["state"] == "ready"
@@ -154,15 +337,30 @@ def test_daemon_start_status_and_confirmed_stop_use_hidden_server(
                 time.sleep(0.02)
             assert StateStore(root).load()["daemon_runtime"]["state"] == "idle_grace"
 
+            before_status = _tree(root)
             assert cli.main(["daemon", "status"]) == 0
             status = json.loads(capsys.readouterr().out)
-            assert status["health"] == "healthy"
+            assert status["health"] == "unknown"
+            assert status["compatibility"] == "unverified"
+            assert _tree(root) == before_status
 
-            assert cli.main(["daemon", "stop"]) == 1
-            assert "requires --confirm" in capsys.readouterr().err
-            assert cli.main(["daemon", "stop", "--confirm"]) == 0
+            with pytest.raises(SystemExit):
+                cli.main(["daemon", "stop"])
+            capsys.readouterr()
+            state = StateStore(root).load()
+            lease = state["controller_lease"]
+            assert cli.main([
+                "daemon", "stop", "--confirm", "--lease-id", "lse_" + "0" * 24,
+                "--lease-generation", str(lease["generation"]),
+            ]) == 1
+            assert "stale controller lease" in capsys.readouterr().err
+            assert (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
+            assert cli.main([
+                "daemon", "stop", "--confirm", "--lease-id", lease["lease_id"],
+                "--lease-generation", str(lease["generation"]),
+            ]) == 0
             stopped = json.loads(capsys.readouterr().out)
-            assert stopped == {"mode": "daemon_stop", "ok": True, "stopped": True}
+            assert stopped == {"mode": "daemon_stop", "ok": True, "accepted": True}
             endpoint = root / ".agentdeck" / "runtime" / "daemon.sock"
             metadata = root / ".agentdeck" / "runtime" / "daemon.json"
             deadline = time.monotonic() + 3
@@ -172,7 +370,13 @@ def test_daemon_start_status_and_confirmed_stop_use_hidden_server(
             assert not metadata.exists()
         finally:
             if (root / ".agentdeck" / "runtime" / "daemon.sock").exists():
-                cli.main(["daemon", "stop", "--confirm"])
+                state = StateStore(root).load()
+                lease = state.get("controller_lease") or {}
+                cli.main([
+                    "daemon", "stop", "--confirm",
+                    "--lease-id", str(lease.get("lease_id", "lse_" + "0" * 24)),
+                    "--lease-generation", str(lease.get("generation", 1)),
+                ])
                 capsys.readouterr()
                 deadline = time.monotonic() + 3
                 metadata = root / ".agentdeck" / "runtime" / "daemon.json"
