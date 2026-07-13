@@ -4,6 +4,13 @@
 
 ## 2026-07-13
 
+### Reconcile daemon Mission recovery
+
+- **Pure complete-evidence classification**: added immutable exact `RecoveryFacts` / `RecoveryDecision` records and a deterministic `reconcile_gate()` that classifies each Mission as `resumable`, `waiting_human`, `ambiguous`, `blocked`, or `terminal`. Prepared-but-unsent attempts resume at dispatch; receipt-backed submitted/running attempts only wait for the Worker and can never redispatch; terminal successful replies resume at validation or compact handoff; pending permissions wait for a human; missing/drifted transport, snapshot, lineage, ownership, result, or handoff facts fail closed.
+- **Unknown effects stay unknown**: a durable `admitting` claim or submitted/running attempt without a receipt is always ambiguous, including when a permission is pending or a Mission status claims terminal completion. Recovery never calls a provider, ACP process, tmux, send, dispatch, clock, filesystem probe, or retry loop through the pure gate.
+- **Outbox-first bounded startup gate**: `reconcile_startup()` finishes daemon, conversation, and protocol outboxes before reading persisted Mission/attempt facts; requires evidence for exactly every nonterminal Mission; cross-checks Mission status, latest attempt identity/state, and receipt presence; atomically persists all classifications and `mission_recovery_classified` audit events before enabling the scheduler. Malformed durable attempts, claim history, outboxes, recovery records, identities, or event journals fail closed. This is a bounded Task 10 startup gate, not the Task 11 service loop.
+- **TDD evidence**: initial RED failed collection because `agentdeck.daemon.recovery` did not exist. Follow-up REDs covered persisted Mission-state drift, persisted attempt drift, terminal Missions retaining unknown external effects, orphan handoffs, and the no-active-Mission startup case. GREEN is 35 passed for recovery, 262 passed for the required recovery/scheduler/conversation-state/protocol regression, and 370 passed with one skip for the complete Task 7–9 snapshot/scheduler/supervisor/ACP/tmux/workflow regression; compileall and `git diff --check` pass.
+
 ### Supervise exact background Worker transports
 
 - **Exact configured route**: added a bounded `WorkerAttemptSupervisor` that requires the attempt identity, route Agent, configured transport, and effective transport to agree before dispatch. ACP and tmux execute through mutually exclusive callables; readiness, ownership, or route drift fails closed, and failure on either transport never invokes the other as a fallback.

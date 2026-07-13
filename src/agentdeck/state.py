@@ -1082,6 +1082,7 @@ class StateStore:
                 "daemon_runtime": None,
                 "controller_lease": None,
                 "daemon_event_outbox": [],
+                "recovery_decisions": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -2367,6 +2368,113 @@ class StateStore:
                 raise KeyError(attempt_id)
             raise ValueError("duplicate mission attempt identity")
         return matches[0]
+
+    def commit_recovery_decisions(
+        self, decisions: list[object] | tuple[object, ...]
+    ) -> list[dict[str, object]]:
+        """Atomically persist complete startup classifications and audit events."""
+        from .daemon.recovery import (
+            RecoveryDecision,
+            validate_recovery_record,
+        )
+
+        if type(decisions) not in {list, tuple}:
+            raise ValueError("recovery decisions are invalid")
+        if any(not isinstance(item, RecoveryDecision) for item in decisions):
+            raise ValueError("recovery decisions are invalid")
+        mission_ids = [item.mission_id for item in decisions]
+        if len(mission_ids) != len(set(mission_ids)):
+            raise ValueError("duplicate recovery Mission identity")
+
+        with self._protocol_mutation_lock():
+            state = self.load()
+            existing = state.setdefault("recovery_decisions", [])
+            if type(existing) is not list:
+                raise TypeError("recovery_decisions must be a list")
+            for item in existing:
+                validate_recovery_record(item)
+
+            attempts_raw = state.setdefault("mission_attempts", [])
+            if type(attempts_raw) is not list:
+                raise ValueError("mission attempt state invalid")
+            attempts = [_validate_mission_attempt_record(item) for item in attempts_raw]
+            _require_unique_mission_attempt_lineage(attempts)
+            outbox = state.setdefault("protocol_event_outbox", [])
+            outbox_ids = _validated_protocol_event_outbox_ids(outbox)
+            self._protocol_admission_claim_history(outbox, attempts)
+            journal_ids = self._strict_protocol_journal_event_ids()
+
+            missions = state.setdefault("missions", [])
+            if type(missions) is not list:
+                raise ValueError("persisted Mission evidence is invalid")
+            persisted_missions: dict[str, dict[str, Any]] = {}
+            for raw in missions:
+                if type(raw) is not dict:
+                    raise ValueError("persisted Mission evidence is invalid")
+                mission_id = raw.get("mission_id")
+                status = raw.get("status")
+                if (
+                    not is_canonical_mission_id(mission_id)
+                    or status not in MISSION_STATUSES
+                    or mission_id in persisted_missions
+                ):
+                    raise ValueError("persisted Mission evidence is invalid")
+                persisted_missions[mission_id] = raw
+
+            records: list[dict[str, object]] = []
+            events: list[dict[str, Any]] = []
+            candidate_event_ids: set[str] = set()
+            for decision in decisions:
+                mission = persisted_missions.get(decision.mission_id)
+                if mission is None or mission.get("status") in {
+                    "completed",
+                    "stopped",
+                    "interrupted",
+                }:
+                    raise ValueError("recovery Mission is not active")
+                now = utc_now()
+                record = validate_recovery_record(
+                    {
+                        "classification": decision.classification,
+                        "reason": decision.reason,
+                        "mission_id": decision.mission_id,
+                        "attempt_id": decision.attempt_id,
+                        "next_transition": decision.next_transition,
+                        "classified_at": now,
+                    }
+                )
+                event = asdict(
+                    EventRecord(
+                        event_id=new_id("evt"),
+                        event_type="mission_recovery_classified",
+                        created_at=now,
+                        payload={
+                            "attempt_id": decision.attempt_id,
+                            "classification": decision.classification,
+                            "mission_id": decision.mission_id,
+                            "next_transition": decision.next_transition,
+                            "reason": decision.reason,
+                        },
+                    )
+                )
+                try:
+                    event_id = validate_daemon_event_record(event)
+                except LeaseError:
+                    raise ValueError("protocol event record is invalid") from None
+                if (
+                    event_id in outbox_ids
+                    or event_id in journal_ids
+                    or event_id in candidate_event_ids
+                ):
+                    raise ValueError("duplicate protocol event identity")
+                candidate_event_ids.add(event_id)
+                records.append(record)
+                events.append(event)
+
+            state["recovery_decisions"] = records
+            outbox.extend(events)
+            self._atomic_save(state)
+            return copy.deepcopy(records)
 
     def _transition_mission_attempt_admission(
         self,
