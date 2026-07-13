@@ -164,6 +164,7 @@ def prepare_attempt(
             "frozen execution drift",
             "frozen execution snapshot invalid",
             "mission attempt state invalid",
+            "mission attempt lineage drift",
             "mission confirmation state invalid",
             "mission execution is not confirmed",
             "mission retry budget exhausted",

@@ -626,6 +626,86 @@ def test_failed_attempt_retries_once_when_frozen_limit_is_one(tmp_path, monkeypa
     assert second["dispatch_key"] != first["dispatch_key"]
 
 
+@pytest.mark.parametrize("drift", ["snapshot", "agent", "transport", "dispatch_key"])
+def test_retry_replays_every_prior_attempt_authority_in_durable_order_zero_write(
+    tmp_path, monkeypatch, drift
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch, retry_limit=1)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    state = store.load()
+    prior = state["mission_attempts"][0]
+    prior["state"] = "failed"
+    prior["terminal_reason"] = "retryable worker failure"
+    if drift == "snapshot":
+        prior["snapshot_hash"] = "sha256:" + "f" * 64
+    elif drift == "agent":
+        prior["agent_id"] = "reviewer"
+    elif drift == "transport":
+        prior["configured_transport"] = "tmux"
+    else:
+        prior["dispatch_key"] = "dsp_" + "f" * 32
+    store.save(state)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="mission attempt lineage drift"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
+def test_duplicate_existing_dispatch_keys_are_rejected_before_retry_without_write(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch, retry_limit=2)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    for _ in range(2):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+        state = store.load()
+        state["mission_attempts"][-1]["state"] = "failed"
+        state["mission_attempts"][-1]["terminal_reason"] = "retryable worker failure"
+        store.save(state)
+    state = store.load()
+    state["mission_attempts"][1]["dispatch_key"] = state["mission_attempts"][0][
+        "dispatch_key"
+    ]
+    store.save(state)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="duplicate mission dispatch key"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
 @pytest.mark.parametrize(
     ("retry_limit", "terminal_state", "message"),
     [

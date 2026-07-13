@@ -2047,13 +2047,31 @@ class StateStore:
             attempt_ids = [item["attempt_id"] for item in validated_attempts]
             if len(attempt_ids) != len(set(attempt_ids)):
                 raise ValueError("duplicate mission attempt identity")
+            dispatch_keys = [item["dispatch_key"] for item in validated_attempts]
+            if len(dispatch_keys) != len(set(dispatch_keys)):
+                raise ValueError("duplicate mission dispatch key")
             matching = [
                 item
                 for item in validated_attempts
                 if item["mission_id"] == mission_id and item["step_id"] == step_id
             ]
-            if any(item["agent_id"] != agent_id for item in matching):
-                raise ValueError("mission step agent drift")
+            for ordinal, prior in enumerate(matching, start=1):
+                expected_key = derive_attempt_dispatch_key(
+                    mission_id,
+                    step_id,
+                    agent_id,
+                    configured_transport,
+                    persisted_snapshot["execution_hash"],
+                    attempt_ordinal=ordinal,
+                )
+                if (
+                    prior["snapshot_hash"] != persisted_snapshot["execution_hash"]
+                    or prior["agent_id"] != step["agent_id"]
+                    or prior["configured_transport"]
+                    != worker["configured_transport"]
+                    or prior["dispatch_key"] != expected_key
+                ):
+                    raise ValueError("mission attempt lineage drift")
             if any(item["state"] in _MISSION_ATTEMPT_ACTIVE_STATES for item in matching):
                 raise ValueError("active attempt already exists")
             if any(
