@@ -250,7 +250,7 @@ def test_scheduler_decision_carries_exact_lineage() -> None:
 
 def test_scheduler_waits_for_durable_admitting_attempt() -> None:
     decision = schedule_gate(facts(attempt_state="admitting"))
-    assert decision.kind == "await_worker"
+    assert decision.kind == "wait_ambiguity"
 
 
 def test_scheduler_state_enums_match_durable_mission_and_attempt_records() -> None:

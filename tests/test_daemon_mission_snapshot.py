@@ -521,6 +521,7 @@ def test_prepare_attempt_commits_exact_pre_dispatch_record_and_event(tmp_path, m
         "agent_id",
         "configured_transport",
         "dispatch_key",
+        "admission_claim_id",
         "snapshot_hash",
         "state",
         "created_at",
@@ -533,6 +534,7 @@ def test_prepare_attempt_commits_exact_pre_dispatch_record_and_event(tmp_path, m
     assert attempt["dispatch_key"].startswith("dsp_")
     assert attempt["snapshot_hash"] == confirmed["snapshot_hash"]
     assert attempt["state"] == "prepared"
+    assert attempt["admission_claim_id"] is None
     assert attempt["receipt_summary"] is None
     persisted = [
         item
@@ -736,6 +738,8 @@ def test_retry_budget_and_non_retryable_terminal_states_are_full_tree_zero_write
     state = store.load()
     state["mission_attempts"][0]["state"] = terminal_state
     state["mission_attempts"][0]["terminal_reason"] = terminal_state
+    if terminal_state == "ambiguous":
+        state["mission_attempts"][0]["admission_claim_id"] = "adm_" + "a" * 12
     store.save(state)
     before = _tree_bytes(root)
 

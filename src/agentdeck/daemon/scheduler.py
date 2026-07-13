@@ -424,7 +424,7 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
         return _decision("idle", facts)
     if facts.permission_state == "pending":
         return _decision("wait_human", facts)
-    if facts.attempt_state == "ambiguous":
+    if facts.attempt_state in {"admitting", "ambiguous"}:
         return _decision("wait_ambiguity", facts)
 
     if facts.all_steps_completed:
@@ -487,7 +487,7 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
         and facts.next_step_eligible
     ):
         return _decision("activate_next", facts)
-    if facts.attempt_state in {"admitting", "submitted", "running"}:
+    if facts.attempt_state in {"submitted", "running"}:
         return _decision("await_worker", facts)
     if (
         facts.attempt_state in _SUCCESSFUL_ATTEMPT_STATES

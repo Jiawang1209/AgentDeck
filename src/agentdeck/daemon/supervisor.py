@@ -18,6 +18,10 @@ class WorkerAttemptError(RuntimeError):
     """A Worker attempt cannot be safely admitted or normalized."""
 
 
+class WorkerAdmissionRejected(RuntimeError):
+    """The transport guarantees admission was rejected with zero external effect."""
+
+
 ArtifactEvidence = CanonicalArtifact
 AttemptOutcome = CanonicalHandoff
 
@@ -71,6 +75,9 @@ ReleaseAdmission = Callable[
 MarkAttemptAmbiguous = Callable[
     [MissionAttempt, SubmittedReceipt, str], None | Awaitable[None]
 ]
+MarkAdmissionAmbiguous = Callable[
+    [MissionAttempt, str], None | Awaitable[None]
+]
 AdmitTransport = Callable[
     [MissionAttempt], SubmittedReceipt | Awaitable[SubmittedReceipt]
 ]
@@ -89,6 +96,20 @@ async def _capture_callback(
     except Exception:
         return False, None
     return True, value
+
+
+async def _capture_admission(
+    callback: Callable[..., Any], attempt: MissionAttempt
+) -> tuple[str, Any]:
+    try:
+        value = callback(attempt)
+        if inspect.isawaitable(value):
+            value = await value
+    except WorkerAdmissionRejected:
+        return "rejected", None
+    except Exception:
+        return "unknown", None
+    return "returned", value
 
 
 _ATTEMPT_AUTHORITY_FIELDS = (
@@ -197,6 +218,7 @@ class WorkerAttemptSupervisor:
         release_admission: ReleaseAdmission,
         persist_submitted: PersistSubmitted,
         mark_attempt_ambiguous: MarkAttemptAmbiguous,
+        mark_admission_ambiguous: MarkAdmissionAmbiguous,
         acp_admit: AdmitTransport,
         tmux_admit: AdmitTransport,
         acp_complete: CompleteTransport,
@@ -208,6 +230,7 @@ class WorkerAttemptSupervisor:
             release_admission,
             persist_submitted,
             mark_attempt_ambiguous,
+            mark_admission_ambiguous,
             acp_admit,
             tmux_admit,
             acp_complete,
@@ -220,6 +243,7 @@ class WorkerAttemptSupervisor:
         self._release_admission = release_admission
         self._persist_submitted = persist_submitted
         self._mark_attempt_ambiguous = mark_attempt_ambiguous
+        self._mark_admission_ambiguous = mark_admission_ambiguous
         self._acp_admit = acp_admit
         self._tmux_admit = tmux_admit
         self._acp_complete = acp_complete
@@ -238,11 +262,14 @@ class WorkerAttemptSupervisor:
         return bool(current), current
 
     async def _durably_mark_unknown(
-        self, baseline: MissionAttempt, receipt: SubmittedReceipt
+        self,
+        baseline: MissionAttempt,
+        claimed: MissionAttempt,
+        receipt: SubmittedReceipt,
     ) -> bool:
         marked, _ = await _capture_callback(
             self._mark_attempt_ambiguous,
-            copy.deepcopy(baseline),
+            copy.deepcopy(claimed),
             copy.deepcopy(receipt),
             "receipt_persistence_unknown",
         )
@@ -253,9 +280,31 @@ class WorkerAttemptSupervisor:
             authority_ok
             and _same_attempt_authority(baseline, ambiguous)
             and ambiguous["state"] == "ambiguous"
+            and ambiguous["admission_claim_id"] == claimed["admission_claim_id"]
             and ambiguous["receipt_summary"] == receipt.summary
             and ambiguous["blocker"] == "receipt_persistence_unknown"
             and ambiguous["terminal_reason"] == "receipt_persistence_unknown"
+        )
+
+    async def _durably_mark_admission_unknown(
+        self, baseline: MissionAttempt, claimed: MissionAttempt
+    ) -> bool:
+        marked, _ = await _capture_callback(
+            self._mark_admission_ambiguous,
+            copy.deepcopy(claimed),
+            "admission_outcome_unknown",
+        )
+        if not marked:
+            return False
+        authority_ok, ambiguous = await self._current_attempt(baseline)
+        return bool(
+            authority_ok
+            and _same_attempt_authority(baseline, ambiguous)
+            and ambiguous["state"] == "ambiguous"
+            and ambiguous["admission_claim_id"] == claimed["admission_claim_id"]
+            and ambiguous["receipt_summary"] == "admission outcome unknown"
+            and ambiguous["blocker"] == "admission_outcome_unknown"
+            and ambiguous["terminal_reason"] == "admission_outcome_unknown"
         )
 
     async def _durably_release_admission(
@@ -307,6 +356,7 @@ class WorkerAttemptSupervisor:
             claimed
             and _same_attempt_authority(baseline, claimed)
             and claimed["state"] == "admitting"
+            and type(claimed["admission_claim_id"]) is str
             and claimed["receipt_summary"] is None
             and claimed["blocker"] is None
             and claimed["terminal_reason"] is None
@@ -318,17 +368,30 @@ class WorkerAttemptSupervisor:
         claimed = durable_claimed
 
         admit = self._acp_admit if transport == "acp" else self._tmux_admit
-        admitted, receipt = await _capture_callback(admit, copy.deepcopy(baseline))
-        if not admitted:
+        admission_status, receipt = await _capture_admission(
+            admit, copy.deepcopy(claimed)
+        )
+        if admission_status == "rejected":
             if not await self._durably_release_admission(baseline, claimed):
                 self._halt()
                 raise WorkerAttemptError("Worker admission claim release failed")
-            raise WorkerAttemptError(f"{label} Worker failed before admission")
-        if not isinstance(receipt, SubmittedReceipt):
+            raise WorkerAttemptError(f"{label} Worker rejected admission")
+        if admission_status == "unknown":
+            if await self._durably_mark_admission_unknown(baseline, claimed):
+                raise WorkerAttemptError(
+                    f"{label} Worker admission outcome is unknown"
+                )
             self._halt()
-            raise WorkerAttemptError(f"{label} Worker returned an invalid admission")
+            raise WorkerAttemptError("Worker ambiguity persistence failed")
+        if not isinstance(receipt, SubmittedReceipt):
+            if await self._durably_mark_admission_unknown(baseline, claimed):
+                raise WorkerAttemptError(
+                    f"{label} Worker admission outcome is unknown"
+                )
+            self._halt()
+            raise WorkerAttemptError("Worker ambiguity persistence failed")
         if receipt.dispatch_key != dispatch_key:
-            marked = await self._durably_mark_unknown(baseline, receipt)
+            marked = await self._durably_mark_unknown(baseline, claimed, receipt)
             if not marked:
                 self._halt()
                 raise WorkerAttemptError("Worker ambiguity persistence failed")
@@ -349,7 +412,7 @@ class WorkerAttemptSupervisor:
                 and submitted["receipt_summary"] == receipt.summary
             )
         if not persisted:
-            marked = await self._durably_mark_unknown(baseline, receipt)
+            marked = await self._durably_mark_unknown(baseline, claimed, receipt)
             if marked:
                 raise WorkerAttemptError("Worker submitted receipt persistence failed")
             self._halt()

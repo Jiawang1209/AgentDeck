@@ -82,6 +82,7 @@ _MISSION_ATTEMPT_FIELDS = frozenset(
         "agent_id",
         "configured_transport",
         "dispatch_key",
+        "admission_claim_id",
         "snapshot_hash",
         "state",
         "created_at",
@@ -234,6 +235,14 @@ def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
         or value.get("configured_transport") not in {"acp", "tmux"}
         or type(value.get("dispatch_key")) is not str
         or re.fullmatch(r"dsp_[0-9a-f]{32}", value["dispatch_key"]) is None
+        or (
+            value.get("admission_claim_id") is not None
+            and (
+                type(value.get("admission_claim_id")) is not str
+                or re.fullmatch(r"adm_[0-9a-f]{12}", value["admission_claim_id"])
+                is None
+            )
+        )
         or type(value.get("snapshot_hash")) is not str
         or re.fullmatch(r"sha256:[0-9a-f]{64}", value["snapshot_hash"]) is None
         or value.get("state") not in _MISSION_ATTEMPT_STATES
@@ -255,6 +264,13 @@ def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
         raise ValueError("mission attempt state invalid")
     if value["state"] == "prepared" and timestamps[1] != timestamps[0]:
         raise ValueError("mission attempt state invalid")
+    if value["state"] == "prepared" and value["admission_claim_id"] is not None:
+        raise ValueError("mission attempt state invalid")
+    if (
+        value["state"] in {"admitting", "submitted", "ambiguous"}
+        and value["admission_claim_id"] is None
+    ):
+        raise ValueError("mission attempt state invalid")
     for field in ("receipt_summary", "blocker", "terminal_reason"):
         item = value.get(field)
         if item is not None and (type(item) is not str or not item):
@@ -267,9 +283,12 @@ def validate_mission_attempt_record(value: object) -> dict[str, Any]:
     return _validate_mission_attempt_record(value)
 
 
-def _require_unique_mission_attempt_dispatch_keys(
+def _require_unique_mission_attempt_lineage(
     attempts: list[dict[str, Any]],
 ) -> None:
+    attempt_ids = [item["attempt_id"] for item in attempts]
+    if len(attempt_ids) != len(set(attempt_ids)):
+        raise ValueError("duplicate mission attempt identity")
     dispatch_keys = [item["dispatch_key"] for item in attempts]
     if len(dispatch_keys) != len(set(dispatch_keys)):
         raise ValueError("duplicate mission attempt dispatch key")
@@ -2156,6 +2175,7 @@ class StateStore:
                 "agent_id": agent_id,
                 "configured_transport": configured_transport,
                 "dispatch_key": dispatch_key,
+                "admission_claim_id": None,
                 "snapshot_hash": snapshot["execution_hash"],
                 "state": "prepared",
                 "created_at": now,
@@ -2216,6 +2236,7 @@ class StateStore:
         attempt_id: str,
         dispatch_key: str,
         target_state: str,
+        expected_claim_id: str | None,
     ) -> dict[str, Any]:
         if (
             type(attempt_id) is not str
@@ -2223,6 +2244,15 @@ class StateStore:
             or type(dispatch_key) is not str
             or re.fullmatch(r"dsp_[0-9a-f]{32}", dispatch_key) is None
             or target_state not in {"admitting", "prepared"}
+            or (
+                expected_claim_id is not None
+                and (
+                    type(expected_claim_id) is not str
+                    or re.fullmatch(r"adm_[0-9a-f]{12}", expected_claim_id) is None
+                )
+            )
+            or (target_state == "admitting" and expected_claim_id is not None)
+            or (target_state == "prepared" and expected_claim_id is None)
         ):
             raise ValueError("mission attempt admission transition is invalid")
         with self._protocol_mutation_lock():
@@ -2231,7 +2261,7 @@ class StateStore:
             if type(attempts) is not list:
                 raise ValueError("mission attempt state invalid")
             validated = [_validate_mission_attempt_record(item) for item in attempts]
-            _require_unique_mission_attempt_dispatch_keys(validated)
+            _require_unique_mission_attempt_lineage(validated)
             matches = [item for item in validated if item["attempt_id"] == attempt_id]
             if len(matches) != 1:
                 if not matches:
@@ -2240,6 +2270,11 @@ class StateStore:
             persisted = matches[0]
             if persisted["dispatch_key"] != dispatch_key:
                 raise ValueError("mission attempt admission lineage drift")
+            if (
+                target_state == "prepared"
+                and persisted["admission_claim_id"] != expected_claim_id
+            ):
+                raise ValueError("mission attempt admission claim drift")
             source_state = "prepared" if target_state == "admitting" else "admitting"
             if persisted["state"] != source_state:
                 raise ValueError("mission attempt admission transition is invalid")
@@ -2250,6 +2285,9 @@ class StateStore:
                     "state": target_state,
                     "updated_at": (
                         now if target_state == "admitting" else persisted["created_at"]
+                    ),
+                    "admission_claim_id": (
+                        new_id("adm") if target_state == "admitting" else None
                     ),
                 }
             )
@@ -2263,6 +2301,11 @@ class StateStore:
                     "mission_id": candidate["mission_id"],
                     "step_id": candidate["step_id"],
                     "dispatch_key": dispatch_key,
+                    "admission_claim_id": (
+                        candidate["admission_claim_id"]
+                        if target_state == "admitting"
+                        else expected_claim_id
+                    ),
                 },
             )
             outbox = state.setdefault("protocol_event_outbox", [])
@@ -2292,15 +2335,21 @@ class StateStore:
             attempt_id=attempt_id,
             dispatch_key=dispatch_key,
             target_state="admitting",
+            expected_claim_id=None,
         )
 
     def release_mission_attempt_admission(
-        self, *, attempt_id: str, dispatch_key: str
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        expected_claim_id: str,
     ) -> dict[str, Any]:
         return self._transition_mission_attempt_admission(
             attempt_id=attempt_id,
             dispatch_key=dispatch_key,
             target_state="prepared",
+            expected_claim_id=expected_claim_id,
         )
 
     def _transition_mission_attempt_receipt(
@@ -2308,6 +2357,7 @@ class StateStore:
         *,
         attempt_id: str,
         dispatch_key: str,
+        expected_claim_id: str,
         observed_dispatch_key: str | None,
         receipt_summary: str,
         target_state: str,
@@ -2320,6 +2370,8 @@ class StateStore:
             or re.fullmatch(r"dsp_[0-9a-f]{32}", dispatch_key) is None
             or type(receipt_summary) is not str
             or not receipt_summary
+            or type(expected_claim_id) is not str
+            or re.fullmatch(r"adm_[0-9a-f]{12}", expected_claim_id) is None
             or (
                 observed_dispatch_key is not None
                 and (
@@ -2332,7 +2384,10 @@ class StateStore:
             raise ValueError("mission attempt receipt is invalid")
         if target_state not in {"submitted", "ambiguous"}:
             raise ValueError("mission attempt receipt transition is invalid")
-        if target_state == "ambiguous" and reason != "receipt_persistence_unknown":
+        if target_state == "ambiguous" and reason not in {
+            "receipt_persistence_unknown",
+            "admission_outcome_unknown",
+        }:
             raise ValueError("mission attempt ambiguity reason is invalid")
         with self._protocol_mutation_lock():
             state = self.load()
@@ -2340,7 +2395,7 @@ class StateStore:
             if type(attempts) is not list:
                 raise ValueError("mission attempt state invalid")
             validated = [_validate_mission_attempt_record(item) for item in attempts]
-            _require_unique_mission_attempt_dispatch_keys(validated)
+            _require_unique_mission_attempt_lineage(validated)
             matches = [item for item in validated if item["attempt_id"] == attempt_id]
             if len(matches) != 1:
                 if not matches:
@@ -2349,6 +2404,8 @@ class StateStore:
             persisted = matches[0]
             if persisted["dispatch_key"] != dispatch_key:
                 raise ValueError("mission attempt receipt lineage drift")
+            if persisted["admission_claim_id"] != expected_claim_id:
+                raise ValueError("mission attempt admission claim drift")
             if persisted["state"] == target_state:
                 expected_reason = reason if target_state == "ambiguous" else None
                 if (
@@ -2361,7 +2418,7 @@ class StateStore:
             allowed_states = (
                 {"admitting"}
                 if target_state == "submitted"
-                else {"prepared", "admitting", "submitted"}
+                else {"admitting", "submitted"}
             )
             if persisted["state"] not in allowed_states:
                 raise ValueError("mission attempt receipt transition is invalid")
@@ -2386,13 +2443,14 @@ class StateStore:
                 "mission_id": candidate["mission_id"],
                 "step_id": candidate["step_id"],
                 "dispatch_key": dispatch_key,
+                "admission_claim_id": expected_claim_id,
                 "reason": reason,
             }
             if target_state == "ambiguous":
                 event_payload.update(
                     {
                         "expected_dispatch_key": dispatch_key,
-                        "observed_dispatch_key": observed_dispatch_key or dispatch_key,
+                        "observed_dispatch_key": observed_dispatch_key,
                     }
                 )
             event = EventRecord(
@@ -2422,11 +2480,17 @@ class StateStore:
             return copy.deepcopy(candidate)
 
     def record_mission_attempt_submitted(
-        self, *, attempt_id: str, dispatch_key: str, receipt_summary: str
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        expected_claim_id: str,
+        receipt_summary: str,
     ) -> dict[str, Any]:
         return self._transition_mission_attempt_receipt(
             attempt_id=attempt_id,
             dispatch_key=dispatch_key,
+            expected_claim_id=expected_claim_id,
             observed_dispatch_key=dispatch_key,
             receipt_summary=receipt_summary,
             target_state="submitted",
@@ -2438,6 +2502,7 @@ class StateStore:
         *,
         attempt_id: str,
         dispatch_key: str,
+        expected_claim_id: str,
         observed_dispatch_key: str | None = None,
         receipt_summary: str,
         reason: str,
@@ -2445,8 +2510,27 @@ class StateStore:
         return self._transition_mission_attempt_receipt(
             attempt_id=attempt_id,
             dispatch_key=dispatch_key,
+            expected_claim_id=expected_claim_id,
             observed_dispatch_key=observed_dispatch_key,
             receipt_summary=receipt_summary,
+            target_state="ambiguous",
+            reason=reason,
+        )
+
+    def mark_mission_attempt_admission_ambiguous(
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        expected_claim_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        return self._transition_mission_attempt_receipt(
+            attempt_id=attempt_id,
+            dispatch_key=dispatch_key,
+            expected_claim_id=expected_claim_id,
+            observed_dispatch_key=None,
+            receipt_summary="admission outcome unknown",
             target_state="ambiguous",
             reason=reason,
         )
