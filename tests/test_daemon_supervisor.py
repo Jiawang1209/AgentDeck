@@ -1121,6 +1121,178 @@ def test_stale_admission_claim_generation_is_rejected_with_zero_write(
     assert store.load() == before
 
 
+def test_released_claim_generation_cannot_be_reused_from_durable_journal(
+    tmp_path, monkeypatch
+) -> None:
+    import agentdeck.state as state_module
+
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claim1 = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+    )
+    claim_id = str(claim1["admission_claim_id"])
+    store.release_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=claim_id,
+    )
+    store.flush_protocol_event_outbox()
+    before_state = store.load()
+    before_events = store.events_path.read_bytes()
+    original_new_id = state_module.new_id
+    monkeypatch.setattr(
+        state_module,
+        "new_id",
+        lambda prefix: claim_id if prefix == "adm" else original_new_id(prefix),
+    )
+
+    with pytest.raises(ValueError, match="duplicate mission admission claim identity"):
+        store.claim_mission_attempt_admission(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+        )
+    assert store.load() == before_state
+    assert store.events_path.read_bytes() == before_events
+
+
+def test_claim_generation_collision_across_attempts_is_zero_write(
+    tmp_path, monkeypatch
+) -> None:
+    import agentdeck.state as state_module
+
+    store = StateStore(tmp_path)
+    second = _attempt(
+        attempt_id="mat_abcdefabcdef",
+        mission_id="mis_abcdefabcdef",
+        dispatch_key="dsp_" + "2" * 32,
+    )
+    state = store.load()
+    state["mission_attempts"] = [_attempt(), second]
+    store.save(state)
+    first = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+    )
+    claim_id = str(first["admission_claim_id"])
+    before = store.load()
+    original_new_id = state_module.new_id
+    monkeypatch.setattr(
+        state_module,
+        "new_id",
+        lambda prefix: claim_id if prefix == "adm" else original_new_id(prefix),
+    )
+
+    with pytest.raises(ValueError, match="duplicate mission admission claim identity"):
+        store.claim_mission_attempt_admission(
+            attempt_id="mat_abcdefabcdef",
+            dispatch_key="dsp_" + "2" * 32,
+        )
+    assert store.load() == before
+
+
+def test_submitted_reread_rejects_forged_claim_generation_before_complete() -> None:
+    authority = _Authority()
+    completion_calls: list[str] = []
+
+    def forge_submitted(candidate, receipt) -> None:
+        authority.current.update(
+            {
+                "state": "submitted",
+                "updated_at": "2026-07-13T00:00:02+00:00",
+                "admission_claim_id": "adm_" + "f" * 12,
+                "receipt_summary": receipt.summary,
+            }
+        )
+
+    supervisor = WorkerAttemptSupervisor(
+        authorize_attempt=authority.authorize,
+        claim_admission=authority.claim,
+        release_admission=authority.release,
+        persist_submitted=forge_submitted,
+        mark_attempt_ambiguous=lambda *_: pytest.fail("must not mark stale claim"),
+        mark_admission_ambiguous=lambda *_: pytest.fail("must not mark admission"),
+        acp_admit=lambda _: _receipt(),
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=lambda *_: completion_calls.append("complete") or _result(),
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
+    )
+
+    with pytest.raises(WorkerAttemptError) as error:
+        asyncio.run(supervisor.execute(_attempt(), _route()))
+    assert str(error.value) == "Worker submitted receipt claim drift"
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    assert completion_calls == []
+    assert supervisor._halted is True
+
+
+@pytest.mark.parametrize(
+    "contradiction",
+    [
+        "receipt_public_admission_reason",
+        "admission_public_receipt_reason",
+        "receipt_private_missing_evidence",
+        "admission_private_forged_receipt",
+    ],
+)
+def test_ambiguity_reason_and_evidence_shapes_cannot_cross(
+    tmp_path, contradiction: str
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+    )
+    claim_id = str(claimed["admission_claim_id"])
+    before = store.load()
+
+    with pytest.raises(ValueError, match="ambiguity"):
+        if contradiction == "receipt_public_admission_reason":
+            store.mark_mission_attempt_ambiguous(
+                attempt_id="mat_0123456789ab",
+                dispatch_key="dsp_" + "1" * 32,
+                expected_claim_id=claim_id,
+                observed_dispatch_key=None,
+                receipt_summary="admission outcome unknown",
+                reason="admission_outcome_unknown",
+            )
+        elif contradiction == "admission_public_receipt_reason":
+            store.mark_mission_attempt_admission_ambiguous(
+                attempt_id="mat_0123456789ab",
+                dispatch_key="dsp_" + "1" * 32,
+                expected_claim_id=claim_id,
+                reason="receipt_persistence_unknown",
+            )
+        elif contradiction == "receipt_private_missing_evidence":
+            store._transition_mission_attempt_receipt(
+                attempt_id="mat_0123456789ab",
+                dispatch_key="dsp_" + "1" * 32,
+                expected_claim_id=claim_id,
+                observed_dispatch_key=None,
+                receipt_summary="accepted",
+                target_state="ambiguous",
+                reason="receipt_persistence_unknown",
+            )
+        else:
+            store._transition_mission_attempt_receipt(
+                attempt_id="mat_0123456789ab",
+                dispatch_key="dsp_" + "1" * 32,
+                expected_claim_id=claim_id,
+                observed_dispatch_key="dsp_" + "1" * 32,
+                receipt_summary="forged",
+                target_state="ambiguous",
+                reason="admission_outcome_unknown",
+            )
+    assert store.load() == before
+
+
 @pytest.mark.parametrize(
     "transition", ["claim", "release", "submitted", "ambiguity"]
 )

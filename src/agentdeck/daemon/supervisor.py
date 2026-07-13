@@ -397,20 +397,30 @@ class WorkerAttemptSupervisor:
                 raise WorkerAttemptError("Worker ambiguity persistence failed")
             raise WorkerAttemptError("Worker admission receipt lineage drift")
 
-        persisted, _ = await _capture_callback(
+        persist_callback_ok, _ = await _capture_callback(
             self._persist_submitted,
             copy.deepcopy(claimed),
             copy.deepcopy(receipt),
         )
         submitted: MissionAttempt = {}
-        if persisted:
-            authority_ok, submitted = await self._current_attempt(baseline)
-            persisted = bool(
-                authority_ok
-                and _same_attempt_authority(baseline, submitted)
-                and submitted["state"] == "submitted"
-                and submitted["receipt_summary"] == receipt.summary
-            )
+        authority_ok, submitted = await self._current_attempt(baseline)
+        submitted_shape_ok = bool(
+            authority_ok
+            and _same_attempt_authority(baseline, submitted)
+            and submitted["state"] == "submitted"
+            and submitted["receipt_summary"] == receipt.summary
+        )
+        if (
+            submitted_shape_ok
+            and submitted["admission_claim_id"] != claimed["admission_claim_id"]
+        ):
+            self._halt()
+            raise WorkerAttemptError("Worker submitted receipt claim drift")
+        persisted = bool(
+            persist_callback_ok
+            and submitted_shape_ok
+            and submitted["admission_claim_id"] == claimed["admission_claim_id"]
+        )
         if not persisted:
             marked = await self._durably_mark_unknown(baseline, claimed, receipt)
             if marked:

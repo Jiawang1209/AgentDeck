@@ -2262,6 +2262,13 @@ class StateStore:
                 raise ValueError("mission attempt state invalid")
             validated = [_validate_mission_attempt_record(item) for item in attempts]
             _require_unique_mission_attempt_lineage(validated)
+            outbox = state.setdefault("protocol_event_outbox", [])
+            known_claim_ids = {
+                item["admission_claim_id"]
+                for item in validated
+                if item["admission_claim_id"] is not None
+            }
+            known_claim_ids.update(self._protocol_admission_claim_ids(outbox))
             matches = [item for item in validated if item["attempt_id"] == attempt_id]
             if len(matches) != 1:
                 if not matches:
@@ -2279,6 +2286,11 @@ class StateStore:
             if persisted["state"] != source_state:
                 raise ValueError("mission attempt admission transition is invalid")
             now = utc_now()
+            candidate_claim_id = (
+                new_id("adm") if target_state == "admitting" else None
+            )
+            if candidate_claim_id is not None and candidate_claim_id in known_claim_ids:
+                raise ValueError("duplicate mission admission claim identity")
             candidate = _validate_mission_attempt_record(
                 {
                     **persisted,
@@ -2286,9 +2298,7 @@ class StateStore:
                     "updated_at": (
                         now if target_state == "admitting" else persisted["created_at"]
                     ),
-                    "admission_claim_id": (
-                        new_id("adm") if target_state == "admitting" else None
-                    ),
+                    "admission_claim_id": candidate_claim_id,
                 }
             )
             event_name = "claimed" if target_state == "admitting" else "released"
@@ -2308,7 +2318,6 @@ class StateStore:
                     ),
                 },
             )
-            outbox = state.setdefault("protocol_event_outbox", [])
             outbox_ids = _validated_protocol_event_outbox_ids(outbox)
             journal_ids = self._strict_protocol_journal_event_ids()
             event_summary = asdict(event)
@@ -2327,6 +2336,25 @@ class StateStore:
             outbox.append(event_summary)
             self._atomic_save(state)
             return copy.deepcopy(candidate)
+
+    def _protocol_admission_claim_ids(self, outbox: object) -> set[str]:
+        _validated_protocol_event_outbox_ids(outbox)
+        records = list(outbox) if type(outbox) is list else []
+        self._strict_protocol_journal_event_ids()
+        if self.events_path.exists():
+            for line in self.events_path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    records.append(json.loads(line))
+        claim_ids: set[str] = set()
+        for record in records:
+            payload = record.get("payload") if type(record) is dict else None
+            claim_id = payload.get("admission_claim_id") if type(payload) is dict else None
+            if claim_id is None:
+                continue
+            if type(claim_id) is not str or re.fullmatch(r"adm_[0-9a-f]{12}", claim_id) is None:
+                raise ValueError("protocol admission claim history is invalid")
+            claim_ids.add(claim_id)
+        return claim_ids
 
     def claim_mission_attempt_admission(
         self, *, attempt_id: str, dispatch_key: str
@@ -2389,6 +2417,26 @@ class StateStore:
             "admission_outcome_unknown",
         }:
             raise ValueError("mission attempt ambiguity reason is invalid")
+        if (
+            target_state == "submitted"
+            and (reason is not None or observed_dispatch_key != dispatch_key)
+        ):
+            raise ValueError("mission attempt receipt evidence is invalid")
+        if (
+            target_state == "ambiguous"
+            and reason == "receipt_persistence_unknown"
+            and observed_dispatch_key is None
+        ):
+            raise ValueError("mission attempt receipt ambiguity evidence is invalid")
+        if (
+            target_state == "ambiguous"
+            and reason == "admission_outcome_unknown"
+            and (
+                observed_dispatch_key is not None
+                or receipt_summary != "admission outcome unknown"
+            )
+        ):
+            raise ValueError("mission attempt admission ambiguity evidence is invalid")
         with self._protocol_mutation_lock():
             state = self.load()
             attempts = state.get("mission_attempts", [])
@@ -2507,6 +2555,8 @@ class StateStore:
         receipt_summary: str,
         reason: str,
     ) -> dict[str, Any]:
+        if reason != "receipt_persistence_unknown":
+            raise ValueError("mission attempt receipt ambiguity reason is invalid")
         return self._transition_mission_attempt_receipt(
             attempt_id=attempt_id,
             dispatch_key=dispatch_key,
@@ -2525,6 +2575,8 @@ class StateStore:
         expected_claim_id: str,
         reason: str,
     ) -> dict[str, Any]:
+        if reason != "admission_outcome_unknown":
+            raise ValueError("mission attempt admission ambiguity reason is invalid")
         return self._transition_mission_attempt_receipt(
             attempt_id=attempt_id,
             dispatch_key=dispatch_key,
