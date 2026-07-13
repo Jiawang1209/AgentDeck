@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+import re
 
 from acp import run_agent, schema
 
@@ -116,6 +117,21 @@ class FakeAgent:
                 ],
             )
         text = prompt[0].text
+        if self.scenario == "mission_worker":
+            token_match = re.search(r"dsp_[0-9a-f]{32}", text)
+            if token_match is None:
+                raise RuntimeError("missing Mission dispatch token")
+            token = token_match.group(0)
+            text = "\n".join(
+                (
+                    f"handoff_token: {token}",
+                    "status: completed",
+                    "summary: fake worker completed",
+                    "verification: deterministic ACP fixture",
+                    "risks: none",
+                    "next_steps: continue",
+                )
+            )
         await self.client.session_update(
             session_id,
             schema.AgentMessageChunk(

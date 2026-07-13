@@ -181,7 +181,19 @@ from .daemon.lease import (
 from .daemon.protocol import DAEMON_RPC_PROTOCOL_VERSION
 from .daemon.server import DaemonClientRequestError, DaemonServer
 from .daemon.recovery import reconcile_startup
-from .daemon.service import ProjectDaemonService, ServiceError, validate_confirmed_mission_admission
+from .daemon.service import (
+    DaemonTransitionEffects,
+    DaemonWorkerCoordinator,
+    ProjectDaemonService,
+    ServiceError,
+    scheduler_facts_from_store,
+    validate_confirmed_mission_admission,
+)
+from .daemon.transports import (
+    AcpWorkerTransport,
+    TmuxWorkerTransport,
+    build_worker_prompt,
+)
 
 
 def _print_json(payload: object) -> None:
@@ -6264,6 +6276,14 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         def lease_validator(lease_id: str, generation: int) -> None:
             _validate_daemon_controller_lease(store, lease_id, generation)
 
+        def refresh_recovery_authority() -> None:
+            reconcile_startup(store, enable_scheduler=lambda: None)
+
+        def admit_and_reconcile(params: dict[str, object]) -> dict[str, object]:
+            result = validate_confirmed_mission_admission(store, params)
+            refresh_recovery_authority()
+            return result
+
         def lease_result(lease: ControllerLease) -> dict[str, object]:
             return {
                 "lease_id": lease.lease_id,
@@ -6314,7 +6334,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                         )
                     try:
                         result = await service.submit_mutation(
-                            lambda: validate_confirmed_mission_admission(store, params)
+                            lambda: admit_and_reconcile(params)
                         )
                     except ServiceError as exc:
                         raise DaemonClientRequestError(
@@ -6441,14 +6461,99 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                     flush()
                     state = store.load()
 
+        effects: DaemonTransitionEffects
         service = ProjectDaemonService(
             server=server,
             reconcile_all=lambda: reconcile_startup(
                 store, enable_scheduler=lambda: None
             ),
             flush_safe_outboxes=flush_pending_outboxes,
-            load_scheduler_facts=lambda: None,
-            apply_transition=lambda _decision: None,
+            load_scheduler_facts=lambda: scheduler_facts_from_store(store),
+            apply_transition=lambda decision: effects.apply(decision),
+        )
+        def transport_for(attempt: dict[str, object]):
+            mission = store.mission_by_id(str(attempt["mission_id"]))
+            snapshot = mission.get("execution_snapshot")
+            if not isinstance(snapshot, dict):
+                raise ServiceError("Worker execution snapshot is missing")
+            mission_snapshot = snapshot.get("mission")
+            if not isinstance(mission_snapshot, dict):
+                raise ServiceError("Worker execution snapshot is invalid")
+            step = next(
+                (
+                    item
+                    for item in mission_snapshot.get("steps", [])
+                    if isinstance(item, dict)
+                    and item.get("step_id") == attempt.get("step_id")
+                ),
+                None,
+            )
+            agent = next(
+                (item for item in config.agents if item.agent_id == attempt.get("agent_id")),
+                None,
+            )
+            if step is None or agent is None:
+                raise ServiceError("Worker execution authority is invalid")
+            plan = store.plan_by_id(str(mission_snapshot.get("plan_id") or ""))
+            raw_plan = plan.get("plan")
+            raw_steps = raw_plan.get("steps", []) if isinstance(raw_plan, dict) else []
+            raw_step = next(
+                (
+                    item
+                    for item in raw_steps
+                    if isinstance(item, dict)
+                    and item.get("step") == step.get("position")
+                    and item.get("agent_id") == step.get("agent_id")
+                ),
+                None,
+            )
+            if raw_step is None or not isinstance(raw_step.get("task"), str):
+                raise ServiceError("Worker task authority is invalid")
+            prompt = build_worker_prompt(
+                attempt,
+                agent,
+                task=raw_step["task"],
+                previous_handoff=None,
+            )
+            if agent.transport == "acp":
+                return AcpWorkerTransport(
+                    argv=agent.transport_command,
+                    workspace=root,
+                    prompt=prompt,
+                    request_timeout=float(mission.get("timeout_seconds") or 180),
+                )
+            project_view = store.project_view(config)
+            pane_id = next(
+                (
+                    item.get("runtime", {}).get("pane_id")
+                    for item in project_view.get("agents", [])
+                    if isinstance(item, dict)
+                    and item.get("agent_id") == agent.agent_id
+                    and isinstance(item.get("runtime"), dict)
+                ),
+                None,
+            )
+            if not isinstance(pane_id, str):
+                raise ServiceError("tmux Worker pane is not ready")
+            timeout_seconds = int(mission.get("timeout_seconds") or 180)
+            return TmuxWorkerTransport(
+                config=config.runtime,
+                pane_id=pane_id,
+                prompt=prompt,
+                max_polls=max(1, timeout_seconds),
+                poll_interval_seconds=1,
+            )
+
+        coordinator = DaemonWorkerCoordinator(
+            service=service,
+            store=store,
+            transport_for=transport_for,
+            refresh_recovery=refresh_recovery_authority,
+        )
+        effects = DaemonTransitionEffects(
+            store,
+            launch_attempt=coordinator.launch,
+            refresh_recovery=refresh_recovery_authority,
         )
         await service.start()
         status.update({
@@ -16641,7 +16746,7 @@ def _mission_execution_command(args: argparse.Namespace, *, resume: bool) -> int
                 raise MissionRunError("mission is not awaiting daemon admission")
             admission = asyncio.run(
                 admit_confirmed_mission(
-                    Path(config.root), config, mission
+                    Path(config.root), config, mission, state_store=store
                 )
             )
             payload = mission_status_payload(

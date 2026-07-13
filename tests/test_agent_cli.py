@@ -1491,7 +1491,8 @@ def test_mission_cli_submits_frozen_mission_without_foreground_worker_io(tmp_pat
     preview = create_mission_preview(config=load_config(root), store=store, provider=Provider(), user_message="让 Codex 和 Claude 接龙，共8轮", timeout_seconds=30)
     backend = InterruptingBackend()
     monkeypatch.setattr(cli, "TmuxBackend", lambda: backend)
-    async def fake_admit(_root, _config, mission):
+    async def fake_admit(_root, _config, mission, *, state_store):
+        assert state_store.root == store.root
         return {
             "accepted": True,
             "mission_id": mission["mission_id"],
@@ -11343,8 +11344,15 @@ def test_status_projects_compact_mission_summary_without_mutating_state(
         "created_at": mission["created_at"],
         "updated_at": mission["updated_at"],
         "confirmed_at": None,
-        "completed_at": None,
-        "status_command": f"agentdeck mission status --mission-id {mission['mission_id']}",
+            "completed_at": None,
+            "daemon_admission": {
+                "state": "not_confirmed",
+                "snapshot_hash": None,
+                "blocker": "Mission is not confirmed for daemon admission",
+                "recovery_command": f'agentdeck leader chat --message "批准执行 {mission["mission_id"]}"',
+                "updated_at": mission["updated_at"],
+            },
+            "status_command": f"agentdeck mission status --mission-id {mission['mission_id']}",
             "confirmation_command": f'agentdeck leader chat --message "批准执行 {mission["mission_id"]}"',
         "resume_command": f"agentdeck mission resume --mission-id {mission['mission_id']} --confirm",
     }

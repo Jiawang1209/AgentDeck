@@ -15,6 +15,7 @@ from agentdeck.daemon.recovery import (
     reconcile_startup,
     recovery_facts_from_persisted_state,
 )
+from agentdeck.daemon.service import scheduler_facts_from_store
 from agentdeck.runtime.protocol import TransportCapabilities
 from agentdeck.state import StateStore, canonical_snapshot_hash
 
@@ -1245,3 +1246,93 @@ def test_handoff_rechecks_reply_receipt_lineage_zero_write(tmp_path: Path) -> No
             state="pending",
         )
     assert store.state_path.read_bytes() == before
+
+
+def test_mission_daemon_admission_is_durable_idempotent_and_drift_safe(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    mission = state["missions"][0]
+    mission["status"] = "preparing"
+    mission["confirmed_at"] = "2026-07-13T01:00:00+00:00"
+    state["mission_attempts"] = []
+    state["mission_recovery_evidence"] = [
+        {"mission_id": MISSION_ID, "attempt_id": None, "agent_id": None}
+    ]
+    state["protocol_event_outbox"] = []
+    mission["daemon_admission"] = {
+        "state": "confirmed_not_admitted",
+        "snapshot_hash": mission["snapshot_hash"],
+        "blocker": "verified project daemon is unavailable",
+        "recovery_command": f"agentdeck mission run --mission-id {MISSION_ID} --confirm",
+        "updated_at": "2026-07-13T01:01:00+00:00",
+    }
+    store.save(state)
+
+    accepted = store.admit_mission_execution(
+        MISSION_ID, snapshot_hash=str(mission["snapshot_hash"])
+    )
+    assert accepted["state"] == "admitted"
+    assert accepted["blocker"] is None
+    assert accepted["recovery_command"] is None
+    before = store.state_path.read_bytes()
+    assert store.admit_mission_execution(
+        MISSION_ID, snapshot_hash=str(mission["snapshot_hash"])
+    ) == accepted
+    assert store.state_path.read_bytes() == before
+
+    with pytest.raises(ValueError, match="Mission admission drift"):
+        store.admit_mission_execution(
+            MISSION_ID, snapshot_hash="sha256:" + "9" * 64
+        )
+    assert store.state_path.read_bytes() == before
+
+
+def test_confirmed_not_admitted_is_persisted_with_recovery_control(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    state["missions"][0]["status"] = "preparing"
+    state["missions"][0]["confirmed_at"] = "2026-07-13T01:00:00+00:00"
+    store.save(state)
+    record = store.record_mission_not_admitted(
+        MISSION_ID,
+        snapshot_hash=str(state["missions"][0]["snapshot_hash"]),
+        blocker="verified project daemon is unavailable",
+    )
+    assert record["state"] == "confirmed_not_admitted"
+    assert store.load()["missions"][0]["daemon_admission"] == record
+    assert record["recovery_command"].endswith(
+        f"--mission-id {MISSION_ID} --confirm"
+    )
+    assert scheduler_facts_from_store(store) is None
+
+
+def test_admitted_mission_projects_real_scheduler_facts(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    mission = state["missions"][0]
+    mission["status"] = "preparing"
+    mission["confirmed_at"] = "2026-07-13T01:00:00+00:00"
+    mission["current_step"] = 0
+    mission["daemon_admission"] = {
+        "state": "admitted", "snapshot_hash": mission["snapshot_hash"],
+        "blocker": None, "recovery_command": f"agentdeck mission run --mission-id {MISSION_ID} --confirm",
+        "updated_at": "2026-07-13T01:01:00+00:00",
+    }
+    state["mission_attempts"] = []
+    state["mission_recovery_evidence"] = [
+        {"mission_id": MISSION_ID, "attempt_id": None, "agent_id": None}
+    ]
+    store.save(state)
+    projected = scheduler_facts_from_store(store)
+    assert projected is not None
+    assert projected.mission_id == MISSION_ID
+    assert projected.step_id == "step_1"
+    assert projected.step_state == "pending"
+    assert projected.attempt_state == "none"

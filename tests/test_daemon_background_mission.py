@@ -1,112 +1,121 @@
 from __future__ import annotations
 
-import json
-import os
+import asyncio
 from pathlib import Path
-import subprocess
+import shutil
 import sys
+import tempfile
 import time
 
+from agentdeck.config import load_config, write_default_config
+from agentdeck.daemon.client import DaemonClient, admit_confirmed_mission, connect_or_start
+from agentdeck.mission_orchestration import confirm_mission_for_daemon, create_mission_preview
+from agentdeck.providers import LeaderPlanRequest
+from agentdeck.state import StateStore
 
-def _wait_for(path: Path, predicate, *, timeout: float = 5.0) -> object:
+
+FAKE_AGENT = Path(__file__).parent / "fixtures" / "fake_acp_agent.py"
+
+
+class TwoWorkerProvider:
+    name = "fake"
+
+    def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
+        del request
+        return {
+            "goal": "complete two deterministic steps",
+            "summary": "planner then reviewer",
+            "steps": [
+                {"step": 1, "agent_id": "planner", "role": "planning", "task": "plan", "risk": "review", "requires_approval": True},
+                {"step": 2, "agent_id": "reviewer", "role": "review", "task": "review", "risk": "review", "requires_approval": True},
+            ],
+            "approval_required": True,
+            "dispatch_ready": False,
+            "declared_tests": ["deterministic ACP fixture"],
+            "acceptance_criteria": ["both workers complete"],
+        }
+
+
+def _wait_for_completed(store: StateStore, mission_id: str, timeout: float = 12) -> dict[str, object]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if path.exists():
-            value = json.loads(path.read_text(encoding="utf-8"))
-            if predicate(value):
-                return value
-        time.sleep(0.01)
-    raise AssertionError(f"timed out waiting for {path.name}")
-
-
-def test_confirmed_mission_continues_after_client_disconnect(tmp_path: Path) -> None:
-    state_path = tmp_path / "service-state.json"
-    child = tmp_path / "background_service.py"
-    child.write_text(
-        """
-import asyncio
-import json
-from pathlib import Path
-import sys
-
-from agentdeck.daemon.scheduler import SchedulerFacts
-from agentdeck.daemon.service import ProjectDaemonService
-
-path = Path(sys.argv[1])
-state = {"worker": "planner", "validated": [], "client_connected": True}
-
-def write():
-    path.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
-
-class Server:
-    async def start(self):
-        write()
-    async def close(self):
-        pass
-
-def facts():
-    if state["worker"] == "planner":
-        return SchedulerFacts("mis_0123456789ab", "running", "step_1", "pending", None, "none", "none", "none", "none", True, False, False, "valid", "valid", "owned", 0, None)
-    if state["worker"] == "reviewer":
-        return SchedulerFacts("mis_0123456789ab", "running", "step_2", "pending", None, "none", "none", "none", "none", True, False, False, "valid", "valid", "owned", 0, None)
-    return None
-
-def apply(decision):
-    if decision.step_id == "step_1":
-        state["validated"].append("planner")
-        state["worker"] = "reviewer"
-    elif decision.step_id == "step_2":
-        if state["validated"] != ["planner"]:
-            raise RuntimeError("reviewer activated before planner validation")
-        state["validated"].append("reviewer")
-        state["worker"] = None
-    write()
-
-async def main():
-    service = ProjectDaemonService(server=Server(), reconcile_all=lambda: None, flush_safe_outboxes=lambda: None, load_scheduler_facts=facts, apply_transition=apply)
-    await service.start()
-    await asyncio.to_thread(sys.stdin.buffer.read, 1)
-    state["client_connected"] = False
-    write()
-    while state["worker"] is not None:
-        await service.tick()
-        await asyncio.sleep(0)
-    await service.close()
-
-asyncio.run(main())
-""",
-        encoding="utf-8",
+        mission = store.mission_by_id(mission_id)
+        if mission.get("status") == "completed":
+            return mission
+        time.sleep(0.05)
+    state = store.load()
+    raise AssertionError(
+        "timed out waiting for daemon Mission completion: "
+        + repr(
+            {
+                "mission": store.mission_by_id(mission_id),
+                "attempts": state.get("mission_attempts"),
+                "replies": state.get("mission_worker_replies"),
+                "handoffs": state.get("mission_handoffs"),
+                "recovery": state.get("recovery_decisions"),
+            }
+        )
     )
-    process = subprocess.Popen(
-        [sys.executable, str(child), str(state_path)],
-        cwd=tmp_path,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
+
+
+def test_confirmed_mission_continues_after_real_client_disconnect(request) -> None:
+    root = Path(tempfile.mkdtemp(prefix="agentdeck-mission-", dir="/tmp")).resolve() / "repo"
+    request.addfinalizer(lambda: shutil.rmtree(root.parent, ignore_errors=True))
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    config_path = root / ".agentdeck" / "config.toml"
+    text = config_path.read_text(encoding="utf-8")
+    text = text.replace('provider = "deepseek"', 'provider = "fake"', 1)
+    text = text.replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
+    command = f'[{sys.executable!r}, {str(FAKE_AGENT)!r}, "mission_worker"]'
+    text = text.replace(
+        'role = "planning"',
+        f'role = "planning"\ntransport = "acp"\ntransport_command = {command}',
+        1,
     )
-    try:
-        connected = _wait_for(
-            state_path, lambda value: value.get("client_connected") is True
+    text = text.replace(
+        'role = "review"',
+        f'role = "review"\ntransport = "acp"\ntransport_command = {command}',
+        1,
+    )
+    config_path.write_text(text, encoding="utf-8")
+    config = load_config(root)
+    store = StateStore(root)
+    preview = create_mission_preview(
+        config=config,
+        store=store,
+        provider=TwoWorkerProvider(),
+        user_message="让 Codex 和 Claude 严格串行完成两步审阅，共2轮",
+        timeout_seconds=30,
+    )
+    confirmed = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+
+    async def admit_then_disconnect() -> dict[str, object]:
+        client = await connect_or_start(root, config)
+        await client.close()
+        result = await admit_confirmed_mission(root, config, confirmed, state_store=store)
+        return result
+
+    admitted = asyncio.run(admit_then_disconnect())
+    assert admitted["accepted"] is True
+    completed = _wait_for_completed(store, str(preview["mission_id"]))
+    assert completed["current_step"] == 2
+    state = store.load()
+    assert [item["state"] for item in state["mission_attempts"]] == ["succeeded", "succeeded"]
+    assert [item["state"] for item in state["mission_worker_replies"]] == ["validated", "validated"]
+    assert [item["state"] for item in state["mission_handoffs"]] == ["recorded", "recorded"]
+
+    async def stop() -> None:
+        client = await DaemonClient.connect_verified(root)
+        lease = await client.request("controller.acquire", {"client_id": "test-cleanup"})
+        await client.request(
+            "daemon.stop",
+            {"lease_id": lease["lease_id"], "generation": lease["generation"]},
+            lease_id=lease["lease_id"], lease_generation=lease["generation"],
         )
-        assert connected["worker"] == "planner"
-        assert process.stdin is not None
-        process.stdin.close()
-        disconnected = _wait_for(
-            state_path, lambda value: value.get("client_connected") is False
-        )
-        assert disconnected["worker"] in {"planner", "reviewer", None}
-        completed = _wait_for(
-            state_path, lambda value: value.get("worker") is None
-        )
-        assert completed["validated"] == ["planner", "reviewer"]
-        assert process.wait(timeout=2) == 0
-    finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=1)
+        await client.close()
+
+    asyncio.run(stop())

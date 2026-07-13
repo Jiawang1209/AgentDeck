@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from types import MappingProxyType
 
 import pytest
@@ -13,10 +14,12 @@ from agentdeck.daemon.client import (
     admit_confirmed_mission,
 )
 from agentdeck.daemon.service import (
+    DaemonWorkerCoordinator,
     ProjectDaemonService,
     ServiceError,
     validate_confirmed_mission_admission,
 )
+from agentdeck.daemon.supervisor import SubmittedReceipt, TransportResult
 
 
 MISSION_ID = "mis_0123456789ab"
@@ -193,6 +196,62 @@ def test_mutations_and_worker_completions_share_one_service_owned_queue() -> Non
     asyncio.run(_case_mutations_and_worker_completions_share_one_service_owned_queue())
 
 
+def test_worker_coordinator_persists_receipt_before_starting_completion() -> None:
+    calls: list[str] = []
+    attempt = {
+        "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,
+        "step_id": "step_1", "agent_id": "planner", "configured_transport": "tmux",
+        "dispatch_key": "dsp_" + "a" * 32, "state": "prepared",
+    }
+
+    class Store:
+        def claim_mission_attempt_admission(self, **kwargs):
+            calls.append("claim")
+            return {**attempt, "state": "admitting", "admission_claim_id": "adm_0123456789ab"}
+        def record_mission_attempt_submitted(self, **kwargs):
+            calls.append("persist:submitted")
+            return {**attempt, "state": "submitted", "admission_claim_id": "adm_0123456789ab"}
+        def record_mission_attempt_result(self, **kwargs):
+            calls.append("persist:result")
+        def record_mission_reply_evidence(self, **kwargs):
+            calls.append("persist:reply")
+
+    class Transport:
+        async def admit(self, claimed):
+            calls.append("io:admit")
+            return SubmittedReceipt("receipt-1", attempt["dispatch_key"], "sent")
+        async def complete(self, submitted, receipt):
+            assert "persist:submitted" in calls
+            calls.append("io:complete")
+            return TransportResult("structured_reply", True, {
+                "handoff_token": attempt["dispatch_key"], "status": "completed",
+                "summary": "done", "verification": "ok", "risks": "none",
+                "next_steps": "continue",
+            })
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer(calls), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        coordinator = DaemonWorkerCoordinator(
+            service=service, store=Store(), transport_for=lambda _attempt: Transport()
+        )
+        coordinator.launch(attempt)
+        for _ in range(10):
+            await asyncio.sleep(0)
+            await service.tick()
+            if "persist:reply" in calls:
+                break
+        assert calls.index("persist:submitted") < calls.index("io:complete")
+        assert calls[-2:] == ["persist:result", "persist:reply"]
+        await service.close()
+
+    asyncio.run(case())
+
+
 def test_run_owns_bounded_loop_and_shutdown() -> None:
     calls: list[str] = []
     service: ProjectDaemonService
@@ -219,6 +278,13 @@ class AdmissionStore:
     def mission_by_id(self, mission_id: str) -> dict[str, object]:
         assert mission_id == self.mission["mission_id"]
         return dict(self.mission)
+
+    def admit_mission_execution(
+        self, mission_id: str, *, snapshot_hash: str
+    ) -> dict[str, object]:
+        assert mission_id == self.mission["mission_id"]
+        assert snapshot_hash == self.mission["snapshot_hash"]
+        return {"state": "admitted", "snapshot_hash": snapshot_hash}
 
 
 def test_daemon_admission_revalidates_exact_frozen_snapshot_digest() -> None:
@@ -291,12 +357,23 @@ def test_unavailable_daemon_leaves_confirmed_mission_visible_not_foreground() ->
     async def unavailable(*_args: object, **_kwargs: object) -> object:
         raise DaemonUnavailable("offline")
 
+    class DeferredStore:
+        def record_mission_not_admitted(self, mission_id, *, snapshot_hash, blocker):
+            return {
+                "state": "confirmed_not_admitted",
+                "snapshot_hash": snapshot_hash,
+                "blocker": blocker,
+                "recovery_command": f"agentdeck mission run --mission-id {mission_id} --confirm",
+                "updated_at": "2026-07-13T00:00:00+00:00",
+            }
+
     result = asyncio.run(
         admit_confirmed_mission(
             object(),
             object(),
             mission,
             connect_factory=unavailable,
+            state_store=DeferredStore(),
         )
     )
 
@@ -312,5 +389,44 @@ def test_unavailable_daemon_leaves_confirmed_mission_visible_not_foreground() ->
             "command": f"agentdeck mission run --mission-id {MISSION_ID} --confirm",
             "safety": "explicit_user",
         },
+        "durable_admission": {
+            "state": "confirmed_not_admitted",
+            "snapshot_hash": snapshot["execution_hash"],
+            "blocker": "verified project daemon is unavailable",
+            "recovery_command": f"agentdeck mission run --mission-id {MISSION_ID} --confirm",
+            "updated_at": "2026-07-13T00:00:00+00:00",
+        },
     }
     assert foreground_calls == []
+
+
+def test_lost_admission_response_reports_existing_durable_admission() -> None:
+    snapshot_hash = "sha256:" + "a" * 64
+    mission = {
+        "mission_id": MISSION_ID,
+        "status": "preparing",
+        "snapshot_hash": snapshot_hash,
+        "execution_snapshot": {
+            "mission": {"mission_id": MISSION_ID},
+            "execution_hash": snapshot_hash,
+        },
+    }
+
+    async def unavailable(*_args, **_kwargs):
+        raise DaemonUnavailable("response lost")
+
+    class Store:
+        def record_mission_not_admitted(self, *_args, **_kwargs):
+            return {
+                "state": "admitted", "snapshot_hash": snapshot_hash,
+                "blocker": None, "recovery_command": None, "updated_at": "now",
+            }
+
+    result = asyncio.run(
+        admit_confirmed_mission(
+            Path("."), object(), mission,
+            connect_factory=unavailable, state_store=Store(),
+        )
+    )
+    assert result["accepted"] is True
+    assert result["state"] == "admitted"

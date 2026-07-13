@@ -2438,6 +2438,125 @@ class StateStore:
             self._atomic_save(state)
             return copy.deepcopy(mission)
 
+    @staticmethod
+    def _mission_admission_record(
+        mission_id: str,
+        snapshot_hash: str,
+        *,
+        state: str,
+        blocker: str | None,
+    ) -> dict[str, Any]:
+        if state not in {"confirmed_not_admitted", "admitted"}:
+            raise ValueError("Mission admission state invalid")
+        if state == "admitted" and blocker is not None:
+            raise ValueError("Mission admission blocker invalid")
+        if state == "confirmed_not_admitted" and (
+            type(blocker) is not str or not blocker
+        ):
+            raise ValueError("Mission admission blocker invalid")
+        return {
+            "state": state,
+            "snapshot_hash": snapshot_hash,
+            "blocker": blocker,
+            "recovery_command": (
+                f"agentdeck mission run --mission-id {mission_id} --confirm"
+                if state == "confirmed_not_admitted"
+                else None
+            ),
+            "updated_at": utc_now(),
+        }
+
+    def record_mission_not_admitted(
+        self, mission_id: str, *, snapshot_hash: str, blocker: str
+    ) -> dict[str, Any]:
+        with self._protocol_mutation_lock():
+            state = self.load()
+            mission = self._unique_mission_record(state, mission_id)
+            if (
+                mission.get("status") != "preparing"
+                or mission.get("snapshot_hash") != snapshot_hash
+                or validate_execution_snapshot(mission.get("execution_snapshot"))[
+                    "execution_hash"
+                ]
+                != snapshot_hash
+            ):
+                raise ValueError("Mission admission drift")
+            current = mission.get("daemon_admission")
+            if isinstance(current, dict) and current.get("state") == "admitted":
+                return copy.deepcopy(current)
+            if (
+                isinstance(current, dict)
+                and current.get("state") == "confirmed_not_admitted"
+                and current.get("snapshot_hash") == snapshot_hash
+                and current.get("blocker") == blocker
+            ):
+                return copy.deepcopy(current)
+            record = self._mission_admission_record(
+                mission_id,
+                snapshot_hash,
+                state="confirmed_not_admitted",
+                blocker=blocker,
+            )
+            mission["daemon_admission"] = record
+            self._append_recovery_audit_locked(
+                state,
+                "mission_admission_deferred",
+                {"mission_id": mission_id, "snapshot_hash": snapshot_hash},
+            )
+            self._atomic_save(state)
+            return copy.deepcopy(record)
+
+    def admit_mission_execution(
+        self, mission_id: str, *, snapshot_hash: str
+    ) -> dict[str, Any]:
+        from .daemon.recovery import validate_mission_recovery_evidence_record
+
+        with self._protocol_mutation_lock():
+            state = self.load()
+            mission = self._unique_mission_record(state, mission_id)
+            try:
+                snapshot = validate_execution_snapshot(
+                    mission.get("execution_snapshot")
+                )
+            except ValueError:
+                raise ValueError("Mission admission drift") from None
+            bindings = [
+                validate_mission_recovery_evidence_record(item)
+                for item in state.setdefault("mission_recovery_evidence", [])
+                if isinstance(item, dict) and item.get("mission_id") == mission_id
+            ]
+            if (
+                mission.get("status") != "preparing"
+                or mission.get("confirmed_at") is None
+                or mission.get("snapshot_hash") != snapshot_hash
+                or snapshot["execution_hash"] != snapshot_hash
+                or len(bindings) != 1
+                or bindings[0] != {
+                    "mission_id": mission_id,
+                    "attempt_id": None,
+                    "agent_id": None,
+                }
+            ):
+                raise ValueError("Mission admission drift")
+            current = mission.get("daemon_admission")
+            if (
+                isinstance(current, dict)
+                and current.get("state") == "admitted"
+                and current.get("snapshot_hash") == snapshot_hash
+            ):
+                return copy.deepcopy(current)
+            record = self._mission_admission_record(
+                mission_id, snapshot_hash, state="admitted", blocker=None
+            )
+            mission["daemon_admission"] = record
+            self._append_recovery_audit_locked(
+                state,
+                "mission_admitted",
+                {"mission_id": mission_id, "snapshot_hash": snapshot_hash},
+            )
+            self._atomic_save(state)
+            return copy.deepcopy(record)
+
     def prepare_mission_attempt(
         self,
         *,
@@ -3788,6 +3907,126 @@ class StateStore:
             target_state="submitted",
             reason=None,
         )
+
+    def record_mission_attempt_result(
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        succeeded: bool,
+        summary: str,
+    ) -> dict[str, Any]:
+        if type(succeeded) is not bool or type(summary) is not str or not summary:
+            raise ValueError("mission attempt result invalid")
+        with self._protocol_mutation_lock():
+            state = self.load()
+            attempts = [
+                _validate_mission_attempt_record(item)
+                for item in state.setdefault("mission_attempts", [])
+            ]
+            matches = [item for item in attempts if item["attempt_id"] == attempt_id]
+            if (
+                len(matches) != 1
+                or matches[0]["dispatch_key"] != dispatch_key
+                or matches[0]["state"] not in {"submitted", "running"}
+            ):
+                raise ValueError("mission attempt result authority invalid")
+            candidate = _validate_mission_attempt_record(
+                {
+                    **matches[0],
+                    "state": "succeeded" if succeeded else "failed",
+                    "updated_at": utc_now(),
+                    "receipt_summary": summary,
+                    "terminal_reason": None if succeeded else "worker_failed",
+                    "blocker": None if succeeded else "worker_failed",
+                }
+            )
+            index = next(
+                i for i, item in enumerate(state["mission_attempts"])
+                if item.get("attempt_id") == attempt_id
+            )
+            state["mission_attempts"][index] = candidate
+            self._append_recovery_audit_locked(
+                state,
+                "mission_attempt_result_recorded",
+                {
+                    "mission_id": candidate["mission_id"],
+                    "attempt_id": attempt_id,
+                    "dispatch_key": dispatch_key,
+                    "state": candidate["state"],
+                },
+            )
+            self._atomic_save(state)
+            return copy.deepcopy(candidate)
+
+    def advance_mission_after_handoff(
+        self, mission_id: str, *, attempt_id: str, handoff_id: str
+    ) -> dict[str, Any]:
+        from .daemon.recovery import validate_mission_handoff_evidence_record
+
+        with self._protocol_mutation_lock():
+            state = self.load()
+            mission = self._unique_mission_record(state, mission_id)
+            handoffs = [
+                validate_mission_handoff_evidence_record(item)
+                for item in state.setdefault("mission_handoffs", [])
+            ]
+            matches = [
+                item for item in handoffs
+                if item["attempt_id"] == attempt_id
+                and item["handoff_id"] == handoff_id
+                and item["mission_id"] == mission_id
+                and item["state"] == "recorded"
+            ]
+            attempts = [
+                _validate_mission_attempt_record(item)
+                for item in state.setdefault("mission_attempts", [])
+            ]
+            attempt = next(
+                (item for item in attempts if item["attempt_id"] == attempt_id), None
+            )
+            if (
+                len(matches) != 1
+                or attempt is None
+                or attempt["state"] not in {"completed", "succeeded"}
+                or mission.get("current_step", 0) + 1
+                != int(attempt["step_id"].split("_")[1])
+            ):
+                raise ValueError("Mission handoff advance authority invalid")
+            mission["current_step"] = int(mission.get("current_step", 0)) + 1
+            mission["status"] = "running"
+            mission["updated_at"] = utc_now()
+            # Recovery authority remains bound to the durable latest attempt
+            # until the next attempt atomically replaces it.  The scheduler
+            # derives logical step-local currentness separately.
+            self._append_recovery_audit_locked(
+                state, "mission_step_activated", {
+                    "mission_id": mission_id,
+                    "attempt_id": attempt_id,
+                    "current_step": mission["current_step"],
+                }
+            )
+            self._atomic_save(state)
+            return copy.deepcopy(mission)
+
+    def complete_admitted_mission(self, mission_id: str) -> dict[str, Any]:
+        with self._protocol_mutation_lock():
+            state = self.load()
+            mission = self._unique_mission_record(state, mission_id)
+            if (
+                mission.get("daemon_admission", {}).get("state") != "admitted"
+                or mission.get("current_step") != mission.get("step_count")
+            ):
+                raise ValueError("Mission completion authority invalid")
+            mission.update({
+                "status": "completed", "completed_at": utc_now(),
+                "updated_at": utc_now(), "stop_reason": None,
+            })
+            self._append_recovery_audit_locked(
+                state, "mission_completed", {"mission_id": mission_id}
+            )
+            self._atomic_save(state)
+            return copy.deepcopy(mission)
 
     def mark_mission_attempt_ambiguous(
         self,
@@ -5324,6 +5563,15 @@ class StateStore:
                 if "invalid mission worker summaries" not in blockers:
                     blockers.append("invalid mission worker summaries")
             commands = mission_commands(mission_id)
+            daemon_admission = mission.get("daemon_admission")
+            if not isinstance(daemon_admission, dict):
+                daemon_admission = {
+                    "state": "not_confirmed",
+                    "snapshot_hash": None,
+                    "blocker": "Mission is not confirmed for daemon admission",
+                    "recovery_command": commands["confirmation_command"],
+                    "updated_at": mission.get("updated_at"),
+                }
             items.append(
                 {
                     "mission_id": mission_id,
@@ -5349,6 +5597,7 @@ class StateStore:
                     "updated_at": mission.get("updated_at"),
                     "confirmed_at": mission.get("confirmed_at"),
                     "completed_at": mission.get("completed_at"),
+                    "daemon_admission": copy.deepcopy(daemon_admission),
                     **commands,
                 }
             )

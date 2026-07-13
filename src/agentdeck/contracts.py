@@ -534,6 +534,7 @@ PROJECT_VIEW_MISSION_ITEM_FIELDS = (
     "updated_at",
     "confirmed_at",
     "completed_at",
+    "daemon_admission",
     "status_command",
     "confirmation_command",
     "resume_command",
@@ -7252,6 +7253,15 @@ def _validate_project_view_mission_items(
         for field in ("can_start", "can_resume"):
             if field in item and not isinstance(item[field], bool):
                 errors.append(f"missions.items[{index}].{field} must be a boolean")
+        admission = item.get("daemon_admission")
+        if not isinstance(admission, dict) or set(admission) != {
+            "state", "snapshot_hash", "blocker", "recovery_command", "updated_at"
+        }:
+            errors.append(f"missions.items[{index}].daemon_admission is invalid")
+        elif admission.get("state") not in {
+            "not_confirmed", "confirmed_not_admitted", "admitted"
+        }:
+            errors.append(f"missions.items[{index}].daemon_admission state is invalid")
         for field in ("current_step", "step_count", "timeout_seconds"):
             if field in item and (
                 not isinstance(item[field], int) or isinstance(item[field], bool)
@@ -11966,6 +11976,13 @@ def project_view_example() -> dict[str, object]:
                     "updated_at": "2026-07-11T00:00:00+00:00",
                     "confirmed_at": None,
                     "completed_at": None,
+                    "daemon_admission": {
+                        "state": "not_confirmed",
+                        "snapshot_hash": None,
+                        "blocker": "Mission confirmation is required",
+                        "recovery_command": None,
+                        "updated_at": None,
+                    },
                     "status_command": (
                         "agentdeck mission status --mission-id mis_0123456789ab"
                     ),

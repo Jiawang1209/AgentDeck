@@ -893,6 +893,7 @@ async def admit_confirmed_mission(
     mission: Mapping[str, object],
     *,
     connect_factory: Callable[..., Awaitable[Any]] = connect_or_start,
+    state_store: Any | None = None,
 ) -> dict[str, object]:
     """Submit one already-frozen Mission without a foreground fallback."""
     mission_id = mission.get("mission_id") if isinstance(mission, Mapping) else None
@@ -923,10 +924,30 @@ async def admit_confirmed_mission(
             "safety": "explicit_user",
         },
     }
+    def persist_unavailable() -> dict[str, object]:
+        nonlocal state_store
+        if state_store is None:
+            from ..state import StateStore
+
+            state_store = StateStore(Path(root))
+        record = state_store.record_mission_not_admitted(
+            mission_id,
+            snapshot_hash=snapshot_hash,
+            blocker="verified project daemon is unavailable",
+        )
+        if record.get("state") == "admitted":
+            return {
+                "accepted": True,
+                "mission_id": mission_id,
+                "snapshot_hash": snapshot_hash,
+                "state": "admitted",
+                "durable_admission": record,
+            }
+        return {**unavailable, "durable_admission": record}
     try:
         client = await connect_factory(root, config)
     except (DaemonClientError, DaemonUnavailable, OSError):
-        return unavailable
+        return persist_unavailable()
     lease_id: str | None = None
     generation: int | None = None
     try:
@@ -937,7 +958,7 @@ async def admit_confirmed_mission(
         lease_id = acquired.get("lease_id")
         generation = acquired.get("generation")
         if type(lease_id) is not str or type(generation) is not int:
-            return unavailable
+            return persist_unavailable()
         result = await client.request(
             "mission.admit",
             {
@@ -955,10 +976,10 @@ async def admit_confirmed_mission(
             "state": "admitted",
         }
         if result != expected:
-            return unavailable
+            return persist_unavailable()
         return result
     except (DaemonClientError, DaemonUnavailable, OSError):
-        return unavailable
+        return persist_unavailable()
     finally:
         if lease_id is not None and generation is not None:
             try:

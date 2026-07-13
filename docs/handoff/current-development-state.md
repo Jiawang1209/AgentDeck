@@ -1,6 +1,6 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-13
+Updated: 2026-07-14
 
 ## Natural-language Mission Phase 0 baseline — accepted
 
@@ -71,7 +71,9 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-**Continue the approved Subagent-Driven Phase 3 M2 plan at Task 7.** Tasks 1–6 are the M2a foundation: compact lifecycle state, strict `daemon-rpc/v1`, verified one-per-project ownership, controller lease, bounded Unix-socket client/server, and the ProjectView/workbench/CLI/contracts control surface. The implementation plan remains `docs/superpowers/plans/2026-07-13-agentdeck-project-daemon.md` and the approved design remains `docs/superpowers/specs/2026-07-13-agentdeck-project-daemon-design.md`.
+**Task 11 of the approved Subagent-Driven Phase 3 M2 plan is complete; continue at Task 12 only after review.** Tasks 1–11 now include the M2a daemon foundation, frozen Mission/attempt authority, pure scheduler, supervised ACP/tmux Worker boundaries, startup recovery, and the production authoritative daemon service. The implementation plan remains `docs/superpowers/plans/2026-07-13-agentdeck-project-daemon.md` and the approved design remains `docs/superpowers/specs/2026-07-13-agentdeck-project-daemon-design.md`.
+
+Task 11 production truth: `mission.admit` persists exact-digest daemon admission or `confirmed_not_admitted`; ProjectView exposes compact `daemon_admission`; `_daemon serve` loads real SchedulerFacts and applies controlled transitions; Worker admission/completion I/O is state-free and returns through one service-owned queue; submitted receipts are durable before completion begins; ACP and tmux use explicit configured adapters without fallback. The real disconnect acceptance starts `_daemon serve`, admits through `DaemonClient`, closes the client, runs two official-SDK fake ACP Workers, and observes two succeeded attempts, validated replies, recorded handoffs, and a completed Mission in the real StateStore.
 
 Task 6's stop path is a complete production flow rather than a test-state shortcut: `daemon stop --confirm` acquires a temporary controller only when no active controller exists, durably flushes lease grant/release audit events, releases before acknowledgement, and sets the server-owned stop event only after response drain. A rejected automatic stop now invokes lease-gated `controller.release`; release must be confirmed or cleanup becomes an explicit blocker, while user-supplied credentials are never auto-released. `controller.renew` and `controller.release` both require the current lease; automatic takeover and background outbox flushing are not implemented. Lease credentials remain RPC-internal and are not added to ProjectView/workbench cards.
 
@@ -79,7 +81,7 @@ The Task 6 quality closure also makes the hidden daemon's idle loop reload the f
 
 The final Task 6 spec closure makes offline ProjectView use the same pure time-aware lease predicate as live status: only a strictly parsed active `lse_` lease whose aware expiry is later than current UTC reports `controller_present=true`; expired, terminal, naive, and malformed facts report false without repairing or writing state. DaemonServer also owns a monotonic process-local `activity_generation`: accept and each successfully decoded protocol-valid request increment once, while close never increments. The idle loop remembers the last generation and resets `idle_since` before evaluating keepalive, so a sub-100ms client that connects and closes entirely between polls still grants a new full idle window. This counter is runtime-only, is not added to ProjectView/contracts, and is not execution authority.
 
-M2a does **not** schedule a Mission in the background. `mission-scheduler/v1` and its workbench card report `inactive` with an explicit blocker. Task 7 must next freeze Mission execution snapshots and attempt identities before Task 8 may add the pure one-transition scheduler. A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
+Task 12 must next enforce permission, takeover, reroute, and shutdown gates around this real service; it must not weaken exact transport selection, recovery binding, submitted-receipt durability, or the single service-owned mutation queue. A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
 
 The completed natural-language Mission and G-series work below is historical context only. It must not be treated as an active continuation request or redone.
 
