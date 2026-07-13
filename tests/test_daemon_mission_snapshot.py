@@ -314,7 +314,7 @@ def test_freeze_rejects_preview_authority_plan_fact_drift_with_full_tree_zero_wr
 def test_freeze_rejects_preview_authority_config_drift_with_full_tree_zero_write(
     tmp_path, monkeypatch, drift
 ) -> None:
-    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
     changed = (
         replace(
             config,
