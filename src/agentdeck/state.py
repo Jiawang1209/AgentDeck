@@ -2185,6 +2185,143 @@ class StateStore:
             self._atomic_save(state)
             return copy.deepcopy(attempt)
 
+    def mission_attempt_by_id(self, attempt_id: str) -> dict[str, Any]:
+        if type(attempt_id) is not str or re.fullmatch(r"mat_[0-9a-f]{12}", attempt_id) is None:
+            raise ValueError("mission attempt identity invalid")
+        attempts = self.load().get("mission_attempts", [])
+        if type(attempts) is not list:
+            raise ValueError("mission attempt state invalid")
+        validated = [_validate_mission_attempt_record(item) for item in attempts]
+        matches = [item for item in validated if item["attempt_id"] == attempt_id]
+        if len(matches) != 1:
+            if not matches:
+                raise KeyError(attempt_id)
+            raise ValueError("duplicate mission attempt identity")
+        return matches[0]
+
+    def _transition_mission_attempt_receipt(
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        receipt_summary: str,
+        target_state: str,
+        reason: str | None,
+    ) -> dict[str, Any]:
+        if (
+            type(attempt_id) is not str
+            or re.fullmatch(r"mat_[0-9a-f]{12}", attempt_id) is None
+            or type(dispatch_key) is not str
+            or re.fullmatch(r"dsp_[0-9a-f]{32}", dispatch_key) is None
+            or type(receipt_summary) is not str
+            or not receipt_summary
+        ):
+            raise ValueError("mission attempt receipt is invalid")
+        if target_state not in {"submitted", "ambiguous"}:
+            raise ValueError("mission attempt receipt transition is invalid")
+        if target_state == "ambiguous" and reason != "receipt_persistence_unknown":
+            raise ValueError("mission attempt ambiguity reason is invalid")
+        with self._protocol_mutation_lock():
+            state = self.load()
+            attempts = state.get("mission_attempts", [])
+            if type(attempts) is not list:
+                raise ValueError("mission attempt state invalid")
+            validated = [_validate_mission_attempt_record(item) for item in attempts]
+            matches = [item for item in validated if item["attempt_id"] == attempt_id]
+            if len(matches) != 1:
+                if not matches:
+                    raise KeyError(attempt_id)
+                raise ValueError("duplicate mission attempt identity")
+            persisted = matches[0]
+            if persisted["dispatch_key"] != dispatch_key:
+                raise ValueError("mission attempt receipt lineage drift")
+            if persisted["state"] == target_state:
+                expected_reason = reason if target_state == "ambiguous" else None
+                if (
+                    persisted["receipt_summary"] == receipt_summary
+                    and persisted["blocker"] == expected_reason
+                    and persisted["terminal_reason"] == expected_reason
+                ):
+                    return persisted
+                raise ValueError("mission attempt receipt conflict")
+            allowed_states = {"prepared"} if target_state == "submitted" else {"prepared", "submitted"}
+            if persisted["state"] not in allowed_states:
+                raise ValueError("mission attempt receipt transition is invalid")
+            if (
+                target_state == "ambiguous"
+                and persisted["state"] == "submitted"
+                and persisted["receipt_summary"] != receipt_summary
+            ):
+                raise ValueError("mission attempt receipt conflict")
+            now = utc_now()
+            candidate = {
+                **persisted,
+                "state": target_state,
+                "updated_at": now,
+                "receipt_summary": receipt_summary,
+                "blocker": reason if target_state == "ambiguous" else None,
+                "terminal_reason": reason if target_state == "ambiguous" else None,
+            }
+            candidate = _validate_mission_attempt_record(candidate)
+            event = EventRecord(
+                event_id=new_id("evt"),
+                event_type=f"mission_attempt_{target_state}",
+                created_at=now,
+                payload={
+                    "attempt_id": attempt_id,
+                    "mission_id": candidate["mission_id"],
+                    "step_id": candidate["step_id"],
+                    "dispatch_key": dispatch_key,
+                    "reason": reason,
+                },
+            )
+            outbox = state.setdefault("protocol_event_outbox", [])
+            outbox_ids = _validated_protocol_event_outbox_ids(outbox)
+            journal_ids = self._strict_protocol_journal_event_ids()
+            event_summary = asdict(event)
+            try:
+                event_id = validate_daemon_event_record(event_summary)
+            except LeaseError:
+                raise ValueError("protocol event record is invalid") from None
+            if event_id in outbox_ids or event_id in journal_ids:
+                raise ValueError("duplicate protocol event identity")
+            index = next(
+                index
+                for index, item in enumerate(attempts)
+                if type(item) is dict and item.get("attempt_id") == attempt_id
+            )
+            attempts[index] = candidate
+            outbox.append(event_summary)
+            self._atomic_save(state)
+            return copy.deepcopy(candidate)
+
+    def record_mission_attempt_submitted(
+        self, *, attempt_id: str, dispatch_key: str, receipt_summary: str
+    ) -> dict[str, Any]:
+        return self._transition_mission_attempt_receipt(
+            attempt_id=attempt_id,
+            dispatch_key=dispatch_key,
+            receipt_summary=receipt_summary,
+            target_state="submitted",
+            reason=None,
+        )
+
+    def mark_mission_attempt_ambiguous(
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        receipt_summary: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        return self._transition_mission_attempt_receipt(
+            attempt_id=attempt_id,
+            dispatch_key=dispatch_key,
+            receipt_summary=receipt_summary,
+            target_state="ambiguous",
+            reason=reason,
+        )
+
     def claim_mission_execution(
         self,
         mission_id: str,

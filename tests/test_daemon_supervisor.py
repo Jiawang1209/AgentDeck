@@ -9,13 +9,13 @@ from agentdeck.conversation.transports import WorkerRoute
 from agentdeck.daemon.supervisor import (
     ArtifactEvidence,
     SubmittedReceipt,
-    TransportExecution,
     TransportResult,
     WorkerAttemptError,
     WorkerAttemptSupervisor,
     supervisor_gate,
 )
 from agentdeck.workflow import build_canonical_handoff, build_compact_handoff
+from agentdeck.state import StateStore
 
 
 def _attempt(transport: str = "acp", **overrides: object) -> dict[str, object]:
@@ -88,20 +88,20 @@ def _result(
     )
 
 
-def _execution(result: TransportResult | Exception) -> TransportExecution:
-    async def complete() -> TransportResult:
+def _receipt() -> SubmittedReceipt:
+    return SubmittedReceipt(
+        receipt_id="rcp_worker",
+        dispatch_key="dsp_" + "1" * 32,
+        summary="accepted",
+    )
+
+
+def _completion(result: TransportResult | Exception):
+    async def complete(_attempt, _receipt) -> TransportResult:
         if isinstance(result, Exception):
             raise result
         return result
-
-    return TransportExecution(
-        admission=SubmittedReceipt(
-            receipt_id="rcp_worker",
-            dispatch_key="dsp_" + "1" * 32,
-            summary="accepted",
-        ),
-        completion_factory=complete,
-    )
+    return complete
 
 
 class _Authority:
@@ -132,19 +132,25 @@ class _Authority:
 def _supervisor(
     authority: _Authority,
     *,
-    acp_execute=None,
-    tmux_execute=None,
+    acp_admit=None,
+    tmux_admit=None,
+    acp_complete=None,
+    tmux_complete=None,
+    mark_ambiguous=None,
 ) -> WorkerAttemptSupervisor:
     return WorkerAttemptSupervisor(
         authorize_attempt=authority.authorize,
         persist_submitted=authority.persist,
-        acp_execute=acp_execute or (lambda _: _execution(_result())),
-        tmux_execute=tmux_execute
-        or (lambda _: _execution(_result(stop_reason="structured_reply"))),
+        mark_attempt_ambiguous=mark_ambiguous or (lambda *_: None),
+        acp_admit=acp_admit or (lambda _: _receipt()),
+        tmux_admit=tmux_admit or (lambda _: _receipt()),
+        acp_complete=acp_complete or _completion(_result()),
+        tmux_complete=tmux_complete
+        or _completion(_result(stop_reason="structured_reply")),
     )
 
 
-def test_completion_factory_cannot_start_before_async_receipt_persistence_finishes() -> None:
+def test_complete_callback_is_not_called_until_async_receipt_persistence_finishes() -> None:
     order: list[str] = []
     authority = _Authority()
 
@@ -154,22 +160,18 @@ def test_completion_factory_cannot_start_before_async_receipt_persistence_finish
         order.append("persist-finish")
         await authority.persist(candidate, receipt)
 
-    async def complete() -> TransportResult:
+    async def complete(_attempt, _receipt) -> TransportResult:
         order.append("complete")
         return _result()
 
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=authority.authorize,
         persist_submitted=persist,
-        acp_execute=lambda _: TransportExecution(
-            admission=SubmittedReceipt(
-                receipt_id="rcp_worker",
-                dispatch_key="dsp_" + "1" * 32,
-                summary="accepted",
-            ),
-            completion_factory=complete,
-        ),
-        tmux_execute=lambda _: pytest.fail("tmux must not run"),
+        mark_attempt_ambiguous=lambda *_: None,
+        acp_admit=lambda _: _receipt(),
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=complete,
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
     )
 
     asyncio.run(supervisor.execute(_attempt(), _route()))
@@ -177,49 +179,31 @@ def test_completion_factory_cannot_start_before_async_receipt_persistence_finish
     assert order == ["persist-start", "persist-finish", "complete"]
 
 
-def test_transport_execution_rejects_hot_task_or_future() -> None:
+def test_admission_record_has_no_completion_injection_surface() -> None:
     async def scenario() -> None:
-        hot = asyncio.create_task(asyncio.sleep(0, result=_result()))
-        with pytest.raises((TypeError, ValueError), match="cold completion factory"):
-            TransportExecution(
-                admission=SubmittedReceipt(
-                    receipt_id="rcp_worker",
-                    dispatch_key="dsp_" + "1" * 32,
-                    summary="accepted",
-                ),
-                completion_factory=hot,  # type: ignore[arg-type]
-            )
+        hot = asyncio.create_task(asyncio.sleep(0.01, result=_result()))
+        receipt = _receipt()
+        assert not hasattr(receipt, "completion")
+        assert not hasattr(receipt, "completion_factory")
+        assert hot.cancelled() is False
         hot.cancel()
         await asyncio.gather(hot, return_exceptions=True)
 
     asyncio.run(scenario())
 
 
-def test_transport_execution_rejects_and_cancels_hot_task_hidden_in_factory() -> None:
+def test_supervisor_constructor_never_inspects_or_cancels_caller_hot_tasks() -> None:
     async def scenario() -> None:
-        started: list[str] = []
-
-        async def hot_completion() -> TransportResult:
-            started.append("ran")
-            return _result()
-
-        hot = asyncio.create_task(hot_completion())
-
-        def factory():
-            return hot
-
-        with pytest.raises(TypeError, match="cold completion factory"):
-            TransportExecution(
-                admission=SubmittedReceipt(
-                    receipt_id="rcp_worker",
-                    dispatch_key="dsp_" + "1" * 32,
-                    summary="accepted",
-                ),
-                completion_factory=factory,  # type: ignore[arg-type]
-            )
-        await asyncio.sleep(0)
-        assert hot.cancelled()
-        assert started == []
+        hot = asyncio.create_task(asyncio.sleep(60))
+        authority = _Authority()
+        _supervisor(
+            authority,
+            acp_admit=lambda _: _receipt(),
+            acp_complete=_completion(_result()),
+        )
+        assert hot.cancelled() is False
+        hot.cancel()
+        await asyncio.gather(hot, return_exceptions=True)
 
     asyncio.run(scenario())
 
@@ -231,23 +215,30 @@ def test_persistence_failure_never_starts_completion_and_is_sanitized() -> None:
     async def persist(*_) -> None:
         raise RuntimeError("secret callback detail")
 
-    async def complete() -> TransportResult:
+    async def complete(_attempt, _receipt) -> TransportResult:
         nonlocal completion_started
         completion_started = True
         return _result()
 
+    def mark_ambiguous(*_) -> None:
+        authority.current.update(
+            {
+                "state": "ambiguous",
+                "updated_at": "2026-07-13T00:00:01+00:00",
+                "receipt_summary": "accepted",
+                "blocker": "receipt_persistence_unknown",
+                "terminal_reason": "receipt_persistence_unknown",
+            }
+        )
+
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=authority.authorize,
         persist_submitted=persist,
-        acp_execute=lambda _: TransportExecution(
-            admission=SubmittedReceipt(
-                receipt_id="rcp_worker",
-                dispatch_key="dsp_" + "1" * 32,
-                summary="accepted",
-            ),
-            completion_factory=complete,
-        ),
-        tmux_execute=lambda _: pytest.fail("tmux must not run"),
+        mark_attempt_ambiguous=mark_ambiguous,
+        acp_admit=lambda _: _receipt(),
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=complete,
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
     )
 
     with pytest.raises(WorkerAttemptError) as caught:
@@ -259,7 +250,7 @@ def test_persistence_failure_never_starts_completion_and_is_sanitized() -> None:
     assert completion_started is False
 
 
-@pytest.mark.parametrize("failure_path", ["authority", "executor", "completion"])
+@pytest.mark.parametrize("failure_path", ["authority", "admit", "completion"])
 def test_external_callback_failures_have_no_sensitive_exception_context(
     failure_path: str,
 ) -> None:
@@ -270,29 +261,24 @@ def test_external_callback_failures_have_no_sensitive_exception_context(
             raise RuntimeError("secret authority")
         return authority.authorize(candidate)
 
-    def execute(_):
-        if failure_path == "executor":
-            raise RuntimeError("secret executor")
+    def admit(_):
+        if failure_path == "admit":
+            raise RuntimeError("secret admit")
+        return _receipt()
 
-        async def complete():
-            if failure_path == "completion":
-                raise RuntimeError("secret completion")
-            return _result()
-
-        return TransportExecution(
-            admission=SubmittedReceipt(
-                receipt_id="rcp_worker",
-                dispatch_key="dsp_" + "1" * 32,
-                summary="accepted",
-            ),
-            completion_factory=complete,
-        )
+    async def complete(_attempt, _receipt):
+        if failure_path == "completion":
+            raise RuntimeError("secret completion")
+        return _result()
 
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=authorize,
         persist_submitted=authority.persist,
-        acp_execute=execute,
-        tmux_execute=lambda _: pytest.fail("tmux must not run"),
+        mark_attempt_ambiguous=lambda *_: None,
+        acp_admit=admit,
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=complete,
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
     )
 
     with pytest.raises(WorkerAttemptError) as caught:
@@ -314,9 +300,11 @@ def test_callback_mutation_cannot_change_frozen_attempt_transport_authority() ->
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=mutate_and_forge,
         persist_submitted=authority.persist,
-        acp_execute=lambda _: calls.append("acp") or _execution(_result()),
-        tmux_execute=lambda _: calls.append("tmux")
-        or _execution(_result(stop_reason="structured_reply")),
+        mark_attempt_ambiguous=lambda *_: None,
+        acp_admit=lambda _: calls.append("acp") or _receipt(),
+        tmux_admit=lambda _: calls.append("tmux") or _receipt(),
+        acp_complete=_completion(_result()),
+        tmux_complete=_completion(_result(stop_reason="structured_reply")),
     )
 
     with pytest.raises(WorkerAttemptError, match="Worker attempt authority drift"):
@@ -329,14 +317,14 @@ def test_executor_mutation_is_isolated_from_canonical_authority() -> None:
     authority = _Authority()
     seen: list[str] = []
 
-    def mutate(candidate: dict[str, object]) -> TransportExecution:
+    def mutate(candidate: dict[str, object]) -> SubmittedReceipt:
         candidate["configured_transport"] = "tmux"
         candidate["dispatch_key"] = "dsp_" + "9" * 32
         seen.append(str(candidate["configured_transport"]))
-        return _execution(_result())
+        return _receipt()
 
     outcome = asyncio.run(
-        _supervisor(authority, acp_execute=mutate).execute(_attempt(), _route())
+        _supervisor(authority, acp_admit=mutate).execute(_attempt(), _route())
     )
 
     assert outcome.status == "completed"
@@ -360,7 +348,7 @@ def test_full_task7_attempt_authority_is_required(field: str, value: object) -> 
     calls: list[str] = []
     supervisor = _supervisor(
         authority,
-        acp_execute=lambda _: calls.append("acp") or _execution(_result()),
+        acp_admit=lambda _: calls.append("acp") or _receipt(),
     )
 
     with pytest.raises((ValueError, WorkerAttemptError)):
@@ -375,7 +363,7 @@ def test_authority_callback_must_return_exact_current_prepared_attempt() -> None
     calls: list[str] = []
     supervisor = _supervisor(
         authority,
-        acp_execute=lambda _: calls.append("acp") or _execution(_result()),
+        acp_admit=lambda _: calls.append("acp") or _receipt(),
     )
 
     with pytest.raises(WorkerAttemptError, match="Worker attempt authority drift"):
@@ -389,7 +377,7 @@ def test_same_attempt_cannot_dispatch_twice_after_submitted_receipt() -> None:
     calls: list[str] = []
     supervisor = _supervisor(
         authority,
-        acp_execute=lambda _: calls.append("acp") or _execution(_result()),
+        acp_admit=lambda _: calls.append("acp") or _receipt(),
     )
 
     asyncio.run(supervisor.execute(_attempt(), _route()))
@@ -404,13 +392,13 @@ def test_pre_admission_failure_releases_claim_for_prepared_retry() -> None:
     authority = _Authority()
     calls: list[str] = []
 
-    def execute(_):
+    def admit(_):
         calls.append("acp")
         if len(calls) == 1:
             raise RuntimeError("pre-admission")
-        return _execution(_result())
+        return _receipt()
 
-    supervisor = _supervisor(authority, acp_execute=execute)
+    supervisor = _supervisor(authority, acp_admit=admit)
 
     with pytest.raises(WorkerAttemptError, match="failed before admission"):
         asyncio.run(supervisor.execute(_attempt(), _route()))
@@ -421,37 +409,133 @@ def test_pre_admission_failure_releases_claim_for_prepared_retry() -> None:
     assert supervisor._claimed_dispatch_keys == set()
 
 
-def test_unknown_persistence_requires_recovery_without_leaking_active_claim() -> None:
+def test_unknown_persistence_marks_durable_ambiguity_and_blocks_new_supervisor() -> None:
     authority = _Authority()
     calls: list[str] = []
 
     async def unknown(*_) -> None:
         raise RuntimeError("unknown")
 
+    def mark_ambiguous(_attempt, receipt, _reason) -> None:
+        authority.current.update(
+            {
+                "state": "ambiguous",
+                "updated_at": "2026-07-13T00:00:01+00:00",
+                "receipt_summary": receipt.summary,
+                "blocker": "receipt_persistence_unknown",
+                "terminal_reason": "receipt_persistence_unknown",
+            }
+        )
+
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=authority.authorize,
         persist_submitted=unknown,
-        acp_execute=lambda _: calls.append("acp") or _execution(_result()),
-        tmux_execute=lambda _: pytest.fail("tmux must not run"),
+        mark_attempt_ambiguous=mark_ambiguous,
+        acp_admit=lambda _: calls.append("acp") or _receipt(),
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=_completion(_result()),
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
     )
 
     with pytest.raises(WorkerAttemptError, match="persistence failed"):
         asyncio.run(supervisor.execute(_attempt(), _route()))
-    with pytest.raises(WorkerAttemptError, match="requires recovery"):
-        asyncio.run(supervisor.execute(_attempt(), _route()))
-
     assert calls == ["acp"]
     assert supervisor._claimed_dispatch_keys == set()
-    authority.current.update(
-        {
-            "state": "submitted",
-            "updated_at": "2026-07-13T00:00:01+00:00",
-            "receipt_summary": "accepted",
-        }
+    restarted = _supervisor(
+        authority,
+        acp_admit=lambda _: calls.append("unexpected") or _receipt(),
     )
-    with pytest.raises(WorkerAttemptError, match="already submitted"):
-        asyncio.run(supervisor.execute(_attempt(), _route()))
-    assert supervisor._recovery_dispatch_keys == set()
+    with pytest.raises(WorkerAttemptError, match="must be prepared"):
+        asyncio.run(restarted.execute(authority.current, _route()))
+    assert calls == ["acp"]
+
+
+def test_persistence_unknown_survives_supervisor_restart_in_state_store(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    calls: list[str] = []
+
+    def authorize(candidate):
+        return store.mission_attempt_by_id(str(candidate["attempt_id"]))
+
+    def mark(candidate, receipt, reason):
+        return store.mark_mission_attempt_ambiguous(
+            attempt_id=str(candidate["attempt_id"]),
+            dispatch_key=receipt.dispatch_key,
+            receipt_summary=receipt.summary,
+            reason=reason,
+        )
+
+    first = WorkerAttemptSupervisor(
+        authorize_attempt=authorize,
+        persist_submitted=lambda *_: (_ for _ in ()).throw(RuntimeError("unknown")),
+        mark_attempt_ambiguous=mark,
+        acp_admit=lambda _: calls.append("acp") or _receipt(),
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=_completion(_result()),
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
+    )
+    with pytest.raises(WorkerAttemptError, match="persistence failed"):
+        asyncio.run(first.execute(_attempt(), _route()))
+
+    persisted = store.mission_attempt_by_id("mat_0123456789ab")
+    assert persisted["state"] == "ambiguous"
+    assert persisted["terminal_reason"] == "receipt_persistence_unknown"
+    assert store.load()["protocol_event_outbox"][-1]["event_type"] == "mission_attempt_ambiguous"
+
+    restarted = WorkerAttemptSupervisor(
+        authorize_attempt=authorize,
+        persist_submitted=lambda *_: pytest.fail("must not persist"),
+        mark_attempt_ambiguous=mark,
+        acp_admit=lambda _: calls.append("unexpected") or _receipt(),
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=_completion(_result()),
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
+    )
+    with pytest.raises(WorkerAttemptError, match="must be prepared"):
+        asyncio.run(restarted.execute(persisted, _route()))
+    assert calls == ["acp"]
+
+
+def test_state_store_submitted_receipt_precedes_complete_callback(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    observed_states: list[str] = []
+
+    def authorize(candidate):
+        return store.mission_attempt_by_id(str(candidate["attempt_id"]))
+
+    def persist(candidate, receipt):
+        return store.record_mission_attempt_submitted(
+            attempt_id=str(candidate["attempt_id"]),
+            dispatch_key=receipt.dispatch_key,
+            receipt_summary=receipt.summary,
+        )
+
+    async def complete(candidate, _receipt):
+        observed_states.append(
+            store.mission_attempt_by_id(str(candidate["attempt_id"]))["state"]
+        )
+        return _result()
+
+    supervisor = WorkerAttemptSupervisor(
+        authorize_attempt=authorize,
+        persist_submitted=persist,
+        mark_attempt_ambiguous=lambda *_: pytest.fail("must not mark ambiguous"),
+        acp_admit=lambda _: _receipt(),
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=complete,
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
+    )
+    result = asyncio.run(supervisor.execute(_attempt(), _route()))
+
+    assert result.status == "completed"
+    assert observed_states == ["submitted"]
+    assert store.load()["protocol_event_outbox"][-1]["event_type"] == "mission_attempt_submitted"
 
 
 def test_concurrent_same_dispatch_uses_one_transport_and_releases_claim() -> None:
@@ -463,15 +547,18 @@ def test_concurrent_same_dispatch_uses_one_transport_and_releases_claim() -> Non
             await asyncio.sleep(0)
             await authority.persist(candidate, receipt)
 
-        def execute(_):
+        def admit(_):
             calls.append("acp")
-            return _execution(_result())
+            return _receipt()
 
         supervisor = WorkerAttemptSupervisor(
             authorize_attempt=authority.authorize,
             persist_submitted=persist,
-            acp_execute=execute,
-            tmux_execute=lambda _: pytest.fail("tmux must not run"),
+            mark_attempt_ambiguous=lambda *_: None,
+            acp_admit=admit,
+            tmux_admit=lambda _: pytest.fail("tmux must not run"),
+            acp_complete=_completion(_result()),
+            tmux_complete=lambda *_: pytest.fail("tmux must not run"),
         )
         results = await asyncio.gather(
             supervisor.execute(_attempt(), _route()),
@@ -492,7 +579,7 @@ def test_human_owned_route_cannot_forge_automation_allowed() -> None:
     calls: list[str] = []
     supervisor = _supervisor(
         authority,
-        acp_execute=lambda _: calls.append("acp") or _execution(_result()),
+        acp_admit=lambda _: calls.append("acp") or _receipt(),
     )
 
     with pytest.raises(WorkerAttemptError, match="Worker ownership is not AgentDeck"):
@@ -518,7 +605,7 @@ def test_result_strict_types_fail_closed(mutation) -> None:
     authority = _Authority()
     result = _result()
     mutation(result)
-    supervisor = _supervisor(authority, acp_execute=lambda _: _execution(result))
+    supervisor = _supervisor(authority, acp_complete=_completion(result))
 
     with pytest.raises(WorkerAttemptError, match="ACP Worker result is invalid"):
         asyncio.run(supervisor.execute(_attempt(), _route()))
@@ -532,7 +619,7 @@ def test_reply_requires_exact_attempt_dispatch_handoff_token(token: str | None) 
         reply.pop("handoff_token")
     supervisor = _supervisor(
         authority,
-        acp_execute=lambda _: _execution(_result(reply=reply)),
+        acp_complete=_completion(_result(reply=reply)),
     )
 
     with pytest.raises(WorkerAttemptError, match="ACP Worker result is invalid"):
@@ -553,7 +640,7 @@ def test_validated_outcome_is_detached_from_mutable_transport_result() -> None:
         trace_ids=("trn_worker", "rep_worker"),
     )
     outcome = asyncio.run(
-        _supervisor(authority, acp_execute=lambda _: _execution(result)).execute(
+        _supervisor(authority, acp_complete=_completion(result)).execute(
             _attempt(), _route()
         )
     )
@@ -567,14 +654,31 @@ def test_validated_outcome_is_detached_from_mutable_transport_result() -> None:
     assert outcome.compact()["trace_ids"] == ["trn_worker", "rep_worker"]
 
 
+def test_ignored_reply_extra_value_is_never_deepcopied_or_accessed() -> None:
+    class ExplodingExtra:
+        def __deepcopy__(self, _memo):
+            raise AssertionError("extra reply value was accessed")
+
+    authority = _Authority()
+    reply = _reply()
+    reply["unapproved_extra"] = ExplodingExtra()
+    outcome = asyncio.run(
+        _supervisor(
+            authority,
+            acp_complete=_completion(_result(reply=reply)),
+        ).execute(_attempt(), _route())
+    )
+
+    assert outcome.summary == "implementation finished"
+
+
 def test_transport_drift_fails_closed_before_any_dispatch() -> None:
     authority = _Authority()
     calls: list[str] = []
     supervisor = _supervisor(
         authority,
-        acp_execute=lambda _: calls.append("acp") or _execution(_result()),
-        tmux_execute=lambda _: calls.append("tmux")
-        or _execution(_result(stop_reason="structured_reply")),
+        acp_admit=lambda _: calls.append("acp") or _receipt(),
+        tmux_admit=lambda _: calls.append("tmux") or _receipt(),
     )
 
     with pytest.raises(WorkerAttemptError, match="Worker transport drift"):
@@ -592,10 +696,10 @@ def test_transport_failure_never_calls_other_fallback(transport: str) -> None:
     calls: list[str] = []
     supervisor = _supervisor(
         authority,
-        acp_execute=lambda _: calls.append("acp")
-        or _execution(RuntimeError("secret acp")),
-        tmux_execute=lambda _: calls.append("tmux")
-        or _execution(RuntimeError("secret tmux")),
+        acp_admit=lambda _: calls.append("acp")
+        or (_ for _ in ()).throw(RuntimeError("secret acp")),
+        tmux_admit=lambda _: calls.append("tmux")
+        or (_ for _ in ()).throw(RuntimeError("secret tmux")),
     )
 
     with pytest.raises(WorkerAttemptError, match=f"{'ACP' if transport == 'acp' else 'tmux'} Worker failed") as caught:
@@ -634,8 +738,9 @@ def test_legacy_workflow_handoff_is_projection_of_same_canonical_record() -> Non
     canonical = build_canonical_handoff(
         reply=reply,
         expected_handoff_token="dsp_" + "1" * 32,
-        artifacts=[],
+        artifacts=[{"path": "reports/result.md", "content_hash": None}],
         trace_ids=["rep_worker"],
+        require_artifact_hashes=False,
     )
     legacy = build_compact_handoff(
         step=1,
@@ -647,6 +752,7 @@ def test_legacy_workflow_handoff_is_projection_of_same_canonical_record() -> Non
 
     for field in ("status", "summary", "verification", "risks", "next_steps"):
         assert legacy[field] == canonical.compact()[field]
+    assert legacy["artifact_paths"] == [item.path for item in canonical.artifacts]
     assert legacy["trace_command"] == "agentdeck trace --id " + canonical.trace_ids[0]
 
 
@@ -654,7 +760,7 @@ def test_acp_requires_formal_completed_stop_reason() -> None:
     authority = _Authority()
     supervisor = _supervisor(
         authority,
-        acp_execute=lambda _: _execution(_result(stop_reason="max_tokens")),
+        acp_complete=_completion(_result(stop_reason="max_tokens")),
     )
 
     with pytest.raises(WorkerAttemptError, match="ACP Worker did not complete"):
@@ -666,7 +772,7 @@ def test_tmux_requires_a_validated_structured_reply() -> None:
     authority.current = _attempt("tmux")
     supervisor = _supervisor(
         authority,
-        tmux_execute=lambda _: _execution(
+        tmux_complete=_completion(
             _result(validated=False, stop_reason="structured_reply")
         ),
     )

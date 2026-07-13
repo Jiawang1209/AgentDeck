@@ -30,14 +30,19 @@ REPLY_STATUSES = {"completed", "blocked", "failed"}
 @dataclass(frozen=True)
 class CanonicalArtifact:
     path: str
-    content_hash: str
+    content_hash: str | None
 
     def __post_init__(self) -> None:
         if (
             type(self.path) is not str
             or not self.path
-            or type(self.content_hash) is not str
-            or re.fullmatch(r"sha256:[0-9a-f]{64}", self.content_hash) is None
+            or (
+                self.content_hash is not None
+                and (
+                    type(self.content_hash) is not str
+                    or re.fullmatch(r"sha256:[0-9a-f]{64}", self.content_hash) is None
+                )
+            )
         ):
             raise ValueError("invalid Worker artifact evidence")
 
@@ -104,9 +109,12 @@ def build_canonical_handoff(
     artifacts: list[dict[str, Any]],
     trace_ids: list[str],
     expected_handoff_token: str,
+    require_artifact_hashes: bool = True,
 ) -> CanonicalHandoff:
     """Build the sole validated compact handoff record used by every transport."""
     correlated = validate_correlated_workflow_reply(reply, expected_handoff_token)
+    if type(require_artifact_hashes) is not bool:
+        raise ValueError("artifact hash policy is invalid")
     if type(artifacts) is not list:
         raise ValueError("worker artifacts must be a list")
     compact_artifacts: list[CanonicalArtifact] = []
@@ -118,8 +126,17 @@ def build_canonical_handoff(
         if (
             type(path) is not str
             or not path
-            or type(content_hash) is not str
-            or re.fullmatch(r"sha256:[0-9a-f]{64}", content_hash) is None
+            or (
+                content_hash is None
+                and require_artifact_hashes
+            )
+            or (
+                content_hash is not None
+                and (
+                    type(content_hash) is not str
+                    or re.fullmatch(r"sha256:[0-9a-f]{64}", content_hash) is None
+                )
+            )
         ):
             raise ValueError("worker artifact evidence is invalid")
         compact_artifacts.append(CanonicalArtifact(path, content_hash))
@@ -154,6 +171,7 @@ def validate_compact_worker_outcome(
         artifacts=artifacts,
         trace_ids=trace_ids,
         expected_handoff_token=expected_handoff_token,
+        require_artifact_hashes=True,
     ).compact()
 
 
@@ -215,14 +233,17 @@ def build_compact_handoff(
     canonical = build_canonical_handoff(
         reply=reply,
         expected_handoff_token=token if type(token) is str else "",
-        artifacts=[],
+        artifacts=[
+            {"path": path, "content_hash": None}
+            for path in artifact_paths
+        ],
         trace_ids=[reply_id],
+        require_artifact_hashes=False,
     )
     return render_legacy_handoff(
         canonical,
         step=step,
         agent_id=agent_id,
-        artifact_paths=artifact_paths,
     )
 
 
@@ -231,17 +252,12 @@ def render_legacy_handoff(
     *,
     step: int,
     agent_id: str,
-    artifact_paths: list[str],
 ) -> dict[str, Any]:
     """Render the historic workflow shape from one validated canonical record."""
     if not isinstance(canonical, CanonicalHandoff):
         raise TypeError("canonical handoff is required")
     if type(step) is not int or step < 1 or type(agent_id) is not str or not agent_id:
         raise ValueError("legacy workflow handoff identity is invalid")
-    if type(artifact_paths) is not list or any(
-        type(path) is not str or not path for path in artifact_paths
-    ):
-        raise ValueError("legacy workflow artifact paths are invalid")
     compact = canonical.compact()
     return {
         "step": step,
@@ -250,7 +266,7 @@ def render_legacy_handoff(
             field: compact[field]
             for field in ("status", "summary", "verification", "risks", "next_steps")
         },
-        "artifact_paths": list(artifact_paths),
+        "artifact_paths": [item.path for item in canonical.artifacts],
         "trace_command": f"agentdeck trace --id {canonical.trace_ids[0]}",
     }
 

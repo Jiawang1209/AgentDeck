@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import copy
 import inspect
 import re
-from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from ..conversation.transports import WorkerRoute
 from ..runtime.acp_mapping import map_stop_reason
 from ..state import validate_mission_attempt_record
-from ..workflow import (
-    CanonicalArtifact,
-    CanonicalHandoff,
-    build_canonical_handoff,
-)
+from ..workflow import CanonicalArtifact, CanonicalHandoff, build_canonical_handoff
 
 
 class WorkerAttemptError(RuntimeError):
@@ -53,55 +48,6 @@ class TransportResult:
     trace_ids: tuple[str, ...] = ()
 
 
-CompletionFactory = Callable[
-    [], Coroutine[Any, Any, TransportResult]
-]
-
-
-def _closure_futures(callback: object) -> tuple[asyncio.Future[Any], ...]:
-    captured: list[object] = [callback]
-    closure = getattr(callback, "__closure__", None)
-    if type(closure) is tuple:
-        for cell in closure:
-            try:
-                captured.append(cell.cell_contents)
-            except ValueError:
-                continue
-    defaults = getattr(callback, "__defaults__", None)
-    if type(defaults) is tuple:
-        captured.extend(defaults)
-    kwdefaults = getattr(callback, "__kwdefaults__", None)
-    if type(kwdefaults) is dict:
-        captured.extend(kwdefaults.values())
-    found: list[asyncio.Future[Any]] = []
-    for value in captured:
-        if isinstance(value, asyncio.Future):
-            found.append(value)
-    return tuple(dict.fromkeys(found))
-
-
-@dataclass(frozen=True)
-class TransportExecution:
-    admission: SubmittedReceipt
-    completion_factory: CompletionFactory
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.admission, SubmittedReceipt):
-            raise TypeError("transport admission is invalid")
-        hidden_futures = _closure_futures(self.completion_factory)
-        valid_factory = (
-            inspect.iscoroutinefunction(self.completion_factory)
-            and not inspect.isawaitable(self.completion_factory)
-            and not hidden_futures
-        )
-        if not valid_factory:
-            for future in hidden_futures:
-                future.cancel()
-            raise TypeError(
-                "transport completion must be a cold completion factory returning a native coroutine"
-            )
-
-
 @dataclass(frozen=True)
 class SupervisorGateDecision:
     next_worker: str | None
@@ -115,8 +61,14 @@ AuthorizeAttempt = Callable[
 PersistSubmitted = Callable[
     [MissionAttempt, SubmittedReceipt], None | Awaitable[None]
 ]
-ExecuteTransport = Callable[
-    [MissionAttempt], TransportExecution | Awaitable[TransportExecution]
+MarkAttemptAmbiguous = Callable[
+    [MissionAttempt, SubmittedReceipt, str], None | Awaitable[None]
+]
+AdmitTransport = Callable[
+    [MissionAttempt], SubmittedReceipt | Awaitable[SubmittedReceipt]
+]
+CompleteTransport = Callable[
+    [MissionAttempt, SubmittedReceipt], TransportResult | Awaitable[TransportResult]
 ]
 
 
@@ -132,31 +84,6 @@ async def _capture_callback(
     return True, value
 
 
-async def _capture_coroutine(coroutine: Coroutine[Any, Any, Any]) -> tuple[bool, Any]:
-    try:
-        value = await coroutine
-    except Exception:
-        return False, None
-    return True, value
-
-
-def _capture_factory(callback: CompletionFactory) -> tuple[bool, object]:
-    try:
-        value = callback()
-    except Exception:
-        return False, None
-    return True, value
-
-
-async def _dispose_invalid_completion(value: object) -> None:
-    if inspect.iscoroutine(value):
-        value.close()
-        return
-    if isinstance(value, asyncio.Future):
-        value.cancel()
-        await asyncio.gather(value, return_exceptions=True)
-
-
 _ATTEMPT_AUTHORITY_FIELDS = (
     "attempt_id",
     "mission_id",
@@ -166,6 +93,14 @@ _ATTEMPT_AUTHORITY_FIELDS = (
     "dispatch_key",
     "snapshot_hash",
     "created_at",
+)
+_REPLY_ALLOWLIST = (
+    "handoff_token",
+    "status",
+    "summary",
+    "verification",
+    "risks",
+    "next_steps",
 )
 
 
@@ -203,26 +138,47 @@ def _validate_route(attempt: MissionAttempt, route: WorkerRoute) -> str | None:
     return None
 
 
-def _result_shape_is_valid(result: object) -> bool:
+def _project_reply_allowlist(reply: object) -> dict[str, str] | None:
+    if type(reply) is not dict:
+        return None
+    projected: dict[str, str] = {}
+    for field in _REPLY_ALLOWLIST:
+        value = reply.get(field)
+        if type(value) is not str or not value:
+            return None
+        projected[field] = value
+    return projected
+
+
+def _project_result(
+    result: object,
+) -> tuple[TransportResult, dict[str, str], list[dict[str, str]], list[str]] | None:
     if (
         not isinstance(result, TransportResult)
         or type(result.stop_reason) is not str
         or not result.stop_reason
         or type(result.validated) is not bool
-        or type(result.reply) is not dict
         or type(result.artifacts) is not tuple
         or type(result.trace_ids) is not tuple
-        or any(not isinstance(item, ArtifactEvidence) for item in result.artifacts)
         or any(type(item) is not str or not item for item in result.trace_ids)
         or len(result.trace_ids) != len(set(result.trace_ids))
     ):
-        return False
+        return None
+    reply = _project_reply_allowlist(result.reply)
+    if reply is None:
+        return None
+    artifacts: list[dict[str, str]] = []
     for item in result.artifacts:
-        try:
-            ArtifactEvidence(item.path, item.content_hash)
-        except (TypeError, ValueError):
-            return False
-    return True
+        if (
+            not isinstance(item, ArtifactEvidence)
+            or type(item.path) is not str
+            or not item.path
+            or type(item.content_hash) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", item.content_hash) is None
+        ):
+            return None
+        artifacts.append({"path": item.path, "content_hash": item.content_hash})
+    return result, reply, artifacts, list(result.trace_ids)
 
 
 class WorkerAttemptSupervisor:
@@ -231,23 +187,31 @@ class WorkerAttemptSupervisor:
         *,
         authorize_attempt: AuthorizeAttempt,
         persist_submitted: PersistSubmitted,
-        acp_execute: ExecuteTransport,
-        tmux_execute: ExecuteTransport,
+        mark_attempt_ambiguous: MarkAttemptAmbiguous,
+        acp_admit: AdmitTransport,
+        tmux_admit: AdmitTransport,
+        acp_complete: CompleteTransport,
+        tmux_complete: CompleteTransport,
     ) -> None:
         for callback in (
             authorize_attempt,
             persist_submitted,
-            acp_execute,
-            tmux_execute,
+            mark_attempt_ambiguous,
+            acp_admit,
+            tmux_admit,
+            acp_complete,
+            tmux_complete,
         ):
             if not callable(callback):
                 raise TypeError("Worker supervisor callback must be callable")
         self._authorize_attempt = authorize_attempt
         self._persist_submitted = persist_submitted
-        self._acp_execute = acp_execute
-        self._tmux_execute = tmux_execute
+        self._mark_attempt_ambiguous = mark_attempt_ambiguous
+        self._acp_admit = acp_admit
+        self._tmux_admit = tmux_admit
+        self._acp_complete = acp_complete
+        self._tmux_complete = tmux_complete
         self._claimed_dispatch_keys: set[str] = set()
-        self._recovery_dispatch_keys: set[str] = set()
 
     async def _current_attempt(
         self, baseline: MissionAttempt
@@ -259,6 +223,27 @@ class WorkerAttemptSupervisor:
             return False, {}
         current = _validated_attempt(raw)
         return bool(current), current
+
+    async def _durably_mark_unknown(
+        self, baseline: MissionAttempt, receipt: SubmittedReceipt
+    ) -> bool:
+        marked, _ = await _capture_callback(
+            self._mark_attempt_ambiguous,
+            copy.deepcopy(baseline),
+            copy.deepcopy(receipt),
+            "receipt_persistence_unknown",
+        )
+        if not marked:
+            return False
+        authority_ok, ambiguous = await self._current_attempt(baseline)
+        return bool(
+            authority_ok
+            and _same_attempt_authority(baseline, ambiguous)
+            and ambiguous["state"] == "ambiguous"
+            and ambiguous["receipt_summary"] == receipt.summary
+            and ambiguous["blocker"] == "receipt_persistence_unknown"
+            and ambiguous["terminal_reason"] == "receipt_persistence_unknown"
+        )
 
     async def execute(
         self, attempt_record: Mapping[str, object], route: WorkerRoute
@@ -280,10 +265,6 @@ class WorkerAttemptSupervisor:
             raise WorkerAttemptError("Worker attempt authority check failed")
         if not _same_attempt_authority(baseline, current):
             raise WorkerAttemptError("Worker attempt authority drift")
-        if dispatch_key in self._recovery_dispatch_keys:
-            if current["state"] == "prepared":
-                raise WorkerAttemptError("Worker attempt requires recovery")
-            self._recovery_dispatch_keys.discard(dispatch_key)
         if current["state"] in {"submitted", "running"}:
             raise WorkerAttemptError("Worker attempt is already submitted")
         if current["state"] != "prepared" or current != baseline:
@@ -292,57 +273,53 @@ class WorkerAttemptSupervisor:
             raise WorkerAttemptError("Worker attempt is already submitted")
         self._claimed_dispatch_keys.add(dispatch_key)
 
-        executor = self._acp_execute if transport == "acp" else self._tmux_execute
-        admitted, execution = await _capture_callback(
-            executor, copy.deepcopy(baseline)
-        )
+        admit = self._acp_admit if transport == "acp" else self._tmux_admit
+        admitted, receipt = await _capture_callback(admit, copy.deepcopy(baseline))
         if not admitted:
             self._claimed_dispatch_keys.discard(dispatch_key)
             raise WorkerAttemptError(f"{label} Worker failed before admission")
-        if not isinstance(execution, TransportExecution):
+        if not isinstance(receipt, SubmittedReceipt):
             self._claimed_dispatch_keys.discard(dispatch_key)
             raise WorkerAttemptError(f"{label} Worker returned an invalid admission")
-        if execution.admission.dispatch_key != dispatch_key:
-            self._claimed_dispatch_keys.discard(dispatch_key)
-            self._recovery_dispatch_keys.add(dispatch_key)
+        if receipt.dispatch_key != dispatch_key:
+            marked = await self._durably_mark_unknown(baseline, receipt)
+            if marked:
+                self._claimed_dispatch_keys.discard(dispatch_key)
             raise WorkerAttemptError("Worker admission receipt lineage drift")
 
         persisted, _ = await _capture_callback(
             self._persist_submitted,
             copy.deepcopy(baseline),
-            copy.deepcopy(execution.admission),
+            copy.deepcopy(receipt),
         )
+        if persisted:
+            authority_ok, submitted = await self._current_attempt(baseline)
+            persisted = bool(
+                authority_ok
+                and _same_attempt_authority(baseline, submitted)
+                and submitted["state"] == "submitted"
+                and submitted["receipt_summary"] == receipt.summary
+            )
         if not persisted:
-            self._claimed_dispatch_keys.discard(dispatch_key)
-            self._recovery_dispatch_keys.add(dispatch_key)
-            raise WorkerAttemptError("Worker submitted receipt persistence failed")
-        authority_ok, submitted = await self._current_attempt(baseline)
-        if not authority_ok:
-            self._claimed_dispatch_keys.discard(dispatch_key)
-            self._recovery_dispatch_keys.add(dispatch_key)
-            raise WorkerAttemptError("Worker submitted receipt persistence failed")
-        if (
-            not _same_attempt_authority(baseline, submitted)
-            or submitted["state"] != "submitted"
-            or submitted["receipt_summary"] != execution.admission.summary
-        ):
-            self._claimed_dispatch_keys.discard(dispatch_key)
-            self._recovery_dispatch_keys.add(dispatch_key)
-            raise WorkerAttemptError("Worker submitted receipt persistence failed")
+            marked = await self._durably_mark_unknown(baseline, receipt)
+            if marked:
+                self._claimed_dispatch_keys.discard(dispatch_key)
+                raise WorkerAttemptError("Worker submitted receipt persistence failed")
+            raise WorkerAttemptError("Worker ambiguity persistence failed")
         self._claimed_dispatch_keys.discard(dispatch_key)
-        self._recovery_dispatch_keys.discard(dispatch_key)
 
-        factory_ok, completion = _capture_factory(execution.completion_factory)
-        if not factory_ok:
-            raise WorkerAttemptError(f"{label} Worker failed")
-        if not inspect.iscoroutine(completion):
-            await _dispose_invalid_completion(completion)
-            raise WorkerAttemptError(f"{label} Worker failed")
-        completed, result = await _capture_coroutine(completion)
+        complete = self._acp_complete if transport == "acp" else self._tmux_complete
+        completed, raw_result = await _capture_callback(
+            complete,
+            copy.deepcopy(baseline),
+            copy.deepcopy(receipt),
+        )
         if not completed:
             raise WorkerAttemptError(f"{label} Worker failed")
-        if not _result_shape_is_valid(result):
+        projected = _project_result(raw_result)
+        if projected is None:
             raise WorkerAttemptError(f"{label} Worker result is invalid")
+        result, reply, artifacts, trace_ids = projected
         if transport == "acp":
             try:
                 turn_state, _ = map_stop_reason(result.stop_reason)
@@ -358,13 +335,11 @@ class WorkerAttemptSupervisor:
             raise WorkerAttemptError(f"{label} Worker result is not validated")
         try:
             handoff = build_canonical_handoff(
-                reply=copy.deepcopy(result.reply),
-                artifacts=[
-                    {"path": item.path, "content_hash": item.content_hash}
-                    for item in result.artifacts
-                ],
-                trace_ids=list(result.trace_ids),
+                reply=reply,
+                artifacts=artifacts,
+                trace_ids=trace_ids,
                 expected_handoff_token=dispatch_key,
+                require_artifact_hashes=True,
             )
         except (TypeError, ValueError):
             handoff = None
