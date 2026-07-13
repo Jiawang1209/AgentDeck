@@ -92,6 +92,17 @@ _MISSION_ATTEMPT_FIELDS = frozenset(
         "terminal_reason",
     }
 )
+_PROTOCOL_TURN_FIELDS = frozenset(
+    {
+        "turn_id",
+        "session_id",
+        "message_id",
+        "kind",
+        "state",
+        "created_at",
+        "updated_at",
+    }
+)
 _MISSION_ATTEMPT_STATES = frozenset(
     {
         "prepared",
@@ -289,6 +300,36 @@ def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
         item = value.get(field)
         if item is not None and (type(item) is not str or not item):
             raise ValueError("mission attempt state invalid")
+    return copy.deepcopy(value)
+
+
+def _validate_protocol_turn_record(value: object) -> dict[str, Any]:
+    if type(value) is not dict or set(value) != _PROTOCOL_TURN_FIELDS:
+        raise ValueError("protocol turn record is invalid")
+    if (
+        type(value.get("turn_id")) is not str
+        or re.fullmatch(r"trn_[a-z0-9]+", value["turn_id"]) is None
+        or type(value.get("session_id")) is not str
+        or re.fullmatch(r"ags_[a-z0-9]+", value["session_id"]) is None
+        or type(value.get("message_id")) is not str
+        or not value["message_id"].strip()
+        or value.get("kind") not in {"prompt", "load_replay"}
+        or value.get("state") not in TURN_STATES
+    ):
+        raise ValueError("protocol turn record is invalid")
+    try:
+        created_at = datetime.fromisoformat(value["created_at"])
+        updated_at = datetime.fromisoformat(value["updated_at"])
+    except (TypeError, ValueError):
+        raise ValueError("protocol turn record is invalid") from None
+    if (
+        created_at.tzinfo is None
+        or created_at.utcoffset() is None
+        or updated_at.tzinfo is None
+        or updated_at.utcoffset() is None
+        or updated_at < created_at
+    ):
+        raise ValueError("protocol turn record is invalid")
     return copy.deepcopy(value)
 
 
@@ -1853,6 +1894,8 @@ class StateStore:
         state = self.load()
         self._validate_protocol_identities(state)
         self._validate_protocol_lineage(state)
+        for item in state.setdefault("protocol_turns", []):
+            _validate_protocol_turn_record(item)
         self._validate_protocol_transition_history(state)
         return state
 
@@ -2330,6 +2373,71 @@ class StateStore:
                     or prior["dispatch_key"] != expected_key
                 ):
                     raise ValueError("mission attempt lineage drift")
+            from .daemon.recovery import validate_mission_recovery_evidence_record
+
+            recovery_evidence = state.setdefault("mission_recovery_evidence", [])
+            if type(recovery_evidence) is not list:
+                raise ValueError("durable recovery authority invalid")
+            try:
+                validated_recovery_evidence = [
+                    validate_mission_recovery_evidence_record(item)
+                    for item in recovery_evidence
+                ]
+                mission_ids = {
+                    item["mission_id"]
+                    for item in state.setdefault("missions", [])
+                    if type(item) is dict
+                    and is_canonical_mission_id(item.get("mission_id"))
+                }
+                attempt_by_id = {
+                    item["attempt_id"]: item for item in validated_attempts
+                }
+                evidence_mission_ids = [
+                    item["mission_id"] for item in validated_recovery_evidence
+                ]
+                if len(evidence_mission_ids) != len(set(evidence_mission_ids)):
+                    raise ValueError
+                for binding in validated_recovery_evidence:
+                    if binding["mission_id"] not in mission_ids:
+                        raise ValueError
+                    bound_attempt_id = binding["attempt_id"]
+                    if bound_attempt_id is not None:
+                        bound_attempt = attempt_by_id.get(bound_attempt_id)
+                        if (
+                            bound_attempt is None
+                            or bound_attempt["mission_id"] != binding["mission_id"]
+                            or bound_attempt["agent_id"] != binding["agent_id"]
+                        ):
+                            raise ValueError
+                target_bindings = [
+                    item
+                    for item in validated_recovery_evidence
+                    if item["mission_id"] == mission_id
+                ]
+                mission_attempts = [
+                    item
+                    for item in validated_attempts
+                    if item["mission_id"] == mission_id
+                ]
+                latest_attempt = max(
+                    mission_attempts,
+                    key=lambda item: (item["created_at"], item["attempt_id"]),
+                    default=None,
+                )
+                expected_attempt_id = (
+                    None if latest_attempt is None else latest_attempt["attempt_id"]
+                )
+                expected_agent_id = (
+                    None if latest_attempt is None else latest_attempt["agent_id"]
+                )
+                if len(target_bindings) != 1 or target_bindings[0] != {
+                    "mission_id": mission_id,
+                    "attempt_id": expected_attempt_id,
+                    "agent_id": expected_agent_id,
+                }:
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise ValueError("durable recovery authority invalid") from None
             if any(item["state"] in _MISSION_ATTEMPT_ACTIVE_STATES for item in matching):
                 raise ValueError("active attempt already exists")
             if any(
@@ -2395,20 +2503,6 @@ class StateStore:
             journal_ids = self._strict_protocol_journal_event_ids()
             if candidate_event_id in outbox_ids or candidate_event_id in journal_ids:
                 raise ValueError("duplicate protocol event identity")
-            from .daemon.recovery import validate_mission_recovery_evidence_record
-
-            recovery_evidence = state.setdefault("mission_recovery_evidence", [])
-            if type(recovery_evidence) is not list:
-                raise TypeError("mission_recovery_evidence must be a list")
-            validated_recovery_evidence = [
-                validate_mission_recovery_evidence_record(item)
-                for item in recovery_evidence
-            ]
-            evidence_mission_ids = [
-                item["mission_id"] for item in validated_recovery_evidence
-            ]
-            if len(evidence_mission_ids) != len(set(evidence_mission_ids)):
-                raise ValueError("duplicate durable recovery evidence")
             next_recovery_evidence = [
                 item
                 for item in validated_recovery_evidence
@@ -2537,6 +2631,11 @@ class StateStore:
             validate_recovery_record(item)
         self._validate_protocol_identities(state)
         self._validate_protocol_lineage(state)
+        protocol_turns = [
+            _validate_protocol_turn_record(item)
+            for item in state.setdefault("protocol_turns", [])
+        ]
+        self._validate_protocol_transition_history(state)
         _validated_protocol_event_outbox_ids(outbox)
         journal_events = self.all_events()
         for event in journal_events:
@@ -2620,6 +2719,7 @@ class StateStore:
             "mission_permission_bindings": permission_bindings,
             "permission_requests": state.setdefault("permission_requests", []),
             "agent_sessions": state.setdefault("agent_sessions", []),
+            "protocol_turns": protocol_turns,
             "protocol_state_transitions": state.setdefault(
                 "protocol_state_transitions", []
             ),
@@ -2640,6 +2740,8 @@ class StateStore:
                 key: list(value) for key, value in sorted(claim_lineage.items())
             },
         }
+        # transport_updates are lineage-validated above but intentionally absent:
+        # no recovery fact or decision is derived from streamed transport updates.
         return _recovery_authority_hash(authority)
 
     def load_recovery_snapshot(self) -> tuple[dict[str, Any], str]:

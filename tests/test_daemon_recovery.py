@@ -719,6 +719,48 @@ def test_startup_rejects_permission_binding_without_authoritative_request(
         reconcile_startup(store, enable_scheduler=lambda: pytest.fail("enabled"))
 
 
+@pytest.mark.parametrize("corruption", ["bad_dict", "orphan", "broken_chain"])
+def test_startup_rejects_complete_protocol_transition_history_corruption(
+    tmp_path: Path, corruption: str
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "other", "codex", "acp", "native", str(tmp_path), capabilities
+    )
+    state = store.load()
+    if corruption == "bad_dict":
+        state["protocol_state_transitions"] = [{}]
+    elif corruption == "orphan":
+        turn = store.record_protocol_turn(session["session_id"], "msg_orphan")
+        permission = store.record_permission_request(
+            session["session_id"], turn["turn_id"], "shell", str(tmp_path), "low"
+        )
+        store.record_protocol_transition(
+            "permission", permission["permission_id"], "pending", "approved", None, {}
+        )
+        state = store.load()
+        state["protocol_state_transitions"][0]["entity_id"] = "prm_orphan"
+    else:
+        store.record_protocol_transition(
+            "session", session["session_id"], "created", "ready", None, {}
+        )
+        store.record_protocol_transition(
+            "session", session["session_id"], "ready", "busy", None, {}
+        )
+        state = store.load()
+        state["protocol_state_transitions"][1].update(
+            {"from_state": "connecting", "to_state": "ready"}
+        )
+    store.save(state)
+    enabled: list[bool] = []
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
+
+
 def test_startup_rejects_reply_evidence_without_controlled_audit_history(
     tmp_path: Path,
 ) -> None:
@@ -863,6 +905,45 @@ def test_recovery_token_covers_protocol_transition_authority(tmp_path: Path) -> 
     store.save(state)
     with pytest.raises(ValueError, match="recovery authority drift"):
         store.commit_recovery_decisions([decision], expected_recovery_token=token)
+
+
+def test_recovery_token_covers_complete_protocol_turn_authority(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "other", "codex", "acp", "native", str(tmp_path), capabilities
+    )
+    store.record_protocol_turn(session["session_id"], "msg_before")
+    store.flush_protocol_event_outbox()
+    snapshot, token = store.load_recovery_snapshot()
+    decision = reconcile_gate(
+        recovery_facts_from_persisted_state(snapshot, MISSION_ID)
+    )
+    state = store.load()
+    state["protocol_turns"][0]["message_id"] = "msg_after"
+    store.save(state)
+
+    _new_snapshot, new_token = store.load_recovery_snapshot()
+    assert new_token != token
+    with pytest.raises(ValueError, match="recovery authority drift"):
+        store.commit_recovery_decisions([decision], expected_recovery_token=token)
+
+
+def test_recovery_rejects_noncanonical_protocol_turn_record(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "other", "codex", "acp", "native", str(tmp_path), capabilities
+    )
+    store.record_protocol_turn(session["session_id"], "msg_before")
+    state = store.load()
+    state["protocol_turns"][0]["projection_only"] = True
+    store.save(state)
+
+    with pytest.raises(ValueError, match="protocol turn record is invalid"):
+        store.load_recovery_snapshot()
 
 
 def test_controlled_reply_and_handoff_transitions_drive_recovery(tmp_path: Path) -> None:

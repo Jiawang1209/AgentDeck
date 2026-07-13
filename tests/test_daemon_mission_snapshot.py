@@ -662,6 +662,63 @@ def test_failed_attempt_retries_once_when_frozen_limit_is_one(tmp_path, monkeypa
     assert second["dispatch_key"] != first["dispatch_key"]
 
 
+@pytest.mark.parametrize("corruption", ["missing", "cross", "nonlatest"])
+def test_retry_rejects_corrupt_existing_recovery_binding_full_tree_zero_write(
+    tmp_path, monkeypatch, corruption: str
+) -> None:
+    root, config, store, preview = _seed(
+        tmp_path, monkeypatch, retry_limit=2 if corruption == "nonlatest" else 1
+    )
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    first = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    state = store.load()
+    state["mission_attempts"][-1]["state"] = "failed"
+    state["mission_attempts"][-1]["terminal_reason"] = "retryable worker failure"
+    store.save(state)
+    latest = first
+    if corruption == "nonlatest":
+        latest = prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+        state = store.load()
+        state["mission_attempts"][-1]["state"] = "failed"
+        state["mission_attempts"][-1]["terminal_reason"] = "retryable worker failure"
+        state["mission_recovery_evidence"][0]["attempt_id"] = first["attempt_id"]
+    elif corruption == "missing":
+        state["mission_recovery_evidence"][0]["attempt_id"] = "mat_ffffffffffff"
+    else:
+        state["mission_recovery_evidence"][0]["mission_id"] = "mis_ffffffffffff"
+    assert latest["attempt_id"] != (
+        first["attempt_id"] if corruption == "nonlatest" else ""
+    )
+    store.save(state)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="durable recovery"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
 @pytest.mark.parametrize("drift", ["snapshot", "agent", "transport", "dispatch_key"])
 def test_retry_replays_every_prior_attempt_authority_in_durable_order_zero_write(
     tmp_path, monkeypatch, drift

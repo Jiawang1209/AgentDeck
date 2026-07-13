@@ -725,7 +725,7 @@ def reconcile_startup(
 
     try:
         state, recovery_token = store.load_recovery_snapshot()
-    except (OSError, RuntimeError, TypeError, ValueError):
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError):
         raise RecoveryError("durable recovery evidence is invalid") from None
     for field in (
         "daemon_event_outbox",
@@ -763,7 +763,7 @@ def reconcile_startup(
         persisted = store.commit_recovery_decisions(
             decisions, expected_recovery_token=recovery_token
         )
-    except (OSError, RuntimeError, TypeError, ValueError):
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError):
         raise RecoveryError("recovery authority drift") from None
     enable_scheduler()
     return persisted

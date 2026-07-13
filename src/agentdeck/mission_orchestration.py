@@ -161,6 +161,7 @@ def prepare_attempt(
             "attempt state invalid",
             "duplicate mission dispatch key",
             "duplicate mission attempt identity",
+            "durable recovery authority invalid",
             "frozen execution drift",
             "frozen execution snapshot invalid",
             "mission attempt state invalid",
