@@ -64,6 +64,14 @@
 - **Pre-init safety**: project setup preview is entirely memory-only and exact-bound to canonical cwd plus missing config marker. Confirmation rechecks those facts before the first init write; a post-init audit failure preserves the initialized project and returns `initialized_with_audit_blocker` instead of rollback or false failure.
 - **TDD evidence**: focused router/setup/binding tests are 24 passed before the broader compatibility regression.
 
+### Combine explicit Worker transport routing with governed tmux visibility
+
+- **Exact transport**: added `WorkerTransportRouter` over frozen AgentSpec plus runtime facts. Configured ACP remains effective ACP even when blocked; tmux is only an explicit-confirmation reroute affordance. Configured tmux uses only visible running-pane facts.
+- **No fallback execution**: the confirmed dispatcher invokes exactly one selected ACP or tmux callback. Readiness/ownership blockers stop before either callback; an ACP exception never calls tmux and a tmux exception never changes transport or completion state.
+- **Read-only mirror**: bounded attach/select-pane commands are derived only from safe tmux session/pane identities and exposed exclusively as `safety=inspect`; route calculation never attaches, captures, selects, or sends input.
+- **Single writer**: takeover and return-control require ready session, no active turn, no pending permission, no executing workflow step, and matching current ownership. Legal changes pass through `takeover_pending` / `return_pending`; failures roll back to the prior writer, and pending/human ownership blocks automation prompts.
+- **TDD evidence**: focused transport/ownership plus tmux/ACP/dispatch/workflow regression is 110 passed with one explicitly opt-in live skip; compileall and `git diff --check` pass.
+
 ### Design the Phase 3 M1 foreground conversation
 
 - **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.
