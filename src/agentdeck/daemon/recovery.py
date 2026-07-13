@@ -23,6 +23,14 @@ class RecoveryError(ValueError):
 Classification = Literal[
     "resumable", "waiting_human", "ambiguous", "blocked", "terminal"
 ]
+NextTransition = Literal[
+    "prepare_dispatch",
+    "dispatch_prepared",
+    "await_worker",
+    "validate_reply",
+    "record_handoff",
+    "activate_next",
+]
 MissionState = Literal[
     "pending_confirmation",
     "preparing",
@@ -97,6 +105,16 @@ _STATE_DOMAINS = {
 _TERMINAL_MISSIONS = frozenset({"completed", "stopped", "interrupted"})
 _SUCCESSFUL_ATTEMPTS = frozenset({"completed", "succeeded"})
 _FAILED_ATTEMPTS = frozenset({"failed", "cancelled", "interrupted"})
+_ALLOWED_RECOVERY_TRANSITIONS = frozenset(
+    {
+        "prepare_dispatch",
+        "dispatch_prepared",
+        "await_worker",
+        "validate_reply",
+        "record_handoff",
+        "activate_next",
+    }
+)
 _RECOVERY_RECORD_FIELDS = frozenset(
     {
         "classification",
@@ -107,6 +125,13 @@ _RECOVERY_RECORD_FIELDS = frozenset(
         "classified_at",
     }
 )
+_DURABLE_EVIDENCE_FIELDS = frozenset(
+    {"mission_id", "attempt_id", "reply", "handoff", "permission", "route"}
+)
+_REPLY_ID = re.compile(r"mrp_[0-9a-f]{12}")
+_HANDOFF_ID = re.compile(r"hof_[0-9a-f]{12}")
+_PERMISSION_ID = re.compile(r"prm_[0-9a-f]{12}")
+_SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
@@ -164,7 +189,7 @@ class RecoveryDecision:
     reason: str
     mission_id: str
     attempt_id: str | None
-    next_transition: str | None
+    next_transition: NextTransition | None
 
     def __post_init__(self) -> None:
         if self.classification not in {
@@ -184,10 +209,13 @@ class RecoveryDecision:
             or _ATTEMPT_ID.fullmatch(self.attempt_id) is None
         ):
             raise RecoveryError("invalid recovery decision attempt identity")
-        if self.next_transition is not None and (
-            type(self.next_transition) is not str or not self.next_transition
+        if (
+            self.classification == "resumable"
+            and self.next_transition not in _ALLOWED_RECOVERY_TRANSITIONS
         ):
-            raise RecoveryError("invalid recovery decision transition")
+            raise RecoveryError(
+                "resumable recovery decision requires an allowed transition"
+            )
         if self.classification != "resumable" and self.next_transition is not None:
             raise RecoveryError("non-resumable recovery decision has a transition")
 
@@ -196,7 +224,7 @@ def _decision(
     facts: RecoveryFacts,
     classification: Classification,
     reason: str,
-    next_transition: str | None = None,
+    next_transition: NextTransition | None = None,
 ) -> RecoveryDecision:
     return RecoveryDecision(
         classification=classification,
@@ -211,29 +239,6 @@ def reconcile_gate(facts: RecoveryFacts) -> RecoveryDecision:
     """Classify one complete immutable persisted-evidence projection."""
     if not isinstance(facts, RecoveryFacts):
         raise RecoveryError("recovery facts must be RecoveryFacts")
-    if facts.mission_state in _TERMINAL_MISSIONS and facts.attempt_state == "admitting":
-        return _decision(
-            facts, "ambiguous", "terminal Mission retains an unknown Worker admission"
-        )
-    if facts.mission_state in _TERMINAL_MISSIONS and facts.attempt_state == "ambiguous":
-        return _decision(
-            facts, "ambiguous", "terminal Mission retains an ambiguous Worker attempt"
-        )
-    if facts.mission_state in _TERMINAL_MISSIONS and facts.attempt_state in {
-        "prepared",
-        "submitted",
-        "running",
-    }:
-        if facts.attempt_state in {"submitted", "running"} and facts.receipt_state == "none":
-            return _decision(
-                facts, "ambiguous", "terminal Mission retains an unknown Worker dispatch"
-            )
-        return _decision(facts, "blocked", "terminal Mission retains an active Worker attempt")
-    if facts.mission_state in _TERMINAL_MISSIONS:
-        return _decision(facts, "terminal", f"Mission is {facts.mission_state}")
-    if facts.mission_state == "pending_confirmation":
-        return _decision(facts, "waiting_human", "Mission confirmation is pending")
-
     if facts.snapshot_state == "drift":
         return _decision(facts, "blocked", "frozen Mission snapshot drift")
     if facts.snapshot_state == "missing":
@@ -259,8 +264,33 @@ def reconcile_gate(facts: RecoveryFacts) -> RecoveryDecision:
         return _decision(facts, "ambiguous", "Worker admission outcome is unknown")
     if facts.attempt_state == "ambiguous":
         return _decision(facts, "ambiguous", "Worker attempt outcome is ambiguous")
-    if facts.attempt_state in {"submitted", "running"} and facts.receipt_state == "none":
+    if (
+        facts.attempt_state in {"submitted", "running"}
+        and facts.receipt_state == "none"
+    ):
         return _decision(facts, "ambiguous", "Worker dispatch outcome lacks a receipt")
+
+    if facts.mission_state in _TERMINAL_MISSIONS:
+        if facts.attempt_state in {"prepared", "submitted", "running"}:
+            return _decision(
+                facts, "blocked", "terminal Mission retains an active Worker attempt"
+            )
+        if facts.attempt_state in _SUCCESSFUL_ATTEMPTS:
+            if facts.receipt_state != "recorded":
+                return _decision(
+                    facts, "blocked", "terminal Worker result lacks a receipt"
+                )
+            if facts.reply_state == "none":
+                return _decision(
+                    facts, "blocked", "terminal Worker result has no reply evidence"
+                )
+            if facts.reply_state != "validated" or facts.handoff_state != "recorded":
+                return _decision(
+                    facts, "blocked", "terminal Mission result is not fully validated"
+                )
+        return _decision(facts, "terminal", f"Mission is {facts.mission_state}")
+    if facts.mission_state == "pending_confirmation":
+        return _decision(facts, "waiting_human", "Mission confirmation is pending")
 
     if facts.transport_state == "missing":
         return _decision(facts, "blocked", "Worker transport is missing")
@@ -374,19 +404,202 @@ def validate_recovery_record(value: object) -> dict[str, object]:
     }
 
 
+def validate_mission_recovery_evidence_record(value: object) -> dict[str, object]:
+    """Validate one compact persisted reply/handoff/permission/route projection."""
+    if type(value) is not dict or set(value) != _DURABLE_EVIDENCE_FIELDS:
+        raise ValueError("durable recovery evidence is invalid")
+    mission_id = value.get("mission_id")
+    attempt_id = value.get("attempt_id")
+    if not is_canonical_mission_id(mission_id) or (
+        attempt_id is not None
+        and (type(attempt_id) is not str or _ATTEMPT_ID.fullmatch(attempt_id) is None)
+    ):
+        raise ValueError("durable recovery evidence is invalid")
+
+    reply = value.get("reply")
+    if reply is not None and (
+        type(reply) is not dict
+        or set(reply) != {"reply_id", "state", "dispatch_key"}
+        or type(reply.get("reply_id")) is not str
+        or _REPLY_ID.fullmatch(reply["reply_id"]) is None
+        or reply.get("state") not in {"received", "validated", "invalid"}
+        or type(reply.get("dispatch_key")) is not str
+        or re.fullmatch(r"dsp_[0-9a-f]{32}", reply["dispatch_key"]) is None
+    ):
+        raise ValueError("durable recovery reply evidence is invalid")
+
+    handoff = value.get("handoff")
+    if handoff is not None and (
+        type(handoff) is not dict
+        or set(handoff) != {"handoff_id", "reply_id", "state"}
+        or type(handoff.get("handoff_id")) is not str
+        or _HANDOFF_ID.fullmatch(handoff["handoff_id"]) is None
+        or type(handoff.get("reply_id")) is not str
+        or _REPLY_ID.fullmatch(handoff["reply_id"]) is None
+        or handoff.get("state") not in {"pending", "recorded"}
+    ):
+        raise ValueError("durable recovery handoff evidence is invalid")
+    if handoff is not None and (
+        reply is None
+        or handoff["reply_id"] != reply["reply_id"]
+        or reply["state"] != "validated"
+    ):
+        raise ValueError("durable recovery handoff reply lineage is invalid")
+
+    permission = value.get("permission")
+    if permission is not None and (
+        type(permission) is not dict
+        or set(permission) != {"permission_id", "state"}
+        or type(permission.get("permission_id")) is not str
+        or _PERMISSION_ID.fullmatch(permission["permission_id"]) is None
+        or permission.get("state")
+        not in {"pending", "approved", "denied", "expired"}
+    ):
+        raise ValueError("durable recovery permission evidence is invalid")
+
+    route = value.get("route")
+    if (
+        type(route) is not dict
+        or set(route)
+        != {
+            "configured_transport",
+            "transport_state",
+            "snapshot_hash",
+            "ownership_state",
+        }
+        or route.get("configured_transport") not in {None, "acp", "tmux"}
+        or route.get("transport_state") not in {"ready", "missing", "invalid"}
+        or type(route.get("snapshot_hash")) is not str
+        or _SHA256.fullmatch(route["snapshot_hash"]) is None
+        or route.get("ownership_state")
+        not in {"agentdeck_owned", "human_owned", "conflict"}
+    ):
+        raise ValueError("durable recovery route evidence is invalid")
+    if attempt_id is None and (reply is not None or handoff is not None):
+        raise ValueError("durable recovery attempt lineage is invalid")
+    return {
+        "mission_id": mission_id,
+        "attempt_id": attempt_id,
+        "reply": None if reply is None else dict(reply),
+        "handoff": None if handoff is None else dict(handoff),
+        "permission": None if permission is None else dict(permission),
+        "route": dict(route),
+    }
+
+
+def recovery_facts_from_persisted_state(
+    state: Mapping[str, object], mission_id: str
+) -> RecoveryFacts:
+    """Build pure recovery facts only from an already validated state snapshot."""
+    if type(state) is not dict or not is_canonical_mission_id(mission_id):
+        raise RecoveryError("persisted recovery state is invalid")
+    missions = state.get("missions")
+    attempts = state.get("mission_attempts")
+    evidence_items = state.get("mission_recovery_evidence")
+    if (
+        type(missions) is not list
+        or type(attempts) is not list
+        or type(evidence_items) is not list
+    ):
+        raise RecoveryError("persisted recovery state is invalid")
+    mission_matches = [
+        item for item in missions if type(item) is dict and item.get("mission_id") == mission_id
+    ]
+    if len(mission_matches) != 1:
+        raise RecoveryError("persisted Mission evidence is invalid")
+    mission = mission_matches[0]
+    if mission.get("status") not in MISSION_STATUSES:
+        raise RecoveryError("persisted Mission evidence is invalid")
+
+    mission_attempts = [
+        item for item in attempts if type(item) is dict and item.get("mission_id") == mission_id
+    ]
+    active = [
+        item
+        for item in mission_attempts
+        if item.get("state") in {"prepared", "admitting", "submitted", "running"}
+    ]
+    if len(active) > 1:
+        raise RecoveryError("multiple active Mission attempts")
+    current = max(
+        mission_attempts,
+        key=lambda item: (str(item.get("created_at")), str(item.get("attempt_id"))),
+        default=None,
+    )
+    current_attempt_id = current.get("attempt_id") if current is not None else None
+    durable = [
+        validate_mission_recovery_evidence_record(item)
+        for item in evidence_items
+        if type(item) is dict and item.get("mission_id") == mission_id
+    ]
+    if len(durable) != 1 or durable[0]["attempt_id"] != current_attempt_id:
+        raise RecoveryError("durable recovery evidence mismatch")
+    evidence = durable[0]
+    route = evidence["route"]
+    assert isinstance(route, dict)
+    reply = evidence["reply"]
+    handoff = evidence["handoff"]
+    permission = evidence["permission"]
+
+    if current is not None:
+        if route["configured_transport"] != current.get("configured_transport"):
+            transport_state = "invalid"
+        else:
+            transport_state = route["transport_state"]
+        if reply is not None and reply["dispatch_key"] != current.get("dispatch_key"):
+            raise RecoveryError("durable recovery reply lineage is invalid")
+        receipt_state = "recorded" if current.get("receipt_summary") is not None else "none"
+        attempt_state = current.get("state")
+    else:
+        if route["configured_transport"] is not None:
+            raise RecoveryError("durable recovery route attempt lineage is invalid")
+        transport_state = route["transport_state"]
+        receipt_state = "none"
+        attempt_state = "none"
+
+    mission_snapshot_hash = mission.get("snapshot_hash")
+    route_snapshot_hash = route["snapshot_hash"]
+    attempt_snapshot_hash = (
+        current.get("snapshot_hash") if current is not None else mission_snapshot_hash
+    )
+    snapshot_state = (
+        "missing"
+        if type(mission_snapshot_hash) is not str
+        else "valid"
+        if mission_snapshot_hash == route_snapshot_hash == attempt_snapshot_hash
+        else "drift"
+    )
+    return RecoveryFacts(
+        mission_id=mission_id,
+        mission_state=mission["status"],  # type: ignore[arg-type]
+        attempt_id=current_attempt_id,  # type: ignore[arg-type]
+        attempt_state=attempt_state,  # type: ignore[arg-type]
+        receipt_state=receipt_state,  # type: ignore[arg-type]
+        reply_state="none" if reply is None else reply["state"],  # type: ignore[arg-type]
+        handoff_state="none" if handoff is None else handoff["state"],  # type: ignore[arg-type]
+        permission_state="none" if permission is None else permission["state"],  # type: ignore[arg-type]
+        transport_state=transport_state,  # type: ignore[arg-type]
+        snapshot_state=snapshot_state,  # type: ignore[arg-type]
+        lineage_state="valid",
+        ownership_state=route["ownership_state"],  # type: ignore[arg-type]
+    )
+
+
 class RecoveryStore(Protocol):
     def flush_daemon_event_outbox(self) -> object: ...
     def flush_conversation_event_outbox(self) -> object: ...
     def flush_protocol_event_outbox(self) -> object: ...
-    def load(self) -> dict[str, object]: ...
+    def load_recovery_snapshot(self) -> tuple[dict[str, object], str]: ...
     def commit_recovery_decisions(
-        self, decisions: Iterable[RecoveryDecision]
+        self,
+        decisions: Iterable[RecoveryDecision],
+        *,
+        expected_recovery_token: str,
     ) -> list[dict[str, object]]: ...
 
 
 def reconcile_startup(
     store: RecoveryStore,
-    evidence: Iterable[RecoveryFacts],
     *,
     enable_scheduler: Callable[[], object],
 ) -> list[dict[str, object]]:
@@ -403,7 +616,10 @@ def reconcile_startup(
     except (OSError, RuntimeError, TypeError, ValueError):
         raise RecoveryError("pending outbox flush failed") from None
 
-    state = store.load()
+    try:
+        state, recovery_token = store.load_recovery_snapshot()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        raise RecoveryError("durable recovery evidence is invalid") from None
     for field in (
         "daemon_event_outbox",
         "conversation_event_outbox",
@@ -416,7 +632,6 @@ def reconcile_startup(
     if type(missions) is not list:
         raise RecoveryError("persisted Mission evidence is invalid")
     nonterminal_ids: list[str] = []
-    persisted_statuses: dict[str, str] = {}
     for mission in missions:
         if type(mission) is not dict:
             raise RecoveryError("persisted Mission evidence is invalid")
@@ -426,55 +641,22 @@ def reconcile_startup(
             raise RecoveryError("persisted Mission evidence is invalid")
         if status not in _TERMINAL_MISSIONS:
             nonterminal_ids.append(mission_id)
-            persisted_statuses[mission_id] = status
     if len(nonterminal_ids) != len(set(nonterminal_ids)):
         raise RecoveryError("persisted Mission evidence is invalid")
 
     try:
-        from ..state import validate_mission_attempt_record
-
-        attempts_raw = state.get("mission_attempts", [])
-        if type(attempts_raw) is not list:
-            raise ValueError("mission attempt state invalid")
-        attempts = [validate_mission_attempt_record(item) for item in attempts_raw]
-    except (TypeError, ValueError):
-        raise RecoveryError("persisted Worker attempt evidence is invalid") from None
-    attempts_by_mission: dict[str, list[dict[str, object]]] = {}
-    for attempt in attempts:
-        attempts_by_mission.setdefault(str(attempt["mission_id"]), []).append(attempt)
-    current_attempts: dict[str, dict[str, object]] = {}
-    for mission_id, items in attempts_by_mission.items():
-        ordered = sorted(items, key=lambda item: (str(item["created_at"]), str(item["attempt_id"])))
-        current_attempts[mission_id] = ordered[-1]
-
-    facts = list(evidence)
-    if any(not isinstance(item, RecoveryFacts) for item in facts):
-        raise RecoveryError("persisted Mission evidence is invalid")
-    evidence_ids = [item.mission_id for item in facts]
-    if len(evidence_ids) != len(set(evidence_ids)) or set(evidence_ids) != set(
-        nonterminal_ids
-    ):
-        raise RecoveryError("nonterminal Mission evidence mismatch")
-    if any(
-        persisted_statuses[item.mission_id] != item.mission_state for item in facts
-    ):
-        raise RecoveryError("persisted Mission state mismatch")
-    for item in facts:
-        current = current_attempts.get(item.mission_id)
-        if current is None:
-            if item.attempt_id is not None:
-                raise RecoveryError("persisted Worker attempt mismatch")
-            continue
-        expected_receipt = (
-            "recorded" if current.get("receipt_summary") is not None else "none"
+        facts = [
+            recovery_facts_from_persisted_state(state, mission_id)
+            for mission_id in nonterminal_ids
+        ]
+        decisions = [reconcile_gate(item) for item in facts]
+    except (RecoveryError, TypeError, ValueError):
+        raise RecoveryError("durable recovery evidence is invalid") from None
+    try:
+        persisted = store.commit_recovery_decisions(
+            decisions, expected_recovery_token=recovery_token
         )
-        if (
-            item.attempt_id != current.get("attempt_id")
-            or item.attempt_state != current.get("state")
-            or item.receipt_state != expected_receipt
-        ):
-            raise RecoveryError("persisted Worker attempt mismatch")
-    decisions = [reconcile_gate(item) for item in facts]
-    persisted = store.commit_recovery_decisions(decisions)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        raise RecoveryError("recovery authority drift") from None
     enable_scheduler()
     return persisted

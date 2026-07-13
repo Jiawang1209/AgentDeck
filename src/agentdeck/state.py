@@ -299,6 +299,13 @@ def _require_unique_mission_attempt_lineage(
     ]
     if len(claim_ids) != len(set(claim_ids)):
         raise ValueError("duplicate mission admission claim identity")
+    active_by_mission: dict[str, int] = {}
+    for item in attempts:
+        if item["state"] in _MISSION_ATTEMPT_ACTIVE_STATES:
+            mission_id = item["mission_id"]
+            active_by_mission[mission_id] = active_by_mission.get(mission_id, 0) + 1
+    if any(count > 1 for count in active_by_mission.values()):
+        raise ValueError("multiple active Mission attempts")
 
 
 _MISSION_CLAIM_EVENT_FIELDS = {
@@ -1083,6 +1090,7 @@ class StateStore:
                 "controller_lease": None,
                 "daemon_event_outbox": [],
                 "recovery_decisions": [],
+                "mission_recovery_evidence": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -2350,7 +2358,44 @@ class StateStore:
             journal_ids = self._strict_protocol_journal_event_ids()
             if candidate_event_id in outbox_ids or candidate_event_id in journal_ids:
                 raise ValueError("duplicate protocol event identity")
+            from .daemon.recovery import validate_mission_recovery_evidence_record
+
+            recovery_evidence = state.setdefault("mission_recovery_evidence", [])
+            if type(recovery_evidence) is not list:
+                raise TypeError("mission_recovery_evidence must be a list")
+            validated_recovery_evidence = [
+                validate_mission_recovery_evidence_record(item)
+                for item in recovery_evidence
+            ]
+            evidence_mission_ids = [
+                item["mission_id"] for item in validated_recovery_evidence
+            ]
+            if len(evidence_mission_ids) != len(set(evidence_mission_ids)):
+                raise ValueError("duplicate durable recovery evidence")
+            next_recovery_evidence = [
+                item
+                for item in validated_recovery_evidence
+                if item["mission_id"] != mission_id
+            ]
+            next_recovery_evidence.append(
+                validate_mission_recovery_evidence_record(
+                    {
+                        "mission_id": mission_id,
+                        "attempt_id": attempt["attempt_id"],
+                        "reply": None,
+                        "handoff": None,
+                        "permission": None,
+                        "route": {
+                            "configured_transport": configured_transport,
+                            "transport_state": "ready",
+                            "snapshot_hash": attempt["snapshot_hash"],
+                            "ownership_state": "agentdeck_owned",
+                        },
+                    }
+                )
+            )
             attempts.append(attempt)
+            state["mission_recovery_evidence"] = next_recovery_evidence
             outbox.append(event_summary)
             self._atomic_save(state)
             return copy.deepcopy(attempt)
@@ -2369,16 +2414,94 @@ class StateStore:
             raise ValueError("duplicate mission attempt identity")
         return matches[0]
 
+    def _validated_recovery_snapshot_locked(
+        self, state: dict[str, Any]
+    ) -> str:
+        from .daemon.recovery import (
+            validate_mission_recovery_evidence_record,
+            validate_recovery_record,
+        )
+
+        missions = state.setdefault("missions", [])
+        attempts_raw = state.setdefault("mission_attempts", [])
+        evidence_raw = state.setdefault("mission_recovery_evidence", [])
+        decisions_raw = state.setdefault("recovery_decisions", [])
+        outbox = state.setdefault("protocol_event_outbox", [])
+        daemon_outbox = state.setdefault("daemon_event_outbox", [])
+        conversation_outbox = state.setdefault("conversation_event_outbox", [])
+        if type(missions) is not list:
+            raise ValueError("persisted Mission evidence is invalid")
+        if type(attempts_raw) is not list:
+            raise ValueError("mission attempt state invalid")
+        if type(evidence_raw) is not list:
+            raise TypeError("mission_recovery_evidence must be a list")
+        if type(decisions_raw) is not list:
+            raise TypeError("recovery_decisions must be a list")
+        mission_ids: list[str] = []
+        for raw in missions:
+            if (
+                type(raw) is not dict
+                or not is_canonical_mission_id(raw.get("mission_id"))
+                or raw.get("status") not in MISSION_STATUSES
+            ):
+                raise ValueError("persisted Mission evidence is invalid")
+            mission_ids.append(raw["mission_id"])
+        if len(mission_ids) != len(set(mission_ids)):
+            raise ValueError("duplicate mission identity")
+        attempts = [_validate_mission_attempt_record(item) for item in attempts_raw]
+        _require_unique_mission_attempt_lineage(attempts)
+        evidence = [
+            validate_mission_recovery_evidence_record(item) for item in evidence_raw
+        ]
+        evidence_missions = [item["mission_id"] for item in evidence]
+        if len(evidence_missions) != len(set(evidence_missions)):
+            raise ValueError("duplicate durable recovery evidence")
+        for item in decisions_raw:
+            validate_recovery_record(item)
+        _validated_protocol_event_outbox_ids(outbox)
+        validate_daemon_event_outbox(daemon_outbox)
+        self._conversation_collections(state)
+        claim_lineage = self._protocol_admission_claim_history(outbox, attempts)
+        authority = {
+            "missions": missions,
+            "mission_attempts": attempts,
+            "mission_recovery_evidence": evidence,
+            "recovery_decisions": decisions_raw,
+            "protocol_event_outbox": outbox,
+            "daemon_event_outbox": daemon_outbox,
+            "conversation_event_outbox": conversation_outbox,
+            "claim_lineage": {
+                key: list(value) for key, value in sorted(claim_lineage.items())
+            },
+        }
+        return canonical_snapshot_hash(authority)
+
+    def load_recovery_snapshot(self) -> tuple[dict[str, Any], str]:
+        """Read and validate one lock-consistent recovery authority snapshot."""
+        with self._protocol_mutation_lock():
+            state = self.load()
+            token = self._validated_recovery_snapshot_locked(state)
+            return copy.deepcopy(state), token
+
     def commit_recovery_decisions(
-        self, decisions: list[object] | tuple[object, ...]
+        self,
+        decisions: list[object] | tuple[object, ...],
+        *,
+        expected_recovery_token: str,
     ) -> list[dict[str, object]]:
         """Atomically persist complete startup classifications and audit events."""
         from .daemon.recovery import (
             RecoveryDecision,
+            reconcile_gate,
+            recovery_facts_from_persisted_state,
             validate_recovery_record,
         )
 
-        if type(decisions) not in {list, tuple}:
+        if (
+            type(decisions) not in {list, tuple}
+            or type(expected_recovery_token) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", expected_recovery_token) is None
+        ):
             raise ValueError("recovery decisions are invalid")
         if any(not isinstance(item, RecoveryDecision) for item in decisions):
             raise ValueError("recovery decisions are invalid")
@@ -2388,6 +2511,24 @@ class StateStore:
 
         with self._protocol_mutation_lock():
             state = self.load()
+            current_recovery_token = self._validated_recovery_snapshot_locked(state)
+            if current_recovery_token != expected_recovery_token:
+                raise ValueError("recovery authority drift")
+            nonterminal_mission_ids = [
+                item["mission_id"]
+                for item in state.get("missions", [])
+                if item.get("status") not in {"completed", "stopped", "interrupted"}
+            ]
+            if set(mission_ids) != set(nonterminal_mission_ids):
+                raise ValueError("recovery decision evidence drift")
+            expected_decisions = {
+                mission_id: reconcile_gate(
+                    recovery_facts_from_persisted_state(state, mission_id)
+                )
+                for mission_id in nonterminal_mission_ids
+            }
+            if any(expected_decisions[item.mission_id] != item for item in decisions):
+                raise ValueError("recovery decision evidence drift")
             existing = state.setdefault("recovery_decisions", [])
             if type(existing) is not list:
                 raise TypeError("recovery_decisions must be a list")

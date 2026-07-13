@@ -177,13 +177,13 @@ def test_terminal_mission_with_active_unknown_effect_is_not_declared_terminal() 
         )
     )
     assert decision.classification == "ambiguous"
-    assert decision.reason == "terminal Mission retains an unknown Worker admission"
+    assert decision.reason == "Worker admission outcome is unknown"
 
     ambiguous = reconcile_gate(
         facts(mission_state="completed", attempt_state="ambiguous")
     )
     assert ambiguous.classification == "ambiguous"
-    assert ambiguous.reason == "terminal Mission retains an ambiguous Worker attempt"
+    assert ambiguous.reason == "Worker attempt outcome is ambiguous"
 
 
 def test_handoff_without_validated_reply_fails_closed() -> None:
@@ -218,6 +218,43 @@ def test_recovery_values_are_immutable() -> None:
         decision.classification = "terminal"  # type: ignore[misc]
 
 
+@pytest.mark.parametrize("transition", [None, "dispatch_worker", "", 1])
+def test_resumable_decision_requires_one_allowed_transition(transition: object) -> None:
+    with pytest.raises(RecoveryError, match="transition"):
+        RecoveryDecision(
+            classification="resumable",
+            reason="resume",
+            mission_id=MISSION_ID,
+            attempt_id=ATTEMPT_ID,
+            next_transition=transition,  # type: ignore[arg-type]
+        )
+
+
+def test_integrity_and_unknown_effects_precede_human_and_terminal_shortcuts() -> None:
+    pending_unknown = reconcile_gate(
+        facts(
+            mission_state="pending_confirmation",
+            attempt_state="admitting",
+            receipt_state="none",
+        )
+    )
+    assert pending_unknown.classification == "ambiguous"
+    terminal_missing_reply = reconcile_gate(
+        facts(mission_state="completed", attempt_state="succeeded", reply_state="none")
+    )
+    assert terminal_missing_reply.classification == "blocked"
+    terminal_drift = reconcile_gate(
+        facts(
+            mission_state="completed",
+            attempt_id=None,
+            attempt_state="none",
+            receipt_state="none",
+            snapshot_state="drift",
+        )
+    )
+    assert terminal_drift.classification == "blocked"
+
+
 class RecordingStore(StateStore):
     def __init__(self, root: Path, calls: list[str]) -> None:
         super().__init__(root)
@@ -235,15 +272,23 @@ class RecordingStore(StateStore):
         self.calls.append("flush_protocol")
         return super().flush_protocol_event_outbox()
 
-    def commit_recovery_decisions(self, decisions):  # type: ignore[no-untyped-def]
+    def commit_recovery_decisions(  # type: ignore[no-untyped-def]
+        self, decisions, *, expected_recovery_token
+    ):
         self.calls.append("persist_recovery")
-        return super().commit_recovery_decisions(decisions)
+        return super().commit_recovery_decisions(
+            decisions, expected_recovery_token=expected_recovery_token
+        )
 
 
 def _seed_missions(store: StateStore) -> None:
     state = store.load()
     state["missions"] = [
-        {"mission_id": MISSION_ID, "status": "running"},
+        {
+            "mission_id": MISSION_ID,
+            "status": "running",
+            "snapshot_hash": "sha256:" + "f" * 64,
+        },
         {"mission_id": "mis_cccccccccccc", "status": "completed"},
     ]
     state["mission_attempts"] = [
@@ -291,6 +336,21 @@ def _seed_missions(store: StateStore) -> None:
             },
         },
     ]
+    state["mission_recovery_evidence"] = [
+        {
+            "mission_id": MISSION_ID,
+            "attempt_id": ATTEMPT_ID,
+            "reply": None,
+            "handoff": None,
+            "permission": None,
+            "route": {
+                "configured_transport": "acp",
+                "transport_state": "ready",
+                "snapshot_hash": "sha256:" + "f" * 64,
+                "ownership_state": "agentdeck_owned",
+            },
+        }
+    ]
     store.save(state)
 
 
@@ -303,7 +363,6 @@ def test_startup_flushes_outboxes_then_atomically_persists_before_enable(
 
     result = reconcile_startup(
         store,
-        [facts()],
         enable_scheduler=lambda: calls.append("enable_scheduler"),
     )
 
@@ -328,11 +387,14 @@ def test_startup_flushes_outboxes_then_atomically_persists_before_enable(
     }
 
 
-def test_startup_requires_exactly_every_nonterminal_mission(tmp_path: Path) -> None:
+def test_startup_requires_durable_evidence_for_every_nonterminal_mission(tmp_path: Path) -> None:
     store = StateStore(tmp_path)
     _seed_missions(store)
-    with pytest.raises(RecoveryError, match="nonterminal Mission evidence mismatch"):
-        reconcile_startup(store, [], enable_scheduler=lambda: pytest.fail("enabled"))
+    state = store.load()
+    state["mission_recovery_evidence"] = []
+    store.save(state)
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: pytest.fail("enabled"))
     assert store.load().get("recovery_decisions", []) == []
 
 
@@ -347,23 +409,25 @@ def test_startup_with_only_terminal_missions_enables_after_empty_atomic_commit(
     store.save(state)
     enabled: list[bool] = []
     assert reconcile_startup(
-        store, [], enable_scheduler=lambda: enabled.append(True)
+        store, enable_scheduler=lambda: enabled.append(True)
     ) == []
     assert enabled == [True]
     assert store.load()["recovery_decisions"] == []
 
 
-def test_startup_rejects_evidence_that_does_not_match_persisted_mission_state(
+def test_startup_accepts_no_caller_facts_that_can_forge_validated_handoff(
     tmp_path: Path,
 ) -> None:
     store = StateStore(tmp_path)
     _seed_missions(store)
-    with pytest.raises(RecoveryError, match="persisted Mission state mismatch"):
+    enabled: list[bool] = []
+    with pytest.raises(TypeError):
         reconcile_startup(
             store,
-            [facts(mission_state="preparing")],
-            enable_scheduler=lambda: pytest.fail("enabled"),
+            [facts(reply_state="validated", handoff_state="recorded")],  # type: ignore[arg-type]
+            enable_scheduler=lambda: enabled.append(True),
         )
+    assert enabled == []
     assert store.load().get("recovery_decisions", []) == []
 
 
@@ -372,12 +436,11 @@ def test_startup_rejects_attempt_evidence_that_does_not_match_persisted_record(
 ) -> None:
     store = StateStore(tmp_path)
     _seed_missions(store)
-    with pytest.raises(RecoveryError, match="persisted Worker attempt mismatch"):
-        reconcile_startup(
-            store,
-            [facts(attempt_state="running")],
-            enable_scheduler=lambda: pytest.fail("enabled"),
-        )
+    state = store.load()
+    state["mission_recovery_evidence"][0]["attempt_id"] = "mat_" + "9" * 12
+    store.save(state)
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: pytest.fail("enabled"))
     assert store.load().get("recovery_decisions", []) == []
 
 
@@ -394,7 +457,7 @@ def test_startup_outbox_failure_prevents_classification_and_scheduler(
     )
     enabled: list[bool] = []
     with pytest.raises(RecoveryError, match="pending outbox flush failed"):
-        reconcile_startup(store, [facts()], enable_scheduler=lambda: enabled.append(True))
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
     assert enabled == []
     assert store.state_path.read_bytes() == before
 
@@ -410,7 +473,7 @@ def test_reconcile_gate_and_startup_do_not_call_runtime_surfaces(
 
     for name in ("subprocess", "socket", "time"):
         monkeypatch.setitem(__import__("sys").modules, name, forbidden)
-    result = reconcile_startup(store, [facts()], enable_scheduler=lambda: None)
+    result = reconcile_startup(store, enable_scheduler=lambda: None)
     assert result[0]["next_transition"] == "await_worker"
 
 
@@ -424,7 +487,10 @@ def test_recovery_persistence_rejects_malformed_existing_state_zero_write(
     store.save(state)
     before = store.state_path.read_bytes()
     with pytest.raises((TypeError, ValueError), match="recovery_decisions"):
-        store.commit_recovery_decisions([reconcile_gate(facts())])
+        _snapshot, token = store.load_recovery_snapshot()
+        store.commit_recovery_decisions(
+            [reconcile_gate(facts())], expected_recovery_token=token
+        )
     assert store.state_path.read_bytes() == before
 
 
@@ -441,8 +507,127 @@ def test_recovery_event_and_state_are_one_atomic_save(
         original(state)
 
     monkeypatch.setattr(store, "_atomic_save", capture)
-    store.commit_recovery_decisions([reconcile_gate(facts())])
+    _snapshot, token = store.load_recovery_snapshot()
+    store.commit_recovery_decisions(
+        [reconcile_gate(facts())], expected_recovery_token=token
+    )
     assert len(saves) == 1
     assert saves[0]["recovery_decisions"]
     assert saves[0]["protocol_event_outbox"]
     json.dumps(saves[0], allow_nan=False)
+
+
+def test_state_store_rejects_caller_forged_recovery_decision_with_valid_token(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    store.flush_protocol_event_outbox()
+    _snapshot, token = store.load_recovery_snapshot()
+    forged = RecoveryDecision(
+        classification="resumable",
+        reason="skip directly to handoff",
+        mission_id=MISSION_ID,
+        attempt_id=ATTEMPT_ID,
+        next_transition="record_handoff",
+    )
+    before = store.state_path.read_bytes()
+    with pytest.raises(ValueError, match="recovery decision evidence drift"):
+        store.commit_recovery_decisions(
+            [forged], expected_recovery_token=token
+        )
+    assert store.state_path.read_bytes() == before
+
+
+def test_startup_rejects_multiple_active_attempts_before_classification(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    duplicate = deepcopy(state["mission_attempts"][0])
+    duplicate.update(
+        {
+            "attempt_id": "mat_" + "8" * 12,
+            "dispatch_key": "dsp_" + "8" * 32,
+            "admission_claim_id": None,
+            "state": "prepared",
+            "created_at": "2026-07-13T01:02:00+00:00",
+            "updated_at": "2026-07-13T01:02:00+00:00",
+            "receipt_summary": None,
+        }
+    )
+    state["mission_attempts"].append(duplicate)
+    store.save(state)
+    enabled: list[bool] = []
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
+
+
+def test_startup_rejects_persisted_handoff_without_reply_record(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    state["mission_recovery_evidence"][0]["handoff"] = {
+        "handoff_id": "hof_" + "3" * 12,
+        "reply_id": "mrp_" + "4" * 12,
+        "state": "recorded",
+    }
+    store.save(state)
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: pytest.fail("enabled"))
+    assert store.load().get("recovery_decisions", []) == []
+
+
+def test_startup_multi_mission_corruption_disables_scheduler_and_writes_no_classification(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    state["missions"].append(
+        {
+            "mission_id": "mis_777777777777",
+            "status": "running",
+            "snapshot_hash": "sha256:" + "7" * 64,
+        }
+    )
+    state["mission_recovery_evidence"].append(
+        {
+            **deepcopy(state["mission_recovery_evidence"][0]),
+            "mission_id": "mis_777777777777",
+            "attempt_id": None,
+            "route": {"corrupt": True},
+        }
+    )
+    store.save(state)
+    enabled: list[bool] = []
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
+
+
+def test_startup_compare_and_swap_rejects_state_drift_before_scheduler(
+    tmp_path: Path,
+) -> None:
+    class DriftingStore(StateStore):
+        def commit_recovery_decisions(  # type: ignore[no-untyped-def]
+            self, decisions, *, expected_recovery_token
+        ):
+            state = self.load()
+            state["missions"][0]["status"] = "preparing"
+            self.save(state)
+            return super().commit_recovery_decisions(
+                decisions, expected_recovery_token=expected_recovery_token
+            )
+
+    store = DriftingStore(tmp_path)
+    _seed_missions(store)
+    enabled: list[bool] = []
+    with pytest.raises(RecoveryError, match="recovery authority drift"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []

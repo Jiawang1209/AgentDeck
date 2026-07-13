@@ -542,6 +542,21 @@ def test_prepare_attempt_commits_exact_pre_dispatch_record_and_event(tmp_path, m
         if item.get("mission_id") == preview["mission_id"]
     ]
     assert persisted == [attempt]
+    assert store.load()["mission_recovery_evidence"] == [
+        {
+            "mission_id": preview["mission_id"],
+            "attempt_id": attempt["attempt_id"],
+            "reply": None,
+            "handoff": None,
+            "permission": None,
+            "route": {
+                "configured_transport": "acp",
+                "transport_state": "ready",
+                "snapshot_hash": confirmed["snapshot_hash"],
+                "ownership_state": "agentdeck_owned",
+            },
+        }
+    ]
     events = store.load()["protocol_event_outbox"]
     assert events[-1]["event_type"] == "mission_attempt_prepared"
     assert events[-1]["payload"] == {
