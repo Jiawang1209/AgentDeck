@@ -34,6 +34,9 @@ agentdeck contract list
 
 The index currently lists these contract names in order:
 
+- `daemon-runtime`
+- `mission-scheduler`
+- `client-session`
 - `project-view`
 - `continue`
 - `loop`

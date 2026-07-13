@@ -44,6 +44,24 @@ CONTRACT_INDEX_ITEM_FIELDS = (
 
 CONTRACT_INDEX_SPECS = (
     (
+        "daemon-runtime",
+        "agentdeck contract daemon-runtime",
+        "agentdeck contract daemon-runtime --example",
+        "daemon-runtime-schema.md",
+    ),
+    (
+        "mission-scheduler",
+        "agentdeck contract mission-scheduler",
+        "agentdeck contract mission-scheduler --example",
+        "mission-scheduler-schema.md",
+    ),
+    (
+        "client-session",
+        "agentdeck contract client-session",
+        "agentdeck contract client-session --example",
+        "client-session-schema.md",
+    ),
+    (
         "project-view",
         "agentdeck contract project-view",
         "agentdeck contract project-view --example",
@@ -309,6 +327,33 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "conversation",
     "inbox",
     "recovery",
+    "daemon",
+    "scheduler",
+)
+
+DAEMON_RUNTIME_CONTRACT_VERSION = "daemon-runtime/v1"
+DAEMON_RUNTIME_RESPONSE_FIELDS = (
+    "schema_version", "mode", "state", "health", "client_count",
+    "controller_present", "idle_exit_pending", "protocol_version",
+    "compatibility", "blockers", "controls",
+)
+MISSION_SCHEDULER_CONTRACT_VERSION = "mission-scheduler/v1"
+MISSION_SCHEDULER_RESPONSE_FIELDS = (
+    "schema_version", "mode", "state", "active_mission_id",
+    "active_step", "next_transition", "blockers", "controls",
+)
+CLIENT_SESSION_CONTRACT_VERSION = "client-session/v1"
+CLIENT_SESSION_RESPONSE_FIELDS = (
+    "schema_version", "mode", "client_id", "role", "lease_generation",
+    "compatible", "write_enabled", "blockers", "controls",
+)
+DAEMON_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
+PROJECT_VIEW_DAEMON_FIELDS = (
+    "state", "health", "client_count", "controller_present",
+    "idle_exit_pending", "protocol_version", "compatibility", "blockers",
+)
+PROJECT_VIEW_SCHEDULER_FIELDS = (
+    "state", "active_mission_id", "active_step", "next_transition", "blockers",
 )
 
 PROJECT_VIEW_AGENT_SESSIONS_FIELDS = ("count", "by_state", "items")
@@ -1686,6 +1731,9 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "leader_action",
     "control_registry",
     "change_summary",
+    "daemon_runtime_card",
+    "mission_scheduler_card",
+    "client_session_card",
 )
 
 WORKBENCH_SKILLS_CATALOG_CARD_FIELDS = (
@@ -2148,6 +2196,9 @@ WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "doctor_contract",
     "run_contract",
     "artifacts_contract",
+    "daemon_runtime_contract",
+    "mission_scheduler_contract",
+    "client_session_contract",
 )
 
 WORKBENCH_CHANGE_SUMMARY_FIELDS = (
@@ -2721,6 +2772,8 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "permission_request_item_fields": list(PROJECT_VIEW_PERMISSION_REQUEST_ITEM_FIELDS),
         "protocol_state_transitions_fields": list(PROJECT_VIEW_PROTOCOL_STATE_TRANSITIONS_FIELDS),
         "protocol_state_transition_item_fields": list(PROJECT_VIEW_PROTOCOL_STATE_TRANSITION_ITEM_FIELDS),
+        "daemon_fields": list(PROJECT_VIEW_DAEMON_FIELDS),
+        "scheduler_fields": list(PROJECT_VIEW_SCHEDULER_FIELDS),
     }
 
 
@@ -2729,7 +2782,7 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
     if include_example:
         example = project_view_example()
         payload["example"] = True
-        payload["example_top_level_fields"] = list(example)
+        payload["example_top_level_fields"] = list(PROJECT_VIEW_TOP_LEVEL_FIELDS)
         payload["example_leader_fields"] = list(example["leader"])
         payload["example_coordination_role_fields"] = list(example["leader"]["coordination_roles"][0])
         payload["example_missions_fields"] = list(example["missions"])
@@ -6221,6 +6274,9 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
+        "daemon_runtime_card_fields": list(DAEMON_RUNTIME_RESPONSE_FIELDS),
+        "mission_scheduler_card_fields": list(MISSION_SCHEDULER_RESPONSE_FIELDS),
+        "client_session_card_fields": list(CLIENT_SESSION_RESPONSE_FIELDS),
         "conversation_runtime_card_fields": list(CONVERSATION_RUNTIME_RESPONSE_FIELDS),
         "leader_backend_card_fields": list(LEADER_BACKEND_RESPONSE_FIELDS),
         "worker_transport_item_fields": list(WORKER_TRANSPORT_RESPONSE_FIELDS),
@@ -6699,6 +6755,12 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     _validate_project_view_memory_items(errors, payload)
     _validate_project_view_protocol_summaries(errors, payload)
     _validate_project_view_conversation(errors, payload)
+    daemon = payload.get("daemon")
+    if not isinstance(daemon, dict) or set(daemon) != set(PROJECT_VIEW_DAEMON_FIELDS):
+        errors.append("daemon summary must match the compact ProjectView contract")
+    scheduler = payload.get("scheduler")
+    if not isinstance(scheduler, dict) or set(scheduler) != set(PROJECT_VIEW_SCHEDULER_FIELDS):
+        errors.append("scheduler summary must match the compact ProjectView contract")
     _validate_project_view_summary_items(errors, payload, "messages", PROJECT_VIEW_MESSAGE_ITEM_FIELDS, "message")
     _validate_project_view_summary_items(errors, payload, "jobs", PROJECT_VIEW_JOB_ITEM_FIELDS, "job")
     _validate_project_view_summary_items(errors, payload, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
@@ -11184,6 +11246,14 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
     for field in WORKBENCH_SNAPSHOT_FIELDS:
         if field not in payload:
             errors.append(f"missing workbench field: {field}")
+    for field, validator in (
+        ("daemon_runtime_card", validate_daemon_runtime_contract),
+        ("mission_scheduler_card", validate_mission_scheduler_contract),
+        ("client_session_card", validate_client_session_contract),
+    ):
+        result = validator(payload.get(field))
+        for error in result["errors"]:
+            errors.append(f"{field}: {error}")
     if payload.get("mode") != "workbench":
         errors.append("mode must be workbench")
     project_view = payload.get("project_view")
@@ -11726,6 +11796,17 @@ def project_view_example() -> dict[str, object]:
         "project": "agentdeck-example",
         "root": "/workspace/agentdeck-example",
         "runtime_backend": "tmux",
+        "daemon": {
+            "state": "ready", "health": "healthy", "client_count": 1,
+            "controller_present": True, "idle_exit_pending": False,
+            "protocol_version": "daemon-rpc/v1", "compatibility": "compatible",
+            "blockers": [],
+        },
+        "scheduler": {
+            "state": "inactive", "active_mission_id": None, "active_step": None,
+            "next_transition": None,
+            "blockers": ["background Mission scheduling is not implemented in M2a"],
+        },
         "leader": {
             "agent_id": "leader",
             "provider": "fake",
@@ -13572,6 +13653,16 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
                 registry, scope="worker_transport", card="worker_transport_card",
                 agent_id=worker.get("agent_id"), controls=worker.get("controls"),
             )
+    for scope, card_name in (
+        ("daemon_runtime", "daemon_runtime_card"),
+        ("mission_scheduler", "mission_scheduler_card"),
+        ("client_session", "client_session_card"),
+    ):
+        card = payload.get(card_name) if isinstance(payload.get(card_name), dict) else {}
+        _append_control_registry_items(
+            registry, scope=scope, card=card_name, agent_id=None,
+            controls=card.get("controls"),
+        )
     return registry
 
 
@@ -15012,6 +15103,9 @@ def workbench_example() -> dict[str, object]:
             "doctor_contract": "agentdeck contract doctor",
             "run_contract": "agentdeck contract run",
             "artifacts_contract": "agentdeck contract artifacts",
+            "daemon_runtime_contract": "agentdeck contract daemon-runtime",
+            "mission_scheduler_contract": "agentdeck contract mission-scheduler",
+            "client_session_contract": "agentdeck contract client-session",
         },
         "control_mode_card": {
             "mode": "control_mode",
@@ -15172,6 +15266,9 @@ def workbench_example() -> dict[str, object]:
             "new_event_count": 0,
             "new_events": [],
         },
+        "daemon_runtime_card": daemon_runtime_example(),
+        "mission_scheduler_card": mission_scheduler_example(),
+        "client_session_card": client_session_example(),
     }
     status_example = mission_example("status")
     mission_summary = project_view["missions"]
@@ -16603,6 +16700,217 @@ def validate_worker_transport_contract(payload: object) -> dict[str, object]:
     if isinstance(mirror, dict) and mirror.get("available") is True and mirror.get("read_only") is not True:
         errors.append("worker_transport live mirror must be read-only")
     return {"ok": not errors, "errors": errors}
+
+
+def _daemon_control(
+    kind: str, label: str, command: str, safety: str, *, enabled: bool = True,
+    blocker: str | None = None,
+) -> dict[str, object]:
+    return {
+        "kind": kind, "label": label, "command": command, "safety": safety,
+        "enabled": enabled, "blocker": blocker,
+    }
+
+
+def daemon_runtime_example() -> dict[str, object]:
+    return {
+        "schema_version": DAEMON_RUNTIME_CONTRACT_VERSION,
+        "mode": "daemon_runtime",
+        "state": "ready",
+        "health": "healthy",
+        "client_count": 1,
+        "controller_present": True,
+        "idle_exit_pending": False,
+        "protocol_version": "daemon-rpc/v1",
+        "compatibility": "compatible",
+        "blockers": [],
+        "controls": [
+            _daemon_control("inspect", "Inspect daemon", "agentdeck daemon status", "inspect"),
+            _daemon_control("stop", "Stop daemon", "agentdeck daemon stop --confirm", "explicit_runtime"),
+        ],
+    }
+
+
+def mission_scheduler_example() -> dict[str, object]:
+    return {
+        "schema_version": MISSION_SCHEDULER_CONTRACT_VERSION,
+        "mode": "mission_scheduler",
+        "state": "inactive",
+        "active_mission_id": None,
+        "active_step": None,
+        "next_transition": None,
+        "blockers": ["background Mission scheduling is not implemented in M2a"],
+        "controls": [
+            _daemon_control("inspect", "Inspect status", "agentdeck status", "inspect"),
+        ],
+    }
+
+
+def client_session_example() -> dict[str, object]:
+    return {
+        "schema_version": CLIENT_SESSION_CONTRACT_VERSION,
+        "mode": "client_session",
+        "client_id": "client_example",
+        "role": "controller",
+        "lease_generation": 1,
+        "compatible": True,
+        "write_enabled": True,
+        "blockers": [],
+        "controls": [
+            _daemon_control("inspect", "Inspect daemon", "agentdeck daemon status", "inspect"),
+        ],
+    }
+
+
+def _validate_daemon_controls(errors: list[str], value: object) -> None:
+    if not isinstance(value, list):
+        errors.append("controls must be an array")
+        return
+    for index, control in enumerate(value):
+        if not isinstance(control, dict) or set(control) != set(DAEMON_CONTROL_FIELDS):
+            errors.append(f"controls[{index}] fields are invalid")
+            continue
+        if control.get("safety") not in {"inspect", "explicit_user", "explicit_runtime"}:
+            errors.append(f"controls[{index}].safety is invalid")
+        if type(control.get("enabled")) is not bool:
+            errors.append(f"controls[{index}].enabled must be boolean")
+        if not control.get("enabled") and not isinstance(control.get("blocker"), str):
+            errors.append(f"controls[{index}].blocker is required when disabled")
+
+
+def _validate_exact_daemon_contract(
+    payload: object, *, fields: tuple[str, ...], version: str, mode: str,
+) -> dict[str, object]:
+    errors: list[str] = []
+    if not isinstance(payload, dict):
+        return {"ok": False, "errors": ["payload must be an object"]}
+    if set(payload) != set(fields):
+        errors.append("response fields must match the exact contract")
+    if payload.get("schema_version") != version:
+        errors.append("schema_version is invalid")
+    if payload.get("mode") != mode:
+        errors.append("mode is invalid")
+    blockers = payload.get("blockers")
+    if not isinstance(blockers, list) or any(type(item) is not str for item in blockers):
+        errors.append("blockers must be an array of strings")
+    _validate_daemon_controls(errors, payload.get("controls"))
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_daemon_runtime_contract(payload: object) -> dict[str, object]:
+    result = _validate_exact_daemon_contract(
+        payload, fields=DAEMON_RUNTIME_RESPONSE_FIELDS,
+        version=DAEMON_RUNTIME_CONTRACT_VERSION, mode="daemon_runtime",
+    )
+    if isinstance(payload, dict):
+        errors = result["errors"]
+        assert isinstance(errors, list)
+        if payload.get("state") not in {"starting", "ready", "busy", "idle_grace", "stopping", "stopped", "blocked"}:
+            errors.append("state is invalid")
+        if payload.get("health") not in {"healthy", "unavailable", "blocked", "unknown"}:
+            errors.append("health is invalid")
+        if type(payload.get("client_count")) is not int or payload.get("client_count", -1) < 0:
+            errors.append("client_count must be a non-negative integer")
+        for name in ("controller_present", "idle_exit_pending"):
+            if type(payload.get(name)) is not bool:
+                errors.append(f"{name} must be boolean")
+        if payload.get("compatibility") not in {"compatible", "incompatible", "unverified"}:
+            errors.append("compatibility is invalid")
+        if payload.get("protocol_version") != "daemon-rpc/v1":
+            errors.append("protocol_version is invalid")
+        result["ok"] = not errors
+    return result
+
+
+def validate_mission_scheduler_contract(payload: object) -> dict[str, object]:
+    result = _validate_exact_daemon_contract(
+        payload, fields=MISSION_SCHEDULER_RESPONSE_FIELDS,
+        version=MISSION_SCHEDULER_CONTRACT_VERSION, mode="mission_scheduler",
+    )
+    if isinstance(payload, dict):
+        errors = result["errors"]
+        assert isinstance(errors, list)
+        if payload.get("state") not in {"inactive", "ready", "running", "waiting_human", "blocked", "terminal"}:
+            errors.append("state is invalid")
+        for name in ("active_mission_id", "active_step", "next_transition"):
+            if payload.get(name) is not None and type(payload.get(name)) is not str:
+                errors.append(f"{name} must be a string or null")
+        result["ok"] = not errors
+    return result
+
+
+def validate_client_session_contract(payload: object) -> dict[str, object]:
+    result = _validate_exact_daemon_contract(
+        payload, fields=CLIENT_SESSION_RESPONSE_FIELDS,
+        version=CLIENT_SESSION_CONTRACT_VERSION, mode="client_session",
+    )
+    if isinstance(payload, dict):
+        errors = result["errors"]
+        assert isinstance(errors, list)
+        if payload.get("role") not in {"observer", "controller", "none"}:
+            errors.append("role is invalid")
+        client_id = payload.get("client_id")
+        if client_id is not None and (type(client_id) is not str or not client_id):
+            errors.append("client_id is invalid")
+        if payload.get("lease_generation") is not None and (
+            type(payload.get("lease_generation")) is not int or payload.get("lease_generation", 0) < 1
+        ):
+            errors.append("lease_generation is invalid")
+        for name in ("compatible", "write_enabled"):
+            if type(payload.get(name)) is not bool:
+                errors.append(f"{name} must be boolean")
+        if payload.get("write_enabled") is True and payload.get("role") != "controller":
+            errors.append("write_enabled requires controller role")
+        if payload.get("role") == "controller" and (
+            type(client_id) is not str or payload.get("lease_generation") is None
+        ):
+            errors.append("controller role requires client identity and lease generation")
+        if payload.get("role") == "none" and (
+            client_id is not None or payload.get("lease_generation") is not None
+        ):
+            errors.append("none role cannot carry client or lease identity")
+        result["ok"] = not errors
+    return result
+
+
+def _daemon_contract_response(
+    path: Path, *, version: str, fields: tuple[str, ...], example: dict[str, object] | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "contract_version": version,
+        "contract_path": str(path),
+        "contract_exists": path.exists(),
+        "response_fields": list(fields),
+        "control_fields": list(DAEMON_CONTROL_FIELDS),
+        "safety_values": ["inspect", "explicit_user", "explicit_runtime"],
+        "project_view_contract": "agentdeck contract project-view",
+        "workbench_contract": "agentdeck contract workbench",
+    }
+    if example is not None:
+        payload["example"] = example
+    return payload
+
+
+def daemon_runtime_contract_response(path: Path, include_example: bool = False) -> dict[str, object]:
+    example = daemon_runtime_example() if include_example else None
+    if example is not None and not validate_daemon_runtime_contract(example)["ok"]:
+        raise ValueError("invalid daemon runtime example")
+    return _daemon_contract_response(path, version=DAEMON_RUNTIME_CONTRACT_VERSION, fields=DAEMON_RUNTIME_RESPONSE_FIELDS, example=example)
+
+
+def mission_scheduler_contract_response(path: Path, include_example: bool = False) -> dict[str, object]:
+    example = mission_scheduler_example() if include_example else None
+    if example is not None and not validate_mission_scheduler_contract(example)["ok"]:
+        raise ValueError("invalid mission scheduler example")
+    return _daemon_contract_response(path, version=MISSION_SCHEDULER_CONTRACT_VERSION, fields=MISSION_SCHEDULER_RESPONSE_FIELDS, example=example)
+
+
+def client_session_contract_response(path: Path, include_example: bool = False) -> dict[str, object]:
+    example = client_session_example() if include_example else None
+    if example is not None and not validate_client_session_contract(example)["ok"]:
+        raise ValueError("invalid client session example")
+    return _daemon_contract_response(path, version=CLIENT_SESSION_CONTRACT_VERSION, fields=CLIENT_SESSION_RESPONSE_FIELDS, example=example)
 
 
 def _m1_contract_response(

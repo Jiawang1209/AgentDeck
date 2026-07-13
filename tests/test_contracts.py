@@ -717,6 +717,9 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "inbox-schema.md",
         "trace-schema.md",
         "artifacts-schema.md",
+        "daemon-runtime-schema.md",
+        "mission-scheduler-schema.md",
+        "client-session-schema.md",
     }
     for filename in docs:
         (tmp_path / filename).write_text(f"# {filename}\n", encoding="utf-8")
@@ -728,9 +731,12 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 34
+    assert payload["count"] == 37
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
+        "daemon-runtime",
+        "mission-scheduler",
+        "client-session",
         "project-view",
         "continue",
         "loop",

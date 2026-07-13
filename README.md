@@ -56,7 +56,7 @@ agentdeck contract worker-transport --example
 
 Natural language is never execution authority. AgentDeck binds confirmation to exact execution facts, does not silently change ACP to tmux, and keeps permission, approval, runtime-safety, and ownership gates independent. Common inline credential assignments are redacted from durable Mission provenance.
 
-Phase 3 M1 is foreground and project-local. It does not yet provide the M2 daemon, background continuation after the client exits, full transcript recovery, global project roaming, a Desktop/IDE Workspace Client, automatic adapter installation/authentication, or native same-session TUI attachment.
+Phase 3 M2a now provides the verified one-per-project daemon foundation, `agentdeck daemon status/start/stop/logs`, and compact ProjectView/workbench discovery contracts. It does not yet advance Missions in the background: the M2a scheduler surface is explicitly inactive until frozen execution snapshots, deterministic scheduling, supervision, and recovery land in M2b. Full transcript recovery, global project roaming, a Desktop/IDE Workspace Client, automatic adapter installation/authentication, and native same-session TUI attachment also remain future work.
 
 ## Architecture
 

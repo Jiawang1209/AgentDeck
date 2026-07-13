@@ -71,9 +71,9 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-**Review the written Phase 3 M2 implementation plan and choose its execution mode; do not implement before a new explicit `/goal`.** M1 is complete, verified, and merged into local `main` at `cd8fd655`. The human approved the M2 written spec at `docs/superpowers/specs/2026-07-13-agentdeck-project-daemon-design.md`. The strict 14-task TDD plan is `docs/superpowers/plans/2026-07-13-agentdeck-project-daemon.md` and covers M2a daemon foundation, M2b recoverable background Mission, and M2c real acceptance.
+**Continue the approved Subagent-Driven Phase 3 M2 plan at Task 7.** Tasks 1–6 are the M2a foundation: compact lifecycle state, strict `daemon-rpc/v1`, verified one-per-project ownership, controller lease, bounded Unix-socket client/server, and the ProjectView/workbench/CLI/contracts control surface. The implementation plan remains `docs/superpowers/plans/2026-07-13-agentdeck-project-daemon.md` and the approved design remains `docs/superpowers/specs/2026-07-13-agentdeck-project-daemon-design.md`.
 
-No M2 production code is authorized before the human reviews the implementation plan, chooses inline or subagent-driven execution, and creates a new explicit `/goal`. A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
+M2a does **not** schedule a Mission in the background. `mission-scheduler/v1` and its workbench card report `inactive` with an explicit blocker. Task 7 must next freeze Mission execution snapshots and attempt identities before Task 8 may add the pure one-transition scheduler. A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
 
 The completed natural-language Mission and G-series work below is historical context only. It must not be treated as an active continuation request or redone.
 

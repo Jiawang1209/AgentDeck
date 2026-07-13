@@ -15,11 +15,15 @@ import re
 import shlex
 import shutil
 import select
+import secrets
+import signal
+import stat
 import sys
 import time
 from typing import Any, TextIO
 
 from acp import schema
+from . import __version__
 
 from .config import (
     config_path,
@@ -117,6 +121,12 @@ from .contracts import (
     validate_workflow_status_contract,
     workflow_contract_response,
     worker_transport_contract_response,
+    client_session_contract_response,
+    daemon_runtime_contract_response,
+    mission_scheduler_contract_response,
+    validate_client_session_contract,
+    validate_daemon_runtime_contract,
+    validate_mission_scheduler_contract,
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, new_id, utc_now
@@ -148,6 +158,13 @@ from .conversation.transports import WorkerRuntimeFacts, WorkerTransportRouter, 
 from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import, resolve_skill_dependencies
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
+from .daemon.client import DaemonClient, DaemonUnavailable, connect_or_start, install_bounded_daemon_stdio_from_env
+from .daemon.lifecycle import (
+    acquire_daemon_ownership, bind_daemon_endpoint, can_stop_daemon,
+    cleanup_daemon_endpoint, daemon_endpoint,
+)
+from .daemon.protocol import DAEMON_RPC_PROTOCOL_VERSION
+from .daemon.server import DaemonServer
 
 
 def _print_json(payload: object) -> None:
@@ -2511,6 +2528,9 @@ def _workbench_snapshot_payload(
     run_progress_card = _workbench_run_progress_card(store)
     plan_board_card = _plan_board_payload(store)
     skills_catalog_card = _skills_catalog_card(config)
+    daemon_runtime_card = _daemon_runtime_card(project_view)
+    mission_scheduler_card = _mission_scheduler_card(project_view)
+    client_session_card = _client_session_card(project_view)
     payload = {
         "ok": True,
         "mode": "workbench",
@@ -2558,8 +2578,72 @@ def _workbench_snapshot_payload(
         "leader_action": leader_action if isinstance(leader_action, dict) else None,
         "control_registry": [],
         "change_summary": _workbench_change_summary(store, since_event_id),
+        "daemon_runtime_card": daemon_runtime_card,
+        "mission_scheduler_card": mission_scheduler_card,
+        "client_session_card": client_session_card,
     }
     payload["control_registry"] = _workbench_control_registry(payload)
+    return payload
+
+
+def _daemon_runtime_card(project_view: dict[str, object]) -> dict[str, object]:
+    summary = project_view.get("daemon") if isinstance(project_view.get("daemon"), dict) else {}
+    state = str(summary.get("state", "stopped"))
+    blockers = list(summary.get("blockers", [])) if isinstance(summary.get("blockers"), list) else ["daemon state unavailable"]
+    stop_enabled = state in {"ready", "idle_grace"} and not blockers
+    payload = {
+        "schema_version": "daemon-runtime/v1",
+        "mode": "daemon_runtime",
+        "state": state,
+        "health": summary.get("health", "unavailable"),
+        "client_count": summary.get("client_count", 0),
+        "controller_present": summary.get("controller_present", False),
+        "idle_exit_pending": summary.get("idle_exit_pending", False),
+        "protocol_version": summary.get("protocol_version", "daemon-rpc/v1"),
+        "compatibility": summary.get("compatibility", "unverified"),
+        "blockers": blockers,
+        "controls": [
+            _control(kind="inspect", label="Inspect daemon", command="agentdeck daemon status", safety="inspect"),
+            _control(
+                kind="stop", label="Stop daemon", command="agentdeck daemon stop --confirm",
+                safety="explicit_runtime", enabled=stop_enabled,
+                blocker=None if stop_enabled else (blockers[0] if blockers else "daemon cannot stop safely"),
+            ),
+        ],
+    }
+    if not validate_daemon_runtime_contract(payload)["ok"]:
+        raise ValueError("daemon runtime card contract validation failed")
+    return payload
+
+
+def _mission_scheduler_card(project_view: dict[str, object]) -> dict[str, object]:
+    summary = project_view.get("scheduler") if isinstance(project_view.get("scheduler"), dict) else {}
+    payload = {
+        "schema_version": "mission-scheduler/v1", "mode": "mission_scheduler",
+        "state": summary.get("state", "inactive"),
+        "active_mission_id": summary.get("active_mission_id"),
+        "active_step": summary.get("active_step"),
+        "next_transition": summary.get("next_transition"),
+        "blockers": list(summary.get("blockers", [])),
+        "controls": [_control(kind="inspect", label="Inspect status", command="agentdeck status", safety="inspect")],
+    }
+    if not validate_mission_scheduler_contract(payload)["ok"]:
+        raise ValueError("mission scheduler card contract validation failed")
+    return payload
+
+
+def _client_session_card(project_view: dict[str, object]) -> dict[str, object]:
+    daemon = project_view.get("daemon") if isinstance(project_view.get("daemon"), dict) else {}
+    compatible = daemon.get("compatibility") == "compatible"
+    payload = {
+        "schema_version": "client-session/v1", "mode": "client_session",
+        "client_id": None, "role": "none", "lease_generation": None,
+        "compatible": compatible, "write_enabled": False,
+        "blockers": [] if compatible else ["no verified daemon client session"],
+        "controls": [_control(kind="inspect", label="Inspect daemon", command="agentdeck daemon status", safety="inspect")],
+    }
+    if not validate_client_session_contract(payload)["ok"]:
+        raise ValueError("client session card contract validation failed")
     return payload
 
 
@@ -3194,6 +3278,16 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
                 registry, scope="worker_transport", card="worker_transport_card",
                 agent_id=worker.get("agent_id"), controls=worker.get("controls"),
             )
+    for scope, card_name in (
+        ("daemon_runtime", "daemon_runtime_card"),
+        ("mission_scheduler", "mission_scheduler_card"),
+        ("client_session", "client_session_card"),
+    ):
+        card = payload.get(card_name) if isinstance(payload.get(card_name), dict) else {}
+        _append_workbench_control_registry_items(
+            registry, scope=scope, card=card_name, agent_id=None,
+            controls=card.get("controls"),
+        )
     return registry
 
 
@@ -4668,6 +4762,9 @@ def _workbench_contracts_card() -> dict[str, object]:
         "doctor_contract": "agentdeck contract doctor",
         "run_contract": "agentdeck contract run",
         "artifacts_contract": "agentdeck contract artifacts",
+        "daemon_runtime_contract": "agentdeck contract daemon-runtime",
+        "mission_scheduler_contract": "agentdeck contract mission-scheduler",
+        "client_session_contract": "agentdeck contract client-session",
     }
 
 
@@ -5686,6 +5783,329 @@ def contract_acp_runtime_command(args: argparse.Namespace) -> int:
     payload = acp_runtime_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
+
+
+def _daemon_contract_command(args: argparse.Namespace, name: str, factory) -> int:
+    path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / f"{name}-schema.md"
+    _print_json(factory(path, include_example=args.example))
+    return 0
+
+
+def contract_daemon_runtime_command(args: argparse.Namespace) -> int:
+    return _daemon_contract_command(args, "daemon-runtime", daemon_runtime_contract_response)
+
+
+def contract_mission_scheduler_command(args: argparse.Namespace) -> int:
+    return _daemon_contract_command(args, "mission-scheduler", mission_scheduler_contract_response)
+
+
+def contract_client_session_command(args: argparse.Namespace) -> int:
+    return _daemon_contract_command(args, "client-session", client_session_contract_response)
+
+
+def _endpoint_files_exist_without_mutation(root: Path) -> bool:
+    endpoint = daemon_endpoint(root)
+    try:
+        metadata = os.lstat(endpoint.metadata_path)
+        socket_metadata = os.lstat(endpoint.socket_path)
+    except (FileNotFoundError, OSError):
+        return False
+    return stat.S_ISREG(metadata.st_mode) and stat.S_ISSOCK(socket_metadata.st_mode)
+
+
+async def _verified_daemon_status(root: Path, config: ProjectConfig) -> tuple[dict[str, object], bool]:
+    client = await DaemonClient.connect_verified(
+        root, max_frame_bytes=config.daemon.max_frame_bytes,
+        timeout_seconds=config.daemon.start_timeout_seconds,
+    )
+    try:
+        return await client.request("status", {}), client.compatible
+    finally:
+        await client.close()
+
+
+def _daemon_status_payload(
+    project_view: dict[str, object], live: dict[str, object] | None = None,
+    *, compatible: bool = False,
+) -> dict[str, object]:
+    summary = dict(project_view.get("daemon", {})) if isinstance(project_view.get("daemon"), dict) else {}
+    if live is None and summary.get("state") in {"starting", "ready", "busy", "idle_grace", "stopping"}:
+        summary.update({
+            "state": "blocked", "health": "unavailable",
+            "compatibility": "unverified",
+            "blockers": ["verified daemon endpoint is unavailable"],
+        })
+    elif live is not None:
+        summary.update({
+            "state": live.get("state", "ready"),
+            "health": "healthy",
+            "client_count": live.get("client_count", 0),
+            "controller_present": live.get("controller_present", False),
+            "idle_exit_pending": live.get("idle_exit_pending", False),
+            "protocol_version": live.get("protocol_version", DAEMON_RPC_PROTOCOL_VERSION),
+            "compatibility": "compatible" if compatible else "incompatible",
+            "blockers": list(live.get("blockers", [])),
+        })
+    return _daemon_runtime_card({**project_view, "daemon": summary})
+
+
+def daemon_status_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    live = None
+    compatible = False
+    if _endpoint_files_exist_without_mutation(Path(config.root)):
+        try:
+            live, compatible = asyncio.run(_verified_daemon_status(Path(config.root), config))
+        except DaemonUnavailable:
+            pass
+    payload = _daemon_status_payload(project_view, live, compatible=compatible)
+    validation = validate_daemon_runtime_contract(payload)
+    if not validation["ok"]:
+        print("Daemon runtime contract validation failed", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+async def _start_daemon(root: Path, config: ProjectConfig) -> tuple[dict[str, object], bool]:
+    client = await connect_or_start(root, config)
+    try:
+        return await client.request("status", {}), client.compatible
+    finally:
+        await client.close()
+
+
+def daemon_start_command(_args: argparse.Namespace) -> int:
+    config, store, exit_code = _load_project_or_error()
+    if config is None or store is None:
+        return exit_code
+    try:
+        live, compatible = asyncio.run(_start_daemon(Path(config.root), config))
+    except DaemonUnavailable as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    project_view = _project_view_payload_or_error(config, store)
+    if project_view is None:
+        return 1
+    _print_json(_daemon_status_payload(project_view, live, compatible=compatible))
+    return 0
+
+
+def daemon_stop_command(args: argparse.Namespace) -> int:
+    if not args.confirm:
+        print("daemon stop requires --confirm", file=sys.stderr)
+        return 1
+    config, _store, exit_code = _load_project_or_error()
+    if config is None:
+        return exit_code
+    root = Path(config.root)
+    if not _endpoint_files_exist_without_mutation(root):
+        print("verified daemon is unavailable", file=sys.stderr)
+        return 1
+    try:
+        live, compatible = asyncio.run(_verified_daemon_status(root, config))
+    except DaemonUnavailable:
+        print("verified daemon is unavailable", file=sys.stderr)
+        return 1
+    if not compatible:
+        print("incompatible daemon is read-only", file=sys.stderr)
+        return 1
+    keepalive_view = {
+        name: live.get(name, 0)
+        for name in (
+            "active_mission_count", "active_worker_count", "pending_approval_count",
+            "pending_permission_count", "pending_reply_count",
+            "pending_recovery_decision_count", "pending_decision_count",
+            "ambiguous_decision_count", "outbox_count",
+        )
+    }
+    keepalive_view.update({
+        name: live.get(name, False)
+        for name in ("recovery_active", "safe_shutdown_active", "atomic_write_active")
+    })
+    if not can_stop_daemon(keepalive_view):
+        print("daemon has active keepalive work", file=sys.stderr)
+        return 1
+    binding = None
+    try:
+        binding = bind_daemon_endpoint(root)
+        metadata = binding.read_metadata()
+        if metadata is None or metadata.get("instance_id") != live.get("instance_id"):
+            print("verified daemon identity changed", file=sys.stderr)
+            return 1
+        os.kill(int(metadata["pid"]), signal.SIGTERM)
+    except (OSError, ValueError):
+        print("verified daemon could not be stopped", file=sys.stderr)
+        return 1
+    finally:
+        if binding is not None:
+            binding.close()
+    _print_json({"ok": True, "mode": "daemon_stop", "stopped": True})
+    return 0
+
+
+def _read_daemon_log(root: Path, name: str, lines: int) -> list[str]:
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptors: list[int] = []
+    try:
+        descriptors.append(os.open(root, directory_flags))
+        descriptors.append(os.open(".agentdeck", directory_flags, dir_fd=descriptors[-1]))
+        descriptors.append(os.open("runtime", directory_flags, dir_fd=descriptors[-1]))
+        try:
+            descriptors.append(os.open(name, file_flags, dir_fd=descriptors[-1]))
+        except FileNotFoundError:
+            return []
+        metadata = os.fstat(descriptors[-1])
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 1024 * 1024:
+            raise ValueError("daemon log is not a bounded regular file")
+        content = os.read(descriptors[-1], 1024 * 1024 + 1)
+    except FileNotFoundError:
+        return []
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+    values = content.decode("utf-8", errors="replace").splitlines()[-lines:]
+    return [re.sub(r"(?i)(token|secret|password|api[_-]?key)=\S+", r"\1=<redacted>", value[:500]) for value in values]
+
+
+def daemon_logs_command(args: argparse.Namespace) -> int:
+    config, _store, exit_code = _load_project_or_error()
+    if config is None:
+        return exit_code
+    if args.lines < 1 or args.lines > 1000:
+        print("--lines must be between 1 and 1000", file=sys.stderr)
+        return 1
+    root = Path(config.root)
+    try:
+        payload = {
+            "ok": True, "mode": "daemon_logs", "lines": args.lines,
+            "stdout": _read_daemon_log(root, "daemon.stdout.log", args.lines),
+            "stderr": _read_daemon_log(root, "daemon.stderr.log", args.lines),
+        }
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) -> int:
+    ownership = acquire_daemon_ownership(
+        root, start_nonce=secrets.token_hex(32), health_probe=lambda _metadata: None,
+        wait_timeout_seconds=config.daemon.start_timeout_seconds,
+    )
+    if ownership.role != "owner":
+        ownership.release()
+        return 0
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(signum, stop_event.set)
+    server: DaemonServer | None = None
+    created_at: str | None = None
+    try:
+        status: dict[str, object] = {}
+        def current_status() -> dict[str, object]:
+            snapshot = dict(status)
+            if server is not None:
+                snapshot["client_count"] = max(0, server.connection_count - 1)
+                if server.connection_count:
+                    snapshot["state"] = "ready"
+                    snapshot["idle_exit_pending"] = False
+            return snapshot
+
+        server = DaemonServer(
+            endpoint=ownership.endpoint.socket_path, instance_id=ownership.instance_id,
+            project_root_hash=ownership.project_root_hash,
+            start_nonce_hash=ownership.start_nonce_hash, daemon_version=__version__,
+            project_view_schema_version=PROJECT_VIEW_SCHEMA_VERSION,
+            max_frame_bytes=config.daemon.max_frame_bytes,
+            allowed_methods={"handshake", "status", "subscribe", "mission.pause"},
+            status_provider=current_status,
+        )
+        await server.start()
+        status.update({
+            "mode": "daemon_status", "state": "ready", "health": "healthy",
+            "client_count": 0, "controller_present": False,
+            "idle_exit_pending": False, "blockers": [],
+            "active_mission_count": 0, "active_worker_count": 0,
+            "pending_approval_count": 0, "pending_permission_count": 0,
+            "pending_reply_count": 0, "pending_recovery_decision_count": 0,
+            "pending_decision_count": 0, "ambiguous_decision_count": 0,
+            "outbox_count": 0, "recovery_active": False,
+            "safe_shutdown_active": False, "atomic_write_active": False,
+        })
+        now = utc_now()
+        created_at = now
+        store.record_daemon_state({
+            "instance_id": ownership.instance_id,
+            "project_root_hash": ownership.project_root_hash,
+            "start_nonce_hash": ownership.start_nonce_hash,
+            "state": "ready", "created_at": now, "updated_at": now,
+        }, expected_project_root_hash=ownership.project_root_hash)
+        idle_since: float | None = None
+        current_state = "ready"
+        while not stop_event.is_set():
+            status["client_count"] = max(0, server.connection_count - 1)
+            if server.connection_count:
+                idle_since = None
+                desired_state = "ready"
+            elif idle_since is None:
+                idle_since = loop.time()
+                desired_state = "idle_grace"
+            else:
+                desired_state = "idle_grace"
+            if desired_state != current_state:
+                status["state"] = desired_state
+                status["idle_exit_pending"] = desired_state == "idle_grace"
+                store.record_daemon_state({
+                    "instance_id": ownership.instance_id,
+                    "project_root_hash": ownership.project_root_hash,
+                    "start_nonce_hash": ownership.start_nonce_hash,
+                    "state": desired_state, "created_at": created_at,
+                    "updated_at": utc_now(),
+                }, expected_project_root_hash=ownership.project_root_hash)
+                current_state = desired_state
+            if idle_since is not None and loop.time() - idle_since >= config.daemon.idle_grace_seconds:
+                break
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+        return 0
+    finally:
+        if server is not None:
+            await server.close()
+        if created_at is not None:
+            stopped_at = utc_now()
+            with contextlib.suppress(Exception):
+                store.record_daemon_state({
+                    "instance_id": ownership.instance_id,
+                    "project_root_hash": ownership.project_root_hash,
+                    "start_nonce_hash": ownership.start_nonce_hash,
+                    "state": "stopped", "created_at": created_at,
+                    "updated_at": stopped_at,
+                }, expected_project_root_hash=ownership.project_root_hash)
+        cleanup_daemon_endpoint(ownership)
+
+
+def daemon_serve_command(args: argparse.Namespace) -> int:
+    root = Path(args.project).expanduser().resolve()
+    try:
+        config = load_config(root)
+        store = StateStore(root)
+        install_bounded_daemon_stdio_from_env(root)
+        return asyncio.run(_serve_daemon(root, config, store))
+    except Exception as exc:
+        print(f"daemon serve failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
 
 
 def contract_conversation_runtime_command(args: argparse.Namespace) -> int:
@@ -16355,6 +16775,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_project_view.add_argument("--example", action="store_true", help="Include a GUI-ready ProjectView example")
     contract_project_view.set_defaults(func=contract_project_view_command)
+    for contract_name, help_text, handler in (
+        ("daemon-runtime", "Show project daemon runtime contract metadata", contract_daemon_runtime_command),
+        ("mission-scheduler", "Show Mission scheduler contract metadata", contract_mission_scheduler_command),
+        ("client-session", "Show daemon client session contract metadata", contract_client_session_command),
+    ):
+        daemon_contract = contract_subparsers.add_parser(contract_name, help=help_text)
+        daemon_contract.add_argument("--example", action="store_true", help="Include a GUI-ready example")
+        daemon_contract.set_defaults(func=handler)
     contract_protocol_runtime = contract_subparsers.add_parser(
         "protocol-runtime",
         help="Show protocol runtime status contract discovery metadata",
@@ -16785,6 +17213,25 @@ def build_parser() -> argparse.ArgumentParser:
     artifacts = subparsers.add_parser("artifacts", help="List recoverable worker artifacts")
     artifacts.set_defaults(func=artifacts_command)
 
+    daemon = subparsers.add_parser("daemon", help="Inspect and control the project daemon")
+    daemon_subparsers = daemon.add_subparsers(dest="daemon_command", required=True)
+    daemon_status = daemon_subparsers.add_parser("status", help="Inspect daemon status without starting it")
+    daemon_status.set_defaults(func=daemon_status_command)
+    daemon_start = daemon_subparsers.add_parser("start", help="Start or connect to the project daemon")
+    daemon_start.set_defaults(func=daemon_start_command)
+    daemon_stop = daemon_subparsers.add_parser("stop", help="Safely stop the verified project daemon")
+    daemon_stop.add_argument("--confirm", action="store_true", help="Confirm the explicit runtime stop")
+    daemon_stop.set_defaults(func=daemon_stop_command)
+    daemon_logs = daemon_subparsers.add_parser("logs", help="Read bounded project daemon logs")
+    daemon_logs.add_argument("--lines", type=int, default=100, help="Read the last 1-1000 lines")
+    daemon_logs.set_defaults(func=daemon_logs_command)
+
+    internal_daemon = subparsers.add_parser("_daemon", help=argparse.SUPPRESS)
+    internal_subparsers = internal_daemon.add_subparsers(dest="internal_daemon_command", required=True)
+    internal_serve = internal_subparsers.add_parser("serve", help=argparse.SUPPRESS)
+    internal_serve.add_argument("--project", required=True)
+    internal_serve.set_defaults(func=daemon_serve_command)
+
     return parser
 
 
@@ -16799,5 +17246,16 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        root = project_root()
+        try:
+            config = load_config(root)
+        except FileNotFoundError:
+            config = None
+        if config is not None:
+            try:
+                asyncio.run(_start_daemon(Path(config.root), config))
+            except DaemonUnavailable as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
         return TerminalConversationUI(_foreground_conversation_session()).run()
     return args.func(args)

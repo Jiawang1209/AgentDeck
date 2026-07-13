@@ -3385,6 +3385,35 @@ class StateStore:
         }
         leader["leader_backend"] = leader_backend_identity(config.leader.provider, config.leader.model)
         leader["coordination_roles"] = leader_coordination_roles(config.leader.provider, config.leader.model)
+        daemon_record = state.get("daemon_runtime")
+        daemon_state = (
+            str(daemon_record.get("state"))
+            if isinstance(daemon_record, dict)
+            else "stopped"
+        )
+        daemon_blockers = [] if daemon_state in {"ready", "busy", "idle_grace"} else ["project daemon is not running"]
+        daemon_summary = {
+            "state": daemon_state,
+            "health": "unknown" if daemon_state in {"ready", "busy", "idle_grace"} else "unavailable",
+            "client_count": 0,
+            "controller_present": isinstance(state.get("controller_lease"), dict)
+            and str(state["controller_lease"].get("lease_id", "")).startswith("lse_"),
+            "idle_exit_pending": daemon_state == "idle_grace",
+            "protocol_version": "daemon-rpc/v1",
+            "compatibility": "unverified",
+            "blockers": (
+                ["daemon health requires endpoint verification"]
+                if daemon_state in {"ready", "busy", "idle_grace"}
+                else daemon_blockers
+            ),
+        }
+        scheduler_summary = {
+            "state": "inactive",
+            "active_mission_id": None,
+            "active_step": None,
+            "next_transition": None,
+            "blockers": ["background Mission scheduling is not implemented in M2a"],
+        }
         return ProjectView(
             schema_version=PROJECT_VIEW_SCHEMA_VERSION,
             project=config.name,
@@ -3414,6 +3443,8 @@ class StateStore:
             conversation=self._conversation_summary(state),
             inbox=self._inbox_summary(state.get("inbox", {})),
             recovery=self._recovery_summary(state, config),
+            daemon=daemon_summary,
+            scheduler=scheduler_summary,
         )
 
 

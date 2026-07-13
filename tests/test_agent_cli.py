@@ -6067,6 +6067,9 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
     assert payload["contract_docs_dir"].endswith("docs/contracts")
     assert payload["count"] == len(payload["contracts"])
     assert [item["name"] for item in payload["contracts"]] == [
+        "daemon-runtime",
+        "mission-scheduler",
+        "client-session",
         "project-view",
         "continue",
         "loop",
@@ -6103,9 +6106,9 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "artifacts",
     ]
     assert all(item["contract_exists"] for item in payload["contracts"])
-    assert payload["contracts"][0]["command"] == "agentdeck contract project-view"
-    assert payload["contracts"][0]["example_command"] == "agentdeck contract project-view --example"
-    assert payload["contracts"][0]["contract_path"].endswith("docs/contracts/project-view-schema.md")
+    assert payload["contracts"][0]["command"] == "agentdeck contract daemon-runtime"
+    assert payload["contracts"][0]["example_command"] == "agentdeck contract daemon-runtime --example"
+    assert payload["contracts"][0]["contract_path"].endswith("docs/contracts/daemon-runtime-schema.md")
 
 
 def test_contract_list_includes_demo(capsys) -> None:
@@ -7426,6 +7429,9 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "leader_action",
         "control_registry",
         "change_summary",
+        "daemon_runtime_card",
+        "mission_scheduler_card",
+        "client_session_card",
     ]
     assert payload["leader_card_fields"] == [
         "agent_id",
@@ -7755,6 +7761,9 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "doctor_contract",
         "run_contract",
         "artifacts_contract",
+        "daemon_runtime_contract",
+        "mission_scheduler_contract",
+        "client_session_contract",
     ]
     assert payload["change_summary_fields"] == [
         "since_event_id",
@@ -9317,7 +9326,10 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "doctor_contract": "agentdeck contract doctor",
         "run_contract": "agentdeck contract run",
         "artifacts_contract": "agentdeck contract artifacts",
-    }
+        "daemon_runtime_contract": "agentdeck contract daemon-runtime",
+        "mission_scheduler_contract": "agentdeck contract mission-scheduler",
+        "client_session_contract": "agentdeck contract client-session",
+        }
     assert payload["control_mode_card"] == {
         "mode": "control_mode",
         "title": "Control mode",
@@ -10093,7 +10105,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 124,
+        "item_count_before_filter": 128,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -10229,7 +10241,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 123,
+        "item_count_before_filter": 127,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -10272,7 +10284,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 124,
+        "item_count_before_filter": 128,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -10311,7 +10323,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 124,
+        "item_count_before_filter": 128,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -10344,7 +10356,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 124,
+        "item_count_before_filter": 128,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -10383,7 +10395,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 124,
+        "item_count_before_filter": 128,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

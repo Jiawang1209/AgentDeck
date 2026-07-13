@@ -1028,7 +1028,10 @@ The card reuses `validate_leader_summary_contract()`. It only aggregates existin
   "events_contract": "agentdeck contract events",
   "doctor_contract": "agentdeck contract doctor",
   "run_contract": "agentdeck contract run",
-  "artifacts_contract": "agentdeck contract artifacts"
+  "artifacts_contract": "agentdeck contract artifacts",
+  "daemon_runtime_contract": "agentdeck contract daemon-runtime",
+  "mission_scheduler_contract": "agentdeck contract mission-scheduler",
+  "client_session_contract": "agentdeck contract client-session"
 }
 ```
 
@@ -1046,6 +1049,12 @@ When `recovery.recommended_action.source` is:
 - absent or unknown: `active_queue_source` is `none`.
 
 ## Invariants
+
+The M2a workbench additionally embeds `daemon_runtime_card`,
+`mission_scheduler_card`, and `client_session_card`. They reuse the three
+versioned discovery contracts and ProjectView daemon/scheduler facts. Rendering
+them never starts, stops, connects, schedules, dispatches, or grants a lease.
+M2a's scheduler card remains explicitly inactive.
 
 - The command is read-only.
 - The command must pass `validate_workbench_contract()` before printing JSON.

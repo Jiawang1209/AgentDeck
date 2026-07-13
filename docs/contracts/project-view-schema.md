@@ -476,6 +476,16 @@ If `cursor_found` is false, the cursor is stale or unknown and the response fall
 
 ## Consumer Rules
 
+## M2a daemon and scheduler summaries
+
+ProjectView includes top-level `daemon` and `scheduler` compact summaries.
+`daemon` contains state, health, client count, controller presence, idle-exit
+state, protocol compatibility, and blockers without PID, socket, nonce, or home
+paths. `scheduler` contains active Mission/step/next-transition facts and
+blockers. During M2a it is deliberately `inactive`; background Mission
+scheduling begins only in M2b. Both summaries are derived read-only from the
+durable state model and are the source for the corresponding workbench cards.
+
 - Treat ProjectView as the default state source.
 - Treat `recovery.recommended_action` as the default next-step affordance.
 - Treat `requires_explicit_user=true` as a hard UI gate.

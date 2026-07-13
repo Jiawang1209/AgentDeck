@@ -56,7 +56,7 @@ agentdeck contract worker-transport --example
 
 自然语言本身永远不是执行授权。确认必须绑定精确执行事实；ACP 不会静默降级成 tmux；permission、approval、runtime safety 与 ownership gate 彼此独立。常见的内联 credential 赋值会在持久化 Mission provenance 中被遮蔽。
 
-Phase 3 M1 是项目内、前台运行的版本。它尚不包含 M2 daemon、客户端退出后的后台续跑、完整 transcript 恢复、全局项目漫游、Desktop/IDE Workspace Client、自动安装/认证 adapter，或原生同会话 TUI attach。
+Phase 3 M2a 现已提供经过身份验证的单项目 daemon 基础、`agentdeck daemon status/start/stop/logs`，以及 compact ProjectView/workbench discovery contracts；但它还不会在后台推进 Mission。M2a scheduler 会明确显示 inactive，直到 M2b 完成冻结执行快照、确定性调度、Worker supervision 与 recovery。完整 transcript 恢复、全局项目漫游、Desktop/IDE Workspace Client、自动安装/认证 adapter，以及原生同会话 TUI attach 仍属于后续工作。
 
 ## 架构
 
