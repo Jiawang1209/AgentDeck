@@ -90,7 +90,8 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
   "protocol_state_transitions": {},
   "conversation": {},
   "inbox": {},
-  "recovery": {}
+  "recovery": {},
+  "mission_recovery": {}
 }
 ```
 
@@ -126,6 +127,44 @@ The projection uses allowlisted fields for nested selected-agent and startup-act
 
 Mission identity and frozen planning fields are immutable after creation. `update_mission()` only accepts `status`, `stop_reason`, `can_start`, `blockers`, `workflow_run_id`, monotonic bounded `current_step`, and one-time `confirmed_at`; `updated_at` and first completion time are store-owned. `can_start=true` always requires an empty blocker list: create/update reject contradictions before writing, legacy contradictory rows preserve compact blockers but project `can_start=false`, and the contract validator rejects external contradictory payloads. If a legacy blockers container is not a list or contains any non-string item, projection retains every valid string, appends the fixed `invalid mission blockers` marker, discards the malformed values without exposing them, and forces `can_start=false`. Legal transitions are `pending_confirmation -> preparing|stopped`, `preparing -> running|stopped`, `running -> completed|stopped|interrupted`, and explicit resume from `stopped|interrupted -> preparing|running`. Same-state updates are idempotent where otherwise valid, and `completed` is terminal.
 
+## Background Mission recovery
+
+`mission_recovery` is the canonical compact reconnection card for an existing
+project client. It is derived from the same validated ProjectView and compact
+Mission ledger facts as `agentdeck status`; `reconnect_conversation()` and the
+workbench `mission_recovery_card` return that exact object rather than rebuilding
+state from a transcript, tmux pane, or provider call.
+
+The stable fields are `mode`, `mission_id`, `classification`, `progress`,
+`completed_steps`, `recent_results`, `active_step`, `wait_reason`, `decision`,
+`trace_commands`, and `workspace_control`. Completed/active steps expose only
+`step_id`, `position`, `agent_id`, and `role`. Recent validated results expose
+only Mission/attempt lineage plus hashes and an artifact count; raw Worker
+summaries, verification text, artifact contents, native trace ids, prompts,
+credentials, and full conversation text are excluded. Invalid recovery,
+attempt, or reply records are ignored rather than projected.
+
+When multiple Missions exist, the latest valid persisted recovery decision
+selects its exact Mission; without one, the latest non-terminal Mission is used
+before a terminal fallback. `classification` remains one of the deterministic
+reconciliation results (`resumable`, `waiting_human`, `ambiguous`, `blocked`, or
+`terminal`). Controls are affordances only: rendering this card performs no
+provider call, tmux read/input, scheduling transition, permission decision, or
+state write.
+
+Existing-project migration is a separate explicit command surface. `agentdeck
+project migration-preview` hashes the exact current `state.json` bytes, reports
+additive target changes, expiry, digest, consume-once confirmation command, and
+marks snapshot-incomplete historical Missions `inspect_only`; it performs zero
+writes. `agentdeck project migrate ... --confirm` accepts only that exact,
+unexpired, unchanged preview, writes a project-local sanitized backup of the
+affected additive paths' prior absence before atomically replacing state, and records only
+additive M2b metadata. It never backs up runtime credentials or external files,
+never upgrades old history into apparent frozen authority, and reconfirmation
+starts through a new Mission preview. Drift, replay, expiry, backup failure, and
+state-save failure leave the original state in place; a rollback-success path
+removes its unused backup, while a rollback failure retains the backup.
+
 ## Recovery
 
 `recovery` is the canonical next-step surface for humans, natural-language shells, and GUI clients. It prioritizes pending Leader actions, approved approvals, pending approvals, stale runtime bindings, pending inbox items, waiting dispatched replies, and Leader errors before returning idle.
@@ -148,6 +187,10 @@ Use `agentdeck contract project-view` to discover this contract from tools or GU
   "missions_fields": [],
   "mission_item_fields": [],
   "plan_item_fields": [],
+  "mission_recovery_fields": [],
+  "mission_recovery_step_fields": [],
+  "mission_recovery_result_fields": [],
+  "mission_recovery_control_fields": [],
   "recovery_fields": [],
   "recovery_pending_fields": [],
   "recommended_action_fields": [],
@@ -178,6 +221,7 @@ Use `agentdeck contract project-view --example` to include a stable GUI-ready Pr
   "example_missions_fields": [],
   "example_mission_item_fields": [],
   "example_plan_item_fields": [],
+  "example_mission_recovery_fields": [],
   "example_recovery_fields": [],
   "example_recommended_action_fields": [],
   "example_message_item_fields": [],

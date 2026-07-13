@@ -15,7 +15,7 @@ from ..mission_orchestration import (
     mission_planning_task,
 )
 from ..models import EventRecord, ProjectConfig, new_id, utc_now
-from ..state import StateStore
+from ..state import StateStore, migration_preview
 from .bindings import execution_digest
 from .leader_gateway import (
     CancellationToken,
@@ -45,6 +45,23 @@ from .router import (
 class ConversationResponse:
     kind: str
     payload: dict[str, Any]
+
+
+def reconnect_conversation(
+    root: Path,
+    *,
+    config: ProjectConfig | None = None,
+    store: StateStore | None = None,
+) -> ConversationResponse:
+    """Return the compact ProjectView recovery card without calling a provider."""
+    canonical = root.resolve()
+    active_config = config or load_config(canonical)
+    active_store = store or StateStore.open_existing(canonical)
+    project_view = asdict(active_store.project_view(active_config))
+    recovery = project_view.get("mission_recovery")
+    if not isinstance(recovery, dict):
+        raise ValueError("ProjectView mission recovery summary is invalid")
+    return ConversationResponse("mission_recovery", recovery)
 
 
 class ConversationSession:
@@ -164,6 +181,8 @@ class ConversationSession:
     def _deterministic(self, command: str | None) -> ConversationResponse:
         if command == "status" and self.config is not None and self.store is not None:
             return ConversationResponse("deterministic", asdict(self.store.project_view(self.config)))
+        if command == "migration_preview":
+            return ConversationResponse("migration_preview", migration_preview(self.root))
         return ConversationResponse(
             "deterministic",
             {"command": command, "safety": "inspect", "executed": False},
@@ -184,7 +203,8 @@ class ConversationSession:
             response = ConversationResponse(decision.kind, preview)
         elif decision.kind == "deterministic":
             response = self._deterministic(decision.command)
-            self._record_compact_terminal_turn("completed", "deterministic_intent")
+            if decision.command != "migration_preview":
+                self._record_compact_terminal_turn("completed", "deterministic_intent")
         elif decision.kind == "leader_setup_preview":
             response = ConversationResponse(
                 decision.kind,

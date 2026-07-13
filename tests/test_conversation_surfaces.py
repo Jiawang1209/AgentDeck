@@ -4,6 +4,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from agentdeck import cli
+from agentdeck import contracts as contracts_module
 from agentdeck.config import load_config, write_default_config
 from agentdeck.contracts import (
     validate_conversation_runtime_contract,
@@ -44,6 +45,13 @@ def test_workbench_conversation_surfaces_share_project_view_truth(tmp_path: Path
     assert conversation["pending_preview"] == project_view["conversation"]["pending_preview"]
     assert validate_conversation_runtime_contract(conversation) == {"ok": True, "errors": []}
 
+    mission_recovery = workbench["mission_recovery_card"]
+    assert mission_recovery == project_view["mission_recovery"]
+    assert contracts_module.validate_mission_recovery_contract(mission_recovery) == {
+        "ok": True,
+        "errors": [],
+    }
+
     leader = workbench["leader_backend_card"]
     assert leader["identity"]["provider"] == project_view["leader"]["provider"]
     assert leader["identity"]["model"] == project_view["leader"]["model"]
@@ -66,4 +74,31 @@ def test_workbench_conversation_surfaces_share_project_view_truth(tmp_path: Path
         "agentdeck contract worker-transport"
     )
     assert validate_workbench_contract(workbench) == {"ok": True, "errors": []}
+    assert _tree(tmp_path) == before
+
+
+def test_natural_language_migration_preview_is_read_only_and_never_calls_provider(
+    tmp_path: Path,
+) -> None:
+    config, store = _project(tmp_path)
+
+    class FailingGateway:
+        def describe(self, _leader):
+            return type("Description", (), {"readiness": "ready"})()
+
+        def generate_mission(self, *_args, **_kwargs):
+            raise AssertionError("migration preview must not call provider")
+
+    session = ConversationSession(
+        root=tmp_path,
+        config=config,
+        store=store,
+        leader_gateway=FailingGateway(),
+    )
+    before = _tree(tmp_path)
+
+    response = session.handle("预览项目迁移")
+
+    assert response.kind == "migration_preview"
+    assert response.payload["mode"] == "migration_preview"
     assert _tree(tmp_path) == before

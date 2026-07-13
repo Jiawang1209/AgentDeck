@@ -129,5 +129,6 @@ class ProjectView:
     conversation: dict[str, Any] = field(default_factory=dict)
     inbox: dict[str, Any] = field(default_factory=dict)
     recovery: dict[str, Any] = field(default_factory=dict)
+    mission_recovery: dict[str, Any] = field(default_factory=dict)
     daemon: dict[str, Any] = field(default_factory=dict)
     scheduler: dict[str, Any] = field(default_factory=dict)

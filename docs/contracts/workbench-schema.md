@@ -1055,6 +1055,24 @@ The M2a workbench additionally embeds `daemon_runtime_card`,
 versioned discovery contracts and ProjectView daemon/scheduler facts. Rendering
 them never starts, stops, connects, schedules, dispatches, or grants a lease.
 M2a's scheduler card remains explicitly inactive.
+M2b additionally embeds `mission_recovery_card`, which must be object-equal to
+`project_view.mission_recovery`. It gives reconnecting clients compact progress,
+completed steps, at most three validated hashed results, the active step/wait
+reason, deterministic decision affordances, trace commands, and the workbench
+control without reconstructing a transcript. Its controls enter the registry
+under `scope=mission_recovery` / `card=mission_recovery_card`; rendering the card
+never calls a provider, reads or writes tmux, decides a permission, advances a
+Mission, or writes state. The standalone conversation reconnection surface
+consumes this same ProjectView field, so workbench and conversation cannot
+diverge into separate recovery truth.
+
+Existing-project migration remains outside snapshot rendering. Read-only
+`agentdeck project migration-preview` reports the exact source hash, only
+additive changes, legacy inspect-only Missions, backup destination, expiry,
+digest, and one explicit confirmation command. Only the exact confirmed command
+may create the sanitized project-local affected-state backup and atomically
+install additive metadata. Preview, workbench, status, and reconnection do not
+create backups or migration state.
 The daemon stop control displays `agentdeck daemon stop --confirm`. Its verified
 client obtains and later releases a temporary controller through internal RPC
 when needed; existing controller holders may supply the optional exact lease

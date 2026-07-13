@@ -160,7 +160,15 @@ from .conversation.terminal_ui import TerminalConversationUI
 from .conversation.leader_gateway import LeaderGateway
 from .conversation.transports import WorkerRuntimeFacts, WorkerTransportRouter, ownership_gate
 from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import, resolve_skill_dependencies
-from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
+from .state import (
+    StateStore,
+    agentdeck_dir,
+    confirm_migration,
+    leader_backend_identity,
+    leader_provider_backend,
+    leader_provider_transport,
+    migration_preview,
+)
 from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
 from .daemon.client import DaemonClient, DaemonUnavailable, admit_confirmed_mission, connect_or_start, govern_mission, install_bounded_daemon_stdio_from_env
 from .daemon.lifecycle import (
@@ -1085,6 +1093,39 @@ def init_command(_args: argparse.Namespace) -> int:
             "config_path": str(path),
         }
     )
+    return 0
+
+
+def project_migration_preview_command(_args: argparse.Namespace) -> int:
+    try:
+        payload = migration_preview(project_root())
+    except (OSError, TypeError, ValueError) as exc:
+        print(f"migration preview failed: {exc}", file=sys.stderr)
+        return 1
+    _print_json(payload)
+    return 0
+
+
+def project_migrate_command(args: argparse.Namespace) -> int:
+    required = (args.preview_id, args.source_hash, args.digest, args.expires_at)
+    if args.confirm is not True or any(
+        not isinstance(item, str) or not item for item in required
+    ):
+        print("migration requires exact confirmation from migration-preview", file=sys.stderr)
+        return 1
+    try:
+        payload = confirm_migration(
+            project_root(),
+            preview_id=args.preview_id,
+            source_hash=args.source_hash,
+            digest=args.digest,
+            expires_at=args.expires_at,
+            confirm=True,
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        print(f"migration confirmation failed: {exc}", file=sys.stderr)
+        return 1
+    _print_json(payload)
     return 0
 
 
@@ -2916,6 +2957,7 @@ def _workbench_snapshot_payload(
     daemon_runtime_card = _daemon_runtime_card(project_view)
     mission_scheduler_card = _mission_scheduler_card(project_view)
     client_session_card = _client_session_card(project_view)
+    mission_recovery_card = project_view.get("mission_recovery")
     payload = {
         "ok": True,
         "mode": "workbench",
@@ -2966,6 +3008,7 @@ def _workbench_snapshot_payload(
         "daemon_runtime_card": daemon_runtime_card,
         "mission_scheduler_card": mission_scheduler_card,
         "client_session_card": client_session_card,
+        "mission_recovery_card": mission_recovery_card,
     }
     payload["control_registry"] = _workbench_control_registry(payload)
     return payload
@@ -3680,6 +3723,30 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
             registry, scope=scope, card=card_name, agent_id=None,
             controls=card.get("controls"),
         )
+    mission_recovery = (
+        payload.get("mission_recovery_card")
+        if isinstance(payload.get("mission_recovery_card"), dict)
+        else {}
+    )
+    decision = (
+        mission_recovery.get("decision")
+        if isinstance(mission_recovery.get("decision"), dict)
+        else {}
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="mission_recovery",
+        card="mission_recovery_card",
+        agent_id=None,
+        controls=decision.get("controls"),
+    )
+    _append_workbench_control_registry_items(
+        registry,
+        scope="mission_recovery",
+        card="mission_recovery_card",
+        agent_id=None,
+        controls=[mission_recovery.get("workspace_control")],
+    )
     return registry
 
 
@@ -18257,6 +18324,19 @@ def build_parser() -> argparse.ArgumentParser:
     project_subparsers = project.add_subparsers(dest="project_command")
     project_init = project_subparsers.add_parser("init", help="Initialize .agentdeck project state")
     project_init.set_defaults(func=init_command)
+    project_migration_preview = project_subparsers.add_parser(
+        "migration-preview", help="Preview additive project migration without writing state"
+    )
+    project_migration_preview.set_defaults(func=project_migration_preview_command)
+    project_migrate = project_subparsers.add_parser(
+        "migrate", help="Apply an exact previewed additive project migration"
+    )
+    project_migrate.add_argument("--preview-id")
+    project_migrate.add_argument("--source-hash")
+    project_migrate.add_argument("--digest")
+    project_migrate.add_argument("--expires-at")
+    project_migrate.add_argument("--confirm", action="store_true")
+    project_migrate.set_defaults(func=project_migrate_command)
 
     agent = subparsers.add_parser("agent", help="Agent runtime commands")
     agent_subparsers = agent.add_subparsers(dest="agent_command")

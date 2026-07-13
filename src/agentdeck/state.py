@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import copy
 from contextlib import contextmanager
 import fcntl
@@ -79,6 +79,301 @@ _DAEMON_ADMISSION_FIELDS = frozenset(
     {"state", "snapshot_hash", "blocker", "recovery_command", "updated_at"}
 )
 _INVALID_DAEMON_ADMISSION_BLOCKER = "invalid daemon admission state"
+
+_MIGRATION_ADDITIVE_COLLECTIONS = (
+    "mission_attempts",
+    "mission_recovery_evidence",
+    "mission_worker_replies",
+    "mission_handoffs",
+    "mission_permission_bindings",
+    "recovery_decisions",
+)
+
+
+def migration_preview(
+    root: Path,
+    *,
+    now: datetime | None = None,
+    ttl_seconds: int = 600,
+    expires_at: datetime | None = None,
+) -> dict[str, object]:
+    """Inspect one legacy project migration without changing any project file."""
+    if type(ttl_seconds) is not int or ttl_seconds <= 0:
+        raise ValueError("migration preview ttl must be positive")
+    store = StateStore.open_existing(root.resolve())
+    source_bytes = store.state_path.read_bytes()
+    state = json.loads(source_bytes.decode("utf-8"))
+    if not isinstance(state, dict):
+        raise ValueError("migration source state is invalid")
+    source_hash = "sha256:" + hashlib.sha256(source_bytes).hexdigest()
+    legacy_missions: list[dict[str, object]] = []
+    for mission in state.get("missions", []):
+        if not isinstance(mission, dict):
+            continue
+        if daemon_mission_authority_state(mission) != "admitted":
+            legacy_missions.append(
+                {
+                    "mission_id": mission.get("mission_id"),
+                    "mode": "inspect_only",
+                    "reason": "complete frozen execution authority is unavailable",
+                    "inspect_command": (
+                        f"agentdeck mission status --mission-id {mission.get('mission_id')}"
+                    ),
+                }
+            )
+    target_changes: list[dict[str, object]] = [
+        {"path": key, "operation": "add", "value": []}
+        for key in _MIGRATION_ADDITIVE_COLLECTIONS
+        if key not in state
+    ]
+    issued_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    expiry = (
+        expires_at.astimezone(timezone.utc)
+        if expires_at is not None
+        else issued_at + timedelta(seconds=ttl_seconds)
+    )
+    preview_id = f"mig_{source_hash.removeprefix('sha256:')[:12]}"
+    for item in legacy_missions:
+        mission_id = item.get("mission_id")
+        item["reconfirm_command"] = (
+            "agentdeck leader chat --message "
+            f'"Reconfirm legacy Mission {mission_id} as a new Mission preview"'
+        )
+    target_changes.extend(
+        [
+            {
+                "path": "schema_generation",
+                "operation": "add",
+                "value": "project-daemon-m2b/v1",
+            },
+            {
+                "path": "legacy_mission_migrations",
+                "operation": "add",
+                "value": copy.deepcopy(legacy_missions),
+            },
+            {
+                "path": "migration_previews_consumed",
+                "operation": "add",
+                "value": [
+                    {
+                        "preview_id": preview_id,
+                        "source_hash": source_hash,
+                        "expires_at": expiry.isoformat(),
+                    }
+                ],
+            },
+        ]
+    )
+    facts = {
+        "preview_id": preview_id,
+        "source_hash": source_hash,
+        "target_changes": target_changes,
+        "legacy_missions": legacy_missions,
+        "expires_at": expiry.isoformat(),
+    }
+    digest = canonical_snapshot_hash(facts)
+    backup_path = f".agentdeck/backups/{preview_id}/state.json"
+    confirm_command = (
+        "agentdeck project migrate "
+        f"--preview-id {preview_id} --source-hash {source_hash} "
+        f"--digest {digest} --expires-at {expiry.isoformat()} --confirm"
+    )
+    return {
+        "mode": "migration_preview",
+        "preview_id": preview_id,
+        "source_hash": source_hash,
+        "target_changes": target_changes,
+        "legacy_missions": legacy_missions,
+        "backup_path": backup_path,
+        "expires_at": expiry.isoformat(),
+        "digest": digest,
+        "consume_once": True,
+        "confirm_command": confirm_command,
+        "controls": [
+            {
+                "kind": "inspect",
+                "label": "Inspect migration preview",
+                "command": "agentdeck project migration-preview",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+            {
+                "kind": "migrate",
+                "label": "Confirm additive migration",
+                "command": confirm_command,
+                "safety": "explicit_user",
+                "enabled": True,
+                "blocker": None,
+            },
+        ],
+    }
+
+
+def _write_migration_backup(path: Path, source: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        raise ValueError("migration backup already exists")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    installed = False
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(source)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path)
+            installed = True
+        except FileExistsError:
+            raise ValueError("migration backup already exists") from None
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException:
+        if installed:
+            _remove_migration_backup(path)
+        raise
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _remove_migration_backup(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    project_dir = path.parent.parent.parent
+    for directory in (path.parent, path.parent.parent):
+        try:
+            directory.rmdir()
+        except OSError:
+            break
+        if directory.parent == project_dir:
+            break
+
+
+def _atomic_restore_migration_source(path: Path, source: bytes) -> None:
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.migration-rollback.tmp")
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(source)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def confirm_migration(
+    root: Path,
+    *,
+    preview_id: str,
+    source_hash: str,
+    digest: str,
+    expires_at: str,
+    confirm: bool,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Consume one exact migration preview and atomically install additive state."""
+    if confirm is not True:
+        raise ValueError("migration requires exact confirmation")
+    current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    try:
+        expiry = datetime.fromisoformat(expires_at)
+    except (TypeError, ValueError):
+        raise ValueError("migration preview expiry is invalid") from None
+    if expiry.tzinfo is None or expiry.utcoffset() is None:
+        raise ValueError("migration preview expiry is invalid")
+    expiry = expiry.astimezone(timezone.utc)
+    if current_time >= expiry:
+        raise ValueError("migration preview expired")
+    store = StateStore.open_existing(root.resolve())
+    current_source = store.state_path.read_bytes()
+    current_state = json.loads(current_source.decode("utf-8"))
+    if not isinstance(current_state, dict):
+        raise ValueError("migration source state is invalid")
+    consumed = current_state.get("migration_previews_consumed", [])
+    if isinstance(consumed, list) and any(
+        isinstance(item, dict) and item.get("preview_id") == preview_id
+        for item in consumed
+    ):
+        raise ValueError("migration preview already consumed")
+    current_hash = "sha256:" + hashlib.sha256(current_source).hexdigest()
+    if current_hash != source_hash:
+        raise ValueError("migration source facts drifted")
+    expected = migration_preview(
+        root.resolve(),
+        now=expiry - timedelta(seconds=600),
+        expires_at=expiry,
+    )
+    if expected["preview_id"] != preview_id:
+        raise ValueError("unknown migration preview")
+    if expected["digest"] != digest:
+        raise ValueError("migration preview digest mismatch")
+    proposed = copy.deepcopy(current_state)
+    for change in expected["target_changes"]:
+        if not isinstance(change, dict):
+            raise ValueError("migration target change is invalid")
+        path = change.get("path")
+        if (
+            type(path) is not str
+            or change.get("operation") != "add"
+            or path in proposed
+        ):
+            raise ValueError("migration is not additive")
+        proposed[path] = copy.deepcopy(change.get("value"))
+    backup_path = root.resolve() / str(expected["backup_path"])
+    backup_bytes = (
+        json.dumps(
+            {
+                "backup_version": "project-daemon-m2b/v1",
+                "source_hash": source_hash,
+                "affected_state": {
+                    str(item["path"]): {"present": False}
+                    for item in expected["target_changes"]
+                    if isinstance(item, dict) and isinstance(item.get("path"), str)
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+    proposed_bytes = (
+        json.dumps(proposed, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    _write_migration_backup(backup_path, backup_bytes)
+    try:
+        if store.state_path.read_bytes() != current_source:
+            raise ValueError("migration source facts drifted")
+        store._atomic_save(proposed)
+    except BaseException:
+        installed = store.state_path.read_bytes()
+        if installed == proposed_bytes:
+            _atomic_restore_migration_source(store.state_path, current_source)
+            installed = store.state_path.read_bytes()
+        if installed == current_source:
+            _remove_migration_backup(backup_path)
+        raise
+    return {
+        "mode": "migration_confirmed",
+        "preview_id": preview_id,
+        "source_hash": source_hash,
+        "digest": digest,
+        "backup_path": expected["backup_path"],
+        "legacy_missions": expected["legacy_missions"],
+        "target_changes": expected["target_changes"],
+        "consumed": True,
+    }
 
 
 def _compact_daemon_admission(
@@ -8384,6 +8679,212 @@ class StateStore:
             "blockers": blockers,
         }
 
+    @staticmethod
+    def _mission_recovery_summary(state: dict[str, Any]) -> dict[str, Any]:
+        missions = [item for item in state.get("missions", []) if isinstance(item, dict)]
+        if not missions:
+            return {
+                "mode": "mission_recovery",
+                "mission_id": None,
+                "classification": "terminal",
+                "progress": {"completed": 0, "total": 0},
+                "completed_steps": [],
+                "recent_results": [],
+                "active_step": None,
+                "wait_reason": "no Mission requires recovery",
+                "decision": {"kind": "none", "controls": []},
+                "trace_commands": [],
+                "workspace_control": {
+                    "kind": "inspect",
+                    "label": "Open workbench",
+                    "command": "agentdeck workbench",
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                },
+            }
+        from .daemon.recovery import validate_recovery_record
+
+        validated_decisions: list[dict[str, object]] = []
+        for item in state.get("recovery_decisions", []):
+            try:
+                validated_decisions.append(validate_recovery_record(item))
+            except ValueError:
+                continue
+        missions_by_id = {
+            item.get("mission_id"): item
+            for item in missions
+            if isinstance(item.get("mission_id"), str)
+        }
+        decision = validated_decisions[-1] if validated_decisions else {}
+        mission = missions_by_id.get(decision.get("mission_id"))
+        if mission is None:
+            active = [
+                item for item in missions
+                if item.get("status") not in {"completed", "stopped", "interrupted"}
+            ]
+            mission = (active or missions)[-1]
+            decision = {}
+        mission_id = mission.get("mission_id")
+        classification = str(decision.get("classification") or (
+            "terminal" if mission.get("status") in {"completed", "stopped", "interrupted"}
+            else "blocked"
+        ))
+        reason = str(decision.get("reason") or "Mission recovery evidence is unavailable")
+        attempt_id = decision.get("attempt_id")
+        if classification == "waiting_human" and "permission" in reason.lower():
+            decision_kind = "permission"
+        elif classification == "resumable":
+            decision_kind = "resume"
+        elif classification == "terminal":
+            decision_kind = "none"
+        else:
+            decision_kind = "inspect"
+        completed = mission.get("current_step", 0)
+        total = mission.get("step_count", 0)
+        if type(completed) is not int or completed < 0:
+            completed = 0
+        if type(total) is not int or total < completed:
+            total = completed
+        status_command = (
+            f"agentdeck mission status --mission-id {mission_id}"
+            if isinstance(mission_id, str)
+            else "agentdeck status"
+        )
+        snapshot = mission.get("execution_snapshot")
+        snapshot_mission = snapshot.get("mission") if isinstance(snapshot, dict) else None
+        raw_steps = snapshot_mission.get("steps") if isinstance(snapshot_mission, dict) else []
+        steps = [
+            {
+                "step_id": item.get("step_id"),
+                "position": item.get("position"),
+                "agent_id": item.get("agent_id"),
+                "role": item.get("role"),
+            }
+            for item in raw_steps
+            if isinstance(item, dict)
+            and isinstance(item.get("step_id"), str)
+            and type(item.get("position")) is int
+            and isinstance(item.get("agent_id"), str)
+            and isinstance(item.get("role"), str)
+        ]
+        completed_steps = copy.deepcopy(steps[:completed])
+        active_step = (
+            copy.deepcopy(steps[completed])
+            if classification != "terminal" and completed < len(steps)
+            else None
+        )
+        attempts: dict[object, dict[str, Any]] = {}
+        for item in state.get("mission_attempts", []):
+            if not isinstance(item, dict) or item.get("mission_id") != mission_id:
+                continue
+            try:
+                validated_attempt = _validate_mission_attempt_record(item)
+            except ValueError:
+                continue
+            attempts[validated_attempt["attempt_id"]] = validated_attempt
+        recent_results: list[dict[str, object]] = []
+        from .daemon.recovery import validate_mission_reply_evidence_record
+
+        for raw_reply in state.get("mission_worker_replies", []):
+            try:
+                reply = validate_mission_reply_evidence_record(raw_reply)
+            except ValueError:
+                continue
+            if reply.get("mission_id") != mission_id or reply.get("state") != "validated":
+                continue
+            reply_attempt_id = reply.get("attempt_id")
+            attempt = attempts.get(reply_attempt_id)
+            if attempt is None or attempt.get("dispatch_key") != reply.get("dispatch_key"):
+                continue
+            handoff = reply.get("canonical_handoff")
+            if not isinstance(handoff, dict):
+                continue
+            summary = handoff.get("summary")
+            verification = handoff.get("verification")
+            artifacts = handoff.get("artifacts")
+            recent_results.append(
+                {
+                    "attempt_id": reply_attempt_id,
+                    "step_id": attempt.get("step_id"),
+                    "agent_id": attempt.get("agent_id"),
+                    "state": "validated",
+                    "summary_hash": canonical_snapshot_hash(
+                        {"summary": summary if isinstance(summary, str) else None}
+                    ),
+                    "verification_hash": canonical_snapshot_hash(
+                        {"verification": verification if isinstance(verification, str) else None}
+                    ),
+                    "artifact_count": len(artifacts) if isinstance(artifacts, list) else 0,
+                }
+            )
+        recent_results = recent_results[-3:]
+        trace_ids = [
+            item.get("attempt_id") for item in recent_results
+            if isinstance(item.get("attempt_id"), str)
+        ]
+        if isinstance(attempt_id, str) and attempt_id not in trace_ids:
+            trace_ids.append(attempt_id)
+        trace_commands = [f"agentdeck trace --id {item}" for item in trace_ids]
+        if decision_kind == "permission" and isinstance(mission_id, str) and isinstance(attempt_id, str):
+            decision_controls = [
+                {
+                    "kind": "permission_preview",
+                    "label": "Preview pending permission",
+                    "command": (
+                        f"agentdeck daemon permission-preview --mission-id {mission_id} "
+                        f"--attempt-id {attempt_id}"
+                    ),
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                }
+            ]
+        elif decision_kind == "resume" and isinstance(mission_id, str):
+            decision_controls = [
+                {
+                    "kind": "resume_preview",
+                    "label": "Preview Mission resume",
+                    "command": f"agentdeck mission resume --mission-id {mission_id} --confirm",
+                    "safety": "explicit_user",
+                    "enabled": True,
+                    "blocker": None,
+                }
+            ]
+        elif decision_kind == "none":
+            decision_controls = []
+        else:
+            decision_controls = [
+                {
+                    "kind": "inspect",
+                    "label": "Inspect Mission recovery",
+                    "command": status_command,
+                    "safety": "inspect",
+                    "enabled": True,
+                    "blocker": None,
+                }
+            ]
+        return {
+            "mode": "mission_recovery",
+            "mission_id": mission_id,
+            "classification": classification,
+            "progress": {"completed": completed, "total": total},
+            "completed_steps": completed_steps,
+            "recent_results": recent_results,
+            "active_step": active_step,
+            "wait_reason": reason,
+            "decision": {"kind": decision_kind, "controls": decision_controls},
+            "trace_commands": trace_commands,
+            "workspace_control": {
+                "kind": "inspect",
+                "label": "Open workbench",
+                "command": "agentdeck workbench",
+                "safety": "inspect",
+                "enabled": True,
+                "blocker": None,
+            },
+        }
+
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
         # Preserve source-row validation precedence before cross-record lineage
@@ -8505,6 +9006,7 @@ class StateStore:
             conversation=self._conversation_summary(state),
             inbox=self._inbox_summary(state.get("inbox", {})),
             recovery=self._recovery_summary(state, config),
+            mission_recovery=self._mission_recovery_summary(state),
             daemon=daemon_summary,
             scheduler=scheduler_summary,
         )

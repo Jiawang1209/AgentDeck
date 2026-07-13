@@ -17,7 +17,7 @@ from agentdeck.providers.openai_compatible import OpenAICompatibleProvider
 from agentdeck.state import StateStore
 
 
-EXPECTED_CONTROL_REGISTRY_ITEM_COUNT = 128
+EXPECTED_CONTROL_REGISTRY_ITEM_COUNT = 129
 
 
 class FakeTmuxBackend:

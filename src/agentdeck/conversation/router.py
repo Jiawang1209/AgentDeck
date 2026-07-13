@@ -95,6 +95,8 @@ class ConversationRouter:
             return RoutingDecision("deterministic", command="approvals")
         if re.search(r"(?:追踪|trace)\s+\S+", normalized, re.IGNORECASE):
             return RoutingDecision("deterministic", command="trace")
+        if re.search(r"(?:预览.*项目迁移|项目迁移.*预览|migration\s+preview)", normalized, re.IGNORECASE):
+            return RoutingDecision("deterministic", command="migration_preview")
 
         if (
             isinstance(context.pending_preview, Mapping)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Callable
 from copy import deepcopy
@@ -327,6 +328,7 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "conversation",
     "inbox",
     "recovery",
+    "mission_recovery",
     "daemon",
     "scheduler",
 )
@@ -355,6 +357,18 @@ PROJECT_VIEW_DAEMON_FIELDS = (
 PROJECT_VIEW_SCHEDULER_FIELDS = (
     "state", "active_mission_id", "active_step", "next_transition", "blockers",
 )
+PROJECT_VIEW_MISSION_RECOVERY_FIELDS = (
+    "mode", "mission_id", "classification", "progress", "completed_steps",
+    "recent_results", "active_step", "wait_reason", "decision",
+    "trace_commands", "workspace_control",
+)
+MISSION_RECOVERY_STEP_FIELDS = ("step_id", "position", "agent_id", "role")
+MISSION_RECOVERY_RESULT_FIELDS = (
+    "attempt_id", "step_id", "agent_id", "state", "summary_hash",
+    "verification_hash", "artifact_count",
+)
+MISSION_RECOVERY_DECISION_FIELDS = ("kind", "controls")
+MISSION_RECOVERY_CONTROL_FIELDS = DAEMON_CONTROL_FIELDS
 
 PROJECT_VIEW_AGENT_SESSIONS_FIELDS = ("count", "by_state", "items")
 PROJECT_VIEW_AGENT_SESSION_ITEM_FIELDS = (
@@ -1735,6 +1749,7 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "daemon_runtime_card",
     "mission_scheduler_card",
     "client_session_card",
+    "mission_recovery_card",
 )
 
 WORKBENCH_SKILLS_CATALOG_CARD_FIELDS = (
@@ -2775,6 +2790,10 @@ def project_view_contract_payload(contract_path: Path) -> dict[str, object]:
         "protocol_state_transition_item_fields": list(PROJECT_VIEW_PROTOCOL_STATE_TRANSITION_ITEM_FIELDS),
         "daemon_fields": list(PROJECT_VIEW_DAEMON_FIELDS),
         "scheduler_fields": list(PROJECT_VIEW_SCHEDULER_FIELDS),
+        "mission_recovery_fields": list(PROJECT_VIEW_MISSION_RECOVERY_FIELDS),
+        "mission_recovery_step_fields": list(MISSION_RECOVERY_STEP_FIELDS),
+        "mission_recovery_result_fields": list(MISSION_RECOVERY_RESULT_FIELDS),
+        "mission_recovery_control_fields": list(MISSION_RECOVERY_CONTROL_FIELDS),
     }
 
 
@@ -2792,6 +2811,7 @@ def project_view_contract_response(contract_path: Path, include_example: bool = 
         payload["example_recovery_fields"] = list(example["recovery"])
         payload["example_recovery_pending_fields"] = list(example["recovery"]["pending"])
         payload["example_recommended_action_fields"] = list(example["recovery"]["recommended_action"])
+        payload["example_mission_recovery_fields"] = list(example["mission_recovery"])
         payload["example_leader_actions_fields"] = list(example["leader_actions"])
         payload["example_leader_action_item_fields"] = list(example["leader_actions"]["items"][0])
         payload["example_skill_summary_fields"] = list(example["skills"])
@@ -6295,6 +6315,9 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "daemon_runtime_card_fields": list(DAEMON_RUNTIME_RESPONSE_FIELDS),
         "mission_scheduler_card_fields": list(MISSION_SCHEDULER_RESPONSE_FIELDS),
         "client_session_card_fields": list(CLIENT_SESSION_RESPONSE_FIELDS),
+        "mission_recovery_card_fields": list(PROJECT_VIEW_MISSION_RECOVERY_FIELDS),
+        "mission_recovery_step_fields": list(MISSION_RECOVERY_STEP_FIELDS),
+        "mission_recovery_result_fields": list(MISSION_RECOVERY_RESULT_FIELDS),
         "conversation_runtime_card_fields": list(CONVERSATION_RUNTIME_RESPONSE_FIELDS),
         "leader_backend_card_fields": list(LEADER_BACKEND_RESPONSE_FIELDS),
         "worker_transport_item_fields": list(WORKER_TRANSPORT_RESPONSE_FIELDS),
@@ -6779,11 +6802,109 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     scheduler = payload.get("scheduler")
     if not isinstance(scheduler, dict) or set(scheduler) != set(PROJECT_VIEW_SCHEDULER_FIELDS):
         errors.append("scheduler summary must match the compact ProjectView contract")
+    mission_recovery = payload.get("mission_recovery")
+    recovery_validation = validate_mission_recovery_contract(mission_recovery)
+    errors.extend(
+        f"mission_recovery: {error}" for error in recovery_validation["errors"]
+    )
     _validate_project_view_summary_items(errors, payload, "messages", PROJECT_VIEW_MESSAGE_ITEM_FIELDS, "message")
     _validate_project_view_summary_items(errors, payload, "jobs", PROJECT_VIEW_JOB_ITEM_FIELDS, "job")
     _validate_project_view_summary_items(errors, payload, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
     _validate_project_view_summary_items(errors, payload, "artifacts", PROJECT_VIEW_ARTIFACT_ITEM_FIELDS, "artifact")
     _validate_project_view_summary_items(errors, payload, "releases", PROJECT_VIEW_RELEASE_ITEM_FIELDS, "release")
+    return {"ok": not errors, "errors": errors}
+
+
+def _validate_mission_recovery_control(
+    errors: list[str], prefix: str, value: object
+) -> None:
+    if not isinstance(value, dict) or set(value) != set(MISSION_RECOVERY_CONTROL_FIELDS):
+        errors.append(f"{prefix} must match the compact control contract")
+        return
+    if value.get("safety") not in {"inspect", "explicit_user"}:
+        errors.append(f"{prefix}.safety must be inspect or explicit_user")
+    if type(value.get("enabled")) is not bool:
+        errors.append(f"{prefix}.enabled must be a boolean")
+    if value.get("enabled") is False and not value.get("blocker"):
+        errors.append(f"{prefix} disabled control requires blocker")
+    command = value.get("command")
+    if not isinstance(command, str) or not command.startswith("agentdeck "):
+        errors.append(f"{prefix}.command must be an agentdeck command")
+
+
+def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
+    errors: list[str] = []
+    if not isinstance(payload, dict) or set(payload) != set(PROJECT_VIEW_MISSION_RECOVERY_FIELDS):
+        return {
+            "ok": False,
+            "errors": ["mission recovery card must match the compact field contract"],
+        }
+    if payload.get("mode") != "mission_recovery":
+        errors.append("mode must be mission_recovery")
+    if payload.get("classification") not in {
+        "resumable", "waiting_human", "ambiguous", "blocked", "terminal"
+    }:
+        errors.append("classification is invalid")
+    progress = payload.get("progress")
+    if not isinstance(progress, dict) or set(progress) != {"completed", "total"}:
+        errors.append("progress must contain completed and total")
+    elif (
+        type(progress.get("completed")) is not int
+        or type(progress.get("total")) is not int
+        or progress["completed"] < 0
+        or progress["total"] < progress["completed"]
+    ):
+        errors.append("progress values are invalid")
+    for field in ("completed_steps", "recent_results", "trace_commands"):
+        if not isinstance(payload.get(field), list):
+            errors.append(f"{field} must be a list")
+    for index, item in enumerate(payload.get("completed_steps", [])):
+        if not isinstance(item, dict) or set(item) != set(MISSION_RECOVERY_STEP_FIELDS):
+            errors.append(f"completed_steps[{index}] is invalid")
+    active_step = payload.get("active_step")
+    if active_step is not None and (
+        not isinstance(active_step, dict)
+        or set(active_step) != set(MISSION_RECOVERY_STEP_FIELDS)
+    ):
+        errors.append("active_step is invalid")
+    for index, item in enumerate(payload.get("recent_results", [])):
+        if not isinstance(item, dict) or set(item) != set(MISSION_RECOVERY_RESULT_FIELDS):
+            errors.append(f"recent_results[{index}] is invalid")
+            continue
+        if item.get("state") != "validated":
+            errors.append(f"recent_results[{index}].state must be validated")
+        for field in ("summary_hash", "verification_hash"):
+            if not isinstance(item.get(field), str) or re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(item.get(field))
+            ) is None:
+                errors.append(f"recent_results[{index}].{field} is invalid")
+    decision = payload.get("decision")
+    if not isinstance(decision, dict) or set(decision) != set(MISSION_RECOVERY_DECISION_FIELDS):
+        errors.append("decision is invalid")
+    else:
+        if decision.get("kind") not in {"none", "resume", "permission", "inspect"}:
+            errors.append("decision.kind is invalid")
+        controls = decision.get("controls")
+        if not isinstance(controls, list):
+            errors.append("decision.controls must be a list")
+        else:
+            for index, control in enumerate(controls):
+                _validate_mission_recovery_control(
+                    errors, f"decision.controls[{index}]", control
+                )
+    for index, command in enumerate(payload.get("trace_commands", [])):
+        if not isinstance(command, str) or re.fullmatch(
+            r"agentdeck trace --id mat_[0-9a-f]{12}", command
+        ) is None:
+            errors.append(f"trace_commands[{index}] is invalid")
+    _validate_mission_recovery_control(
+        errors, "workspace_control", payload.get("workspace_control")
+    )
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    for forbidden in ("/Users/", "/home/", "raw_prompt", "full_transcript", "content_snapshot"):
+        if forbidden in encoded:
+            errors.append("mission recovery card contains forbidden raw context")
+            break
     return {"ok": not errors, "errors": errors}
 
 
@@ -11277,6 +11398,7 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
         ("daemon_runtime_card", validate_daemon_runtime_contract),
         ("mission_scheduler_card", validate_mission_scheduler_contract),
         ("client_session_card", validate_client_session_contract),
+        ("mission_recovery_card", validate_mission_recovery_contract),
     ):
         result = validator(payload.get(field))
         for error in result["errors"]:
@@ -11292,6 +11414,8 @@ def validate_workbench_contract(payload: dict[str, object]) -> dict[str, object]
             errors.append("leader_actions must match project_view.leader_actions")
         if payload.get("recovery") != project_view.get("recovery"):
             errors.append("recovery must match project_view.recovery")
+        if payload.get("mission_recovery_card") != project_view.get("mission_recovery"):
+            errors.append("mission_recovery_card must match project_view.mission_recovery")
     elif "project_view" in payload:
         errors.append("project_view must be an object")
     leader_card = payload.get("leader_card")
@@ -11833,6 +11957,23 @@ def project_view_example() -> dict[str, object]:
             "state": "inactive", "active_mission_id": None, "active_step": None,
             "next_transition": None,
             "blockers": ["background Mission scheduling is not implemented in M2a"],
+        },
+        "mission_recovery": {
+            "mode": "mission_recovery",
+            "mission_id": None,
+            "classification": "terminal",
+            "progress": {"completed": 0, "total": 0},
+            "completed_steps": [],
+            "recent_results": [],
+            "active_step": None,
+            "wait_reason": "no Mission requires recovery",
+            "decision": {"kind": "none", "controls": []},
+            "trace_commands": [],
+            "workspace_control": {
+                "kind": "inspect", "label": "Open workbench",
+                "command": "agentdeck workbench", "safety": "inspect",
+                "enabled": True, "blocker": None,
+            },
         },
         "leader": {
             "agent_id": "leader",
@@ -13697,6 +13838,30 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
             registry, scope=scope, card=card_name, agent_id=None,
             controls=card.get("controls"),
         )
+    mission_recovery = (
+        payload.get("mission_recovery_card")
+        if isinstance(payload.get("mission_recovery_card"), dict)
+        else {}
+    )
+    decision = (
+        mission_recovery.get("decision")
+        if isinstance(mission_recovery.get("decision"), dict)
+        else {}
+    )
+    _append_control_registry_items(
+        registry,
+        scope="mission_recovery",
+        card="mission_recovery_card",
+        agent_id=None,
+        controls=decision.get("controls"),
+    )
+    _append_control_registry_items(
+        registry,
+        scope="mission_recovery",
+        card="mission_recovery_card",
+        agent_id=None,
+        controls=[mission_recovery.get("workspace_control")],
+    )
     return registry
 
 
@@ -15303,6 +15468,7 @@ def workbench_example() -> dict[str, object]:
         "daemon_runtime_card": daemon_runtime_example(),
         "mission_scheduler_card": mission_scheduler_example(),
         "client_session_card": client_session_example(),
+        "mission_recovery_card": project_view["mission_recovery"],
     }
     status_example = mission_example("status")
     mission_summary = project_view["missions"]
