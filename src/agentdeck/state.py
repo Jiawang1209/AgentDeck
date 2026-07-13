@@ -16,7 +16,11 @@ from .config import CONFIG_DIR, ensure_project_layout, project_root
 from .conversation.lifecycle import validate_conversation_history
 from .conversation.models import ConversationMutation
 from .daemon.lifecycle import validate_daemon_record
-from .daemon.lease import LeaseTransition, validate_lease_transition
+from .daemon.lease import (
+    LeaseTransition,
+    validate_daemon_event_outbox,
+    validate_lease_transition,
+)
 from .mission import (
     MISSION_SCHEMA_VERSION,
     MISSION_STATUSES,
@@ -226,22 +230,55 @@ class StateStore:
         # Reject malformed current state and transitions before creating the lock path.
         initial_state = self.load()
         initial_outbox = initial_state.setdefault("daemon_event_outbox", [])
-        if type(initial_outbox) is not list:
-            raise TypeError("daemon_event_outbox must be a list")
+        initial_event_ids = validate_daemon_event_outbox(initial_outbox)
         validate_lease_transition(initial_state.get("controller_lease"), transition)
+        candidate_event_id = transition.audit_event.event_id
+        if (
+            candidate_event_id in initial_event_ids
+            or candidate_event_id in self._daemon_journal_event_ids()
+        ):
+            raise ValueError("duplicate daemon event identity")
         with self._protocol_mutation_lock():
             state = self.load()
             outbox = state.setdefault("daemon_event_outbox", [])
-            if type(outbox) is not list:
-                raise TypeError("daemon_event_outbox must be a list")
+            event_ids = validate_daemon_event_outbox(outbox)
             persisted = state.get("controller_lease")
             validate_lease_transition(persisted, transition)
+            if (
+                candidate_event_id in event_ids
+                or candidate_event_id in self._daemon_journal_event_ids()
+            ):
+                raise ValueError("duplicate daemon event identity")
             assert transition.current is not None
             summary = transition.current.summary()
             state["controller_lease"] = summary
             outbox.append(transition.audit_event.summary())
             self._atomic_save(state)
         return dict(summary)
+
+    def _daemon_journal_event_ids(self) -> set[str]:
+        if not self.events_path.exists():
+            return set()
+        event_ids: set[str] = set()
+        for line in self.events_path.read_text(encoding="utf-8").splitlines():
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                raise ValueError("daemon event journal is malformed") from None
+            if (
+                type(item) is not dict
+                or set(item) != {"event_id", "event_type", "created_at", "payload"}
+                or type(item["event_id"]) is not str
+                or not item["event_id"]
+                or type(item["event_type"]) is not str
+                or type(item["created_at"]) is not str
+                or type(item["payload"]) is not dict
+            ):
+                raise ValueError("daemon event journal is malformed")
+            event_ids.add(item["event_id"])
+        return event_ids
 
     def _atomic_save(self, state: dict[str, Any]) -> None:
         temporary = self.state_path.with_name(

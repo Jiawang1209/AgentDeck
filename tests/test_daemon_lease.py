@@ -9,7 +9,9 @@ import pytest
 
 from agentdeck.config import write_default_config
 from agentdeck.daemon.lease import (
+    LeaseAuditEvent,
     LeaseError,
+    LeaseTransition,
     confirm_takeover,
     expire_controller,
     grant_controller,
@@ -19,6 +21,7 @@ from agentdeck.daemon.lease import (
     renew_controller,
     validate_controller,
 )
+from agentdeck.models import EventRecord
 from agentdeck.state import StateStore
 
 
@@ -251,6 +254,9 @@ def test_unrepresentable_ttl_is_rejected_with_sanitized_error() -> None:
     with pytest.raises(LeaseError, match="TTL"):
         grant_controller(client_id="client-a", now=NOW, ttl_seconds=1e300)
 
+    with pytest.raises(LeaseError, match="TTL"):
+        grant_controller(client_id="client-a", now=NOW, ttl_seconds=10**10000)
+
 
 def test_renew_release_and_takeover_reject_backward_time() -> None:
     current = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30).current
@@ -319,6 +325,66 @@ def test_state_store_atomically_commits_compact_lease_and_audit_event(
     assert "terminal" not in repr(state["controller_lease"])
 
 
+@pytest.mark.parametrize("action", ["release", "takeover"])
+def test_state_store_rejects_publicly_constructed_privileged_transition(
+    tmp_path: Path, action: str
+) -> None:
+    store = _store(tmp_path)
+    granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(granted)
+    assert granted.current is not None
+    if action == "release":
+        built = release_controller(
+            granted.current,
+            lease_id=granted.current.lease_id,
+            generation=granted.current.generation,
+            now=NOW + timedelta(seconds=1),
+        )
+    else:
+        preview = preview_takeover(
+            granted.current, requester="client-b", now=NOW + timedelta(seconds=1)
+        )
+        built = confirm_takeover(
+            granted.current,
+            preview,
+            requester="client-b",
+            now=NOW + timedelta(seconds=1),
+            ttl_seconds=30,
+        )
+    manual = LeaseTransition(
+        action=built.action,
+        previous=built.previous,
+        current=built.current,
+        audit_event=built.audit_event,
+    )
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(LeaseError, match="transition"):
+        store.commit_controller_lease(manual)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_public_audit_event_detaches_and_freezes_caller_payload() -> None:
+    payload = {
+        "action": "release",
+        "client_id": "client-a",
+        "generation": 1,
+        "lease_id": "lse_" + "a" * 24,
+    }
+    event = LeaseAuditEvent(
+        event_id="evt_" + "b" * 24,
+        event_type="controller_lease_released",
+        created_at="2026-07-13T10:00:01+00:00",
+        payload=payload,
+    )
+
+    payload["client_id"] = "client-b"
+    assert event.payload["client_id"] == "client-a"
+    with pytest.raises(TypeError):
+        event.payload["client_id"] = "client-c"  # type: ignore[index]
+
+
 def test_state_store_validates_persisted_lease_inside_lock_and_zero_writes_stale(
     tmp_path: Path,
 ) -> None:
@@ -358,7 +424,7 @@ def test_invalid_transition_is_full_tree_zero_write(tmp_path: Path) -> None:
     )
     before = _snapshot(tmp_path)
 
-    with pytest.raises((TypeError, LeaseError), match="generation"):
+    with pytest.raises((TypeError, LeaseError), match="transition|generation"):
         store.commit_controller_lease(invalid)
 
     assert _snapshot(tmp_path) == before
@@ -516,6 +582,121 @@ def test_state_store_rejects_malformed_existing_daemon_outbox_without_writing(
         store.commit_controller_lease(
             grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
         )
+
+    assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    "bad_item",
+    [
+        {"event_id": "evt_bad"},
+        {
+            "event_id": "evt_" + "a" * 24,
+            "event_type": "controller_lease_granted",
+            "created_at": "not-a-time",
+            "payload": {},
+            "extra": True,
+        },
+        {
+            "event_id": 7,
+            "event_type": "controller_lease_granted",
+            "created_at": "2026-07-13T10:00:00+00:00",
+            "payload": {},
+        },
+        {
+            "event_id": "evt_" + "c" * 24,
+            "event_type": "controller_lease_granted",
+            "created_at": "2026-07-13T10:00:00+00:00",
+            "payload": [],
+        },
+    ],
+)
+def test_state_store_rejects_malformed_daemon_outbox_items_without_writing(
+    tmp_path: Path, bad_item: dict[str, object]
+) -> None:
+    store = _store(tmp_path)
+    state = store.load()
+    state["daemon_event_outbox"] = [bad_item]
+    store.save(state)
+    before = _snapshot(tmp_path)
+
+    with pytest.raises((TypeError, LeaseError, ValueError), match="daemon.*outbox"):
+        store.commit_controller_lease(
+            grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+        )
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_state_store_rejects_duplicate_daemon_outbox_event_ids_without_writing(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    item = transition.audit_event.summary()
+    state = store.load()
+    state["daemon_event_outbox"] = [item, item]
+    store.save(state)
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="duplicate daemon event identity"):
+        store.commit_controller_lease(transition)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_repeated_expiry_is_zero_write_while_audit_remains_in_outbox(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(granted)
+    assert granted.current is not None
+    first = expire_controller(granted.current, now=NOW + timedelta(seconds=30))
+    store.commit_controller_lease(first)
+    repeated = expire_controller(granted.current, now=NOW + timedelta(seconds=31))
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="duplicate daemon event identity"):
+        store.commit_controller_lease(repeated)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_repeated_expiry_is_zero_write_after_outbox_flush_and_restart(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(granted)
+    assert granted.current is not None
+    first = expire_controller(granted.current, now=NOW + timedelta(seconds=30))
+    store.commit_controller_lease(first)
+    state = store.load()
+    expiry_item = state["daemon_event_outbox"][-1]
+    store.append_event(EventRecord(**expiry_item))
+    state["daemon_event_outbox"] = []
+    store.save(state)
+    restarted = StateStore.open_existing(tmp_path)
+    repeated = expire_controller(granted.current, now=NOW + timedelta(seconds=31))
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="duplicate daemon event identity"):
+        restarted.commit_controller_lease(repeated)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_corrupt_event_journal_fails_closed_without_lease_write(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    store.events_path.write_text("{not-json}\n", encoding="utf-8")
+    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="daemon event journal"):
+        store.commit_controller_lease(transition)
 
     assert _snapshot(tmp_path) == before
 

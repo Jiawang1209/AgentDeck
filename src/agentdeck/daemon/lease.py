@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -25,6 +25,9 @@ _LEASE_FIELDS = frozenset(
         "generation",
     }
 )
+_EVENT_FIELDS = frozenset({"event_id", "event_type", "created_at", "payload"})
+_TRANSITION_FACTORY_TOKEN = object()
+_AUDIT_FACTORY_TOKEN = object()
 
 
 class LeaseError(RuntimeError):
@@ -73,13 +76,23 @@ class LeaseAuditEvent:
     event_type: str
     created_at: str
     payload: Mapping[str, object]
+    _factory_capability: object | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.payload, Mapping):
+            raise LeaseError("invalid controller lease audit payload")
+        frozen = _freeze_json(dict(self.payload))
+        assert isinstance(frozen, Mapping)
+        object.__setattr__(self, "payload", frozen)
 
     def summary(self) -> dict[str, object]:
         return {
             "event_id": self.event_id,
             "event_type": self.event_type,
             "created_at": self.created_at,
-            "payload": dict(self.payload),
+            "payload": _thaw_json(self.payload),
         }
 
 
@@ -89,6 +102,40 @@ class LeaseTransition:
     previous: ControllerLease | None
     current: ControllerLease | None
     audit_event: LeaseAuditEvent
+    _factory_capability: object | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+
+def _freeze_json(value: object, *, depth: int = 0) -> object:
+    if depth > 32:
+        raise LeaseError("invalid daemon event outbox")
+    if value is None or type(value) in {str, bool, int}:
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise LeaseError("invalid daemon event outbox")
+        return value
+    if type(value) is list:
+        return tuple(_freeze_json(item, depth=depth + 1) for item in value)
+    if type(value) is dict:
+        if any(type(key) is not str for key in value):
+            raise LeaseError("invalid daemon event outbox")
+        return MappingProxyType(
+            {
+                key: _freeze_json(item, depth=depth + 1)
+                for key, item in value.items()
+            }
+        )
+    raise LeaseError("invalid daemon event outbox")
+
+
+def _thaw_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if type(value) is tuple:
+        return [_thaw_json(item) for item in value]
+    return value
 
 
 def _client_id(value: object) -> str:
@@ -128,7 +175,10 @@ def _parse_timestamp(value: object, *, field: str) -> datetime:
 def _ttl(value: object) -> float:
     if type(value) not in {int, float}:
         raise LeaseError("controller lease TTL must be a positive finite number")
-    ttl = float(value)
+    try:
+        ttl = float(value)
+    except (OverflowError, ValueError):
+        raise LeaseError("controller lease TTL must be a positive finite number") from None
     if not math.isfinite(ttl) or ttl <= 0:
         raise LeaseError("controller lease TTL must be a positive finite number")
     return ttl
@@ -147,8 +197,16 @@ def _event(action: str, lease: ControllerLease, now: datetime) -> LeaseAuditEven
         "released": "release",
         "taken_over": "takeover",
     }[action]
-    return LeaseAuditEvent(
-        event_id=f"evt_{uuid.uuid4().hex[:24]}",
+    event_id = (
+        "evt_"
+        + hashlib.sha256(
+            f"controller-expire:{lease.lease_id}:{lease.generation}".encode("ascii")
+        ).hexdigest()[:24]
+        if action == "expired"
+        else f"evt_{uuid.uuid4().hex[:24]}"
+    )
+    event = LeaseAuditEvent(
+        event_id=event_id,
         event_type=f"controller_lease_{action}",
         created_at=_timestamp(now),
         payload=MappingProxyType(
@@ -160,6 +218,21 @@ def _event(action: str, lease: ControllerLease, now: datetime) -> LeaseAuditEven
             }
         ),
     )
+    object.__setattr__(event, "_factory_capability", _AUDIT_FACTORY_TOKEN)
+    return event
+
+
+def _transition(
+    action: str,
+    previous: ControllerLease | None,
+    current: ControllerLease,
+    audit_event: LeaseAuditEvent,
+) -> LeaseTransition:
+    transition = LeaseTransition(action, previous, current, audit_event)
+    object.__setattr__(
+        transition, "_factory_capability", _TRANSITION_FACTORY_TOKEN
+    )
+    return transition
 
 
 def _new_lease(
@@ -210,7 +283,7 @@ def grant_controller(
         ttl_seconds=ttl,
         generation=generation,
     )
-    return LeaseTransition("grant", previous, lease, _event("granted", lease, current_time))
+    return _transition("grant", previous, lease, _event("granted", lease, current_time))
 
 
 def validate_controller(
@@ -260,7 +333,7 @@ def renew_controller(
     renewed = replace(
         current, last_renewed_at=_timestamp(current_time), expires_at=expires_at
     )
-    return LeaseTransition("renew", current, renewed, _event("renewed", renewed, current_time))
+    return _transition("renew", current, renewed, _event("renewed", renewed, current_time))
 
 
 def expire_controller(current: ControllerLease, *, now: datetime) -> LeaseTransition:
@@ -271,7 +344,7 @@ def expire_controller(current: ControllerLease, *, now: datetime) -> LeaseTransi
     )
     if current_time < _parse_timestamp(current.expires_at, field="expires_at"):
         raise LeaseError("controller lease has not expired")
-    return LeaseTransition("expire", current, current, _event("expired", current, current_time))
+    return _transition("expire", current, current, _event("expired", current, current_time))
 
 
 def release_controller(
@@ -286,7 +359,7 @@ def release_controller(
         current, lease_id=lease_id, generation=generation, now=current_time
     )
     released = replace(current, expires_at=_timestamp(current_time))
-    return LeaseTransition(
+    return _transition(
         "release", current, released, _event("released", released, current_time)
     )
 
@@ -376,7 +449,7 @@ def confirm_takeover(
         ttl_seconds=ttl,
         generation=current.generation + 1,
     )
-    return LeaseTransition(
+    return _transition(
         "takeover", current, taken, _event("taken_over", taken, current_time)
     )
 
@@ -420,7 +493,10 @@ def controller_lease_from_summary(value: object) -> ControllerLease | None:
 def validate_lease_transition(
     persisted: object, transition: LeaseTransition
 ) -> LeaseTransition:
-    if not isinstance(transition, LeaseTransition):
+    if (
+        not isinstance(transition, LeaseTransition)
+        or transition._factory_capability is not _TRANSITION_FACTORY_TOKEN
+    ):
         raise LeaseError("invalid controller lease transition")
     previous = controller_lease_from_summary(persisted)
     if transition.previous != previous:
@@ -431,7 +507,10 @@ def validate_lease_transition(
     if transition.action not in {"grant", "renew", "expire", "release", "takeover"}:
         raise LeaseError("invalid controller lease transition")
     event = transition.audit_event
-    if not isinstance(event, LeaseAuditEvent):
+    if (
+        not isinstance(event, LeaseAuditEvent)
+        or event._factory_capability is not _AUDIT_FACTORY_TOKEN
+    ):
         raise LeaseError("invalid controller lease audit event")
     event_time = _parse_timestamp(event.created_at, field="audit time")
     expected_event_type = {
@@ -509,3 +588,33 @@ def validate_lease_transition(
     if not valid_edge:
         raise LeaseError("invalid controller lease transition")
     return transition
+
+
+def validate_daemon_event_outbox(value: object) -> set[str]:
+    if type(value) is not list:
+        raise TypeError("daemon_event_outbox must be a list")
+    event_ids: list[str] = []
+    for item in value:
+        if type(item) is not dict or set(item) != _EVENT_FIELDS:
+            raise LeaseError("invalid daemon event outbox item")
+        event_id = item["event_id"]
+        event_type = item["event_type"]
+        created_at = item["created_at"]
+        payload = item["payload"]
+        if (
+            type(event_id) is not str
+            or re.fullmatch(r"evt_[0-9a-f]{12,64}", event_id) is None
+            or type(event_type) is not str
+            or re.fullmatch(r"[a-z][a-z0-9_]{0,127}", event_type) is None
+            or type(payload) is not dict
+        ):
+            raise LeaseError("invalid daemon event outbox item")
+        try:
+            _parse_timestamp(created_at, field="daemon event created_at")
+            _freeze_json(payload)
+        except LeaseError:
+            raise LeaseError("invalid daemon event outbox item") from None
+        event_ids.append(event_id)
+    if len(event_ids) != len(set(event_ids)):
+        raise ValueError("duplicate daemon event identity")
+    return set(event_ids)
