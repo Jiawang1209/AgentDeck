@@ -338,6 +338,50 @@ def test_force_stop_signals_shutdown_even_when_post_stop_lease_release_fails() -
     asyncio.run(case())
 
 
+@pytest.mark.parametrize("failure_stage", ["load", "release", "flush"])
+def test_force_stop_finalizer_signals_after_any_post_commit_failure(
+    monkeypatch, failure_stage: str,
+) -> None:
+    now = datetime.now(timezone.utc)
+    lease = grant_controller(
+        client_id="force-stop-test", now=now, ttl_seconds=60
+    ).current
+    assert lease is not None
+
+    class Store:
+        def load(self):
+            if failure_stage == "load":
+                raise OSError("load failed")
+            return {"controller_lease": lease.summary()}
+
+    if failure_stage == "release":
+        monkeypatch.setattr(
+            cli,
+            "release_controller",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("release failed")),
+        )
+
+    def commit_and_flush(_transition):
+        if failure_stage == "flush":
+            raise OSError("flush failed")
+        return {}
+
+    async def case() -> None:
+        stop_event = asyncio.Event()
+        with pytest.raises(OSError, match=failure_stage):
+            cli._finalize_force_stop_shutdown(
+                Store(),
+                lease_id=lease.lease_id,
+                generation=lease.generation,
+                now=now,
+                commit_and_flush=commit_and_flush,
+                stop_event=stop_event,
+            )
+        assert stop_event.is_set()
+
+    asyncio.run(case())
+
+
 def test_daemon_stop_requires_explicit_lease_options_as_a_pair(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

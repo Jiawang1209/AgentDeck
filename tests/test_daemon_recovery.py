@@ -1429,7 +1429,16 @@ def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
                 "native-daemon-1", "call-1", decision
             )
             await sink.finish("end_turn")
-            await sink.disconnect("transport_closed")
+            disconnected = asyncio.Event()
+
+            async def disconnect_worker() -> None:
+                await sink.disconnect("transport_closed")
+                disconnected.set()
+
+            service.start_worker_io(
+                disconnect_worker(), on_completion=lambda _result: None
+            )
+            await asyncio.wait_for(disconnected.wait(), timeout=0.2)
             protocol = store.validated_protocol_state()
             session_id = str(sink.session_id)
             session_record = next(
@@ -1547,6 +1556,82 @@ def test_service_close_persists_busy_acp_disconnect_before_restart_recovery(
     assert store._derived_protocol_state(
         restarted, "session", session_id, session
     ) == "disconnected"
+
+
+def test_activate_cancel_after_persist_derives_session_and_disconnects(
+    tmp_path: Path,
+) -> None:
+    class Server:
+        async def start(self) -> None: return None
+        async def close(self) -> None: return None
+
+    class Transport:
+        async def initialize(self):
+            return SimpleNamespace(
+                capabilities=TransportCapabilities(
+                    True, True, True, True, True, False
+                ),
+                protocol_version="1", agent_identity="fake",
+            )
+        async def new_session(self):
+            return SimpleNamespace(native_session_id="native-activate-race")
+        async def prompt(self, *_args): raise AssertionError
+        async def close(self): return None
+
+    async def case() -> None:
+        store = StateStore(tmp_path)
+        _seed_missions(store)
+        service = ProjectDaemonService(
+            server=Server(), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        attempt = store.load()["mission_attempts"][0]
+        sink = _DaemonAcpWorkerSink(
+            service=service, store=store, attempt=attempt,
+            agent=AgentSpec(
+                agent_id="worker", role="implementation", provider="codex",
+                command="codex", role_prompt="implement", transport="acp",
+                transport_command=("fake-agent-acp",),
+            ),
+            workspace=tmp_path,
+        )
+        worker = AcpWorkerTransport(
+            argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+            transport_factory=lambda *_args, **_kwargs: Transport(), sink=sink,
+        )
+        disconnect_submissions: list[str] = []
+        original_begin_disconnect = sink.begin_disconnect
+
+        def record_begin_disconnect(reason: str):
+            disconnect_submissions.append(reason)
+            return original_begin_disconnect(reason)
+
+        sink.begin_disconnect = record_begin_disconnect  # type: ignore[method-assign]
+        service.start_worker_io(
+            worker.admit(attempt), on_completion=lambda _result: None
+        )
+        for _ in range(20):
+            await asyncio.sleep(0)
+            if not service._queue.empty():
+                break
+        await service.tick()
+        assert sink.session_id is None
+        worker_task = next(iter(service._worker_tasks))
+        worker_task.cancel()
+        await service.close()
+        assert disconnect_submissions == ["admission_cancelled"]
+        protocol = store.validated_protocol_state()
+        session = next(
+            item for item in protocol["agent_sessions"]
+            if item["native_session_id"] == "native-activate-race"
+        )
+        assert store._derived_protocol_state(
+            protocol, "session", session["session_id"], session
+        ) == "disconnected"
+
+    asyncio.run(case())
 
 
 @pytest.mark.parametrize(

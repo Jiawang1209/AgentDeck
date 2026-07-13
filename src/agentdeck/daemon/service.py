@@ -1645,10 +1645,8 @@ class ProjectDaemonService:
         if (
             self._lifecycle_state not in {"open", "closing"}
             or not callable(callback)
-            or (
-                self._lifecycle_state == "closing"
-                and (task is None or task not in self._worker_tasks)
-            )
+            or task is None
+            or task not in self._worker_tasks
         ):
             raise ServiceError("daemon Worker cleanup is unavailable")
         future = asyncio.get_running_loop().create_future()

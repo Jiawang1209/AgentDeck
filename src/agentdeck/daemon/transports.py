@@ -307,6 +307,73 @@ class AcpWorkerTransport:
         self._sink = selected_sink
         self._decide = decide
         self._active: dict[str, _ActiveAcpAttempt] = {}
+        self._cleanup_tasks: set[asyncio.Future[Any]] = set()
+
+    def _retain_cleanup_task(self, task: asyncio.Future[Any]) -> None:
+        self._cleanup_tasks.add(task)
+
+        def consume(completed: asyncio.Future[Any]) -> None:
+            self._cleanup_tasks.discard(completed)
+            try:
+                completed.result()
+            except BaseException:
+                pass
+
+        task.add_done_callback(consume)
+
+    async def _bounded_cleanup(self, operation: object) -> str:
+        if not inspect.isawaitable(operation):
+            return "completed"
+        task = asyncio.ensure_future(operation)
+        try:
+            done, _pending = await asyncio.wait(
+                {task}, timeout=self._request_timeout
+            )
+        except BaseException:
+            task.cancel()
+            asyncio.get_running_loop().call_soon(task.cancel)
+            self._retain_cleanup_task(task)
+            return "failed"
+        if task not in done:
+            task.cancel()
+            asyncio.get_running_loop().call_soon(task.cancel)
+            self._retain_cleanup_task(task)
+            return "timed_out"
+        try:
+            task.result()
+        except BaseException:
+            return "failed"
+        return "completed"
+
+    async def _close_then_disconnect(
+        self,
+        transport: object,
+        sink: object,
+        *,
+        session_id: str | None,
+        success_reason: str,
+        failure_reason: str,
+    ) -> None:
+        try:
+            close_operation = transport.close()  # type: ignore[attr-defined]
+        except BaseException:
+            close_status = "failed"
+        else:
+            close_status = await self._bounded_cleanup(close_operation)
+        if session_id is None:
+            return
+        reason = success_reason if close_status == "completed" else failure_reason
+        begin_disconnect = getattr(sink, "begin_disconnect", None)
+        disconnect = getattr(sink, "disconnect", None)
+        try:
+            operation = (
+                begin_disconnect(reason)
+                if callable(begin_disconnect)
+                else disconnect(reason) if callable(disconnect) else None
+            )
+        except BaseException:
+            return
+        await self._bounded_cleanup(operation)
 
     async def admit(self, attempt: Mapping[str, object]) -> SubmittedReceipt:
         attempt_id, _agent_id, dispatch_key = _attempt_authority(
@@ -349,31 +416,22 @@ class AcpWorkerTransport:
                 if inspect.isawaitable(activated):
                     await activated
         except asyncio.CancelledError:
-            close_task = asyncio.create_task(transport.close())
-            try:
-                await asyncio.wait_for(close_task, timeout=self._request_timeout)
-            except Exception:
-                pass
-            if session_id is not None:
-                disconnect = getattr(sink, "disconnect", None)
-                if callable(disconnect):
-                    try:
-                        disconnected = disconnect("admission_cancelled")
-                        if inspect.isawaitable(disconnected):
-                            await disconnected
-                    except Exception:
-                        pass
+            await self._close_then_disconnect(
+                transport,
+                sink,
+                session_id=session_id,
+                success_reason="admission_cancelled",
+                failure_reason="admission_cancelled",
+            )
             raise
         except Exception as error:
-            try:
-                await transport.close()
-            except Exception:
-                pass
-            disconnect = getattr(sink, "disconnect", None)
-            if callable(disconnect):
-                disconnected = disconnect("admission_failed")
-                if inspect.isawaitable(disconnected):
-                    await disconnected
+            await self._close_then_disconnect(
+                transport,
+                sink,
+                session_id=session_id,
+                success_reason="admission_failed",
+                failure_reason="admission_failed",
+            )
             if isinstance(error, WorkerTransportError):
                 raise
             raise WorkerTransportError("ACP Worker admission failed") from error
@@ -436,13 +494,10 @@ class AcpWorkerTransport:
             raise WorkerTransportError("ACP Worker completion failed") from error
         finally:
             self._active.pop(attempt_id, None)
-            disconnect_reason = "transport_closed"
-            try:
-                await active.transport.close()
-            except Exception:
-                disconnect_reason = "transport_close_failed"
-            disconnect = getattr(active.sink, "disconnect", None)
-            if callable(disconnect):
-                disconnected = disconnect(disconnect_reason)
-                if inspect.isawaitable(disconnected):
-                    await disconnected
+            await self._close_then_disconnect(
+                active.transport,
+                active.sink,
+                session_id=active.session_id,
+                success_reason="transport_closed",
+                failure_reason="transport_close_failed",
+            )

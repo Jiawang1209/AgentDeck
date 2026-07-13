@@ -8,6 +8,7 @@ import asyncio
 from collections.abc import Mapping
 import contextlib
 import hashlib
+import inspect
 import importlib.metadata
 import importlib.util
 import json
@@ -1438,6 +1439,7 @@ class _DaemonAcpWorkerSink:
             or capabilities is None
         ):
             raise ServiceError("daemon ACP session activation is invalid")
+        self.native_session_id = native_session_id
 
         def persist() -> dict[str, object]:
             session = self.store.record_agent_session(
@@ -1475,7 +1477,6 @@ class _DaemonAcpWorkerSink:
         persisted = await self._mutate(persist)
         if not isinstance(persisted, Mapping):
             raise ServiceError("daemon ACP session persistence failed")
-        self.native_session_id = native_session_id
         self.session_id = str(persisted["session_id"])
         self.turn_id = str(persisted["turn_id"])
         self.turn_state = "submitted"
@@ -1654,25 +1655,35 @@ class _DaemonAcpWorkerSink:
         self.turn_state = turn_to
         self.session_state = "ready"
 
-    async def disconnect(self, reason: str) -> None:
-        """Persist the daemon-owned ACP process boundary after transport close."""
-        if self.session_id is None:
-            return
-        session_id = self.session_id
+    def begin_disconnect(self, reason: str) -> object:
+        """Submit cleanup while still executing as the registered Worker task."""
+        if self.session_id is None and self.native_session_id is None:
+            return None
+        known_session_id = self.session_id
+        native_session_id = self.native_session_id
 
-        def persist() -> None:
+        def persist() -> str | None:
             state = self.store.validated_protocol_state()
             matches = [
                 item for item in state.get("agent_sessions", [])
-                if type(item) is dict and item.get("session_id") == session_id
+                if type(item) is dict
+                and (
+                    item.get("session_id") == known_session_id
+                    if known_session_id is not None
+                    else item.get("native_session_id") == native_session_id
+                    and item.get("agent_id") == self.agent.agent_id
+                )
             ]
+            if not matches and known_session_id is None:
+                return None
             if len(matches) != 1:
                 raise ServiceError("daemon ACP disconnect lineage is invalid")
+            session_id = str(matches[0]["session_id"])
             current = self.store._derived_protocol_state(
                 state, "session", session_id, matches[0]
             )
             if current == "disconnected":
-                return
+                return session_id
             if current not in {"busy", "ready"}:
                 raise ServiceError("daemon ACP disconnect lineage is invalid")
             try:
@@ -1692,11 +1703,25 @@ class _DaemonAcpWorkerSink:
                 if latest_record is not None and self.store._derived_protocol_state(
                     latest, "session", session_id, latest_record
                 ) == "disconnected":
-                    return
+                    return session_id
                 raise
+            return session_id
 
-        await self.service.submit_worker_cleanup(persist)
-        self.session_state = "disconnected"
+        persisted = self.service.submit_worker_cleanup(persist)
+
+        async def finish() -> None:
+            session_id = await persisted
+            if session_id is not None:
+                self.session_id = session_id
+                self.session_state = "disconnected"
+
+        return finish()
+
+    async def disconnect(self, reason: str) -> None:
+        """Persist the daemon-owned ACP process boundary after transport close."""
+        operation = self.begin_disconnect(reason)
+        if inspect.isawaitable(operation):
+            await operation
 
 
 def _derived_entity_state(state: dict[str, Any], entity_type: str, entity_id: str, base: str) -> str:
@@ -6422,6 +6447,35 @@ def _commit_daemon_shutdown(
         return result
 
 
+def _finalize_force_stop_shutdown(
+    store: StateStore,
+    *,
+    lease_id: str,
+    generation: int,
+    now: datetime,
+    commit_and_flush: Any,
+    stop_event: asyncio.Event,
+) -> object:
+    """Always request exit after force-stop already committed durable stopping."""
+    def release_and_flush() -> object:
+        current = controller_lease_from_summary(
+            store.load().get("controller_lease")
+        )
+        if current is None:
+            raise LeaseError("controller lease required")
+        transition = release_controller(
+            current,
+            lease_id=lease_id,
+            generation=generation,
+            now=now,
+        )
+        return commit_and_flush(transition)
+
+    return _commit_daemon_shutdown(
+        release_and_flush, stop_event, shutdown_on_failure=True
+    )
+
+
 async def _request_daemon_stop(
     root: Path, config: ProjectConfig, *,
     lease_id: str | None, lease_generation: int | None,
@@ -6856,20 +6910,13 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                             str(exc), "force_stop_blocked"
                         ) from None
                     if result.get("state") == "stopping":
-                        current = controller_lease_from_summary(
-                            store.load().get("controller_lease")
-                        )
-                        if current is None:
-                            raise LeaseError("controller lease required")
-                        transition = release_controller(
-                            current,
+                        _finalize_force_stop_shutdown(
+                            store,
                             lease_id=lease_id,
                             generation=generation,
                             now=now,
-                        )
-                        _commit_daemon_shutdown(
-                            lambda: commit_and_flush(transition), stop_event,
-                            shutdown_on_failure=True,
+                            commit_and_flush=commit_and_flush,
+                            stop_event=stop_event,
                         )
                     return result
             except LeaseError as exc:

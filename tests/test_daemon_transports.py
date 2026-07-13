@@ -415,3 +415,159 @@ def test_acp_admit_cancellation_closes_and_disconnects_existing_session(
     assert disconnects == (
         ["admission_cancelled"] if cancel_stage == "activate" else []
     )
+
+
+def test_acp_admit_cancel_does_not_wait_for_close_that_swallows_cancellation(
+    tmp_path: Path,
+) -> None:
+    activate_started: asyncio.Event
+    release_close: asyncio.Event
+    close_started: asyncio.Event
+    disconnects: list[str] = []
+
+    class Sink:
+        fragments: list[str] = []
+
+        async def append_update(self, *_args): return None
+        async def append_permission(self, *_args): return None
+        async def append_permission_decision(self, *_args): return None
+
+        async def activate(self, *_args):
+            activate_started.set()
+            await asyncio.Event().wait()
+
+        async def disconnect(self, reason: str):
+            disconnects.append(reason)
+
+    class UncooperativeClose:
+        async def initialize(self): return object()
+        async def new_session(self):
+            return SimpleNamespace(native_session_id="native-uncooperative")
+        async def prompt(self, *_args): raise AssertionError
+
+        async def close(self):
+            close_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await release_close.wait()
+
+    worker = AcpWorkerTransport(
+        argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+        request_timeout=0.01,
+        transport_factory=lambda *_args, **_kwargs: UncooperativeClose(),
+        sink=Sink(),
+    )
+
+    async def case() -> None:
+        nonlocal activate_started, release_close, close_started
+        activate_started = asyncio.Event()
+        release_close = asyncio.Event()
+        close_started = asyncio.Event()
+        task = asyncio.create_task(worker.admit(_attempt("acp")))
+        await activate_started.wait()
+        task.cancel()
+        await close_started.wait()
+        done, _pending = await asyncio.wait({task}, timeout=0.1)
+        try:
+            assert task in done
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert disconnects == ["admission_cancelled"]
+        finally:
+            release_close.set()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        assert worker._cleanup_tasks == set()
+
+    asyncio.run(case())
+
+
+def test_acp_admit_cancel_disconnects_when_close_raises_cancelled_error(
+    tmp_path: Path,
+) -> None:
+    activate_started: asyncio.Event
+    disconnects: list[str] = []
+
+    class Sink:
+        fragments: list[str] = []
+        async def append_update(self, *_args): return None
+        async def append_permission(self, *_args): return None
+        async def append_permission_decision(self, *_args): return None
+        async def activate(self, *_args):
+            activate_started.set()
+            await asyncio.Event().wait()
+        async def disconnect(self, reason: str): disconnects.append(reason)
+
+    class CancelledClose:
+        async def initialize(self): return object()
+        async def new_session(self):
+            return SimpleNamespace(native_session_id="native-cancelled-close")
+        async def prompt(self, *_args): raise AssertionError
+        async def close(self): raise asyncio.CancelledError
+
+    worker = AcpWorkerTransport(
+        argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+        transport_factory=lambda *_args, **_kwargs: CancelledClose(), sink=Sink(),
+    )
+
+    async def case() -> None:
+        nonlocal activate_started
+        activate_started = asyncio.Event()
+        task = asyncio.create_task(worker.admit(_attempt("acp")))
+        await activate_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(case())
+    assert disconnects == ["admission_cancelled"]
+
+
+def test_acp_prompt_cancel_uses_bounded_close_then_disconnect(
+    tmp_path: Path,
+) -> None:
+    prompt_started: asyncio.Event
+    calls: list[str] = []
+
+    class Sink:
+        fragments: list[str] = []
+        async def append_update(self, *_args): return None
+        async def append_permission(self, *_args): return None
+        async def append_permission_decision(self, *_args): return None
+        async def activate(self, *_args): calls.append("activate")
+        async def disconnect(self, reason: str): calls.append(f"disconnect:{reason}")
+
+    class PromptTransport:
+        async def initialize(self): return object()
+        async def new_session(self):
+            return SimpleNamespace(native_session_id="native-prompt-cancel")
+        async def prompt(self, *_args):
+            calls.append("prompt")
+            prompt_started.set()
+            await asyncio.Event().wait()
+        async def close(self):
+            calls.append("close")
+            raise asyncio.CancelledError
+
+    worker = AcpWorkerTransport(
+        argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+        transport_factory=lambda *_args, **_kwargs: PromptTransport(), sink=Sink(),
+    )
+
+    async def case() -> None:
+        nonlocal prompt_started
+        prompt_started = asyncio.Event()
+        receipt = await worker.admit(_attempt("acp"))
+        task = asyncio.create_task(worker.complete(_attempt("acp"), receipt))
+        await prompt_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        with pytest.raises(WorkerTransportError, match="not admitted"):
+            await worker.complete(_attempt("acp"), receipt)
+
+    asyncio.run(case())
+    assert calls == [
+        "activate", "prompt", "close", "disconnect:transport_close_failed"
+    ]

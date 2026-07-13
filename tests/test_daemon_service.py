@@ -254,6 +254,41 @@ def test_close_pumps_registered_worker_cleanup_before_server_close() -> None:
     asyncio.run(case())
 
 
+def test_worker_cleanup_requires_registered_worker_even_while_open() -> None:
+    calls: list[str] = []
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer(calls), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        with pytest.raises(ServiceError, match="cleanup is unavailable"):
+            service.submit_worker_cleanup(
+                lambda: calls.append("forged-cleanup")
+            )
+
+        completed = asyncio.Event()
+
+        async def worker() -> str:
+            await service.submit_worker_cleanup(
+                lambda: calls.append("registered-cleanup")
+            )
+            completed.set()
+            return "done"
+
+        service.start_worker_io(worker(), on_completion=lambda _value: None)
+        await asyncio.sleep(0)
+        await service.tick()
+        await asyncio.wait_for(completed.wait(), timeout=0.2)
+        await service.close()
+        assert "forged-cleanup" not in calls
+        assert calls == ["server:start", "registered-cleanup", "server:close"]
+
+    asyncio.run(case())
+
+
 def test_concurrent_close_shares_cleanup_failure_and_still_closes_server() -> None:
     calls: list[str] = []
 
