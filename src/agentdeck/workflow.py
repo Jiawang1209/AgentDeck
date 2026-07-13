@@ -31,7 +31,7 @@ def _validated_compact_reply(reply: dict[str, Any]) -> dict[str, str]:
         raise ValueError("worker reply must be an object")
     status = reply.get("status")
     if status not in REPLY_STATUSES:
-        raise ValueError("invalid workflow reply status")
+        raise ValueError(f"invalid workflow reply status: {status}")
     compact = {"status": status}
     for field in ("summary", "verification", "risks", "next_steps"):
         value = reply.get(field)
@@ -41,14 +41,33 @@ def _validated_compact_reply(reply: dict[str, Any]) -> dict[str, str]:
     return compact
 
 
+def validate_correlated_workflow_reply(
+    reply: dict[str, Any], expected_handoff_token: str
+) -> dict[str, str]:
+    """Validate the canonical workflow fields and exact dispatch lineage token."""
+    if type(expected_handoff_token) is not str or not expected_handoff_token:
+        raise ValueError("workflow handoff token is invalid")
+    if type(reply) is not dict or reply.get("handoff_token") != expected_handoff_token:
+        raise ValueError("workflow handoff token does not match")
+    return {
+        "handoff_token": expected_handoff_token,
+        **_validated_compact_reply(reply),
+    }
+
+
 def validate_compact_worker_outcome(
     *,
     reply: dict[str, Any],
     artifacts: list[dict[str, Any]],
     trace_ids: list[str],
+    expected_handoff_token: str,
 ) -> dict[str, Any]:
     """Validate and project a Worker result onto the durable handoff allowlist."""
-    compact: dict[str, Any] = _validated_compact_reply(reply)
+    correlated = validate_correlated_workflow_reply(reply, expected_handoff_token)
+    compact: dict[str, Any] = {
+        field: correlated[field]
+        for field in ("status", "summary", "verification", "risks", "next_steps")
+    }
     if type(artifacts) is not list:
         raise ValueError("worker artifacts must be a list")
     compact_artifacts: list[dict[str, str]] = []
@@ -118,8 +137,7 @@ def parse_correlated_reply(output: str, token: str) -> dict[str, str] | None:
     for field in REPLY_FIELDS:
         if not reply.get(field):
             return None
-    if reply["status"] not in REPLY_STATUSES:
-        raise ValueError(f"invalid workflow reply status: {reply['status']}")
+    validate_correlated_workflow_reply(reply, token)
     return reply
 
 

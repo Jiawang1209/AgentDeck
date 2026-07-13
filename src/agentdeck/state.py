@@ -259,6 +259,11 @@ def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
     return copy.deepcopy(value)
 
 
+def validate_mission_attempt_record(value: object) -> dict[str, Any]:
+    """Validate the exact durable Task 7 Mission attempt record."""
+    return _validate_mission_attempt_record(value)
+
+
 def validate_execution_snapshot(value: object) -> dict[str, Any]:
     if type(value) is not dict or set(value) != _EXECUTION_SNAPSHOT_FIELDS:
         raise ValueError("execution snapshot fields are invalid")
