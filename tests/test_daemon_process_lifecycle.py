@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import multiprocessing
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ import pytest
 from agentdeck.daemon.lifecycle import (
     DaemonEndpoint,
     DaemonIdentityError,
+    DaemonOwnership,
     acquire_daemon_ownership,
     can_stop_daemon,
     cleanup_daemon_endpoint,
@@ -77,13 +79,21 @@ def _run_two_start_contenders(project: Path) -> list[tuple[str, str, str | None]
         )
         for _ in range(2)
     ]
-    for process in processes:
-        process.start()
-    output = [results.get(timeout=5) for _ in processes]
-    for process in processes:
-        process.join(timeout=5)
-        assert process.exitcode == 0
-    return output
+    try:
+        for process in processes:
+            process.start()
+        output = [results.get(timeout=5) for _ in processes]
+        for process in processes:
+            process.join(timeout=5)
+            assert process.exitcode == 0
+        return output
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+            process.join(timeout=5)
+        results.close()
+        results.join_thread()
 
 
 def _metadata(
@@ -148,7 +158,7 @@ def test_follower_rejects_metadata_without_matching_health_proof(tmp_path: Path)
                     "healthy": True,
                     "start_nonce_hash": "0" * 64,
                 },
-                wait_timeout_seconds=0.05,
+                wait_timeout_seconds=1,
                 poll_interval_seconds=0.005,
             )
     finally:
@@ -290,6 +300,162 @@ def test_cleanup_matching_owner_removes_metadata_and_socket(tmp_path: Path) -> N
     assert not owner.endpoint.metadata_path.exists()
     assert not owner.endpoint.socket_path.exists()
     assert owner.endpoint.lock_path.exists()
+
+
+def test_forged_owner_cannot_remove_live_owner_endpoint(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    owner = acquire_daemon_ownership(
+        project,
+        start_nonce="owner-nonce",
+        health_probe=lambda metadata: metadata,
+    )
+    owner.endpoint.socket_path.write_text("owned", encoding="utf-8")
+    try:
+        with pytest.raises(TypeError, match="cannot be constructed directly"):
+            DaemonOwnership(
+                role="owner",
+                instance_id=owner.instance_id,
+                endpoint=owner.endpoint,
+                project_root_hash=owner.project_root_hash,
+                start_nonce_hash=owner.start_nonce_hash,
+                pid=owner.pid,
+            )
+        assert owner.endpoint.metadata_path.exists()
+        assert owner.endpoint.socket_path.exists()
+    finally:
+        cleanup_daemon_endpoint(owner)
+
+
+def test_follower_and_released_owner_cannot_remove_endpoint(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    owner = acquire_daemon_ownership(
+        project,
+        start_nonce="owner-nonce",
+        health_probe=lambda metadata: metadata,
+    )
+    owner.endpoint.socket_path.write_text("owned", encoding="utf-8")
+    follower = acquire_daemon_ownership(
+        project,
+        start_nonce="follower-nonce",
+        health_probe=lambda metadata: owner.health_proof(),
+        wait_timeout_seconds=1,
+        poll_interval_seconds=0.01,
+    )
+    assert follower.role == "follower"
+    assert not cleanup_daemon_endpoint(follower)
+    assert owner.endpoint.metadata_path.exists()
+    owner.release()
+    assert not cleanup_daemon_endpoint(owner)
+    assert owner.endpoint.metadata_path.exists()
+    assert owner.endpoint.socket_path.exists()
+
+
+def test_runtime_symlink_is_rejected_without_external_write(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    agentdeck = project / ".agentdeck"
+    agentdeck.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (agentdeck / "runtime").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(DaemonIdentityError, match="symlink"):
+        acquire_daemon_ownership(
+            project,
+            start_nonce="owner-nonce",
+            health_probe=lambda metadata: metadata,
+        )
+
+    assert list(outside.iterdir()) == []
+    assert (agentdeck / "runtime").is_symlink()
+
+
+@pytest.mark.parametrize("endpoint_name", ["daemon.json", "daemon.sock"])
+def test_endpoint_symlink_is_rejected_without_write_or_delete(
+    tmp_path: Path, endpoint_name: str
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    runtime = project / ".agentdeck" / "runtime"
+    runtime.mkdir(parents=True)
+    outside = tmp_path / "outside-data"
+    outside.write_text("do-not-touch", encoding="utf-8")
+    endpoint_link = runtime / endpoint_name
+    endpoint_link.symlink_to(outside)
+
+    with pytest.raises(DaemonIdentityError, match="symlink"):
+        acquire_daemon_ownership(
+            project,
+            start_nonce="owner-nonce",
+            health_probe=lambda metadata: metadata,
+        )
+
+    assert outside.read_text(encoding="utf-8") == "do-not-touch"
+    assert endpoint_link.is_symlink()
+    assert not (runtime / "daemon.lock").exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("wait_timeout_seconds", True),
+        ("wait_timeout_seconds", "1"),
+        ("wait_timeout_seconds", math.nan),
+        ("wait_timeout_seconds", math.inf),
+        ("wait_timeout_seconds", -math.inf),
+        ("wait_timeout_seconds", 0),
+        ("wait_timeout_seconds", -1),
+        ("wait_timeout_seconds", 0.5),
+        ("wait_timeout_seconds", 301),
+        ("poll_interval_seconds", False),
+        ("poll_interval_seconds", "0.1"),
+        ("poll_interval_seconds", math.nan),
+        ("poll_interval_seconds", math.inf),
+        ("poll_interval_seconds", -math.inf),
+        ("poll_interval_seconds", 0),
+        ("poll_interval_seconds", -0.1),
+    ],
+)
+def test_ownership_wait_bounds_reject_invalid_values_before_endpoint_write(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    arguments: dict[str, object] = {
+        "wait_timeout_seconds": 1,
+        "poll_interval_seconds": 0.01,
+    }
+    arguments[field] = value
+
+    with pytest.raises((TypeError, ValueError), match=field):
+        acquire_daemon_ownership(
+            project,
+            start_nonce="owner-nonce",
+            health_probe=lambda metadata: metadata,
+            **arguments,
+        )
+
+    assert not (project / ".agentdeck").exists()
+
+
+def test_poll_interval_cannot_exceed_bounded_wait_without_endpoint_write(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+
+    with pytest.raises(ValueError, match="poll_interval_seconds"):
+        acquire_daemon_ownership(
+            project,
+            start_nonce="owner-nonce",
+            health_probe=lambda metadata: metadata,
+            wait_timeout_seconds=1,
+            poll_interval_seconds=2,
+        )
+
+    assert not (project / ".agentdeck").exists()
 
 
 @pytest.mark.parametrize(

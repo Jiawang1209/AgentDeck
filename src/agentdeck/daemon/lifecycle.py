@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import errno
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
+import stat
 import time
 from types import TracebackType
 from typing import BinaryIO, Callable, Literal, Mapping
@@ -52,6 +55,15 @@ HealthProbe = Callable[[Mapping[str, object]], Mapping[str, object] | None]
 
 
 @dataclass
+class _OwnershipCapability:
+    lock_file: BinaryIO | None
+    released: bool = False
+
+
+_OWNERSHIP_FACTORY_TOKEN = object()
+
+
+@dataclass(frozen=True, init=False)
 class DaemonOwnership:
     role: Literal["owner", "follower"]
     instance_id: str
@@ -59,8 +71,29 @@ class DaemonOwnership:
     project_root_hash: str
     start_nonce_hash: str
     pid: int
-    _lock_file: BinaryIO | None = field(default=None, repr=False, compare=False)
-    _released: bool = field(default=False, init=False, repr=False, compare=False)
+    _capability: _OwnershipCapability = field(repr=False, compare=False)
+
+    def __init__(
+        self,
+        *,
+        role: Literal["owner", "follower"],
+        instance_id: str,
+        endpoint: DaemonEndpoint,
+        project_root_hash: str,
+        start_nonce_hash: str,
+        pid: int,
+        _factory_token: object | None = None,
+        _lock_file: BinaryIO | None = None,
+    ) -> None:
+        if _factory_token is not _OWNERSHIP_FACTORY_TOKEN:
+            raise TypeError("DaemonOwnership cannot be constructed directly")
+        object.__setattr__(self, "role", role)
+        object.__setattr__(self, "instance_id", instance_id)
+        object.__setattr__(self, "endpoint", endpoint)
+        object.__setattr__(self, "project_root_hash", project_root_hash)
+        object.__setattr__(self, "start_nonce_hash", start_nonce_hash)
+        object.__setattr__(self, "pid", pid)
+        object.__setattr__(self, "_capability", _OwnershipCapability(_lock_file))
 
     def health_proof(self) -> dict[str, object]:
         return {
@@ -72,14 +105,15 @@ class DaemonOwnership:
         }
 
     def release(self) -> None:
-        if self._released:
+        capability = self._capability
+        if capability.released:
             return
-        self._released = True
-        if self._lock_file is not None:
+        capability.released = True
+        if capability.lock_file is not None:
             try:
-                fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
+                fcntl.flock(capability.lock_file.fileno(), fcntl.LOCK_UN)
             finally:
-                self._lock_file.close()
+                capability.lock_file.close()
 
     def __enter__(self) -> DaemonOwnership:
         return self
@@ -91,6 +125,28 @@ class DaemonOwnership:
         traceback: TracebackType | None,
     ) -> None:
         self.release()
+
+
+def _new_ownership(
+    *,
+    role: Literal["owner", "follower"],
+    instance_id: str,
+    endpoint: DaemonEndpoint,
+    project_root_hash: str,
+    start_nonce_hash: str,
+    pid: int,
+    lock_file: BinaryIO | None = None,
+) -> DaemonOwnership:
+    return DaemonOwnership(
+        role=role,
+        instance_id=instance_id,
+        endpoint=endpoint,
+        project_root_hash=project_root_hash,
+        start_nonce_hash=start_nonce_hash,
+        pid=pid,
+        _factory_token=_OWNERSHIP_FACTORY_TOKEN,
+        _lock_file=lock_file,
+    )
 
 
 _ENDPOINT_METADATA_FIELDS = {
@@ -119,6 +175,74 @@ def daemon_endpoint(root: Path) -> DaemonEndpoint:
     )
 
 
+def _open_directory_no_follow(path: Path) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+            raise DaemonIdentityError("daemon runtime symlink is forbidden") from exc
+        raise DaemonIdentityError("daemon project directory is unavailable") from exc
+    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise DaemonIdentityError("daemon runtime path must be a directory")
+    return descriptor
+
+
+def _open_child_directory_no_follow(parent_fd: int, name: str) -> int:
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_fd)
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+            raise DaemonIdentityError("daemon runtime symlink is forbidden") from exc
+        raise DaemonIdentityError("daemon runtime directory is unavailable") from exc
+    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise DaemonIdentityError("daemon runtime path must be a directory")
+    return descriptor
+
+
+def _ensure_secure_runtime(root: Path) -> Path:
+    canonical = _canonical_project_root(root)
+    root_fd = _open_directory_no_follow(canonical)
+    agentdeck_fd: int | None = None
+    runtime_fd: int | None = None
+    try:
+        agentdeck_fd = _open_child_directory_no_follow(root_fd, ".agentdeck")
+        runtime_fd = _open_child_directory_no_follow(agentdeck_fd, "runtime")
+    finally:
+        if runtime_fd is not None:
+            os.close(runtime_fd)
+        if agentdeck_fd is not None:
+            os.close(agentdeck_fd)
+        os.close(root_fd)
+    return canonical / ".agentdeck" / "runtime"
+
+
+def _reject_endpoint_symlinks(endpoint: DaemonEndpoint) -> None:
+    for path in (endpoint.metadata_path, endpoint.socket_path, endpoint.lock_path):
+        try:
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(mode):
+            raise DaemonIdentityError("daemon endpoint symlink is forbidden")
+
+
+def _prepare_endpoint(root: Path) -> DaemonEndpoint:
+    endpoint = daemon_endpoint(root)
+    runtime = _ensure_secure_runtime(root)
+    if endpoint.metadata_path.parent != runtime:
+        raise DaemonIdentityError("daemon endpoint escaped project runtime")
+    _reject_endpoint_symlinks(endpoint)
+    return endpoint
+
+
 def _validate_endpoint_metadata(value: object) -> dict[str, object]:
     if not isinstance(value, Mapping) or set(value) != _ENDPOINT_METADATA_FIELDS:
         raise DaemonIdentityError("daemon endpoint metadata is invalid")
@@ -139,9 +263,16 @@ def _validate_endpoint_metadata(value: object) -> dict[str, object]:
 
 def _read_endpoint_metadata(path: Path) -> dict[str, object] | None:
     try:
-        raw = path.read_text(encoding="utf-8")
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except FileNotFoundError:
         return None
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise DaemonIdentityError("daemon endpoint symlink is forbidden") from exc
+        raise DaemonIdentityError("daemon endpoint metadata is unreadable") from exc
+    try:
+        with os.fdopen(descriptor, "r", encoding="utf-8", closefd=True) as stream:
+            raw = stream.read()
     except (OSError, UnicodeError) as exc:
         raise DaemonIdentityError("daemon endpoint metadata is unreadable") from exc
     try:
@@ -204,6 +335,7 @@ def _verified_health_proof(
 
 
 def _unlink_endpoint_files(endpoint: DaemonEndpoint) -> bool:
+    _reject_endpoint_symlinks(endpoint)
     removed = False
     for path in (endpoint.socket_path, endpoint.metadata_path):
         try:
@@ -217,13 +349,80 @@ def _unlink_endpoint_files(endpoint: DaemonEndpoint) -> bool:
 
 
 def _try_startup_lock(endpoint: DaemonEndpoint) -> tuple[BinaryIO, bool]:
-    endpoint.lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_file = endpoint.lock_path.open("a+b")
+    _reject_endpoint_symlinks(endpoint)
+    try:
+        descriptor = os.open(
+            endpoint.lock_path,
+            os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise DaemonIdentityError("daemon endpoint symlink is forbidden") from exc
+        raise
+    lock_file = os.fdopen(descriptor, "a+b", closefd=True)
     try:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         return lock_file, False
     return lock_file, True
+
+
+def _ownership_holds_startup_lock(ownership: DaemonOwnership) -> bool:
+    capability = ownership._capability
+    lock_file = capability.lock_file
+    if lock_file is None or capability.released or lock_file.closed:
+        return False
+    try:
+        held_stat = os.fstat(lock_file.fileno())
+        path_stat = ownership.endpoint.lock_path.stat(follow_symlinks=False)
+    except (OSError, ValueError):
+        return False
+    if stat.S_ISLNK(path_stat.st_mode) or (
+        held_stat.st_dev,
+        held_stat.st_ino,
+    ) != (path_stat.st_dev, path_stat.st_ino):
+        return False
+
+    try:
+        check_fd = os.open(
+            ownership.endpoint.lock_path,
+            os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError:
+        return False
+    try:
+        try:
+            fcntl.flock(check_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        else:
+            fcntl.flock(check_fd, fcntl.LOCK_UN)
+            return False
+    finally:
+        os.close(check_fd)
+
+
+def _validated_wait_number(
+    value: object,
+    field_name: str,
+    *,
+    minimum: float,
+    maximum: float | None = None,
+    minimum_is_exclusive: bool = False,
+) -> float:
+    if type(value) not in {int, float}:
+        raise TypeError(f"daemon {field_name} must be a finite number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"daemon {field_name} must be a finite number")
+    below_minimum = number <= minimum if minimum_is_exclusive else number < minimum
+    if below_minimum or (maximum is not None and number > maximum):
+        upper = f" and at most {maximum:g}" if maximum is not None else ""
+        raise ValueError(
+            f"daemon {field_name} must be at least {minimum:g}{upper}"
+        )
+    return number
 
 
 def _wait_for_verified_owner(
@@ -245,7 +444,7 @@ def _wait_for_verified_owner(
             and metadata["project_root_hash"] == expected_project_hash
             and _verified_health_proof(metadata, health_probe)
         ):
-            return DaemonOwnership(
+            return _new_ownership(
                 role="follower",
                 instance_id=str(metadata["instance_id"]),
                 endpoint=endpoint,
@@ -267,9 +466,23 @@ def acquire_daemon_ownership(
     poll_interval_seconds: float = 0.01,
 ) -> DaemonOwnership:
     nonce = _required_string(start_nonce, "start_nonce")
-    if wait_timeout_seconds <= 0 or poll_interval_seconds <= 0:
-        raise ValueError("daemon ownership wait bounds must be positive")
-    endpoint = daemon_endpoint(root)
+    wait_timeout_seconds = _validated_wait_number(
+        wait_timeout_seconds,
+        "wait_timeout_seconds",
+        minimum=1,
+        maximum=300,
+    )
+    poll_interval_seconds = _validated_wait_number(
+        poll_interval_seconds,
+        "poll_interval_seconds",
+        minimum=0,
+        minimum_is_exclusive=True,
+    )
+    if poll_interval_seconds > wait_timeout_seconds:
+        raise ValueError(
+            "daemon poll_interval_seconds must not exceed wait_timeout_seconds"
+        )
+    endpoint = _prepare_endpoint(root)
     expected_hash = project_root_hash(root)
     lock_file, acquired = _try_startup_lock(endpoint)
     if not acquired:
@@ -289,7 +502,7 @@ def acquire_daemon_ownership(
                 existing["project_root_hash"] == expected_hash
                 and _verified_health_proof(existing, health_probe)
             ):
-                ownership = DaemonOwnership(
+                ownership = _new_ownership(
                     role="follower",
                     instance_id=str(existing["instance_id"]),
                     endpoint=endpoint,
@@ -314,14 +527,14 @@ def acquire_daemon_ownership(
             "pid": os.getpid(),
         }
         _atomic_write_metadata(endpoint.metadata_path, metadata)
-        return DaemonOwnership(
+        return _new_ownership(
             role="owner",
             instance_id=str(metadata["instance_id"]),
             endpoint=endpoint,
             project_root_hash=expected_hash,
             start_nonce_hash=nonce_hash,
             pid=os.getpid(),
-            _lock_file=lock_file,
+            lock_file=lock_file,
         )
     except Exception:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
@@ -335,7 +548,7 @@ def reconcile_endpoint(
     expected_project_hash: str,
     health_probe: HealthProbe,
 ) -> bool:
-    endpoint = daemon_endpoint(root)
+    endpoint = _prepare_endpoint(root)
     lock_file, acquired = _try_startup_lock(endpoint)
     if not acquired:
         lock_file.close()
@@ -363,7 +576,7 @@ def reconcile_endpoint(
 
 
 def cleanup_daemon_endpoint(ownership: DaemonOwnership) -> bool:
-    if ownership.role != "owner" or ownership._released:
+    if ownership.role != "owner" or not _ownership_holds_startup_lock(ownership):
         return False
     expected = {
         "instance_id": ownership.instance_id,
@@ -372,6 +585,9 @@ def cleanup_daemon_endpoint(ownership: DaemonOwnership) -> bool:
         "pid": ownership.pid,
     }
     try:
+        root = ownership.endpoint.metadata_path.parents[2]
+        if _prepare_endpoint(root) != ownership.endpoint:
+            return False
         try:
             metadata = _read_endpoint_metadata(ownership.endpoint.metadata_path)
         except DaemonIdentityError:
