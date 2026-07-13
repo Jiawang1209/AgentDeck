@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 from typing import Any, Callable, Mapping
@@ -56,6 +57,276 @@ from .runtime.acp_mapping import (
     MAX_ACP_UPDATES_PER_TURN,
     MAX_ACP_TERMINAL_UPDATE_BYTES,
 )
+
+
+_EXECUTION_SNAPSHOT_FIELDS = frozenset(
+    {
+        "mission",
+        "workers",
+        "policy",
+        "limits",
+        "mission_hash",
+        "policy_hash",
+        "execution_hash",
+    }
+)
+_EXECUTION_SNAPSHOT_MAX_BYTES = 256 * 1024
+_EXECUTION_SNAPSHOT_MAX_DEPTH = 32
+
+
+def _validate_snapshot_json(value: object, *, depth: int = 0) -> None:
+    if depth > _EXECUTION_SNAPSHOT_MAX_DEPTH:
+        raise ValueError("execution snapshot nesting is invalid")
+    if value is None:
+        return
+    if type(value) is bool or type(value) is float:
+        raise ValueError("execution snapshot value is invalid")
+    if type(value) is int:
+        if not -(2**63) <= value < 2**63:
+            raise ValueError("execution snapshot integer is invalid")
+        return
+    if type(value) is str:
+        if "\x00" in value or any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+            raise ValueError("execution snapshot string is invalid")
+        return
+    if type(value) is list:
+        for item in value:
+            _validate_snapshot_json(item, depth=depth + 1)
+        return
+    if type(value) is dict:
+        for key, item in value.items():
+            if type(key) is not str or not key:
+                raise ValueError("execution snapshot key is invalid")
+            _validate_snapshot_json(key, depth=depth + 1)
+            _validate_snapshot_json(item, depth=depth + 1)
+        return
+    raise ValueError("execution snapshot value is invalid")
+
+
+def _canonical_snapshot_bytes(value: object) -> bytes:
+    _validate_snapshot_json(value)
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (UnicodeEncodeError, ValueError, TypeError):
+        raise ValueError("execution snapshot encoding is invalid") from None
+    if len(encoded) > _EXECUTION_SNAPSHOT_MAX_BYTES:
+        raise ValueError("execution snapshot is too large")
+    return encoded
+
+
+def canonical_snapshot_hash(value: object) -> str:
+    return f"sha256:{hashlib.sha256(_canonical_snapshot_bytes(value)).hexdigest()}"
+
+
+def validate_execution_snapshot(value: object) -> dict[str, Any]:
+    if type(value) is not dict or set(value) != _EXECUTION_SNAPSHOT_FIELDS:
+        raise ValueError("execution snapshot fields are invalid")
+    _canonical_snapshot_bytes(value)
+    snapshot = copy.deepcopy(value)
+    for name in ("mission", "policy", "limits"):
+        if type(snapshot[name]) is not dict:
+            raise ValueError(f"execution snapshot {name} is invalid")
+    if type(snapshot["workers"]) is not list or len(snapshot["workers"]) < 2:
+        raise ValueError("execution snapshot workers are invalid")
+    mission = snapshot["mission"]
+    mission_fields = {
+        "mission_id",
+        "schema_version",
+        "plan_id",
+        "plan_hash",
+        "goal_hash",
+        "summary_hash",
+        "steps",
+        "project_scope_hash",
+        "action_classes",
+        "skill_provenance",
+        "memory_provenance",
+        "declared_tests_hash",
+        "acceptance_criteria_hash",
+    }
+    if (
+        set(mission) != mission_fields
+        or not is_canonical_mission_id(mission.get("mission_id"))
+        or mission.get("schema_version") != MISSION_SCHEMA_VERSION
+        or type(mission.get("plan_id")) is not str
+        or re.fullmatch(r"pln_[0-9a-f]{12}", mission["plan_id"]) is None
+    ):
+        raise ValueError("execution snapshot mission is invalid")
+    hash_fields = (
+        "plan_hash",
+        "goal_hash",
+        "summary_hash",
+        "project_scope_hash",
+    )
+    if any(
+        type(mission.get(field)) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", mission[field]) is None
+        for field in hash_fields
+    ):
+        raise ValueError("execution snapshot mission is invalid")
+    for optional_hash in ("declared_tests_hash", "acceptance_criteria_hash"):
+        value = mission.get(optional_hash)
+        if value is not None and (
+            type(value) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None
+        ):
+            raise ValueError("execution snapshot mission is invalid")
+    if mission.get("action_classes") != [
+        "worker_task",
+        "declared_local_verification",
+    ]:
+        raise ValueError("execution snapshot mission is invalid")
+    steps = mission.get("steps")
+    if type(steps) is not list or not steps:
+        raise ValueError("execution snapshot mission is invalid")
+    step_agents: list[str] = []
+    for position, step in enumerate(steps, start=1):
+        if (
+            type(step) is not dict
+            or set(step) != {"step_id", "position", "agent_id", "role", "task_hash"}
+            or step.get("step_id") != f"step_{position}"
+            or type(step.get("position")) is not int
+            or step["position"] != position
+            or type(step.get("agent_id")) is not str
+            or not step["agent_id"]
+            or type(step.get("role")) is not str
+            or not step["role"]
+            or type(step.get("task_hash")) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", step["task_hash"]) is None
+        ):
+            raise ValueError("execution snapshot mission is invalid")
+        step_agents.append(step["agent_id"])
+    workers = snapshot["workers"]
+    worker_ids: list[str] = []
+    for worker in workers:
+        if (
+            type(worker) is not dict
+            or set(worker)
+            != {
+                "agent_id",
+                "role",
+                "provider",
+                "workspace_mode",
+                "configured_transport",
+                "capability_provenance",
+            }
+            or any(
+                type(worker.get(field)) is not str or not worker[field]
+                for field in ("agent_id", "role", "provider", "workspace_mode")
+            )
+            or worker.get("configured_transport") not in {"acp", "tmux"}
+        ):
+            raise ValueError("execution snapshot workers are invalid")
+        provenance = worker.get("capability_provenance")
+        if (
+            type(provenance) is not dict
+            or set(provenance) != {"source", "transport", "adapter_configuration"}
+            or provenance.get("source") != "project_config"
+            or provenance.get("transport") != worker["configured_transport"]
+            or provenance.get("adapter_configuration")
+            not in {"present", "not_applicable"}
+            or (
+                worker["configured_transport"] == "acp"
+                and provenance["adapter_configuration"] != "present"
+            )
+        ):
+            raise ValueError("execution snapshot workers are invalid")
+        worker_ids.append(worker["agent_id"])
+    if len(worker_ids) != len(set(worker_ids)) or any(
+        agent_id not in worker_ids for agent_id in step_agents
+    ):
+        raise ValueError("execution snapshot workers are invalid")
+    policy = snapshot["policy"]
+    if (
+        set(policy)
+        != {
+            "approval_mode",
+            "autonomous_allowed_agents",
+            "autonomous_max_approvals",
+            "policy_source",
+        }
+        or policy.get("approval_mode")
+        not in {"confirm", "approve", "auto_approve", "autonomous"}
+        or type(policy.get("autonomous_allowed_agents")) is not list
+        or any(type(item) is not str or not item for item in policy["autonomous_allowed_agents"])
+        or type(policy.get("autonomous_max_approvals")) is not int
+        or policy["autonomous_max_approvals"] < 0
+        or policy.get("policy_source") != "project_config"
+    ):
+        raise ValueError("execution snapshot policy is invalid")
+    limits = snapshot["limits"]
+    if set(limits) != {"step_count", "timeout_seconds", "retry_limit", "worker_budget"}:
+        raise ValueError("execution snapshot limits are invalid")
+    if any(
+        type(limits.get(field)) is not int or limits[field] < minimum
+        for field, minimum in (
+            ("step_count", 1),
+            ("timeout_seconds", 1),
+            ("retry_limit", 0),
+            ("worker_budget", 1),
+        )
+    ) or limits["step_count"] != len(steps) or limits["worker_budget"] != len(steps):
+        raise ValueError("execution snapshot limits are invalid")
+    skill_provenance = mission.get("skill_provenance")
+    if type(skill_provenance) is not list:
+        raise ValueError("execution snapshot mission is invalid")
+    for item in skill_provenance:
+        if (
+            type(item) is not dict
+            or set(item) != {"agent_id", "name_hash", "content_hash", "source_kind"}
+            or type(item.get("agent_id")) is not str
+            or not item["agent_id"]
+            or item.get("source_kind") not in {"builtin", "project", "external"}
+            or any(
+                type(item.get(field)) is not str
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", item[field]) is None
+                for field in ("name_hash", "content_hash")
+            )
+        ):
+            raise ValueError("execution snapshot mission is invalid")
+    memory_provenance = mission.get("memory_provenance")
+    if type(memory_provenance) is not list:
+        raise ValueError("execution snapshot mission is invalid")
+    seen_scopes: set[str] = set()
+    for item in memory_provenance:
+        if (
+            type(item) is not dict
+            or set(item) != {"scope", "content_hash", "line_count", "byte_count"}
+            or item.get("scope") not in {"project", "global"}
+            or item["scope"] in seen_scopes
+            or type(item.get("content_hash")) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", item["content_hash"]) is None
+            or type(item.get("line_count")) is not int
+            or item["line_count"] < 0
+            or type(item.get("byte_count")) is not int
+            or item["byte_count"] < 0
+        ):
+            raise ValueError("execution snapshot mission is invalid")
+        seen_scopes.add(item["scope"])
+    if snapshot["mission_hash"] != canonical_snapshot_hash(snapshot["mission"]):
+        raise ValueError("execution snapshot mission hash is invalid")
+    if snapshot["policy_hash"] != canonical_snapshot_hash(snapshot["policy"]):
+        raise ValueError("execution snapshot policy hash is invalid")
+    body = {
+        key: snapshot[key]
+        for key in (
+            "mission",
+            "workers",
+            "policy",
+            "limits",
+            "mission_hash",
+            "policy_hash",
+        )
+    }
+    if snapshot["execution_hash"] != canonical_snapshot_hash(body):
+        raise ValueError("execution snapshot execution hash is invalid")
+    return snapshot
 
 
 def leader_provider_backend(provider: str | None) -> str:
@@ -174,6 +445,7 @@ class StateStore:
             return {
                 "agents": {},
                 "messages": [],
+                "attempts": [],
                 "jobs": [],
                 "replies": [],
                 "artifacts": [],
@@ -1055,6 +1327,8 @@ class StateStore:
             "workflow_run_id": None,
             "current_step": 0,
             "confirmed_at": None,
+            "execution_snapshot": None,
+            "snapshot_hash": None,
             "completed_at": None,
             "created_at": now,
             "updated_at": now,
@@ -1135,6 +1409,8 @@ class StateStore:
             "workflow_run_id": None,
             "current_step": 0,
             "confirmed_at": None,
+            "execution_snapshot": None,
+            "snapshot_hash": None,
             "completed_at": None,
             "created_at": now,
             "updated_at": now,
@@ -1148,6 +1424,242 @@ class StateStore:
 
     def list_missions(self) -> list[dict[str, Any]]:
         return list(self.load().get("missions", []))
+
+    @staticmethod
+    def _unique_mission_record(
+        state: dict[str, Any], mission_id: str
+    ) -> dict[str, Any]:
+        matches = [
+            item
+            for item in state.setdefault("missions", [])
+            if isinstance(item, dict) and item.get("mission_id") == mission_id
+        ]
+        if not matches:
+            raise KeyError(mission_id)
+        if len(matches) != 1:
+            raise ValueError("duplicate mission identity")
+        return matches[0]
+
+    @staticmethod
+    def _unique_plan_record(state: dict[str, Any], plan_id: str) -> dict[str, Any]:
+        matches = [
+            item
+            for item in state.setdefault("plans", [])
+            if isinstance(item, dict) and item.get("plan_id") == plan_id
+        ]
+        if not matches:
+            raise KeyError(plan_id)
+        if len(matches) != 1:
+            raise ValueError("duplicate plan identity")
+        return matches[0]
+
+    def freeze_mission_execution(
+        self,
+        mission_id: str,
+        *,
+        expected_mission: Mapping[str, object],
+        expected_plan: Mapping[str, object],
+        execution_snapshot: Mapping[str, object],
+        confirmed_at: str,
+    ) -> dict[str, Any]:
+        if not is_canonical_mission_id(mission_id):
+            raise ValueError("mission identity invalid")
+        if type(confirmed_at) is not str or not confirmed_at:
+            raise ValueError("confirmation timestamp invalid")
+        try:
+            parsed = datetime.fromisoformat(confirmed_at)
+        except ValueError:
+            raise ValueError("confirmation timestamp invalid") from None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("confirmation timestamp invalid")
+        snapshot = validate_execution_snapshot(dict(execution_snapshot))
+        if snapshot["mission"].get("mission_id") != mission_id:
+            raise ValueError("execution snapshot mission identity mismatch")
+        event = EventRecord.create(
+            "mission_execution_frozen",
+            {
+                "mission_id": mission_id,
+                "snapshot_hash": snapshot["execution_hash"],
+            },
+        )
+        with self._protocol_mutation_lock():
+            state = self.load()
+            mission = self._unique_mission_record(state, mission_id)
+            plan_id = str(mission.get("plan_id") or "")
+            plan = self._unique_plan_record(state, plan_id)
+            if mission != dict(expected_mission) or plan != dict(expected_plan):
+                raise ValueError("mission confirmation drift")
+            created_at = mission.get("created_at")
+            if type(created_at) is not str:
+                raise ValueError("confirmation timestamp invalid")
+            try:
+                created_time = datetime.fromisoformat(created_at)
+            except ValueError:
+                raise ValueError("confirmation timestamp invalid") from None
+            if (
+                created_time.tzinfo is None
+                or created_time.utcoffset() is None
+                or parsed < created_time
+            ):
+                raise ValueError("confirmation timestamp invalid")
+            if (
+                mission.get("status") != "pending_confirmation"
+                or mission.get("can_start") is not True
+                or mission.get("blockers") != []
+                or mission.get("confirmed_at") is not None
+                or mission.get("execution_snapshot") is not None
+                or mission.get("snapshot_hash") is not None
+            ):
+                raise ValueError("mission is not confirmable")
+            mission.update(
+                {
+                    "status": "preparing",
+                    "can_start": False,
+                    "confirmed_at": confirmed_at,
+                    "updated_at": confirmed_at,
+                    "execution_snapshot": copy.deepcopy(snapshot),
+                    "snapshot_hash": snapshot["execution_hash"],
+                }
+            )
+            state.setdefault("protocol_event_outbox", []).append(asdict(event))
+            self._atomic_save(state)
+            return copy.deepcopy(mission)
+
+    def prepare_mission_attempt(
+        self,
+        *,
+        mission_id: str,
+        step_id: str,
+        agent_id: str,
+        configured_transport: str,
+        expected_snapshot: Mapping[str, object],
+        expected_plan: Mapping[str, object],
+        dispatch_key: str,
+    ) -> dict[str, Any]:
+        snapshot = validate_execution_snapshot(dict(expected_snapshot))
+        if type(step_id) is not str or not re.fullmatch(r"step_[1-9][0-9]*", step_id):
+            raise ValueError("mission step identity invalid")
+        if type(agent_id) is not str or not agent_id:
+            raise ValueError("mission step agent invalid")
+        if configured_transport not in {"acp", "tmux"}:
+            raise ValueError("mission step transport invalid")
+        if type(dispatch_key) is not str or not re.fullmatch(r"dsp_[0-9a-f]{32}", dispatch_key):
+            raise ValueError("dispatch key invalid")
+        with self._protocol_mutation_lock():
+            state = self.load()
+            mission = self._unique_mission_record(state, mission_id)
+            status = mission.get("status")
+            if status in {"completed", "stopped", "interrupted"}:
+                raise ValueError("terminal mission step")
+            if (
+                status not in {"preparing", "running"}
+                or not mission.get("confirmed_at")
+                or mission.get("execution_snapshot") is None
+            ):
+                raise ValueError("mission execution is not confirmed")
+            confirmed_at = mission.get("confirmed_at")
+            created_at = mission.get("created_at")
+            if type(confirmed_at) is not str or type(created_at) is not str:
+                raise ValueError("mission confirmation state invalid")
+            try:
+                confirmed_time = datetime.fromisoformat(confirmed_at)
+                created_time = datetime.fromisoformat(created_at)
+            except ValueError:
+                raise ValueError("mission confirmation state invalid") from None
+            if (
+                confirmed_time.tzinfo is None
+                or confirmed_time.utcoffset() is None
+                or created_time.tzinfo is None
+                or created_time.utcoffset() is None
+                or confirmed_time < created_time
+            ):
+                raise ValueError("mission confirmation state invalid")
+            try:
+                persisted_snapshot = validate_execution_snapshot(
+                    mission["execution_snapshot"]
+                )
+            except ValueError:
+                raise ValueError("frozen execution snapshot invalid") from None
+            if (
+                persisted_snapshot != snapshot
+                or mission.get("snapshot_hash") != snapshot["execution_hash"]
+            ):
+                raise ValueError("frozen execution drift")
+            plan = self._unique_plan_record(state, str(mission.get("plan_id") or ""))
+            if plan != dict(expected_plan):
+                raise ValueError("frozen execution drift")
+            steps = snapshot["mission"].get("steps")
+            if type(steps) is not list:
+                raise ValueError("frozen execution snapshot invalid")
+            matches = [item for item in steps if type(item) is dict and item.get("step_id") == step_id]
+            if len(matches) != 1:
+                raise ValueError("unknown mission step")
+            step = matches[0]
+            position = step.get("position")
+            current_step = mission.get("current_step")
+            if type(position) is not int or type(current_step) is not int:
+                raise ValueError("frozen execution snapshot invalid")
+            if position <= current_step:
+                raise ValueError("terminal mission step")
+            if position != current_step + 1:
+                raise ValueError("mission step lineage drift")
+            if step.get("agent_id") != agent_id:
+                raise ValueError("mission step agent drift")
+            workers = snapshot["workers"]
+            worker = next(
+                (
+                    item
+                    for item in workers
+                    if type(item) is dict and item.get("agent_id") == agent_id
+                ),
+                None,
+            )
+            if worker is None:
+                raise ValueError("mission step agent drift")
+            if worker.get("configured_transport") != configured_transport:
+                raise ValueError("mission step transport drift")
+            attempts = state.setdefault("attempts", [])
+            if type(attempts) is not list:
+                raise ValueError("attempt state invalid")
+            terminal_states = {"completed", "failed", "cancelled", "interrupted"}
+            for item in attempts:
+                if not isinstance(item, dict):
+                    raise ValueError("attempt state invalid")
+                if (
+                    item.get("mission_id") == mission_id
+                    and item.get("step_id") == step_id
+                    and item.get("state") not in terminal_states
+                ):
+                    raise ValueError("active attempt already exists")
+            now = utc_now()
+            attempt = {
+                "attempt_id": new_id("att"),
+                "mission_id": mission_id,
+                "step_id": step_id,
+                "agent_id": agent_id,
+                "configured_transport": configured_transport,
+                "dispatch_key": dispatch_key,
+                "snapshot_hash": snapshot["execution_hash"],
+                "state": "prepared",
+                "created_at": now,
+                "updated_at": now,
+                "receipt_summary": None,
+                "blocker": None,
+                "terminal_reason": None,
+            }
+            event = EventRecord.create(
+                "mission_attempt_prepared",
+                {
+                    "attempt_id": attempt["attempt_id"],
+                    "mission_id": mission_id,
+                    "step_id": step_id,
+                    "dispatch_key": dispatch_key,
+                },
+            )
+            attempts.append(attempt)
+            state.setdefault("protocol_event_outbox", []).append(asdict(event))
+            self._atomic_save(state)
+            return copy.deepcopy(attempt)
 
     def claim_mission_execution(
         self,

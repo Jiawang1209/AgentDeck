@@ -1,0 +1,547 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import replace
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from agentdeck.config import load_config, write_default_config
+from agentdeck.mission_orchestration import (
+    MissionRunError,
+    attempt_dispatch_key,
+    build_execution_snapshot,
+    canonical_hash,
+    confirm_mission_for_daemon,
+    create_mission_preview,
+    prepare_attempt,
+)
+from agentdeck.models import AgentSpec
+from agentdeck.providers import LeaderPlanRequest
+from agentdeck.state import StateStore
+
+
+MESSAGE = "让 Codex 和 Claude 严格串行完成两步审阅，共2轮"
+
+
+class TwoStepProvider:
+    name = "fake"
+
+    def plan(self, request: LeaderPlanRequest) -> dict[str, object]:
+        del request
+        return {
+            "goal": "完成实现和审阅 SECRET-GOAL",
+            "summary": "两个 Worker 严格串行，password=summary-secret。",
+            "steps": [
+                {
+                    "step": 1,
+                    "agent_id": "planner",
+                    "role": "planning",
+                    "task": "实现任务，不要泄露 password=hunter2",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                },
+                {
+                    "step": 2,
+                    "agent_id": "reviewer",
+                    "role": "review",
+                    "task": "审阅任务",
+                    "risk": "requires human review before dispatch",
+                    "requires_approval": True,
+                },
+            ],
+            "approval_required": True,
+            "dispatch_ready": False,
+        }
+
+
+def _seed(tmp_path: Path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    write_default_config(root)
+    config_path = root / ".agentdeck" / "config.toml"
+    text = config_path.read_text(encoding="utf-8")
+    text = text.replace('provider = "deepseek"', 'provider = "fake"', 1)
+    text = text.replace('model = "deepseek-chat"', 'model = "fake-plan"', 1)
+    config_path.write_text(text, encoding="utf-8")
+    base = load_config(root)
+    agents: list[AgentSpec] = []
+    for agent in base.agents:
+        if agent.agent_id == "planner":
+            agents.append(
+                replace(
+                    agent,
+                    transport="acp",
+                    transport_command=("adapter", "--token", "SECRET"),
+                )
+            )
+        else:
+            agents.append(agent)
+    config = replace(base, agents=tuple(agents))
+    store = StateStore(root)
+    monkeypatch.setattr(
+        "agentdeck.mission_orchestration.shutil.which", lambda command: f"/bin/{command}"
+    )
+    preview = create_mission_preview(
+        config=config,
+        store=store,
+        provider=TwoStepProvider(),
+        user_message=MESSAGE,
+        timeout_seconds=180,
+    )
+    return root, config, store, preview
+
+
+def _state_bytes(store: StateStore) -> bytes:
+    return store.state_path.read_bytes()
+
+
+def test_confirmed_mission_freezes_compact_execution_authority(tmp_path, monkeypatch) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    memory_dir = root / ".agentdeck" / "memory"
+    memory_dir.mkdir()
+    (memory_dir / "project.md").write_text(
+        "private memory SECRET-MEMORY\n", encoding="utf-8"
+    )
+
+    result = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+
+    snapshot = result["execution_snapshot"]
+    assert snapshot["mission_hash"] == canonical_hash(snapshot["mission"])
+    assert snapshot["policy_hash"] == canonical_hash(snapshot["policy"])
+    execution_body = {
+        key: snapshot[key]
+        for key in ("mission", "workers", "policy", "limits", "mission_hash", "policy_hash")
+    }
+    assert snapshot["execution_hash"] == canonical_hash(execution_body)
+    assert result["snapshot_hash"] == snapshot["execution_hash"]
+    assert [item["configured_transport"] for item in snapshot["workers"]] == [
+        "acp",
+        "tmux",
+    ]
+    assert [item["agent_id"] for item in snapshot["workers"]] == [
+        "planner",
+        "reviewer",
+    ]
+    assert snapshot["mission"]["steps"][0]["step_id"] == "step_1"
+    assert snapshot["mission"]["steps"][0]["task_hash"].startswith("sha256:")
+    assert set(snapshot["mission"]) >= {"goal_hash", "summary_hash"}
+    assert "goal" not in snapshot["mission"]
+    assert "summary" not in snapshot["mission"]
+    assert snapshot["mission"]["memory_provenance"] == [
+        {
+            "scope": "project",
+            "content_hash": "sha256:"
+            + hashlib.sha256("private memory SECRET-MEMORY\n".encode()).hexdigest(),
+            "line_count": 1,
+            "byte_count": len("private memory SECRET-MEMORY\n".encode()),
+        }
+    ]
+    serialized = json.dumps(snapshot, ensure_ascii=False)
+    assert "hunter2" not in serialized
+    assert "SECRET" not in serialized
+    assert "summary-secret" not in serialized
+    assert "SECRET-MEMORY" not in serialized
+    assert "--token" not in serialized
+    assert "pane_id" not in serialized
+    assert "native_session_id" not in serialized
+    persisted = store.mission_by_id(preview["mission_id"])
+    assert persisted["execution_snapshot"] == snapshot
+    snapshot["mission"]["steps"][0]["role"] = "tampered"
+    assert store.mission_by_id(preview["mission_id"])["execution_snapshot"] != snapshot
+
+
+def test_snapshot_builder_hashes_raw_goal_and_rejects_sensitive_policy_keys(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    mission = store.mission_by_id(preview["mission_id"])
+    plan = store.plan_by_id(mission["plan_id"])
+    plan["plan"]["goal"] = "raw SECRET goal"
+    plan["plan"]["summary"] = "raw password=summary"
+    policy = {
+        "approval_mode": "confirm",
+        "autonomous_allowed_agents": [],
+        "autonomous_max_approvals": 0,
+        "policy_source": "project_config",
+    }
+
+    snapshot = build_execution_snapshot(config, mission, plan, policy)
+
+    encoded = json.dumps(snapshot, ensure_ascii=False)
+    assert "SECRET" not in encoded
+    assert "password" not in encoded
+    with pytest.raises(MissionRunError, match="execution snapshot invalid"):
+        build_execution_snapshot(
+            config,
+            mission,
+            plan,
+            {**policy, "command": "publish --token SECRET"},
+        )
+
+
+def test_snapshot_hash_is_canonical_and_rejects_illegal_json_values() -> None:
+    assert canonical_hash({"b": 2, "a": ["值", 1]}) == canonical_hash(
+        {"a": ["值", 1], "b": 2}
+    )
+    with pytest.raises(MissionRunError, match="execution snapshot invalid"):
+        canonical_hash({"bad": True})
+    with pytest.raises(MissionRunError, match="execution snapshot invalid"):
+        canonical_hash({"bad": "\ud800"})
+    with pytest.raises(MissionRunError, match="execution snapshot invalid"):
+        canonical_hash({"bad": float("nan")})
+
+
+def test_state_rejects_forbidden_nested_runtime_facts_even_with_recomputed_hash(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    mission = store.mission_by_id(preview["mission_id"])
+    plan = store.plan_by_id(mission["plan_id"])
+    policy = {
+        "approval_mode": "confirm",
+        "autonomous_allowed_agents": [],
+        "autonomous_max_approvals": 0,
+        "policy_source": "project_config",
+    }
+    snapshot = build_execution_snapshot(config, mission, plan, policy)
+    snapshot["workers"][0]["native_session_id"] = "SECRET-session"
+    snapshot["workers"][0]["pane_history"] = ["SECRET-pane"]
+    body = {
+        key: snapshot[key]
+        for key in ("mission", "workers", "policy", "limits", "mission_hash", "policy_hash")
+    }
+    snapshot["execution_hash"] = canonical_hash(body)
+    before = _state_bytes(store)
+
+    with pytest.raises(ValueError, match="execution snapshot workers are invalid"):
+        store.freeze_mission_execution(
+            preview["mission_id"],
+            expected_mission=mission,
+            expected_plan=plan,
+            execution_snapshot=snapshot,
+            confirmed_at=mission["created_at"],
+        )
+
+    assert _state_bytes(store) == before
+
+
+def test_confirmation_rejects_timestamp_before_mission_creation_without_write(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    mission = store.mission_by_id(preview["mission_id"])
+    plan = store.plan_by_id(mission["plan_id"])
+    snapshot = build_execution_snapshot(
+        config,
+        mission,
+        plan,
+        {
+            "approval_mode": "confirm",
+            "autonomous_allowed_agents": [],
+            "autonomous_max_approvals": 0,
+            "policy_source": "project_config",
+        },
+    )
+    before = _state_bytes(store)
+
+    with pytest.raises(ValueError, match="confirmation timestamp invalid"):
+        store.freeze_mission_execution(
+            preview["mission_id"],
+            expected_mission=mission,
+            expected_plan=plan,
+            execution_snapshot=snapshot,
+            confirmed_at="2000-01-01T00:00:00+00:00",
+        )
+
+    assert _state_bytes(store) == before
+
+
+def test_snapshot_drift_rejects_before_attempt_write(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirmed = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    changed = replace(
+        config,
+        agents=tuple(
+            replace(agent, role="changed") if agent.agent_id == "planner" else agent
+            for agent in config.agents
+        ),
+    )
+    before = _state_bytes(store)
+
+    with pytest.raises(MissionRunError, match="frozen execution drift"):
+        prepare_attempt(
+            config=changed,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _state_bytes(store) == before
+    assert confirmed["execution_snapshot"] == store.mission_by_id(preview["mission_id"])[
+        "execution_snapshot"
+    ]
+
+
+def test_policy_or_plan_drift_rejects_with_zero_write(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    state = store.load()
+    state["plans"][0]["plan"]["steps"][0]["task"] = "changed task"
+    store.save(state)
+    before = _state_bytes(store)
+    with pytest.raises(MissionRunError, match="frozen execution drift"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+    assert _state_bytes(store) == before
+
+    state = store.load()
+    state["plans"][0]["plan"]["steps"][0]["task"] = (
+        "实现任务，不要泄露 password=hunter2"
+    )
+    store.save(state)
+    changed_policy = replace(config, leader=replace(config.leader, approval_mode="approve"))
+    before = _state_bytes(store)
+    with pytest.raises(MissionRunError, match="frozen execution drift"):
+        prepare_attempt(
+            config=changed_policy,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+    assert _state_bytes(store) == before
+
+
+def test_prepare_attempt_commits_exact_pre_dispatch_record_and_event(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirmed = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+
+    attempt = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+
+    assert set(attempt) == {
+        "attempt_id",
+        "mission_id",
+        "step_id",
+        "agent_id",
+        "configured_transport",
+        "dispatch_key",
+        "snapshot_hash",
+        "state",
+        "created_at",
+        "updated_at",
+        "receipt_summary",
+        "blocker",
+        "terminal_reason",
+    }
+    assert attempt["attempt_id"].startswith("att_")
+    assert attempt["dispatch_key"].startswith("dsp_")
+    assert attempt["snapshot_hash"] == confirmed["snapshot_hash"]
+    assert attempt["state"] == "prepared"
+    assert attempt["receipt_summary"] is None
+    persisted = [
+        item
+        for item in store.load()["attempts"]
+        if item.get("mission_id") == preview["mission_id"]
+    ]
+    assert persisted == [attempt]
+    events = store.load()["protocol_event_outbox"]
+    assert events[-1]["event_type"] == "mission_attempt_prepared"
+    assert events[-1]["payload"] == {
+        "attempt_id": attempt["attempt_id"],
+        "mission_id": preview["mission_id"],
+        "step_id": "step_1",
+        "dispatch_key": attempt["dispatch_key"],
+    }
+    durable_execution_facts = json.dumps(
+        {"snapshot": confirmed["execution_snapshot"], "attempt": attempt, "events": events},
+        ensure_ascii=False,
+    )
+    assert "SECRET" not in durable_execution_facts
+    assert "hunter2" not in durable_execution_facts
+    assert "summary-secret" not in durable_execution_facts
+
+
+def test_dispatch_key_is_deterministic_and_duplicate_active_attempt_is_zero_write(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    first = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    before = _state_bytes(store)
+    with pytest.raises(MissionRunError, match="active attempt already exists"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+    assert _state_bytes(store) == before
+    assert first["dispatch_key"] == attempt_dispatch_key(
+        preview["mission_id"],
+        "step_1",
+        "planner",
+        "acp",
+        first["snapshot_hash"],
+    )
+
+
+@pytest.mark.parametrize(
+    ("step_id", "agent_id", "transport", "message"),
+    [
+        ("step_9", "planner", "acp", "unknown mission step"),
+        ("step_1", "reviewer", "acp", "mission step agent drift"),
+        ("step_1", "planner", "tmux", "mission step transport drift"),
+        (True, "planner", "acp", "mission step identity invalid"),
+    ],
+)
+def test_prepare_attempt_rejects_invalid_step_agent_and_transport_without_write(
+    tmp_path, monkeypatch, step_id, agent_id, transport, message
+) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    before = _state_bytes(store)
+    with pytest.raises(MissionRunError, match=message):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id=step_id,
+            agent_id=agent_id,
+            configured_transport=transport,
+        )
+    assert _state_bytes(store) == before
+
+
+def test_prepare_attempt_rejects_terminal_or_unconfirmed_mission_without_write(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    before = _state_bytes(store)
+    with pytest.raises(MissionRunError, match="mission execution is not confirmed"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+    assert _state_bytes(store) == before
+
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    state = store.load()
+    mission = state["missions"][0]
+    mission["status"] = "completed"
+    mission["completed_at"] = mission["updated_at"]
+    store.save(state)
+    before = _state_bytes(store)
+    with pytest.raises(MissionRunError, match="terminal mission step"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+    assert _state_bytes(store) == before
+
+
+def test_corrupt_frozen_snapshot_fails_closed_without_repair(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    state = store.load()
+    state["missions"][0]["execution_snapshot"]["workers"][0][
+        "configured_transport"
+    ] = "tmux"
+    store.save(state)
+    before = _state_bytes(store)
+    with pytest.raises(MissionRunError, match="frozen execution snapshot invalid"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+    assert _state_bytes(store) == before
+
+
+def test_invalid_confirmation_timestamp_fails_closed_without_attempt_write(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    state = store.load()
+    state["missions"][0]["confirmed_at"] = True
+    store.save(state)
+    before = _state_bytes(store)
+
+    with pytest.raises(MissionRunError, match="mission confirmation state invalid"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _state_bytes(store) == before
+
+
+def test_legacy_state_without_attempts_is_additively_upgraded(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    state = store.load()
+    state.pop("attempts", None)
+    store.save(state)
+    unrelated = deepcopy(store.load()["plans"])
+
+    attempt = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+
+    assert store.load()["attempts"] == [attempt]
+    assert store.load()["plans"] == unrelated
