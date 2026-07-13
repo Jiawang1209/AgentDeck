@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
+import time
 
 import pytest
 
@@ -22,6 +23,7 @@ from agentdeck.daemon.service import (
     validate_confirmed_mission_admission,
 )
 from agentdeck.daemon.supervisor import SubmittedReceipt, TransportResult
+from agentdeck.daemon.transports import AcpWorkerTransport
 
 
 MISSION_ID = "mis_0123456789ab"
@@ -358,6 +360,53 @@ def test_cancelled_first_close_waiter_does_not_cancel_shared_shutdown() -> None:
     asyncio.run(case())
 
 
+def test_close_has_bounded_grace_for_worker_that_ignores_cancellation() -> None:
+    calls: list[str] = []
+    durable = {"attempt_state": "submitted", "session_state": "busy"}
+
+    async def case() -> None:
+        release_worker = asyncio.Event()
+        worker_started = asyncio.Event()
+        service = ProjectDaemonService(
+            server=FakeServer(calls), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+            shutdown_grace_seconds=0.01,
+        )
+        await service.start()
+
+        async def worker() -> str:
+            worker_started.set()
+            while not release_worker.is_set():
+                try:
+                    await release_worker.wait()
+                except asyncio.CancelledError:
+                    continue
+            return "released"
+
+        service.start_worker_io(worker(), on_completion=lambda _result: None)
+        await worker_started.wait()
+        started = time.monotonic()
+        try:
+            with pytest.raises(ServiceError, match="Worker shutdown grace exceeded"):
+                await asyncio.wait_for(service.close(), timeout=0.2)
+            assert time.monotonic() - started < 0.2
+            assert calls == ["server:start", "server:close"]
+            assert durable == {
+                "attempt_state": "submitted", "session_state": "busy"
+            }
+            assert service.active_worker_task_count == 1
+        finally:
+            release_worker.set()
+            for _ in range(20):
+                await asyncio.sleep(0)
+                if service.active_worker_task_count == 0:
+                    break
+            assert service.active_worker_task_count == 0
+
+    asyncio.run(case())
+
+
 def test_self_replenishing_callback_queue_cannot_starve_scheduler() -> None:
     calls: list[str] = []
 
@@ -547,6 +596,88 @@ def test_acp_worker_stays_admitting_until_prompt_result_is_atomically_persisted(
                 break
         assert store.durable_state == "succeeded"
         assert calls[-1] == "persist:acp-combined"
+        await service.close()
+
+    asyncio.run(case())
+
+
+def test_acp_cleanup_failure_cannot_persist_succeeded_reply(tmp_path: Path) -> None:
+    attempt = {
+        "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,
+        "step_id": "step_1", "agent_id": "planner", "configured_transport": "acp",
+        "dispatch_key": "dsp_" + "a" * 32, "state": "prepared",
+    }
+
+    class Store:
+        attempt_state = "prepared"
+        reply_count = 0
+
+        def claim_mission_attempt_admission(self, **_kwargs):
+            self.attempt_state = "admitting"
+            return {**attempt, "state": "admitting",
+                    "admission_claim_id": "adm_0123456789ab"}
+
+        def mark_mission_attempt_admission_ambiguous(self, **_kwargs):
+            self.attempt_state = "ambiguous"
+
+        def record_acp_mission_attempt_completion(self, **_kwargs):
+            self.reply_count += 1
+            self.attempt_state = "succeeded"
+
+    store = Store()
+
+    class Sink:
+        fragments = [
+            "\n".join((
+                f"handoff_token: {attempt['dispatch_key']}", "status: completed",
+                "summary: done", "verification: ok", "risks: none",
+                "next_steps: review",
+            ))
+        ]
+        permission_seen = False
+        session_state = "busy"
+
+        async def append_update(self, *_args): return None
+        async def append_permission(self, *_args): return None
+        async def append_permission_decision(self, *_args): return None
+        async def activate(self, *_args): return None
+        async def finish(self, *_args): self.session_state = "ready"
+        async def disconnect(self, _reason): raise OSError("save failed")
+
+    sink = Sink()
+
+    class Transport:
+        async def initialize(self): return object()
+        async def new_session(self):
+            return SimpleNamespace(native_session_id="native-cleanup-failed")
+        async def prompt(self, *_args):
+            return SimpleNamespace(stop_reason="end_turn")
+        async def close(self): return None
+
+    worker_transport = AcpWorkerTransport(
+        argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt", sink=sink,
+        transport_factory=lambda *_args, **_kwargs: Transport(),
+    )
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer([]), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        DaemonWorkerCoordinator(
+            service=service, store=store,
+            transport_for=lambda _attempt: worker_transport,
+        ).launch(attempt)
+        for _ in range(20):
+            await asyncio.sleep(0)
+            await service.tick()
+            if store.attempt_state == "ambiguous":
+                break
+        assert sink.session_state == "ready"
+        assert store.attempt_state == "ambiguous"
+        assert store.reply_count == 0
         await service.close()
 
     asyncio.run(case())

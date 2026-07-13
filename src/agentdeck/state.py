@@ -2111,9 +2111,10 @@ class StateStore:
                 matched.append(
                     str(record["event_type"]).removeprefix("controller_lease_")
                 )
-        if "released" in matched:
+        terminal_states = set(matched)
+        if terminal_states == {"released"}:
             return "released"
-        if "expired" in matched:
+        if terminal_states == {"expired"}:
             return "expired"
         return None
 
@@ -2670,9 +2671,10 @@ class StateStore:
                 and record["payload"].get("lease_id") == lease_id
                 and record["payload"].get("generation") == generation
             ]
-            if "controller_lease_released" in matching:
+            terminal_states = set(matching)
+            if terminal_states == {"controller_lease_released"}:
                 return "released"
-            if "controller_lease_expired" in matching:
+            if terminal_states == {"controller_lease_expired"}:
                 return "expired"
             return None
 
@@ -2961,7 +2963,7 @@ class StateStore:
             existing_ids.add(event.event_id)
             appended += 1
         state["protocol_event_outbox"] = []
-        self.save(state)
+        self._atomic_save(state)
         return appended
 
     def flush_protocol_event_outbox(self) -> int:

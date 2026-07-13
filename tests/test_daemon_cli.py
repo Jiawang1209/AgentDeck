@@ -368,18 +368,93 @@ def test_force_stop_finalizer_signals_after_any_post_commit_failure(
 
     async def case() -> None:
         stop_event = asyncio.Event()
-        with pytest.raises(OSError, match=failure_stage):
-            cli._finalize_force_stop_shutdown(
-                Store(),
-                lease_id=lease.lease_id,
-                generation=lease.generation,
-                now=now,
-                commit_and_flush=commit_and_flush,
-                stop_event=stop_event,
-            )
+        diagnostic = cli._finalize_force_stop_shutdown(
+            Store(),
+            lease_id=lease.lease_id,
+            generation=lease.generation,
+            now=now,
+            commit_and_flush=commit_and_flush,
+            stop_event=stop_event,
+        )
+        assert diagnostic == {
+            "status": "failed",
+            "reason": "controller cleanup incomplete",
+            "recovery": "daemon restart reconciliation required",
+        }
+        assert lease.lease_id not in repr(diagnostic)
         assert stop_event.is_set()
 
     asyncio.run(case())
+
+
+def test_force_stop_rpc_reports_cleanup_failure_after_durable_acceptance(
+    monkeypatch,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="adk-force-rpc-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        original_commit = StateStore.commit_controller_lease
+
+        def fail_release(self, transition):
+            if transition.action == "release":
+                raise OSError("simulated release failure")
+            return original_commit(self, transition)
+
+        monkeypatch.setattr(StateStore, "commit_controller_lease", fail_release)
+
+        async def case() -> None:
+            serving = asyncio.create_task(
+                cli._serve_daemon(root, load_config(root), StateStore(root))
+            )
+            client = None
+            try:
+                for _ in range(100):
+                    try:
+                        client = await DaemonClient.connect_verified(
+                            root, timeout_seconds=0.1
+                        )
+                    except DaemonUnavailable:
+                        await asyncio.sleep(0.01)
+                    else:
+                        break
+                assert client is not None
+                lease = await client.request(
+                    "controller.acquire", {"client_id": "force-rpc-test"}
+                )
+                authority = {
+                    "lease_id": str(lease["lease_id"]),
+                    "lease_generation": int(lease["generation"]),
+                }
+                preview = await client.request(
+                    "daemon.force-stop", {}, **authority
+                )
+                result = await client.request(
+                    "daemon.force-stop",
+                    {"preview_id": preview["preview_id"]},
+                    **authority,
+                )
+                assert result["accepted"] is True
+                assert result["state"] == "stopping"
+                assert result["cleanup"] == {
+                    "status": "failed",
+                    "reason": "controller cleanup incomplete",
+                    "recovery": "daemon restart reconciliation required",
+                }
+                assert str(lease["lease_id"]) not in repr(result["cleanup"])
+            finally:
+                if client is not None:
+                    await client.close()
+            assert await asyncio.wait_for(serving, timeout=2) == 0
+            state = StateStore(root).load()
+            audit = [
+                item for item in state["protocol_event_outbox"]
+                if item["event_type"] == "daemon_force_stopped"
+            ]
+            assert len(audit) == 1
+            assert not (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
+
+        asyncio.run(case())
 
 
 def test_daemon_stop_requires_explicit_lease_options_as_a_pair(

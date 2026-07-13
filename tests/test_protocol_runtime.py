@@ -1031,6 +1031,36 @@ def test_event_failure_returns_record_with_durable_outbox_and_flushes_once(tmp_p
     assert events[0]["payload"]["session_id"] == record["session_id"]
 
 
+def test_protocol_outbox_flush_replaces_state_atomically(tmp_path, monkeypatch) -> None:
+    store = StateStore(tmp_path)
+    real_append_event = store.append_event
+    monkeypatch.setattr(
+        store, "append_event",
+        lambda _event: (_ for _ in ()).throw(OSError("event failed")),
+    )
+    store.record_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
+    monkeypatch.setattr(store, "append_event", real_append_event)
+    atomic_save = store._atomic_save
+    atomic_writes = 0
+
+    def counted_atomic_save(state):
+        nonlocal atomic_writes
+        atomic_writes += 1
+        atomic_save(state)
+
+    monkeypatch.setattr(store, "_atomic_save", counted_atomic_save)
+    monkeypatch.setattr(
+        store, "save",
+        lambda _state: (_ for _ in ()).throw(
+            AssertionError("outbox flush must not truncate live state")
+        ),
+    )
+
+    assert store.flush_protocol_event_outbox() == 1
+    assert atomic_writes == 1
+    assert store.load()["protocol_event_outbox"] == []
+
+
 def test_outbox_replay_deduplicates_event_already_in_ledger(tmp_path) -> None:
     store = StateStore(tmp_path)
     record = store.record_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
@@ -1052,7 +1082,7 @@ def test_outbox_clear_save_failure_is_recoverable_without_duplicate_event(tmp_pa
     monkeypatch.setattr(store, "append_event", lambda event: (_ for _ in ()).throw(OSError("event failed")))
     store.record_agent_session("a", "p", "tmux", None, "w", CAPABILITIES)
     monkeypatch.setattr(store, "append_event", real_append_event)
-    real_save = store.save
+    real_save = store._atomic_save
     calls = 0
 
     def fail_clear_once(state):
@@ -1062,7 +1092,7 @@ def test_outbox_clear_save_failure_is_recoverable_without_duplicate_event(tmp_pa
             raise OSError("clear failed")
         return real_save(state)
 
-    monkeypatch.setattr(store, "save", fail_clear_once)
+    monkeypatch.setattr(store, "_atomic_save", fail_clear_once)
     with pytest.raises(OSError, match="clear failed"):
         store.flush_protocol_event_outbox()
     assert len(store.events_path.read_text().splitlines()) == 1

@@ -524,6 +524,129 @@ def test_acp_admit_cancel_disconnects_when_close_raises_cancelled_error(
     assert disconnects == ["admission_cancelled"]
 
 
+def test_bounded_cleanup_propagates_outer_cancellation(tmp_path: Path) -> None:
+    worker = AcpWorkerTransport(
+        argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+        transport_factory=lambda *_args, **_kwargs: object(),
+        request_timeout=1,
+    )
+
+    async def case() -> None:
+        operation_started = asyncio.Event()
+
+        async def operation() -> None:
+            operation_started.set()
+            await asyncio.Event().wait()
+
+        task = asyncio.create_task(worker._bounded_cleanup(operation()))
+        await operation_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+        assert worker._cleanup_tasks == set()
+
+    asyncio.run(case())
+
+
+def test_uncooperative_cleanup_blocks_new_admission_and_remains_bounded(
+    tmp_path: Path,
+) -> None:
+    release_cleanup: asyncio.Event
+    activation_started: asyncio.Event
+    factory_calls = 0
+
+    class Sink:
+        fragments: list[str] = []
+        async def append_update(self, *_args): return None
+        async def append_permission(self, *_args): return None
+        async def append_permission_decision(self, *_args): return None
+        async def activate(self, *_args):
+            activation_started.set()
+            await asyncio.Event().wait()
+        async def disconnect(self, *_args): return None
+
+    class Transport:
+        async def initialize(self): return object()
+        async def new_session(self):
+            return SimpleNamespace(native_session_id="native-stubborn-cleanup")
+        async def prompt(self, *_args): raise AssertionError
+        async def close(self):
+            while not release_cleanup.is_set():
+                try:
+                    await release_cleanup.wait()
+                except asyncio.CancelledError:
+                    continue
+
+    def factory(*_args, **_kwargs):
+        nonlocal factory_calls
+        factory_calls += 1
+        return Transport()
+
+    worker = AcpWorkerTransport(
+        argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+        request_timeout=0.01, transport_factory=factory, sink=Sink(),
+    )
+
+    async def case() -> None:
+        nonlocal release_cleanup, activation_started
+        release_cleanup = asyncio.Event()
+        activation_started = asyncio.Event()
+        first = asyncio.create_task(worker.admit(_attempt("acp")))
+        await activation_started.wait()
+        first.cancel()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert len(worker._cleanup_tasks) == 1
+            with pytest.raises(WorkerTransportError, match="cleanup is pending"):
+                await asyncio.wait_for(
+                    worker.admit(_attempt("acp")), timeout=0.05
+                )
+            assert factory_calls == 1
+            assert len(worker._cleanup_tasks) == 1
+        finally:
+            release_cleanup.set()
+            for _ in range(20):
+                await asyncio.sleep(0)
+                if not worker._cleanup_tasks:
+                    break
+            assert worker._cleanup_tasks == set()
+
+    asyncio.run(case())
+
+
+def test_invalid_factory_does_not_poison_admission_reservation(
+    tmp_path: Path,
+) -> None:
+    calls = 0
+
+    class ValidTransport:
+        async def initialize(self): return object()
+        async def new_session(self):
+            return SimpleNamespace(native_session_id="native-valid-retry")
+        async def prompt(self, *_args): raise AssertionError
+        async def close(self): return None
+
+    def factory(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return object() if calls == 1 else ValidTransport()
+
+    worker = AcpWorkerTransport(
+        argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+        transport_factory=factory,
+    )
+
+    async def case() -> None:
+        with pytest.raises(WorkerTransportError, match="factory is invalid"):
+            await worker.admit(_attempt("acp"))
+        receipt = await worker.admit(_attempt("acp"))
+        assert receipt.summary == "ACP session admitted"
+
+    asyncio.run(case())
+
+
 def test_acp_prompt_cancel_uses_bounded_close_then_disconnect(
     tmp_path: Path,
 ) -> None:
@@ -571,3 +694,39 @@ def test_acp_prompt_cancel_uses_bounded_close_then_disconnect(
     assert calls == [
         "activate", "prompt", "close", "disconnect:transport_close_failed"
     ]
+
+
+def test_acp_success_is_not_reported_when_disconnect_persistence_fails(
+    tmp_path: Path,
+) -> None:
+    class Sink:
+        fragments = [_reply()]
+        permission_seen = False
+
+        async def append_update(self, *_args): return None
+        async def append_permission(self, *_args): return None
+        async def append_permission_decision(self, *_args): return None
+        async def activate(self, *_args): return None
+        async def finish(self, *_args): return None
+        async def disconnect(self, _reason: str):
+            raise OSError("disconnect save failed")
+
+    class Transport:
+        async def initialize(self): return object()
+        async def new_session(self):
+            return SimpleNamespace(native_session_id="native-cleanup-failure")
+        async def prompt(self, *_args):
+            return SimpleNamespace(stop_reason="end_turn")
+        async def close(self): return None
+
+    worker = AcpWorkerTransport(
+        argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+        transport_factory=lambda *_args, **_kwargs: Transport(), sink=Sink(),
+    )
+
+    async def case() -> None:
+        receipt = await worker.admit(_attempt("acp"))
+        with pytest.raises(WorkerTransportError, match="cleanup failed"):
+            await worker.complete(_attempt("acp"), receipt)
+
+    asyncio.run(case())

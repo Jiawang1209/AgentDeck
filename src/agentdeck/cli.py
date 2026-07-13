@@ -1425,6 +1425,11 @@ class _DaemonAcpWorkerSink:
         self.permission_seen = False
         self.fragments: list[str] = []
         self._permission_authority: dict[str, dict[str, object]] = {}
+        self._disconnect_diagnostics: list[dict[str, str]] = []
+
+    @property
+    def disconnect_diagnostics(self) -> tuple[dict[str, str], ...]:
+        return tuple(dict(item) for item in self._disconnect_diagnostics)
 
     async def _mutate(self, callback: Any) -> object:
         return await self.service.submit_mutation(callback)
@@ -1472,6 +1477,13 @@ class _DaemonAcpWorkerSink:
                 "session", session["session_id"], "ready", "busy",
                 "daemon_prompt_started", {},
             )
+            # Publish only the exact identities whose complete activation
+            # sequence has durably returned from every StateStore write.  The
+            # service may cancel the awaiting Worker before its Future resumes.
+            self.session_id = str(session["session_id"])
+            self.turn_id = str(turn["turn_id"])
+            self.turn_state = "submitted"
+            self.session_state = "busy"
             return {"session_id": session["session_id"], "turn_id": turn["turn_id"]}
 
         persisted = await self._mutate(persist)
@@ -1657,25 +1669,17 @@ class _DaemonAcpWorkerSink:
 
     def begin_disconnect(self, reason: str) -> object:
         """Submit cleanup while still executing as the registered Worker task."""
-        if self.session_id is None and self.native_session_id is None:
+        if self.session_id is None:
             return None
         known_session_id = self.session_id
-        native_session_id = self.native_session_id
 
         def persist() -> str | None:
             state = self.store.validated_protocol_state()
             matches = [
                 item for item in state.get("agent_sessions", [])
                 if type(item) is dict
-                and (
-                    item.get("session_id") == known_session_id
-                    if known_session_id is not None
-                    else item.get("native_session_id") == native_session_id
-                    and item.get("agent_id") == self.agent.agent_id
-                )
+                and item.get("session_id") == known_session_id
             ]
-            if not matches and known_session_id is None:
-                return None
             if len(matches) != 1:
                 raise ServiceError("daemon ACP disconnect lineage is invalid")
             session_id = str(matches[0]["session_id"])
@@ -1709,11 +1713,25 @@ class _DaemonAcpWorkerSink:
 
         persisted = self.service.submit_worker_cleanup(persist)
 
+        def observe(completed: asyncio.Future[object]) -> None:
+            try:
+                session_id = completed.result()
+            except BaseException:
+                self._disconnect_diagnostics.append(
+                    {
+                        "status": "failed",
+                        "reason": "disconnect persistence failed",
+                    }
+                )
+            else:
+                if session_id is not None:
+                    self.session_id = str(session_id)
+                    self.session_state = "disconnected"
+
+        persisted.add_done_callback(observe)
+
         async def finish() -> None:
-            session_id = await persisted
-            if session_id is not None:
-                self.session_id = session_id
-                self.session_state = "disconnected"
+            await asyncio.shield(persisted)
 
         return finish()
 
@@ -6471,9 +6489,19 @@ def _finalize_force_stop_shutdown(
         )
         return commit_and_flush(transition)
 
-    return _commit_daemon_shutdown(
-        release_and_flush, stop_event, shutdown_on_failure=True
-    )
+    try:
+        _commit_daemon_shutdown(
+            release_and_flush, stop_event, shutdown_on_failure=True
+        )
+    except BaseException:
+        # The force-stop domain transition is already durable.  Cleanup
+        # failure is diagnostic, never a retroactive rejection of that stop.
+        return {
+            "status": "failed",
+            "reason": "controller cleanup incomplete",
+            "recovery": "daemon restart reconciliation required",
+        }
+    return {"status": "completed"}
 
 
 async def _request_daemon_stop(
@@ -6910,7 +6938,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                             str(exc), "force_stop_blocked"
                         ) from None
                     if result.get("state") == "stopping":
-                        _finalize_force_stop_shutdown(
+                        cleanup = _finalize_force_stop_shutdown(
                             store,
                             lease_id=lease_id,
                             generation=generation,
@@ -6918,6 +6946,8 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                             commit_and_flush=commit_and_flush,
                             stop_event=stop_event,
                         )
+                        if cleanup.get("status") != "completed":
+                            result = {**result, "cleanup": cleanup}
                     return result
             except LeaseError as exc:
                 raise DaemonClientRequestError(str(exc), "lease_required") from None

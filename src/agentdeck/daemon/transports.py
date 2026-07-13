@@ -27,6 +27,18 @@ class WorkerTransportError(RuntimeError):
     """One configured Worker transport could not complete its bounded I/O."""
 
 
+@dataclass(frozen=True)
+class _CleanupResult:
+    close: str
+    disconnect: str
+
+    @property
+    def completed(self) -> bool:
+        return self.close == "completed" and self.disconnect in {
+            "completed", "not_required"
+        }
+
+
 class _TmuxIo(Protocol):
     def send_input(self, config: RuntimeConfig, pane_id: str, text: str) -> None: ...
 
@@ -307,7 +319,13 @@ class AcpWorkerTransport:
         self._sink = selected_sink
         self._decide = decide
         self._active: dict[str, _ActiveAcpAttempt] = {}
+        self._admission_in_progress = False
         self._cleanup_tasks: set[asyncio.Future[Any]] = set()
+        self._cleanup_diagnostics: list[dict[str, str]] = []
+
+    @property
+    def cleanup_diagnostics(self) -> tuple[dict[str, str], ...]:
+        return tuple(dict(item) for item in self._cleanup_diagnostics)
 
     def _retain_cleanup_task(self, task: asyncio.Future[Any]) -> None:
         self._cleanup_tasks.add(task)
@@ -329,6 +347,11 @@ class AcpWorkerTransport:
             done, _pending = await asyncio.wait(
                 {task}, timeout=self._request_timeout
             )
+        except asyncio.CancelledError:
+            task.cancel()
+            asyncio.get_running_loop().call_soon(task.cancel)
+            self._retain_cleanup_task(task)
+            raise
         except BaseException:
             task.cancel()
             asyncio.get_running_loop().call_soon(task.cancel)
@@ -353,7 +376,7 @@ class AcpWorkerTransport:
         session_id: str | None,
         success_reason: str,
         failure_reason: str,
-    ) -> None:
+    ) -> _CleanupResult:
         try:
             close_operation = transport.close()  # type: ignore[attr-defined]
         except BaseException:
@@ -361,7 +384,12 @@ class AcpWorkerTransport:
         else:
             close_status = await self._bounded_cleanup(close_operation)
         if session_id is None:
-            return
+            result = _CleanupResult(close_status, "not_required")
+            if not result.completed:
+                self._cleanup_diagnostics.append(
+                    {"close": result.close, "disconnect": result.disconnect}
+                )
+            return result
         reason = success_reason if close_status == "completed" else failure_reason
         begin_disconnect = getattr(sink, "begin_disconnect", None)
         disconnect = getattr(sink, "disconnect", None)
@@ -372,69 +400,88 @@ class AcpWorkerTransport:
                 else disconnect(reason) if callable(disconnect) else None
             )
         except BaseException:
-            return
-        await self._bounded_cleanup(operation)
+            disconnect_status = "failed"
+        else:
+            disconnect_status = await self._bounded_cleanup(operation)
+        result = _CleanupResult(close_status, disconnect_status)
+        if not result.completed:
+            self._cleanup_diagnostics.append(
+                {"close": result.close, "disconnect": result.disconnect}
+            )
+        return result
 
     async def admit(self, attempt: Mapping[str, object]) -> SubmittedReceipt:
         attempt_id, _agent_id, dispatch_key = _attempt_authority(
             attempt, expected_transport="acp"
         )
+        if self._cleanup_tasks:
+            raise WorkerTransportError("ACP Worker cleanup is pending")
+        if self._admission_in_progress or self._active:
+            raise WorkerTransportError("ACP Worker transport is already active")
         if attempt_id in self._active:
             raise WorkerTransportError("ACP Worker attempt is already admitted")
-        sink = self._sink
-        client = AgentDeckAcpClient(
-            sink=sink,
-            decide=(
-                self._decide
-                if self._decide is not None
-                else lambda *_: PermissionDecision.cancelled(
-                    "daemon_worker_permission_denied"
-                )
-            ),
-        )
-        transport = self._factory(
-            self._argv,
-            self._workspace,
-            client,
-            request_timeout=self._request_timeout,
-        )
-        if not all(
-            callable(getattr(transport, name, None))
-            for name in ("initialize", "new_session", "prompt", "close")
-        ):
-            raise WorkerTransportError("ACP Worker transport factory is invalid")
+        self._admission_in_progress = True
+        try:
+            sink = self._sink
+            client = AgentDeckAcpClient(
+                sink=sink,
+                decide=(
+                    self._decide
+                    if self._decide is not None
+                    else lambda *_: PermissionDecision.cancelled(
+                        "daemon_worker_permission_denied"
+                    )
+                ),
+            )
+            transport = self._factory(
+                self._argv,
+                self._workspace,
+                client,
+                request_timeout=self._request_timeout,
+            )
+            if not all(
+                callable(getattr(transport, name, None))
+                for name in ("initialize", "new_session", "prompt", "close")
+            ):
+                raise WorkerTransportError("ACP Worker transport factory is invalid")
+        except BaseException:
+            self._admission_in_progress = False
+            raise
         session_id: str | None = None
         try:
-            initialized = await transport.initialize()
-            session = await transport.new_session()
-            session_id = getattr(session, "native_session_id", None)
-            if type(session_id) is not str or not session_id:
-                raise WorkerTransportError("ACP Worker session is invalid")
-            activate = getattr(sink, "activate", None)
-            if callable(activate):
-                activated = activate(session_id, initialized)
-                if inspect.isawaitable(activated):
-                    await activated
-        except asyncio.CancelledError:
-            await self._close_then_disconnect(
-                transport,
-                sink,
-                session_id=session_id,
-                success_reason="admission_cancelled",
-                failure_reason="admission_cancelled",
-            )
-            raise
-        except Exception as error:
-            await self._close_then_disconnect(
-                transport,
-                sink,
-                session_id=session_id,
-                success_reason="admission_failed",
-                failure_reason="admission_failed",
-            )
-            if isinstance(error, WorkerTransportError):
+            try:
+                initialized = await transport.initialize()
+                session = await transport.new_session()
+                session_id = getattr(session, "native_session_id", None)
+                if type(session_id) is not str or not session_id:
+                    raise WorkerTransportError("ACP Worker session is invalid")
+                activate = getattr(sink, "activate", None)
+                if callable(activate):
+                    activated = activate(session_id, initialized)
+                    if inspect.isawaitable(activated):
+                        await activated
+            except asyncio.CancelledError:
+                await self._close_then_disconnect(
+                    transport,
+                    sink,
+                    session_id=session_id,
+                    success_reason="admission_cancelled",
+                    failure_reason="admission_cancelled",
+                )
                 raise
-            raise WorkerTransportError("ACP Worker admission failed") from error
+            except Exception as error:
+                await self._close_then_disconnect(
+                    transport,
+                    sink,
+                    session_id=session_id,
+                    success_reason="admission_failed",
+                    failure_reason="admission_failed",
+                )
+                if isinstance(error, WorkerTransportError):
+                    raise
+                raise WorkerTransportError("ACP Worker admission failed") from error
+        finally:
+            self._admission_in_progress = False
         self._active[attempt_id] = _ActiveAcpAttempt(
             transport=transport,
             session_id=session_id,
@@ -457,47 +504,66 @@ class AcpWorkerTransport:
         if active is None or active.dispatch_key != dispatch_key:
             raise WorkerTransportError("ACP Worker session is not admitted")
         try:
-            result = await active.transport.prompt(active.session_id, self._prompt)
-            if bool(getattr(active.sink, "permission_seen", False)) and bool(
-                getattr(active.sink, "fail_on_permission", True)
-            ):
-                raise WorkerTransportError("ACP Worker requested a forbidden permission")
-            stop_reason = getattr(result, "stop_reason", None)
-            if type(stop_reason) is not str or not stop_reason:
-                raise WorkerTransportError("ACP Worker result is invalid")
-            reply = parse_correlated_reply("".join(active.sink.fragments), dispatch_key)
-            if reply is None:
-                raise WorkerTransportError("ACP Worker returned no correlated reply")
-            finish = getattr(active.sink, "finish", None)
-            if callable(finish):
-                finished = finish(stop_reason)
-                if inspect.isawaitable(finished):
-                    await finished
-            return TransportResult(
-                stop_reason=stop_reason,
-                validated=True,
-                reply={
-                    key: reply[key]
-                    for key in (
-                        "handoff_token",
-                        "status",
-                        "summary",
-                        "verification",
-                        "risks",
-                        "next_steps",
-                    )
-                },
-            )
-        except WorkerTransportError:
-            raise
-        except Exception as error:
-            raise WorkerTransportError("ACP Worker completion failed") from error
-        finally:
-            self._active.pop(attempt_id, None)
-            await self._close_then_disconnect(
-                active.transport,
-                active.sink,
-                session_id=active.session_id,
+            try:
+                result = await active.transport.prompt(active.session_id, self._prompt)
+                if bool(getattr(active.sink, "permission_seen", False)) and bool(
+                    getattr(active.sink, "fail_on_permission", True)
+                ):
+                    raise WorkerTransportError("ACP Worker requested a forbidden permission")
+                stop_reason = getattr(result, "stop_reason", None)
+                if type(stop_reason) is not str or not stop_reason:
+                    raise WorkerTransportError("ACP Worker result is invalid")
+                reply = parse_correlated_reply("".join(active.sink.fragments), dispatch_key)
+                if reply is None:
+                    raise WorkerTransportError("ACP Worker returned no correlated reply")
+                finish = getattr(active.sink, "finish", None)
+                if callable(finish):
+                    finished = finish(stop_reason)
+                    if inspect.isawaitable(finished):
+                        await finished
+                completed = TransportResult(
+                    stop_reason=stop_reason,
+                    validated=True,
+                    reply={
+                        key: reply[key]
+                        for key in (
+                            "handoff_token",
+                            "status",
+                            "summary",
+                            "verification",
+                            "risks",
+                            "next_steps",
+                        )
+                    },
+                )
+            except asyncio.CancelledError:
+                await self._close_then_disconnect(
+                    active.transport, active.sink, session_id=active.session_id,
+                    success_reason="transport_closed",
+                    failure_reason="transport_close_failed",
+                )
+                raise
+            except WorkerTransportError:
+                await self._close_then_disconnect(
+                    active.transport, active.sink, session_id=active.session_id,
+                    success_reason="transport_closed",
+                    failure_reason="transport_close_failed",
+                )
+                raise
+            except Exception as error:
+                await self._close_then_disconnect(
+                    active.transport, active.sink, session_id=active.session_id,
+                    success_reason="transport_closed",
+                    failure_reason="transport_close_failed",
+                )
+                raise WorkerTransportError("ACP Worker completion failed") from error
+            cleanup = await self._close_then_disconnect(
+                active.transport, active.sink, session_id=active.session_id,
                 success_reason="transport_closed",
                 failure_reason="transport_close_failed",
             )
+            if not cleanup.completed:
+                raise WorkerTransportError("ACP Worker cleanup failed")
+            return completed
+        finally:
+            self._active.pop(attempt_id, None)

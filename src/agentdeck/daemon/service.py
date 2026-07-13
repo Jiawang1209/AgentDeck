@@ -1578,6 +1578,7 @@ class ProjectDaemonService:
             [], SchedulerFacts | None | Awaitable[SchedulerFacts | None]
         ],
         apply_transition: TransitionCallback,
+        shutdown_grace_seconds: float = 5.0,
     ) -> None:
         if not all(
             callable(value)
@@ -1593,6 +1594,12 @@ class ProjectDaemonService:
             getattr(server, "close", None)
         ):
             raise TypeError("daemon service server is invalid")
+        if (
+            type(shutdown_grace_seconds) not in {int, float}
+            or not math.isfinite(float(shutdown_grace_seconds))
+            or shutdown_grace_seconds <= 0
+        ):
+            raise TypeError("daemon service shutdown grace is invalid")
         self.server = server
         self._reconcile_all = reconcile_all
         self._flush_safe_outboxes = flush_safe_outboxes
@@ -1611,6 +1618,7 @@ class ProjectDaemonService:
         self._shutdown = asyncio.Event()
         self._wakeup = asyncio.Event()
         self._scheduler_due = False
+        self._shutdown_grace_seconds = float(shutdown_grace_seconds)
 
     @property
     def started(self) -> bool:
@@ -1705,7 +1713,15 @@ class ProjectDaemonService:
 
         task = asyncio.create_task(run())
         self._worker_tasks.add(task)
-        task.add_done_callback(self._worker_tasks.discard)
+
+        def worker_done(completed: asyncio.Task[None]) -> None:
+            self._worker_tasks.discard(completed)
+            try:
+                completed.result()
+            except BaseException:
+                pass
+
+        task.add_done_callback(worker_done)
 
     @staticmethod
     def _permission_wait_authority(value: object) -> dict[str, object]:
@@ -1894,11 +1910,24 @@ class ProjectDaemonService:
         workers = tuple(self._worker_tasks)
         for task in workers:
             task.cancel()
-        while any(not task.done() for task in workers):
+        deadline = (
+            asyncio.get_running_loop().time() + self._shutdown_grace_seconds
+        )
+        worker_grace_exceeded = False
+        while True:
             await self._drain_shutdown_queue(failures)
-            await asyncio.sleep(0)
-        if workers:
-            await asyncio.gather(*workers, return_exceptions=True)
+            pending = {task for task in workers if not task.done()}
+            if not pending:
+                break
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                worker_grace_exceeded = True
+                break
+            await asyncio.wait(
+                pending,
+                timeout=min(remaining, 0.01),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
         await self._drain_shutdown_queue(failures)
         server_error: BaseException | None = None
         try:
@@ -1911,6 +1940,8 @@ class ProjectDaemonService:
             self._lifecycle_state = "closed"
         if failures:
             raise ServiceError("daemon shutdown cleanup failed") from failures[0]
+        if worker_grace_exceeded:
+            raise ServiceError("daemon Worker shutdown grace exceeded")
         if server_error is not None:
             raise ServiceError("daemon server shutdown failed") from server_error
 

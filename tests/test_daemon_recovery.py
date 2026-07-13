@@ -1581,6 +1581,19 @@ def test_activate_cancel_after_persist_derives_session_and_disconnects(
     async def case() -> None:
         store = StateStore(tmp_path)
         _seed_missions(store)
+        capabilities = TransportCapabilities(True, True, True, True, True, False)
+        historical = store.record_agent_session(
+            "worker", "codex", "acp-adapter", "native-activate-race",
+            str(tmp_path), capabilities,
+        )
+        store.record_protocol_transition(
+            "session", historical["session_id"], "created", "ready",
+            "historical_ready", {},
+        )
+        store.record_protocol_transition(
+            "session", historical["session_id"], "ready", "disconnected",
+            "historical_disconnected", {},
+        )
         service = ProjectDaemonService(
             server=Server(), reconcile_all=lambda: None,
             flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
@@ -1617,19 +1630,69 @@ def test_activate_cancel_after_persist_derives_session_and_disconnects(
             if not service._queue.empty():
                 break
         await service.tick()
-        assert sink.session_id is None
+        assert sink.session_id is not None
+        current_session_id = sink.session_id
+        assert current_session_id != historical["session_id"]
         worker_task = next(iter(service._worker_tasks))
         worker_task.cancel()
-        await service.close()
+        for _ in range(20):
+            await asyncio.sleep(0)
+            if disconnect_submissions:
+                break
         assert disconnect_submissions == ["admission_cancelled"]
+        await service.close()
         protocol = store.validated_protocol_state()
-        session = next(
-            item for item in protocol["agent_sessions"]
-            if item["native_session_id"] == "native-activate-race"
-        )
+        session = next(item for item in protocol["agent_sessions"]
+                       if item["session_id"] == current_session_id)
         assert store._derived_protocol_state(
             protocol, "session", session["session_id"], session
         ) == "disconnected"
+        historical_record = next(item for item in protocol["agent_sessions"]
+                                 if item["session_id"] == historical["session_id"])
+        assert store._derived_protocol_state(
+            protocol, "session", historical["session_id"], historical_record
+        ) == "disconnected"
+
+    asyncio.run(case())
+
+
+def test_timed_out_disconnect_keeps_durable_future_observable(tmp_path: Path) -> None:
+    class Service:
+        future: asyncio.Future[object]
+
+        def submit_worker_cleanup(self, _callback):
+            self.future = asyncio.get_running_loop().create_future()
+            return self.future
+
+    async def case() -> None:
+        service = Service()
+        sink = _DaemonAcpWorkerSink(
+            service=service,  # type: ignore[arg-type]
+            store=StateStore(tmp_path),
+            attempt={"attempt_id": "mat_bbbbbbbbbbbb"},
+            agent=AgentSpec(
+                agent_id="worker", role="implementation", provider="codex",
+                command="codex", role_prompt="implement", transport="acp",
+                transport_command=("fake-agent-acp",),
+            ),
+            workspace=tmp_path,
+        )
+        sink.session_id = "ags_000000000001"
+        worker = AcpWorkerTransport(
+            argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+            request_timeout=0.01,
+            transport_factory=lambda *_args, **_kwargs: object(), sink=sink,
+        )
+        status = await worker._bounded_cleanup(
+            sink.begin_disconnect("transport_close_failed")
+        )
+        assert status == "timed_out"
+        assert service.future.cancelled() is False
+        service.future.set_exception(OSError("disconnect save failed"))
+        await asyncio.sleep(0)
+        assert sink.disconnect_diagnostics == (
+            {"status": "failed", "reason": "disconnect persistence failed"},
+        )
 
     asyncio.run(case())
 
