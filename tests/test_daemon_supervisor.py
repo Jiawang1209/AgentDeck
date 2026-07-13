@@ -1194,6 +1194,160 @@ def test_claim_generation_collision_across_attempts_is_zero_write(
     assert store.load() == before
 
 
+@pytest.mark.parametrize(
+    "transition",
+    ["claim", "release", "submitted", "receipt_ambiguity", "admission_ambiguity"],
+)
+def test_all_attempt_transitions_reject_duplicate_active_claim_ids(
+    tmp_path, transition: str
+) -> None:
+    store = StateStore(tmp_path)
+    first = _attempt()
+    second = _attempt(
+        attempt_id="mat_abcdefabcdef",
+        mission_id="mis_abcdefabcdef",
+        dispatch_key="dsp_" + "2" * 32,
+    )
+    third = _attempt(
+        attempt_id="mat_fedcbafedcba",
+        mission_id="mis_fedcbafedcba",
+        dispatch_key="dsp_" + "3" * 32,
+    )
+    duplicate_claim_id = "adm_" + "a" * 12
+    for item in (first, second):
+        item.update(
+            {
+                "state": "admitting",
+                "updated_at": "2026-07-13T00:00:01+00:00",
+                "admission_claim_id": duplicate_claim_id,
+            }
+        )
+    state = store.load()
+    state["mission_attempts"] = [first, second, third]
+    store.save(state)
+    before = store.load()
+    target = third if transition == "claim" else first
+
+    with pytest.raises(ValueError, match="duplicate mission admission claim identity"):
+        if transition == "claim":
+            store.claim_mission_attempt_admission(
+                attempt_id=str(target["attempt_id"]),
+                dispatch_key=str(target["dispatch_key"]),
+            )
+        elif transition == "release":
+            store.release_mission_attempt_admission(
+                attempt_id=str(target["attempt_id"]),
+                dispatch_key=str(target["dispatch_key"]),
+                expected_claim_id=duplicate_claim_id,
+            )
+        elif transition == "submitted":
+            store.record_mission_attempt_submitted(
+                attempt_id=str(target["attempt_id"]),
+                dispatch_key=str(target["dispatch_key"]),
+                expected_claim_id=duplicate_claim_id,
+                receipt_summary="accepted",
+            )
+        elif transition == "receipt_ambiguity":
+            store.mark_mission_attempt_ambiguous(
+                attempt_id=str(target["attempt_id"]),
+                dispatch_key=str(target["dispatch_key"]),
+                expected_claim_id=duplicate_claim_id,
+                observed_dispatch_key=str(target["dispatch_key"]),
+                receipt_summary="accepted",
+                reason="receipt_persistence_unknown",
+            )
+        else:
+            store.mark_mission_attempt_admission_ambiguous(
+                attempt_id=str(target["attempt_id"]),
+                dispatch_key=str(target["dispatch_key"]),
+                expected_claim_id=duplicate_claim_id,
+                reason="admission_outcome_unknown",
+            )
+    assert store.load() == before
+
+
+@pytest.mark.parametrize(
+    "corruption", ["missing_claim", "cross_lineage", "current_history_mismatch"]
+)
+def test_claim_lifecycle_history_corruption_is_zero_write(
+    tmp_path, corruption: str
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+    )
+    claim_id = str(claimed["admission_claim_id"])
+    state = store.load()
+    if corruption == "missing_claim":
+        del state["protocol_event_outbox"][-1]["payload"]["admission_claim_id"]
+    elif corruption == "cross_lineage":
+        state["protocol_event_outbox"].append(
+            {
+                "event_id": "evt_abcdefabcdef",
+                "event_type": "mission_attempt_admission_released",
+                "created_at": "2026-07-13T00:00:02+00:00",
+                "payload": {
+                    "attempt_id": "mat_abcdefabcdef",
+                    "mission_id": "mis_abcdefabcdef",
+                    "step_id": "step_1",
+                    "dispatch_key": "dsp_" + "2" * 32,
+                    "admission_claim_id": claim_id,
+                },
+            }
+        )
+    else:
+        state["mission_attempts"][0]["admission_claim_id"] = "adm_" + "b" * 12
+    store.save(state)
+    before = store.load()
+
+    with pytest.raises(ValueError, match="admission claim history"):
+        store.release_mission_attempt_admission(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=str(before["mission_attempts"][0]["admission_claim_id"]),
+        )
+    assert store.load() == before
+
+
+def test_claim_lifecycle_allows_claimed_submitted_ambiguous_sequence(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+    )
+    claim_id = str(claimed["admission_claim_id"])
+    store.record_mission_attempt_submitted(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=claim_id,
+        receipt_summary="accepted",
+    )
+    ambiguous = store.mark_mission_attempt_ambiguous(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=claim_id,
+        observed_dispatch_key="dsp_" + "1" * 32,
+        receipt_summary="accepted",
+        reason="receipt_persistence_unknown",
+    )
+
+    assert ambiguous["state"] == "ambiguous"
+    assert [
+        item["event_type"] for item in store.load()["protocol_event_outbox"]
+    ] == [
+        "mission_attempt_admission_claimed",
+        "mission_attempt_submitted",
+        "mission_attempt_ambiguous",
+    ]
+
+
 def test_submitted_reread_rejects_forged_claim_generation_before_complete() -> None:
     authority = _Authority()
     completion_calls: list[str] = []
