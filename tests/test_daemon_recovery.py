@@ -946,6 +946,55 @@ def test_recovery_rejects_noncanonical_protocol_turn_record(tmp_path: Path) -> N
         store.load_recovery_snapshot()
 
 
+@pytest.mark.parametrize(
+    ("record_type", "corruption"),
+    [
+        ("session", "missing"),
+        ("session", "extra"),
+        ("session", "invalid"),
+        ("permission", "missing"),
+        ("permission", "extra"),
+        ("permission", "invalid"),
+        ("permission", "invalid_combo"),
+    ],
+)
+def test_startup_rejects_noncanonical_session_and_permission_authority(
+    tmp_path: Path, record_type: str, corruption: str
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "worker", "codex", "acp", "native", str(tmp_path), capabilities
+    )
+    turn = store.record_protocol_turn(session["session_id"], "msg_permission")
+    permission = store.record_permission_request(
+        session["session_id"], turn["turn_id"], "shell", str(tmp_path), "high"
+    )
+    state = store.load()
+    record = state[
+        "agent_sessions" if record_type == "session" else "permission_requests"
+    ][0]
+    if corruption == "missing":
+        record.pop("provider" if record_type == "session" else "target")
+    elif corruption == "extra":
+        record["projection_only"] = True
+    elif record_type == "session":
+        record["capabilities"]["structured_sessions"] = "yes"
+    elif corruption == "invalid_combo":
+        record["decision"] = "approve"
+    else:
+        record["decision"] = 42
+    store.save(state)
+    enabled: list[bool] = []
+
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
+
+
 def test_controlled_reply_and_handoff_transitions_drive_recovery(tmp_path: Path) -> None:
     store = StateStore(tmp_path)
     _seed_missions(store)

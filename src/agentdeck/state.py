@@ -103,6 +103,45 @@ _PROTOCOL_TURN_FIELDS = frozenset(
         "updated_at",
     }
 )
+_AGENT_SESSION_FIELDS = frozenset(
+    {
+        "session_id",
+        "agent_id",
+        "provider",
+        "transport",
+        "native_session_id",
+        "workspace",
+        "capabilities",
+        "state",
+        "created_at",
+        "updated_at",
+        "observation_bindings",
+    }
+)
+_PERMISSION_RECORD_FIELDS = frozenset(
+    {
+        "permission_id",
+        "session_id",
+        "turn_id",
+        "tool_name",
+        "target",
+        "risk",
+        "status",
+        "decision",
+        "created_at",
+        "updated_at",
+    }
+)
+_TRANSPORT_CAPABILITY_FIELDS = frozenset(
+    {
+        "structured_sessions",
+        "streaming_updates",
+        "structured_tools",
+        "permission_requests",
+        "resume_session",
+        "observable_terminal",
+    }
+)
 _MISSION_ATTEMPT_STATES = frozenset(
     {
         "prepared",
@@ -330,6 +369,81 @@ def _validate_protocol_turn_record(value: object) -> dict[str, Any]:
         or updated_at < created_at
     ):
         raise ValueError("protocol turn record is invalid")
+    return copy.deepcopy(value)
+
+
+def _validated_aware_record_times(value: dict[str, Any], error: str) -> None:
+    try:
+        created_at = datetime.fromisoformat(value["created_at"])
+        updated_at = datetime.fromisoformat(value["updated_at"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(error) from None
+    if (
+        created_at.tzinfo is None
+        or created_at.utcoffset() is None
+        or updated_at.tzinfo is None
+        or updated_at.utcoffset() is None
+        or updated_at < created_at
+    ):
+        raise ValueError(error)
+
+
+def _validate_agent_session_record(value: object) -> dict[str, Any]:
+    error = "agent session record is invalid"
+    if type(value) is not dict or set(value) != _AGENT_SESSION_FIELDS:
+        raise ValueError(error)
+    capabilities = value.get("capabilities")
+    observation_bindings = value.get("observation_bindings")
+    native_session_id = value.get("native_session_id")
+    if (
+        type(value.get("session_id")) is not str
+        or re.fullmatch(r"ags_[a-z0-9]+", value["session_id"]) is None
+        or any(
+            type(value.get(field)) is not str or not value[field].strip()
+            for field in ("agent_id", "provider", "workspace")
+        )
+        or value.get("transport") not in TRANSPORT_KINDS
+        or (
+            native_session_id is not None
+            and (type(native_session_id) is not str or not native_session_id.strip())
+        )
+        or type(capabilities) is not dict
+        or set(capabilities) != _TRANSPORT_CAPABILITY_FIELDS
+        or any(type(item) is not bool for item in capabilities.values())
+        or value.get("state") not in AGENT_SESSION_STATES
+        or type(observation_bindings) is not list
+        or any(type(item) is not dict for item in observation_bindings)
+    ):
+        raise ValueError(error)
+    _validated_aware_record_times(value, error)
+    return copy.deepcopy(value)
+
+
+def _validate_permission_record(value: object) -> dict[str, Any]:
+    error = "permission record is invalid"
+    if type(value) is not dict or set(value) != _PERMISSION_RECORD_FIELDS:
+        raise ValueError(error)
+    decision = value.get("decision")
+    if (
+        type(value.get("permission_id")) is not str
+        or re.fullmatch(r"prm_[a-z0-9]+", value["permission_id"]) is None
+        or type(value.get("session_id")) is not str
+        or re.fullmatch(r"ags_[a-z0-9]+", value["session_id"]) is None
+        or type(value.get("turn_id")) is not str
+        or re.fullmatch(r"trn_[a-z0-9]+", value["turn_id"]) is None
+        or any(
+            type(value.get(field)) is not str or not value[field].strip()
+            for field in ("tool_name", "target", "risk")
+        )
+        or value.get("status") not in PERMISSION_STATES
+        or (value.get("status") == "pending" and decision is not None)
+        or (
+            decision is not None
+            and (type(decision) is not str or not decision.strip())
+        )
+    ):
+        raise ValueError(error)
+    _validated_aware_record_times(value, error)
     return copy.deepcopy(value)
 
 
@@ -1894,8 +2008,12 @@ class StateStore:
         state = self.load()
         self._validate_protocol_identities(state)
         self._validate_protocol_lineage(state)
+        for item in state.setdefault("agent_sessions", []):
+            _validate_agent_session_record(item)
         for item in state.setdefault("protocol_turns", []):
             _validate_protocol_turn_record(item)
+        for item in state.setdefault("permission_requests", []):
+            _validate_permission_record(item)
         self._validate_protocol_transition_history(state)
         return state
 
@@ -2459,6 +2577,17 @@ class StateStore:
             )
             if any(item["dispatch_key"] == dispatch_key for item in validated_attempts):
                 raise ValueError("duplicate mission dispatch key")
+            try:
+                self._validated_recovery_snapshot_locked(state)
+            except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                message = str(exc)
+                if message in {
+                    "duplicate protocol event identity",
+                    "protocol event journal is malformed",
+                    "protocol event outbox is invalid",
+                }:
+                    raise ValueError(message) from None
+                raise ValueError("durable recovery authority invalid") from None
             now = utc_now()
             attempt = {
                 "attempt_id": new_id("mat"),
@@ -2631,12 +2760,21 @@ class StateStore:
             validate_recovery_record(item)
         self._validate_protocol_identities(state)
         self._validate_protocol_lineage(state)
+        agent_sessions = [
+            _validate_agent_session_record(item)
+            for item in state.setdefault("agent_sessions", [])
+        ]
         protocol_turns = [
             _validate_protocol_turn_record(item)
             for item in state.setdefault("protocol_turns", [])
         ]
+        permission_requests = [
+            _validate_permission_record(item)
+            for item in state.setdefault("permission_requests", [])
+        ]
         self._validate_protocol_transition_history(state)
         _validated_protocol_event_outbox_ids(outbox)
+        self._strict_protocol_journal_event_ids()
         journal_events = self.all_events()
         for event in journal_events:
             try:
@@ -2717,8 +2855,8 @@ class StateStore:
             "mission_worker_replies": replies,
             "mission_handoffs": handoffs,
             "mission_permission_bindings": permission_bindings,
-            "permission_requests": state.setdefault("permission_requests", []),
-            "agent_sessions": state.setdefault("agent_sessions", []),
+            "permission_requests": permission_requests,
+            "agent_sessions": agent_sessions,
             "protocol_turns": protocol_turns,
             "protocol_state_transitions": state.setdefault(
                 "protocol_state_transitions", []

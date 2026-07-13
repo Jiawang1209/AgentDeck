@@ -719,6 +719,47 @@ def test_retry_rejects_corrupt_existing_recovery_binding_full_tree_zero_write(
     assert _tree_bytes(root) == before
 
 
+def test_retry_rejects_unaudited_reply_in_full_recovery_authority_zero_write(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch, retry_limit=1)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    attempt = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    state = store.load()
+    state["mission_attempts"][0]["state"] = "failed"
+    state["mission_attempts"][0]["terminal_reason"] = "retryable worker failure"
+    state["mission_worker_replies"] = [
+        {
+            "mission_id": preview["mission_id"],
+            "attempt_id": attempt["attempt_id"],
+            "reply_id": "mrp_" + "a" * 12,
+            "dispatch_key": attempt["dispatch_key"],
+            "state": "received",
+        }
+    ]
+    store.save(state)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="durable recovery authority invalid"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
 @pytest.mark.parametrize("drift", ["snapshot", "agent", "transport", "dispatch_key"])
 def test_retry_replays_every_prior_attempt_authority_in_durable_order_zero_write(
     tmp_path, monkeypatch, drift
