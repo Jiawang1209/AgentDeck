@@ -56,6 +56,14 @@
 - **Cancellation and privacy**: pre-call/post-call cancellation, ACP cancellation propagation, timeouts, malformed frames, invalid structured output, and backend errors fail closed with sanitized messages. ProjectView keeps an allowlisted compact Leader projection and never exposes `transport_command` argv.
 - **TDD evidence**: the focused gateway suite is 11 passed; gateway/provider/ACP/dispatch/Mission regression is 170 passed with one explicitly opt-in live skip; compileall and `git diff --check` pass.
 
+### Add deterministic foreground routing and exact setup confirmation
+
+- **Ordered routing**: added a pure `ConversationRouter` with exit → minimal slash registry → current-preview confirmation → deterministic governance intents → project/Leader setup preview → open Leader request priority. Deterministic help/status/approvals/trace remain available without an LLM.
+- **Minimal registry**: `/help`, `/leader`, `/model`, `/team`, `/role`, `/status`, `/approvals`, `/trace`, `/takeover`, `/return-control`, and `/quit` classify without provider/runtime/state effects; unknown or incomplete commands fail closed.
+- **Exact confirmation**: natural confirmation only targets the single current pending preview. A shared execution gate revalidates pending state, expiry, and current execution digest before passing a consumed copy to the action callback; drift means zero callback and zero input mutation.
+- **Pre-init safety**: project setup preview is entirely memory-only and exact-bound to canonical cwd plus missing config marker. Confirmation rechecks those facts before the first init write; a post-init audit failure preserves the initialized project and returns `initialized_with_audit_blocker` instead of rollback or false failure.
+- **TDD evidence**: focused router/setup/binding tests are 24 passed before the broader compatibility regression.
+
 ### Design the Phase 3 M1 foreground conversation
 
 - **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.
