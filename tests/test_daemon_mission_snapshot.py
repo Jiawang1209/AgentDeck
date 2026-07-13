@@ -958,6 +958,110 @@ def test_candidate_attempt_at_confirmation_boundary_and_event_share_validated_ti
     assert event["payload"]["attempt_id"] == attempt["attempt_id"]
 
 
+@pytest.mark.parametrize("collision_source", ["outbox", "journal"])
+def test_candidate_event_id_collision_with_durable_event_state_is_zero_write(
+    tmp_path, monkeypatch, collision_source
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    if collision_source == "outbox":
+        collision_id = store.load()["protocol_event_outbox"][0]["event_id"]
+    else:
+        collision_id = json.loads(
+            next(line for line in store.events_path.read_text().splitlines() if line)
+        )["event_id"]
+    real_new_id = state_module.new_id
+    monkeypatch.setattr(
+        state_module,
+        "new_id",
+        lambda prefix: collision_id if prefix == "evt" else real_new_id(prefix),
+    )
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="duplicate protocol event identity"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
+def test_existing_duplicate_protocol_outbox_identity_blocks_attempt_zero_write(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    state = store.load()
+    state["protocol_event_outbox"].append(
+        deepcopy(state["protocol_event_outbox"][0])
+    )
+    store.save(state)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="duplicate protocol event identity"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
+@pytest.mark.parametrize(
+    "journal_text",
+    ["{not-json}\n", '{"event_id":"evt_bad"}\n'],
+)
+def test_malformed_protocol_event_journal_blocks_attempt_zero_write(
+    tmp_path, monkeypatch, journal_text
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    store.events_path.write_text(journal_text, encoding="utf-8")
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="protocol event journal is malformed"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
+def test_valid_candidate_event_remains_flushable_without_loss(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    attempt = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    event = store.load()["protocol_event_outbox"][-1]
+
+    assert store.flush_protocol_event_outbox() >= 1
+    assert store.load()["protocol_event_outbox"] == []
+    durable = [json.loads(line) for line in store.events_path.read_text().splitlines()]
+    matches = [item for item in durable if item["event_id"] == event["event_id"]]
+    assert len(matches) == 1
+    assert matches[0]["payload"]["attempt_id"] == attempt["attempt_id"]
+
+
 def test_state_store_does_not_accept_caller_supplied_dispatch_key(tmp_path, monkeypatch) -> None:
     _root, config, store, preview = _seed(tmp_path, monkeypatch)
     confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])

@@ -112,6 +112,61 @@ class MissionStateError(ValueError):
     pass
 
 
+def _strict_event_journal_ids(
+    path: Path,
+    *,
+    malformed_error: str,
+    duplicate_error: str,
+) -> set[str]:
+    if not path.exists():
+        return set()
+    event_ids: list[str] = []
+
+    def reject_duplicate_keys(
+        pairs: list[tuple[str, object]],
+    ) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+
+    def reject_constant(_value: str) -> object:
+        raise ValueError("non-finite JSON number")
+
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(
+                    line,
+                    object_pairs_hook=reject_duplicate_keys,
+                    parse_constant=reject_constant,
+                )
+                event_ids.append(validate_daemon_event_record(item))
+            except (json.JSONDecodeError, LeaseError, ValueError):
+                raise ValueError(malformed_error) from None
+    if len(event_ids) != len(set(event_ids)):
+        raise ValueError(duplicate_error)
+    return set(event_ids)
+
+
+def _validated_protocol_event_outbox_ids(value: object) -> set[str]:
+    if type(value) is not list:
+        raise ValueError("protocol event outbox is invalid")
+    event_ids: list[str] = []
+    for item in value:
+        try:
+            event_ids.append(validate_daemon_event_record(item))
+        except LeaseError:
+            raise ValueError("protocol event outbox is invalid") from None
+    if len(event_ids) != len(set(event_ids)):
+        raise ValueError("duplicate protocol event identity")
+    return set(event_ids)
+
+
 def _validate_snapshot_json(value: object, *, depth: int = 0) -> None:
     if depth > _EXECUTION_SNAPSHOT_MAX_DEPTH:
         raise ValueError("execution snapshot nesting is invalid")
@@ -920,36 +975,18 @@ class StateStore:
         return dict(summary)
 
     def _daemon_journal_event_ids(self) -> set[str]:
-        if not self.events_path.exists():
-            return set()
-        event_ids: list[str] = []
-        def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
-            result: dict[str, object] = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ValueError("duplicate JSON key")
-                result[key] = value
-            return result
+        return _strict_event_journal_ids(
+            self.events_path,
+            malformed_error="daemon event journal is malformed",
+            duplicate_error="duplicate daemon event identity",
+        )
 
-        def reject_constant(_value: str) -> object:
-            raise ValueError("non-finite JSON number")
-
-        with self.events_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                try:
-                    item = json.loads(
-                        line,
-                        object_pairs_hook=reject_duplicate_keys,
-                        parse_constant=reject_constant,
-                    )
-                    event_ids.append(validate_daemon_event_record(item))
-                except (json.JSONDecodeError, LeaseError, ValueError):
-                    raise ValueError("daemon event journal is malformed") from None
-        if len(event_ids) != len(set(event_ids)):
-            raise ValueError("duplicate daemon event identity")
-        return set(event_ids)
+    def _strict_protocol_journal_event_ids(self) -> set[str]:
+        return _strict_event_journal_ids(
+            self.events_path,
+            malformed_error="protocol event journal is malformed",
+            duplicate_error="duplicate protocol event identity",
+        )
 
     def flush_daemon_event_outbox(self) -> dict[str, int]:
         with self._protocol_mutation_lock():
@@ -2128,8 +2165,18 @@ class StateStore:
                     "dispatch_key": attempt["dispatch_key"],
                 },
             )
+            event_summary = asdict(event)
+            try:
+                candidate_event_id = validate_daemon_event_record(event_summary)
+            except LeaseError:
+                raise ValueError("protocol event record is invalid") from None
+            outbox = state.setdefault("protocol_event_outbox", [])
+            outbox_ids = _validated_protocol_event_outbox_ids(outbox)
+            journal_ids = self._strict_protocol_journal_event_ids()
+            if candidate_event_id in outbox_ids or candidate_event_id in journal_ids:
+                raise ValueError("duplicate protocol event identity")
             attempts.append(attempt)
-            state.setdefault("protocol_event_outbox", []).append(asdict(event))
+            outbox.append(event_summary)
             self._atomic_save(state)
             return copy.deepcopy(attempt)
 
