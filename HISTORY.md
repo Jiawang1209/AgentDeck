@@ -40,6 +40,14 @@
 - **Discovery and safety**: registered all three in the contract index and CLI, added durable schema documents, rejected missing/unknown fields and unsafe enabled controls, and updated frozen contract lists/counts.
 - **TDD evidence**: focused/registry contract tests are 497 passed; the broader contract + CLI regression is 848 passed; compileall and `git diff --check` pass.
 
+### Share one validated Mission candidate-to-preview path
+
+- **Single candidate**: added immutable `LeaderMissionCandidate` for the existing provider-plan shape. Pre-generated candidates call no provider; the legacy path calls its configured provider exactly once and then enters the same primitive.
+- **Validation order**: the shared path deep-copies and validates provider schema, raw Mission constraints, normalized metadata, normalized Mission constraints, compact Worker summaries, and the public preview contract before state mutation.
+- **One commit**: plan, Mission, `mission_preview_created` event, and optional validated conversation lifecycle records/events enter one locked `ConversationMutation` state commit plus recoverable outbox flush. Caller-supplied conversation batches cannot inject plan/Mission collections.
+- **Failure boundary**: invalid provider/model, plan, selection, summary, or public card produces zero plan/Mission/approval/dispatch writes; audit delivery failure leaves committed outbox truth and returns an explicit blocker rather than repeating provider or Mission creation.
+- **TDD evidence**: candidate/legacy atomicity plus full Mission orchestration regressions are 59 passed before the broader Leader/state verification.
+
 ### Design the Phase 3 M1 foreground conversation
 
 - **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.

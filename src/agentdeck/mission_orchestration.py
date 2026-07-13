@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, replace
+from copy import deepcopy
+from dataclasses import asdict, dataclass, replace
 import re
 import shlex
 import shutil
@@ -32,6 +33,7 @@ from .models import (
     ProjectConfig,
     utc_now,
 )
+from .conversation.models import ConversationMutation
 from .orchestration.leader import LeaderOrchestrator
 from .providers import LeaderProvider
 from .providers.base import validate_provider_plan_schema
@@ -48,6 +50,15 @@ class MissionPreviewError(ValueError):
 
 class MissionRunError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class LeaderMissionCandidate:
+    provider: str
+    model: str
+    user_message: str
+    plan: dict[str, Any]
+    timeout_seconds: int
 
 
 def _requested_step_count(user_message: str) -> int:
@@ -187,6 +198,204 @@ def _mission_preview_payload(
     return payload
 
 
+def _mission_candidate_context(
+    config: ProjectConfig,
+    store: StateStore,
+    *,
+    user_message: str,
+    provider: str,
+) -> tuple[dict[str, Any], tuple[Any, ...], tuple[str, ...], list[str], ProjectConfig, dict[str, Any]]:
+    intent = mission_intent(user_message, config)
+    if intent is None:
+        raise ValueError("message is not a multi-agent mission request")
+    try:
+        state = store.load()
+        if not isinstance(state, dict) or not isinstance(state.get("agents"), dict):
+            raise ValueError("invalid state")
+        bindings = state["agents"]
+    except Exception:
+        raise MissionPreviewError("mission preview state invalid") from None
+    selection = select_mission_agents(
+        config,
+        requested_agent_ids=tuple(str(item) for item in intent["requested_agent_ids"]),
+        requested_providers=tuple(str(item) for item in intent["requested_providers"]),
+        bindings=bindings,
+    )
+    if selection.blockers or len(selection.agents) < 2 or len(
+        {agent.agent_id for agent in selection.agents}
+    ) < 2:
+        raise MissionPreviewError("mission preview selection invalid")
+    try:
+        for agent in selection.agents:
+            mission_binding_reusable(bindings.get(agent.agent_id))
+    except Exception:
+        raise MissionPreviewError("mission preview binding invalid") from None
+    effective = tuple(
+        effective_mission_agent_for_binding(
+            agent, config.leader, bindings.get(agent.agent_id)
+        )
+        for agent in selection.agents
+    )
+    blockers = list(selection.blockers)
+    for item in effective:
+        if item.blocker is not None:
+            blockers.append(item.blocker)
+            continue
+        blocker = _command_blocker(item.agent.agent_id, item.agent.command)
+        if blocker is not None:
+            blockers.append(blocker)
+    selected_config = replace(
+        config,
+        leader=replace(config.leader, provider=provider),
+        agents=tuple(item.agent for item in effective),
+    )
+    selected_agent_ids = tuple(item.agent.agent_id for item in effective)
+    try:
+        skill_context = _explicit_leader_skill_context(store, config)
+    except Exception:
+        raise MissionPreviewError("mission preview state invalid") from None
+    return (
+        bindings,
+        effective,
+        selected_agent_ids,
+        blockers,
+        selected_config,
+        skill_context,
+    )
+
+
+def create_mission_preview_from_candidate(
+    *,
+    config: ProjectConfig,
+    store: StateStore,
+    candidate: LeaderMissionCandidate,
+    conversation_mutation: ConversationMutation | None = None,
+) -> dict[str, object]:
+    if not isinstance(candidate, LeaderMissionCandidate):
+        raise MissionPreviewError("mission preview candidate invalid")
+    provider = candidate.provider.strip().lower() if isinstance(candidate.provider, str) else ""
+    configured_provider = config.leader.provider.strip().lower()
+    if not provider or provider != configured_provider or candidate.model != config.leader.model:
+        raise MissionPreviewError("mission preview provider invalid")
+    if type(candidate.timeout_seconds) is not int or candidate.timeout_seconds <= 0:
+        raise ValueError("mission timeout must be positive")
+    (
+        bindings,
+        effective,
+        selected_agent_ids,
+        blockers,
+        selected_config,
+        skill_context,
+    ) = _mission_candidate_context(
+        config, store, user_message=candidate.user_message, provider=provider
+    )
+    step_count = _requested_step_count(candidate.user_message)
+    try:
+        raw_plan = deepcopy(candidate.plan)
+        validate_provider_plan_schema(raw_plan, config=selected_config)
+        validate_mission_plan(raw_plan, selected_agent_ids, candidate.timeout_seconds)
+        if len(raw_plan["steps"]) != step_count:
+            raise ValueError("unexpected mission step count")
+        plan = normalize_mission_plan_metadata(raw_plan, step_count)
+        validate_mission_plan(plan, selected_agent_ids, candidate.timeout_seconds)
+    except Exception:
+        raise MissionPreviewError("mission preview plan invalid") from None
+
+    selected_agents = selected_agent_summaries(effective, bindings)
+    startup_actions = startup_action_summaries(effective, bindings)
+    for item in selected_agents:
+        item.pop("blocker", None)
+    for item in startup_actions:
+        item.pop("blocker", None)
+    try:
+        compact_agents, invalid_agents = compact_mission_worker_entries(
+            selected_agents, kind="selected_agents"
+        )
+        compact_actions, invalid_actions = compact_mission_worker_entries(
+            startup_actions, kind="startup_actions"
+        )
+        selected_ids = [item["agent_id"] for item in compact_agents]
+        action_ids = [item["agent_id"] for item in compact_actions]
+        if (
+            invalid_agents
+            or invalid_actions
+            or compact_agents != selected_agents
+            or compact_actions != startup_actions
+            or selected_ids != list(selected_agent_ids)
+            or action_ids != selected_ids
+            or len(selected_ids) < 2
+            or len(set(selected_ids)) != len(selected_ids)
+            or (not blockers and (not compact_agents or not compact_actions))
+        ):
+            raise ValueError("invalid mission summaries")
+    except Exception:
+        raise MissionPreviewError("mission preview summaries invalid") from None
+
+    plan_record = store.build_plan_record(
+        candidate.user_message,
+        provider,
+        candidate.model,
+        plan,
+        skill_context=skill_context,
+    )
+    plan_hash = workflow_plan_hash(plan_record)
+    mission = store.build_mission_record(
+        user_message=candidate.user_message,
+        provider=provider,
+        model=candidate.model,
+        leader_backend=plan_record["leader_backend"],
+        plan_id=plan_record["plan_id"],
+        plan_hash=plan_hash,
+        selected_agents=selected_agents,
+        startup_actions=startup_actions,
+        timeout_seconds=candidate.timeout_seconds,
+        step_count=len(plan["steps"]),
+        can_start=not blockers,
+        blockers=blockers,
+    )
+    payload = _mission_preview_payload(mission, plan_record)
+    event = EventRecord.create(
+        "mission_preview_created",
+        {
+            "mission_id": mission["mission_id"],
+            "plan_id": plan_record["plan_id"],
+            "selected_agent_ids": list(selected_agent_ids),
+            "step_count": len(plan["steps"]),
+        },
+    )
+    conversation_records: dict[str, tuple[Any, ...]] = {}
+    conversation_events: tuple[EventRecord, ...] = ()
+    if conversation_mutation is not None:
+        if not isinstance(conversation_mutation, ConversationMutation):
+            raise MissionPreviewError("conversation mutation invalid")
+        allowed = {
+            "conversation_sessions",
+            "conversation_turns",
+            "conversation_preview_bindings",
+            "conversation_state_transitions",
+        }
+        if set(conversation_mutation.append_records) - allowed:
+            raise MissionPreviewError("conversation mutation contains domain records")
+        conversation_records = {
+            key: tuple(records)
+            for key, records in conversation_mutation.append_records.items()
+        }
+        conversation_events = conversation_mutation.events
+    result = store.commit_conversation_mutation(
+        ConversationMutation(
+            append_records={
+                **conversation_records,
+                "plans": (plan_record,),
+                "missions": (mission,),
+            },
+            events=(*conversation_events, event),
+        )
+    )
+    if result["outbox_blocked"]:
+        raise MissionPreviewError("mission preview audit blocked")
+    return payload
+
+
 def create_mission_preview(
     *,
     config: ProjectConfig,
@@ -279,80 +488,17 @@ def create_mission_preview(
         )
     except Exception:
         raise MissionPreviewError("mission preview provider failed") from None
-    try:
-        validate_provider_plan_schema(plan, config=selected_config)
-        validate_mission_plan(plan, selected_agent_ids, timeout_seconds)
-        if len(plan["steps"]) != step_count:
-            raise ValueError("unexpected mission step count")
-        plan = normalize_mission_plan_metadata(plan, step_count)
-        validate_mission_plan(plan, selected_agent_ids, timeout_seconds)
-    except Exception:
-        raise MissionPreviewError("mission preview plan invalid") from None
-
-    selected_agents = selected_agent_summaries(effective, bindings)
-    startup_actions = startup_action_summaries(effective, bindings)
-    for item in selected_agents:
-        item.pop("blocker", None)
-    for item in startup_actions:
-        item.pop("blocker", None)
-    try:
-        compact_agents, invalid_agents = compact_mission_worker_entries(
-            selected_agents, kind="selected_agents"
-        )
-        compact_actions, invalid_actions = compact_mission_worker_entries(
-            startup_actions, kind="startup_actions"
-        )
-        selected_ids = [item["agent_id"] for item in compact_agents]
-        action_ids = [item["agent_id"] for item in compact_actions]
-        if (
-            invalid_agents
-            or invalid_actions
-            or compact_agents != selected_agents
-            or compact_actions != startup_actions
-            or selected_ids != list(selected_agent_ids)
-            or action_ids != selected_ids
-            or len(selected_ids) < 2
-            or len(set(selected_ids)) != len(selected_ids)
-            or (not blockers and (not compact_agents or not compact_actions))
-        ):
-            raise ValueError("invalid mission summaries")
-    except Exception:
-        raise MissionPreviewError("mission preview summaries invalid") from None
-
-    plan_record = store.record_plan(
-        user_message,
-        canonical_provider,
-        config.leader.model,
-        plan,
-        skill_context=skill_context,
+    return create_mission_preview_from_candidate(
+        config=config,
+        store=store,
+        candidate=LeaderMissionCandidate(
+            provider=canonical_provider,
+            model=config.leader.model,
+            user_message=user_message,
+            plan=plan,
+            timeout_seconds=timeout_seconds,
+        ),
     )
-    plan_hash = workflow_plan_hash(plan_record)
-    mission = store.create_mission(
-        user_message=user_message,
-        provider=canonical_provider,
-        model=config.leader.model,
-        leader_backend=plan_record["leader_backend"],
-        plan_id=plan_record["plan_id"],
-        plan_hash=plan_hash,
-        selected_agents=selected_agents,
-        startup_actions=startup_actions,
-        timeout_seconds=timeout_seconds,
-        step_count=len(plan["steps"]),
-        can_start=not blockers,
-        blockers=blockers,
-    )
-    store.append_event(
-        EventRecord.create(
-            "mission_preview_created",
-            {
-                "mission_id": mission["mission_id"],
-                "plan_id": plan_record["plan_id"],
-                "selected_agent_ids": list(selected_agent_ids),
-                "step_count": len(plan["steps"]),
-            },
-        )
-    )
-    return _mission_preview_payload(mission, plan_record)
 
 
 def _safe_attach_command(config: ProjectConfig) -> str:

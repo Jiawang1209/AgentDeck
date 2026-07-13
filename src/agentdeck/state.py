@@ -251,6 +251,8 @@ class StateStore:
             "conversation_turns",
             "conversation_preview_bindings",
             "conversation_state_transitions",
+            "plans",
+            "missions",
         }
         for collection, records in mutation.append_records.items():
             if collection not in allowed:
@@ -259,7 +261,10 @@ class StateStore:
                 not isinstance(record, Mapping) for record in records
             ):
                 raise TypeError("conversation mutation records must be tuples of mappings")
-            proposed.setdefault(collection, []).extend(copy.deepcopy(list(records)))
+            target = proposed.setdefault(collection, [])
+            if type(target) is not list:
+                raise TypeError(f"{collection} must be a list")
+            target.extend(copy.deepcopy(list(records)))
         event_ids = [event.event_id for event in mutation.events]
         if len(event_ids) != len(set(event_ids)):
             raise ValueError("duplicate conversation event identity")
@@ -927,6 +932,83 @@ class StateStore:
         self.save(state)
         return record
 
+    def build_mission_record(
+        self,
+        *,
+        user_message: str,
+        can_start: bool,
+        blockers: list[str],
+        provider: str,
+        model: str,
+        leader_backend: dict[str, Any],
+        plan_id: str,
+        plan_hash: str,
+        selected_agents: list[dict[str, Any]],
+        startup_actions: list[dict[str, Any]],
+        step_count: int,
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        if not all(
+            isinstance(value, str) and value
+            for value in (user_message, provider, model, plan_id, plan_hash)
+        ):
+            raise ValueError("mission identity fields must be non-empty strings")
+        if not isinstance(can_start, bool):
+            raise ValueError("can_start must be a boolean")
+        compact_blockers, invalid_blockers = compact_mission_blockers(blockers)
+        if invalid_blockers:
+            raise ValueError("blockers must be a list of strings")
+        if can_start and compact_blockers:
+            raise ValueError("can_start requires empty blockers")
+        if not isinstance(step_count, int) or isinstance(step_count, bool) or step_count < 1:
+            raise ValueError("step_count must be a positive integer")
+        if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool) or timeout_seconds < 1:
+            raise ValueError("timeout_seconds must be a positive integer")
+        expected_backend = leader_backend_identity(provider, model)
+        if leader_backend != expected_backend:
+            raise ValueError("leader_backend must match provider and model")
+        compact_agents, invalid_agents = compact_mission_worker_entries(
+            selected_agents, kind="selected_agents"
+        )
+        compact_actions, invalid_actions = compact_mission_worker_entries(
+            startup_actions, kind="startup_actions"
+        )
+        if invalid_agents or invalid_actions:
+            raise ValueError("mission worker summaries must use compact domain fields")
+        selected_ids = [item["agent_id"] for item in compact_agents]
+        action_ids = [item["agent_id"] for item in compact_actions]
+        if can_start and (
+            len(compact_agents) < 2
+            or len(compact_actions) < 2
+            or selected_ids != action_ids
+        ):
+            raise ValueError("startable mission requires matching worker and startup summaries")
+        now = utc_now()
+        return {
+            "mission_id": new_id("mis"),
+            "schema_version": MISSION_SCHEMA_VERSION,
+            "user_message": user_message,
+            "status": MISSION_STATUSES[0],
+            "stop_reason": None,
+            "can_start": can_start,
+            "blockers": compact_blockers,
+            "provider": provider,
+            "model": model,
+            "leader_backend": expected_backend,
+            "plan_id": plan_id,
+            "plan_hash": plan_hash,
+            "selected_agents": compact_agents,
+            "startup_actions": compact_actions,
+            "step_count": step_count,
+            "timeout_seconds": timeout_seconds,
+            "workflow_run_id": None,
+            "current_step": 0,
+            "confirmed_at": None,
+            "completed_at": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+
     def mission_by_id(self, mission_id: str) -> dict[str, Any]:
         for item in self.load().get("missions", []):
             if isinstance(item, dict) and item.get("mission_id") == mission_id:
@@ -1309,6 +1391,31 @@ class StateStore:
         state.setdefault("plans", []).append(record)
         self.save(state)
         return record
+
+    def build_plan_record(
+        self,
+        task: str,
+        provider: str,
+        model: str,
+        plan: dict[str, Any],
+        skill_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "plan_id": new_id("pln"),
+            "task": task,
+            "provider": provider,
+            "provider_backend": leader_provider_backend(provider),
+            "provider_transport": leader_provider_transport(provider),
+            "leader_backend": leader_backend_identity(
+                provider, model, bool(plan.get("dispatch_ready", False))
+            ),
+            "model": model,
+            "status": "planned",
+            "dispatch_ready": bool(plan.get("dispatch_ready", False)),
+            "skill_context": self._plan_skill_context(skill_context),
+            "plan": copy.deepcopy(plan),
+            "created_at": utc_now(),
+        }
 
     def list_plans(self) -> list[dict[str, Any]]:
         return list(self.load().get("plans", []))
