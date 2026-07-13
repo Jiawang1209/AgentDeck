@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, replace
 import re
 import shlex
 import shutil
-from typing import Any
+from typing import Any, Callable
 
 from .contracts import (
     validate_mission_preview_contract,
@@ -270,6 +270,7 @@ def create_mission_preview_from_candidate(
     store: StateStore,
     candidate: LeaderMissionCandidate,
     conversation_mutation: ConversationMutation | None = None,
+    conversation_mutation_factory: Callable[[dict[str, object]], ConversationMutation] | None = None,
 ) -> dict[str, object]:
     if not isinstance(candidate, LeaderMissionCandidate):
         raise MissionPreviewError("mission preview candidate invalid")
@@ -363,6 +364,13 @@ def create_mission_preview_from_candidate(
             "step_count": len(plan["steps"]),
         },
     )
+    if conversation_mutation is not None and conversation_mutation_factory is not None:
+        raise MissionPreviewError("conversation mutation source is ambiguous")
+    if conversation_mutation_factory is not None:
+        try:
+            conversation_mutation = conversation_mutation_factory(deepcopy(payload))
+        except Exception:
+            raise MissionPreviewError("conversation mutation invalid") from None
     conversation_records: dict[str, tuple[Any, ...]] = {}
     conversation_events: tuple[EventRecord, ...] = ()
     if conversation_mutation is not None:

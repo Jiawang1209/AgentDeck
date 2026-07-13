@@ -72,6 +72,14 @@
 - **Single writer**: takeover and return-control require ready session, no active turn, no pending permission, no executing workflow step, and matching current ownership. Legal changes pass through `takeover_pending` / `return_pending`; failures roll back to the prior writer, and pending/human ownership blocks automation prompts.
 - **TDD evidence**: focused transport/ownership plus tmux/ACP/dispatch/workflow regression is 110 passed with one explicitly opt-in live skip; compileall and `git diff --check` pass.
 
+### Compose the bounded M1 ConversationSession
+
+- **Composition**: added `ConversationSession` over the pure router, explicit LeaderGateway, shared Mission candidate primitive, exact bindings, StateStore lifecycle/outbox, and injected deterministic preview executor. It does not duplicate approval, workflow, dispatch, ACP, or tmux engines.
+- **Lifecycle**: initialized sessions persist compact session/turn/preview bases and append-only transitions; deterministic turns also terminalize as compact records. Leader failure/cancellation creates no partial Mission, while a valid Mission and its pending binding/lifecycle facts share the final locked commit.
+- **Confirmation**: natural confirmation re-derives current project/Leader/Mission hash facts, calls only the injected exact execution adapter, and consumes the preview once after successful execution. A pending preview blocks new Leader work but not deterministic status/help inspection.
+- **Privacy and bounds**: pre-init setup stays memory-only; full input/response text exists only in an in-process context capped at 24 items and 128 KiB. Durable conversation bases/events contain compact IDs, states, reasons, counts, and hashes rather than transcript content.
+- **TDD evidence**: session/router/Mission/state/orchestration regressions are 98 passed; compileall and `git diff --check` pass.
+
 ### Design the Phase 3 M1 foreground conversation
 
 - **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.

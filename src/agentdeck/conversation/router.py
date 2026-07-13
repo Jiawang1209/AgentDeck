@@ -96,6 +96,14 @@ class ConversationRouter:
         if re.search(r"(?:追踪|trace)\s+\S+", normalized, re.IGNORECASE):
             return RoutingDecision("deterministic", command="trace")
 
+        if (
+            isinstance(context.pending_preview, Mapping)
+            and context.pending_preview.get("state") == "pending"
+        ):
+            return RoutingDecision(
+                "blocked", blocker="pending preview requires a decision"
+            )
+
         if not context.initialized:
             return RoutingDecision(
                 "project_setup_preview", requires_confirmation=True
