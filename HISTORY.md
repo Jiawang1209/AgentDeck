@@ -6,10 +6,10 @@
 
 ### Add compact project daemon lifecycle records
 
-- **Configuration**: added frozen daemon defaults for idle grace, bounded startup, controller lease TTL, and maximum RPC frame size; TOML overrides reject booleans, non-integers, unsafe ranges, and malformed daemon sections.
-- **Compact lifecycle truth**: added strict pure daemon record construction and validation for the approved lifecycle states, timezone-aware timestamps, project identity, and SHA-256 start-nonce provenance without persisting the raw nonce, PID, socket path, argv, environment, or native runtime identifiers.
+- **Configuration**: added frozen daemon defaults for idle grace, bounded startup, controller lease TTL, and maximum RPC frame size; TOML overrides reject booleans, non-integers, unsafe ranges, malformed daemon sections, and unknown or misspelled keys.
+- **Compact lifecycle truth**: added strict pure daemon record construction and validation for the immutable approved lifecycle states, non-decreasing timezone-aware timestamps, project identity, and SHA-256 start-nonce provenance without persisting the raw nonce, PID, socket path, argv, environment, or native runtime identifiers.
 - **Durable state boundary**: new projects receive an additive nullable `daemon_runtime` slot. StateStore validates records and rejects project-root identity drift before acquiring the shared mutation lock, then uses the existing fsync-backed atomic replacement path for valid records without events, ProjectView changes, or runtime effects.
-- **TDD evidence**: the lifecycle RED failed because the daemon domain module did not exist; the focused suite is 41 passed and the daemon/CLI/conversation/protocol regression is 537 passed.
+- **TDD evidence**: the lifecycle RED failed because the daemon domain module did not exist; follow-up REDs exposed permissive unknown-key and timestamp-order validation. The focused suite is 44 passed and the daemon/CLI/conversation/protocol regression is 540 passed.
 
 ### Plan the Phase 3 M2 Project Daemon implementation
 

@@ -6,15 +6,17 @@ import re
 from typing import Mapping
 
 
-DAEMON_STATES = {
-    "starting",
-    "ready",
-    "busy",
-    "idle_grace",
-    "stopping",
-    "stopped",
-    "blocked",
-}
+DAEMON_STATES = frozenset(
+    {
+        "starting",
+        "ready",
+        "busy",
+        "idle_grace",
+        "stopping",
+        "stopped",
+        "blocked",
+    }
+)
 
 _DAEMON_RECORD_FIELDS = {
     "instance_id",
@@ -33,7 +35,7 @@ def _required_string(value: object, field: str) -> str:
     return value
 
 
-def _aware_timestamp(value: object, field: str) -> str:
+def _aware_timestamp(value: object, field: str) -> datetime:
     timestamp = _required_string(value, field)
     try:
         parsed = datetime.fromisoformat(timestamp)
@@ -41,7 +43,7 @@ def _aware_timestamp(value: object, field: str) -> str:
         raise ValueError(f"daemon {field} must be a timezone-aware timestamp") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"daemon {field} must be a timezone-aware timestamp")
-    return timestamp
+    return parsed
 
 
 def validate_daemon_record(record: Mapping[str, object]) -> dict[str, object]:
@@ -58,8 +60,10 @@ def validate_daemon_record(record: Mapping[str, object]) -> dict[str, object]:
     state = record["state"]
     if type(state) is not str or state not in DAEMON_STATES:
         raise ValueError("daemon state is invalid")
-    _aware_timestamp(record["created_at"], "created_at")
-    _aware_timestamp(record["updated_at"], "updated_at")
+    created_at = _aware_timestamp(record["created_at"], "created_at")
+    updated_at = _aware_timestamp(record["updated_at"], "updated_at")
+    if updated_at < created_at:
+        raise ValueError("daemon updated_at must not be earlier than created_at")
     return dict(record)
 
 

@@ -124,6 +124,20 @@ def test_daemon_config_rejects_non_table_section(tmp_path: Path) -> None:
         load_config(root)
 
 
+def test_daemon_config_rejects_unknown_keys(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    config_path = write_default_config(root)
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + "\n[daemon]\nstart_timout_seconds = 10\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unknown daemon configuration key"):
+        load_config(root)
+
+
 def test_build_daemon_record_hashes_nonce_and_validates_compact_shape() -> None:
     record = build_daemon_record(
         instance_id="dmn_123",
@@ -136,6 +150,21 @@ def test_build_daemon_record_hashes_nonce_and_validates_compact_shape() -> None:
     assert record == _valid_record()
     assert "start_nonce" not in record
     assert validate_daemon_record(record) == record
+
+
+def test_daemon_states_are_immutable_and_exact() -> None:
+    assert DAEMON_STATES == frozenset(
+        {
+            "starting",
+            "ready",
+            "busy",
+            "idle_grace",
+            "stopping",
+            "stopped",
+            "blocked",
+        }
+    )
+    assert isinstance(DAEMON_STATES, frozenset)
 
 
 @pytest.mark.parametrize("state", sorted(DAEMON_STATES))
@@ -171,6 +200,13 @@ def test_daemon_record_rejects_missing_and_unknown_fields() -> None:
 
     with pytest.raises(ValueError, match="fields"):
         validate_daemon_record(_valid_record(pid=1234))
+
+
+def test_daemon_record_rejects_updated_at_before_created_at() -> None:
+    with pytest.raises(ValueError, match="updated_at must not be earlier than created_at"):
+        validate_daemon_record(
+            _valid_record(updated_at="2026-07-13T09:59:59+00:00")
+        )
 
 
 @pytest.mark.parametrize(

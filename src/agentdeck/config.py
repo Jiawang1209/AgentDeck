@@ -155,6 +155,10 @@ def load_config(root: Path | None = None) -> ProjectConfig:
     daemon_raw = raw.get("daemon", {})
     if type(daemon_raw) is not dict:
         raise ValueError("invalid daemon configuration")
+    unknown_daemon_keys = set(daemon_raw) - set(_DAEMON_CONFIG_BOUNDS)
+    if unknown_daemon_keys:
+        unknown = ", ".join(sorted(unknown_daemon_keys))
+        raise ValueError(f"unknown daemon configuration keys: {unknown}")
     daemon = DaemonConfig(
         idle_grace_seconds=_daemon_config_value(
             daemon_raw, "idle_grace_seconds", DaemonConfig.idle_grace_seconds
