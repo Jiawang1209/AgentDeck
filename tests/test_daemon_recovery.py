@@ -644,6 +644,114 @@ def test_startup_rejects_multiple_active_attempts_before_classification(
     assert store.load().get("recovery_decisions", []) == []
 
 
+def test_startup_rejects_post_admission_attempt_with_cleared_claim(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    state["mission_attempts"][0]["state"] = "running"
+    state["mission_attempts"][0]["admission_claim_id"] = None
+    store.save(state)
+    enabled: list[bool] = []
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
+
+
+def test_startup_rejects_terminal_mission_with_submitted_attempt(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    state["missions"][0]["status"] = "completed"
+    store.save(state)
+    enabled: list[bool] = []
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
+
+
+def test_startup_rejects_newer_terminal_attempt_hiding_older_active_attempt(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    newer = deepcopy(state["mission_attempts"][0])
+    newer.update(
+        {
+            "attempt_id": "mat_" + "c" * 12,
+            "dispatch_key": "dsp_" + "c" * 32,
+            "admission_claim_id": "adm_" + "c" * 12,
+            "state": "succeeded",
+            "created_at": "2026-07-13T01:02:00+00:00",
+            "updated_at": "2026-07-13T01:03:00+00:00",
+            "receipt_summary": "completed",
+        }
+    )
+    state["mission_attempts"].append(newer)
+    state["mission_recovery_evidence"][0].update(
+        {"attempt_id": newer["attempt_id"], "agent_id": "worker"}
+    )
+    reply_id = "mrp_" + "c" * 12
+    handoff_id = "hof_" + "c" * 12
+    state["mission_worker_replies"] = [{
+        "mission_id": MISSION_ID,
+        "attempt_id": newer["attempt_id"],
+        "reply_id": reply_id,
+        "dispatch_key": newer["dispatch_key"],
+        "state": "validated",
+    }]
+    state["mission_handoffs"] = [{
+        "mission_id": MISSION_ID,
+        "attempt_id": newer["attempt_id"],
+        "handoff_id": handoff_id,
+        "reply_id": reply_id,
+        "state": "recorded",
+    }]
+    def event(suffix: str, event_type: str, payload: dict[str, object]):
+        return {
+            "event_id": "evt_" + suffix * 24,
+            "event_type": event_type,
+            "created_at": "2026-07-13T01:03:00+00:00",
+            "payload": payload,
+        }
+    state["protocol_event_outbox"].extend([
+        event("3", "mission_attempt_admission_claimed", {
+            "attempt_id": newer["attempt_id"], "mission_id": MISSION_ID,
+            "step_id": "step_1", "dispatch_key": newer["dispatch_key"],
+            "admission_claim_id": newer["admission_claim_id"],
+        }),
+        event("4", "mission_attempt_submitted", {
+            "attempt_id": newer["attempt_id"], "mission_id": MISSION_ID,
+            "step_id": "step_1", "dispatch_key": newer["dispatch_key"],
+            "admission_claim_id": newer["admission_claim_id"], "reason": None,
+        }),
+        event("5", "mission_reply_evidence_recorded", {
+            "attempt_id": newer["attempt_id"], "mission_id": MISSION_ID,
+            "reply_id": reply_id, "state": "received",
+        }),
+        event("6", "mission_reply_evidence_recorded", {
+            "attempt_id": newer["attempt_id"], "mission_id": MISSION_ID,
+            "reply_id": reply_id, "state": "validated",
+        }),
+        event("7", "mission_handoff_evidence_recorded", {
+            "attempt_id": newer["attempt_id"], "mission_id": MISSION_ID,
+            "handoff_id": handoff_id, "reply_id": reply_id, "state": "pending",
+        }),
+        event("8", "mission_handoff_evidence_recorded", {
+            "attempt_id": newer["attempt_id"], "mission_id": MISSION_ID,
+            "handoff_id": handoff_id, "reply_id": reply_id, "state": "recorded",
+        }),
+    ])
+    store.save(state)
+    enabled: list[bool] = []
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
+
+
 @pytest.mark.parametrize("orphan", ["attempt", "evidence"])
 def test_startup_rejects_orphan_attempt_or_evidence(
     tmp_path: Path, orphan: str
@@ -1062,3 +1170,54 @@ def test_controlled_reply_and_handoff_transitions_drive_recovery(tmp_path: Path)
     result = reconcile_startup(store, enable_scheduler=lambda: None)
     assert result[0]["classification"] == "resumable"
     assert result[0]["next_transition"] == "activate_next"
+
+
+def test_reply_evidence_rejects_success_without_durable_receipt_zero_write(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    state["mission_attempts"][0].update(
+        {"state": "succeeded", "receipt_summary": None}
+    )
+    store.save(state)
+    before = store.state_path.read_bytes()
+    with pytest.raises(ValueError, match="mission attempt state invalid"):
+        store.record_mission_reply_evidence(
+            attempt_id=ATTEMPT_ID,
+            dispatch_key="dsp_" + "d" * 32,
+            state="received",
+        )
+    assert store.state_path.read_bytes() == before
+
+
+def test_handoff_rechecks_reply_receipt_lineage_zero_write(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    store.flush_protocol_event_outbox()
+    state = store.load()
+    state["mission_attempts"][0]["state"] = "succeeded"
+    store.save(state)
+    received = store.record_mission_reply_evidence(
+        attempt_id=ATTEMPT_ID,
+        dispatch_key="dsp_" + "d" * 32,
+        state="received",
+    )
+    validated = store.record_mission_reply_evidence(
+        attempt_id=ATTEMPT_ID,
+        dispatch_key="dsp_" + "d" * 32,
+        state="validated",
+        expected_reply_id=received["reply_id"],
+    )
+    state = store.load()
+    state["mission_attempts"][0]["receipt_summary"] = None
+    store.save(state)
+    before = store.state_path.read_bytes()
+    with pytest.raises(ValueError, match="mission attempt state invalid"):
+        store.record_mission_handoff_evidence(
+            attempt_id=ATTEMPT_ID,
+            reply_id=validated["reply_id"],
+            state="pending",
+        )
+    assert store.state_path.read_bytes() == before

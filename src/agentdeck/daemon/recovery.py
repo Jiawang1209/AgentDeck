@@ -516,6 +516,8 @@ def recovery_facts_from_persisted_state(
         key=lambda item: (str(item.get("created_at")), str(item.get("attempt_id"))),
         default=None,
     )
+    if active and current is not active[0]:
+        raise RecoveryError("active Mission attempt is not current")
     current_attempt_id = current.get("attempt_id") if current is not None else None
     bindings = [
         validate_mission_recovery_evidence_record(item)

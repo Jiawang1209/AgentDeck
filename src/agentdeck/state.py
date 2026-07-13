@@ -330,15 +330,27 @@ def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
         raise ValueError("mission attempt state invalid")
     if value["state"] == "prepared" and value["admission_claim_id"] is not None:
         raise ValueError("mission attempt state invalid")
-    if (
-        value["state"] in {"admitting", "submitted", "ambiguous"}
-        and value["admission_claim_id"] is None
-    ):
+    if value["state"] != "prepared" and value["admission_claim_id"] is None:
         raise ValueError("mission attempt state invalid")
     for field in ("receipt_summary", "blocker", "terminal_reason"):
         item = value.get(field)
         if item is not None and (type(item) is not str or not item):
             raise ValueError("mission attempt state invalid")
+    if (
+        value["state"]
+        in {
+            "submitted",
+            "running",
+            "completed",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "interrupted",
+            "ambiguous",
+        }
+        and value["receipt_summary"] is None
+    ):
+        raise ValueError("mission attempt state invalid")
     return copy.deepcopy(value)
 
 
@@ -596,9 +608,11 @@ def _validate_mission_admission_claim_history(
             raise ValueError("mission admission claim history is invalid")
         expected_stage = {
             "admitting": "claimed",
-            "submitted": "submitted",
             "ambiguous": "ambiguous",
-        }.get(attempt["state"])
+        }.get(
+            attempt["state"],
+            "submitted" if attempt["state"] != "prepared" else None,
+        )
         if expected_stage is not None and stages.get(claim_id) != expected_stage:
             raise ValueError("mission admission claim history is invalid")
     return lineage
@@ -2666,6 +2680,7 @@ class StateStore:
         self, state: dict[str, Any]
     ) -> str:
         from .daemon.recovery import (
+            reconcile_gate,
             recovery_facts_from_persisted_state,
             validate_mission_handoff_evidence_record,
             validate_mission_permission_binding,
@@ -2844,6 +2859,24 @@ class StateStore:
             mission = next(item for item in missions if item["mission_id"] == mission_id)
             if mission["status"] not in {"completed", "stopped", "interrupted"}:
                 recovery_facts_from_persisted_state(state, mission_id)
+                continue
+            has_terminal_lineage = any(
+                item["mission_id"] == mission_id
+                for collection in (
+                    attempts,
+                    evidence,
+                    replies,
+                    handoffs,
+                    permission_bindings,
+                )
+                for item in collection
+            )
+            if has_terminal_lineage:
+                terminal_decision = reconcile_gate(
+                    recovery_facts_from_persisted_state(state, mission_id)
+                )
+                if terminal_decision.classification != "terminal":
+                    raise ValueError("terminal Mission recovery integrity is invalid")
         authority = {
             "missions": missions,
             "mission_attempts": attempts,

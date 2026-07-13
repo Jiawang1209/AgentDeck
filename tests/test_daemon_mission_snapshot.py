@@ -115,6 +115,47 @@ def _tree_bytes(root: Path) -> dict[str, bytes]:
     }
 
 
+def _set_attempt_post_admission(
+    state: dict[str, object], target_state: str, *, index: int = -1
+) -> None:
+    attempt = state["mission_attempts"][index]  # type: ignore[index]
+    claim_id = "adm_" + attempt["attempt_id"].removeprefix("mat_")
+    attempt.update(
+        {
+            "admission_claim_id": claim_id,
+            "state": target_state,
+            "receipt_summary": "admitted",
+            "terminal_reason": (
+                "retryable worker failure" if target_state == "failed" else target_state
+            ),
+        }
+    )
+    outbox = state["protocol_event_outbox"]  # type: ignore[index]
+    base_payload = {
+        "attempt_id": attempt["attempt_id"],
+        "mission_id": attempt["mission_id"],
+        "step_id": attempt["step_id"],
+        "dispatch_key": attempt["dispatch_key"],
+        "admission_claim_id": claim_id,
+    }
+    outbox.extend(
+        [
+            {
+                "event_id": state_module.new_id("evt"),
+                "event_type": "mission_attempt_admission_claimed",
+                "created_at": attempt["updated_at"],
+                "payload": dict(base_payload),
+            },
+            {
+                "event_id": state_module.new_id("evt"),
+                "event_type": "mission_attempt_submitted",
+                "created_at": attempt["updated_at"],
+                "payload": {**base_payload, "reason": None},
+            },
+        ]
+    )
+
+
 @pytest.mark.parametrize("drift", ["task", "order", "add", "remove"])
 def test_freeze_recomputes_current_plan_hash_inside_lock_and_is_full_tree_zero_write(
     tmp_path, monkeypatch, drift
@@ -638,8 +679,7 @@ def test_failed_attempt_retries_once_when_frozen_limit_is_one(tmp_path, monkeypa
         configured_transport="acp",
     )
     state = store.load()
-    state["mission_attempts"][0]["state"] = "failed"
-    state["mission_attempts"][0]["terminal_reason"] = "retryable worker failure"
+    _set_attempt_post_admission(state, "failed", index=0)
     store.save(state)
 
     second = prepare_attempt(
@@ -679,8 +719,7 @@ def test_retry_rejects_corrupt_existing_recovery_binding_full_tree_zero_write(
         configured_transport="acp",
     )
     state = store.load()
-    state["mission_attempts"][-1]["state"] = "failed"
-    state["mission_attempts"][-1]["terminal_reason"] = "retryable worker failure"
+    _set_attempt_post_admission(state, "failed")
     store.save(state)
     latest = first
     if corruption == "nonlatest":
@@ -693,8 +732,7 @@ def test_retry_rejects_corrupt_existing_recovery_binding_full_tree_zero_write(
             configured_transport="acp",
         )
         state = store.load()
-        state["mission_attempts"][-1]["state"] = "failed"
-        state["mission_attempts"][-1]["terminal_reason"] = "retryable worker failure"
+        _set_attempt_post_admission(state, "failed")
         state["mission_recovery_evidence"][0]["attempt_id"] = first["attempt_id"]
     elif corruption == "missing":
         state["mission_recovery_evidence"][0]["attempt_id"] = "mat_ffffffffffff"
@@ -733,8 +771,7 @@ def test_retry_rejects_unaudited_reply_in_full_recovery_authority_zero_write(
         configured_transport="acp",
     )
     state = store.load()
-    state["mission_attempts"][0]["state"] = "failed"
-    state["mission_attempts"][0]["terminal_reason"] = "retryable worker failure"
+    _set_attempt_post_admission(state, "failed", index=0)
     state["mission_worker_replies"] = [
         {
             "mission_id": preview["mission_id"],
@@ -776,8 +813,7 @@ def test_retry_replays_every_prior_attempt_authority_in_durable_order_zero_write
     )
     state = store.load()
     prior = state["mission_attempts"][0]
-    prior["state"] = "failed"
-    prior["terminal_reason"] = "retryable worker failure"
+    _set_attempt_post_admission(state, "failed", index=0)
     if drift == "snapshot":
         prior["snapshot_hash"] = "sha256:" + "f" * 64
     elif drift == "agent":
@@ -817,8 +853,7 @@ def test_duplicate_existing_dispatch_keys_are_rejected_before_retry_without_writ
             configured_transport="acp",
         )
         state = store.load()
-        state["mission_attempts"][-1]["state"] = "failed"
-        state["mission_attempts"][-1]["terminal_reason"] = "retryable worker failure"
+        _set_attempt_post_admission(state, "failed")
         store.save(state)
     state = store.load()
     state["mission_attempts"][1]["dispatch_key"] = state["mission_attempts"][0][
@@ -867,10 +902,7 @@ def test_retry_budget_and_non_retryable_terminal_states_are_full_tree_zero_write
         configured_transport="acp",
     )
     state = store.load()
-    state["mission_attempts"][0]["state"] = terminal_state
-    state["mission_attempts"][0]["terminal_reason"] = terminal_state
-    if terminal_state == "ambiguous":
-        state["mission_attempts"][0]["admission_claim_id"] = "adm_" + "a" * 12
+    _set_attempt_post_admission(state, terminal_state, index=0)
     store.save(state)
     before = _tree_bytes(root)
 
@@ -902,8 +934,7 @@ def test_retry_limit_one_rejects_third_total_attempt_without_write(
             configured_transport="acp",
         )
         state = store.load()
-        state["mission_attempts"][-1]["state"] = "failed"
-        state["mission_attempts"][-1]["terminal_reason"] = "retryable worker failure"
+        _set_attempt_post_admission(state, "failed")
         store.save(state)
         assert len(store.load()["mission_attempts"]) == expected_count
     before = _tree_bytes(root)
@@ -938,8 +969,7 @@ def test_duplicate_dispatch_key_anywhere_in_mission_attempts_is_zero_write(
     )
     state = store.load()
     first_record = state["mission_attempts"][0]
-    first_record["state"] = "failed"
-    first_record["terminal_reason"] = "retryable worker failure"
+    _set_attempt_post_admission(state, "failed", index=0)
     duplicate = deepcopy(first_record)
     duplicate["attempt_id"] = "mat_" + "f" * 12
     duplicate["mission_id"] = "mis_" + "e" * 12
@@ -982,8 +1012,7 @@ def test_duplicate_mission_attempt_identity_is_strictly_rejected_without_write(
         configured_transport="acp",
     )
     state = store.load()
-    state["mission_attempts"][0]["state"] = "failed"
-    state["mission_attempts"][0]["terminal_reason"] = "retryable worker failure"
+    _set_attempt_post_admission(state, "failed", index=0)
     duplicate = deepcopy(state["mission_attempts"][0])
     duplicate["mission_id"] = "mis_" + "d" * 12
     duplicate["dispatch_key"] = "dsp_" + "e" * 32
@@ -1018,8 +1047,7 @@ def test_candidate_mission_attempt_id_collision_is_rejected_without_random_retry
         configured_transport="acp",
     )
     state = store.load()
-    state["mission_attempts"][0]["state"] = "failed"
-    state["mission_attempts"][0]["terminal_reason"] = "retryable worker failure"
+    _set_attempt_post_admission(state, "failed", index=0)
     store.save(state)
     real_new_id = state_module.new_id
     monkeypatch.setattr(
