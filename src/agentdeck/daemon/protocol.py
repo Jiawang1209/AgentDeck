@@ -35,6 +35,7 @@ _HANDSHAKE_FIELDS = {
     "client_version",
     "protocol_version",
 }
+_MAX_JSON_NESTING = 64
 
 
 class _FrozenJsonList(Sequence[object]):
@@ -147,15 +148,24 @@ def _required_string(value: object) -> bool:
     )
 
 
-def _freeze_json(value: object, active: set[int]) -> object:
+def _invalid_json_value() -> RpcProtocolError:
+    return _error(
+        "invalid_json_value",
+        "envelope contains an invalid JSON value",
+    )
+
+
+def _freeze_json(value: object, active: set[int], depth: int) -> object:
+    if depth > _MAX_JSON_NESTING:
+        raise _invalid_json_value()
     if type(value) in {dict, MappingProxyType}:
         identity = id(value)
         if identity in active:
-            return value
+            raise _invalid_json_value()
         active.add(identity)
         try:
             frozen = {
-                key: _freeze_json(item, active)
+                key: _freeze_json(item, active, depth + 1)
                 for key, item in value.items()  # type: ignore[union-attr]
             }
         finally:
@@ -164,11 +174,11 @@ def _freeze_json(value: object, active: set[int]) -> object:
     if type(value) in {list, _FrozenJsonList}:
         identity = id(value)
         if identity in active:
-            return value
+            raise _invalid_json_value()
         active.add(identity)
         try:
             return _FrozenJsonList(
-                [_freeze_json(item, active) for item in value]
+                [_freeze_json(item, active, depth + 1) for item in value]
             )
         finally:
             active.remove(identity)
@@ -177,9 +187,9 @@ def _freeze_json(value: object, active: set[int]) -> object:
 
 def _detached_json(value: object) -> object:
     try:
-        return _freeze_json(value, set())
+        return _freeze_json(value, set(), 0)
     except RecursionError:
-        return value
+        raise _invalid_json_value() from None
 
 
 def _is_json_value(value: object, active: set[int] | None = None) -> bool:
@@ -304,7 +314,7 @@ def _encode_object(payload: Mapping[str, object], *, max_bytes: int) -> bytes:
             separators=(",", ":"),
         ).encode("utf-8") + b"\n"
     except (TypeError, ValueError, RecursionError):
-        raise _error("invalid_json_value", "envelope contains an invalid JSON value") from None
+        raise _invalid_json_value() from None
     if len(encoded) > max_bytes:
         raise _error("frame_too_large", "frame exceeds maximum size")
     return encoded

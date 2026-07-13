@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -70,6 +71,63 @@ def test_envelopes_are_frozen_and_detached_from_constructor_inputs() -> None:
         response.result["nested"]["items"][0] = 2  # type: ignore[index,union-attr]
     with pytest.raises(TypeError):
         event.summary["nested"]["new"] = True  # type: ignore[index,union-attr]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda value: RpcRequest(
+            request_id="req_1", method="status", params={"value": value}
+        ),
+        lambda value: RpcResponse(
+            request_id="req_1", ok=True, result={"value": value}, error=None
+        ),
+        lambda value: RpcEvent(
+            event_id="evt_1", revision=1, kind="changed", summary={"value": value}
+        ),
+    ],
+)
+def test_envelope_construction_rejects_cycles_without_retaining_mutable_input(
+    build: Callable[[object], object],
+) -> None:
+    cycle: list[object] = []
+    cycle.append(cycle)
+
+    with pytest.raises(RpcProtocolError) as captured:
+        build(cycle)
+
+    assert captured.value.code == "invalid_json_value"
+    assert str(captured.value) == "envelope contains an invalid JSON value"
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda value: RpcRequest(
+            request_id="req_1", method="status", params={"value": value}
+        ),
+        lambda value: RpcResponse(
+            request_id="req_1", ok=True, result={"value": value}, error=None
+        ),
+        lambda value: RpcEvent(
+            event_id="evt_1", revision=1, kind="changed", summary={"value": value}
+        ),
+    ],
+)
+def test_envelope_construction_rejects_excessive_json_depth_with_sanitized_error(
+    build: Callable[[object], object],
+) -> None:
+    secret = "SECRET_DEEP_MARKER_71e2"
+    nested: object = secret
+    for _ in range(2_000):
+        nested = [nested]
+
+    with pytest.raises(RpcProtocolError) as captured:
+        build(nested)
+
+    assert captured.value.code == "invalid_json_value"
+    assert str(captured.value) == "envelope contains an invalid JSON value"
+    assert secret not in str(captured.value)
 
 
 def test_encoding_is_canonical_utf8_with_stable_recursive_key_order() -> None:
@@ -400,3 +458,29 @@ def test_protocol_errors_are_stable_and_do_not_echo_secret_payloads() -> None:
     assert captured.value.code == "method_not_allowed"
     assert str(captured.value) == "request method is not allowed"
     assert secret not in str(captured.value)
+
+
+def test_oversized_frame_errors_do_not_echo_secret_payloads() -> None:
+    secret = "SECRET_OVERSIZED_MARKER_f31a"
+    request = RpcRequest(
+        request_id="req_1",
+        method="status",
+        params={"token": secret},
+    )
+
+    with pytest.raises(RpcProtocolError) as encoded_error:
+        encode_request(request, max_bytes=1)
+    assert encoded_error.value.code == "frame_too_large"
+    assert str(encoded_error.value) == "frame exceeds maximum size"
+    assert secret not in str(encoded_error.value)
+
+    frame = (
+        '{"request_id":"req_1","method":"status","params":{"token":"'
+        + secret
+        + '"}}\n'
+    ).encode("utf-8")
+    with pytest.raises(RpcProtocolError) as decoded_error:
+        decode_request(frame, max_bytes=len(frame) - 1)
+    assert decoded_error.value.code == "frame_too_large"
+    assert str(decoded_error.value) == "frame exceeds maximum size"
+    assert secret not in str(decoded_error.value)
