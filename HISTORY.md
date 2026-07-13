@@ -4,6 +4,12 @@
 
 ## 2026-07-13
 
+### Align Leader control-registry test expectations with Task 6
+
+- Updated the five Leader help/filter assertions that intentionally lock `filters.item_count_before_filter` to the complete control registry. Task 6 added exactly four valid controls—daemon runtime inspect/stop, Mission scheduler inspect, and client session inspect—so the shared test-local baseline is now 128 instead of 124.
+- This is test debt only: no production code, contract, payload, control behavior, safety rule, or user-visible command changed. RED confirmed all five failures differed only on `124 != 128`; a fresh temporary project confirmed those four daemon controls are the complete registry delta.
+- Verification: `tests/test_leader_cli.py` is 173 passed; the full suite is 2257 passed and 1 skipped. Compileall and `git diff --check` pass.
+
 ### Bind confirmation and retries to previewed Mission authority
 
 - **Preview-to-confirm exact authority**: every startable Mission preview now builds the same compact execution-authority projection used by confirmation and persists only its `execution_authority_hash`. The projection covers normalized goal/summary hashes, ordered step/task hashes, compact Skill and Memory provenance, provider-declared tests and acceptance criteria, Worker role/provider/workspace/configured transport/capability provenance, policy, and frozen limits. Confirmation freshly rebuilds those facts under the protocol mutation lock and requires exact hash equality before atomically storing the same-source execution snapshot; formal workflow `plan_hash` semantics remain unchanged.
