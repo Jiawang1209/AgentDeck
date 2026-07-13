@@ -11441,6 +11441,142 @@ def test_status_handles_malformed_mission_rows_without_empty_worker_sentinels(
 
 
 @pytest.mark.parametrize(
+    "daemon_admission",
+    [
+        {
+            "state": "admitted",
+            "snapshot_hash": "sha256:" + "a" * 64,
+            "blocker": None,
+            "recovery_command": None,
+            "updated_at": "2026-07-14T00:00:00+00:00",
+            "credentials": "EXTRA_ADMISSION_SECRET",
+        },
+        {
+            "state": "admitted",
+            "snapshot_hash": "sha256:" + "a" * 64,
+            "blocker": None,
+            "recovery_command": None,
+        },
+        {
+            "state": "confirmed_not_admitted",
+            "snapshot_hash": "sha256:" + "a" * 64,
+            "blocker": {"credentials": "TYPE_ADMISSION_SECRET"},
+            "recovery_command": "agentdeck mission run --mission-id mis_x --confirm",
+            "updated_at": "2026-07-14T00:00:00+00:00",
+        },
+        {
+            "state": "admitted",
+            "snapshot_hash": "sha256:" + "a" * 64,
+            "blocker": "STATE_COMBINATION_SECRET",
+            "recovery_command": None,
+            "updated_at": "2026-07-14T00:00:00+00:00",
+        },
+        {
+            "state": "confirmed_not_admitted",
+            "snapshot_hash": "not-a-hash",
+            "blocker": "daemon unavailable",
+            "recovery_command": None,
+            "updated_at": 42,
+        },
+    ],
+)
+def test_project_view_fail_closes_malformed_daemon_admission_without_secrets(
+    tmp_path, monkeypatch, capsys, daemon_admission
+) -> None:
+    root = prepare_project(tmp_path, monkeypatch)
+    store = StateStore(root)
+    mission = store.create_mission(
+        user_message="让 Codex 和 Claude 接龙",
+        can_start=False,
+        blockers=["no workers selected"],
+        provider="fake",
+        model="fake-plan",
+        leader_backend={
+            "agent_id": "leader",
+            "provider": "fake",
+            "model": "fake-plan",
+            "provider_backend": "local",
+            "provider_transport": "local",
+            "reasoning_backend": "local-fake",
+            "runtime_kind": "logical_leader",
+            "pane_backed": False,
+            "pane_id": None,
+            "approval_required": True,
+            "dispatch_ready": False,
+        },
+        plan_id="pln_123456789abc",
+        plan_hash="sha256:" + "b" * 64,
+        selected_agents=[
+            {
+                "agent_id": "planner",
+                "provider": "codex-cli",
+                "role": "planning",
+                "workspace_mode": "shared",
+                "runtime_status": "configured",
+                "effective_model": "gpt-5.5",
+                "model_source": "configured",
+            },
+            {
+                "agent_id": "reviewer",
+                "provider": "claude-cli",
+                "role": "review",
+                "workspace_mode": "shared",
+                "runtime_status": "configured",
+                "effective_model": "opus-4.8",
+                "model_source": "configured",
+            },
+        ],
+        startup_actions=[],
+        step_count=2,
+        timeout_seconds=180,
+    )
+    state = store.load()
+    state["missions"][0]["daemon_admission"] = daemon_admission
+    store.save(state)
+    state_before = store.state_path.read_bytes()
+    events_before = store.events_path.read_bytes()
+
+    payload = cli.asdict(store.project_view(cli.load_config(root)))
+    item = payload["missions"]["items"][0]
+
+    assert item["daemon_admission"] == {
+        "state": "not_confirmed",
+        "snapshot_hash": None,
+        "blocker": "Invalid daemon admission state",
+        "recovery_command": item["confirmation_command"],
+        "updated_at": mission["updated_at"],
+    }
+    assert "invalid daemon admission state" in item["blockers"]
+    assert item["can_start"] is False
+    serialized = json.dumps(payload, ensure_ascii=False)
+    for secret in (
+        "EXTRA_ADMISSION_SECRET",
+        "TYPE_ADMISSION_SECRET",
+        "STATE_COMBINATION_SECRET",
+    ):
+        assert secret not in serialized
+    assert validate_project_view_contract(payload) == {"ok": True, "errors": []}
+
+    assert cli.main(["status"]) == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["missions"]["items"][0]["daemon_admission"] == item[
+        "daemon_admission"
+    ]
+    assert cli.main(["workbench"]) == 0
+    workbench_payload = json.loads(capsys.readouterr().out)
+    for rendered_payload in (status_payload, workbench_payload):
+        rendered = json.dumps(rendered_payload, ensure_ascii=False)
+        for secret in (
+            "EXTRA_ADMISSION_SECRET",
+            "TYPE_ADMISSION_SECRET",
+            "STATE_COMBINATION_SECRET",
+        ):
+            assert secret not in rendered
+    assert store.state_path.read_bytes() == state_before
+    assert store.events_path.read_bytes() == events_before
+
+
+@pytest.mark.parametrize(
     ("raw_blockers", "expected_blockers"),
     [
         ({"credentials": "dict-secret"}, ["invalid mission blockers"]),

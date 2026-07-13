@@ -2,6 +2,15 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-14
+
+### Fail closed malformed daemon admission projections
+
+- **Exact compact projection**: ProjectView now rebuilds `missions.items[].daemon_admission` from the exact five-field allowlist and strictly validates every state/type combination, digest, blocker, recovery command, and timestamp. Unknown fields are never copied.
+- **Safe deterministic fallback**: malformed, missing, extra-field, or incoherent admission state projects a contract-valid `not_confirmed` sentinel plus the fixed Mission blocker `invalid daemon admission state`. The fallback contains no rejected source value, credential, or exception text and cannot leave a Mission startable.
+- **Read-only cross-surface behavior**: ProjectView, `agentdeck status`, and `agentdeck workbench` expose the same safe result without modifying state or events. Parameterized regression coverage includes extra credentials, missing fields, wrong types, illegal state combinations, invalid hashes, and secret-exclusion assertions.
+- **Regression evidence**: project-view/contracts/daemon CLI coverage is 887 passed, daemon-wide coverage is 711 passed, and the final full suite is 2,571 passed with one skip. The first full run observed the pre-existing idle-grace timing test fail once; its exact rerun and the second full suite passed, so no unrelated idle-loop code was changed. Compileall and `git diff --check` pass.
+
 ## 2026-07-13
 
 ### Persist and replay exact compact Worker handoffs

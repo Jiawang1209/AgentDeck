@@ -72,6 +72,85 @@ _EXECUTION_SNAPSHOT_FIELDS = frozenset(
         "execution_hash",
     }
 )
+
+_DAEMON_ADMISSION_FIELDS = frozenset(
+    {"state", "snapshot_hash", "blocker", "recovery_command", "updated_at"}
+)
+_INVALID_DAEMON_ADMISSION_BLOCKER = "invalid daemon admission state"
+
+
+def _compact_daemon_admission(
+    value: object,
+    *,
+    mission_id: str,
+    confirmation_command: str,
+    safe_updated_at: object,
+) -> tuple[dict[str, object], bool]:
+    """Project exact daemon-admission facts without forwarding unknown state."""
+    fallback_updated_at = safe_updated_at if type(safe_updated_at) is str else None
+    fallback = {
+        "state": "not_confirmed",
+        "snapshot_hash": None,
+        "blocker": "Invalid daemon admission state",
+        "recovery_command": confirmation_command,
+        "updated_at": fallback_updated_at,
+    }
+    if type(value) is not dict or set(value) != _DAEMON_ADMISSION_FIELDS:
+        return fallback, True
+    state = value.get("state")
+    snapshot_hash = value.get("snapshot_hash")
+    blocker = value.get("blocker")
+    recovery_command = value.get("recovery_command")
+    updated_at = value.get("updated_at")
+    timestamp_valid = updated_at is None or (
+        type(updated_at) is str and bool(updated_at)
+    )
+    hash_valid = (
+        type(snapshot_hash) is str
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", snapshot_hash) is not None
+    )
+    expected_recovery = (
+        f"agentdeck mission run --mission-id {mission_id} --confirm"
+    )
+    valid = False
+    if type(state) is str and state == "not_confirmed":
+        valid = (
+            snapshot_hash is None
+            and type(blocker) is str
+            and bool(blocker)
+            and type(recovery_command) is str
+            and recovery_command == confirmation_command
+            and timestamp_valid
+        )
+    elif type(state) is str and state == "confirmed_not_admitted":
+        valid = (
+            hash_valid
+            and type(blocker) is str
+            and bool(blocker)
+            and type(recovery_command) is str
+            and recovery_command == expected_recovery
+            and type(updated_at) is str
+            and bool(updated_at)
+        )
+    elif type(state) is str and state == "admitted":
+        valid = (
+            hash_valid
+            and blocker is None
+            and recovery_command is None
+            and type(updated_at) is str
+            and bool(updated_at)
+        )
+    if not valid:
+        return fallback, True
+    return {
+        "state": state,
+        "snapshot_hash": snapshot_hash,
+        "blocker": blocker,
+        "recovery_command": recovery_command,
+        "updated_at": updated_at,
+    }, False
+
+
 _EXECUTION_SNAPSHOT_MAX_BYTES = 256 * 1024
 _EXECUTION_SNAPSHOT_MAX_DEPTH = 32
 _MISSION_ATTEMPT_FIELDS = frozenset(
@@ -5966,6 +6045,17 @@ class StateStore:
                     "recovery_command": commands["confirmation_command"],
                     "updated_at": mission.get("updated_at"),
                 }
+            daemon_admission, invalid_daemon_admission = _compact_daemon_admission(
+                daemon_admission,
+                mission_id=mission_id,
+                confirmation_command=commands["confirmation_command"],
+                safe_updated_at=mission.get("updated_at"),
+            )
+            if (
+                invalid_daemon_admission
+                and _INVALID_DAEMON_ADMISSION_BLOCKER not in blockers
+            ):
+                blockers.append(_INVALID_DAEMON_ADMISSION_BLOCKER)
             items.append(
                 {
                     "mission_id": mission_id,
@@ -5991,7 +6081,7 @@ class StateStore:
                     "updated_at": mission.get("updated_at"),
                     "confirmed_at": mission.get("confirmed_at"),
                     "completed_at": mission.get("completed_at"),
-                    "daemon_admission": copy.deepcopy(daemon_admission),
+                    "daemon_admission": daemon_admission,
                     **commands,
                 }
             )
