@@ -14,6 +14,7 @@ from agentdeck.daemon.lease import (
     LeaseError,
     LeaseTransition,
     confirm_takeover,
+    controller_lease_from_summary,
     expire_controller,
     grant_controller,
     preview_takeover,
@@ -126,11 +127,22 @@ def test_expiry_and_release_revoke_mutation_but_preserve_generation() -> None:
     assert current is not None
 
     expired = expire_controller(current, now=NOW + timedelta(seconds=30))
-    assert expired.current == current
+    assert expired.current is not None
+    assert expired.current.lease_id.startswith("lst_")
+    assert expired.current.generation == current.generation
+    assert {
+        key: value
+        for key, value in expired.current.summary().items()
+        if key != "lease_id"
+    } == {
+        key: value
+        for key, value in current.summary().items()
+        if key != "lease_id"
+    }
     with pytest.raises(LeaseError, match="controller lease expired"):
         validate_controller(
             expired.current,
-            lease_id=current.lease_id,
+            lease_id=expired.current.lease_id,
             generation=current.generation,
             now=NOW + timedelta(seconds=30),
         )
@@ -722,7 +734,7 @@ def test_repeated_expiry_is_zero_write_while_audit_remains_in_outbox(
     repeated = expire_controller(granted.current, now=NOW + timedelta(seconds=31))
     before = _snapshot(tmp_path)
 
-    with pytest.raises(ValueError, match="duplicate daemon event identity"):
+    with pytest.raises((LeaseError, ValueError), match="stale controller lease|duplicate daemon event identity"):
         store.commit_controller_lease(repeated)
 
     assert _snapshot(tmp_path) == before
@@ -746,7 +758,7 @@ def test_repeated_expiry_is_zero_write_after_outbox_flush_and_restart(
     repeated = expire_controller(granted.current, now=NOW + timedelta(seconds=31))
     before = _snapshot(tmp_path)
 
-    with pytest.raises(ValueError, match="duplicate daemon event identity"):
+    with pytest.raises((LeaseError, ValueError), match="stale controller lease|duplicate daemon event identity"):
         restarted.commit_controller_lease(repeated)
 
     assert _snapshot(tmp_path) == before
@@ -924,6 +936,138 @@ def test_duplicate_json_keys_in_journal_are_full_tree_zero_write(
         store.commit_controller_lease(transition)
 
     assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("action", ["renew", "release", "takeover"])
+def test_expiry_tombstone_rejects_transition_minted_before_expiry(
+    tmp_path: Path, action: str
+) -> None:
+    store = _store(tmp_path)
+    granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(granted)
+    assert granted.current is not None
+    if action == "renew":
+        delayed = renew_controller(
+            granted.current,
+            lease_id=granted.current.lease_id,
+            generation=granted.current.generation,
+            now=NOW + timedelta(seconds=5),
+            ttl_seconds=30,
+        )
+    elif action == "release":
+        delayed = release_controller(
+            granted.current,
+            lease_id=granted.current.lease_id,
+            generation=granted.current.generation,
+            now=NOW + timedelta(seconds=5),
+        )
+    else:
+        preview = preview_takeover(
+            granted.current,
+            requester="client-b",
+            now=NOW + timedelta(seconds=5),
+        )
+        delayed = confirm_takeover(
+            granted.current,
+            preview,
+            requester="client-b",
+            now=NOW + timedelta(seconds=5),
+            ttl_seconds=30,
+        )
+    expiry = expire_controller(
+        granted.current, now=NOW + timedelta(seconds=30)
+    )
+    store.commit_controller_lease(expiry)
+    state_after_expiry = store.load()
+    assert state_after_expiry["controller_lease"]["lease_id"].startswith("lst_")
+    assert state_after_expiry["controller_lease"]["generation"] == 1
+    assert state_after_expiry["daemon_event_outbox"][-1]["payload"]["lease_id"] == granted.current.lease_id
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(LeaseError, match="stale controller lease"):
+        store.commit_controller_lease(delayed)
+
+    assert _snapshot(tmp_path) == before
+    assert [
+        item["event_type"] for item in store.load()["daemon_event_outbox"]
+    ] == ["controller_lease_granted", "controller_lease_expired"]
+
+
+def test_delayed_renewal_remains_rejected_after_store_restart(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(granted)
+    assert granted.current is not None
+    delayed = renew_controller(
+        granted.current,
+        lease_id=granted.current.lease_id,
+        generation=granted.current.generation,
+        now=NOW + timedelta(seconds=5),
+        ttl_seconds=30,
+    )
+    store.commit_controller_lease(
+        expire_controller(granted.current, now=NOW + timedelta(seconds=30))
+    )
+    restarted = StateStore.open_existing(tmp_path)
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(LeaseError, match="stale controller lease"):
+        restarted.commit_controller_lease(delayed)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_expiry_from_original_or_terminal_record_cannot_repeat(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(granted)
+    assert granted.current is not None
+    store.commit_controller_lease(
+        expire_controller(granted.current, now=NOW + timedelta(seconds=30))
+    )
+    terminal = controller_lease_from_summary(store.load()["controller_lease"])
+    assert terminal is not None
+    assert terminal.lease_id.startswith("lst_")
+    repeated_original = expire_controller(
+        granted.current, now=NOW + timedelta(seconds=31)
+    )
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(LeaseError, match="stale controller lease"):
+        store.commit_controller_lease(repeated_original)
+    with pytest.raises(LeaseError, match="terminal controller lease"):
+        expire_controller(terminal, now=NOW + timedelta(seconds=31))
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_new_grant_after_expiry_tombstone_increments_generation(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(granted)
+    assert granted.current is not None
+    store.commit_controller_lease(
+        expire_controller(granted.current, now=NOW + timedelta(seconds=30))
+    )
+    terminal = controller_lease_from_summary(store.load()["controller_lease"])
+    assert terminal is not None
+
+    next_grant = grant_controller(
+        client_id="client-b",
+        now=NOW + timedelta(seconds=31),
+        ttl_seconds=30,
+        previous=terminal,
+    )
+
+    assert next_grant.current is not None
+    assert next_grant.current.generation == 2
+    assert next_grant.current.lease_id.startswith("lse_")
 
 
 def test_state_store_rejects_malformed_persisted_lease_with_sanitized_error(

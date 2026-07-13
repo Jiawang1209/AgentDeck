@@ -15,7 +15,8 @@ import weakref
 
 
 _CLIENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
-_LEASE_ID = re.compile(r"lse_[0-9a-f]{24}")
+_ACTIVE_LEASE_ID = re.compile(r"lse_[0-9a-f]{24}")
+_TERMINAL_LEASE_ID = re.compile(r"lst_[0-9a-f]{24}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _LEASE_FIELDS = frozenset(
     {
@@ -337,6 +338,20 @@ def _new_lease(
     )
 
 
+def _is_terminal_lease(lease: ControllerLease) -> bool:
+    return (
+        type(lease.lease_id) is str
+        and _TERMINAL_LEASE_ID.fullmatch(lease.lease_id) is not None
+    )
+
+
+def _terminal_lease_id(lease: ControllerLease) -> str:
+    digest = hashlib.sha256(
+        f"controller-terminal:{lease.lease_id}:{lease.generation}".encode("ascii")
+    ).hexdigest()[:24]
+    return f"lst_{digest}"
+
+
 def register_observer(*, client_id: str, now: datetime) -> ObserverRegistration:
     return ObserverRegistration(
         client_id=_client_id(client_id),
@@ -386,10 +401,12 @@ def validate_controller(
     if lease is None:
         raise LeaseError("controller lease required")
     validate_controller_lease(lease)
+    if _is_terminal_lease(lease):
+        raise LeaseError("controller lease expired")
     current_time = _now(now)
     if (
         type(lease_id) is not str
-        or _LEASE_ID.fullmatch(lease_id) is None
+        or _ACTIVE_LEASE_ID.fullmatch(lease_id) is None
         or type(generation) is not int
         or not hmac.compare_digest(lease.lease_id, lease_id)
         or lease.generation != generation
@@ -438,16 +455,19 @@ def renew_controller(
 
 def expire_controller(current: ControllerLease, *, now: datetime) -> LeaseTransition:
     validate_controller_lease(current)
+    if _is_terminal_lease(current):
+        raise LeaseError("terminal controller lease cannot expire again")
     current_time = _now(now)
     _assert_not_backward(
         current_time, _parse_timestamp(current.last_renewed_at, field="last_renewed_at")
     )
     if current_time < _parse_timestamp(current.expires_at, field="expires_at"):
         raise LeaseError("controller lease has not expired")
+    terminal = replace(current, lease_id=_terminal_lease_id(current))
     return _transition(
         "expire",
         current,
-        current,
+        terminal,
         _event("expired", current, current_time),
         authorization_facts={
             "expired_at": _timestamp(current_time),
@@ -503,6 +523,8 @@ def preview_takeover(
     current: ControllerLease, *, requester: str, now: datetime
 ) -> TakeoverPreview:
     validate_controller_lease(current)
+    if _is_terminal_lease(current):
+        raise LeaseError("terminal controller lease cannot be taken over")
     requester_id = _client_id(requester)
     current_time = _now(now)
     _assert_not_backward(
@@ -590,7 +612,13 @@ def confirm_takeover(
 def validate_controller_lease(lease: ControllerLease) -> ControllerLease:
     if not isinstance(lease, ControllerLease):
         raise LeaseError("invalid controller lease")
-    if type(lease.lease_id) is not str or _LEASE_ID.fullmatch(lease.lease_id) is None:
+    if (
+        type(lease.lease_id) is not str
+        or (
+            _ACTIVE_LEASE_ID.fullmatch(lease.lease_id) is None
+            and _TERMINAL_LEASE_ID.fullmatch(lease.lease_id) is None
+        )
+    ):
         raise LeaseError("invalid controller lease lease_id")
     _client_id(lease.client_id)
     if type(lease.generation) is not int or lease.generation <= 0:
@@ -656,11 +684,13 @@ def validate_lease_transition(
     }[transition.action]
     if event.event_type != expected_event_type or not re.fullmatch(r"evt_[0-9a-f]{24}", event.event_id):
         raise LeaseError("invalid controller lease audit event")
+    audit_lease = previous if transition.action == "expire" else current
+    assert audit_lease is not None
     if dict(event.payload) != {
         "action": transition.action,
-        "client_id": current.client_id,
-        "generation": current.generation,
-        "lease_id": current.lease_id,
+        "client_id": audit_lease.client_id,
+        "generation": audit_lease.generation,
+        "lease_id": audit_lease.lease_id,
     }:
         raise LeaseError("invalid controller lease audit event")
 
@@ -687,8 +717,12 @@ def validate_lease_transition(
             and _parse_timestamp(current.expires_at, field="expires_at") > event_time
         )
     elif transition.action == "expire":
-        valid_edge = current == previous and event_time >= _parse_timestamp(
-            previous.expires_at, field="expires_at"
+        valid_edge = (
+            not _is_terminal_lease(previous)
+            and current
+            == replace(previous, lease_id=_terminal_lease_id(previous))
+            and event_time
+            >= _parse_timestamp(previous.expires_at, field="expires_at")
         )
     elif transition.action == "release":
         valid_edge = (
