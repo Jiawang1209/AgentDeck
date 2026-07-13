@@ -71,7 +71,7 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-**Phase 3 M1 foreground conversation design.** The human approved the layered ConversationSession design and its exact confirmation, Leader, ACP/tmux dual-plane, persistence, contract, failure, testing, and live-acceptance boundaries. The durable spec is `docs/superpowers/specs/2026-07-13-agentdeck-foreground-conversation-design.md`. Current work is design self-review and then a separately human-approved implementation plan; production code is not yet authorized.
+**Phase 3 M1 foreground conversation implementation planning.** The human approved the layered ConversationSession design and its exact confirmation, Leader, ACP/tmux dual-plane, persistence, contract, failure, testing, and live-acceptance boundaries. The durable spec is `docs/superpowers/specs/2026-07-13-agentdeck-foreground-conversation-design.md`; the strict 12-task TDD plan is `docs/superpowers/plans/2026-07-13-agentdeck-foreground-conversation.md`. Production code has not started; the next gate is human plan approval followed by a dedicated `/goal` executing M1 only.
 
 M1 composes the existing Leader chat, Mission, approval, workflow, dispatch, ProjectView, ACP, and tmux primitives. It must not add the M2 daemon, durable transcript recovery, global roaming, Workspace Client, automatic install/auth, or unproven native-TUI session attach.
 
@@ -97,7 +97,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0, Phase 1, and Phase 2 Tasks 1–12 are complete. Phase 3 M1 has an approved conversational architecture now being frozen into a spec and implementation plan. No M1 production code has been written yet.
+Phase 0, Phase 1, and Phase 2 Tasks 1–12 are complete. Phase 3 M1 has an approved conversational architecture, committed spec, and written implementation plan awaiting execution approval. No M1 production code has been written yet.
 
 The completed Phase 2 diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. It explicitly distinguishes `session/load` history replay from `session/resume` without replay, uses append-only lifecycle transitions rather than rewriting Phase 1 records, and makes non-interactive permission requests fail closed. The approved M1 design may now compose that ACP client with the existing Mission/Worker kernel through explicit transport routing, while preserving tmux compatibility. The project daemon remains M2 and is not authorized in M1.
 

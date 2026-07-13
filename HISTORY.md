@@ -4,6 +4,13 @@
 
 ## 2026-07-13
 
+### Plan the Phase 3 M1 foreground conversation implementation
+
+- **Plan**: added a strict 12-task TDD implementation sequence for conversation lifecycle, exact preview binding, atomic compact persistence/outbox, contracts, shared Mission preview creation, explicit Leader backends, deterministic routing/setup, ACP/tmux Worker routing and takeover, bounded session/UI, ProjectView/workbench integration, and acceptance.
+- **Scope gate**: M1 composes existing governance and runtime primitives; M2/M3 daemon, global roaming, Workspace Client, automatic install/auth, full transcript recovery, and unrelated terminal-emulator work remain excluded.
+- **Delivery discipline**: every semantic task requires focused RED/GREEN verification, HISTORY synchronization, spec/quality review, and a local commit; final full regression and disposable live evidence are mandatory before M1 can be called complete.
+- **Deliverable**: `docs/superpowers/plans/2026-07-13-agentdeck-foreground-conversation.md`.
+
 ### Design the Phase 3 M1 foreground conversation
 
 - **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.
