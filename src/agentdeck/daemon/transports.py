@@ -377,18 +377,28 @@ class AcpWorkerTransport:
         success_reason: str,
         failure_reason: str,
     ) -> _CleanupResult:
+        pending_cancellation: asyncio.CancelledError | None = None
         try:
             close_operation = transport.close()  # type: ignore[attr-defined]
         except BaseException:
             close_status = "failed"
         else:
-            close_status = await self._bounded_cleanup(close_operation)
+            try:
+                close_status = await self._bounded_cleanup(close_operation)
+            except asyncio.CancelledError as exc:
+                # A repeated cancellation must not revoke the registered
+                # Worker's final opportunity to submit its durable session
+                # disconnect.  _bounded_cleanup already retained close.
+                pending_cancellation = exc
+                close_status = "failed"
         if session_id is None:
             result = _CleanupResult(close_status, "not_required")
             if not result.completed:
                 self._cleanup_diagnostics.append(
                     {"close": result.close, "disconnect": result.disconnect}
                 )
+            if pending_cancellation is not None:
+                raise pending_cancellation
             return result
         reason = success_reason if close_status == "completed" else failure_reason
         begin_disconnect = getattr(sink, "begin_disconnect", None)
@@ -402,12 +412,21 @@ class AcpWorkerTransport:
         except BaseException:
             disconnect_status = "failed"
         else:
-            disconnect_status = await self._bounded_cleanup(operation)
+            if pending_cancellation is not None and inspect.isawaitable(operation):
+                disconnect_task = asyncio.ensure_future(operation)
+                self._retain_cleanup_task(disconnect_task)
+                disconnect_status = "pending"
+            elif pending_cancellation is not None:
+                disconnect_status = "completed"
+            else:
+                disconnect_status = await self._bounded_cleanup(operation)
         result = _CleanupResult(close_status, disconnect_status)
         if not result.completed:
             self._cleanup_diagnostics.append(
                 {"close": result.close, "disconnect": result.disconnect}
             )
+        if pending_cancellation is not None:
+            raise pending_cancellation
         return result
 
     async def admit(self, attempt: Mapping[str, object]) -> SubmittedReceipt:

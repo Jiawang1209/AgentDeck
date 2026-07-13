@@ -1697,6 +1697,139 @@ def test_timed_out_disconnect_keeps_durable_future_observable(tmp_path: Path) ->
     asyncio.run(case())
 
 
+@pytest.mark.parametrize("phase", ["admission", "prompt"])
+def test_repeated_worker_cancellation_still_submits_exact_disconnect(
+    tmp_path: Path, phase: str,
+) -> None:
+    class Server:
+        async def start(self) -> None: return None
+        async def close(self) -> None: return None
+
+    async def case() -> None:
+        release_close = asyncio.Event()
+        close_started = asyncio.Event()
+        prompt_started = asyncio.Event()
+        store = StateStore(tmp_path)
+        _seed_missions(store)
+        service = ProjectDaemonService(
+            server=Server(), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        attempt = store.load()["mission_attempts"][0]
+        sink = _DaemonAcpWorkerSink(
+            service=service, store=store, attempt=attempt,
+            agent=AgentSpec(
+                agent_id="worker", role="implementation", provider="codex",
+                command="codex", role_prompt="implement", transport="acp",
+                transport_command=("fake-agent-acp",),
+            ),
+            workspace=tmp_path,
+        )
+        activation_persisted = asyncio.Event()
+        original_mutate = sink._mutate
+
+        async def pause_after_activation_persist(callback):
+            result = await original_mutate(callback)
+            if sink.session_id is not None:
+                activation_persisted.set()
+                await asyncio.Event().wait()
+            return result
+
+        if phase == "admission":
+            sink._mutate = pause_after_activation_persist  # type: ignore[method-assign]
+
+        class Transport:
+            async def initialize(self):
+                return SimpleNamespace(
+                    capabilities=TransportCapabilities(
+                        True, True, True, True, True, False
+                    ),
+                    protocol_version="1", agent_identity="fake",
+                )
+            async def new_session(self):
+                return SimpleNamespace(native_session_id=f"native-double-{phase}")
+            async def prompt(self, *_args):
+                prompt_started.set()
+                await asyncio.Event().wait()
+            async def close(self):
+                close_started.set()
+                while not release_close.is_set():
+                    try:
+                        await release_close.wait()
+                    except asyncio.CancelledError:
+                        continue
+
+        worker = AcpWorkerTransport(
+            argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+            request_timeout=1,
+            transport_factory=lambda *_args, **_kwargs: Transport(), sink=sink,
+        )
+
+        async def operation() -> object:
+            receipt = await worker.admit(attempt)
+            if phase == "admission":
+                return receipt
+            return await worker.complete(attempt, receipt)
+
+        service.start_worker_io(operation(), on_completion=lambda _result: None)
+        worker_task = next(iter(service._worker_tasks))
+        for _ in range(50):
+            if not service._queue.empty():
+                await service.tick()
+            await asyncio.sleep(0)
+            phase_started = (
+                activation_persisted.is_set()
+                if phase == "admission"
+                else prompt_started.is_set()
+            )
+            if sink.session_id is not None and phase_started:
+                break
+        assert sink.session_id is not None
+        if phase == "prompt":
+            assert prompt_started.is_set()
+        session_id = sink.session_id
+
+        worker_task.cancel()
+        await asyncio.wait_for(close_started.wait(), timeout=0.2)
+        worker_task.cancel()
+        try:
+            for _ in range(50):
+                if not service._queue.empty():
+                    await service.tick()
+                await asyncio.sleep(0)
+                protocol = store.validated_protocol_state()
+                session = next(
+                    item for item in protocol["agent_sessions"]
+                    if item["session_id"] == session_id
+                )
+                if store._derived_protocol_state(
+                    protocol, "session", session_id, session
+                ) == "disconnected":
+                    break
+            with pytest.raises(asyncio.CancelledError):
+                await worker_task
+            protocol = store.validated_protocol_state()
+            session = next(
+                item for item in protocol["agent_sessions"]
+                if item["session_id"] == session_id
+            )
+            assert store._derived_protocol_state(
+                protocol, "session", session_id, session
+            ) == "disconnected"
+        finally:
+            release_close.set()
+            for _ in range(50):
+                await asyncio.sleep(0)
+                if not worker._cleanup_tasks:
+                    break
+            assert worker._cleanup_tasks == set()
+            await service.close()
+
+    asyncio.run(case())
+
+
 @pytest.mark.parametrize(
     ("target", "human_owned", "allowed", "gate"),
     [
