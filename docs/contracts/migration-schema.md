@@ -21,12 +21,19 @@ list` and advertised by workbench `contracts_card.migration_contract`.
 `agentdeck project migration-preview` returns exactly:
 
 - `schema_version=migration/v1` and `mode=migration_preview`;
+- `status=ready|noop|blocked`, compact `blockers`, and matching
+  `can_migrate`; already migrated projects are explicit read-only no-ops, while
+  partial/inconsistent migration markers fail closed as blocked;
 - canonical `preview_id`, exact `state.json` byte `source_hash`, expiry, digest,
   consume-once flag, project-local backup path, and exact confirmation command;
 - additive `target_changes[]` only;
 - historical snapshot-incomplete Missions as `inspect_only`, with exact status
   and new-Mission-preview commands;
 - one inspect control and one exact explicit-user migration control.
+
+Only `status=ready` exposes an enabled confirmation control. `noop` and
+`blocked` return `target_changes=[]`, `consume_once=false`,
+`confirm_command=null`, and a disabled migration control with the same blocker.
 
 The domain builder and command both validate `validate_migration_contract()`
 before returning or printing. Canonical legacy Mission ids are required before
@@ -50,6 +57,17 @@ The confirmed response is constructed and validated with the same contract
 inside the lock before backup creation or state replacement. Contract failure is
 therefore zero-write; CLI validation remains a final pre-print gate rather than
 the first safety boundary.
+
+Project, `.agentdeck`, and `state` are opened as no-follow directory
+descriptors before the shared protocol lock is acquired. The shared lock lives
+under the anchored `.agentdeck` descriptor, so all authoritative writers retain
+one exclusion domain. Confirmation rechecks the current directory device/inode
+binding after acquiring the lock, and all migration state reads, exclusive temp
+creation, state rename, rollback, and fsync operations are relative to the
+anchored state descriptor. A state-directory symlink or replacement therefore
+fails before backup/state effects and cannot redirect writes outside the
+project. Expiry is freshly rechecked after blocking lock acquisition and before
+backup/save; a preview that expires while waiting is zero-write.
 
 The backup path is exactly
 `.agentdeck/backups/<preview_id>/state.json`. Directory traversal uses no-follow

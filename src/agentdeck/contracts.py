@@ -378,7 +378,8 @@ MISSION_RECOVERY_DECISION_FIELDS = ("kind", "attempt_id", "controls")
 MISSION_RECOVERY_CONTROL_FIELDS = DAEMON_CONTROL_FIELDS
 
 MIGRATION_PREVIEW_RESPONSE_FIELDS = (
-    "schema_version", "mode", "preview_id", "source_hash", "target_changes",
+    "schema_version", "mode", "status", "blockers", "can_migrate",
+    "preview_id", "source_hash", "target_changes",
     "legacy_missions", "backup_path", "expires_at", "digest", "consume_once",
     "confirm_command", "controls",
 )
@@ -1386,6 +1387,9 @@ def _migration_example_payloads() -> tuple[dict[str, object], dict[str, object]]
     preview = {
         "schema_version": MIGRATION_SCHEMA_VERSION,
         "mode": "migration_preview",
+        "status": "ready",
+        "blockers": [],
+        "can_migrate": True,
         "preview_id": preview_id,
         "source_hash": source_hash,
         "target_changes": changes,
@@ -1492,6 +1496,18 @@ def validate_migration_contract(payload: object) -> dict[str, object]:
         return {"ok": False, "errors": ["migration response fields are invalid"]}
     if payload.get("schema_version") != MIGRATION_SCHEMA_VERSION:
         errors.append("schema_version must be migration/v1")
+    status = payload.get("status") if mode == "migration_preview" else "ready"
+    if status not in {"ready", "noop", "blocked"}:
+        errors.append("migration preview status is invalid")
+    blockers = payload.get("blockers") if mode == "migration_preview" else []
+    if (
+        not isinstance(blockers, list)
+        or any(type(item) is not str or not item for item in blockers)
+    ):
+        errors.append("migration blockers must be compact strings")
+        blockers = []
+    if mode == "migration_preview" and payload.get("can_migrate") is not (status == "ready"):
+        errors.append("can_migrate must match preview status")
     preview_id = payload.get("preview_id")
     if type(preview_id) is not str or re.fullmatch(r"mig_[0-9a-f]{12}", preview_id) is None:
         errors.append("preview_id is invalid")
@@ -1505,8 +1521,8 @@ def validate_migration_contract(payload: object) -> dict[str, object]:
         errors.append("backup_path must be the exact project-local path")
     changes = payload.get("target_changes")
     change_paths: list[str] = []
-    if not isinstance(changes, list) or not changes:
-        errors.append("target_changes must be a non-empty list")
+    if not isinstance(changes, list) or (status == "ready" and not changes):
+        errors.append("target_changes must match migration readiness")
         changes = []
     for index, item in enumerate(changes):
         if (
@@ -1550,25 +1566,32 @@ def validate_migration_contract(payload: object) -> dict[str, object]:
         item.get("path"): item.get("value") for item in changes
         if isinstance(item, dict) and isinstance(item.get("path"), str)
     }
-    expected_path_order = [
-        path for path in _MIGRATION_ADDITIVE_COLLECTION_PATHS if path in changes_by_path
-    ] + list(_MIGRATION_REQUIRED_PATHS)
+    expected_path_order = (
+        [path for path in _MIGRATION_ADDITIVE_COLLECTION_PATHS if path in changes_by_path]
+        + list(_MIGRATION_REQUIRED_PATHS)
+        if status == "ready"
+        else []
+    )
     if change_paths != expected_path_order:
         errors.append("target_changes must use the exact additive path order")
     for path in _MIGRATION_ADDITIVE_COLLECTION_PATHS:
         if path in changes_by_path and changes_by_path[path] != []:
             errors.append(f"target_changes value for {path} must be an empty list")
-    if changes_by_path.get("schema_generation") != "project-daemon-m2b/v1":
+    if status == "ready" and changes_by_path.get("schema_generation") != "project-daemon-m2b/v1":
         errors.append("schema_generation migration value is invalid")
-    if changes_by_path.get("legacy_mission_migrations") != legacy:
+    if status == "ready" and changes_by_path.get("legacy_mission_migrations") != legacy:
         errors.append("legacy_mission_migrations must match legacy_missions")
     consumed_preview = changes_by_path.get("migration_previews_consumed")
-    if not isinstance(consumed_preview, list) or len(consumed_preview) != 1:
+    if status == "ready" and (
+        not isinstance(consumed_preview, list) or len(consumed_preview) != 1
+    ):
         errors.append("migration_previews_consumed value is invalid")
+        consumed_entry = None
+    elif status != "ready":
         consumed_entry = None
     else:
         consumed_entry = consumed_preview[0]
-    if (
+    if status == "ready" and (
         not isinstance(consumed_entry, dict)
         or set(consumed_entry) != {"preview_id", "source_hash", "expires_at"}
         or consumed_entry.get("preview_id") != preview_id
@@ -1577,20 +1600,35 @@ def validate_migration_contract(payload: object) -> dict[str, object]:
         errors.append("migration_previews_consumed must bind the exact preview")
         consumed_expiry = None
     else:
-        consumed_expiry = consumed_entry.get("expires_at")
+        consumed_expiry = (
+            consumed_entry.get("expires_at")
+            if isinstance(consumed_entry, dict)
+            else payload.get("expires_at")
+        )
     if mode == "migration_preview":
         expires_at = payload.get("expires_at")
-        if consumed_expiry != expires_at:
+        if status == "ready" and consumed_expiry != expires_at:
             errors.append("migration_previews_consumed expiry must match the preview")
         expected_command = (
             "agentdeck project migrate "
             f"--preview-id {preview_id} --source-hash {payload.get('source_hash')} "
             f"--digest {payload.get('digest')} --expires-at {expires_at} --confirm"
         )
-        if payload.get("consume_once") is not True:
-            errors.append("consume_once must be true")
-        if payload.get("confirm_command") != expected_command:
-            errors.append("confirm_command must bind the exact preview")
+        expected_blocker = blockers[0] if blockers else None
+        if status == "ready":
+            if blockers:
+                errors.append("ready migration preview cannot have blockers")
+            if payload.get("consume_once") is not True:
+                errors.append("consume_once must be true")
+            if payload.get("confirm_command") != expected_command:
+                errors.append("confirm_command must bind the exact preview")
+        else:
+            if not blockers:
+                errors.append("non-actionable migration preview requires a blocker")
+            if payload.get("consume_once") is not False:
+                errors.append("non-actionable migration preview cannot be consumed")
+            if payload.get("confirm_command") is not None:
+                errors.append("non-actionable migration preview cannot confirm")
         expected_controls = [
             {
                 "kind": "inspect", "label": "Inspect migration preview",
@@ -1598,9 +1636,11 @@ def validate_migration_contract(payload: object) -> dict[str, object]:
                 "enabled": True, "blocker": None,
             },
             {
-                "kind": "migrate", "label": "Confirm additive migration",
-                "command": expected_command, "safety": "explicit_user",
-                "enabled": True, "blocker": None,
+                "kind": "migrate",
+                "label": "Confirm additive migration" if status == "ready" else "Migration unavailable",
+                "command": expected_command if status == "ready" else "agentdeck project migration-preview",
+                "safety": "explicit_user", "enabled": status == "ready",
+                "blocker": expected_blocker,
             },
         ]
         if payload.get("controls") != expected_controls:

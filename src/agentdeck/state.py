@@ -13,6 +13,7 @@ import re
 import shlex
 import shutil
 import stat
+import time
 from typing import Any, Callable, Mapping
 
 from .config import CONFIG_DIR, ensure_project_layout, load_config, project_root
@@ -100,11 +101,27 @@ def migration_preview(
     """Inspect one legacy project migration without changing any project file."""
     if type(ttl_seconds) is not int or ttl_seconds <= 0:
         raise ValueError("migration preview ttl must be positive")
-    store = StateStore.open_existing(root.resolve())
-    source_bytes = store.state_path.read_bytes()
+    canonical_root = root.resolve()
+    with _secure_project_state_directory(canonical_root) as (_deck_fd, state_fd):
+        source_bytes = _read_state_bytes_at(state_fd)
     state = json.loads(source_bytes.decode("utf-8"))
     if not isinstance(state, dict):
         raise ValueError("migration source state is invalid")
+    issued_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    expiry = (
+        expires_at.astimezone(timezone.utc)
+        if expires_at is not None
+        else issued_at + timedelta(seconds=ttl_seconds)
+    )
+    return _migration_preview_payload(source_bytes, state, expiry=expiry)
+
+
+def _migration_preview_payload(
+    source_bytes: bytes,
+    state: dict[str, object],
+    *,
+    expiry: datetime,
+) -> dict[str, object]:
     source_hash = "sha256:" + hashlib.sha256(source_bytes).hexdigest()
     legacy_missions: list[dict[str, object]] = []
     for mission in state.get("missions", []):
@@ -121,17 +138,6 @@ def migration_preview(
                     ),
                 }
             )
-    target_changes: list[dict[str, object]] = [
-        {"path": key, "operation": "add", "value": []}
-        for key in _MIGRATION_ADDITIVE_COLLECTIONS
-        if key not in state
-    ]
-    issued_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    expiry = (
-        expires_at.astimezone(timezone.utc)
-        if expires_at is not None
-        else issued_at + timedelta(seconds=ttl_seconds)
-    )
     preview_id = f"mig_{source_hash.removeprefix('sha256:')[:12]}"
     for item in legacy_missions:
         mission_id = item.get("mission_id")
@@ -139,8 +145,27 @@ def migration_preview(
             "agentdeck leader chat --message "
             f'"Reconfirm legacy Mission {mission_id} as a new Mission preview"'
         )
-    target_changes.extend(
-        [
+    markers = (
+        "schema_generation", "legacy_mission_migrations",
+        "migration_previews_consumed",
+    )
+    marker_count = sum(key in state for key in markers)
+    completely_migrated = (
+        marker_count == len(markers)
+        and state.get("schema_generation") == "project-daemon-m2b/v1"
+        and isinstance(state.get("legacy_mission_migrations"), list)
+        and isinstance(state.get("migration_previews_consumed"), list)
+        and all(isinstance(state.get(key), list) for key in _MIGRATION_ADDITIVE_COLLECTIONS)
+    )
+    if marker_count == 0:
+        status = "ready"
+        blockers: list[str] = []
+        target_changes: list[dict[str, object]] = [
+            {"path": key, "operation": "add", "value": []}
+            for key in _MIGRATION_ADDITIVE_COLLECTIONS
+            if key not in state
+        ]
+        target_changes.extend([
             {
                 "path": "schema_generation",
                 "operation": "add",
@@ -162,8 +187,15 @@ def migration_preview(
                     }
                 ],
             },
-        ]
-    )
+        ])
+    elif completely_migrated:
+        status = "noop"
+        blockers = ["project is already migrated"]
+        target_changes = []
+    else:
+        status = "blocked"
+        blockers = ["partial or inconsistent migration state"]
+        target_changes = []
     facts = {
         "preview_id": preview_id,
         "source_hash": source_hash,
@@ -177,10 +209,13 @@ def migration_preview(
         "agentdeck project migrate "
         f"--preview-id {preview_id} --source-hash {source_hash} "
         f"--digest {digest} --expires-at {expiry.isoformat()} --confirm"
-    )
+    ) if status == "ready" else None
     payload = {
         "schema_version": MIGRATION_SCHEMA_VERSION,
         "mode": "migration_preview",
+        "status": status,
+        "blockers": blockers,
+        "can_migrate": status == "ready",
         "preview_id": preview_id,
         "source_hash": source_hash,
         "target_changes": target_changes,
@@ -188,7 +223,7 @@ def migration_preview(
         "backup_path": backup_path,
         "expires_at": expiry.isoformat(),
         "digest": digest,
-        "consume_once": True,
+        "consume_once": status == "ready",
         "confirm_command": confirm_command,
         "controls": [
             {
@@ -201,11 +236,11 @@ def migration_preview(
             },
             {
                 "kind": "migrate",
-                "label": "Confirm additive migration",
-                "command": confirm_command,
+                "label": "Confirm additive migration" if status == "ready" else "Migration unavailable",
+                "command": confirm_command or "agentdeck project migration-preview",
                 "safety": "explicit_user",
-                "enabled": True,
-                "blocker": None,
+                "enabled": status == "ready",
+                "blocker": blockers[0] if blockers else None,
             },
         ],
     }
@@ -227,6 +262,84 @@ _MIGRATION_DIRECTORY_FLAGS = (
 )
 
 
+@contextmanager
+def _secure_project_state_directory(root: Path):
+    """Anchor project, .agentdeck, and state without following directory links."""
+    descriptors: list[int] = []
+    try:
+        try:
+            root_fd = os.open(root, _MIGRATION_DIRECTORY_FLAGS)
+            descriptors.append(root_fd)
+            deck_fd = os.open(".agentdeck", _MIGRATION_DIRECTORY_FLAGS, dir_fd=root_fd)
+            descriptors.append(deck_fd)
+            state_fd = os.open("state", _MIGRATION_DIRECTORY_FLAGS, dir_fd=deck_fd)
+            descriptors.append(state_fd)
+        except OSError as exc:
+            raise ValueError("migration state directory is unsafe") from exc
+        yield deck_fd, state_fd
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _read_state_bytes_at(state_fd: int) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open("state.json", flags, dir_fd=state_fd)
+    except OSError as exc:
+        raise ValueError("migration state file is unsafe") from exc
+    try:
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            return handle.read()
+    finally:
+        os.close(descriptor)
+
+
+def _verify_project_state_anchor(root: Path, deck_fd: int, state_fd: int) -> None:
+    """Fail if either anchored directory was replaced after it was opened."""
+    with _secure_project_state_directory(root) as (current_deck_fd, current_state_fd):
+        anchored_deck = os.fstat(deck_fd)
+        current_deck = os.fstat(current_deck_fd)
+        anchored_state = os.fstat(state_fd)
+        current_state = os.fstat(current_state_fd)
+        if (anchored_deck.st_dev, anchored_deck.st_ino) != (
+            current_deck.st_dev, current_deck.st_ino
+        ) or (anchored_state.st_dev, anchored_state.st_ino) != (
+            current_state.st_dev, current_state.st_ino
+        ):
+            raise ValueError("migration state directory changed during confirmation")
+
+
+def _atomic_save_state_at(state_fd: int, state: dict[str, object]) -> None:
+    temporary = f".state.json.{os.getpid()}.{new_id('tmp')}.tmp"
+    flags = (
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(temporary, flags, 0o600, dir_fd=state_fd)
+        encoded = (
+            json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
+            handle.write(encoded)
+            handle.flush()
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = None
+        os.replace(
+            temporary, "state.json", src_dir_fd=state_fd, dst_dir_fd=state_fd
+        )
+        os.fsync(state_fd)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary, dir_fd=state_fd)
+        except FileNotFoundError:
+            pass
+
+
 def _open_migration_directory(parent_fd: int, name: str) -> int:
     try:
         descriptor = os.open(name, _MIGRATION_DIRECTORY_FLAGS, dir_fd=parent_fd)
@@ -238,10 +351,12 @@ def _open_migration_directory(parent_fd: int, name: str) -> int:
     return descriptor
 
 
-def _write_migration_backup(root: Path, preview_id: str, source: bytes) -> Path:
+def _write_migration_backup(
+    root: Path, preview_id: str, source: bytes, *, deck_fd: int | None = None
+) -> Path:
     if re.fullmatch(r"mig_[0-9a-f]{12}", preview_id) is None:
         raise ValueError("migration backup preview id is invalid")
-    root_fd = os.open(root, _MIGRATION_DIRECTORY_FLAGS)
+    root_fd: int | None = None
     agentdeck_fd: int | None = None
     backups_fd: int | None = None
     preview_fd: int | None = None
@@ -250,7 +365,11 @@ def _write_migration_backup(root: Path, preview_id: str, source: bytes) -> Path:
     temporary = f".state.json.{os.getpid()}.tmp"
     installed = False
     try:
-        agentdeck_fd = _open_migration_directory(root_fd, ".agentdeck")
+        if deck_fd is None:
+            root_fd = os.open(root, _MIGRATION_DIRECTORY_FLAGS)
+            agentdeck_fd = _open_migration_directory(root_fd, ".agentdeck")
+        else:
+            agentdeck_fd = os.dup(deck_fd)
         try:
             os.mkdir("backups", 0o700, dir_fd=agentdeck_fd)
             backups_created = True
@@ -330,13 +449,19 @@ def _write_migration_backup(root: Path, preview_id: str, source: bytes) -> Path:
                 os.close(descriptor)
 
 
-def _remove_migration_backup(root: Path, preview_id: str) -> None:
-    root_fd = os.open(root, _MIGRATION_DIRECTORY_FLAGS)
+def _remove_migration_backup(
+    root: Path, preview_id: str, *, deck_fd: int | None = None
+) -> None:
+    root_fd: int | None = None
     agentdeck_fd: int | None = None
     backups_fd: int | None = None
     preview_fd: int | None = None
     try:
-        agentdeck_fd = _open_migration_directory(root_fd, ".agentdeck")
+        if deck_fd is None:
+            root_fd = os.open(root, _MIGRATION_DIRECTORY_FLAGS)
+            agentdeck_fd = _open_migration_directory(root_fd, ".agentdeck")
+        else:
+            agentdeck_fd = os.dup(deck_fd)
         backups_fd = _open_migration_directory(agentdeck_fd, "backups")
         preview_fd = _open_migration_directory(backups_fd, preview_id)
         os.unlink("state.json", dir_fd=preview_fd)
@@ -356,22 +481,31 @@ def _remove_migration_backup(root: Path, preview_id: str) -> None:
                 os.close(descriptor)
 
 
-def _atomic_restore_migration_source(path: Path, source: bytes) -> None:
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.migration-rollback.tmp")
+def _atomic_restore_migration_source_at(state_fd: int, source: bytes) -> None:
+    temporary = f".state.json.{os.getpid()}.migration-rollback.tmp"
+    descriptor: int | None = None
     try:
-        with temporary.open("wb") as handle:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=state_fd,
+        )
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
             handle.write(source)
             handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        directory_fd = os.open(path.parent, _MIGRATION_DIRECTORY_FLAGS)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = None
+        os.replace(
+            temporary, "state.json", src_dir_fd=state_fd, dst_dir_fd=state_fd
+        )
+        os.fsync(state_fd)
     finally:
+        if descriptor is not None:
+            os.close(descriptor)
         try:
-            temporary.unlink()
+            os.unlink(temporary, dir_fd=state_fd)
         except FileNotFoundError:
             pass
 
@@ -390,6 +524,7 @@ def confirm_migration(
     if confirm is not True:
         raise ValueError("migration requires exact confirmation")
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    started_monotonic = time.monotonic()
     try:
         expiry = datetime.fromisoformat(expires_at)
     except (TypeError, ValueError):
@@ -408,10 +543,21 @@ def confirm_migration(
         expiry=expiry,
     )
     store = StateStore.open_existing(canonical_root)
-    with store._protocol_mutation_lock():
+    with store._protocol_mutation_lock() as anchored:
+        deck_fd, state_fd = anchored
+        _verify_project_state_anchor(canonical_root, deck_fd, state_fd)
+        fresh_time = (
+            datetime.now(timezone.utc)
+            if now is None
+            else current_time + timedelta(seconds=time.monotonic() - started_monotonic)
+        )
+        if fresh_time >= expiry:
+            raise ValueError("migration preview expired")
         return _confirm_migration_locked(
             store,
             root=root.resolve(),
+            deck_fd=deck_fd,
+            state_fd=state_fd,
             preview_id=preview_id,
             source_hash=source_hash,
             digest=digest,
@@ -428,8 +574,8 @@ def _preflight_migration_confirmation(
     expiry: datetime,
 ) -> None:
     """Reject already-stale or replayed confirmation before lock-file creation."""
-    store = StateStore.open_existing(root)
-    source = store.state_path.read_bytes()
+    with _secure_project_state_directory(root) as (_deck_fd, state_fd):
+        source = _read_state_bytes_at(state_fd)
     state = json.loads(source.decode("utf-8"))
     if not isinstance(state, dict):
         raise ValueError("migration source state is invalid")
@@ -456,13 +602,15 @@ def _confirm_migration_locked(
     store: "StateStore",
     *,
     root: Path,
+    deck_fd: int,
+    state_fd: int,
     preview_id: str,
     source_hash: str,
     digest: str,
     expiry: datetime,
 ) -> dict[str, object]:
     """Apply one exact migration while the protocol mutation lock is held."""
-    current_source = store.state_path.read_bytes()
+    current_source = _read_state_bytes_at(state_fd)
     current_state = json.loads(current_source.decode("utf-8"))
     if not isinstance(current_state, dict):
         raise ValueError("migration source state is invalid")
@@ -475,11 +623,9 @@ def _confirm_migration_locked(
     current_hash = "sha256:" + hashlib.sha256(current_source).hexdigest()
     if current_hash != source_hash:
         raise ValueError("migration source facts drifted")
-    expected = migration_preview(
-        root,
-        now=expiry - timedelta(seconds=600),
-        expires_at=expiry,
-    )
+    expected = _migration_preview_payload(current_source, current_state, expiry=expiry)
+    if expected.get("status") != "ready" or expected.get("can_migrate") is not True:
+        raise ValueError("migration preview is not actionable")
     if expected["preview_id"] != preview_id:
         raise ValueError("unknown migration preview")
     if expected["digest"] != digest:
@@ -528,24 +674,22 @@ def _confirm_migration_locked(
         "consumed": True,
     }
     _require_valid_migration_contract(response)
-    _write_migration_backup(root, preview_id, backup_bytes)
+    _verify_project_state_anchor(root, deck_fd, state_fd)
+    _write_migration_backup(root, preview_id, backup_bytes, deck_fd=deck_fd)
     try:
-        if store.state_path.read_bytes() != current_source:
+        _verify_project_state_anchor(root, deck_fd, state_fd)
+        if _read_state_bytes_at(state_fd) != current_source:
             raise ValueError("migration source facts drifted")
-        store._atomic_save(proposed)
-        state_directory_fd = os.open(store.state_path.parent, _MIGRATION_DIRECTORY_FLAGS)
-        try:
-            os.fsync(state_directory_fd)
-        finally:
-            os.close(state_directory_fd)
+        _atomic_save_state_at(state_fd, proposed)
+        _verify_project_state_anchor(root, deck_fd, state_fd)
     except BaseException:
-        installed = store.state_path.read_bytes()
+        installed = _read_state_bytes_at(state_fd)
         if installed == proposed_bytes:
-            _atomic_restore_migration_source(store.state_path, current_source)
-            installed = store.state_path.read_bytes()
+            _atomic_restore_migration_source_at(state_fd, current_source)
+            installed = _read_state_bytes_at(state_fd)
         if installed == current_source:
             try:
-                _remove_migration_backup(root, preview_id)
+                _remove_migration_backup(root, preview_id, deck_fd=deck_fd)
             except (OSError, ValueError):
                 pass
         raise
@@ -3393,14 +3537,29 @@ class StateStore:
 
     @contextmanager
     def _protocol_mutation_lock(self):
-        lock_path = self.state_path.parent / "protocol-mutation.lock"
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with lock_path.open("a+", encoding="utf-8") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        with _secure_project_state_directory(self.root.resolve()) as anchored:
+            _deck_fd, state_fd = anchored
+            flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
             try:
-                yield
+                try:
+                    lock_fd = os.open(
+                        "protocol-mutation.lock",
+                        flags | os.O_CREAT | os.O_EXCL,
+                        0o600,
+                        dir_fd=_deck_fd,
+                    )
+                except FileExistsError:
+                    lock_fd = os.open(
+                        "protocol-mutation.lock", flags, dir_fd=_deck_fd
+                    )
+            except OSError as exc:
+                raise ValueError("protocol mutation lock is unsafe") from exc
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            try:
+                yield anchored
             finally:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
 
     def _protocol_event_ids(self) -> set[str]:
         event_ids: set[str] = set()

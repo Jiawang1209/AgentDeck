@@ -7,6 +7,7 @@ import json
 import os
 import stat
 import threading
+import time
 
 import pytest
 
@@ -115,6 +116,142 @@ def test_malicious_legacy_mission_is_rejected_before_preview_or_confirm_writes(
 
     assert _tree_bytes(tmp_path) == before
     assert not (tmp_path / ".agentdeck" / "backups").exists()
+
+
+def test_state_directory_symlink_is_rejected_before_lock_backup_or_external_write(
+    tmp_path: Path,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    preview = state_module.migration_preview(tmp_path, now=NOW)
+    state_dir = tmp_path / ".agentdeck" / "state"
+    outside = tmp_path / "outside-state"
+    state_dir.rename(outside)
+    state_dir.symlink_to(outside, target_is_directory=True)
+    outside_before = _tree_bytes(outside)
+
+    with pytest.raises(ValueError, match="state directory"):
+        _confirm(tmp_path, preview, now=NOW + timedelta(seconds=1))
+
+    assert _tree_bytes(outside) == outside_before
+    assert not (tmp_path / ".agentdeck" / "backups").exists()
+    assert not any(".tmp" in path.name for path in outside.iterdir())
+    assert not (outside / "protocol-mutation.lock").exists()
+
+
+def test_state_directory_replace_race_fails_before_backup_or_external_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    preview = state_module.migration_preview(tmp_path, now=NOW)
+    state_dir = tmp_path / ".agentdeck" / "state"
+    detached = tmp_path / ".agentdeck" / "detached-state"
+    outside = tmp_path / "outside-state"
+    outside.mkdir()
+    outside_before = _tree_bytes(outside)
+    original_verify = state_module._verify_project_state_anchor
+    replaced = False
+
+    def replace_before_verify(root: Path, deck_fd: int, state_fd: int) -> None:
+        nonlocal replaced
+        if not replaced:
+            state_dir.rename(detached)
+            state_dir.symlink_to(outside, target_is_directory=True)
+            replaced = True
+        original_verify(root, deck_fd, state_fd)
+
+    monkeypatch.setattr(
+        state_module, "_verify_project_state_anchor", replace_before_verify
+    )
+
+    with pytest.raises(ValueError, match="state directory"):
+        _confirm(tmp_path, preview, now=NOW + timedelta(seconds=1))
+
+    assert _tree_bytes(outside) == outside_before
+    assert not (tmp_path / ".agentdeck" / "backups").exists()
+    assert not any(".tmp" in path.name for path in detached.iterdir())
+
+
+def test_migration_expiry_is_rechecked_after_waiting_for_mutation_lock(
+    tmp_path: Path,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    preview = state_module.migration_preview(
+        tmp_path, now=NOW, expires_at=NOW + timedelta(milliseconds=150)
+    )
+    store = StateStore.open_existing(tmp_path)
+    locked = threading.Event()
+    release = threading.Event()
+
+    def holder() -> None:
+        with store._protocol_mutation_lock():
+            locked.set()
+            release.wait(timeout=2)
+
+    holder_thread = threading.Thread(target=holder)
+    holder_thread.start()
+    assert locked.wait(timeout=1)
+    before = _tree_bytes(tmp_path)
+    errors: list[BaseException] = []
+
+    def confirmer() -> None:
+        try:
+            _confirm(tmp_path, preview, now=NOW)
+        except BaseException as exc:
+            errors.append(exc)
+
+    confirm_thread = threading.Thread(target=confirmer)
+    confirm_thread.start()
+    time.sleep(0.25)
+    release.set()
+    holder_thread.join(timeout=2)
+    confirm_thread.join(timeout=2)
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], ValueError)
+    assert "expired" in str(errors[0])
+    assert _tree_bytes(tmp_path) == before
+    assert not (tmp_path / ".agentdeck" / "backups").exists()
+
+
+def test_already_migrated_preview_is_read_only_noop_with_disabled_confirm(
+    tmp_path: Path,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    ready = state_module.migration_preview(tmp_path, now=NOW)
+    _confirm(tmp_path, ready, now=NOW + timedelta(seconds=1))
+    before = _tree_bytes(tmp_path)
+
+    preview = state_module.migration_preview(tmp_path, now=NOW + timedelta(minutes=1))
+
+    assert preview["status"] == "noop"
+    assert preview["can_migrate"] is False
+    assert preview["target_changes"] == []
+    assert preview["confirm_command"] is None
+    assert preview["controls"][1]["enabled"] is False
+    assert preview["controls"][1]["blocker"] == "project is already migrated"
+    assert _tree_bytes(tmp_path) == before
+
+
+def test_partial_migration_preview_fails_safe_with_disabled_confirm(
+    tmp_path: Path,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    store = StateStore.open_existing(tmp_path)
+    state = store.load()
+    state["schema_generation"] = "project-daemon-m2b/v1"
+    store.save(state)
+    before = _tree_bytes(tmp_path)
+
+    preview = state_module.migration_preview(tmp_path, now=NOW)
+
+    assert preview["status"] == "blocked"
+    assert preview["can_migrate"] is False
+    assert preview["target_changes"] == []
+    assert preview["confirm_command"] is None
+    assert preview["controls"][1]["enabled"] is False
+    assert "partial" in str(preview["controls"][1]["blocker"])
+    assert _tree_bytes(tmp_path) == before
 
 
 def test_migration_preview_binds_exact_source_changes_backup_and_expiry(
@@ -239,8 +376,8 @@ def test_migration_save_failure_removes_backup_and_leaves_source_unchanged(
     preview = state_module.migration_preview(tmp_path, now=NOW)
     before = _tree_bytes(tmp_path)
     monkeypatch.setattr(
-        StateStore,
-        "_atomic_save",
+        state_module,
+        "_atomic_save_state_at",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
     )
 
@@ -340,14 +477,14 @@ def test_rollback_replace_fsyncs_state_parent_directory(
 ) -> None:
     _seed_m1_state_without_execution_snapshot(tmp_path)
     preview = state_module.migration_preview(tmp_path, now=NOW)
-    original_save = StateStore._atomic_save
+    original_save = state_module._atomic_save_state_at
     original_replace = os.replace
     original_fsync = os.fsync
     rollback_replaced = False
     rollback_parent_fsynced = False
 
-    def replace_then_fail(store: StateStore, state: dict[str, object]) -> None:
-        original_save(store, state)
+    def replace_then_fail(state_fd: int, state: dict[str, object]) -> None:
+        original_save(state_fd, state)
         raise OSError("post replace failure")
 
     def tracking_replace(src, dst, *args, **kwargs) -> None:
@@ -362,7 +499,7 @@ def test_rollback_replace_fsyncs_state_parent_directory(
             rollback_parent_fsynced = True
         original_fsync(fd)
 
-    monkeypatch.setattr(StateStore, "_atomic_save", replace_then_fail)
+    monkeypatch.setattr(state_module, "_atomic_save_state_at", replace_then_fail)
     monkeypatch.setattr(state_module.os, "replace", tracking_replace)
     monkeypatch.setattr(state_module.os, "fsync", tracking_fsync)
 
@@ -391,7 +528,9 @@ def test_successful_migration_fsyncs_backup_and_state_after_each_replace(
     def tracking_replace(src, dst, *args, **kwargs) -> None:
         nonlocal phase
         original_replace(src, dst, *args, **kwargs)
-        if kwargs.get("dst_dir_fd") is not None and dst == "state.json":
+        if ".tmp_" in os.fspath(src) and dst == "state.json":
+            phase = "state"
+        elif kwargs.get("dst_dir_fd") is not None and dst == "state.json":
             phase = "backup"
         elif Path(os.fspath(dst)).name == "state.json":
             phase = "state"
@@ -422,13 +561,13 @@ def test_post_replace_save_failure_rolls_back_state_before_removing_backup(
     _seed_m1_state_without_execution_snapshot(tmp_path)
     preview = state_module.migration_preview(tmp_path, now=NOW)
     before = _tree_bytes(tmp_path)
-    original = StateStore._atomic_save
+    original = state_module._atomic_save_state_at
 
-    def replace_then_fail(store: StateStore, state: dict[str, object]) -> None:
-        original(store, state)
+    def replace_then_fail(state_fd: int, state: dict[str, object]) -> None:
+        original(state_fd, state)
         raise OSError("post replace failure")
 
-    monkeypatch.setattr(StateStore, "_atomic_save", replace_then_fail)
+    monkeypatch.setattr(state_module, "_atomic_save_state_at", replace_then_fail)
 
     with pytest.raises(OSError, match="post replace failure"):
         _confirm(tmp_path, preview, now=NOW + timedelta(seconds=1))
