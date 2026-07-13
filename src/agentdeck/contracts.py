@@ -16729,11 +16729,8 @@ def daemon_runtime_example() -> dict[str, object]:
             _daemon_control(
                 "stop",
                 "Stop daemon",
-                "agentdeck daemon stop --confirm --lease-id <lease_id> "
-                "--lease-generation <generation>",
+                "agentdeck daemon stop --confirm",
                 "explicit_runtime",
-                enabled=False,
-                blocker="current controller lease id and generation required",
             ),
         ],
     }

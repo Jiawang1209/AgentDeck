@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import asyncio
 import json
+import os
 from pathlib import Path
 import time
 import tempfile
@@ -11,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from agentdeck import cli
+import agentdeck.daemon.client as daemon_client_module
 from agentdeck.config import load_config, write_default_config
 from agentdeck.contracts import validate_workbench_contract
 from agentdeck.state import StateStore
@@ -20,9 +23,9 @@ from agentdeck.daemon.lifecycle import (
     cleanup_daemon_endpoint,
     project_root_hash,
 )
+from agentdeck.daemon.client import DaemonClient
 from agentdeck.daemon.lease import LeaseError, grant_controller
 from agentdeck.daemon.server import DaemonClientRequestError
-from agentdeck.models import EventRecord
 
 
 def _project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -40,6 +43,27 @@ def _tree(root: Path) -> dict[str, bytes]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
+
+
+def _wait_for_process_exit(pid: int, *, timeout_seconds: float = 3) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.02)
+    pytest.fail("daemon child was not reaped before the test completed")
+
+
+def _wait_for_reaper_empty(*, timeout_seconds: float = 3) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while (
+        daemon_client_module._detached_reaper_count()
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.01)
+    assert daemon_client_module._detached_reaper_count() == 0
 
 
 @pytest.mark.parametrize("name", ["daemon-runtime", "mission-scheduler", "client-session"])
@@ -163,6 +187,19 @@ def test_daemon_stop_never_signals_an_unverified_endpoint(
         "--lease-generation", "1",
     ]) == 1
     assert "verified daemon is unavailable" in capsys.readouterr().err
+
+
+def test_daemon_stop_requires_explicit_lease_options_as_a_pair(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = _project(tmp_path, monkeypatch)
+    before = _tree(root)
+
+    assert cli.main([
+        "daemon", "stop", "--confirm", "--lease-id", "lse_" + "0" * 24,
+    ]) == 1
+    assert "must be provided together" in capsys.readouterr().err
+    assert _tree(root) == before
 
 
 def test_daemon_stop_rejects_expired_controller_lease(tmp_path: Path, monkeypatch) -> None:
@@ -314,18 +351,13 @@ def test_daemon_start_status_and_confirmed_stop_use_hidden_server(
         write_default_config(root)
         monkeypatch.chdir(root)
         try:
-            transition = grant_controller(
-                client_id="client-test", now=datetime.now(timezone.utc), ttl_seconds=300
-            )
-            store = StateStore(root)
-            store.commit_controller_lease(transition)
-            event = transition.audit_event.summary()
-            store.append_event(EventRecord(**event))
-            state = store.load()
-            state["daemon_event_outbox"] = []
-            store.save(state)
             assert cli.main(["daemon", "start"]) == 0
             started = json.loads(capsys.readouterr().out)
+            daemon_pid = int(json.loads(
+                (root / ".agentdeck" / "runtime" / "daemon.json").read_text(
+                    encoding="utf-8"
+                )
+            )["pid"])
             assert started["state"] == "ready"
             assert started["compatibility"] == "compatible"
 
@@ -344,21 +376,7 @@ def test_daemon_start_status_and_confirmed_stop_use_hidden_server(
             assert status["compatibility"] == "unverified"
             assert _tree(root) == before_status
 
-            with pytest.raises(SystemExit):
-                cli.main(["daemon", "stop"])
-            capsys.readouterr()
-            state = StateStore(root).load()
-            lease = state["controller_lease"]
-            assert cli.main([
-                "daemon", "stop", "--confirm", "--lease-id", "lse_" + "0" * 24,
-                "--lease-generation", str(lease["generation"]),
-            ]) == 1
-            assert "stale controller lease" in capsys.readouterr().err
-            assert (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
-            assert cli.main([
-                "daemon", "stop", "--confirm", "--lease-id", lease["lease_id"],
-                "--lease-generation", str(lease["generation"]),
-            ]) == 0
+            assert cli.main(["daemon", "stop", "--confirm"]) == 0
             stopped = json.loads(capsys.readouterr().out)
             assert stopped == {"mode": "daemon_stop", "ok": True, "accepted": True}
             endpoint = root / ".agentdeck" / "runtime" / "daemon.sock"
@@ -368,20 +386,121 @@ def test_daemon_start_status_and_confirmed_stop_use_hidden_server(
                 time.sleep(0.02)
             assert not endpoint.exists()
             assert not metadata.exists()
+            _wait_for_process_exit(daemon_pid)
+            _wait_for_reaper_empty()
+            state = StateStore(root).load()
+            assert state["daemon_event_outbox"] == []
+            event_types = [
+                json.loads(line)["event_type"]
+                for line in StateStore(root).events_path.read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            assert event_types == [
+                "controller_lease_granted",
+                "controller_lease_released",
+            ]
         finally:
             if (root / ".agentdeck" / "runtime" / "daemon.sock").exists():
-                state = StateStore(root).load()
-                lease = state.get("controller_lease") or {}
-                cli.main([
-                    "daemon", "stop", "--confirm",
-                    "--lease-id", str(lease.get("lease_id", "lse_" + "0" * 24)),
-                    "--lease-generation", str(lease.get("generation", 1)),
-                ])
+                cli.main(["daemon", "stop", "--confirm"])
                 capsys.readouterr()
                 deadline = time.monotonic() + 3
                 metadata = root / ".agentdeck" / "runtime" / "daemon.json"
                 while metadata.exists() and time.monotonic() < deadline:
                     time.sleep(0.02)
+
+
+def test_active_controller_blocks_auto_acquire_but_can_renew_and_stop_explicitly(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    del tmp_path
+    with tempfile.TemporaryDirectory(prefix="adk6-ctl-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        monkeypatch.chdir(root)
+        lease: dict[str, object] = {}
+        try:
+            assert cli.main(["daemon", "start"]) == 0
+            capsys.readouterr()
+            daemon_pid = int(json.loads(
+                (root / ".agentdeck" / "runtime" / "daemon.json").read_text(
+                    encoding="utf-8"
+                )
+            )["pid"])
+
+            async def acquire_and_renew() -> dict[str, object]:
+                client = await DaemonClient.connect_verified(root, timeout_seconds=2)
+                try:
+                    acquired = await client.request(
+                        "controller.acquire", {"client_id": "client-other"}
+                    )
+                    assert set(acquired) == {
+                        "lease_id", "generation", "expires_at"
+                    }
+                    renewed = await client.request(
+                        "controller.renew",
+                        {
+                            "lease_id": acquired["lease_id"],
+                            "generation": acquired["generation"],
+                        },
+                        lease_id=str(acquired["lease_id"]),
+                        lease_generation=int(acquired["generation"]),
+                    )
+                    assert renewed["lease_id"] == acquired["lease_id"]
+                    assert renewed["generation"] == acquired["generation"]
+                    return renewed
+                finally:
+                    await client.close()
+
+            lease = asyncio.run(acquire_and_renew())
+            assert cli.main(["daemon", "stop", "--confirm"]) == 1
+            assert "controller lease is already held" in capsys.readouterr().err
+            assert (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
+
+            assert cli.main([
+                "daemon",
+                "stop",
+                "--confirm",
+                "--lease-id",
+                str(lease["lease_id"]),
+                "--lease-generation",
+                str(lease["generation"]),
+            ]) == 0
+            capsys.readouterr()
+            deadline = time.monotonic() + 3
+            socket_path = root / ".agentdeck" / "runtime" / "daemon.sock"
+            while socket_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert not socket_path.exists()
+            _wait_for_process_exit(daemon_pid)
+            _wait_for_reaper_empty()
+            state = StateStore(root).load()
+            assert state["daemon_event_outbox"] == []
+            event_types = [
+                json.loads(line)["event_type"]
+                for line in StateStore(root).events_path.read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            assert event_types == [
+                "controller_lease_granted",
+                "controller_lease_renewed",
+                "controller_lease_released",
+            ]
+        finally:
+            socket_path = root / ".agentdeck" / "runtime" / "daemon.sock"
+            if socket_path.exists() and lease:
+                cli.main([
+                    "daemon",
+                    "stop",
+                    "--confirm",
+                    "--lease-id",
+                    str(lease["lease_id"]),
+                    "--lease-generation",
+                    str(lease["generation"]),
+                ])
+                capsys.readouterr()
 
 
 def test_bare_tty_connects_or_starts_daemon_before_foreground_ui(

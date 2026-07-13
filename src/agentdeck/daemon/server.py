@@ -76,6 +76,7 @@ class DaemonServer:
         max_frame_bytes: int,
         allowed_methods: Collection[str],
         status_provider: StatusProvider,
+        lease_exempt_methods: Collection[str] = (),
         mutation_handler: MutationHandler | None = None,
         lease_validator: LeaseValidator | None = None,
         mutation_response_sent_handler: MutationResponseSentHandler | None = None,
@@ -101,6 +102,12 @@ class DaemonServer:
         methods = frozenset(allowed_methods)
         if not {"handshake", "status"}.issubset(methods):
             raise ValueError("daemon methods must include handshake and status")
+        lease_exempt = frozenset(lease_exempt_methods)
+        if (
+            not lease_exempt.issubset(methods)
+            or not lease_exempt.issubset({"controller.acquire"})
+        ):
+            raise ValueError("daemon lease-exempt methods are invalid")
         self.endpoint = Path(endpoint)
         self.instance_id = instance_id
         self.project_root_hash = project_root_hash
@@ -109,6 +116,7 @@ class DaemonServer:
         self.project_view_schema_version = project_view_schema_version
         self.max_frame_bytes = max_frame_bytes
         self.allowed_methods = methods
+        self.lease_exempt_methods = lease_exempt
         self.status_provider = status_provider
         self.mutation_handler = mutation_handler
         self.lease_validator = lease_validator
@@ -453,6 +461,13 @@ class DaemonServer:
 
     async def _mutate(self, request: RpcRequest) -> dict[str, object]:
         params = dict(request.params)
+        if request.method in self.lease_exempt_methods:
+            if "_lease" in params:
+                raise DaemonClientRequestError(
+                    "lease-exempt request cannot carry controller authority",
+                    "invalid_request",
+                )
+            return await self._start_mutation(request.method, params)
         lease = params.pop("_lease", None)
         if not isinstance(lease, Mapping) or set(lease) != {"lease_id", "generation"}:
             raise DaemonClientRequestError("controller lease required", "lease_required")
@@ -474,9 +489,14 @@ class DaemonServer:
             raise DaemonClientRequestError(reason, "lease_required") from None
         except Exception:
             raise DaemonClientRequestError("controller lease required", "lease_required") from None
+        return await self._start_mutation(request.method, params)
+
+    async def _start_mutation(
+        self, method: str, params: dict[str, object]
+    ) -> dict[str, object]:
         if self.mutation_handler is None:
             raise DaemonClientRequestError("mutation handler is unavailable", "unavailable")
-        task = asyncio.create_task(self._run_mutation_handler(request.method, params))
+        task = asyncio.create_task(self._run_mutation_handler(method, params))
         self._mutation_tasks.add(task)
         task.add_done_callback(self._mutation_finished)
         return await asyncio.shield(task)

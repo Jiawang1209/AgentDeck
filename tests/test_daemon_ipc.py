@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -79,6 +80,8 @@ async def _running_server(
     mutation_handler=None,
     lease_validator=None,
     mutation_response_sent_handler=None,
+    allowed_methods=METHODS,
+    lease_exempt_methods=frozenset(),
     read_timeout_seconds: float = 1,
     write_timeout_seconds: float = 1,
 ) -> tuple[object, DaemonServer]:
@@ -91,7 +94,8 @@ async def _running_server(
         daemon_version=__version__,
         project_view_schema_version=PROJECT_VIEW_SCHEMA_VERSION,
         max_frame_bytes=MAX_FRAME,
-        allowed_methods=METHODS,
+        allowed_methods=allowed_methods,
+        lease_exempt_methods=lease_exempt_methods,
         event_queue_size=queue_size,
         request_queue_size=queue_size,
         status_provider=lambda: {"mode": "daemon_status", "state": "ready"},
@@ -405,6 +409,124 @@ def test_observer_mutation_requires_current_lease_before_handler(short_project: 
                 )
                 assert result == {"paused": True}
                 assert calls == [{"method": "mission.pause", "mission_id": "mis_1"}]
+            finally:
+                await client.close()
+        finally:
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_only_controller_acquire_can_be_lease_exempt(short_project: Path) -> None:
+    base = {
+        "endpoint": short_project / "daemon.sock",
+        "instance_id": "dmn_test",
+        "project_root_hash": "a" * 64,
+        "start_nonce_hash": "b" * 64,
+        "daemon_version": __version__,
+        "project_view_schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "max_frame_bytes": MAX_FRAME,
+        "status_provider": lambda: {},
+    }
+    with pytest.raises(ValueError, match="lease-exempt"):
+        DaemonServer(
+            **base,
+            allowed_methods=METHODS,
+            lease_exempt_methods={"controller.acquire"},
+        )
+    with pytest.raises(ValueError, match="lease-exempt"):
+        DaemonServer(
+            **base,
+            allowed_methods=METHODS,
+            lease_exempt_methods={"mission.pause"},
+        )
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def mutate(method: str, params: dict[str, object]) -> dict[str, object]:
+        calls.append((method, params))
+        return {"lease_id": "lse_" + "1" * 24, "generation": 1}
+
+    async def exercise() -> None:
+        allowed = METHODS | {"controller.acquire", "controller.renew"}
+        owner, server = await _running_server(
+            short_project,
+            mutation_handler=mutate,
+            lease_validator=lambda lease_id, generation: (
+                None
+                if (lease_id, generation) == ("lse_" + "1" * 24, 1)
+                else (_ for _ in ()).throw(LeaseError("stale controller lease"))
+            ),
+            allowed_methods=allowed,
+            lease_exempt_methods={"controller.acquire"},
+        )
+        try:
+            client = await DaemonClient.connect_verified(
+                short_project, max_frame_bytes=MAX_FRAME, timeout_seconds=1
+            )
+            try:
+                acquired = await client.request(
+                    "controller.acquire", {"client_id": "client-a"}
+                )
+                assert set(acquired) == {"lease_id", "generation"}
+                assert acquired["generation"] == 1
+                with pytest.raises(
+                    DaemonClientError, match="controller lease required"
+                ):
+                    await client.request("controller.renew", {})
+                renewed = await client.request(
+                    "controller.renew",
+                    {},
+                    lease_id="lse_" + "1" * 24,
+                    lease_generation=1,
+                )
+                assert renewed["generation"] == 1
+            finally:
+                await client.close()
+        finally:
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+        assert calls == [
+            ("controller.acquire", {"client_id": "client-a"}),
+            ("controller.renew", {}),
+        ]
+
+    _run(exercise())
+
+
+def test_failed_mutation_never_runs_response_sent_hook(short_project: Path) -> None:
+    hook_called = False
+
+    async def fail_mutation(
+        _method: str, _params: dict[str, object]
+    ) -> dict[str, object]:
+        raise OSError("simulated durable flush failure")
+
+    def after_response(_method: str, _result: dict[str, object]) -> None:
+        nonlocal hook_called
+        hook_called = True
+
+    async def exercise() -> None:
+        owner, server = await _running_server(
+            short_project,
+            mutation_handler=fail_mutation,
+            lease_validator=lambda _lease_id, _generation: None,
+            mutation_response_sent_handler=after_response,
+        )
+        try:
+            client = await DaemonClient.connect_verified(
+                short_project, max_frame_bytes=MAX_FRAME, timeout_seconds=1
+            )
+            try:
+                with pytest.raises(DaemonClientError, match="request failed"):
+                    await client.request(
+                        "mission.pause",
+                        {},
+                        lease_id="lse_current",
+                        lease_generation=1,
+                    )
+                assert hook_called is False
             finally:
                 await client.close()
         finally:
@@ -1231,6 +1353,34 @@ def test_connect_or_start_uses_argv_python_and_project_local_logs(
         assert int(environment["AGENTDECK_DAEMON_LOG_CAP_BYTES"]) > 0
 
     _run(exercise())
+
+
+def test_default_detached_spawn_reaper_registry_clears_after_child_exit() -> None:
+    baseline_threads = threading.active_count()
+
+    async def exercise() -> tuple[object, int]:
+        process = await client_module._spawn_detached_process(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(0.1)",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        assert client_module._detached_reaper_count() == 1
+        return process, process.pid
+
+    process, pid = _run(exercise())
+    deadline = time.monotonic() + 2
+    while client_module._detached_reaper_count() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert process.returncode == 0
+    assert client_module._detached_reaper_count() == 0
+    assert threading.active_count() == baseline_threads
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
 
 
 def test_connect_or_start_cancellation_never_terminates_spawned_process(

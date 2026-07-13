@@ -345,6 +345,76 @@ def test_state_store_atomically_commits_compact_lease_and_audit_event(
     assert "terminal" not in repr(state["controller_lease"])
 
 
+def test_state_store_flushes_daemon_outbox_durably_and_clears_it(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(transition)
+
+    result = store.flush_daemon_event_outbox()
+
+    assert result == {"flushed": 1, "already_durable": 0}
+    assert store.load()["daemon_event_outbox"] == []
+    records = [
+        json.loads(line)
+        for line in store.events_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert records == [transition.audit_event.summary()]
+
+
+def test_daemon_outbox_flush_retry_skips_already_durable_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(transition)
+    atomic_save = store._atomic_save
+    failed = False
+
+    def fail_first_clear(state: dict[str, object]) -> None:
+        nonlocal failed
+        if not failed and state.get("daemon_event_outbox") == []:
+            failed = True
+            raise OSError("simulated clear failure")
+        atomic_save(state)
+
+    monkeypatch.setattr(store, "_atomic_save", fail_first_clear)
+    with pytest.raises(OSError, match="simulated clear failure"):
+        store.flush_daemon_event_outbox()
+    assert len(store.load()["daemon_event_outbox"]) == 1
+    assert len(store.events_path.read_text(encoding="utf-8").splitlines()) == 1
+
+    monkeypatch.setattr(store, "_atomic_save", atomic_save)
+    assert store.flush_daemon_event_outbox() == {
+        "flushed": 0,
+        "already_durable": 1,
+    }
+    assert store.load()["daemon_event_outbox"] == []
+    assert len(store.events_path.read_text(encoding="utf-8").splitlines()) == 1
+
+
+@pytest.mark.parametrize("malformed_source", ["outbox", "journal"])
+def test_daemon_outbox_flush_rejects_malformed_durable_state_without_clearing(
+    tmp_path: Path, malformed_source: str
+) -> None:
+    store = _store(tmp_path)
+    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(transition)
+    if malformed_source == "outbox":
+        state = store.load()
+        state["daemon_event_outbox"] = {"invalid": True}
+        store.save(state)
+    else:
+        store.events_path.write_text("{not-json}\n", encoding="utf-8")
+    before = _snapshot(tmp_path)
+
+    with pytest.raises((TypeError, ValueError), match="daemon_event_outbox|journal"):
+        store.flush_daemon_event_outbox()
+
+    assert _snapshot(tmp_path) == before
+
+
 @pytest.mark.parametrize("action", ["release", "takeover"])
 def test_state_store_rejects_publicly_constructed_privileged_transition(
     tmp_path: Path, action: str

@@ -164,7 +164,16 @@ from .daemon.lifecycle import (
     acquire_daemon_ownership, bind_daemon_endpoint, can_stop_daemon,
     cleanup_daemon_endpoint, daemon_endpoint,
 )
-from .daemon.lease import controller_lease_from_summary, validate_controller
+from .daemon.lease import (
+    ControllerLease,
+    LeaseError,
+    LeaseTransition,
+    controller_lease_from_summary,
+    grant_controller,
+    release_controller,
+    renew_controller,
+    validate_controller,
+)
 from .daemon.protocol import DAEMON_RPC_PROTOCOL_VERSION
 from .daemon.server import DaemonClientRequestError, DaemonServer
 
@@ -2592,6 +2601,7 @@ def _daemon_runtime_card(project_view: dict[str, object]) -> dict[str, object]:
     summary = project_view.get("daemon") if isinstance(project_view.get("daemon"), dict) else {}
     state = str(summary.get("state", "stopped"))
     blockers = list(summary.get("blockers", [])) if isinstance(summary.get("blockers"), list) else ["daemon state unavailable"]
+    stop_enabled = state in {"ready", "idle_grace"} and not blockers
     payload = {
         "schema_version": "daemon-runtime/v1",
         "mode": "daemon_runtime",
@@ -2608,16 +2618,13 @@ def _daemon_runtime_card(project_view: dict[str, object]) -> dict[str, object]:
             _control(
                 kind="stop",
                 label="Stop daemon",
-                command=(
-                    "agentdeck daemon stop --confirm --lease-id <lease_id> "
-                    "--lease-generation <generation>"
-                ),
+                command="agentdeck daemon stop --confirm",
                 safety="explicit_runtime",
-                enabled=False,
+                enabled=stop_enabled,
                 blocker=(
-                    blockers[0]
-                    if blockers
-                    else "current controller lease id and generation required"
+                    None
+                    if stop_enabled
+                    else (blockers[0] if blockers else "daemon cannot stop safely")
                 ),
             ),
         ],
@@ -6034,15 +6041,34 @@ def _validate_daemon_stop_gate(
 
 
 async def _request_daemon_stop(
-    root: Path, config: ProjectConfig, *, lease_id: str, lease_generation: int,
+    root: Path, config: ProjectConfig, *,
+    lease_id: str | None, lease_generation: int | None,
 ) -> dict[str, object]:
     client = await DaemonClient.connect_verified(
         root, max_frame_bytes=config.daemon.max_frame_bytes,
         timeout_seconds=config.daemon.start_timeout_seconds,
     )
     try:
+        if lease_id is None and lease_generation is None:
+            acquired = await client.request(
+                "controller.acquire",
+                {"client_id": f"client_stop_{secrets.token_hex(12)}"},
+            )
+            acquired_lease_id = acquired.get("lease_id")
+            acquired_generation = acquired.get("generation")
+            lease_id = (
+                acquired_lease_id if type(acquired_lease_id) is str else None
+            )
+            lease_generation = (
+                acquired_generation if type(acquired_generation) is int else None
+            )
+            if type(lease_id) is not str or type(lease_generation) is not int:
+                raise DaemonUnavailable("daemon controller acquisition failed")
+        assert lease_id is not None and lease_generation is not None
         return await client.request(
-            "daemon.stop", {}, lease_id=lease_id,
+            "daemon.stop",
+            {"lease_id": lease_id, "generation": lease_generation},
+            lease_id=lease_id,
             lease_generation=lease_generation,
         )
     finally:
@@ -6053,6 +6079,9 @@ def daemon_stop_command(args: argparse.Namespace) -> int:
     config, _store, exit_code = _load_project_or_error()
     if config is None:
         return exit_code
+    if (args.lease_id is None) != (args.lease_generation is None):
+        print("--lease-id and --lease-generation must be provided together", file=sys.stderr)
+        return 1
     root = Path(config.root)
     if not _endpoint_files_exist_without_mutation(root):
         print("verified daemon is unavailable", file=sys.stderr)
@@ -6066,7 +6095,8 @@ def daemon_stop_command(args: argparse.Namespace) -> int:
         message = str(exc)
         if message not in {
             "controller lease required", "stale controller lease",
-            "controller lease expired", "daemon has active keepalive work",
+            "controller lease expired", "controller lease is already held",
+            "daemon has active keepalive work",
             "daemon identity is unverified", "daemon keepalive state is invalid",
         }:
             message = "verified daemon stop was rejected"
@@ -6154,15 +6184,87 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         def lease_validator(lease_id: str, generation: int) -> None:
             _validate_daemon_controller_lease(store, lease_id, generation)
 
+        def lease_result(lease: ControllerLease) -> dict[str, object]:
+            return {
+                "lease_id": lease.lease_id,
+                "generation": lease.generation,
+                "expires_at": lease.expires_at,
+            }
+
+        def commit_and_flush(transition: LeaseTransition) -> dict[str, object]:
+            store.commit_controller_lease(transition)
+            store.flush_daemon_event_outbox()
+            current = transition.current
+            assert current is not None
+            return lease_result(current)
+
+        def lease_params(params: dict[str, object]) -> tuple[str, int]:
+            lease_id = params.get("lease_id")
+            generation = params.get("generation")
+            if type(lease_id) is not str or type(generation) is not int:
+                raise LeaseError("stale controller lease")
+            return lease_id, generation
+
         async def mutation_handler(method: str, params: dict[str, object]) -> dict[str, object]:
-            if method != "daemon.stop" or params:
-                raise DaemonClientRequestError("daemon mutation is unavailable", "unavailable")
-            assert server is not None
-            _validate_daemon_stop_gate(
-                root, ownership, store,
-                other_client_count=max(0, server.connection_count - 1),
-            )
-            return {"accepted": True, "state": "stopping"}
+            try:
+                now = datetime.now(timezone.utc)
+                if method == "controller.acquire" and set(params) == {"client_id"}:
+                    transition = grant_controller(
+                        client_id=params["client_id"],  # type: ignore[arg-type]
+                        now=now,
+                        ttl_seconds=config.daemon.controller_ttl_seconds,
+                        previous=controller_lease_from_summary(
+                            store.load().get("controller_lease")
+                        ),
+                    )
+                    return commit_and_flush(transition)
+                if method == "controller.renew" and set(params) == {
+                    "lease_id", "generation"
+                }:
+                    lease_id, generation = lease_params(params)
+                    current = controller_lease_from_summary(
+                        store.load().get("controller_lease")
+                    )
+                    if current is None:
+                        raise LeaseError("controller lease required")
+                    transition = renew_controller(
+                        current,
+                        lease_id=lease_id,
+                        generation=generation,
+                        now=now,
+                        ttl_seconds=config.daemon.controller_ttl_seconds,
+                    )
+                    return commit_and_flush(transition)
+                if method == "daemon.stop" and set(params) == {
+                    "lease_id", "generation"
+                }:
+                    lease_id, generation = lease_params(params)
+                    _validate_daemon_controller_lease(
+                        store, lease_id, generation, now=now
+                    )
+                    assert server is not None
+                    _validate_daemon_stop_gate(
+                        root,
+                        ownership,
+                        store,
+                        other_client_count=max(0, server.connection_count - 1),
+                    )
+                    current = controller_lease_from_summary(
+                        store.load().get("controller_lease")
+                    )
+                    if current is None:
+                        raise LeaseError("controller lease required")
+                    transition = release_controller(
+                        current,
+                        lease_id=lease_id,
+                        generation=generation,
+                        now=now,
+                    )
+                    commit_and_flush(transition)
+                    return {"accepted": True, "state": "stopping"}
+            except LeaseError as exc:
+                raise DaemonClientRequestError(str(exc), "lease_required") from None
+            raise DaemonClientRequestError("daemon mutation is unavailable", "unavailable")
 
         def mutation_response_sent_handler(
             method: str, result: dict[str, object]
@@ -6179,7 +6281,11 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             start_nonce_hash=ownership.start_nonce_hash, daemon_version=__version__,
             project_view_schema_version=PROJECT_VIEW_SCHEMA_VERSION,
             max_frame_bytes=config.daemon.max_frame_bytes,
-            allowed_methods={"handshake", "status", "subscribe", "mission.pause", "daemon.stop"},
+            allowed_methods={
+                "handshake", "status", "subscribe", "mission.pause",
+                "controller.acquire", "controller.renew", "daemon.stop",
+            },
+            lease_exempt_methods={"controller.acquire"},
             status_provider=current_status,
             mutation_handler=mutation_handler,
             lease_validator=lease_validator,
@@ -17376,8 +17482,8 @@ def build_parser() -> argparse.ArgumentParser:
     daemon_start.set_defaults(func=daemon_start_command)
     daemon_stop = daemon_subparsers.add_parser("stop", help="Safely stop the verified project daemon")
     daemon_stop.add_argument("--confirm", action="store_true", required=True, help="Confirm the explicit runtime stop")
-    daemon_stop.add_argument("--lease-id", required=True, help="Current controller lease id")
-    daemon_stop.add_argument("--lease-generation", required=True, type=int, help="Current controller lease generation")
+    daemon_stop.add_argument("--lease-id", help="Current controller lease id; omit both lease options to acquire a temporary controller")
+    daemon_stop.add_argument("--lease-generation", type=int, help="Current controller lease generation; omit both lease options to acquire a temporary controller")
     daemon_stop.set_defaults(func=daemon_stop_command)
     daemon_logs = daemon_subparsers.add_parser("logs", help="Read bounded project daemon logs")
     daemon_logs.add_argument("--lines", type=int, default=100, help="Read the last 1-1000 lines")

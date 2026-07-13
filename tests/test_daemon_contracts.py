@@ -103,17 +103,14 @@ def test_client_session_role_compatibility_and_lease_combinations_are_strict(mut
     assert validate_client_session_contract(payload)["ok"] is False
 
 
-def test_daemon_stop_control_requires_explicit_lease_arguments() -> None:
+def test_daemon_stop_control_uses_internal_temporary_controller_flow() -> None:
     payload = daemon_runtime_example()
     stop = next(control for control in payload["controls"] if control["kind"] == "stop")
     assert stop == {
         "kind": "stop",
         "label": "Stop daemon",
-        "command": (
-            "agentdeck daemon stop --confirm --lease-id <lease_id> "
-            "--lease-generation <generation>"
-        ),
+        "command": "agentdeck daemon stop --confirm",
         "safety": "explicit_runtime",
-        "enabled": False,
-        "blocker": "current controller lease id and generation required",
+        "enabled": True,
+        "blocker": None,
     }

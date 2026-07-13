@@ -237,10 +237,9 @@ class StateStore:
         candidate_event_id = transition.audit_event.event_id
         if candidate_event_id in initial_event_ids:
             raise ValueError("duplicate daemon event identity")
-        # Task 4 keeps daemon events in the durable outbox and does not expose a
-        # daemon flush API. A future outbox-to-journal flush must hold this same
-        # mutation lock; this expiry scan does not make arbitrary append_event
-        # calls atomic with lease commits.
+        # Lease commits stage daemon events in the durable outbox. The explicit
+        # outbox-to-journal flush below holds this same mutation lock; this expiry
+        # scan does not make arbitrary append_event calls atomic with lease commits.
         if transition.action == "expire" and (
             candidate_event_id in self._daemon_journal_event_ids()
         ):
@@ -295,6 +294,40 @@ class StateStore:
         if len(event_ids) != len(set(event_ids)):
             raise ValueError("duplicate daemon event identity")
         return set(event_ids)
+
+    def flush_daemon_event_outbox(self) -> dict[str, int]:
+        with self._protocol_mutation_lock():
+            state = self.load()
+            outbox = state.setdefault("daemon_event_outbox", [])
+            validate_daemon_event_outbox(outbox)
+            durable_ids = self._daemon_journal_event_ids()
+            pending = [
+                item
+                for item in outbox
+                if validate_daemon_event_record(item) not in durable_ids
+            ]
+            if pending:
+                journal_existed = self.events_path.exists()
+                with self.events_path.open("a", encoding="utf-8") as handle:
+                    for item in pending:
+                        handle.write(
+                            json.dumps(item, ensure_ascii=False, sort_keys=True)
+                            + "\n"
+                        )
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                if not journal_existed:
+                    directory_fd = os.open(self.events_path.parent, os.O_RDONLY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+            state["daemon_event_outbox"] = []
+            self._atomic_save(state)
+            return {
+                "flushed": len(pending),
+                "already_durable": len(outbox) - len(pending),
+            }
 
     def _atomic_save(self, state: dict[str, Any]) -> None:
         temporary = self.state_path.with_name(

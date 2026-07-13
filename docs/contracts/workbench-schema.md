@@ -1055,11 +1055,11 @@ The M2a workbench additionally embeds `daemon_runtime_card`,
 versioned discovery contracts and ProjectView daemon/scheduler facts. Rendering
 them never starts, stops, connects, schedules, dispatches, or grants a lease.
 M2a's scheduler card remains explicitly inactive.
-The daemon stop control displays the complete lease-gated command
-`agentdeck daemon stop --confirm --lease-id <lease_id> --lease-generation <generation>`
-but remains disabled because the compact workbench does not
-expose the lease id. A caller must supply a current controller lease through an
-explicit client flow; the rendered control is not authority.
+The daemon stop control displays `agentdeck daemon stop --confirm`. Its verified
+client obtains and later releases a temporary controller through internal RPC
+when needed; existing controller holders may supply the optional exact lease
+pair directly. The compact workbench never exposes either lease credential and
+the rendered control is not authority.
 
 - The command is read-only.
 - The command must pass `validate_workbench_contract()` before printing JSON.

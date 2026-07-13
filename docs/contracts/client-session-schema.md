@@ -12,3 +12,10 @@ session, and incompatible sessions are always read-only. Every mutation must
 still present and pass the daemon's current lease and safety gates. Native
 connection handles, socket paths, process IDs, credentials, and raw protocol
 frames are excluded.
+
+`controller.acquire` is the only lease-exempt mutation and exists solely to
+bootstrap a verified compatible client when no unexpired controller is held;
+it never performs takeover. `controller.renew` requires the exact current lease.
+Grant, renew, and release each commit through StateStore and synchronously flush
+the strict daemon event outbox before success is returned. These RPC credentials
+remain internal to the stop flow and do not add fields or controls to this card.

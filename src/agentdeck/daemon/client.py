@@ -12,6 +12,7 @@ from pathlib import Path
 import secrets
 import socket
 import stat
+import subprocess
 import sys
 import threading
 from typing import Any
@@ -37,12 +38,24 @@ from .protocol import (
 
 
 CLIENT_METHODS = frozenset(
-    {"handshake", "status", "subscribe", "mission.pause", "daemon.stop"}
+    {
+        "handshake",
+        "status",
+        "subscribe",
+        "mission.pause",
+        "controller.acquire",
+        "controller.renew",
+        "daemon.stop",
+    }
 )
 DEFAULT_DAEMON_LOG_CAP_BYTES = 1024 * 1024
 _MIN_DAEMON_LOG_CAP_BYTES = 1024
 _MAX_DAEMON_LOG_CAP_BYTES = 64 * 1024 * 1024
 _LOG_NAMES = ("daemon.stdout.log", "daemon.stderr.log")
+_DETACHED_REAPER_LOCK = threading.Lock()
+_DETACHED_REAPERS: dict[
+    int, tuple[subprocess.Popen[Any], threading.Thread]
+] = {}
 
 
 class DaemonClientError(RuntimeError):
@@ -51,6 +64,57 @@ class DaemonClientError(RuntimeError):
 
 class DaemonUnavailable(DaemonClientError):
     """No verified daemon is reachable at the expected endpoint."""
+
+
+def _reap_detached_process(process: subprocess.Popen[Any]) -> None:
+    try:
+        process.wait()
+    finally:
+        with _DETACHED_REAPER_LOCK:
+            current = _DETACHED_REAPERS.get(process.pid)
+            if current is not None and current[0] is process:
+                _DETACHED_REAPERS.pop(process.pid, None)
+
+
+def _register_detached_reaper(process: subprocess.Popen[Any]) -> None:
+    thread = threading.Thread(
+        target=_reap_detached_process,
+        args=(process,),
+        name=f"agentdeck-daemon-reaper-{process.pid}",
+        daemon=True,
+    )
+    with _DETACHED_REAPER_LOCK:
+        if process.pid in _DETACHED_REAPERS:
+            raise DaemonUnavailable("daemon reaper identity conflict")
+        _DETACHED_REAPERS[process.pid] = (process, thread)
+    try:
+        thread.start()
+    except Exception:
+        with _DETACHED_REAPER_LOCK:
+            _DETACHED_REAPERS.pop(process.pid, None)
+        process.terminate()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=1)
+        raise DaemonUnavailable("daemon reaper could not start") from None
+
+
+def _detached_reaper_count() -> int:
+    with _DETACHED_REAPER_LOCK:
+        return len(_DETACHED_REAPERS)
+
+
+async def _spawn_detached_process(
+    *argv: str, **kwargs: object
+) -> subprocess.Popen[Any]:
+    try:
+        process = subprocess.Popen(argv, **kwargs)  # type: ignore[arg-type]
+    except (OSError, ValueError):
+        raise DaemonUnavailable("daemon spawn failed") from None
+    _register_detached_reaper(process)
+    return process
 
 
 def _validate_timeout(value: object) -> float:
@@ -720,7 +784,7 @@ async def connect_or_start(
     root: Path,
     config: Any,
     *,
-    spawn_factory: Callable[..., Awaitable[Any]] = asyncio.create_subprocess_exec,
+    spawn_factory: Callable[..., Awaitable[Any]] = _spawn_detached_process,
     retry_interval: float = 0.05,
     log_cap_bytes: int = DEFAULT_DAEMON_LOG_CAP_BYTES,
 ) -> DaemonClient:
