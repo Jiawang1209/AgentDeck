@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
 from collections.abc import Callable
+import re
 from typing import Any
 
 from ..config import load_config, write_default_config
@@ -441,10 +442,14 @@ class ConversationSession:
                     events=(EventRecord.create("conversation_preview_presented", {"conversation_id": self.conversation_id, "turn_id": turn_id, "preview_id": binding["preview_id"]}),),
                 )
 
+            persisted_candidate = replace(
+                candidate,
+                user_message=_redact_persisted_user_message(candidate.user_message),
+            )
             payload = create_mission_preview_from_candidate(
                 config=self.config,
                 store=self.store,
-                candidate=candidate,
+                candidate=persisted_candidate,
                 conversation_mutation_factory=mutation_factory,
             )
             payload["preview_binding"] = {
@@ -474,3 +479,19 @@ def _requested_steps(text: str) -> range:
     match = re.search(r"共\s*(\d+)\s*轮", text)
     count = int(match.group(1)) if match else 2
     return range(count)
+
+
+_PERSISTED_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(secret|token|password|api[_-]?key|authorization)"
+    r"\s*([:=])\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+)
+
+
+def _redact_persisted_user_message(text: str) -> str:
+    """Remove common inline credential assignments from durable Mission provenance."""
+    if not isinstance(text, str):
+        raise TypeError("user message must be a string")
+    return _PERSISTED_SECRET_ASSIGNMENT.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]",
+        text,
+    )

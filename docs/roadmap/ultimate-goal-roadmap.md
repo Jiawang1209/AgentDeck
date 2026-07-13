@@ -4,6 +4,12 @@
 
 > 目的：防止 AgentDeck 在连续开发中偏离终极目标。每一轮新功能都应该能映射到本文中的某个目标能力。
 
+## 2026-07-13 Phase 3 M1 落地状态
+
+Phase 3 M1 前台持续会话已经实现：裸 `agentdeck` 是真实 TTY 中的主交互入口，`leader chat --message` 退居脚本化/调试入口；ConversationSession 支持项目初始化 preview、显式 API/Agent-CLI Leader、确定性无 LLM intent、自然语言 Mission preview 与精确确认、ACP/tmux Worker transport 事实、single-writer ownership，以及 ProjectView/Workbench/contract 观察面。M1 复用现有 Mission、审批、workflow、ledger、trace 与恢复内核，没有替换历史能力。
+
+本阶段仍是 foreground + project-local。M2 daemon、退出客户端后的后台续跑、完整 transcript 恢复、global roaming、Workspace Client、自动 install/auth 与原生同会话 TUI attach 仍是后续独立里程碑，不能从 M1 状态推断为已经交付。
+
 ## 1. 终极目标
 
 AgentDeck 的终极目标不是“做一堆 tmux 命令”，而是做一个 local-first 多智能体工作台：

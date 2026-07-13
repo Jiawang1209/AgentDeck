@@ -4,6 +4,14 @@
 
 ## 2026-07-13
 
+### Complete Phase 3 M1 foreground conversation acceptance
+
+- **Primary experience**: documented bare `agentdeck` as the foreground natural-language entry and retained `leader chat --message` for scripts/debugging; added concise aligned English/Chinese READMEs with explicit M1 versus M2/M3 boundaries.
+- **End-to-end acceptance**: added one deterministic temporary-project test covering natural setup and exact confirmation, fake Leader Mission planning, two Workers, governance execution, ACP/tmux route selection, deterministic status/approval/trace, cancellation, exit, compact state, ProjectView, contracts, and outbox agreement.
+- **Durable privacy**: the acceptance RED exposed raw inline credential assignments in legacy Mission provenance. Leader planning still receives the original request, while durable Mission/plan provenance now redacts common `secret`, `token`, `password`, `api-key`, and `authorization` assignments.
+- **Verification**: all conversation tests are 113 passed; the full suite reports 1856 tests with 0 failures, 0 errors, and 1 skip; compileall and diff checks pass.
+- **Live evidence**: a disposable project passed Claude ACP 0.58.1 preflight and a real completed/end-turn/clean-exit turn, then bare `agentdeck` served `/status` and `/quit` in a PTY. The unconfigured DeepSeek Leader remained an explicit blocker; no real Leader Mission was falsely claimed. Sanitized evidence is in `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`.
+
 ### Surface foreground conversation truth in ProjectView and Workbench
 
 - **Observation cards**: Workbench now derives validated `conversation_runtime_card`, `leader_backend_card`, and per-Worker `worker_transport_card` payloads from compact ProjectView/configuration facts without calling a provider, starting ACP, inspecting tmux, changing ownership, or writing state.

@@ -71,7 +71,7 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-**Phase 3 M1 foreground conversation implementation planning.** The human approved the layered ConversationSession design and its exact confirmation, Leader, ACP/tmux dual-plane, persistence, contract, failure, testing, and live-acceptance boundaries. The durable spec is `docs/superpowers/specs/2026-07-13-agentdeck-foreground-conversation-design.md`; the strict 12-task TDD plan is `docs/superpowers/plans/2026-07-13-agentdeck-foreground-conversation.md`. Production code has not started; the next gate is human plan approval followed by a dedicated `/goal` executing M1 only.
+**Complete Phase 3 M1 foreground conversation verification and hand it to the human for review.** Tasks 1–11 are committed on `codex/phase3-conversation-design`; Task 12 deterministic acceptance is GREEN and the remaining gates are the full regression, disposable live rehearsal, sanitized evidence, final local commit, and human review. The durable spec is `docs/superpowers/specs/2026-07-13-agentdeck-foreground-conversation-design.md`; the execution plan is `docs/superpowers/plans/2026-07-13-agentdeck-foreground-conversation.md`.
 
 M1 composes the existing Leader chat, Mission, approval, workflow, dispatch, ProjectView, ACP, and tmux primitives. It must not add the M2 daemon, durable transcript recovery, global roaming, Workspace Client, automatic install/auth, or unproven native-TUI session attach.
 
@@ -97,7 +97,7 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0, Phase 1, and Phase 2 Tasks 1–12 are complete. Phase 3 M1 has an approved conversational architecture, committed spec, and written implementation plan awaiting execution approval. No M1 production code has been written yet.
+Phase 0, Phase 1, and Phase 2 Tasks 1–12 are complete. Phase 3 M1 Tasks 1–11 are implemented and locally committed. The current worktree adds the final deterministic acceptance, concise bilingual README, roadmap/handoff synchronization, and credential-like Mission provenance redaction discovered by the acceptance RED. M1 is not complete until the full suite and disposable live rehearsal pass and the final Task 12 commit is clean.
 
 The completed Phase 2 diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. It explicitly distinguishes `session/load` history replay from `session/resume` without replay, uses append-only lifecycle transitions rather than rewriting Phase 1 records, and makes non-interactive permission requests fail closed. The approved M1 design may now compose that ACP client with the existing Mission/Worker kernel through explicit transport routing, while preserving tmux compatibility. The project daemon remains M2 and is not authorized in M1.
 
@@ -122,7 +122,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-Continue only Phase 3 M1 from `docs/superpowers/specs/2026-07-13-agentdeck-foreground-conversation-design.md`. Do not redo Phase 0, Phase 1, Mission, G-series work, or Phase 2 Tasks 1–12. M1 production code still requires its separately written plan and explicit human approval. Do not merge/push, auto-install, change authentication, auto-download, start the M2 daemon, add durable transcript recovery, global roaming, or Workspace Client work.
+Continue only the remaining Phase 3 M1 Task 12 gates from `docs/superpowers/plans/2026-07-13-agentdeck-foreground-conversation.md`. Do not redo Phase 0, Phase 1, Mission, G-series work, Phase 2, or M1 Tasks 1–11. Do not merge/push, auto-install, change authentication, auto-download, start the M2 daemon, add durable transcript recovery, global roaming, or Workspace Client work.
 ```
 
 ## Historical development log — not active
