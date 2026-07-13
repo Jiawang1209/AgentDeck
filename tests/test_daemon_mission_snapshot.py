@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from agentdeck import cli
+from agentdeck import state as state_module
 from agentdeck.config import load_config, write_default_config
 from agentdeck.mission_orchestration import (
     MissionRunError,
@@ -866,6 +867,95 @@ def test_duplicate_mission_attempt_identity_is_strictly_rejected_without_write(
         )
 
     assert _tree_bytes(root) == before
+
+
+def test_candidate_mission_attempt_id_collision_is_rejected_without_random_retry(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch, retry_limit=1)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    first = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    state = store.load()
+    state["mission_attempts"][0]["state"] = "failed"
+    state["mission_attempts"][0]["terminal_reason"] = "retryable worker failure"
+    store.save(state)
+    real_new_id = state_module.new_id
+    monkeypatch.setattr(
+        state_module,
+        "new_id",
+        lambda prefix: first["attempt_id"] if prefix == "mat" else real_new_id(prefix),
+    )
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="duplicate mission attempt identity"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
+@pytest.mark.parametrize(
+    "candidate_time",
+    [True, "not-a-timestamp", "2026-07-13T12:00:00", "2000-01-01T00:00:00+00:00"],
+)
+def test_candidate_attempt_invalid_naive_or_backward_time_is_full_tree_zero_write(
+    tmp_path, monkeypatch, candidate_time
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    monkeypatch.setattr(state_module, "utc_now", lambda: candidate_time)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="mission attempt state invalid"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
+def test_candidate_attempt_at_confirmation_boundary_and_event_share_validated_time(
+    tmp_path, monkeypatch
+) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirmed = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    boundary = confirmed["confirmed_at"]
+    monkeypatch.setattr(state_module, "utc_now", lambda: boundary)
+
+    attempt = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+
+    assert attempt["created_at"] == boundary
+    assert attempt["updated_at"] == boundary
+    event = store.load()["protocol_event_outbox"][-1]
+    assert event["created_at"] == boundary
+    assert event["payload"]["attempt_id"] == attempt["attempt_id"]
 
 
 def test_state_store_does_not_accept_caller_supplied_dispatch_key(tmp_path, monkeypatch) -> None:

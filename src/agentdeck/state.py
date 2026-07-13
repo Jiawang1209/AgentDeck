@@ -195,6 +195,8 @@ def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
         timestamps.append(parsed)
     if timestamps[1] < timestamps[0]:
         raise ValueError("mission attempt state invalid")
+    if value["state"] == "prepared" and timestamps[1] != timestamps[0]:
+        raise ValueError("mission attempt state invalid")
     for field in ("receipt_summary", "blocker", "terminal_reason"):
         item = value.get(field)
         if item is not None and (type(item) is not str or not item):
@@ -2109,13 +2111,21 @@ class StateStore:
                 "blocker": None,
                 "terminal_reason": None,
             }
-            event = EventRecord.create(
-                "mission_attempt_prepared",
-                {
+            attempt = _validate_mission_attempt_record(attempt)
+            if attempt["attempt_id"] in set(attempt_ids):
+                raise ValueError("duplicate mission attempt identity")
+            attempt_time = datetime.fromisoformat(attempt["created_at"])
+            if attempt_time < confirmed_time:
+                raise ValueError("mission attempt state invalid")
+            event = EventRecord(
+                event_id=new_id("evt"),
+                event_type="mission_attempt_prepared",
+                created_at=attempt["created_at"],
+                payload={
                     "attempt_id": attempt["attempt_id"],
                     "mission_id": mission_id,
                     "step_id": step_id,
-                    "dispatch_key": dispatch_key,
+                    "dispatch_key": attempt["dispatch_key"],
                 },
             )
             attempts.append(attempt)
