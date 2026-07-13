@@ -11,6 +11,13 @@
 - **Delivery discipline**: every semantic task requires focused RED/GREEN verification, HISTORY synchronization, spec/quality review, and a local commit; final full regression and disposable live evidence are mandatory before M1 can be called complete.
 - **Deliverable**: `docs/superpowers/plans/2026-07-13-agentdeck-foreground-conversation.md`.
 
+### Add the Phase 3 M1 conversation lifecycle model
+
+- **Domain records**: added focused pure builders for compact conversation, turn, preview-binding, and lifecycle transition records with bounded in-memory context constants; no state, provider, ACP, or tmux side effects are introduced.
+- **Lifecycle truth**: added complete-history validation and projection for the approved conversation/turn/preview/ownership edge sets, terminal immutability, unique identities, known references, and cross-conversation lineage.
+- **Single active facts**: validation rejects more than one active turn or pending preview per conversation and returns a compact current-state projection without mutating its inputs.
+- **TDD evidence**: the focused lifecycle suite is 10 passed; the final regression also passes compileall for the new package and `git diff --check`.
+
 ### Design the Phase 3 M1 foreground conversation
 
 - **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.
