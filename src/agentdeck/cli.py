@@ -1532,20 +1532,17 @@ class _DaemonAcpWorkerSink:
         sequence = self.sequence
 
         def persist() -> dict[str, object]:
-            result = self.store.record_acp_permission_pending(
-                session_id,
-                turn_id,
-                sequence,
+            result = self.store.record_mission_acp_permission_pending(
+                attempt_id=str(self.attempt["attempt_id"]),
+                session_id=session_id,
+                turn_id=turn_id,
+                sequence=sequence,
                 tool_name=summary.get("title") or summary.get("kind") or "unknown",
                 target=summary.get("target", "unknown"),
                 risk=summary["risk"],
                 tool_call_id=summary["tool_call_id"],
             )
             permission = result["permission"]
-            self.store.bind_mission_permission_evidence(
-                attempt_id=str(self.attempt["attempt_id"]),
-                permission_id=permission["permission_id"],
-            )
             return {
                 "permission_id": permission["permission_id"],
                 "payload": result["update"]["payload"],

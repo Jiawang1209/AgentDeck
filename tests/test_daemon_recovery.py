@@ -972,6 +972,111 @@ def test_controlled_permission_binding_tracks_authoritative_status_transitions(
     assert resumed[0]["next_transition"] == "await_worker"
 
 
+def test_mission_acp_permission_and_attempt_binding_commit_in_one_save(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "worker", "codex", "acp", "native", str(tmp_path), capabilities
+    )
+    turn = store.record_protocol_turn(session["session_id"], "msg_permission")
+    store.record_protocol_transition(
+        "turn", turn["turn_id"], "created", "submitted", "submitted", {}
+    )
+    saves: list[dict[str, object]] = []
+    original_save = store._atomic_save
+
+    def recording_save(state: dict[str, object]) -> None:
+        saves.append(state)
+        original_save(state)
+
+    store._atomic_save = recording_save  # type: ignore[method-assign]
+    result = store.record_mission_acp_permission_pending(
+        attempt_id=ATTEMPT_ID,
+        session_id=session["session_id"],
+        turn_id=turn["turn_id"],
+        sequence=0,
+        tool_name="shell",
+        target=str(tmp_path),
+        risk="high",
+        tool_call_id="call-1",
+    )
+
+    assert len(saves) == 1
+    assert result["binding"]["attempt_id"] == ATTEMPT_ID
+    persisted = store.load()
+    assert len(persisted["permission_requests"]) == 1
+    assert persisted["mission_permission_bindings"] == [result["binding"]]
+    before_retry = store.state_path.read_bytes()
+    retried = store.record_mission_acp_permission_pending(
+        attempt_id=ATTEMPT_ID,
+        session_id=session["session_id"],
+        turn_id=turn["turn_id"],
+        sequence=0,
+        tool_name="shell",
+        target=str(tmp_path),
+        risk="high",
+        tool_call_id="call-1",
+    )
+    assert retried == result
+    assert store.state_path.read_bytes() == before_retry
+    with pytest.raises(ValueError, match="conflict"):
+        store.record_mission_acp_permission_pending(
+            attempt_id=ATTEMPT_ID,
+            session_id=session["session_id"],
+            turn_id=turn["turn_id"],
+            sequence=0,
+            tool_name="shell",
+            target="different-target",
+            risk="high",
+            tool_call_id="call-1",
+        )
+    assert store.state_path.read_bytes() == before_retry
+
+
+def test_mission_acp_permission_atomic_save_failure_is_full_tree_zero_write(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "worker", "codex", "acp", "native", str(tmp_path), capabilities
+    )
+    turn = store.record_protocol_turn(session["session_id"], "msg_permission")
+    store.record_protocol_transition(
+        "turn", turn["turn_id"], "created", "submitted", "submitted", {}
+    )
+
+    def tree() -> dict[str, bytes]:
+        return {
+            str(path.relative_to(tmp_path)): path.read_bytes()
+            for path in tmp_path.rglob("*")
+            if path.is_file()
+        }
+
+    before = tree()
+
+    def fail_save(_state: dict[str, object]) -> None:
+        raise OSError("simulated crash before atomic replace")
+
+    store._atomic_save = fail_save  # type: ignore[method-assign]
+    with pytest.raises(OSError, match="simulated crash"):
+        store.record_mission_acp_permission_pending(
+            attempt_id=ATTEMPT_ID,
+            session_id=session["session_id"],
+            turn_id=turn["turn_id"],
+            sequence=0,
+            tool_name="shell",
+            target=str(tmp_path),
+            risk="high",
+            tool_call_id="call-1",
+        )
+    assert tree() == before
+
+
 def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
     tmp_path: Path,
 ) -> None:
