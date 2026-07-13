@@ -4,6 +4,12 @@
 
 ## 2026-07-13
 
+### Bind frozen Missions to the fresh canonical plan hash
+
+- **One lightweight authority source**: moved the existing formal workflow step normalization and plan-hash algorithm into stdlib-only `mission_authority.py`. `workflow.py`, Mission preview/preflight, and the lock-bound StateStore snapshot builder now import that single pure implementation, avoiding both duplicate hash logic and a `workflow.py -> state.py` dependency.
+- **Locked current-plan validation**: Mission confirmation now recomputes the current persisted plan hash while holding the protocol mutation lock and requires exact equality with `mission.plan_hash` before freezing any execution facts. Attempt preparation repeats that comparison and also requires the persisted snapshot's plan hash to match the Mission, so task edits, step reordering, additions, and removals cannot retain stale execution authority.
+- **Fail-closed zero-write evidence**: new parametrized RED/GREEN coverage mutates the persisted plan after preview through all four drift classes, calls StateStore confirmation directly, requires `MissionStateError("plan hash drift")`, and proves every file in the disposable project remains byte-for-byte unchanged. The focused snapshot/workflow suite is 37 passed and the required Mission/conversation/workflow regression is 104 passed; compileall and `git diff --check` pass.
+
 ### Make the locked StateStore the sole Mission execution authority
 
 - **Fresh lock-bound derivation**: moved canonical execution-policy, Worker, Skill/Memory provenance, snapshot, and dispatch-key derivation into dependency-light `state.py` helpers that both the public Mission wrappers and StateStore reuse. `freeze_mission_execution()` now accepts no caller snapshot or cached plan; while holding the protocol mutation lock it freshly reloads state, plan, project config, policy, and Worker transport facts, builds the only accepted snapshot, validates it, and atomically persists it with its event.

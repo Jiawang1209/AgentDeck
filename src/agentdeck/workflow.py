@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from collections.abc import Callable
 from typing import Any
 
 from .models import EventRecord, ProjectConfig, utc_now
+from .mission_authority import (
+    canonical_workflow_authorized_steps,
+    canonical_workflow_plan_hash,
+)
 from .runtime.base import RuntimeBackend
 from .state import StateStore
 
@@ -22,38 +25,12 @@ REPLY_FIELDS = (
 REPLY_STATUSES = {"completed", "blocked", "failed"}
 
 
-def _sha256_text(text: str) -> str:
-    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
 def authorized_steps(plan_record: dict[str, Any]) -> list[dict[str, Any]]:
-    plan = plan_record.get("plan") if isinstance(plan_record.get("plan"), dict) else {}
-    steps = plan.get("steps") if isinstance(plan.get("steps"), list) else []
-    result = []
-    for item in steps:
-        if not isinstance(item, dict):
-            continue
-        task = str(item.get("task") or "")
-        result.append(
-            {
-                "step": int(item.get("step") or 0),
-                "agent_id": str(item.get("agent_id") or ""),
-                "role": str(item.get("role") or ""),
-                "task": task,
-                "task_hash": _sha256_text(task),
-            }
-        )
-    return result
+    return canonical_workflow_authorized_steps(plan_record)
 
 
 def workflow_plan_hash(plan_record: dict[str, Any]) -> str:
-    canonical = {
-        "plan_id": str(plan_record.get("plan_id") or ""),
-        "steps": authorized_steps(plan_record),
-    }
-    return _sha256_text(
-        json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    )
+    return canonical_workflow_plan_hash(plan_record)
 
 
 def _reply_blocks(output: str) -> list[dict[str, str]]:

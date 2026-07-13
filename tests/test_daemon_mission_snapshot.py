@@ -19,7 +19,7 @@ from agentdeck.mission_orchestration import (
     prepare_attempt,
 )
 from agentdeck.providers import LeaderPlanRequest
-from agentdeck.state import StateStore
+from agentdeck.state import MissionStateError, StateStore
 
 
 MESSAGE = "让 Codex 和 Claude 严格串行完成两步审阅，共2轮"
@@ -89,6 +89,42 @@ def _seed(tmp_path: Path, monkeypatch):
 
 def _state_bytes(store: StateStore) -> bytes:
     return store.state_path.read_bytes()
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+@pytest.mark.parametrize("drift", ["task", "order", "add", "remove"])
+def test_freeze_recomputes_current_plan_hash_inside_lock_and_is_full_tree_zero_write(
+    tmp_path, monkeypatch, drift
+) -> None:
+    root, _config, store, preview = _seed(tmp_path, monkeypatch)
+    state = store.load()
+    steps = state["plans"][0]["plan"]["steps"]
+    if drift == "task":
+        steps[0]["task"] = "changed after preview"
+    elif drift == "order":
+        steps[0], steps[1] = steps[1], steps[0]
+    elif drift == "add":
+        extra = deepcopy(steps[-1])
+        extra["step"] = 3
+        steps.append(extra)
+    else:
+        steps.pop()
+    store.save(state)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionStateError, match="plan hash drift"):
+        store.freeze_mission_execution(
+            preview["mission_id"], confirmed_at=state["missions"][0]["created_at"]
+        )
+
+    assert _tree_bytes(root) == before
 
 
 def test_confirmed_mission_freezes_compact_execution_authority(tmp_path, monkeypatch) -> None:

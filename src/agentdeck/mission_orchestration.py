@@ -27,6 +27,7 @@ from .mission import (
     startup_action_summaries,
     validate_mission_plan,
 )
+from .mission_authority import canonical_workflow_plan_hash
 from .models import (
     AgentRuntimeBinding,
     AgentSpec,
@@ -46,10 +47,11 @@ from .state import (
     derive_attempt_dispatch_key,
     execution_policy_snapshot,
     leader_backend_identity,
+    MissionStateError,
 )
 from .runtime.base import RuntimeBackend
 from .runtime.readiness import WorkerReadinessBatch, wait_for_worker_readiness
-from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
+from .workflow import authorized_steps, run_sequential_workflow
 
 
 class MissionPreviewError(ValueError):
@@ -144,6 +146,8 @@ def prepare_attempt(
         )
     except KeyError:
         raise MissionRunError("mission identity invalid") from None
+    except MissionStateError:
+        raise MissionRunError("frozen execution drift") from None
     except (OSError, TypeError, ValueError) as exc:
         allowed = {
             "active attempt already exists",
@@ -452,7 +456,7 @@ def create_mission_preview_from_candidate(
         plan,
         skill_context=skill_context,
     )
-    plan_hash = workflow_plan_hash(plan_record)
+    plan_hash = canonical_workflow_plan_hash(plan_record)
     mission = store.build_mission_record(
         user_message=candidate.user_message,
         provider=provider,
@@ -805,7 +809,7 @@ def _frozen_preflight(
         plan = store.plan_by_id(str(mission.get("plan_id") or ""))
     except KeyError:
         raise MissionRunError("plan_drift") from None
-    if workflow_plan_hash(plan) != mission.get("plan_hash"):
+    if canonical_workflow_plan_hash(plan) != mission.get("plan_hash"):
         raise MissionRunError("plan_drift")
     selected = mission.get("selected_agents")
     if not isinstance(selected, list) or len(selected) < 2:

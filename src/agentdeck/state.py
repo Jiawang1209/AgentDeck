@@ -37,6 +37,7 @@ from .mission import (
     mission_commands,
     mission_status_transition_allowed,
 )
+from .mission_authority import canonical_workflow_plan_hash
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
 from .runtime.protocol import (
     AGENT_SESSION_STATES,
@@ -73,6 +74,10 @@ _EXECUTION_SNAPSHOT_FIELDS = frozenset(
 )
 _EXECUTION_SNAPSHOT_MAX_BYTES = 256 * 1024
 _EXECUTION_SNAPSHOT_MAX_DEPTH = 32
+
+
+class MissionStateError(ValueError):
+    pass
 
 
 def _validate_snapshot_json(value: object, *, depth: int = 0) -> None:
@@ -461,6 +466,12 @@ def build_execution_snapshot_authority(
     plan_id = mission.get("plan_id")
     if type(plan_id) is not str or plan.get("plan_id") != plan_id:
         raise ValueError("execution snapshot invalid")
+    try:
+        current_plan_hash = canonical_workflow_plan_hash(plan)
+    except (TypeError, ValueError, OverflowError):
+        raise MissionStateError("plan hash drift") from None
+    if current_plan_hash != mission.get("plan_hash"):
+        raise MissionStateError("plan hash drift")
     if mission.get("schema_version") != MISSION_SCHEMA_VERSION:
         raise ValueError("execution snapshot invalid")
     raw_plan = plan.get("plan")
@@ -1798,6 +1809,8 @@ class StateStore:
                         Path(config.root)
                     ),
                 )
+            except MissionStateError:
+                raise
             except (OSError, TypeError, ValueError):
                 raise ValueError("mission confirmation drift") from None
             event = EventRecord.create(
@@ -1872,6 +1885,11 @@ class StateStore:
                 raise ValueError("frozen execution snapshot invalid") from None
             if mission.get("snapshot_hash") != persisted_snapshot["execution_hash"]:
                 raise ValueError("frozen execution drift")
+            if (
+                persisted_snapshot["mission"].get("plan_hash")
+                != mission.get("plan_hash")
+            ):
+                raise MissionStateError("plan hash drift")
             plan = self._unique_plan_record(state, str(mission.get("plan_id") or ""))
             try:
                 config = load_config(self.root)
@@ -1884,6 +1902,8 @@ class StateStore:
                         Path(config.root)
                     ),
                 )
+            except MissionStateError:
+                raise
             except (OSError, TypeError, ValueError):
                 raise ValueError("frozen execution drift") from None
             if snapshot != persisted_snapshot:
