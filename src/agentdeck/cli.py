@@ -189,6 +189,7 @@ from .daemon.service import (
     apply_permission_decision_request,
     apply_worker_ownership_request,
     apply_transport_reroute_request,
+    authorize_mission_acp_effect,
     DaemonTransitionEffects,
     DaemonWorkerCoordinator,
     ProjectDaemonService,
@@ -1537,7 +1538,7 @@ class _DaemonAcpWorkerSink:
                 session_id=session_id,
                 turn_id=turn_id,
                 sequence=sequence,
-                tool_name=summary.get("title") or summary.get("kind") or "unknown",
+                tool_name=summary.get("kind") or "unknown",
                 target=summary.get("target", "unknown"),
                 risk=summary["risk"],
                 tool_call_id=summary["tool_call_id"],
@@ -1592,6 +1593,21 @@ class _DaemonAcpWorkerSink:
             authority,
             read_decision=lambda: self._read_permission(str(permission_id)),
         )
+        if decision == "approved":
+            governed = await self._mutate(
+                lambda: authorize_mission_acp_effect(
+                    self.store,
+                    attempt_id=str(self.attempt["attempt_id"]),
+                    permission_id=str(permission_id),
+                )
+            )
+            if not isinstance(governed, Mapping) or governed.get("allowed") is not True:
+                gate = (
+                    governed.get("gate")
+                    if isinstance(governed, Mapping)
+                    else "invalid"
+                )
+                return PermissionDecision.cancelled(f"governance_blocked:{gate}")
         wanted = "allow_once" if decision == "approved" else "reject_once"
         option = next((item for item in options if item.kind == wanted), None)
         if option is None:

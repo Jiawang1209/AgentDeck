@@ -61,6 +61,7 @@ TransportState = Literal["ready", "missing", "invalid"]
 SnapshotState = Literal["valid", "missing", "drift"]
 LineageState = Literal["valid", "missing", "conflict"]
 OwnershipState = Literal["agentdeck_owned", "human_owned", "conflict"]
+ConfiguredTransport = Literal["acp", "tmux", "none"]
 
 _ATTEMPT_ID = re.compile(r"mat_[0-9a-f]{12}")
 _FACT_FIELDS = (
@@ -72,6 +73,7 @@ _FACT_FIELDS = (
     "reply_state",
     "handoff_state",
     "permission_state",
+    "configured_transport",
     "transport_state",
     "snapshot_state",
     "lineage_state",
@@ -98,6 +100,7 @@ _STATE_DOMAINS = {
     "reply_state": frozenset({"none", "received", "validated", "invalid"}),
     "handoff_state": frozenset({"none", "pending", "recorded"}),
     "permission_state": frozenset({"none", "pending", "approved", "denied", "expired"}),
+    "configured_transport": frozenset({"acp", "tmux", "none"}),
     "transport_state": frozenset({"ready", "missing", "invalid"}),
     "snapshot_state": frozenset({"valid", "missing", "drift"}),
     "lineage_state": frozenset({"valid", "missing", "conflict"}),
@@ -142,6 +145,7 @@ class RecoveryFacts:
     reply_state: ReplyState
     handoff_state: HandoffState
     permission_state: PermissionState
+    configured_transport: ConfiguredTransport
     transport_state: TransportState
     snapshot_state: SnapshotState
     lineage_state: LineageState
@@ -262,6 +266,15 @@ def reconcile_gate(facts: RecoveryFacts) -> RecoveryDecision:
         return _decision(facts, "ambiguous", "Worker admission outcome is unknown")
     if facts.attempt_state == "ambiguous":
         return _decision(facts, "ambiguous", "Worker attempt outcome is ambiguous")
+    if (
+        facts.configured_transport == "acp"
+        and facts.attempt_state in {"submitted", "running"}
+    ):
+        return _decision(
+            facts,
+            "ambiguous",
+            "ACP Worker connection was lost across daemon restart",
+        )
     if (
         facts.attempt_state in {"submitted", "running"}
         and facts.receipt_state == "none"
@@ -552,7 +565,7 @@ def recovery_facts_from_persisted_state(
         raise RecoveryError("durable recovery attempt binding mismatch")
 
     try:
-        from ..state import validate_execution_snapshot
+        from ..state import canonical_snapshot_hash, validate_execution_snapshot
 
         snapshot = validate_execution_snapshot(mission.get("execution_snapshot"))
     except (TypeError, ValueError):
@@ -567,6 +580,7 @@ def recovery_facts_from_persisted_state(
     )
 
     target_agent_id: str | None = None
+    configured_transport = "none"
     transport_state = "missing"
     lineage_state = "valid"
     if snapshot is not None:
@@ -589,6 +603,7 @@ def recovery_facts_from_persisted_state(
         }
         worker = workers.get(target_agent_id)
         if worker is not None:
+            configured_transport = worker["configured_transport"]
             if current is not None and worker["configured_transport"] != current.get(
                 "configured_transport"
             ):
@@ -655,6 +670,46 @@ def recovery_facts_from_persisted_state(
         ]
         if len(sessions) != 1 or sessions[0].get("agent_id") != current_agent_id:
             raise RecoveryError("durable recovery permission agent scope mismatch")
+        session = sessions[0]
+        workers = [
+            item for item in snapshot["workers"]
+            if item["agent_id"] == current_agent_id
+        ] if snapshot is not None else []
+        caps = session.get("capabilities")
+        workspace = session.get("workspace")
+        if (
+            current is None
+            or current.get("configured_transport") != "acp"
+            or len(workers) != 1
+            or workers[0]["configured_transport"] != "acp"
+            or session.get("provider") != workers[0]["provider"]
+            or session.get("transport") != "acp-adapter"
+            or type(workspace) is not str
+            or canonical_snapshot_hash({"project_root": workspace})
+            != snapshot["mission"]["project_scope_hash"]
+            or type(session.get("native_session_id")) is not str
+            or type(caps) is not dict
+            or any(
+                caps.get(name) is not True
+                for name in (
+                    "structured_sessions", "streaming_updates",
+                    "structured_tools", "permission_requests",
+                )
+            )
+            or caps.get("observable_terminal") is not False
+        ):
+            raise RecoveryError("durable recovery permission agent scope mismatch")
+        turns = [
+            item for item in state.get("protocol_turns", [])
+            if type(item) is dict and item.get("turn_id") == permission.get("turn_id")
+        ]
+        if (
+            len(turns) != 1
+            or turns[0].get("session_id") != session.get("session_id")
+            or turns[0].get("kind") != "prompt"
+            or turns[0].get("message_id") != current.get("dispatch_key")
+        ):
+            raise RecoveryError("durable recovery permission turn scope mismatch")
         permission_state = permission.get("status")
         for transition in state.get("protocol_state_transitions", []):
             if (
@@ -708,6 +763,7 @@ def recovery_facts_from_persisted_state(
         reply_state="none" if reply is None else reply["state"],  # type: ignore[arg-type]
         handoff_state="none" if handoff is None else handoff["state"],  # type: ignore[arg-type]
         permission_state=permission_state,  # type: ignore[arg-type]
+        configured_transport=configured_transport,  # type: ignore[arg-type]
         transport_state=transport_state,  # type: ignore[arg-type]
         snapshot_state=snapshot_state,  # type: ignore[arg-type]
         lineage_state=lineage_state,  # type: ignore[arg-type]

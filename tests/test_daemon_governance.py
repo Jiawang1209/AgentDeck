@@ -812,13 +812,17 @@ def test_production_takeover_and_return_control_are_preview_bound(tmp_path) -> N
     )
     assert projection["ownership_states"]["worker-a"] == "human_owned"
 
+    return_target = {
+        **target,
+        "reported_changes": {"summary": "no human changes", "paths": []},
+    }
     preview = apply_worker_ownership_request(
-        store, action="return_control", params=target, generation=8, now=NOW
+        store, action="return_control", params=return_target, generation=8, now=NOW
     )
     apply_worker_ownership_request(
         store,
         action="return_control",
-        params={**target, "preview_id": preview["preview_id"]},
+        params={**return_target, "preview_id": preview["preview_id"]},
         generation=8,
         now=NOW,
     )
@@ -835,6 +839,100 @@ def test_production_takeover_and_return_control_are_preview_bound(tmp_path) -> N
         persisted["conversation_state_transitions"],
     )
     assert projection["ownership_states"]["worker-a"] == "agentdeck_owned"
+
+
+def test_return_control_requires_exact_human_change_report_and_execution_rescan(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["conversation_sessions"] = [{
+        "conversation_id": "cvs_session1", "created_at": NOW.isoformat()
+    }]
+    state["conversation_state_transitions"] = [
+        {
+            "transition_id": "cst_created", "conversation_id": "cvs_session1",
+            "entity_type": "conversation", "entity_id": "cvs_session1",
+            "from_state": None, "to_state": "created", "reason": "started",
+            "created_at": NOW.isoformat(),
+        },
+        {
+            "transition_id": "cst_ready", "conversation_id": "cvs_session1",
+            "entity_type": "conversation", "entity_id": "cvs_session1",
+            "from_state": "created", "to_state": "ready", "reason": "ready",
+            "created_at": NOW.isoformat(),
+        },
+    ]
+    store.save(state)
+    target = {"agent_id": "worker-a"}
+    takeover = apply_worker_ownership_request(
+        store, action="takeover", params=target, generation=8, now=NOW
+    )
+    accepted = apply_worker_ownership_request(
+        store,
+        action="takeover",
+        params={**target, "preview_id": takeover["preview_id"]},
+        generation=8,
+        now=NOW,
+    )
+    assert accepted["baseline_id"].startswith("wob_")
+    assert store.load()["worker_takeover_baselines"][0]["state"] == "active"
+
+    (tmp_path / "human.txt").write_text("first\n", encoding="utf-8")
+    with pytest.raises(ServiceError, match="return requires reconciliation"):
+        apply_worker_ownership_request(
+            store,
+            action="return_control",
+            params={
+                **target,
+                "reported_changes": {"summary": "wrong", "paths": []},
+            },
+            generation=8,
+            now=NOW,
+        )
+    report = {"summary": "created human.txt", "paths": ["human.txt"]}
+    preview = apply_worker_ownership_request(
+        store,
+        action="return_control",
+        params={**target, "reported_changes": report},
+        generation=8,
+        now=NOW,
+    )
+    (tmp_path / "human.txt").write_text("changed again\n", encoding="utf-8")
+    with pytest.raises(ServiceError, match="confirmation failed"):
+        apply_worker_ownership_request(
+            store,
+            action="return_control",
+            params={
+                **target,
+                "reported_changes": report,
+                "preview_id": preview["preview_id"],
+            },
+            generation=8,
+            now=NOW,
+        )
+    assert store.load()["worker_takeover_baselines"][0]["state"] == "active"
+
+    preview = apply_worker_ownership_request(
+        store,
+        action="return_control",
+        params={**target, "reported_changes": report},
+        generation=8,
+        now=NOW,
+    )
+    result = apply_worker_ownership_request(
+        store,
+        action="return_control",
+        params={
+            **target,
+            "reported_changes": report,
+            "preview_id": preview["preview_id"],
+        },
+        generation=8,
+        now=NOW,
+    )
+    assert result["ownership"] == "agentdeck_owned"
+    assert store.load()["worker_takeover_baselines"][0]["state"] == "reconciled"
 
 
 def test_production_reroute_applies_only_before_attempt_creation(tmp_path) -> None:

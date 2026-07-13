@@ -42,3 +42,31 @@ Offline ProjectView uses the same pure current-lease predicate without writing:
 only a strictly parsed active-namespace lease with an aware future expiry sets
 `controller_present=true`; expired, terminal, naive, and malformed facts are
 false.
+
+## Governed Worker authority
+
+Daemon Worker mutations remain two-call preview/confirm operations and are
+serialized by the project service owner. A confirmed ACP permission is only a
+human policy decision: immediately before returning an ACP `allow_once`, the
+daemon revalidates the exact Mission attempt, ACP session/turn, permission
+binding, frozen project/action scope, permission policy, and runtime ownership.
+An out-of-scope target, unsupported tool kind, human-owned Worker, stale turn,
+or mismatched `acp` attempt / `acp-adapter` session is denied without granting
+the effect. The resulting gate decision is durably auditable.
+
+`worker.takeover` records a bounded baseline for the exact controller
+generation: ACP session/turn lineage, artifact lineage, and a content-hashed
+project worktree manifest (excluding daemon-owned `.agentdeck/` and Git
+metadata). `worker.return-control` additionally requires bounded
+`reported_changes` (`summary` plus exact changed relative paths), unchanged
+session/artifact lineage, a safe boundary, and an execution-time rescan matching
+the preview. Missing reports, drift, escaping symlinks, changed authority, or a
+replayed preview fail closed. Successful return consumes the active baseline;
+the report and reconciliation remain durable audit facts.
+
+Startup recovery is transport-derived. A tmux attempt with a durable submitted
+receipt may remain observable and wait for its Worker. An ACP attempt in
+`submitted` or `running` cannot preserve its live process connection across a
+daemon restart, so it is classified `ambiguous` before permission handling.
+That persisted recovery blocker is also consumed by the live scheduler; later
+permission approval cannot reinterpret the disconnected attempt as resumable.

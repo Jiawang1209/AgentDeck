@@ -1434,6 +1434,7 @@ class StateStore:
                 "mission_permission_bindings": [],
                 "governance_previews": [],
                 "mission_transport_reroutes": [],
+                "worker_takeover_baselines": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -2062,11 +2063,38 @@ class StateStore:
                 "conversation_id": conversation_id,
                 "ownership": ownership,
                 "safe_boundary": safe,
-                "reconciled": safe,
+                "reconciled": facts.get("reconciled"),
                 "active_turn_ids": active_turn_ids,
                 "pending_permission_ids": pending_permission_ids,
                 "active_attempt_ids": active_attempt_ids,
+                "baseline_id": facts.get("baseline_id"),
+                "reconciliation": facts.get("reconciliation"),
+                "changed_paths": facts.get("changed_paths"),
+                "reported_changes": facts.get("reported_changes"),
             }
+            reconciliation = current_facts["reconciliation"]
+            if type(reconciliation) is not dict or set(reconciliation) != {
+                "session_digest", "artifact_digest", "worktree_digest",
+                "worktree_manifest",
+            }:
+                raise ValueError("Worker reconciliation facts are invalid")
+            baselines = state.setdefault("worker_takeover_baselines", [])
+            active_baselines = [
+                item for item in baselines
+                if type(item) is dict and item.get("agent_id") == agent_id
+                and item.get("state") == "active"
+            ]
+            if action == "takeover":
+                if active_baselines or current_facts["baseline_id"] is not None:
+                    raise ValueError("Worker reconciliation baseline conflicts")
+            else:
+                if (
+                    len(active_baselines) != 1
+                    or current_facts["baseline_id"]
+                    != active_baselines[0].get("baseline_id")
+                    or current_facts["reconciled"] is not True
+                ):
+                    raise ValueError("Worker reconciliation baseline is invalid")
             if dict(facts) != current_facts:
                 raise PreviewBindingError("preview state drift")
             previews = state.setdefault("governance_previews", [])
@@ -2130,6 +2158,22 @@ class StateStore:
                 if type(item) is dict and item.get("preview_id") == preview_id
             )
             previews[preview_index] = consumed
+            if action == "takeover":
+                baseline = {
+                    "baseline_id": new_id("wob"),
+                    "agent_id": agent_id,
+                    "generation": generation,
+                    "state": "active",
+                    "created_at": created_at,
+                    **copy.deepcopy(reconciliation),
+                }
+                baselines.append(baseline)
+            else:
+                active_baselines[0]["state"] = "reconciled"
+                active_baselines[0]["reconciled_at"] = created_at
+                active_baselines[0]["reported_changes"] = copy.deepcopy(
+                    current_facts["reported_changes"]
+                )
             event = EventRecord.create(
                 "worker_ownership_changed",
                 {
@@ -2157,6 +2201,10 @@ class StateStore:
                 "agent_id": agent_id,
                 "ownership": target,
                 "preview_id": preview_id,
+                "baseline_id": (
+                    baseline["baseline_id"] if action == "takeover"
+                    else current_facts["baseline_id"]
+                ),
             }
 
     def record_transport_reroute_with_governance_preview(
@@ -3091,12 +3139,92 @@ class StateStore:
             if len(matches) != 1:
                 raise ValueError("mission permission attempt reference is invalid")
             attempt = matches[0]
+            if (
+                attempt["configured_transport"] != "acp"
+                or attempt["state"] not in {"admitting", "submitted", "running"}
+                or type(attempt["admission_claim_id"]) is not str
+                or not attempt["admission_claim_id"]
+            ):
+                raise ValueError("mission permission requires an active claimed ACP attempt")
+            missions = [
+                item for item in state.setdefault("missions", [])
+                if type(item) is dict and item.get("mission_id") == attempt["mission_id"]
+            ]
+            if len(missions) != 1:
+                raise ValueError("mission permission Mission is invalid")
+            snapshot = validate_execution_snapshot(missions[0].get("execution_snapshot"))
+            if missions[0].get("snapshot_hash") != snapshot["execution_hash"]:
+                raise ValueError("mission permission snapshot drift")
+            workers = [
+                item for item in snapshot["workers"]
+                if item["agent_id"] == attempt["agent_id"]
+            ]
+            steps = [
+                item for item in snapshot["mission"]["steps"]
+                if item["step_id"] == attempt["step_id"]
+                and item["agent_id"] == attempt["agent_id"]
+            ]
+            if (
+                len(workers) != 1
+                or len(steps) != 1
+                or workers[0]["configured_transport"] != "acp"
+                or workers[0]["provider"] == ""
+                or snapshot["mission"]["project_scope_hash"]
+                != canonical_snapshot_hash({"project_root": str(Path(self.root).resolve())})
+            ):
+                raise ValueError("mission permission frozen ACP scope is invalid")
             sessions = [
-                item for item in state.setdefault("agent_sessions", [])
+                _validate_agent_session_record(item)
+                for item in state.setdefault("agent_sessions", [])
                 if item.get("session_id") == session_id
             ]
-            if len(sessions) != 1 or sessions[0].get("agent_id") != attempt["agent_id"]:
+            if len(sessions) != 1:
                 raise ValueError("mission permission agent scope mismatch")
+            session = sessions[0]
+            caps = session["capabilities"]
+            protocol_states = self._validate_protocol_transition_history(state)
+            if (
+                session["agent_id"] != attempt["agent_id"]
+                or session["provider"] != workers[0]["provider"]
+                or session["transport"] != "acp-adapter"
+                or Path(session["workspace"]).resolve(strict=False)
+                != Path(self.root).resolve()
+                or session["native_session_id"] is None
+                or any(
+                    caps[name] is not True
+                    for name in (
+                        "structured_sessions", "streaming_updates",
+                        "structured_tools", "permission_requests",
+                    )
+                )
+                or caps["observable_terminal"] is not False
+                or protocol_states.get(("session", session_id), session["state"])
+                != "busy"
+            ):
+                raise ValueError("mission permission agent scope mismatch")
+            turns = [
+                item for item in state.setdefault("protocol_turns", [])
+                if type(item) is dict and item.get("turn_id") == turn_id
+            ]
+            if (
+                len(turns) != 1
+                or turns[0].get("session_id") != session_id
+                or turns[0].get("kind") != "prompt"
+                or turns[0].get("message_id") != attempt["dispatch_key"]
+                or protocol_states.get(("turn", turn_id), turns[0].get("state"))
+                not in {"submitted", "streaming", "waiting_permission"}
+            ):
+                raise ValueError("mission permission turn lineage is invalid")
+            bounded = (tool_name, target, risk, tool_call_id)
+            if (
+                tool_name not in {"read", "search", "edit", "delete", "move", "execute"}
+                or any(type(value) is not str or not value.strip() for value in bounded)
+                or len(tool_name.encode("utf-8")) > 64
+                or len(target.encode("utf-8")) > 1024
+                or len(risk.encode("utf-8")) > 64
+                or len(tool_call_id.encode("utf-8")) > 256
+            ):
+                raise ValueError("mission ACP permission fields are invalid")
             bindings = state.setdefault("mission_permission_bindings", [])
             validated = [validate_mission_permission_binding(item) for item in bindings]
             existing_updates = [
@@ -3174,6 +3302,180 @@ class StateStore:
             )
             self._atomic_save(state)
             return {**result, "binding": binding}
+
+    def authorize_mission_acp_effect(
+        self, *, attempt_id: str, permission_id: str
+    ) -> dict[str, object]:
+        """Rebuild and audit all three effect gates at the ACP decision edge."""
+        from .conversation.lifecycle import validate_conversation_history
+        from .daemon.governance import authorize_effect
+
+        tool_actions = {
+            "read": "worker_task",
+            "search": "worker_task",
+            "edit": "worker_task",
+            "delete": "worker_task",
+            "move": "worker_task",
+            "execute": "declared_local_verification",
+        }
+        with self._protocol_mutation_lock():
+            state = self.load()
+            self._validated_recovery_snapshot_locked(state)
+            attempts = [
+                _validate_mission_attempt_record(item)
+                for item in state.setdefault("mission_attempts", [])
+            ]
+            attempt_matches = [
+                item for item in attempts if item["attempt_id"] == attempt_id
+            ]
+            if len(attempt_matches) != 1:
+                raise ValueError("ACP effect attempt is invalid")
+            attempt = attempt_matches[0]
+            missions = [
+                item for item in state.setdefault("missions", [])
+                if type(item) is dict and item.get("mission_id") == attempt["mission_id"]
+            ]
+            if len(missions) != 1:
+                raise ValueError("ACP effect Mission is invalid")
+            mission = missions[0]
+            snapshot = validate_execution_snapshot(mission.get("execution_snapshot"))
+            if mission.get("snapshot_hash") != snapshot["execution_hash"]:
+                raise ValueError("ACP effect snapshot drift")
+            step_matches = [
+                item for item in snapshot["mission"]["steps"]
+                if item["step_id"] == attempt["step_id"]
+                and item["agent_id"] == attempt["agent_id"]
+            ]
+            worker_matches = [
+                item for item in snapshot["workers"]
+                if item["agent_id"] == attempt["agent_id"]
+            ]
+            if len(step_matches) != 1 or len(worker_matches) != 1:
+                raise ValueError("ACP effect frozen Worker scope is invalid")
+            worker = worker_matches[0]
+            permission_matches = [
+                _validate_permission_record(item)
+                for item in state.setdefault("permission_requests", [])
+                if type(item) is dict and item.get("permission_id") == permission_id
+            ]
+            bindings = [
+                item for item in state.setdefault("mission_permission_bindings", [])
+                if type(item) is dict
+                and item.get("attempt_id") == attempt_id
+                and item.get("permission_id") == permission_id
+            ]
+            if len(permission_matches) != 1 or len(bindings) != 1:
+                raise ValueError("ACP effect permission lineage is invalid")
+            permission = permission_matches[0]
+            protocol_states = self._validate_protocol_transition_history(state)
+            permission_state = protocol_states.get(
+                ("permission", permission_id), permission["status"]
+            )
+            sessions = [
+                _validate_agent_session_record(item)
+                for item in state.setdefault("agent_sessions", [])
+                if type(item) is dict and item.get("session_id") == permission["session_id"]
+            ]
+            if len(sessions) != 1:
+                raise ValueError("ACP effect session lineage is invalid")
+            session = sessions[0]
+            turns = [
+                item for item in state.setdefault("protocol_turns", [])
+                if type(item) is dict and item.get("turn_id") == permission["turn_id"]
+            ]
+            if (
+                len(turns) != 1
+                or turns[0].get("session_id") != session["session_id"]
+                or turns[0].get("kind") != "prompt"
+                or turns[0].get("message_id") != attempt["dispatch_key"]
+            ):
+                raise ValueError("ACP effect turn lineage is invalid")
+            turn = turns[0]
+            ownership = validate_conversation_history(
+                {
+                    key: state.setdefault(key, [])
+                    for key in (
+                        "conversation_sessions", "conversation_turns",
+                        "conversation_preview_bindings",
+                    )
+                },
+                state.setdefault("conversation_state_transitions", []),
+            )["ownership_states"].get(attempt["agent_id"], "agentdeck_owned")
+            raw_target = permission["target"]
+            target_without_line = re.sub(r":\d+$", "", raw_target)
+            root = Path(self.root).resolve()
+            normalized_target: str | None = None
+            try:
+                target_path = Path(target_without_line).expanduser()
+                resolved = (
+                    target_path.resolve(strict=False)
+                    if target_path.is_absolute()
+                    else (root / target_path).resolve(strict=False)
+                )
+                normalized_target = resolved.relative_to(root).as_posix()
+                if not normalized_target or normalized_target.startswith(".agentdeck/"):
+                    normalized_target = None
+            except (OSError, ValueError):
+                normalized_target = None
+            action_class = tool_actions.get(permission["tool_name"])
+            effect = {
+                "mission_id": attempt["mission_id"],
+                "step_id": attempt["step_id"],
+                "agent_id": attempt["agent_id"],
+                "action_class": action_class or "unsupported",
+                "transport": attempt["configured_transport"],
+                "target": normalized_target or "outside_frozen_scope",
+            }
+            frozen = {
+                "mission_id": attempt["mission_id"],
+                "steps": [{
+                    "step_id": attempt["step_id"],
+                    "agent_id": attempt["agent_id"],
+                    "transport": worker["configured_transport"],
+                }],
+                "allowed_action_classes": snapshot["mission"]["action_classes"],
+                "allowed_targets": (
+                    [normalized_target] if normalized_target is not None else []
+                ),
+            }
+            policy = {
+                "allowed_action_classes": snapshot["mission"]["action_classes"],
+                "permission_state": permission_state,
+            }
+            runtime = {
+                "owner": ownership,
+                "ready": (
+                    attempt["state"] in {"admitting", "submitted", "running"}
+                    and session["agent_id"] == attempt["agent_id"]
+                    and session["transport"] == "acp-adapter"
+                    and protocol_states.get(("session", session["session_id"]), session["state"])
+                    == "busy"
+                    and protocol_states.get(("turn", turn["turn_id"]), turn["state"])
+                    == "waiting_permission"
+                ),
+                "effective_transport": attempt["configured_transport"],
+            }
+            decision = authorize_effect(
+                effect, snapshot=frozen, policy=policy, runtime=runtime
+            )
+            event_payload = {
+                "attempt_id": attempt_id,
+                "permission_id": permission_id,
+                "allowed": decision.allowed,
+                "gate": decision.gate,
+                "blocker": decision.blocker,
+                "effect_hash": canonical_snapshot_hash(effect),
+            }
+            self._append_recovery_audit_locked(
+                state, "mission_acp_effect_authorized", event_payload
+            )
+            self._atomic_save(state)
+            return {
+                "allowed": decision.allowed,
+                "gate": decision.gate,
+                "blocker": decision.blocker,
+                "effect": effect,
+            }
 
     def agent_session_by_id(self, session_id: str) -> dict[str, Any]:
         state = self.load()

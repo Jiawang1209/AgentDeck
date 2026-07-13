@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
+import hashlib
 import inspect
 import math
 from pathlib import Path
@@ -29,6 +30,23 @@ class ServiceError(RuntimeError):
 class ServiceServer(Protocol):
     async def start(self) -> None: ...
     async def close(self) -> None: ...
+
+
+def authorize_mission_acp_effect(
+    store: object, *, attempt_id: str, permission_id: str
+) -> dict[str, object]:
+    """Invoke the StateStore's atomic three-gate ACP effect decision."""
+    if not callable(getattr(store, "authorize_mission_acp_effect", None)):
+        raise ServiceError("ACP effect authority store is invalid")
+    try:
+        result = store.authorize_mission_acp_effect(
+            attempt_id=attempt_id, permission_id=permission_id
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise ServiceError("ACP effect authority is invalid") from None
+    if type(result) is not dict or result.get("allowed") not in {True, False}:
+        raise ServiceError("ACP effect authority result is invalid")
+    return result
 
 
 def _canonical_transport_result(
@@ -492,7 +510,108 @@ def _worker_ownership_state(state: Mapping[str, object], agent_id: str) -> str:
     return str(projection["ownership_states"].get(agent_id, "agentdeck_owned"))
 
 
-def _worker_ownership_facts(store: object, agent_id: str) -> dict[str, object]:
+def _bounded_worktree_snapshot(root: Path) -> dict[str, object]:
+    """Hash the human-editable tree without reading daemon-owned state."""
+    manifest: dict[str, str] = {}
+    total_bytes = 0
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if relative.parts and relative.parts[0] in {".agentdeck", ".git"}:
+            continue
+        if path.is_symlink():
+            resolved = path.resolve(strict=False)
+            try:
+                resolved.relative_to(root.resolve())
+            except ValueError:
+                raise ServiceError("Worker reconciliation found an escaping symlink") from None
+            manifest[str(relative)] = f"symlink:{path.readlink()}"
+            continue
+        if path.is_dir():
+            continue
+        if not path.is_file() or len(manifest) >= 4096:
+            raise ServiceError("Worker reconciliation worktree is unsupported")
+        data = path.read_bytes()
+        total_bytes += len(data)
+        if total_bytes > 32 * 1024 * 1024:
+            raise ServiceError("Worker reconciliation worktree exceeds bounded limits")
+        manifest[str(relative)] = hashlib.sha256(data).hexdigest()
+    digest = hashlib.sha256(
+        repr(sorted(manifest.items())).encode("utf-8")
+    ).hexdigest()
+    return {"digest": digest, "manifest": manifest}
+
+
+def _worker_reconciliation_snapshot(
+    store: object, state: Mapping[str, object], agent_id: str
+) -> dict[str, object]:
+    root = Path(store.root).resolve()
+    protocol = store.validated_protocol_state()
+    current_states = store._validate_protocol_transition_history(protocol)
+    sessions = sorted(
+        (
+            {
+                "session_id": item.get("session_id"),
+                "provider": item.get("provider"),
+                "transport": item.get("transport"),
+                "workspace": item.get("workspace"),
+                "state": current_states.get(
+                    ("session", item.get("session_id")), item.get("state")
+                ),
+            }
+            for item in protocol.get("agent_sessions", [])
+            if type(item) is dict and item.get("agent_id") == agent_id
+        ),
+        key=lambda item: str(item["session_id"]),
+    )
+    turns = sorted(
+        (
+            {
+                "turn_id": item.get("turn_id"),
+                "session_id": item.get("session_id"),
+                "message_id": item.get("message_id"),
+                "kind": item.get("kind"),
+                "state": current_states.get(
+                    ("turn", item.get("turn_id")), item.get("state")
+                ),
+            }
+            for item in protocol.get("protocol_turns", [])
+            if type(item) is dict
+            and any(item.get("session_id") == session["session_id"] for session in sessions)
+        ),
+        key=lambda item: str(item["turn_id"]),
+    )
+    artifacts = sorted(
+        (
+            {
+                "attempt_id": handoff.get("attempt_id"),
+                "artifacts": handoff.get("canonical_handoff", {}).get("artifacts", []),
+            }
+            for handoff in state.get("mission_handoffs", [])
+            if type(handoff) is dict
+            and any(
+                type(attempt) is dict
+                and attempt.get("attempt_id") == handoff.get("attempt_id")
+                and attempt.get("agent_id") == agent_id
+                for attempt in state.get("mission_attempts", [])
+            )
+        ),
+        key=lambda item: str(item["attempt_id"]),
+    )
+    worktree = _bounded_worktree_snapshot(root)
+    return {
+        "session_digest": hashlib.sha256(repr((sessions, turns)).encode()).hexdigest(),
+        "artifact_digest": hashlib.sha256(repr(artifacts).encode()).hexdigest(),
+        "worktree_digest": worktree["digest"],
+        "worktree_manifest": worktree["manifest"],
+    }
+
+
+def _worker_ownership_facts(
+    store: object,
+    agent_id: str,
+    *,
+    reported_changes: Mapping[str, object] | None = None,
+) -> dict[str, object]:
     if not callable(getattr(store, "load", None)):
         raise ServiceError("Worker ownership store is invalid")
     state = store.load()
@@ -545,15 +664,65 @@ def _worker_ownership_facts(store: object, agent_id: str) -> dict[str, object]:
         and item.get("state") in {"prepared", "admitting", "submitted", "running"}
     )
     safe = not (active_turn_ids or pending_permission_ids or active_attempt_ids)
+    reconciliation = _worker_reconciliation_snapshot(store, state, agent_id)
+    baselines = [
+        item for item in state.get("worker_takeover_baselines", [])
+        if type(item) is dict and item.get("agent_id") == agent_id
+        and item.get("state") == "active"
+    ]
+    if len(baselines) > 1:
+        raise ServiceError("Worker reconciliation baseline is invalid")
+    reconciled = False
+    changed_paths: list[str] = []
+    baseline_id = None
+    if ownership == "agentdeck_owned":
+        reconciled = safe
+    elif baselines:
+        baseline = baselines[0]
+        baseline_id = baseline.get("baseline_id")
+        old_manifest = baseline.get("worktree_manifest")
+        current_manifest = reconciliation["worktree_manifest"]
+        if type(old_manifest) is not dict or type(current_manifest) is not dict:
+            raise ServiceError("Worker reconciliation baseline is invalid")
+        changed_paths = sorted(
+            key for key in set(old_manifest) | set(current_manifest)
+            if old_manifest.get(key) != current_manifest.get(key)
+        )
+        report_paths = (
+            reported_changes.get("paths") if reported_changes is not None else None
+        )
+        report_summary = (
+            reported_changes.get("summary") if reported_changes is not None else None
+        )
+        report_valid = (
+            type(report_paths) is list
+            and len(report_paths) <= 256
+            and all(type(item) is str and item for item in report_paths)
+            and len(report_paths) == len(set(report_paths))
+            and sorted(set(report_paths)) == changed_paths
+            and type(report_summary) is str
+            and len(report_summary.encode("utf-8")) <= 4096
+            and (not changed_paths or bool(report_summary.strip()))
+        )
+        reconciled = bool(
+            safe
+            and report_valid
+            and reconciliation["session_digest"] == baseline.get("session_digest")
+            and reconciliation["artifact_digest"] == baseline.get("artifact_digest")
+        )
     return {
         "agent_id": agent_id,
         "conversation_id": conversation_id,
         "ownership": ownership,
         "safe_boundary": safe,
-        "reconciled": safe,
+        "reconciled": reconciled,
         "active_turn_ids": active_turn_ids,
         "pending_permission_ids": pending_permission_ids,
         "active_attempt_ids": active_attempt_ids,
+        "baseline_id": baseline_id,
+        "reconciliation": reconciliation,
+        "changed_paths": changed_paths,
+        "reported_changes": None if reported_changes is None else dict(reported_changes),
     }
 
 
@@ -569,15 +738,22 @@ def apply_worker_ownership_request(
 
     if action not in {"takeover", "return_control"}:
         raise ServiceError("Worker ownership action is invalid")
-    if type(params) is not dict or set(params) not in (
-        {"agent_id"},
-        {"agent_id", "preview_id"},
-    ):
+    allowed = {"agent_id", "preview_id", "reported_changes"}
+    if type(params) is not dict or not set(params).issubset(allowed) or "agent_id" not in params:
         raise ServiceError("Worker ownership request is invalid")
     agent_id = params.get("agent_id")
     if type(agent_id) is not str or not agent_id:
         raise ServiceError("Worker ownership request is invalid")
-    facts = _worker_ownership_facts(store, agent_id)
+    reported_changes = params.get("reported_changes")
+    if action == "takeover" and reported_changes is not None:
+        raise ServiceError("Worker ownership request is invalid")
+    if reported_changes is not None and type(reported_changes) is not dict:
+        raise ServiceError("Worker ownership request is invalid")
+    facts = _worker_ownership_facts(
+        store,
+        agent_id,
+        reported_changes=reported_changes,  # type: ignore[arg-type]
+    )
     gate = governance_transition_gate(action, facts)
     if not gate.allowed:
         raise ServiceError(gate.blocker or "Worker ownership change is blocked")
@@ -760,6 +936,27 @@ def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
         step is None or current.get("step_id") != step.get("step_id")
     ):
         current = None
+    recovery_blocker = None
+    recovery_matches = [
+        item for item in state.get("recovery_decisions", [])
+        if isinstance(item, dict)
+        and item.get("mission_id") == mission["mission_id"]
+        and item.get("attempt_id") == (
+            None if current is None else current.get("attempt_id")
+        )
+    ]
+    if len(recovery_matches) > 1:
+        raise ServiceError("scheduler recovery decision is invalid")
+    if (
+        recovery_matches
+        and recovery_matches[0].get("classification") == "ambiguous"
+        and recovery_matches[0].get("reason")
+        == "ACP Worker connection was lost across daemon restart"
+    ):
+        reason = recovery_matches[0].get("reason")
+        if type(reason) is not str or not reason:
+            raise ServiceError("scheduler recovery decision is invalid")
+        recovery_blocker = reason
     replies = [
         item for item in state.get("mission_worker_replies", [])
         if isinstance(item, dict) and current is not None
@@ -852,7 +1049,7 @@ def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
         lineage_state="valid",
         ownership_state=ownership_state,
         active_attempt_count=len(active),
-        blocker=mission["daemon_admission"].get("blocker"),
+        blocker=recovery_blocker or mission["daemon_admission"].get("blocker"),
     )
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from acp import schema
 
 from agentdeck.daemon.recovery import (
     RecoveryDecision,
@@ -22,6 +23,7 @@ from agentdeck.daemon.service import scheduler_facts_from_store
 from agentdeck.daemon.service import (
     ProjectDaemonService,
     apply_permission_decision_request,
+    authorize_mission_acp_effect,
 )
 from agentdeck.cli import _DaemonAcpWorkerSink
 from agentdeck.models import AgentSpec
@@ -46,7 +48,9 @@ def compact_handoff(token: str) -> dict[str, object]:
     }
 
 
-def frozen_snapshot(mission_id: str = MISSION_ID) -> dict[str, object]:
+def frozen_snapshot(
+    mission_id: str = MISSION_ID, *, project_root: Path | None = None
+) -> dict[str, object]:
     digest = "sha256:" + "a" * 64
     mission = {
         "mission_id": mission_id,
@@ -71,7 +75,11 @@ def frozen_snapshot(mission_id: str = MISSION_ID) -> dict[str, object]:
                 "task_hash": digest,
             },
         ],
-        "project_scope_hash": digest,
+        "project_scope_hash": (
+            canonical_snapshot_hash({"project_root": str(project_root.resolve())})
+            if project_root is not None
+            else digest
+        ),
         "action_classes": ["worker_task", "declared_local_verification"],
         "skill_provenance": [],
         "memory_provenance": [],
@@ -138,6 +146,7 @@ def facts(**overrides: object) -> RecoveryFacts:
         "reply_state": "none",
         "handoff_state": "none",
         "permission_state": "none",
+        "configured_transport": "tmux",
         "transport_state": "ready",
         "snapshot_state": "valid",
         "lineage_state": "valid",
@@ -275,6 +284,23 @@ def test_unknown_admission_outcome_wins_over_pending_permission() -> None:
     assert decision.reason == "Worker admission outcome is unknown"
 
 
+@pytest.mark.parametrize("attempt_state", ["submitted", "running"])
+def test_acp_active_attempt_is_fail_closed_before_permission_after_restart(
+    attempt_state: str,
+) -> None:
+    decision = reconcile_gate(
+        facts(
+            configured_transport="acp",
+            attempt_state=attempt_state,
+            receipt_state="recorded",
+            permission_state="pending",
+        )
+    )
+    assert decision.classification == "ambiguous"
+    assert decision.next_transition is None
+    assert "ACP Worker connection" in decision.reason
+
+
 def test_terminal_mission_with_active_unknown_effect_is_not_declared_terminal() -> None:
     decision = reconcile_gate(
         facts(
@@ -390,7 +416,7 @@ class RecordingStore(StateStore):
 
 def _seed_missions(store: StateStore) -> None:
     state = store.load()
-    snapshot = frozen_snapshot()
+    snapshot = frozen_snapshot(project_root=store.root)
     state["missions"] = [
         {
             "mission_id": MISSION_ID,
@@ -474,17 +500,17 @@ def test_startup_flushes_outboxes_then_atomically_persists_before_enable(
         "persist_recovery",
         "enable_scheduler",
     ]
-    assert result[0]["classification"] == "resumable"
+    assert result[0]["classification"] == "ambiguous"
     state = store.load()
     assert state["recovery_decisions"] == result
     event = state["protocol_event_outbox"][-1]
     assert event["event_type"] == "mission_recovery_classified"
     assert event["payload"] == {
         "attempt_id": ATTEMPT_ID,
-        "classification": "resumable",
+        "classification": "ambiguous",
         "mission_id": MISSION_ID,
-        "next_transition": "await_worker",
-        "reason": "submitted Worker receipt is waiting for a reply",
+        "next_transition": None,
+        "reason": "ACP Worker connection was lost across daemon restart",
     }
 
 
@@ -575,7 +601,8 @@ def test_reconcile_gate_and_startup_do_not_call_runtime_surfaces(
     for name in ("subprocess", "socket", "time"):
         monkeypatch.setitem(__import__("sys").modules, name, forbidden)
     result = reconcile_startup(store, enable_scheduler=lambda: None)
-    assert result[0]["next_transition"] == "await_worker"
+    assert result[0]["classification"] == "ambiguous"
+    assert result[0]["next_transition"] is None
 
 
 def test_recovery_persistence_rejects_malformed_existing_state_zero_write(
@@ -610,7 +637,8 @@ def test_recovery_event_and_state_are_one_atomic_save(
     monkeypatch.setattr(store, "_atomic_save", capture)
     _snapshot, token = store.load_recovery_snapshot()
     store.commit_recovery_decisions(
-        [reconcile_gate(facts())], expected_recovery_token=token
+        [reconcile_gate(facts(configured_transport="acp"))],
+        expected_recovery_token=token,
     )
     assert len(saves) == 1
     assert saves[0]["recovery_decisions"]
@@ -946,9 +974,16 @@ def test_controlled_permission_binding_tracks_authoritative_status_transitions(
     _seed_missions(store)
     capabilities = TransportCapabilities(True, True, True, True, True, False)
     session = store.record_agent_session(
-        "worker", "codex", "acp", "native", str(tmp_path), capabilities
+        "worker", "codex", "acp-adapter", "native", str(tmp_path), capabilities
     )
-    turn = store.record_protocol_turn(session["session_id"], "msg_permission")
+    store.record_protocol_transition(
+        "session", session["session_id"], "created", "ready", "ready", {}
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "ready", "busy", "prompt", {}
+    )
+    dispatch_key = store.load()["mission_attempts"][0]["dispatch_key"]
+    turn = store.record_protocol_turn(session["session_id"], dispatch_key)
     permission = store.record_permission_request(
         session["session_id"], turn["turn_id"], "shell", str(tmp_path), "high"
     )
@@ -957,7 +992,7 @@ def test_controlled_permission_binding_tracks_authoritative_status_transitions(
     )
     assert binding["mission_id"] == MISSION_ID
     waiting = reconcile_startup(store, enable_scheduler=lambda: None)
-    assert waiting[0]["classification"] == "waiting_human"
+    assert waiting[0]["classification"] == "ambiguous"
 
     store.record_protocol_transition(
         "permission",
@@ -968,8 +1003,8 @@ def test_controlled_permission_binding_tracks_authoritative_status_transitions(
         {},
     )
     resumed = reconcile_startup(store, enable_scheduler=lambda: None)
-    assert resumed[0]["classification"] == "resumable"
-    assert resumed[0]["next_transition"] == "await_worker"
+    assert resumed[0]["classification"] == "ambiguous"
+    assert resumed[0]["next_transition"] is None
 
 
 def test_mission_acp_permission_and_attempt_binding_commit_in_one_save(
@@ -979,9 +1014,16 @@ def test_mission_acp_permission_and_attempt_binding_commit_in_one_save(
     _seed_missions(store)
     capabilities = TransportCapabilities(True, True, True, True, True, False)
     session = store.record_agent_session(
-        "worker", "codex", "acp", "native", str(tmp_path), capabilities
+        "worker", "codex", "acp-adapter", "native", str(tmp_path), capabilities
     )
-    turn = store.record_protocol_turn(session["session_id"], "msg_permission")
+    store.record_protocol_transition(
+        "session", session["session_id"], "created", "ready", "ready", {}
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "ready", "busy", "prompt", {}
+    )
+    dispatch_key = store.load()["mission_attempts"][0]["dispatch_key"]
+    turn = store.record_protocol_turn(session["session_id"], dispatch_key)
     store.record_protocol_transition(
         "turn", turn["turn_id"], "created", "submitted", "submitted", {}
     )
@@ -998,7 +1040,7 @@ def test_mission_acp_permission_and_attempt_binding_commit_in_one_save(
         session_id=session["session_id"],
         turn_id=turn["turn_id"],
         sequence=0,
-        tool_name="shell",
+        tool_name="edit",
         target=str(tmp_path),
         risk="high",
         tool_call_id="call-1",
@@ -1015,7 +1057,7 @@ def test_mission_acp_permission_and_attempt_binding_commit_in_one_save(
         session_id=session["session_id"],
         turn_id=turn["turn_id"],
         sequence=0,
-        tool_name="shell",
+        tool_name="edit",
         target=str(tmp_path),
         risk="high",
         tool_call_id="call-1",
@@ -1028,7 +1070,7 @@ def test_mission_acp_permission_and_attempt_binding_commit_in_one_save(
             session_id=session["session_id"],
             turn_id=turn["turn_id"],
             sequence=0,
-            tool_name="shell",
+            tool_name="edit",
             target="different-target",
             risk="high",
             tool_call_id="call-1",
@@ -1043,9 +1085,16 @@ def test_mission_acp_permission_atomic_save_failure_is_full_tree_zero_write(
     _seed_missions(store)
     capabilities = TransportCapabilities(True, True, True, True, True, False)
     session = store.record_agent_session(
-        "worker", "codex", "acp", "native", str(tmp_path), capabilities
+        "worker", "codex", "acp-adapter", "native", str(tmp_path), capabilities
     )
-    turn = store.record_protocol_turn(session["session_id"], "msg_permission")
+    store.record_protocol_transition(
+        "session", session["session_id"], "created", "ready", "ready", {}
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "ready", "busy", "prompt", {}
+    )
+    dispatch_key = store.load()["mission_attempts"][0]["dispatch_key"]
+    turn = store.record_protocol_turn(session["session_id"], dispatch_key)
     store.record_protocol_transition(
         "turn", turn["turn_id"], "created", "submitted", "submitted", {}
     )
@@ -1069,12 +1118,133 @@ def test_mission_acp_permission_atomic_save_failure_is_full_tree_zero_write(
             session_id=session["session_id"],
             turn_id=turn["turn_id"],
             sequence=0,
-            tool_name="shell",
+            tool_name="edit",
             target=str(tmp_path),
             risk="high",
             tool_call_id="call-1",
         )
     assert tree() == before
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "attempt_transport",
+        "attempt_state",
+        "session_transport",
+        "session_workspace",
+        "session_capability",
+        "turn_dispatch",
+        "turn_kind",
+        "oversize_target",
+    ],
+)
+def test_mission_acp_permission_rejects_corrupt_binding_lineage_zero_write(
+    tmp_path: Path, corruption: str
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "worker", "codex", "acp-adapter", "native", str(tmp_path), capabilities
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "created", "ready", "ready", {}
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "ready", "busy", "prompt", {}
+    )
+    dispatch_key = store.load()["mission_attempts"][0]["dispatch_key"]
+    turn = store.record_protocol_turn(session["session_id"], dispatch_key)
+    store.record_protocol_transition(
+        "turn", turn["turn_id"], "created", "submitted", "submitted", {}
+    )
+    state = store.load()
+    if corruption == "attempt_transport":
+        state["mission_attempts"][0]["configured_transport"] = "tmux"
+    elif corruption == "attempt_state":
+        state["mission_attempts"][0]["state"] = "succeeded"
+    elif corruption == "session_transport":
+        state["agent_sessions"][0]["transport"] = "tmux"
+    elif corruption == "session_workspace":
+        state["agent_sessions"][0]["workspace"] = str(tmp_path.parent)
+    elif corruption == "session_capability":
+        state["agent_sessions"][0]["capabilities"]["permission_requests"] = False
+    elif corruption == "turn_dispatch":
+        state["protocol_turns"][0]["message_id"] = "wrong-dispatch"
+    elif corruption == "turn_kind":
+        state["protocol_turns"][0]["kind"] = "load_replay"
+    store.save(state)
+    before = {
+        str(path.relative_to(tmp_path)): path.read_bytes()
+        for path in tmp_path.rglob("*") if path.is_file()
+    }
+    target = "x" * 2048 if corruption == "oversize_target" else "src/app.py"
+    with pytest.raises(ValueError, match="ACP permission|mission permission"):
+        store.record_mission_acp_permission_pending(
+            attempt_id=ATTEMPT_ID,
+            session_id=session["session_id"],
+            turn_id=turn["turn_id"],
+            sequence=0,
+            tool_name="edit",
+            target=target,
+            risk="high",
+            tool_call_id="call-1",
+        )
+    after = {
+        str(path.relative_to(tmp_path)): path.read_bytes()
+        for path in tmp_path.rglob("*") if path.is_file()
+    }
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    "corruption", ["session_transport", "session_workspace", "turn_dispatch"]
+)
+def test_startup_rejects_persisted_acp_permission_lineage_drift(
+    tmp_path: Path, corruption: str
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "worker", "codex", "acp-adapter", "native", str(tmp_path), capabilities
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "created", "ready", "ready", {}
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "ready", "busy", "prompt", {}
+    )
+    dispatch_key = store.load()["mission_attempts"][0]["dispatch_key"]
+    turn = store.record_protocol_turn(session["session_id"], dispatch_key)
+    store.record_protocol_transition(
+        "turn", turn["turn_id"], "created", "submitted", "submitted", {}
+    )
+    store.record_mission_acp_permission_pending(
+        attempt_id=ATTEMPT_ID,
+        session_id=session["session_id"],
+        turn_id=turn["turn_id"],
+        sequence=0,
+        tool_name="edit",
+        target="src/app.py",
+        risk="project_write",
+        tool_call_id="call-1",
+    )
+    state = store.load()
+    if corruption == "session_transport":
+        state["agent_sessions"][0]["transport"] = "tmux"
+    elif corruption == "session_workspace":
+        state["agent_sessions"][0]["workspace"] = str(tmp_path.parent)
+    else:
+        state["protocol_turns"][0]["message_id"] = "forged-dispatch"
+    store.save(state)
+    enabled: list[bool] = []
+
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
 
 
 def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
@@ -1143,10 +1313,15 @@ def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
                 [],
             )
             waiting = reconcile_startup(store, enable_scheduler=lambda: None)
-            assert waiting[0]["classification"] == "waiting_human"
+            assert waiting[0]["classification"] == "ambiguous"
             assert waiting[0]["next_transition"] is None
 
-            decision_task = asyncio.create_task(sink.decide(pending, []))
+            options = [
+                schema.PermissionOption(
+                    optionId="allow", name="Allow once", kind="allow_once"
+                )
+            ]
+            decision_task = asyncio.create_task(sink.decide(pending, options))
             await asyncio.sleep(0)
             now = datetime(2026, 7, 14, tzinfo=timezone.utc)
             preview = await service.submit_mutation(
@@ -1177,12 +1352,116 @@ def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
                 str(pending["permission_id"]), "approved"
             ) is True
             decision = await decision_task
-            assert decision.reason == "human_approved"
+            assert decision.option_id == "allow"
         finally:
             await service.close()
             await pumping
 
     asyncio.run(case())
+
+
+@pytest.mark.parametrize(
+    ("target", "human_owned", "allowed", "gate"),
+    [
+        ("src/app.py", False, True, None),
+        ("/outside/frozen/project", False, False, "frozen_scope"),
+        ("src/app.py", True, False, "runtime_ownership"),
+    ],
+)
+def test_approved_acp_permission_still_requires_real_effect_gates(
+    tmp_path: Path,
+    target: str,
+    human_owned: bool,
+    allowed: bool,
+    gate: str | None,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "worker", "codex", "acp-adapter", "native", str(tmp_path), capabilities
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "created", "ready", "ready", {}
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "ready", "busy", "prompt", {}
+    )
+    dispatch_key = store.load()["mission_attempts"][0]["dispatch_key"]
+    turn = store.record_protocol_turn(session["session_id"], dispatch_key)
+    store.record_protocol_transition(
+        "turn", turn["turn_id"], "created", "submitted", "submitted", {}
+    )
+    pending = store.record_mission_acp_permission_pending(
+        attempt_id=ATTEMPT_ID,
+        session_id=session["session_id"],
+        turn_id=turn["turn_id"],
+        sequence=0,
+        tool_name="edit",
+        target=target,
+        risk="project_write",
+        tool_call_id="call-1",
+    )
+    store.record_protocol_transition(
+        "permission",
+        pending["permission"]["permission_id"],
+        "pending",
+        "approved",
+        "human",
+        {},
+    )
+    if human_owned:
+        state = store.load()
+        state["conversation_sessions"] = [{
+            "conversation_id": "cvs_session1",
+            "created_at": "2026-07-13T01:00:00+00:00",
+        }]
+        state["conversation_state_transitions"] = [
+            {
+                "transition_id": "cst_created", "conversation_id": "cvs_session1",
+                "entity_type": "conversation", "entity_id": "cvs_session1",
+                "from_state": None, "to_state": "created", "reason": "started",
+                "created_at": "2026-07-13T01:00:00+00:00",
+            },
+            {
+                "transition_id": "cst_ready", "conversation_id": "cvs_session1",
+                "entity_type": "conversation", "entity_id": "cvs_session1",
+                "from_state": "created", "to_state": "ready", "reason": "ready",
+                "created_at": "2026-07-13T01:00:01+00:00",
+            },
+            {
+                "transition_id": "cst_owner", "conversation_id": "cvs_session1",
+                "entity_type": "ownership", "entity_id": "worker",
+                "from_state": None, "to_state": "agentdeck_owned", "reason": "init",
+                "created_at": "2026-07-13T01:00:02+00:00",
+            },
+            {
+                "transition_id": "cst_pending", "conversation_id": "cvs_session1",
+                "entity_type": "ownership", "entity_id": "worker",
+                "from_state": "agentdeck_owned", "to_state": "takeover_pending",
+                "reason": "takeover", "created_at": "2026-07-13T01:00:03+00:00",
+            },
+            {
+                "transition_id": "cst_human", "conversation_id": "cvs_session1",
+                "entity_type": "ownership", "entity_id": "worker",
+                "from_state": "takeover_pending", "to_state": "human_owned",
+                "reason": "human", "created_at": "2026-07-13T01:00:04+00:00",
+            },
+        ]
+        store.save(state)
+
+    decision = authorize_mission_acp_effect(
+        store,
+        attempt_id=ATTEMPT_ID,
+        permission_id=pending["permission"]["permission_id"],
+    )
+    assert decision["allowed"] is allowed
+    assert decision["gate"] == gate
+    events = [
+        item for item in store.load()["protocol_event_outbox"]
+        if item["event_type"] == "mission_acp_effect_authorized"
+    ]
+    assert events[-1]["payload"]["allowed"] is allowed
 
 
 @pytest.mark.parametrize("forged_status", ["approved", "denied", "expired"])
@@ -1638,3 +1917,34 @@ def test_admitted_mission_projects_real_scheduler_facts(tmp_path: Path) -> None:
     human_owned = scheduler_facts_from_store(store)
     assert human_owned is not None
     assert human_owned.ownership_state == "conflict"
+
+
+def test_scheduler_preserves_persisted_acp_restart_ambiguity_after_approval(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    mission = state["missions"][0]
+    mission["current_step"] = 0
+    mission["daemon_admission"] = {
+        "state": "admitted",
+        "snapshot_hash": mission["snapshot_hash"],
+        "blocker": None,
+        "recovery_command": None,
+        "updated_at": "2026-07-13T01:01:00+00:00",
+    }
+    state["recovery_decisions"] = [{
+        "classification": "ambiguous",
+        "reason": "ACP Worker connection was lost across daemon restart",
+        "mission_id": MISSION_ID,
+        "attempt_id": ATTEMPT_ID,
+        "next_transition": None,
+        "classified_at": "2026-07-13T01:02:00+00:00",
+    }]
+    store.save(state)
+
+    projected = scheduler_facts_from_store(store)
+    assert projected is not None
+    assert projected.permission_state == "none"
+    assert projected.blocker == "ACP Worker connection was lost across daemon restart"
