@@ -74,6 +74,38 @@ _EXECUTION_SNAPSHOT_FIELDS = frozenset(
 )
 _EXECUTION_SNAPSHOT_MAX_BYTES = 256 * 1024
 _EXECUTION_SNAPSHOT_MAX_DEPTH = 32
+_MISSION_ATTEMPT_FIELDS = frozenset(
+    {
+        "attempt_id",
+        "mission_id",
+        "step_id",
+        "agent_id",
+        "configured_transport",
+        "dispatch_key",
+        "snapshot_hash",
+        "state",
+        "created_at",
+        "updated_at",
+        "receipt_summary",
+        "blocker",
+        "terminal_reason",
+    }
+)
+_MISSION_ATTEMPT_STATES = frozenset(
+    {
+        "prepared",
+        "submitted",
+        "running",
+        "completed",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "interrupted",
+        "ambiguous",
+    }
+)
+_MISSION_ATTEMPT_ACTIVE_STATES = frozenset({"prepared", "submitted", "running"})
+_MISSION_ATTEMPT_RETRYABLE_STATES = frozenset({"failed"})
 
 
 class MissionStateError(ValueError):
@@ -128,6 +160,46 @@ def _canonical_snapshot_bytes(value: object) -> bytes:
 
 def canonical_snapshot_hash(value: object) -> str:
     return f"sha256:{hashlib.sha256(_canonical_snapshot_bytes(value)).hexdigest()}"
+
+
+def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
+    if type(value) is not dict or set(value) != _MISSION_ATTEMPT_FIELDS:
+        raise ValueError("mission attempt state invalid")
+    if (
+        type(value.get("attempt_id")) is not str
+        or re.fullmatch(r"mat_[0-9a-f]{12}", value["attempt_id"]) is None
+        or not is_canonical_mission_id(value.get("mission_id"))
+        or type(value.get("step_id")) is not str
+        or re.fullmatch(r"step_[1-9][0-9]*", value["step_id"]) is None
+        or type(value.get("agent_id")) is not str
+        or not value["agent_id"]
+        or value.get("configured_transport") not in {"acp", "tmux"}
+        or type(value.get("dispatch_key")) is not str
+        or re.fullmatch(r"dsp_[0-9a-f]{32}", value["dispatch_key"]) is None
+        or type(value.get("snapshot_hash")) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", value["snapshot_hash"]) is None
+        or value.get("state") not in _MISSION_ATTEMPT_STATES
+    ):
+        raise ValueError("mission attempt state invalid")
+    timestamps: list[datetime] = []
+    for field in ("created_at", "updated_at"):
+        raw = value.get(field)
+        if type(raw) is not str:
+            raise ValueError("mission attempt state invalid")
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            raise ValueError("mission attempt state invalid") from None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("mission attempt state invalid")
+        timestamps.append(parsed)
+    if timestamps[1] < timestamps[0]:
+        raise ValueError("mission attempt state invalid")
+    for field in ("receipt_summary", "blocker", "terminal_reason"):
+        item = value.get(field)
+        if item is not None and (type(item) is not str or not item):
+            raise ValueError("mission attempt state invalid")
+    return copy.deepcopy(value)
 
 
 def validate_execution_snapshot(value: object) -> dict[str, Any]:
@@ -583,7 +655,7 @@ def build_execution_snapshot_authority(
     limits: dict[str, object] = {
         "step_count": mission.get("step_count"),
         "timeout_seconds": mission.get("timeout_seconds"),
-        "retry_limit": 0,
+        "retry_limit": mission.get("retry_limit"),
         "worker_budget": mission.get("step_count"),
     }
     mission_hash = canonical_snapshot_hash(mission_body)
@@ -607,6 +679,8 @@ def derive_attempt_dispatch_key(
     agent_id: str,
     configured_transport: str,
     snapshot_hash: str,
+    *,
+    attempt_ordinal: int = 1,
 ) -> str:
     if (
         not is_canonical_mission_id(mission_id)
@@ -617,6 +691,8 @@ def derive_attempt_dispatch_key(
         or configured_transport not in {"acp", "tmux"}
         or type(snapshot_hash) is not str
         or re.fullmatch(r"sha256:[0-9a-f]{64}", snapshot_hash) is None
+        or type(attempt_ordinal) is not int
+        or attempt_ordinal < 1
     ):
         raise ValueError("attempt identity invalid")
     digest = canonical_snapshot_hash(
@@ -626,6 +702,7 @@ def derive_attempt_dispatch_key(
             "agent_id": agent_id,
             "configured_transport": configured_transport,
             "snapshot_hash": snapshot_hash,
+            "attempt_ordinal": attempt_ordinal,
         }
     ).removeprefix("sha256:")
     return f"dsp_{digest[:32]}"
@@ -748,6 +825,7 @@ class StateStore:
                 "agents": {},
                 "messages": [],
                 "attempts": [],
+                "mission_attempts": [],
                 "jobs": [],
                 "replies": [],
                 "artifacts": [],
@@ -1567,6 +1645,7 @@ class StateStore:
         startup_actions: list[dict[str, Any]],
         step_count: int,
         timeout_seconds: int,
+        retry_limit: int = 0,
     ) -> dict[str, Any]:
         state = self.load()
         if not all(
@@ -1589,6 +1668,8 @@ class StateStore:
             or timeout_seconds < 1
         ):
             raise ValueError("timeout_seconds must be a positive integer")
+        if type(retry_limit) is not int or retry_limit < 0:
+            raise ValueError("retry_limit must be a non-negative integer")
         expected_backend = leader_backend_identity(provider, model)
         if leader_backend != expected_backend:
             raise ValueError("leader_backend must match provider and model")
@@ -1626,11 +1707,13 @@ class StateStore:
             "startup_actions": compact_actions,
             "step_count": step_count,
             "timeout_seconds": timeout_seconds,
+            "retry_limit": retry_limit,
             "workflow_run_id": None,
             "current_step": 0,
             "confirmed_at": None,
             "execution_snapshot": None,
             "snapshot_hash": None,
+            "execution_authority_hash": None,
             "completed_at": None,
             "created_at": now,
             "updated_at": now,
@@ -1654,6 +1737,7 @@ class StateStore:
         startup_actions: list[dict[str, Any]],
         step_count: int,
         timeout_seconds: int,
+        retry_limit: int = 0,
     ) -> dict[str, Any]:
         if not all(
             isinstance(value, str) and value
@@ -1671,6 +1755,8 @@ class StateStore:
             raise ValueError("step_count must be a positive integer")
         if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool) or timeout_seconds < 1:
             raise ValueError("timeout_seconds must be a positive integer")
+        if type(retry_limit) is not int or retry_limit < 0:
+            raise ValueError("retry_limit must be a non-negative integer")
         expected_backend = leader_backend_identity(provider, model)
         if leader_backend != expected_backend:
             raise ValueError("leader_backend must match provider and model")
@@ -1708,11 +1794,13 @@ class StateStore:
             "startup_actions": compact_actions,
             "step_count": step_count,
             "timeout_seconds": timeout_seconds,
+            "retry_limit": retry_limit,
             "workflow_run_id": None,
             "current_step": 0,
             "confirmed_at": None,
             "execution_snapshot": None,
             "snapshot_hash": None,
+            "execution_authority_hash": None,
             "completed_at": None,
             "created_at": now,
             "updated_at": now,
@@ -1812,7 +1900,14 @@ class StateStore:
             except MissionStateError:
                 raise
             except (OSError, TypeError, ValueError):
-                raise ValueError("mission confirmation drift") from None
+                raise MissionStateError("execution authority drift") from None
+            authority_hash = mission.get("execution_authority_hash")
+            if (
+                type(authority_hash) is not str
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", authority_hash) is None
+                or snapshot["execution_hash"] != authority_hash
+            ):
+                raise MissionStateError("execution authority drift")
             event = EventRecord.create(
                 "mission_execution_frozen",
                 {
@@ -1886,6 +1981,11 @@ class StateStore:
             if mission.get("snapshot_hash") != persisted_snapshot["execution_hash"]:
                 raise ValueError("frozen execution drift")
             if (
+                mission.get("execution_authority_hash")
+                != persisted_snapshot["execution_hash"]
+            ):
+                raise ValueError("frozen execution drift")
+            if (
                 persisted_snapshot["mission"].get("plan_hash")
                 != mission.get("plan_hash")
             ):
@@ -1938,29 +2038,46 @@ class StateStore:
                 raise ValueError("mission step agent drift")
             if worker.get("configured_transport") != configured_transport:
                 raise ValueError("mission step transport drift")
+            attempts = state.setdefault("mission_attempts", [])
+            if type(attempts) is not list:
+                raise ValueError("mission attempt state invalid")
+            validated_attempts = [
+                _validate_mission_attempt_record(item) for item in attempts
+            ]
+            attempt_ids = [item["attempt_id"] for item in validated_attempts]
+            if len(attempt_ids) != len(set(attempt_ids)):
+                raise ValueError("duplicate mission attempt identity")
+            matching = [
+                item
+                for item in validated_attempts
+                if item["mission_id"] == mission_id and item["step_id"] == step_id
+            ]
+            if any(item["agent_id"] != agent_id for item in matching):
+                raise ValueError("mission step agent drift")
+            if any(item["state"] in _MISSION_ATTEMPT_ACTIVE_STATES for item in matching):
+                raise ValueError("active attempt already exists")
+            if any(
+                item["state"] not in _MISSION_ATTEMPT_RETRYABLE_STATES
+                for item in matching
+            ):
+                raise ValueError("terminal mission attempt")
+            retry_limit = persisted_snapshot["limits"]["retry_limit"]
+            if len(matching) >= 1 + retry_limit:
+                raise ValueError("mission retry budget exhausted")
+            attempt_ordinal = len(matching) + 1
             dispatch_key = derive_attempt_dispatch_key(
                 mission_id,
                 step_id,
                 agent_id,
                 configured_transport,
                 persisted_snapshot["execution_hash"],
+                attempt_ordinal=attempt_ordinal,
             )
-            attempts = state.setdefault("attempts", [])
-            if type(attempts) is not list:
-                raise ValueError("attempt state invalid")
-            terminal_states = {"completed", "failed", "cancelled", "interrupted"}
-            for item in attempts:
-                if not isinstance(item, dict):
-                    raise ValueError("attempt state invalid")
-                if (
-                    item.get("mission_id") == mission_id
-                    and item.get("step_id") == step_id
-                    and item.get("state") not in terminal_states
-                ):
-                    raise ValueError("active attempt already exists")
+            if any(item["dispatch_key"] == dispatch_key for item in validated_attempts):
+                raise ValueError("duplicate mission dispatch key")
             now = utc_now()
             attempt = {
-                "attempt_id": new_id("att"),
+                "attempt_id": new_id("mat"),
                 "mission_id": mission_id,
                 "step_id": step_id,
                 "agent_id": agent_id,

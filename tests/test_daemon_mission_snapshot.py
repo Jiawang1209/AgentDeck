@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from agentdeck import cli
 from agentdeck.config import load_config, write_default_config
 from agentdeck.mission_orchestration import (
     MissionRunError,
@@ -53,10 +54,18 @@ class TwoStepProvider:
             ],
             "approval_required": True,
             "dispatch_ready": False,
+            "declared_tests": ["pytest tests/test_feature.py -q"],
+            "acceptance_criteria": ["implementation and review both complete"],
         }
 
 
-def _seed(tmp_path: Path, monkeypatch):
+def _seed(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    project_memory: str | None = None,
+    retry_limit: int = 0,
+):
     root = tmp_path / "repo"
     root.mkdir()
     (root / ".git").mkdir()
@@ -72,6 +81,10 @@ def _seed(tmp_path: Path, monkeypatch):
         1,
     )
     config_path.write_text(text, encoding="utf-8")
+    if project_memory is not None:
+        memory_dir = root / ".agentdeck" / "memory"
+        memory_dir.mkdir()
+        (memory_dir / "project.md").write_text(project_memory, encoding="utf-8")
     config = load_config(root)
     store = StateStore(root)
     monkeypatch.setattr(
@@ -83,6 +96,7 @@ def _seed(tmp_path: Path, monkeypatch):
         provider=TwoStepProvider(),
         user_message=MESSAGE,
         timeout_seconds=180,
+        retry_limit=retry_limit,
     )
     return root, config, store, preview
 
@@ -128,11 +142,10 @@ def test_freeze_recomputes_current_plan_hash_inside_lock_and_is_full_tree_zero_w
 
 
 def test_confirmed_mission_freezes_compact_execution_authority(tmp_path, monkeypatch) -> None:
-    root, config, store, preview = _seed(tmp_path, monkeypatch)
-    memory_dir = root / ".agentdeck" / "memory"
-    memory_dir.mkdir()
-    (memory_dir / "project.md").write_text(
-        "private memory SECRET-MEMORY\n", encoding="utf-8"
+    root, config, store, preview = _seed(
+        tmp_path,
+        monkeypatch,
+        project_memory="private memory SECRET-MEMORY\n",
     )
 
     result = confirm_mission_for_daemon(
@@ -148,6 +161,11 @@ def test_confirmed_mission_freezes_compact_execution_authority(tmp_path, monkeyp
     }
     assert snapshot["execution_hash"] == canonical_hash(execution_body)
     assert result["snapshot_hash"] == snapshot["execution_hash"]
+    assert (
+        store.mission_by_id(preview["mission_id"])["execution_authority_hash"]
+        == snapshot["execution_hash"]
+    )
+    assert result["execution_authority_hash"] == snapshot["execution_hash"]
     assert [item["configured_transport"] for item in snapshot["workers"]] == [
         "acp",
         "tmux",
@@ -159,6 +177,12 @@ def test_confirmed_mission_freezes_compact_execution_authority(tmp_path, monkeyp
     assert snapshot["mission"]["steps"][0]["step_id"] == "step_1"
     assert snapshot["mission"]["steps"][0]["task_hash"].startswith("sha256:")
     assert set(snapshot["mission"]) >= {"goal_hash", "summary_hash"}
+    assert snapshot["mission"]["declared_tests_hash"] == canonical_hash(
+        {"declared_tests": ["pytest tests/test_feature.py -q"]}
+    )
+    assert snapshot["mission"]["acceptance_criteria_hash"] == canonical_hash(
+        {"acceptance_criteria": ["implementation and review both complete"]}
+    )
     assert "goal" not in snapshot["mission"]
     assert "summary" not in snapshot["mission"]
     assert snapshot["mission"]["memory_provenance"] == [
@@ -182,6 +206,90 @@ def test_confirmed_mission_freezes_compact_execution_authority(tmp_path, monkeyp
     assert persisted["execution_snapshot"] == snapshot
     snapshot["mission"]["steps"][0]["role"] = "tampered"
     assert store.mission_by_id(preview["mission_id"])["execution_snapshot"] != snapshot
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ["goal", "summary", "skill", "declared_tests", "acceptance_criteria"],
+)
+def test_freeze_rejects_preview_authority_plan_fact_drift_with_full_tree_zero_write(
+    tmp_path, monkeypatch, drift
+) -> None:
+    root, _config, store, preview = _seed(tmp_path, monkeypatch)
+    state = store.load()
+    plan_record = state["plans"][0]
+    if drift == "skill":
+        plan_record["skill_context"] = {
+            "items": [
+                {
+                    "agent_id": "planner",
+                    "name": "changed-skill",
+                    "content_hash": "sha256:" + "1" * 64,
+                    "source": "project",
+                }
+            ]
+        }
+    else:
+        plan_record["plan"][drift] = f"changed {drift}"
+    store.save(state)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionStateError, match="execution authority drift"):
+        store.freeze_mission_execution(
+            preview["mission_id"], confirmed_at=state["missions"][0]["created_at"]
+        )
+
+    assert _tree_bytes(root) == before
+
+
+@pytest.mark.parametrize("drift", ["worker", "policy"])
+def test_freeze_rejects_preview_authority_config_drift_with_full_tree_zero_write(
+    tmp_path, monkeypatch, drift
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    changed = (
+        replace(
+            config,
+            agents=tuple(
+                replace(agent, role="changed")
+                if agent.agent_id == "planner"
+                else agent
+                for agent in config.agents
+            ),
+        )
+        if drift == "worker"
+        else replace(config, leader=replace(config.leader, approval_mode="approve"))
+    )
+    monkeypatch.setattr("agentdeck.state.load_config", lambda root: changed)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionStateError, match="execution authority drift"):
+        store.freeze_mission_execution(
+            preview["mission_id"],
+            confirmed_at=store.mission_by_id(preview["mission_id"])["created_at"],
+        )
+
+    assert _tree_bytes(root) == before
+
+
+def test_freeze_rejects_preview_authority_memory_drift_with_full_tree_zero_write(
+    tmp_path, monkeypatch
+) -> None:
+    root, _config, store, preview = _seed(
+        tmp_path, monkeypatch, project_memory="preview memory\n"
+    )
+    (root / ".agentdeck" / "memory" / "project.md").write_text(
+        "changed memory\n", encoding="utf-8"
+    )
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionStateError, match="execution authority drift"):
+        store.freeze_mission_execution(
+            preview["mission_id"],
+            confirmed_at=store.mission_by_id(preview["mission_id"])["created_at"],
+        )
+
+    assert _tree_bytes(root) == before
 
 
 def test_snapshot_builder_hashes_raw_goal_and_rejects_sensitive_policy_keys(
@@ -420,14 +528,14 @@ def test_prepare_attempt_commits_exact_pre_dispatch_record_and_event(tmp_path, m
         "blocker",
         "terminal_reason",
     }
-    assert attempt["attempt_id"].startswith("att_")
+    assert attempt["attempt_id"].startswith("mat_")
     assert attempt["dispatch_key"].startswith("dsp_")
     assert attempt["snapshot_hash"] == confirmed["snapshot_hash"]
     assert attempt["state"] == "prepared"
     assert attempt["receipt_summary"] is None
     persisted = [
         item
-        for item in store.load()["attempts"]
+        for item in store.load()["mission_attempts"]
         if item.get("mission_id") == preview["mission_id"]
     ]
     assert persisted == [attempt]
@@ -478,7 +586,206 @@ def test_dispatch_key_is_deterministic_and_duplicate_active_attempt_is_zero_writ
         "planner",
         "acp",
         first["snapshot_hash"],
+        attempt_ordinal=1,
     )
+
+
+def test_failed_attempt_retries_once_when_frozen_limit_is_one(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch, retry_limit=1)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    first = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    state = store.load()
+    state["mission_attempts"][0]["state"] = "failed"
+    state["mission_attempts"][0]["terminal_reason"] = "retryable worker failure"
+    store.save(state)
+
+    second = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+
+    assert second["dispatch_key"] == attempt_dispatch_key(
+        preview["mission_id"],
+        "step_1",
+        "planner",
+        "acp",
+        second["snapshot_hash"],
+        attempt_ordinal=2,
+    )
+    assert second["dispatch_key"] != first["dispatch_key"]
+
+
+@pytest.mark.parametrize(
+    ("retry_limit", "terminal_state", "message"),
+    [
+        (0, "failed", "mission retry budget exhausted"),
+        (1, "completed", "terminal mission attempt"),
+        (1, "succeeded", "terminal mission attempt"),
+        (1, "cancelled", "terminal mission attempt"),
+        (1, "interrupted", "terminal mission attempt"),
+        (1, "ambiguous", "terminal mission attempt"),
+    ],
+)
+def test_retry_budget_and_non_retryable_terminal_states_are_full_tree_zero_write(
+    tmp_path, monkeypatch, retry_limit, terminal_state, message
+) -> None:
+    root, config, store, preview = _seed(
+        tmp_path, monkeypatch, retry_limit=retry_limit
+    )
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    state = store.load()
+    state["mission_attempts"][0]["state"] = terminal_state
+    state["mission_attempts"][0]["terminal_reason"] = terminal_state
+    store.save(state)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match=message):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
+def test_retry_limit_one_rejects_third_total_attempt_without_write(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch, retry_limit=1)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    for expected_count in (1, 2):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+        state = store.load()
+        state["mission_attempts"][-1]["state"] = "failed"
+        state["mission_attempts"][-1]["terminal_reason"] = "retryable worker failure"
+        store.save(state)
+        assert len(store.load()["mission_attempts"]) == expected_count
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="mission retry budget exhausted"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
+def test_duplicate_dispatch_key_anywhere_in_mission_attempts_is_zero_write(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch, retry_limit=1)
+    confirmed = confirm_mission_for_daemon(
+        config=config, store=store, mission_id=preview["mission_id"]
+    )
+    first = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    state = store.load()
+    first_record = state["mission_attempts"][0]
+    first_record["state"] = "failed"
+    first_record["terminal_reason"] = "retryable worker failure"
+    duplicate = deepcopy(first_record)
+    duplicate["attempt_id"] = "mat_" + "f" * 12
+    duplicate["mission_id"] = "mis_" + "e" * 12
+    duplicate["dispatch_key"] = attempt_dispatch_key(
+        preview["mission_id"],
+        "step_1",
+        "planner",
+        "acp",
+        confirmed["snapshot_hash"],
+        attempt_ordinal=2,
+    )
+    state["mission_attempts"].append(duplicate)
+    store.save(state)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="duplicate mission dispatch key"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
+
+
+def test_duplicate_mission_attempt_identity_is_strictly_rejected_without_write(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch, retry_limit=1)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    state = store.load()
+    state["mission_attempts"][0]["state"] = "failed"
+    state["mission_attempts"][0]["terminal_reason"] = "retryable worker failure"
+    duplicate = deepcopy(state["mission_attempts"][0])
+    duplicate["mission_id"] = "mis_" + "d" * 12
+    duplicate["dispatch_key"] = "dsp_" + "e" * 32
+    state["mission_attempts"].append(duplicate)
+    store.save(state)
+    before = _tree_bytes(root)
+
+    with pytest.raises(MissionRunError, match="duplicate mission attempt identity"):
+        prepare_attempt(
+            config=config,
+            store=store,
+            mission_id=preview["mission_id"],
+            step_id="step_1",
+            agent_id="planner",
+            configured_transport="acp",
+        )
+
+    assert _tree_bytes(root) == before
 
 
 def test_state_store_does_not_accept_caller_supplied_dispatch_key(tmp_path, monkeypatch) -> None:
@@ -604,11 +911,14 @@ def test_invalid_confirmation_timestamp_fails_closed_without_attempt_write(
     assert _state_bytes(store) == before
 
 
-def test_legacy_state_without_attempts_is_additively_upgraded(tmp_path, monkeypatch) -> None:
+def test_legacy_state_without_mission_attempts_is_additively_upgraded(
+    tmp_path, monkeypatch
+) -> None:
     _root, config, store, preview = _seed(tmp_path, monkeypatch)
     confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
     state = store.load()
-    state.pop("attempts", None)
+    legacy_attempts = deepcopy(state["attempts"])
+    state.pop("mission_attempts", None)
     store.save(state)
     unrelated = deepcopy(store.load()["plans"])
 
@@ -621,5 +931,27 @@ def test_legacy_state_without_attempts_is_additively_upgraded(tmp_path, monkeypa
         configured_transport="acp",
     )
 
-    assert store.load()["attempts"] == [attempt]
+    assert store.load()["mission_attempts"] == [attempt]
+    assert store.load()["attempts"] == legacy_attempts
     assert store.load()["plans"] == unrelated
+
+
+def test_generic_trace_treats_mat_identity_as_safe_unknown(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    attempt = prepare_attempt(
+        config=config,
+        store=store,
+        mission_id=preview["mission_id"],
+        step_id="step_1",
+        agent_id="planner",
+        configured_transport="acp",
+    )
+    before = _tree_bytes(root)
+    monkeypatch.chdir(root)
+
+    assert cli.main(["trace", "--id", attempt["attempt_id"]]) == 1
+    assert capsys.readouterr().err == f"unknown trace id: {attempt['attempt_id']}\n"
+    assert _tree_bytes(root) == before

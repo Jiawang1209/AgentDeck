@@ -118,10 +118,17 @@ def attempt_dispatch_key(
     agent_id: str,
     configured_transport: str,
     snapshot_hash: str,
+    *,
+    attempt_ordinal: int = 1,
 ) -> str:
     try:
         return derive_attempt_dispatch_key(
-            mission_id, step_id, agent_id, configured_transport, snapshot_hash
+            mission_id,
+            step_id,
+            agent_id,
+            configured_transport,
+            snapshot_hash,
+            attempt_ordinal=attempt_ordinal,
         )
     except (TypeError, ValueError):
         raise MissionRunError("attempt identity invalid") from None
@@ -152,15 +159,20 @@ def prepare_attempt(
         allowed = {
             "active attempt already exists",
             "attempt state invalid",
+            "duplicate mission dispatch key",
+            "duplicate mission attempt identity",
             "frozen execution drift",
             "frozen execution snapshot invalid",
+            "mission attempt state invalid",
             "mission confirmation state invalid",
             "mission execution is not confirmed",
+            "mission retry budget exhausted",
             "mission step agent drift",
             "mission step identity invalid",
             "mission step lineage drift",
             "mission step transport drift",
             "terminal mission step",
+            "terminal mission attempt",
             "unknown mission step",
         }
         message = str(exc)
@@ -388,6 +400,7 @@ def create_mission_preview_from_candidate(
     candidate: LeaderMissionCandidate,
     conversation_mutation: ConversationMutation | None = None,
     conversation_mutation_factory: Callable[[dict[str, object]], ConversationMutation] | None = None,
+    retry_limit: int = 0,
 ) -> dict[str, object]:
     if not isinstance(candidate, LeaderMissionCandidate):
         raise MissionPreviewError("mission preview candidate invalid")
@@ -397,6 +410,8 @@ def create_mission_preview_from_candidate(
         raise MissionPreviewError("mission preview provider invalid")
     if type(candidate.timeout_seconds) is not int or candidate.timeout_seconds <= 0:
         raise ValueError("mission timeout must be positive")
+    if type(retry_limit) is not int or retry_limit < 0:
+        raise ValueError("mission retry limit must be non-negative")
     (
         bindings,
         effective,
@@ -415,6 +430,9 @@ def create_mission_preview_from_candidate(
         if len(raw_plan["steps"]) != step_count:
             raise ValueError("unexpected mission step count")
         plan = normalize_mission_plan_metadata(raw_plan, step_count)
+        for field in ("declared_tests", "acceptance_criteria"):
+            if field in raw_plan:
+                plan[field] = deepcopy(raw_plan[field])
         validate_mission_plan(plan, selected_agent_ids, candidate.timeout_seconds)
     except Exception:
         raise MissionPreviewError("mission preview plan invalid") from None
@@ -467,10 +485,25 @@ def create_mission_preview_from_candidate(
         selected_agents=selected_agents,
         startup_actions=startup_actions,
         timeout_seconds=candidate.timeout_seconds,
+        retry_limit=retry_limit,
         step_count=len(plan["steps"]),
         can_start=not blockers,
         blockers=blockers,
     )
+    if not blockers:
+        try:
+            preview_snapshot = build_execution_snapshot_authority(
+                config,
+                mission,
+                plan_record,
+                execution_policy_snapshot(config),
+                memory_provenance=collect_execution_memory_provenance(
+                    Path(config.root)
+                ),
+            )
+        except (OSError, TypeError, ValueError):
+            raise MissionPreviewError("mission preview authority invalid") from None
+        mission["execution_authority_hash"] = preview_snapshot["execution_hash"]
     payload = _mission_preview_payload(mission, plan_record)
     event = EventRecord.create(
         "mission_preview_created",
@@ -528,12 +561,15 @@ def create_mission_preview(
     provider: LeaderProvider,
     user_message: str,
     timeout_seconds: int,
+    retry_limit: int = 0,
 ) -> dict[str, object]:
     intent = mission_intent(user_message, config)
     if intent is None:
         raise ValueError("message is not a multi-agent mission request")
     if type(timeout_seconds) is not int or timeout_seconds <= 0:
         raise ValueError("mission timeout must be positive")
+    if type(retry_limit) is not int or retry_limit < 0:
+        raise ValueError("mission retry limit must be non-negative")
 
     try:
         provider_name = provider.name
@@ -623,6 +659,7 @@ def create_mission_preview(
             plan=plan,
             timeout_seconds=timeout_seconds,
         ),
+        retry_limit=retry_limit,
     )
 
 
