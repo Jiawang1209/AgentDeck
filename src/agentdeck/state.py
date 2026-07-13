@@ -3058,6 +3058,13 @@ class StateStore:
             observed = [event["payload"].get("state") for event in matching]
             if observed != states:
                 raise ValueError("durable recovery evidence audit history is invalid")
+            if "canonical_handoff" in record:
+                expected_hash = canonical_snapshot_hash(record["canonical_handoff"])
+                if any(
+                    event["payload"].get("canonical_handoff_hash") != expected_hash
+                    for event in matching
+                ):
+                    raise ValueError("durable recovery evidence audit history is invalid")
 
         for reply in replies:
             expected_states = ["received"]
@@ -3309,6 +3316,7 @@ class StateStore:
         dispatch_key: str,
         state: str,
         expected_reply_id: str | None = None,
+        canonical_handoff: object | None = None,
     ) -> dict[str, object]:
         from .daemon.recovery import validate_mission_reply_evidence_record
 
@@ -3334,7 +3342,11 @@ class StateStore:
             validated = [validate_mission_reply_evidence_record(item) for item in records]
             current = [item for item in validated if item["attempt_id"] == attempt_id]
             if not current:
-                if state != "received" or expected_reply_id is not None:
+                if (
+                    state != "received"
+                    or expected_reply_id is not None
+                    or canonical_handoff is None
+                ):
                     raise ValueError("mission reply evidence transition is invalid")
                 candidate = validate_mission_reply_evidence_record(
                     {
@@ -3343,6 +3355,7 @@ class StateStore:
                         "reply_id": new_id("mrp"),
                         "dispatch_key": dispatch_key,
                         "state": "received",
+                        "canonical_handoff": canonical_handoff,
                     }
                 )
                 records.append(candidate)
@@ -3353,6 +3366,7 @@ class StateStore:
                     or prior["dispatch_key"] != dispatch_key
                     or prior["state"] != "received"
                     or state not in {"validated", "invalid"}
+                    or canonical_handoff is not None
                 ):
                     raise ValueError("mission reply evidence transition is invalid")
                 candidate = validate_mission_reply_evidence_record(
@@ -3374,6 +3388,9 @@ class StateStore:
                     "mission_id": candidate["mission_id"],
                     "reply_id": candidate["reply_id"],
                     "state": candidate["state"],
+                    "canonical_handoff_hash": canonical_snapshot_hash(
+                        candidate["canonical_handoff"]
+                    ),
                 },
             )
             self._atomic_save(persisted)
@@ -3424,6 +3441,7 @@ class StateStore:
                         "handoff_id": new_id("hof"),
                         "reply_id": reply_id,
                         "state": "pending",
+                        "canonical_handoff": reply["canonical_handoff"],
                     }
                 )
                 records.append(candidate)
@@ -3439,6 +3457,8 @@ class StateStore:
                 candidate = validate_mission_handoff_evidence_record(
                     {**prior, "state": "recorded"}
                 )
+                if candidate["canonical_handoff"] != reply["canonical_handoff"]:
+                    raise ValueError("mission handoff evidence content drift")
                 index = next(
                     index
                     for index, item in enumerate(records)
@@ -3456,6 +3476,9 @@ class StateStore:
                     "mission_id": candidate["mission_id"],
                     "reply_id": reply_id,
                     "state": candidate["state"],
+                    "canonical_handoff_hash": canonical_snapshot_hash(
+                        candidate["canonical_handoff"]
+                    ),
                 },
             )
             self._atomic_save(persisted)
@@ -4005,6 +4028,7 @@ class StateStore:
         receipt_summary: str,
         succeeded: bool,
         summary: str,
+        canonical_handoff: object | None = None,
     ) -> dict[str, object]:
         """Commit an ACP session receipt and its prompt result as one fence.
 
@@ -4029,6 +4053,18 @@ class StateStore:
             or not summary
         ):
             raise ValueError("ACP mission attempt completion is invalid")
+        if canonical_handoff is not None:
+            from .workflow import validate_canonical_handoff
+
+            canonical = validate_canonical_handoff(
+                canonical_handoff, expected_handoff_token=dispatch_key
+            ).compact()
+            if succeeded != (canonical["status"] == "completed"):
+                raise ValueError("ACP mission attempt completion is invalid")
+        else:
+            canonical = None
+            if succeeded:
+                raise ValueError("ACP mission attempt completion is invalid")
         with self._protocol_mutation_lock():
             state = self.load()
             attempts_raw = state.setdefault("mission_attempts", [])
@@ -4063,6 +4099,7 @@ class StateStore:
                     len(attempt_replies) == 1
                     and attempt_replies[0]["dispatch_key"] == dispatch_key
                     and attempt_replies[0]["state"] in {"received", "validated"}
+                    and attempt_replies[0]["canonical_handoff"] == canonical
                 )
                 if (
                     persisted["state"] == expected_state
@@ -4071,11 +4108,13 @@ class StateStore:
                     == (None if succeeded else "worker_failed")
                     and persisted["blocker"]
                     == (None if succeeded else "worker_failed")
-                    and (reply_matches if succeeded else not attempt_replies)
+                    and (reply_matches if canonical is not None else not attempt_replies)
                 ):
                     return {
                         "attempt": copy.deepcopy(persisted),
-                        "reply": copy.deepcopy(attempt_replies[0]) if succeeded else None,
+                        "reply": copy.deepcopy(attempt_replies[0])
+                        if canonical is not None
+                        else None,
                         "receipt_summary": receipt_summary,
                     }
                 raise ValueError("ACP mission attempt completion conflict")
@@ -4125,7 +4164,7 @@ class StateStore:
             reply: dict[str, object] | None = None
             if attempt_replies:
                 raise ValueError("duplicate durable recovery reply evidence")
-            if succeeded:
+            if canonical is not None:
                 reply = validate_mission_reply_evidence_record(
                     {
                         "mission_id": candidate["mission_id"],
@@ -4133,6 +4172,7 @@ class StateStore:
                         "reply_id": new_id("mrp"),
                         "dispatch_key": dispatch_key,
                         "state": "received",
+                        "canonical_handoff": canonical,
                     }
                 )
 
@@ -4163,6 +4203,9 @@ class StateStore:
                         "mission_id": candidate["mission_id"],
                         "reply_id": reply["reply_id"],
                         "state": reply["state"],
+                        "canonical_handoff_hash": canonical_snapshot_hash(
+                            reply["canonical_handoff"]
+                        ),
                     },
                 )
             self._atomic_save(state)
@@ -4170,6 +4213,144 @@ class StateStore:
                 "attempt": copy.deepcopy(candidate),
                 "reply": copy.deepcopy(reply),
                 "receipt_summary": receipt_summary,
+            }
+
+    def record_tmux_mission_attempt_completion(
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        succeeded: bool,
+        summary: str,
+        canonical_handoff: object | None = None,
+    ) -> dict[str, object]:
+        """Atomically commit one submitted tmux result and compact reply."""
+        from .daemon.recovery import validate_mission_reply_evidence_record
+        from .workflow import validate_canonical_handoff
+
+        if (
+            type(attempt_id) is not str
+            or re.fullmatch(r"mat_[0-9a-f]{12}", attempt_id) is None
+            or type(dispatch_key) is not str
+            or re.fullmatch(r"dsp_[0-9a-f]{32}", dispatch_key) is None
+            or type(succeeded) is not bool
+            or type(summary) is not str
+            or not summary
+        ):
+            raise ValueError("tmux mission attempt completion is invalid")
+        canonical = None
+        if canonical_handoff is not None:
+            canonical = validate_canonical_handoff(
+                canonical_handoff, expected_handoff_token=dispatch_key
+            ).compact()
+            if succeeded != (canonical["status"] == "completed"):
+                raise ValueError("tmux mission attempt completion is invalid")
+        elif succeeded:
+            raise ValueError("tmux mission attempt completion is invalid")
+        with self._protocol_mutation_lock():
+            state = self.load()
+            attempts_raw = state.setdefault("mission_attempts", [])
+            attempts = [_validate_mission_attempt_record(item) for item in attempts_raw]
+            _require_unique_mission_attempt_lineage(attempts)
+            outbox = state.setdefault("protocol_event_outbox", [])
+            self._protocol_admission_claim_history(outbox, attempts)
+            matches = [item for item in attempts if item["attempt_id"] == attempt_id]
+            if (
+                len(matches) != 1
+                or matches[0]["dispatch_key"] != dispatch_key
+                or matches[0]["configured_transport"] != "tmux"
+            ):
+                raise ValueError("tmux mission attempt completion authority invalid")
+            persisted = matches[0]
+            replies = state.setdefault("mission_worker_replies", [])
+            validated_replies = [
+                validate_mission_reply_evidence_record(item) for item in replies
+            ]
+            attempt_replies = [
+                item for item in validated_replies if item["attempt_id"] == attempt_id
+            ]
+            expected_state = "succeeded" if succeeded else "failed"
+            if persisted["state"] != "submitted":
+                reply_matches = (
+                    len(attempt_replies) == 1
+                    and attempt_replies[0]["dispatch_key"] == dispatch_key
+                    and attempt_replies[0]["state"] in {"received", "validated"}
+                    and attempt_replies[0]["canonical_handoff"] == canonical
+                )
+                if (
+                    persisted["state"] == expected_state
+                    and persisted["receipt_summary"] == summary
+                    and persisted["terminal_reason"]
+                    == (None if succeeded else "worker_failed")
+                    and persisted["blocker"]
+                    == (None if succeeded else "worker_failed")
+                    and (reply_matches if canonical is not None else not attempt_replies)
+                ):
+                    return {
+                        "attempt": copy.deepcopy(persisted),
+                        "reply": copy.deepcopy(attempt_replies[0])
+                        if canonical is not None
+                        else None,
+                    }
+                raise ValueError("tmux mission attempt completion conflict")
+            if attempt_replies:
+                raise ValueError("duplicate durable recovery reply evidence")
+            candidate = _validate_mission_attempt_record(
+                {
+                    **persisted,
+                    "state": expected_state,
+                    "updated_at": utc_now(),
+                    "receipt_summary": summary,
+                    "terminal_reason": None if succeeded else "worker_failed",
+                    "blocker": None if succeeded else "worker_failed",
+                }
+            )
+            reply = None
+            if canonical is not None:
+                reply = validate_mission_reply_evidence_record(
+                    {
+                        "mission_id": candidate["mission_id"],
+                        "attempt_id": attempt_id,
+                        "reply_id": new_id("mrp"),
+                        "dispatch_key": dispatch_key,
+                        "state": "received",
+                        "canonical_handoff": canonical,
+                    }
+                )
+            index = next(
+                index for index, item in enumerate(attempts_raw)
+                if type(item) is dict and item.get("attempt_id") == attempt_id
+            )
+            attempts_raw[index] = candidate
+            self._append_recovery_audit_locked(
+                state,
+                "mission_attempt_result_recorded",
+                {
+                    "mission_id": candidate["mission_id"],
+                    "attempt_id": attempt_id,
+                    "dispatch_key": dispatch_key,
+                    "state": candidate["state"],
+                },
+            )
+            if reply is not None:
+                replies.append(reply)
+                self._append_recovery_audit_locked(
+                    state,
+                    "mission_reply_evidence_recorded",
+                    {
+                        "attempt_id": attempt_id,
+                        "mission_id": candidate["mission_id"],
+                        "reply_id": reply["reply_id"],
+                        "state": reply["state"],
+                        "canonical_handoff_hash": canonical_snapshot_hash(
+                            reply["canonical_handoff"]
+                        ),
+                    },
+                )
+            self._atomic_save(state)
+            return {
+                "attempt": copy.deepcopy(candidate),
+                "reply": copy.deepcopy(reply),
             }
 
     def advance_mission_after_handoff(

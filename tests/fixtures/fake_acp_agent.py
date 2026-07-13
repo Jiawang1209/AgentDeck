@@ -21,7 +21,7 @@ class FakeAgent:
         self.cancelled = asyncio.Event()
 
     def log_request(self, method: str, **facts: object) -> None:
-        if self.scenario != "full_reconnect_log" or not self.args:
+        if self.scenario not in {"full_reconnect_log", "mission_worker"} or not self.args:
             return
         with Path(self.args[0]).open("a", encoding="utf-8") as stream:
             stream.write(json.dumps({"method": method, **facts}, sort_keys=True) + "\n")
@@ -118,18 +118,34 @@ class FakeAgent:
             )
         text = prompt[0].text
         if self.scenario == "mission_worker":
-            token_match = re.search(r"dsp_[0-9a-f]{32}", text)
-            if token_match is None:
+            label = self.args[1] if len(self.args) > 1 else "worker"
+            state_path = Path.cwd() / ".agentdeck" / "state" / "state.json"
+            durable = json.loads(state_path.read_text(encoding="utf-8"))
+            self.log_request(
+                "mission_prompt",
+                worker=label,
+                prompt=text,
+                recorded_handoffs=[
+                    item.get("attempt_id")
+                    for item in durable.get("mission_handoffs", [])
+                    if item.get("state") == "recorded"
+                ],
+            )
+            token_matches = re.findall(r"dsp_[0-9a-f]{32}", text)
+            if not token_matches:
                 raise RuntimeError("missing Mission dispatch token")
-            token = token_match.group(0)
+            token = token_matches[-1]
             text = "\n".join(
                 (
                     f"handoff_token: {token}",
                     "status: completed",
-                    "summary: fake worker completed",
-                    "verification: deterministic ACP fixture",
+                    f"summary: {label} compact summary",
+                    f"verification: {label} deterministic verification",
                     "risks: none",
                     "next_steps: continue",
+                    "private_reasoning: PRIVATE_REASONING_MARKER",
+                    "full_transcript: FULL_TRANSCRIPT_MARKER",
+                    "secret: SECRET_MARKER",
                 )
             )
         await self.client.session_update(

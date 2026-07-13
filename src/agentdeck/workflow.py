@@ -25,6 +25,18 @@ REPLY_FIELDS = (
     "next_steps",
 )
 REPLY_STATUSES = {"completed", "blocked", "failed"}
+CANONICAL_HANDOFF_FIELDS = {
+    "handoff_token",
+    "status",
+    "summary",
+    "verification",
+    "risks",
+    "next_steps",
+    "artifacts",
+    "trace_ids",
+}
+MAX_CANONICAL_HANDOFF_BYTES = 32 * 1024
+MAX_CANONICAL_HANDOFF_ITEMS = 64
 
 
 @dataclass(frozen=True)
@@ -156,6 +168,42 @@ def build_canonical_handoff(
         artifacts=tuple(compact_artifacts),
         trace_ids=tuple(trace_ids),
     )
+
+
+def validate_canonical_handoff(
+    value: object, *, expected_handoff_token: str | None = None
+) -> CanonicalHandoff:
+    """Rebuild and bound one persisted compact handoff through the sole schema."""
+    if type(value) is not dict or set(value) != CANONICAL_HANDOFF_FIELDS:
+        raise ValueError("canonical Worker handoff is invalid")
+    token = value.get("handoff_token")
+    if type(token) is not str or not token:
+        raise ValueError("canonical Worker handoff is invalid")
+    if expected_handoff_token is not None and token != expected_handoff_token:
+        raise ValueError("canonical Worker handoff lineage is invalid")
+    artifacts = value.get("artifacts")
+    trace_ids = value.get("trace_ids")
+    if (
+        type(artifacts) is not list
+        or type(trace_ids) is not list
+        or len(artifacts) > MAX_CANONICAL_HANDOFF_ITEMS
+        or len(trace_ids) > MAX_CANONICAL_HANDOFF_ITEMS
+    ):
+        raise ValueError("canonical Worker handoff is invalid")
+    rebuilt = build_canonical_handoff(
+        reply={key: value[key] for key in REPLY_FIELDS},
+        artifacts=artifacts,
+        trace_ids=trace_ids,
+        expected_handoff_token=token,
+        require_artifact_hashes=True,
+    )
+    compact = rebuilt.compact()
+    if compact != value:
+        raise ValueError("canonical Worker handoff is not canonical")
+    encoded = json.dumps(compact, sort_keys=True, separators=(",", ":")).encode()
+    if len(encoded) > MAX_CANONICAL_HANDOFF_BYTES:
+        raise ValueError("canonical Worker handoff exceeds size limit")
+    return rebuilt
 
 
 def validate_compact_worker_outcome(

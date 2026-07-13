@@ -18,6 +18,7 @@ from typing import Any, Protocol
 
 from .scheduler import SchedulerDecision, SchedulerFacts, schedule_gate
 from .supervisor import SubmittedReceipt, TransportResult
+from ..workflow import build_canonical_handoff, validate_canonical_handoff
 
 
 class ServiceError(RuntimeError):
@@ -27,6 +28,107 @@ class ServiceError(RuntimeError):
 class ServiceServer(Protocol):
     async def start(self) -> None: ...
     async def close(self) -> None: ...
+
+
+def _canonical_transport_result(
+    result: object, *, dispatch_key: str, transport: str
+) -> dict[str, object] | None:
+    if not isinstance(result, TransportResult) or not result.validated:
+        return None
+    if transport == "acp" and result.stop_reason != "end_turn":
+        return None
+    if transport == "tmux" and result.stop_reason != "structured_reply":
+        return None
+    try:
+        return build_canonical_handoff(
+            reply=result.reply,
+            artifacts=[
+                {"path": item.path, "content_hash": item.content_hash}
+                for item in result.artifacts
+            ],
+            trace_ids=list(result.trace_ids),
+            expected_handoff_token=dispatch_key,
+            require_artifact_hashes=True,
+        ).compact()
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def resolve_previous_handoff(
+    state: object, attempt: Mapping[str, object]
+) -> dict[str, object] | None:
+    """Resolve only the exact frozen predecessor's recorded compact handoff."""
+    if type(state) is not dict:
+        raise ServiceError("previous Worker handoff state is invalid")
+    mission_id = attempt.get("mission_id")
+    step_id = attempt.get("step_id")
+    agent_id = attempt.get("agent_id")
+    missions = [
+        item for item in state.get("missions", [])
+        if type(item) is dict and item.get("mission_id") == mission_id
+    ]
+    if len(missions) != 1:
+        raise ServiceError("previous Worker handoff Mission is invalid")
+    snapshot = missions[0].get("execution_snapshot")
+    mission_snapshot = snapshot.get("mission") if type(snapshot) is dict else None
+    steps = mission_snapshot.get("steps") if type(mission_snapshot) is dict else None
+    if type(steps) is not list or any(type(item) is not dict for item in steps):
+        raise ServiceError("previous Worker handoff step order is invalid")
+    indexes = [
+        index for index, item in enumerate(steps)
+        if item.get("step_id") == step_id and item.get("agent_id") == agent_id
+    ]
+    if len(indexes) != 1:
+        raise ServiceError("previous Worker handoff current step is invalid")
+    index = indexes[0]
+    if index == 0:
+        return None
+    previous_step = steps[index - 1]
+    attempts = [
+        item for item in state.get("mission_attempts", [])
+        if type(item) is dict
+        and item.get("mission_id") == mission_id
+        and item.get("step_id") == previous_step.get("step_id")
+        and item.get("agent_id") == previous_step.get("agent_id")
+        and item.get("state") == "succeeded"
+    ]
+    if len(attempts) != 1:
+        raise ServiceError("previous Worker handoff attempt is ambiguous")
+    previous_attempt = attempts[0]
+    previous_attempt_id = previous_attempt.get("attempt_id")
+    dispatch_key = previous_attempt.get("dispatch_key")
+    replies = [
+        item for item in state.get("mission_worker_replies", [])
+        if type(item) is dict
+        and item.get("mission_id") == mission_id
+        and item.get("attempt_id") == previous_attempt_id
+        and item.get("dispatch_key") == dispatch_key
+        and item.get("state") == "validated"
+    ]
+    if len(replies) != 1:
+        raise ServiceError("previous Worker handoff validated reply is invalid")
+    reply = replies[0]
+    handoffs = [
+        item for item in state.get("mission_handoffs", [])
+        if type(item) is dict
+        and item.get("mission_id") == mission_id
+        and item.get("attempt_id") == previous_attempt_id
+        and item.get("reply_id") == reply.get("reply_id")
+        and item.get("state") == "recorded"
+    ]
+    if len(handoffs) != 1:
+        raise ServiceError("previous Worker handoff recorded evidence is invalid")
+    reply_content = reply.get("canonical_handoff")
+    handoff_content = handoffs[0].get("canonical_handoff")
+    if reply_content != handoff_content:
+        raise ServiceError("previous Worker handoff content drift")
+    try:
+        canonical = validate_canonical_handoff(
+            reply_content, expected_handoff_token=dispatch_key  # type: ignore[arg-type]
+        )
+    except (TypeError, ValueError):
+        raise ServiceError("previous Worker handoff content is invalid") from None
+    return canonical.compact()
 
 
 def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
@@ -235,13 +337,12 @@ class DaemonWorkerCoordinator:
                         expected_claim_id=claimed["admission_claim_id"], reason="admission_outcome_unknown",
                     )
                     return
-                succeeded = bool(
-                    isinstance(result, TransportResult)
-                    and result.validated
-                    and result.stop_reason == "end_turn"
-                    and result.reply.get("handoff_token") == claimed["dispatch_key"]
-                    and result.reply.get("status") == "completed"
+                canonical = _canonical_transport_result(
+                    result,
+                    dispatch_key=str(claimed["dispatch_key"]),
+                    transport="acp",
                 )
+                succeeded = canonical is not None and canonical["status"] == "completed"
                 result_summary = (
                     str(result.reply.get("summary") or "Worker completed")
                     if isinstance(result, TransportResult)
@@ -252,7 +353,8 @@ class DaemonWorkerCoordinator:
                     expected_claim_id=claimed["admission_claim_id"],
                     receipt_summary=receipt.summary,
                     succeeded=succeeded,
-                    summary=result_summary if succeeded else "Worker transport failed",
+                    summary=result_summary if canonical is not None else "Worker transport failed",
+                    canonical_handoff=canonical,
                 )
                 self.refresh_recovery()
 
@@ -317,37 +419,29 @@ class DaemonWorkerCoordinator:
 
         def completion_completed(outcome: tuple[bool, object]) -> None:
             ok, value = outcome
-            succeeded = bool(
-                ok
-                and isinstance(value, TransportResult)
-                and value.validated
-                and isinstance(value.reply, dict)
-                and value.reply.get("handoff_token") == claimed["dispatch_key"]
-                and value.reply.get("status") == "completed"
-                and (
-                    (claimed["configured_transport"] == "tmux" and value.stop_reason == "structured_reply")
-                    or (claimed["configured_transport"] == "acp" and value.stop_reason in {"end_turn", "completed"})
+            canonical = (
+                _canonical_transport_result(
+                    value,
+                    dispatch_key=str(claimed["dispatch_key"]),
+                    transport=str(claimed["configured_transport"]),
                 )
+                if ok
+                else None
             )
+            succeeded = canonical is not None and canonical["status"] == "completed"
             summary = (
                 str(value.reply.get("summary") or "Worker completed")
-                if succeeded and isinstance(value, TransportResult)
+                if canonical is not None and isinstance(value, TransportResult)
                 else "Worker transport failed"
             )
-            self.store.record_mission_attempt_result(
+            self.store.record_tmux_mission_attempt_completion(
                 attempt_id=claimed["attempt_id"],
                 dispatch_key=claimed["dispatch_key"],
                 succeeded=succeeded,
                 summary=summary,
+                canonical_handoff=canonical,
             )
             self.refresh_recovery()
-            if succeeded:
-                self.store.record_mission_reply_evidence(
-                    attempt_id=claimed["attempt_id"],
-                    dispatch_key=claimed["dispatch_key"],
-                    state="received",
-                )
-                self.refresh_recovery()
 
         self.service.start_worker_io(admit(), on_completion=admission_completed)
 

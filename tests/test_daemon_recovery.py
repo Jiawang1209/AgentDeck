@@ -24,6 +24,19 @@ MISSION_ID = "mis_aaaaaaaaaaaa"
 ATTEMPT_ID = "mat_bbbbbbbbbbbb"
 
 
+def compact_handoff(token: str) -> dict[str, object]:
+    return {
+        "handoff_token": token,
+        "status": "completed",
+        "summary": "implementation finished",
+        "verification": "pytest passed",
+        "risks": "none",
+        "next_steps": "review",
+        "artifacts": [],
+        "trace_ids": [],
+    }
+
+
 def frozen_snapshot(mission_id: str = MISSION_ID) -> dict[str, object]:
     digest = "sha256:" + "a" * 64
     mission = {
@@ -726,6 +739,7 @@ def test_startup_rejects_newer_terminal_attempt_hiding_older_active_attempt(
         "reply_id": reply_id,
         "dispatch_key": newer["dispatch_key"],
         "state": "validated",
+        "canonical_handoff": compact_handoff(newer["dispatch_key"]),
     }]
     state["mission_handoffs"] = [{
         "mission_id": MISSION_ID,
@@ -733,6 +747,7 @@ def test_startup_rejects_newer_terminal_attempt_hiding_older_active_attempt(
         "handoff_id": handoff_id,
         "reply_id": reply_id,
         "state": "recorded",
+        "canonical_handoff": compact_handoff(newer["dispatch_key"]),
     }]
     def event(suffix: str, event_type: str, payload: dict[str, object]):
         return {
@@ -1174,6 +1189,7 @@ def test_controlled_reply_and_handoff_transitions_drive_recovery(tmp_path: Path)
         attempt_id=ATTEMPT_ID,
         dispatch_key="dsp_" + "d" * 32,
         state="received",
+        canonical_handoff=compact_handoff("dsp_" + "d" * 32),
     )
     validated = store.record_mission_reply_evidence(
         attempt_id=ATTEMPT_ID,
@@ -1213,6 +1229,7 @@ def test_reply_evidence_rejects_success_without_durable_receipt_zero_write(
             attempt_id=ATTEMPT_ID,
             dispatch_key="dsp_" + "d" * 32,
             state="received",
+            canonical_handoff=compact_handoff("dsp_" + "d" * 32),
         )
     assert store.state_path.read_bytes() == before
 
@@ -1228,6 +1245,7 @@ def test_handoff_rechecks_reply_receipt_lineage_zero_write(tmp_path: Path) -> No
         attempt_id=ATTEMPT_ID,
         dispatch_key="dsp_" + "d" * 32,
         state="received",
+        canonical_handoff=compact_handoff("dsp_" + "d" * 32),
     )
     validated = store.record_mission_reply_evidence(
         attempt_id=ATTEMPT_ID,

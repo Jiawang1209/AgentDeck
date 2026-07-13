@@ -17,12 +17,28 @@ from agentdeck.daemon.service import (
     DaemonWorkerCoordinator,
     ProjectDaemonService,
     ServiceError,
+    resolve_previous_handoff,
     validate_confirmed_mission_admission,
 )
 from agentdeck.daemon.supervisor import SubmittedReceipt, TransportResult
 
 
 MISSION_ID = "mis_0123456789ab"
+
+
+def _compact_handoff(token: str, summary: str = "planner compact summary") -> dict[str, object]:
+    return {
+        "handoff_token": token,
+        "status": "completed",
+        "summary": summary,
+        "verification": "planner deterministic verification",
+        "risks": "none",
+        "next_steps": "review the plan",
+        "artifacts": [
+            {"path": "reports/plan.md", "content_hash": "sha256:" + "a" * 64}
+        ],
+        "trace_ids": ["trace_planner"],
+    }
 
 
 class FakeServer:
@@ -266,10 +282,9 @@ def test_worker_coordinator_persists_receipt_before_starting_completion() -> Non
         def record_mission_attempt_submitted(self, **kwargs):
             calls.append("persist:submitted")
             return {**attempt, "state": "submitted", "admission_claim_id": "adm_0123456789ab"}
-        def record_mission_attempt_result(self, **kwargs):
-            calls.append("persist:result")
-        def record_mission_reply_evidence(self, **kwargs):
-            calls.append("persist:reply")
+        def record_tmux_mission_attempt_completion(self, **kwargs):
+            assert kwargs["canonical_handoff"]["summary"] == "done"
+            calls.append("persist:tmux-combined")
 
     class Transport:
         async def admit(self, claimed):
@@ -298,10 +313,10 @@ def test_worker_coordinator_persists_receipt_before_starting_completion() -> Non
         for _ in range(10):
             await asyncio.sleep(0)
             await service.tick()
-            if "persist:reply" in calls:
+            if "persist:tmux-combined" in calls:
                 break
         assert calls.index("persist:submitted") < calls.index("io:complete")
-        assert calls[-2:] == ["persist:result", "persist:reply"]
+        assert calls[-1] == "persist:tmux-combined"
         await service.close()
 
     asyncio.run(case())
@@ -653,3 +668,129 @@ def test_lost_admission_response_reports_existing_durable_admission() -> None:
     )
     assert result["accepted"] is True
     assert result["state"] == "admitted"
+
+
+def test_previous_handoff_resolves_exact_frozen_predecessor() -> None:
+    token = "dsp_" + "1" * 32
+    compact = _compact_handoff(token)
+    attempt = {
+        "mission_id": MISSION_ID,
+        "attempt_id": "mat_" + "2" * 12,
+        "step_id": "step_2",
+        "agent_id": "reviewer",
+    }
+    state = {
+        "missions": [{
+            "mission_id": MISSION_ID,
+            "execution_snapshot": {"mission": {"steps": [
+                {"step_id": "step_1", "agent_id": "planner", "position": 1},
+                {"step_id": "step_2", "agent_id": "reviewer", "position": 2},
+            ]}},
+        }],
+        "mission_attempts": [
+            {
+                "mission_id": MISSION_ID,
+                "attempt_id": "mat_" + "1" * 12,
+                "step_id": "step_1",
+                "agent_id": "planner",
+                "dispatch_key": token,
+                "state": "succeeded",
+            },
+            attempt,
+        ],
+        "mission_worker_replies": [{
+            "mission_id": MISSION_ID,
+            "attempt_id": "mat_" + "1" * 12,
+            "reply_id": "mrp_" + "1" * 12,
+            "dispatch_key": token,
+            "state": "validated",
+            "canonical_handoff": compact,
+        }],
+        "mission_handoffs": [{
+            "mission_id": MISSION_ID,
+            "attempt_id": "mat_" + "1" * 12,
+            "handoff_id": "hof_" + "1" * 12,
+            "reply_id": "mrp_" + "1" * 12,
+            "state": "recorded",
+            "canonical_handoff": compact,
+        }],
+    }
+
+    assert resolve_previous_handoff(state, attempt) == compact
+    first = dict(attempt, attempt_id="mat_" + "1" * 12, step_id="step_1", agent_id="planner")
+    assert resolve_previous_handoff(state, first) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_handoff",
+        "duplicate_attempt",
+        "wrong_mission",
+        "reply_not_validated",
+        "content_drift",
+    ],
+)
+def test_previous_handoff_fails_closed_on_ambiguous_or_invalid_lineage(
+    mutation: str,
+) -> None:
+    token = "dsp_" + "1" * 32
+    compact = _compact_handoff(token)
+    attempt = {
+        "mission_id": MISSION_ID,
+        "attempt_id": "mat_" + "2" * 12,
+        "step_id": "step_2",
+        "agent_id": "reviewer",
+    }
+    previous = {
+        "mission_id": MISSION_ID,
+        "attempt_id": "mat_" + "1" * 12,
+        "step_id": "step_1",
+        "agent_id": "planner",
+        "dispatch_key": token,
+        "state": "succeeded",
+    }
+    reply = {
+        "mission_id": MISSION_ID,
+        "attempt_id": previous["attempt_id"],
+        "reply_id": "mrp_" + "1" * 12,
+        "dispatch_key": token,
+        "state": "validated",
+        "canonical_handoff": compact,
+    }
+    handoff = {
+        "mission_id": MISSION_ID,
+        "attempt_id": previous["attempt_id"],
+        "handoff_id": "hof_" + "1" * 12,
+        "reply_id": reply["reply_id"],
+        "state": "recorded",
+        "canonical_handoff": compact,
+    }
+    state = {
+        "missions": [{
+            "mission_id": MISSION_ID,
+            "execution_snapshot": {"mission": {"steps": [
+                {"step_id": "step_1", "agent_id": "planner", "position": 1},
+                {"step_id": "step_2", "agent_id": "reviewer", "position": 2},
+            ]}},
+        }],
+        "mission_attempts": [previous, attempt],
+        "mission_worker_replies": [reply],
+        "mission_handoffs": [handoff],
+    }
+    if mutation == "missing_handoff":
+        state["mission_handoffs"] = []
+    elif mutation == "duplicate_attempt":
+        state["mission_attempts"].append(dict(previous, attempt_id="mat_" + "3" * 12))
+    elif mutation == "wrong_mission":
+        state["mission_handoffs"][0] = dict(handoff, mission_id="mis_" + "f" * 12)
+    elif mutation == "reply_not_validated":
+        state["mission_worker_replies"][0] = dict(reply, state="received")
+    else:
+        state["mission_handoffs"][0] = dict(
+            handoff,
+            canonical_handoff=_compact_handoff(token, "different compact content"),
+        )
+
+    with pytest.raises(ServiceError, match="previous Worker handoff"):
+        resolve_previous_handoff(state, attempt)

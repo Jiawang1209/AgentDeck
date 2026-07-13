@@ -104,6 +104,17 @@ def _receipt() -> SubmittedReceipt:
     )
 
 
+def _canonical_handoff() -> dict[str, object]:
+    return build_canonical_handoff(
+        reply=_reply(),
+        artifacts=[
+            {"path": "reports/result.md", "content_hash": "sha256:" + "a" * 64}
+        ],
+        trace_ids=["trn_worker", "rep_worker"],
+        expected_handoff_token="dsp_" + "1" * 32,
+    ).compact()
+
+
 def _claim_store_attempt(store: StateStore, candidate: dict[str, object]):
     return store.claim_mission_attempt_admission(
         attempt_id=str(candidate["attempt_id"]),
@@ -1376,12 +1387,15 @@ def test_acp_completion_persists_receipt_result_and_reply_with_one_atomic_save(
         receipt_summary="session-created",
         succeeded=True,
         summary="implementation finished",
+        canonical_handoff=_canonical_handoff(),
     )
 
     persisted = store.load()
     assert save_calls == 1
     assert result["attempt"]["state"] == "succeeded"
     assert result["reply"]["state"] == "received"
+    assert result["reply"]["canonical_handoff"] == _canonical_handoff()
+    assert "private_reasoning" not in json.dumps(result["reply"])
     assert persisted["mission_attempts"][0]["state"] == "succeeded"
     assert persisted["mission_worker_replies"][0]["state"] == "received"
     assert [item["event_type"] for item in persisted["protocol_event_outbox"]] == [
@@ -1420,6 +1434,95 @@ def test_failed_acp_completion_is_one_terminal_save_without_reply(tmp_path) -> N
     ]
 
 
+def test_structured_blocked_acp_completion_preserves_canonical_reply(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
+    )
+    canonical = _canonical_handoff()
+    canonical["status"] = "blocked"
+    canonical["summary"] = "blocked by missing input"
+    result = store.record_acp_mission_attempt_completion(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=str(claimed["admission_claim_id"]),
+        receipt_summary="session-created",
+        succeeded=False,
+        summary="blocked by missing input",
+        canonical_handoff=canonical,
+    )
+
+    assert result["attempt"]["state"] == "failed"
+    assert result["reply"]["state"] == "received"
+    assert result["reply"]["canonical_handoff"] == canonical
+    before = store.state_path.read_bytes()
+    repeated = store.record_acp_mission_attempt_completion(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=str(claimed["admission_claim_id"]),
+        receipt_summary="session-created",
+        succeeded=False,
+        summary="blocked by missing input",
+        canonical_handoff=canonical,
+    )
+    assert repeated == result
+    assert store.state_path.read_bytes() == before
+    conflicting = deepcopy(canonical)
+    conflicting["summary"] = "different blocked result"
+    with pytest.raises(ValueError, match="conflict"):
+        store.record_acp_mission_attempt_completion(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=str(claimed["admission_claim_id"]),
+            receipt_summary="session-created",
+            succeeded=False,
+            summary="blocked by missing input",
+            canonical_handoff=conflicting,
+        )
+    assert store.state_path.read_bytes() == before
+
+
+def test_tmux_completion_atomically_persists_result_and_canonical_reply(
+    tmp_path, monkeypatch
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt("tmux")]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
+    )
+    store.record_mission_attempt_submitted(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=str(claimed["admission_claim_id"]),
+        receipt_summary="pane accepted",
+    )
+    save_calls = 0
+    original_save = store._atomic_save
+
+    def counted_save(candidate):
+        nonlocal save_calls
+        save_calls += 1
+        original_save(candidate)
+
+    monkeypatch.setattr(store, "_atomic_save", counted_save)
+    result = store.record_tmux_mission_attempt_completion(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        succeeded=True,
+        summary="implementation finished",
+        canonical_handoff=_canonical_handoff(),
+    )
+
+    assert save_calls == 1
+    assert result["attempt"]["state"] == "succeeded"
+    assert result["reply"]["canonical_handoff"] == _canonical_handoff()
+
+
 def test_acp_completion_wrong_claim_is_zero_write(tmp_path) -> None:
     store = StateStore(tmp_path)
     state = store.load()
@@ -1437,6 +1540,7 @@ def test_acp_completion_wrong_claim_is_zero_write(tmp_path) -> None:
             receipt_summary="session-created",
             succeeded=True,
             summary="done",
+            canonical_handoff=_canonical_handoff(),
         )
     assert store.state_path.read_bytes() == before
 
@@ -1458,6 +1562,7 @@ def test_identical_acp_completion_retry_is_idempotent_and_adds_no_events(
         "receipt_summary": "session-created",
         "succeeded": True,
         "summary": "done",
+        "canonical_handoff": _canonical_handoff(),
     }
     first = store.record_acp_mission_attempt_completion(**arguments)
     before = store.state_path.read_bytes()
@@ -1484,6 +1589,7 @@ def test_identical_acp_completion_retry_remains_idempotent_after_reply_validatio
         "receipt_summary": "session-created",
         "succeeded": True,
         "summary": "done",
+        "canonical_handoff": _canonical_handoff(),
     }
     completed = store.record_acp_mission_attempt_completion(**arguments)
     reply = completed["reply"]
@@ -1528,6 +1634,7 @@ def test_conflicting_acp_completion_retry_is_zero_write(tmp_path) -> None:
         receipt_summary="session-created",
         succeeded=True,
         summary="done",
+        canonical_handoff=_canonical_handoff(),
     )
     before = store.state_path.read_bytes()
     with pytest.raises(ValueError, match="conflict"):

@@ -427,7 +427,12 @@ def validate_mission_recovery_evidence_record(value: object) -> dict[str, object
 
 
 def validate_mission_reply_evidence_record(value: object) -> dict[str, object]:
-    fields = {"mission_id", "attempt_id", "reply_id", "dispatch_key", "state"}
+    from ..workflow import validate_canonical_handoff
+
+    fields = {
+        "mission_id", "attempt_id", "reply_id", "dispatch_key", "state",
+        "canonical_handoff",
+    }
     if (
         type(value) is not dict
         or set(value) != fields
@@ -441,11 +446,22 @@ def validate_mission_reply_evidence_record(value: object) -> dict[str, object]:
         or value.get("state") not in {"received", "validated", "invalid"}
     ):
         raise ValueError("durable recovery reply evidence is invalid")
-    return dict(value)
+    try:
+        compact = validate_canonical_handoff(
+            value["canonical_handoff"], expected_handoff_token=value["dispatch_key"]
+        ).compact()
+    except (TypeError, ValueError):
+        raise ValueError("durable recovery reply evidence is invalid") from None
+    return {**value, "canonical_handoff": compact}
 
 
 def validate_mission_handoff_evidence_record(value: object) -> dict[str, object]:
-    fields = {"mission_id", "attempt_id", "handoff_id", "reply_id", "state"}
+    from ..workflow import validate_canonical_handoff
+
+    fields = {
+        "mission_id", "attempt_id", "handoff_id", "reply_id", "state",
+        "canonical_handoff",
+    }
     if (
         type(value) is not dict
         or set(value) != fields
@@ -459,7 +475,11 @@ def validate_mission_handoff_evidence_record(value: object) -> dict[str, object]
         or value.get("state") not in {"pending", "recorded"}
     ):
         raise ValueError("durable recovery handoff evidence is invalid")
-    return dict(value)
+    try:
+        compact = validate_canonical_handoff(value["canonical_handoff"]).compact()
+    except (TypeError, ValueError):
+        raise ValueError("durable recovery handoff evidence is invalid") from None
+    return {**value, "canonical_handoff": compact}
 
 
 def validate_mission_permission_binding(value: object) -> dict[str, object]:
@@ -603,6 +623,7 @@ def recovery_facts_from_persisted_state(
         or handoff["mission_id"] != mission_id
         or handoff["reply_id"] != reply["reply_id"]
         or reply["state"] != "validated"
+        or handoff["canonical_handoff"] != reply["canonical_handoff"]
     ):
         raise RecoveryError("durable recovery handoff reply lineage is invalid")
 

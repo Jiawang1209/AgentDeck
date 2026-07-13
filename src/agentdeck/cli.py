@@ -187,6 +187,7 @@ from .daemon.service import (
     DaemonWorkerCoordinator,
     ProjectDaemonService,
     ServiceError,
+    resolve_previous_handoff,
     scheduler_facts_from_store,
     validate_confirmed_mission_admission,
 )
@@ -6528,11 +6529,12 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             )
             if raw_step is None or not isinstance(raw_step.get("task"), str):
                 raise ServiceError("Worker task authority is invalid")
+            previous_handoff = resolve_previous_handoff(store.load(), attempt)
             prompt = build_worker_prompt(
                 attempt,
                 agent,
                 task=raw_step["task"],
-                previous_handoff=None,
+                previous_handoff=previous_handoff,
             )
             if agent.transport == "acp":
                 return AcpWorkerTransport(
