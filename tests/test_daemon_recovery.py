@@ -815,6 +815,36 @@ def test_controlled_permission_binding_tracks_authoritative_status_transitions(
     assert resumed[0]["next_transition"] == "await_worker"
 
 
+@pytest.mark.parametrize("forged_status", ["approved", "denied", "expired"])
+def test_startup_rejects_forged_terminal_permission_base_state(
+    tmp_path: Path, forged_status: str
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "worker", "codex", "acp", "native", str(tmp_path), capabilities
+    )
+    turn = store.record_protocol_turn(session["session_id"], "msg_permission")
+    permission = store.record_permission_request(
+        session["session_id"], turn["turn_id"], "shell", str(tmp_path), "high"
+    )
+    store.bind_mission_permission_evidence(
+        attempt_id=ATTEMPT_ID, permission_id=permission["permission_id"]
+    )
+    state = store.load()
+    state["permission_requests"][0]["status"] = forged_status
+    assert state["permission_requests"][0]["decision"] is None
+    store.save(state)
+    enabled: list[bool] = []
+
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: enabled.append(True))
+
+    assert enabled == []
+    assert store.load().get("recovery_decisions", []) == []
+
+
 @pytest.mark.parametrize("forged_field", ["configured_transport", "ownership_state"])
 def test_startup_rejects_forged_route_or_ownership_projection(
     tmp_path: Path, forged_field: str

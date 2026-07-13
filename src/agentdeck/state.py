@@ -435,12 +435,8 @@ def _validate_permission_record(value: object) -> dict[str, Any]:
             type(value.get(field)) is not str or not value[field].strip()
             for field in ("tool_name", "target", "risk")
         )
-        or value.get("status") not in PERMISSION_STATES
-        or (value.get("status") == "pending" and decision is not None)
-        or (
-            decision is not None
-            and (type(decision) is not str or not decision.strip())
-        )
+        or value.get("status") != "pending"
+        or decision is not None
     ):
         raise ValueError(error)
     _validated_aware_record_times(value, error)
