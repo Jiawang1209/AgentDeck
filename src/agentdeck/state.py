@@ -3281,7 +3281,12 @@ class StateStore:
                     "runtime": binding,
                 }
             )
-        leader = asdict(config.leader)
+        leader = {
+            "agent_id": config.leader.agent_id,
+            "provider": config.leader.provider,
+            "model": config.leader.model,
+            "approval_mode": config.leader.approval_mode,
+        }
         leader["leader_backend"] = leader_backend_identity(config.leader.provider, config.leader.model)
         leader["coordination_roles"] = leader_coordination_roles(config.leader.provider, config.leader.model)
         return ProjectView(

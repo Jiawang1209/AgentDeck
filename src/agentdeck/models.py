@@ -42,6 +42,9 @@ class LeaderConfig:
     provider: str = "deepseek"
     model: str = "deepseek-chat"
     approval_mode: str = "confirm"
+    backend_kind: str | None = None
+    transport: str | None = None
+    transport_command: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

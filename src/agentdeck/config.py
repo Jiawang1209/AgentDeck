@@ -104,12 +104,35 @@ def load_config(root: Path | None = None) -> ProjectConfig:
     leader_raw = raw.get("leader", {})
     runtime_raw = raw.get("runtime", {})
     agents_raw = raw.get("agents", [])
+    raw_leader_command = leader_raw.get("transport_command", [])
+    if type(raw_leader_command) is not list:
+        raise ValueError("invalid Leader backend configuration")
     leader = LeaderConfig(
         agent_id=leader_raw.get("agent_id", "leader"),
         provider=leader_raw.get("provider", "deepseek"),
         model=leader_raw.get("model", "deepseek-chat"),
         approval_mode=leader_raw.get("approval_mode", "confirm"),
+        backend_kind=leader_raw.get("backend_kind"),
+        transport=leader_raw.get("transport"),
+        transport_command=tuple(raw_leader_command),
     )
+    explicit_leader = leader.backend_kind is not None or leader.transport is not None or bool(leader.transport_command)
+    if explicit_leader:
+        valid_pair = (leader.backend_kind, leader.transport) in {
+            ("api", "http"),
+            ("agent_cli", "acp"),
+            ("agent_cli", "cli_subprocess"),
+        }
+        command_valid = all(
+            isinstance(part, str) and part for part in leader.transport_command
+        )
+        if (
+            not valid_pair
+            or not command_valid
+            or (leader.transport == "acp" and not leader.transport_command)
+            or (leader.backend_kind == "api" and leader.transport_command)
+        ):
+            raise ValueError("invalid Leader backend configuration")
     runtime = RuntimeConfig(
         backend=runtime_raw.get("backend", "tmux"),
         session_name=runtime_raw.get("session_name", "agentdeck"),
@@ -248,6 +271,15 @@ def _dump_config(raw: dict[str, object]) -> str:
                 "",
             ]
         )
+        if leader.get("backend_kind") is not None:
+            lines.insert(len(lines) - 1, f"backend_kind = {_quote_toml(str(leader['backend_kind']))}")
+        if leader.get("transport") is not None:
+            lines.insert(len(lines) - 1, f"transport = {_quote_toml(str(leader['transport']))}")
+        if leader.get("transport_command"):
+            command = leader["transport_command"]
+            if isinstance(command, list):
+                rendered = ", ".join(_quote_toml(str(part)) for part in command)
+                lines.insert(len(lines) - 1, f"transport_command = [{rendered}]")
     if isinstance(agents, list):
         for item in agents:
             if not isinstance(item, dict):

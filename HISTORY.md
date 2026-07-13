@@ -48,6 +48,14 @@
 - **Failure boundary**: invalid provider/model, plan, selection, summary, or public card produces zero plan/Mission/approval/dispatch writes; audit delivery failure leaves committed outbox truth and returns an explicit blocker rather than repeating provider or Mission creation.
 - **TDD evidence**: candidate/legacy atomicity plus full Mission orchestration regressions are 59 passed before the broader Leader/state verification.
 
+### Add explicit M1 Leader backend routing
+
+- **Backend identity**: added `LeaderGateway` with stable readiness/capability facts for API HTTP, Agent-CLI ACP, and explicit CLI-subprocess Leaders. Legacy provider configs derive the existing identity without rewriting files; new TOML combinations are strictly validated.
+- **No fallback**: one request freezes one backend/transport. API and CLI use the existing provider/orchestrator exactly once; ACP uses the existing bounded transport for foreground initialize/new/prompt only. Failure never retries another provider or transport.
+- **ACP planning**: a memory-only sink accepts at most 2 MiB/256 agent text fragments under the existing 64 KiB frame bound, rejects unsupported updates and all permissions, requires completed `end_turn`, parses exactly one JSON object, and discards raw assembled text/native session identity after cleanup. Load/resume are not used.
+- **Cancellation and privacy**: pre-call/post-call cancellation, ACP cancellation propagation, timeouts, malformed frames, invalid structured output, and backend errors fail closed with sanitized messages. ProjectView keeps an allowlisted compact Leader projection and never exposes `transport_command` argv.
+- **TDD evidence**: the focused gateway suite is 11 passed; gateway/provider/ACP/dispatch/Mission regression is 170 passed with one explicitly opt-in live skip; compileall and `git diff --check` pass.
+
 ### Design the Phase 3 M1 foreground conversation
 
 - **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.
