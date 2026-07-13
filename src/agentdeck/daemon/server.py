@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import socket
+import threading
 
 from .lifecycle import DaemonEndpointBinding, DaemonIdentityError, bind_daemon_endpoint
 from .lease import LeaseError
@@ -32,6 +33,9 @@ MutationHandler = Callable[
     Mapping[str, object] | Awaitable[Mapping[str, object]],
 ]
 LeaseValidator = Callable[[str, int], object]
+
+
+_DAEMON_BIND_LOCK = threading.RLock()
 
 
 class DaemonServerError(RuntimeError):
@@ -136,6 +140,10 @@ class DaemonServer:
     async def start(self) -> None:
         if self._server is not None:
             return
+        if threading.active_count() != 1:
+            raise DaemonServerError(
+                "daemon server startup requires a single-threaded process"
+            )
         binding: DaemonEndpointBinding | None = None
         bound_identity: tuple[int, int] | None = None
         listener: socket.socket | None = None
@@ -147,11 +155,25 @@ class DaemonServer:
             binding.assert_socket_absent()
             listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             listener.setblocking(False)
-            previous_umask = os.umask(0o177)
-            try:
-                listener.bind(str(self.endpoint))
-            finally:
-                os.umask(previous_umask)
+            runtime_fd = binding.duplicate_runtime_fd()
+            with _DAEMON_BIND_LOCK:
+                cwd_fd: int | None = None
+                try:
+                    cwd_fd = os.open(".", os.O_RDONLY)
+                    os.fchdir(runtime_fd)
+                    previous_umask = os.umask(0o177)
+                    try:
+                        listener.bind("daemon.sock")
+                    finally:
+                        os.umask(previous_umask)
+                finally:
+                    try:
+                        if cwd_fd is not None:
+                            os.fchdir(cwd_fd)
+                    finally:
+                        if cwd_fd is not None:
+                            os.close(cwd_fd)
+                        os.close(runtime_fd)
             bound_identity = binding.held_socket_identity()
             binding.assert_socket_identity(bound_identity)
             binding.assert_socket_mode(bound_identity, 0o600)

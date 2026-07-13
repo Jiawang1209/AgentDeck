@@ -317,7 +317,8 @@ class DaemonClient:
                     return await asyncio.shield(future)
             except asyncio.TimeoutError:
                 future.cancel()
-                self._expired_request_ids.append(request_id)
+                if sent:
+                    self._expired_request_ids.append(request_id)
                 raise DaemonClientError("daemon request timed out") from None
         except asyncio.CancelledError:
             future.cancel()

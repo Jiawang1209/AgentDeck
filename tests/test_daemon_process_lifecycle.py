@@ -141,6 +141,59 @@ def test_endpoint_binding_restores_mismatched_quarantined_entry() -> None:
         shutil.rmtree(outside, ignore_errors=True)
 
 
+def test_endpoint_binding_quarantine_restore_conflict_is_bounded_to_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = Path(tempfile.mkdtemp(prefix="ad-bind-", dir="/tmp")).resolve()
+    binding = bind_daemon_endpoint(project)
+    expected = socket.socket(socket.AF_UNIX)
+    expected.bind(str(binding.endpoint.socket_path))
+    identity = binding.socket_identity()
+    outside = project.with_name(project.name + "-outside")
+    outside.mkdir()
+    first_target = outside / "first"
+    replacement_target = outside / "replacement"
+    first_target.write_text("first", encoding="utf-8")
+    replacement_target.write_text("replacement", encoding="utf-8")
+    binding.endpoint.socket_path.unlink()
+    binding.endpoint.socket_path.symlink_to(first_target)
+    real_rename = lifecycle.os.rename
+
+    def inject_restore_conflict(
+        source: str,
+        target: str,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        real_rename(
+            source,
+            target,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
+        if source == "daemon.sock" and target.startswith(".daemon.sock.cleanup-"):
+            assert dst_dir_fd is not None
+            os.symlink(replacement_target, "daemon.sock", dir_fd=dst_dir_fd)
+
+    monkeypatch.setattr(lifecycle.os, "rename", inject_restore_conflict)
+    try:
+        for _ in range(5):
+            assert not binding.unlink_socket_if_identity(identity)
+        residues = list(
+            binding.endpoint.socket_path.parent.glob(".daemon.sock.cleanup-*")
+        )
+        assert len(residues) == 1
+        assert binding.endpoint.socket_path.is_symlink()
+        assert binding.endpoint.socket_path.resolve() == replacement_target
+        assert replacement_target.read_text(encoding="utf-8") == "replacement"
+    finally:
+        expected.close()
+        binding.close()
+        shutil.rmtree(project, ignore_errors=True)
+        shutil.rmtree(outside, ignore_errors=True)
+
+
 def _atomic_json(path: Path, value: Mapping[str, object]) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value), encoding="utf-8")

@@ -9,6 +9,7 @@ import stat
 import shutil
 import sys
 import tempfile
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -506,6 +507,65 @@ def test_sent_request_cancellation_tombstones_late_response(
     _run(exercise())
 
 
+def test_unsent_timeout_storm_cannot_evict_real_sent_tombstone(
+    short_project: Path,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def mutate(method: str, params: dict[str, object]) -> dict[str, object]:
+        del method, params
+        started.set()
+        await release.wait()
+        return {"late": True}
+
+    async def exercise() -> None:
+        owner, server = await _running_server(
+            short_project,
+            mutation_handler=mutate,
+            lease_validator=lambda lease_id, generation: None,
+        )
+        client = await DaemonClient.connect_verified(
+            short_project, max_frame_bytes=MAX_FRAME
+        )
+        client.request_timeout_seconds = 0.04
+        sent = asyncio.create_task(
+            client.request(
+                "mission.pause", {}, lease_id="lse_current", lease_generation=1
+            )
+        )
+        try:
+            await asyncio.wait_for(started.wait(), timeout=0.5)
+            await client._write_lock.acquire()
+            unsent = [
+                asyncio.create_task(client.request("status", {}))
+                for _ in range(140)
+            ]
+            results = await asyncio.gather(*unsent, return_exceptions=True)
+            assert all(
+                isinstance(result, DaemonClientError)
+                and "timed out" in str(result)
+                for result in results
+            )
+            with pytest.raises(DaemonClientError, match="timed out"):
+                await sent
+            client._write_lock.release()
+            release.set()
+            await server.wait_for_mutations(timeout_seconds=0.5)
+            await asyncio.sleep(0)
+            assert (await client.request("status", {}))["state"] == "ready"
+        finally:
+            if client._write_lock.locked():
+                client._write_lock.release()
+            release.set()
+            await asyncio.gather(sent, return_exceptions=True)
+            await client.close()
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
 def test_reader_eof_atomically_fails_pending_and_unbounded_event_waiters(
     short_project: Path,
 ) -> None:
@@ -916,6 +976,102 @@ def test_server_bind_runtime_swap_never_chmods_or_unlinks_external_file(
     _run(exercise())
 
 
+def test_server_prebind_runtime_swap_writes_only_held_runtime(
+    short_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        owner = _owner(short_project)
+        runtime = owner.endpoint.socket_path.parent
+        parked = runtime.with_name("runtime-parked")
+        outside = short_project / "outside-runtime"
+        outside.mkdir()
+        original = getattr(
+            lifecycle_module.DaemonEndpointBinding,
+            "duplicate_runtime_fd",
+            None,
+        )
+        swapped = False
+
+        def swap_before_bind(binding: object) -> int:
+            nonlocal swapped
+            swapped = True
+            runtime.rename(parked)
+            runtime.symlink_to(outside, target_is_directory=True)
+            assert original is not None
+            return original(binding)
+
+        monkeypatch.setattr(
+            lifecycle_module.DaemonEndpointBinding,
+            "duplicate_runtime_fd",
+            swap_before_bind,
+            raising=False,
+        )
+        server = DaemonServer(
+            endpoint=owner.endpoint.socket_path,
+            instance_id=owner.instance_id,
+            project_root_hash=owner.project_root_hash,
+            start_nonce_hash=owner.start_nonce_hash,
+            daemon_version=__version__,
+            project_view_schema_version=PROJECT_VIEW_SCHEMA_VERSION,
+            max_frame_bytes=MAX_FRAME,
+            allowed_methods=METHODS,
+            status_provider=lambda: {"mode": "daemon_status"},
+        )
+        try:
+            with pytest.raises(Exception):
+                await server.start()
+            assert swapped is True
+            assert not (outside / "daemon.sock").exists()
+            assert not (parked / "daemon.sock").exists()
+        finally:
+            await server.close()
+            if runtime.is_symlink():
+                runtime.unlink()
+                parked.rename(runtime)
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_server_start_rejects_multithreaded_process_without_global_mutation(
+    short_project: Path,
+) -> None:
+    async def exercise() -> None:
+        owner = _owner(short_project)
+        stop = threading.Event()
+        helper = threading.Thread(target=stop.wait, daemon=True)
+        helper.start()
+        before_cwd = os.getcwd()
+        before_umask = os.umask(0)
+        os.umask(before_umask)
+        server = DaemonServer(
+            endpoint=owner.endpoint.socket_path,
+            instance_id=owner.instance_id,
+            project_root_hash=owner.project_root_hash,
+            start_nonce_hash=owner.start_nonce_hash,
+            daemon_version=__version__,
+            project_view_schema_version=PROJECT_VIEW_SCHEMA_VERSION,
+            max_frame_bytes=MAX_FRAME,
+            allowed_methods=METHODS,
+            status_provider=lambda: {"mode": "daemon_status"},
+        )
+        try:
+            with pytest.raises(Exception, match="single-thread"):
+                await server.start()
+            after_umask = os.umask(0)
+            os.umask(after_umask)
+            assert after_umask == before_umask
+            assert os.getcwd() == before_cwd
+            assert not owner.endpoint.socket_path.exists()
+        finally:
+            stop.set()
+            helper.join(timeout=1)
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
 def test_server_socket_is_created_0600_without_chmod_replacement_window(
     short_project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -950,6 +1106,7 @@ def test_server_socket_is_created_0600_without_chmod_replacement_window(
         )
         before = os.umask(0)
         os.umask(before)
+        before_cwd = os.getcwd()
         server = DaemonServer(
             endpoint=owner.endpoint.socket_path,
             instance_id=owner.instance_id,
@@ -967,6 +1124,7 @@ def test_server_socket_is_created_0600_without_chmod_replacement_window(
             after = os.umask(0)
             os.umask(after)
             assert after == before
+            assert os.getcwd() == before_cwd
             assert injected is True
             assert stat.S_IMODE(outside.stat().st_mode) == 0o644
             assert outside.read_text(encoding="utf-8") == "external"

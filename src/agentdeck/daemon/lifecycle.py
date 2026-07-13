@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import threading
 import time
 from types import TracebackType
 from typing import BinaryIO, Callable, Literal, Mapping
@@ -58,6 +59,7 @@ class _BoundEndpoint:
     runtime_device: int
     runtime_inode: int
     closed: bool = False
+    cleanup_lock: threading.RLock = field(default_factory=threading.RLock)
 
     def close(self) -> None:
         if not self.closed:
@@ -92,6 +94,11 @@ class DaemonEndpointBinding:
 
     def read_metadata(self) -> dict[str, object] | None:
         return _read_endpoint_metadata(self._bound)
+
+    def duplicate_runtime_fd(self) -> int:
+        if self._bound.closed:
+            raise DaemonIdentityError("daemon runtime binding is closed")
+        return os.dup(self._bound.runtime_fd)
 
     def assert_socket_absent(self) -> None:
         self.assert_runtime_identity()
@@ -164,7 +171,20 @@ class DaemonEndpointBinding:
         return True
 
     def unlink_socket_if_identity(self, identity: tuple[int, int]) -> bool:
+        with self._bound.cleanup_lock:
+            return self._unlink_socket_if_identity(identity)
+
+    def _unlink_socket_if_identity(self, identity: tuple[int, int]) -> bool:
         if self._bound.closed:
+            return False
+        try:
+            entries = os.listdir(self._bound.runtime_fd)
+        except OSError:
+            return False
+        if any(
+            re.fullmatch(r"\.daemon\.sock\.cleanup-[0-9a-f]{32}", entry)
+            for entry in entries
+        ):
             return False
         quarantine = f".daemon.sock.cleanup-{uuid.uuid4().hex}"
         try:
