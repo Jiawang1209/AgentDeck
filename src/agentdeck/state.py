@@ -1432,6 +1432,8 @@ class StateStore:
                 "mission_worker_replies": [],
                 "mission_handoffs": [],
                 "mission_permission_bindings": [],
+                "governance_previews": [],
+                "mission_transport_reroutes": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -1444,6 +1446,861 @@ class StateStore:
     def append_event(self, event: EventRecord) -> None:
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
+
+    def record_governance_preview(
+        self,
+        action: str,
+        *,
+        facts: Mapping[str, object],
+        generation: int,
+        now: datetime,
+        ttl_seconds: float = 300,
+    ) -> dict[str, object]:
+        """Durably record an exact-bound governance preview without acting."""
+        from .daemon.governance import build_governance_preview
+
+        candidate = {
+            "preview_id": new_id("gov"),
+            **build_governance_preview(
+                action,
+                facts=facts,
+                generation=generation,
+                now=now,
+                ttl_seconds=ttl_seconds,
+            ),
+        }
+        with self._protocol_mutation_lock():
+            state = self.load()
+            previews = state.setdefault("governance_previews", [])
+            if type(previews) is not list or any(
+                type(item) is not dict for item in previews
+            ):
+                raise ValueError("governance preview state is invalid")
+            if any(item.get("preview_id") == candidate["preview_id"] for item in previews):
+                raise ValueError("duplicate governance preview identity")
+            previews.append(candidate)
+            self._append_recovery_audit_locked(
+                state,
+                "governance_preview_recorded",
+                {
+                    "preview_id": candidate["preview_id"],
+                    "action": action,
+                    "generation": generation,
+                    "execution_digest": candidate["execution_digest"],
+                },
+            )
+            self._atomic_save(state)
+            return copy.deepcopy(candidate)
+
+    def consume_governance_preview(
+        self,
+        *,
+        preview_id: str,
+        action: str,
+        facts: Mapping[str, object],
+        generation: int,
+        now: datetime,
+    ) -> dict[str, object]:
+        """Consume once only after state, expiry, action, and generation agree."""
+        from .daemon.governance import consume_governance_preview
+
+        with self._protocol_mutation_lock():
+            state = self.load()
+            previews = state.setdefault("governance_previews", [])
+            if type(previews) is not list or any(
+                type(item) is not dict for item in previews
+            ):
+                raise ValueError("governance preview state is invalid")
+            matches = [item for item in previews if item.get("preview_id") == preview_id]
+            if len(matches) != 1:
+                raise KeyError(preview_id)
+            current = matches[0]
+            consumed = consume_governance_preview(
+                current,
+                action=action,
+                facts=facts,
+                generation=generation,
+                now=now,
+            )
+            index = next(
+                index for index, item in enumerate(previews)
+                if item.get("preview_id") == preview_id
+            )
+            previews[index] = consumed
+            self._append_recovery_audit_locked(
+                state,
+                "governance_preview_consumed",
+                {
+                    "preview_id": preview_id,
+                    "action": action,
+                    "generation": generation,
+                    "execution_digest": consumed["execution_digest"],
+                },
+            )
+            self._atomic_save(state)
+            return copy.deepcopy(consumed)
+
+    def pause_mission_with_governance_preview(
+        self,
+        *,
+        mission_id: str,
+        preview_id: str,
+        facts: Mapping[str, object],
+        generation: int,
+        now: datetime,
+    ) -> dict[str, object]:
+        """Atomically consume exact pause authority and stop scheduling."""
+        from .conversation.bindings import PreviewBindingError
+        from .daemon.governance import consume_governance_preview
+
+        with self._protocol_mutation_lock():
+            state = self.load()
+            missions = state.setdefault("missions", [])
+            attempts = state.setdefault("mission_attempts", [])
+            previews = state.setdefault("governance_previews", [])
+            if any(type(value) is not list for value in (missions, attempts, previews)):
+                raise ValueError("Mission pause state is invalid")
+            matches = [
+                item for item in missions
+                if type(item) is dict and item.get("mission_id") == mission_id
+            ]
+            if len(matches) != 1 or matches[0].get("status") != "running":
+                raise ValueError("Mission pause target is invalid")
+            mission = matches[0]
+            current_facts = {
+                "mission_id": mission_id,
+                "status": mission.get("status"),
+                "current_step": mission.get("current_step"),
+                "snapshot_hash": mission.get("snapshot_hash"),
+                "active_attempts": [
+                    {
+                        "attempt_id": item.get("attempt_id"),
+                        "state": item.get("state"),
+                        "dispatch_key": item.get("dispatch_key"),
+                    }
+                    for item in attempts
+                    if type(item) is dict
+                    and item.get("mission_id") == mission_id
+                    and item.get("state") not in {
+                        "succeeded", "completed", "failed", "cancelled",
+                        "interrupted", "ambiguous",
+                    }
+                ],
+            }
+            if current_facts["active_attempts"]:
+                raise ValueError("Mission pause requires an idle boundary")
+            if dict(facts) != current_facts:
+                raise PreviewBindingError("preview state drift")
+            preview_matches = [
+                item for item in previews
+                if type(item) is dict and item.get("preview_id") == preview_id
+            ]
+            if len(preview_matches) != 1:
+                raise KeyError(preview_id)
+            consumed = consume_governance_preview(
+                preview_matches[0],
+                action="mission_pause",
+                facts=current_facts,
+                generation=generation,
+                now=now,
+            )
+            if not mission_status_transition_allowed("running", "stopped"):
+                raise ValueError("Mission pause transition is invalid")
+            updated_at = now.astimezone(timezone.utc).isoformat()
+            mission.update(
+                {
+                    "status": "stopped",
+                    "stop_reason": "human_pause",
+                    "updated_at": updated_at,
+                }
+            )
+            preview_index = next(
+                index for index, item in enumerate(previews)
+                if type(item) is dict and item.get("preview_id") == preview_id
+            )
+            previews[preview_index] = consumed
+            self._append_recovery_audit_locked(
+                state,
+                "mission_paused",
+                {
+                    "mission_id": mission_id,
+                    "preview_id": preview_id,
+                    "generation": generation,
+                    "execution_digest": consumed["execution_digest"],
+                },
+            )
+            self._atomic_save(state)
+            return {
+                "accepted": True,
+                "state": "stopped",
+                "mission_id": mission_id,
+                "preview_id": preview_id,
+            }
+
+    def decide_permission_with_governance_preview(
+        self,
+        *,
+        permission_id: str,
+        decision: str,
+        preview_id: str,
+        facts: Mapping[str, object],
+        generation: int,
+        now: datetime,
+    ) -> dict[str, object]:
+        """Atomically consume exact human authority and append the decision."""
+        from .conversation.bindings import PreviewBindingError
+        from .daemon.governance import consume_governance_preview
+
+        if decision not in {"approved", "denied"}:
+            raise ValueError("permission decision is invalid")
+        with self._protocol_mutation_lock():
+            state = self.load()
+            self._validate_protocol_identities(state)
+            current_states = self._validate_protocol_transition_history(state)
+            permissions = state.setdefault("permission_requests", [])
+            matches = [
+                item for item in permissions
+                if type(item) is dict and item.get("permission_id") == permission_id
+            ]
+            if len(matches) != 1:
+                raise KeyError(permission_id)
+            permission = _validate_permission_record(matches[0])
+            current = current_states.get(("permission", permission_id), "pending")
+            if current != "pending":
+                raise ValueError("permission decision is terminal")
+            current_facts = {
+                "permission_id": permission_id,
+                "session_id": permission["session_id"],
+                "turn_id": permission["turn_id"],
+                "tool_name": permission["tool_name"],
+                "target": permission["target"],
+                "risk": permission["risk"],
+                "state": current,
+                "decision": decision,
+            }
+            if dict(facts) != current_facts:
+                raise PreviewBindingError("preview state drift")
+            previews = state.setdefault("governance_previews", [])
+            if type(previews) is not list:
+                raise ValueError("governance preview state is invalid")
+            preview_matches = [
+                item for item in previews
+                if type(item) is dict and item.get("preview_id") == preview_id
+            ]
+            if len(preview_matches) != 1:
+                raise KeyError(preview_id)
+            consumed = consume_governance_preview(
+                preview_matches[0],
+                action="permission_decision",
+                facts=current_facts,
+                generation=generation,
+                now=now,
+            )
+            transition = build_protocol_transition(
+                "permission",
+                permission_id,
+                "pending",
+                decision,
+                "human_exact_confirmation",
+                {"preview_id": preview_id, "generation": generation},
+            )
+            state.setdefault("protocol_state_transitions", []).append(transition)
+            self._validate_protocol_transition_history(state)
+            preview_index = next(
+                index for index, item in enumerate(previews)
+                if type(item) is dict and item.get("preview_id") == preview_id
+            )
+            previews[preview_index] = consumed
+            event = EventRecord.create(
+                "permission_decision_recorded",
+                {
+                    "permission_id": permission_id,
+                    "decision": decision,
+                    "preview_id": preview_id,
+                    "generation": generation,
+                },
+            )
+            state.setdefault("protocol_event_outbox", []).append(asdict(event))
+            self._append_recovery_audit_locked(
+                state,
+                "governance_preview_consumed",
+                {
+                    "preview_id": preview_id,
+                    "action": "permission_decision",
+                    "generation": generation,
+                    "execution_digest": consumed["execution_digest"],
+                },
+            )
+            self._atomic_save(state)
+            return {
+                "accepted": True,
+                "permission_id": permission_id,
+                "state": decision,
+                "preview_id": preview_id,
+            }
+
+    def force_stop_with_governance_preview(
+        self,
+        *,
+        preview_id: str,
+        facts: Mapping[str, object],
+        generation: int,
+        now: datetime,
+    ) -> dict[str, object]:
+        """Atomically stop scheduling while preserving unknown effect outcomes."""
+        from .conversation.bindings import PreviewBindingError
+        from .daemon.governance import (
+            classify_force_stop_attempts,
+            consume_governance_preview,
+        )
+
+        with self._protocol_mutation_lock():
+            state = self.load()
+            missions = state.setdefault("missions", [])
+            attempts_raw = state.setdefault("mission_attempts", [])
+            previews = state.setdefault("governance_previews", [])
+            if any(type(value) is not list for value in (missions, attempts_raw, previews)):
+                raise ValueError("force-stop state is invalid")
+            attempts = [_validate_mission_attempt_record(item) for item in attempts_raw]
+            _require_unique_mission_attempt_lineage(attempts)
+            current_facts = {
+                "missions": [
+                    {
+                        "mission_id": item.get("mission_id"),
+                        "status": item.get("status"),
+                        "current_step": item.get("current_step"),
+                        "snapshot_hash": item.get("snapshot_hash"),
+                    }
+                    for item in missions
+                    if type(item) is dict
+                    and item.get("status") not in {"completed", "stopped", "interrupted"}
+                ],
+                "attempts": [
+                    {
+                        "attempt_id": item["attempt_id"],
+                        "mission_id": item["mission_id"],
+                        "state": item["state"],
+                        "dispatch_key": item["dispatch_key"],
+                        "admission_claim_id": item["admission_claim_id"],
+                        "receipt_summary": item["receipt_summary"],
+                    }
+                    for item in attempts
+                    if item["state"] not in {
+                        "succeeded", "completed", "failed", "cancelled",
+                        "interrupted", "ambiguous",
+                    }
+                ],
+            }
+            if dict(facts) != current_facts:
+                raise PreviewBindingError("preview state drift")
+            preview_matches = [
+                item for item in previews
+                if type(item) is dict and item.get("preview_id") == preview_id
+            ]
+            if len(preview_matches) != 1:
+                raise KeyError(preview_id)
+            consumed = consume_governance_preview(
+                preview_matches[0],
+                action="force_daemon_stop",
+                facts=current_facts,
+                generation=generation,
+                now=now,
+            )
+            classifications = classify_force_stop_attempts(attempts)
+            timestamp = now.astimezone(timezone.utc).isoformat()
+            next_attempts: list[dict[str, Any]] = []
+            for attempt in attempts:
+                target = classifications.get(attempt["attempt_id"])
+                if target is None:
+                    next_attempts.append(attempt)
+                    continue
+                reason = (
+                    "force_daemon_stop_before_dispatch"
+                    if target == "interrupted"
+                    else "force_daemon_stop_outcome_unknown"
+                )
+                candidate = {
+                    **attempt,
+                    "state": target,
+                    "updated_at": timestamp,
+                    "receipt_summary": (
+                        attempt["receipt_summary"]
+                        if attempt["receipt_summary"] is not None
+                        else (
+                            None if target == "interrupted"
+                            else "admission outcome unknown"
+                        )
+                    ),
+                    "blocker": reason,
+                    "terminal_reason": reason,
+                }
+                next_attempts.append(_validate_mission_attempt_record(candidate))
+            for mission in missions:
+                if type(mission) is not dict or mission.get("status") in {
+                    "completed", "stopped", "interrupted"
+                }:
+                    continue
+                status = mission.get("status")
+                if not mission_status_transition_allowed(status, "interrupted"):
+                    raise ValueError("force-stop Mission transition is invalid")
+                mission.update(
+                    {
+                        "status": "interrupted",
+                        "stop_reason": "force_daemon_stop",
+                        "updated_at": timestamp,
+                    }
+                )
+            state["mission_attempts"] = next_attempts
+            preview_index = next(
+                index for index, item in enumerate(previews)
+                if type(item) is dict and item.get("preview_id") == preview_id
+            )
+            previews[preview_index] = consumed
+            self._append_recovery_audit_locked(
+                state,
+                "daemon_force_stopped",
+                {
+                    "preview_id": preview_id,
+                    "generation": generation,
+                    "interrupted_count": sum(
+                        value == "interrupted" for value in classifications.values()
+                    ),
+                    "ambiguous_count": sum(
+                        value == "ambiguous" for value in classifications.values()
+                    ),
+                },
+            )
+            self._atomic_save(state)
+            return {
+                "accepted": True,
+                "state": "stopping",
+                "preview_id": preview_id,
+                "attempts": classifications,
+            }
+
+    def transition_mission_with_governance_preview(
+        self,
+        *,
+        action: str,
+        mission_id: str,
+        preview_id: str,
+        facts: Mapping[str, object],
+        generation: int,
+        now: datetime,
+    ) -> dict[str, object]:
+        """Atomically resume or cancel an idle-boundary Mission."""
+        from .conversation.bindings import PreviewBindingError
+        from .daemon.governance import consume_governance_preview
+
+        transitions = {
+            "mission_resume": ("stopped", "running", None),
+            "mission_cancel": ("running", "interrupted", "human_cancel"),
+        }
+        if action not in transitions:
+            raise ValueError("Mission governance action is invalid")
+        source, target, stop_reason = transitions[action]
+        with self._protocol_mutation_lock():
+            state = self.load()
+            missions = state.setdefault("missions", [])
+            attempts = state.setdefault("mission_attempts", [])
+            previews = state.setdefault("governance_previews", [])
+            if any(type(value) is not list for value in (missions, attempts, previews)):
+                raise ValueError("Mission governance state is invalid")
+            matches = [
+                item for item in missions
+                if type(item) is dict and item.get("mission_id") == mission_id
+            ]
+            if len(matches) != 1 or matches[0].get("status") != source:
+                raise ValueError("Mission governance target is invalid")
+            mission = matches[0]
+            active_attempts = [
+                item for item in attempts
+                if type(item) is dict
+                and item.get("mission_id") == mission_id
+                and item.get("state") in _MISSION_ATTEMPT_ACTIVE_STATES
+            ]
+            if active_attempts:
+                raise ValueError("Mission governance requires an idle boundary")
+            current_facts = {
+                "mission_id": mission_id,
+                "status": mission.get("status"),
+                "current_step": mission.get("current_step"),
+                "snapshot_hash": mission.get("snapshot_hash"),
+                "active_attempts": [],
+            }
+            if dict(facts) != current_facts:
+                raise PreviewBindingError("preview state drift")
+            preview_matches = [
+                item for item in previews
+                if type(item) is dict and item.get("preview_id") == preview_id
+            ]
+            if len(preview_matches) != 1:
+                raise KeyError(preview_id)
+            consumed = consume_governance_preview(
+                preview_matches[0],
+                action=action,
+                facts=current_facts,
+                generation=generation,
+                now=now,
+            )
+            if not mission_status_transition_allowed(source, target):
+                raise ValueError("Mission governance transition is invalid")
+            mission.update(
+                {
+                    "status": target,
+                    "stop_reason": stop_reason,
+                    "updated_at": now.astimezone(timezone.utc).isoformat(),
+                }
+            )
+            preview_index = next(
+                index for index, item in enumerate(previews)
+                if type(item) is dict and item.get("preview_id") == preview_id
+            )
+            previews[preview_index] = consumed
+            self._append_recovery_audit_locked(
+                state,
+                {
+                    "mission_resume": "mission_resumed",
+                    "mission_cancel": "mission_cancelled",
+                }[action],
+                {
+                    "mission_id": mission_id,
+                    "preview_id": preview_id,
+                    "generation": generation,
+                    "execution_digest": consumed["execution_digest"],
+                },
+            )
+            self._atomic_save(state)
+            return {
+                "accepted": True,
+                "mission_id": mission_id,
+                "state": target,
+                "preview_id": preview_id,
+            }
+
+    def change_worker_ownership_with_governance_preview(
+        self,
+        *,
+        action: str,
+        agent_id: str,
+        preview_id: str,
+        facts: Mapping[str, object],
+        generation: int,
+        now: datetime,
+    ) -> dict[str, object]:
+        """Atomically consume authority and append both ownership edges."""
+        from .conversation.bindings import PreviewBindingError
+        from .conversation.models import build_conversation_transition
+        from .daemon.governance import consume_governance_preview
+
+        edges = {
+            "takeover": (
+                "agentdeck_owned", "takeover_pending", "human_owned"
+            ),
+            "return_control": (
+                "human_owned", "return_pending", "agentdeck_owned"
+            ),
+        }
+        if action not in edges:
+            raise ValueError("Worker ownership action is invalid")
+        source, pending, target = edges[action]
+        with self._protocol_mutation_lock():
+            state = self.load()
+            collections = self._conversation_collections(state)
+            projection = validate_conversation_history(
+                collections, state["conversation_state_transitions"]
+            )
+            ownership_initialized = agent_id in projection["ownership_states"]
+            ownership = projection["ownership_states"].get(
+                agent_id, "agentdeck_owned"
+            )
+            if ownership != source:
+                raise ValueError("Worker ownership source is invalid")
+            sessions = state["conversation_sessions"]
+            if not sessions:
+                raise ValueError("Worker ownership conversation is missing")
+            conversation_id = sessions[-1].get("conversation_id")
+            if type(conversation_id) is not str:
+                raise ValueError("Worker ownership conversation is invalid")
+            self._validate_protocol_identities(state)
+            protocol_states = self._validate_protocol_transition_history(state)
+            session_ids = {
+                item.get("session_id")
+                for item in state.get("agent_sessions", [])
+                if type(item) is dict and item.get("agent_id") == agent_id
+            }
+            active_turn_ids = sorted(
+                str(item["turn_id"])
+                for item in state.get("protocol_turns", [])
+                if type(item) is dict
+                and item.get("session_id") in session_ids
+                and protocol_states.get(
+                    ("turn", item.get("turn_id")), item.get("state")
+                ) not in {"completed", "blocked", "failed", "cancelled", "ambiguous"}
+            )
+            pending_permission_ids = sorted(
+                str(item["permission_id"])
+                for item in state.get("permission_requests", [])
+                if type(item) is dict
+                and item.get("session_id") in session_ids
+                and protocol_states.get(
+                    ("permission", item.get("permission_id")), item.get("status")
+                ) == "pending"
+            )
+            active_attempt_ids = sorted(
+                str(item["attempt_id"])
+                for item in state.get("mission_attempts", [])
+                if type(item) is dict
+                and item.get("agent_id") == agent_id
+                and item.get("state") in _MISSION_ATTEMPT_ACTIVE_STATES
+            )
+            safe = not (
+                active_turn_ids or pending_permission_ids or active_attempt_ids
+            )
+            current_facts = {
+                "agent_id": agent_id,
+                "conversation_id": conversation_id,
+                "ownership": ownership,
+                "safe_boundary": safe,
+                "reconciled": safe,
+                "active_turn_ids": active_turn_ids,
+                "pending_permission_ids": pending_permission_ids,
+                "active_attempt_ids": active_attempt_ids,
+            }
+            if dict(facts) != current_facts:
+                raise PreviewBindingError("preview state drift")
+            previews = state.setdefault("governance_previews", [])
+            preview_matches = [
+                item for item in previews
+                if type(item) is dict and item.get("preview_id") == preview_id
+            ]
+            if len(preview_matches) != 1:
+                raise KeyError(preview_id)
+            consumed = consume_governance_preview(
+                preview_matches[0],
+                action=action,
+                facts=current_facts,
+                generation=generation,
+                now=now,
+            )
+            created_at = now.astimezone(timezone.utc).isoformat()
+            transitions = []
+            if not ownership_initialized:
+                transitions.append(
+                    build_conversation_transition(
+                        transition_id=new_id("cst"),
+                        conversation_id=conversation_id,
+                        entity_type="ownership",
+                        entity_id=agent_id,
+                        from_state=None,
+                        to_state="agentdeck_owned",
+                        reason="ownership_initialized",
+                        created_at=created_at,
+                    )
+                )
+            transitions.extend([
+                build_conversation_transition(
+                    transition_id=new_id("cst"),
+                    conversation_id=conversation_id,
+                    entity_type="ownership",
+                    entity_id=agent_id,
+                    from_state=source,
+                    to_state=pending,
+                    reason=f"{action}_confirmed",
+                    created_at=created_at,
+                ),
+                build_conversation_transition(
+                    transition_id=new_id("cst"),
+                    conversation_id=conversation_id,
+                    entity_type="ownership",
+                    entity_id=agent_id,
+                    from_state=pending,
+                    to_state=target,
+                    reason=f"{action}_completed",
+                    created_at=created_at,
+                ),
+            ])
+            state["conversation_state_transitions"].extend(transitions)
+            validate_conversation_history(
+                self._conversation_collections(state),
+                state["conversation_state_transitions"],
+            )
+            preview_index = next(
+                index for index, item in enumerate(previews)
+                if type(item) is dict and item.get("preview_id") == preview_id
+            )
+            previews[preview_index] = consumed
+            event = EventRecord.create(
+                "worker_ownership_changed",
+                {
+                    "agent_id": agent_id,
+                    "from_state": source,
+                    "to_state": target,
+                    "preview_id": preview_id,
+                    "generation": generation,
+                },
+            )
+            state["conversation_event_outbox"].append(asdict(event))
+            self._append_recovery_audit_locked(
+                state,
+                "worker_ownership_governed",
+                {
+                    "agent_id": agent_id,
+                    "action": action,
+                    "preview_id": preview_id,
+                    "generation": generation,
+                },
+            )
+            self._atomic_save(state)
+            return {
+                "accepted": True,
+                "agent_id": agent_id,
+                "ownership": target,
+                "preview_id": preview_id,
+            }
+
+    def record_transport_reroute_with_governance_preview(
+        self,
+        *,
+        mission_id: str,
+        step_id: str,
+        agent_id: str,
+        to_transport: str,
+        preview_id: str,
+        facts: Mapping[str, object],
+        generation: int,
+        now: datetime,
+    ) -> dict[str, object]:
+        """Record one future-attempt transport override without rewriting snapshot."""
+        from .conversation.bindings import PreviewBindingError
+        from .daemon.governance import consume_governance_preview
+
+        with self._protocol_mutation_lock():
+            state = self.load()
+            missions = [
+                item for item in state.setdefault("missions", [])
+                if type(item) is dict and item.get("mission_id") == mission_id
+            ]
+            if len(missions) != 1:
+                raise ValueError("reroute Mission is invalid")
+            mission = missions[0]
+            snapshot = mission.get("execution_snapshot")
+            mission_snapshot = snapshot.get("mission") if type(snapshot) is dict else None
+            steps = mission_snapshot.get("steps") if type(mission_snapshot) is dict else None
+            workers = snapshot.get("workers") if type(snapshot) is dict else None
+            if type(steps) is not list or type(workers) is not list:
+                raise ValueError("reroute snapshot is invalid")
+            step_matches = [
+                item for item in steps
+                if type(item) is dict
+                and item.get("step_id") == step_id
+                and item.get("agent_id") == agent_id
+            ]
+            worker_matches = [
+                item for item in workers
+                if type(item) is dict and item.get("agent_id") == agent_id
+            ]
+            if len(step_matches) != 1 or len(worker_matches) != 1:
+                raise ValueError("reroute frozen scope is invalid")
+            from_transport = worker_matches[0].get("configured_transport")
+            if (
+                from_transport not in {"acp", "tmux"}
+                or to_transport not in {"acp", "tmux"}
+                or from_transport == to_transport
+            ):
+                raise ValueError("reroute transport is invalid")
+            attempts = [
+                item for item in state.setdefault("mission_attempts", [])
+                if type(item) is dict
+                and item.get("mission_id") == mission_id
+                and item.get("step_id") == step_id
+            ]
+            if attempts:
+                raise ValueError("reroute cannot modify a frozen attempt")
+            projection = validate_conversation_history(
+                {
+                    key: state.setdefault(key, [])
+                    for key in (
+                        "conversation_sessions", "conversation_turns",
+                        "conversation_preview_bindings",
+                    )
+                },
+                state.setdefault("conversation_state_transitions", []),
+            )
+            ownership = projection["ownership_states"].get(
+                agent_id, "agentdeck_owned"
+            )
+            if ownership != "agentdeck_owned":
+                raise ValueError("reroute Worker is not AgentDeck-owned")
+            current_facts = {
+                "mission_id": mission_id,
+                "step_id": step_id,
+                "agent_id": agent_id,
+                "snapshot_hash": mission.get("snapshot_hash"),
+                "mission_status": mission.get("status"),
+                "current_step": mission.get("current_step"),
+                "ownership": ownership,
+                "attempt_state": "none",
+                "from_transport": from_transport,
+                "to_transport": to_transport,
+            }
+            if dict(facts) != current_facts:
+                raise PreviewBindingError("preview state drift")
+            reroutes = state.setdefault("mission_transport_reroutes", [])
+            if type(reroutes) is not list or any(
+                type(item) is not dict for item in reroutes
+            ):
+                raise ValueError("reroute state is invalid")
+            if any(
+                item.get("mission_id") == mission_id
+                and item.get("step_id") == step_id
+                for item in reroutes
+            ):
+                raise ValueError("reroute already exists")
+            previews = state.setdefault("governance_previews", [])
+            preview_matches = [
+                item for item in previews
+                if type(item) is dict and item.get("preview_id") == preview_id
+            ]
+            if len(preview_matches) != 1:
+                raise KeyError(preview_id)
+            consumed = consume_governance_preview(
+                preview_matches[0], action="reroute", facts=current_facts,
+                generation=generation, now=now,
+            )
+            record = {
+                **current_facts,
+                "preview_id": preview_id,
+                "generation": generation,
+                "created_at": now.astimezone(timezone.utc).isoformat(),
+            }
+            reroutes.append(record)
+            preview_index = next(
+                index for index, item in enumerate(previews)
+                if type(item) is dict and item.get("preview_id") == preview_id
+            )
+            previews[preview_index] = consumed
+            self._append_recovery_audit_locked(
+                state,
+                "mission_transport_rerouted",
+                {
+                    "mission_id": mission_id,
+                    "step_id": step_id,
+                    "agent_id": agent_id,
+                    "from_transport": from_transport,
+                    "to_transport": to_transport,
+                    "preview_id": preview_id,
+                    "generation": generation,
+                },
+            )
+            self._atomic_save(state)
+            return {
+                "accepted": True,
+                "mission_id": mission_id,
+                "step_id": step_id,
+                "effective_transport": to_transport,
+                "preview_id": preview_id,
+            }
 
     def record_daemon_state(
         self,
@@ -2780,7 +3637,21 @@ class StateStore:
             )
             if worker is None:
                 raise ValueError("mission step agent drift")
-            if worker.get("configured_transport") != configured_transport:
+            from .daemon.governance import (
+                GovernanceError,
+                effective_transport_for_step,
+            )
+            try:
+                expected_transport = effective_transport_for_step(
+                    state,
+                    mission_id=mission_id,
+                    step_id=step_id,
+                    agent_id=agent_id,
+                    frozen_transport=worker.get("configured_transport"),
+                )
+            except GovernanceError:
+                raise ValueError("mission step transport drift") from None
+            if expected_transport != configured_transport:
                 raise ValueError("mission step transport drift")
             attempts = state.setdefault("mission_attempts", [])
             if type(attempts) is not list:

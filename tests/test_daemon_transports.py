@@ -148,12 +148,14 @@ class FakeAcpTransport:
         *,
         request_timeout: float,
         permission: bool = False,
+        expected_permission_outcome: str = "cancelled",
     ) -> None:
         self.argv = argv
         self.workspace = Path(workspace)
         self.client = client
         self.request_timeout = request_timeout
         self.permission = permission
+        self.expected_permission_outcome = expected_permission_outcome
         self.calls: list[object] = []
 
     async def initialize(self) -> object:
@@ -176,7 +178,7 @@ class FakeAcpTransport:
                     )
                 ],
             )
-            assert response.outcome.outcome == "cancelled"
+            assert response.outcome.outcome == self.expected_permission_outcome
         await self.client._sink.append_update(  # type: ignore[attr-defined]
             session_id,
             "text",
@@ -258,4 +260,84 @@ def test_acp_permission_is_denied_and_completion_fails_closed(tmp_path: Path) ->
             await transport.complete(_attempt("acp"), receipt)
 
     asyncio.run(run())
+    assert created[0].calls[-1] == "close"
+
+
+def test_acp_transport_can_delegate_permission_to_daemon_ledger(tmp_path: Path) -> None:
+    created: list[FakeAcpTransport] = []
+
+    class Ledger:
+        fail_on_permission = False
+
+        def __init__(self) -> None:
+            self.fragments: list[str] = []
+            self.permission_seen = False
+            self.pending: list[dict[str, Any]] = []
+            self.decisions: list[object] = []
+
+        async def activate(self, native_session_id: str, _initialized: object) -> None:
+            assert native_session_id == "native-worker-1"
+
+        async def append_update(
+            self, _session_id: str, _kind: str, payload: dict[str, Any]
+        ) -> object:
+            self.fragments.append(payload["content"]["text"])
+            return {}
+
+        async def append_permission(
+            self,
+            _session_id: str,
+            summary: dict[str, Any],
+            _options: list[schema.PermissionOption],
+        ) -> object:
+            self.permission_seen = True
+            pending = {**summary, "permission_id": "prm_000000000001"}
+            self.pending.append(pending)
+            return pending
+
+        async def append_permission_decision(
+            self,
+            _session_id: str,
+            _tool_call_id: str,
+            decision: object,
+        ) -> None:
+            self.decisions.append(decision)
+
+    ledger = Ledger()
+
+    def factory(*args: Any, **kwargs: Any) -> FakeAcpTransport:
+        transport = FakeAcpTransport(
+            *args,
+            **kwargs,
+            permission=True,
+            expected_permission_outcome="selected",
+        )
+        created.append(transport)
+        return transport
+
+    async def decide(
+        pending: dict[str, Any], options: list[schema.PermissionOption]
+    ) -> object:
+        assert pending["permission_id"] == "prm_000000000001"
+        return __import__(
+            "agentdeck.runtime.acp_client", fromlist=["PermissionDecision"]
+        ).PermissionDecision.select(options[0].option_id)
+
+    transport = AcpWorkerTransport(
+        argv=("fake-agent-acp",),
+        workspace=tmp_path,
+        prompt="prompt",
+        transport_factory=factory,
+        sink=ledger,
+        decide=decide,
+    )
+
+    async def run() -> TransportResult:
+        receipt = await transport.admit(_attempt("acp"))
+        return await transport.complete(_attempt("acp"), receipt)
+
+    result = asyncio.run(run())
+    assert result.validated is True
+    assert len(ledger.pending) == 1
+    assert len(ledger.decisions) == 1
     assert created[0].calls[-1] == "close"

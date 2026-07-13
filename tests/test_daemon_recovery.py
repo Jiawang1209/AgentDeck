@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
+from datetime import datetime, timezone
+import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +19,12 @@ from agentdeck.daemon.recovery import (
     recovery_facts_from_persisted_state,
 )
 from agentdeck.daemon.service import scheduler_facts_from_store
+from agentdeck.daemon.service import (
+    ProjectDaemonService,
+    apply_permission_decision_request,
+)
+from agentdeck.cli import _DaemonAcpWorkerSink
+from agentdeck.models import AgentSpec
 from agentdeck.runtime.protocol import TransportCapabilities
 from agentdeck.state import StateStore, canonical_snapshot_hash
 
@@ -963,6 +972,114 @@ def test_controlled_permission_binding_tracks_authoritative_status_transitions(
     assert resumed[0]["next_transition"] == "await_worker"
 
 
+def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
+    tmp_path: Path,
+) -> None:
+    class Server:
+        async def start(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    async def case() -> None:
+        store = StateStore(tmp_path)
+        _seed_missions(store)
+        service = ProjectDaemonService(
+            server=Server(),
+            reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None,
+            load_scheduler_facts=lambda: scheduler_facts_from_store(store),
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+
+        async def pump() -> None:
+            while service.started:
+                await service.tick()
+                await asyncio.sleep(0)
+
+        pumping = asyncio.create_task(pump())
+        try:
+            sink = _DaemonAcpWorkerSink(
+                service=service,
+                store=store,
+                attempt=store.load()["mission_attempts"][0],
+                agent=AgentSpec(
+                    agent_id="worker",
+                    role="implementation",
+                    provider="codex",
+                    command="codex",
+                    role_prompt="implement",
+                    transport="acp",
+                    transport_command=("fake-agent-acp",),
+                ),
+                workspace=tmp_path,
+            )
+            await sink.activate(
+                "native-daemon-1",
+                SimpleNamespace(
+                    capabilities=TransportCapabilities(
+                        True, True, True, True, True, False
+                    ),
+                    protocol_version="1",
+                    agent_identity="fake",
+                ),
+            )
+            pending = await sink.append_permission(
+                "native-daemon-1",
+                {
+                    "tool_call_id": "call-1",
+                    "title": "Write file",
+                    "kind": "edit",
+                    "target": "src/app.py",
+                    "risk": "project_write",
+                },
+                [],
+            )
+            waiting = reconcile_startup(store, enable_scheduler=lambda: None)
+            assert waiting[0]["classification"] == "waiting_human"
+            assert waiting[0]["next_transition"] is None
+
+            decision_task = asyncio.create_task(sink.decide(pending, []))
+            await asyncio.sleep(0)
+            now = datetime(2026, 7, 14, tzinfo=timezone.utc)
+            preview = await service.submit_mutation(
+                lambda: apply_permission_decision_request(
+                    store,
+                    {
+                        "permission_id": pending["permission_id"],
+                        "decision": "approved",
+                    },
+                    generation=5,
+                    now=now,
+                )
+            )
+            confirmed = await service.submit_mutation(
+                lambda: apply_permission_decision_request(
+                    store,
+                    {
+                        "permission_id": pending["permission_id"],
+                        "decision": "approved",
+                        "preview_id": preview["preview_id"],
+                    },
+                    generation=5,
+                    now=now,
+                )
+            )
+            assert confirmed["state"] == "approved"
+            assert service.notify_permission_decision(
+                str(pending["permission_id"]), "approved"
+            ) is True
+            decision = await decision_task
+            assert decision.reason == "human_approved"
+        finally:
+            await service.close()
+            await pumping
+
+    asyncio.run(case())
+
+
 @pytest.mark.parametrize("forged_status", ["approved", "denied", "expired"])
 def test_startup_rejects_forged_terminal_permission_base_state(
     tmp_path: Path, forged_status: str
@@ -1354,3 +1471,65 @@ def test_admitted_mission_projects_real_scheduler_facts(tmp_path: Path) -> None:
     assert projected.step_id == "step_1"
     assert projected.step_state == "pending"
     assert projected.attempt_state == "none"
+
+    state = store.load()
+    state["conversation_sessions"] = [{
+        "conversation_id": "cvs_session1",
+        "created_at": "2026-07-13T01:00:00+00:00",
+    }]
+    state["conversation_state_transitions"] = [
+        {
+            "transition_id": "cst_created",
+            "conversation_id": "cvs_session1",
+            "entity_type": "conversation",
+            "entity_id": "cvs_session1",
+            "from_state": None,
+            "to_state": "created",
+            "reason": "started",
+            "created_at": "2026-07-13T01:00:00+00:00",
+        },
+        {
+            "transition_id": "cst_ready",
+            "conversation_id": "cvs_session1",
+            "entity_type": "conversation",
+            "entity_id": "cvs_session1",
+            "from_state": "created",
+            "to_state": "ready",
+            "reason": "ready",
+            "created_at": "2026-07-13T01:00:01+00:00",
+        },
+        {
+            "transition_id": "cst_owner",
+            "conversation_id": "cvs_session1",
+            "entity_type": "ownership",
+            "entity_id": "worker",
+            "from_state": None,
+            "to_state": "agentdeck_owned",
+            "reason": "initialized",
+            "created_at": "2026-07-13T01:00:02+00:00",
+        },
+        {
+            "transition_id": "cst_takeover",
+            "conversation_id": "cvs_session1",
+            "entity_type": "ownership",
+            "entity_id": "worker",
+            "from_state": "agentdeck_owned",
+            "to_state": "takeover_pending",
+            "reason": "confirmed",
+            "created_at": "2026-07-13T01:00:03+00:00",
+        },
+        {
+            "transition_id": "cst_human",
+            "conversation_id": "cvs_session1",
+            "entity_type": "ownership",
+            "entity_id": "worker",
+            "from_state": "takeover_pending",
+            "to_state": "human_owned",
+            "reason": "completed",
+            "created_at": "2026-07-13T01:00:04+00:00",
+        },
+    ]
+    store.save(state)
+    human_owned = scheduler_facts_from_store(store)
+    assert human_owned is not None
+    assert human_owned.ownership_state == "conflict"

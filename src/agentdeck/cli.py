@@ -183,6 +183,12 @@ from .daemon.protocol import DAEMON_RPC_PROTOCOL_VERSION
 from .daemon.server import DaemonClientRequestError, DaemonServer
 from .daemon.recovery import reconcile_startup
 from .daemon.service import (
+    apply_force_stop_request,
+    apply_mission_pause_request,
+    apply_mission_state_request,
+    apply_permission_decision_request,
+    apply_worker_ownership_request,
+    apply_transport_reroute_request,
     DaemonTransitionEffects,
     DaemonWorkerCoordinator,
     ProjectDaemonService,
@@ -1386,6 +1392,251 @@ class _AcpRunLedgerSink:
         )
         if self.turn_state == "waiting_permission":
             self._transition_turn("streaming", "permission_settled")
+
+
+class _DaemonAcpWorkerSink:
+    """Queue ACP callbacks into the daemon's single authoritative writer."""
+
+    fail_on_permission = False
+
+    def __init__(
+        self,
+        *,
+        service: ProjectDaemonService,
+        store: StateStore,
+        attempt: Mapping[str, object],
+        agent: AgentSpec,
+        workspace: Path,
+    ) -> None:
+        self.service = service
+        self.store = store
+        self.attempt = dict(attempt)
+        self.agent = agent
+        self.workspace = workspace.resolve()
+        self.native_session_id: str | None = None
+        self.session_id: str | None = None
+        self.turn_id: str | None = None
+        self.sequence = 0
+        self.payload_bytes = 0
+        self.turn_state = "created"
+        self.permission_seen = False
+        self.fragments: list[str] = []
+        self._permission_authority: dict[str, dict[str, object]] = {}
+
+    async def _mutate(self, callback: Any) -> object:
+        return await self.service.submit_mutation(callback)
+
+    async def activate(self, native_session_id: str, initialized: object) -> None:
+        capabilities = getattr(initialized, "capabilities", None)
+        protocol_version = getattr(initialized, "protocol_version", None)
+        agent_identity = getattr(initialized, "agent_identity", None)
+        if (
+            type(native_session_id) is not str
+            or not native_session_id
+            or capabilities is None
+        ):
+            raise ServiceError("daemon ACP session activation is invalid")
+
+        def persist() -> dict[str, object]:
+            session = self.store.record_agent_session(
+                self.agent.agent_id,
+                self.agent.provider,
+                "acp-adapter",
+                native_session_id,
+                str(self.workspace),
+                capabilities,
+            )
+            self.store.record_protocol_transition(
+                "session",
+                session["session_id"],
+                "created",
+                "ready",
+                "daemon_session_new_completed",
+                {
+                    "protocol_version": protocol_version,
+                    "agent_identity": agent_identity,
+                },
+            )
+            turn = self.store.record_protocol_turn(
+                session["session_id"], str(self.attempt["dispatch_key"]), "prompt"
+            )
+            self.store.record_protocol_transition(
+                "turn", turn["turn_id"], "created", "submitted",
+                "daemon_prompt_submitted", {},
+            )
+            self.store.record_protocol_transition(
+                "session", session["session_id"], "ready", "busy",
+                "daemon_prompt_started", {},
+            )
+            return {"session_id": session["session_id"], "turn_id": turn["turn_id"]}
+
+        persisted = await self._mutate(persist)
+        if not isinstance(persisted, Mapping):
+            raise ServiceError("daemon ACP session persistence failed")
+        self.native_session_id = native_session_id
+        self.session_id = str(persisted["session_id"])
+        self.turn_id = str(persisted["turn_id"])
+        self.turn_state = "submitted"
+
+    def _correlate(self, native_session_id: str) -> tuple[str, str]:
+        if (
+            native_session_id != self.native_session_id
+            or self.session_id is None
+            or self.turn_id is None
+        ):
+            raise ServiceError("daemon ACP session correlation mismatch")
+        return self.session_id, self.turn_id
+
+    async def append_update(
+        self, native_session_id: str, kind: str, payload: dict[str, Any]
+    ) -> object:
+        session_id, turn_id = self._correlate(native_session_id)
+        encoded = len(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        )
+        ensure_turn_within_bounds(
+            self.payload_bytes + encoded + MAX_ACP_TERMINAL_UPDATE_BYTES,
+            self.sequence + 2,
+        )
+        sequence = self.sequence
+        prior = self.turn_state
+
+        def persist() -> object:
+            if prior == "submitted":
+                self.store.record_protocol_transition(
+                    "turn", turn_id, "submitted", "streaming",
+                    "daemon_session_update_received", {},
+                )
+            return self.store.record_transport_update(
+                session_id, turn_id, sequence, kind, payload
+            )
+
+        record = await self._mutate(persist)
+        if prior == "submitted":
+            self.turn_state = "streaming"
+        self.sequence += 1
+        self.payload_bytes += encoded
+        content = payload.get("content") if type(payload) is dict else None
+        text = content.get("text") if isinstance(content, dict) else None
+        if kind == "text" and payload.get("role") == "agent" and type(text) is str:
+            self.fragments.append(text)
+        return record
+
+    async def append_permission(
+        self,
+        native_session_id: str,
+        summary: dict[str, Any],
+        _options: list[schema.PermissionOption],
+    ) -> object:
+        session_id, turn_id = self._correlate(native_session_id)
+        sequence = self.sequence
+
+        def persist() -> dict[str, object]:
+            result = self.store.record_acp_permission_pending(
+                session_id,
+                turn_id,
+                sequence,
+                tool_name=summary.get("title") or summary.get("kind") or "unknown",
+                target=summary.get("target", "unknown"),
+                risk=summary["risk"],
+                tool_call_id=summary["tool_call_id"],
+            )
+            permission = result["permission"]
+            self.store.bind_mission_permission_evidence(
+                attempt_id=str(self.attempt["attempt_id"]),
+                permission_id=permission["permission_id"],
+            )
+            return {
+                "permission_id": permission["permission_id"],
+                "payload": result["update"]["payload"],
+            }
+
+        persisted = await self._mutate(persist)
+        if not isinstance(persisted, Mapping):
+            raise ServiceError("daemon ACP permission persistence failed")
+        permission_id = str(persisted["permission_id"])
+        payload = persisted["payload"]
+        encoded = len(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        )
+        authority = {
+            "permission_id": permission_id,
+            "attempt_id": str(self.attempt["attempt_id"]),
+            "session_id": session_id,
+            "generation": 1,
+        }
+        self._permission_authority[permission_id] = authority
+        self.permission_seen = True
+        self.turn_state = "waiting_permission"
+        self.sequence += 1
+        self.payload_bytes += encoded
+        return {**summary, "permission_id": permission_id}
+
+    def _read_permission(self, permission_id: str) -> str:
+        state = self.store.validated_protocol_state()
+        matches = [
+            item for item in state.get("permission_requests", [])
+            if isinstance(item, dict) and item.get("permission_id") == permission_id
+        ]
+        if len(matches) != 1:
+            raise ServiceError("daemon ACP permission lineage is invalid")
+        return self.store._derived_protocol_state(
+            state, "permission", permission_id, matches[0]
+        )
+
+    async def decide(
+        self, pending: dict[str, Any], options: list[schema.PermissionOption]
+    ) -> PermissionDecision:
+        permission_id = pending.get("permission_id")
+        authority = self._permission_authority.get(str(permission_id))
+        if authority is None:
+            return PermissionDecision.cancelled("permission_lineage_missing")
+        decision = await self.service.wait_for_permission(
+            authority,
+            read_decision=lambda: self._read_permission(str(permission_id)),
+        )
+        wanted = "allow_once" if decision == "approved" else "reject_once"
+        option = next((item for item in options if item.kind == wanted), None)
+        if option is None:
+            return PermissionDecision.cancelled(f"human_{decision}")
+        return PermissionDecision.select(option.option_id)
+
+    async def append_permission_decision(
+        self,
+        native_session_id: str,
+        tool_call_id: str,
+        _decision: PermissionDecision,
+    ) -> None:
+        _session_id, turn_id = self._correlate(native_session_id)
+        if type(tool_call_id) is not str or not tool_call_id:
+            raise ServiceError("daemon ACP permission decision is invalid")
+        if self.turn_state == "waiting_permission":
+            await self._mutate(
+                lambda: self.store.record_protocol_transition(
+                    "turn", turn_id, "waiting_permission", "streaming",
+                    "daemon_permission_settled", {},
+                )
+            )
+            self.turn_state = "streaming"
+
+    async def finish(self, stop_reason: str) -> None:
+        if self.session_id is None or self.turn_id is None:
+            raise ServiceError("daemon ACP completion lineage is invalid")
+        turn_from = self.turn_state
+        turn_to, mapped_reason = map_stop_reason(stop_reason)
+
+        def persist() -> None:
+            self.store.record_protocol_transition(
+                "turn", self.turn_id, turn_from, turn_to,
+                f"daemon_stop_reason:{mapped_reason}", {},
+            )
+            self.store.record_protocol_transition(
+                "session", self.session_id, "busy", "ready",
+                "daemon_prompt_finished", {},
+            )
+
+        await self._mutate(persist)
+        self.turn_state = turn_to
 
 
 def _derived_entity_state(state: dict[str, Any], entity_type: str, entity_id: str, base: str) -> str:
@@ -6358,6 +6609,79 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                             "Mission admission result is invalid", "invalid_result"
                         )
                     return result
+                if method == "mission.pause":
+                    try:
+                        return apply_mission_pause_request(
+                            store,
+                            params,
+                            generation=generation,
+                            now=now,
+                        )
+                    except ServiceError as exc:
+                        raise DaemonClientRequestError(
+                            str(exc), "mission_pause_blocked"
+                        ) from None
+                if method in {"mission.resume", "mission.cancel"}:
+                    try:
+                        return apply_mission_state_request(
+                            store,
+                            action=method.replace(".", "_"),
+                            params=params,
+                            generation=generation,
+                            now=now,
+                        )
+                    except ServiceError as exc:
+                        raise DaemonClientRequestError(
+                            str(exc), "mission_governance_blocked"
+                        ) from None
+                if method == "permission.decide":
+                    try:
+                        result = apply_permission_decision_request(
+                            store,
+                            params,
+                            generation=generation,
+                            now=now,
+                        )
+                        if result.get("state") in {"approved", "denied"}:
+                            if service is None:
+                                raise ServiceError("daemon service is unavailable")
+                            service.notify_permission_decision(
+                                str(result["permission_id"]), str(result["state"])
+                            )
+                        return result
+                    except ServiceError as exc:
+                        raise DaemonClientRequestError(
+                            str(exc), "permission_decision_blocked"
+                        ) from None
+                if method in {"worker.takeover", "worker.return-control"}:
+                    try:
+                        return apply_worker_ownership_request(
+                            store,
+                            action=(
+                                "takeover"
+                                if method == "worker.takeover"
+                                else "return_control"
+                            ),
+                            params=params,
+                            generation=generation,
+                            now=now,
+                        )
+                    except ServiceError as exc:
+                        raise DaemonClientRequestError(
+                            str(exc), "worker_ownership_blocked"
+                        ) from None
+                if method == "worker.reroute":
+                    try:
+                        return apply_transport_reroute_request(
+                            store,
+                            params,
+                            generation=generation,
+                            now=now,
+                        )
+                    except ServiceError as exc:
+                        raise DaemonClientRequestError(
+                            str(exc), "worker_reroute_blocked"
+                        ) from None
                 if method == "controller.acquire" and set(params) == {"client_id"}:
                     transition = grant_controller(
                         client_id=params["client_id"],  # type: ignore[arg-type]
@@ -6428,6 +6752,33 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                     )
                     commit_and_flush(transition)
                     return {"accepted": True, "state": "stopping"}
+                if method == "daemon.force-stop":
+                    try:
+                        result = apply_force_stop_request(
+                            store,
+                            params,
+                            generation=generation,
+                            now=now,
+                        )
+                    except ServiceError as exc:
+                        raise DaemonClientRequestError(
+                            str(exc), "force_stop_blocked"
+                        ) from None
+                    if result.get("state") == "stopping":
+                        current = controller_lease_from_summary(
+                            store.load().get("controller_lease")
+                        )
+                        if current is None:
+                            raise LeaseError("controller lease required")
+                        commit_and_flush(
+                            release_controller(
+                                current,
+                                lease_id=lease_id,
+                                generation=generation,
+                                now=now,
+                            )
+                        )
+                    return result
             except LeaseError as exc:
                 raise DaemonClientRequestError(str(exc), "lease_required") from None
             raise DaemonClientRequestError("daemon mutation is unavailable", "unavailable")
@@ -6442,10 +6793,10 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
         def mutation_response_sent_handler(
             method: str, result: dict[str, object]
         ) -> None:
-            if method == "daemon.stop" and result == {
-                "accepted": True,
-                "state": "stopping",
-            }:
+            if method in {"daemon.stop", "daemon.force-stop"} and (
+                result.get("accepted") is True
+                and result.get("state") == "stopping"
+            ):
                 stop_event.set()
 
         server = DaemonServer(
@@ -6456,9 +6807,14 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             max_frame_bytes=config.daemon.max_frame_bytes,
             allowed_methods={
                 "handshake", "status", "subscribe", "mission.pause",
+                "mission.resume", "mission.cancel",
                 "mission.admit",
+                "permission.decide",
+                "worker.takeover", "worker.return-control",
+                "worker.reroute",
                 "controller.acquire", "controller.renew", "controller.release",
                 "daemon.stop",
+                "daemon.force-stop",
             },
             lease_exempt_methods={"controller.acquire"},
             status_provider=current_status,
@@ -6530,18 +6886,30 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             if raw_step is None or not isinstance(raw_step.get("task"), str):
                 raise ServiceError("Worker task authority is invalid")
             previous_handoff = resolve_previous_handoff(store.load(), attempt)
+            effective_agent = replace(
+                agent, transport=str(attempt["configured_transport"])
+            )
             prompt = build_worker_prompt(
                 attempt,
-                agent,
+                effective_agent,
                 task=raw_step["task"],
                 previous_handoff=previous_handoff,
             )
-            if agent.transport == "acp":
+            if attempt["configured_transport"] == "acp":
+                sink = _DaemonAcpWorkerSink(
+                    service=service,
+                    store=store,
+                    attempt=attempt,
+                    agent=effective_agent,
+                    workspace=root,
+                )
                 return AcpWorkerTransport(
-                    argv=agent.transport_command,
+                    argv=effective_agent.transport_command,
                     workspace=root,
                     prompt=prompt,
                     request_timeout=float(mission.get("timeout_seconds") or 180),
+                    sink=sink,
+                    decide=sink.decide,
                 )
             project_view = store.project_view(config)
             pane_id = next(
@@ -6549,7 +6917,7 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                     item.get("runtime", {}).get("pane_id")
                     for item in project_view.get("agents", [])
                     if isinstance(item, dict)
-                    and item.get("agent_id") == agent.agent_id
+                    and item.get("agent_id") == effective_agent.agent_id
                     and isinstance(item.get("runtime"), dict)
                 ),
                 None,

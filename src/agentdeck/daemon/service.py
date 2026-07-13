@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import datetime
 import inspect
 import math
 from pathlib import Path
@@ -131,6 +132,576 @@ def resolve_previous_handoff(
     return canonical.compact()
 
 
+def permission_state_for_attempt(
+    state: Mapping[str, object], attempt: Mapping[str, object] | None
+) -> str:
+    """Derive one attempt's permission from bound protocol authority.
+
+    Request base records remain pending; decisions are append-only protocol
+    transitions.  Never infer permission from ACP recommendations or Worker
+    output.
+    """
+    if attempt is None:
+        return "none"
+    def records(name: str) -> list[object]:
+        value = state.get(name, [])
+        if type(value) is not list:
+            raise ServiceError("Mission permission state is invalid")
+        return value
+
+    attempt_id = attempt.get("attempt_id")
+    mission_id = attempt.get("mission_id")
+    agent_id = attempt.get("agent_id")
+    bindings = [
+        item
+        for item in records("mission_permission_bindings")
+        if type(item) is dict and item.get("attempt_id") == attempt_id
+    ]
+    if not bindings:
+        return "none"
+    if len(bindings) != 1 or bindings[0].get("mission_id") != mission_id:
+        raise ServiceError("Mission permission binding is invalid")
+    permission_id = bindings[0].get("permission_id")
+    permissions = [
+        item
+        for item in records("permission_requests")
+        if type(item) is dict and item.get("permission_id") == permission_id
+    ]
+    if len(permissions) != 1:
+        raise ServiceError("Mission permission request is invalid")
+    permission = permissions[0]
+    sessions = [
+        item
+        for item in records("agent_sessions")
+        if type(item) is dict and item.get("session_id") == permission.get("session_id")
+    ]
+    if len(sessions) != 1 or sessions[0].get("agent_id") != agent_id:
+        raise ServiceError("Mission permission agent scope is invalid")
+    current = permission.get("status")
+    if current != "pending":
+        raise ServiceError("Mission permission base state is invalid")
+    for transition in records("protocol_state_transitions"):
+        if (
+            type(transition) is not dict
+            or transition.get("entity_type") != "permission"
+            or transition.get("entity_id") != permission_id
+        ):
+            continue
+        if transition.get("from_state") != current:
+            raise ServiceError("Mission permission history is invalid")
+        if current != "pending":
+            raise ServiceError("Mission permission history is invalid")
+        next_state = transition.get("to_state")
+        if next_state not in {"approved", "denied", "expired"}:
+            raise ServiceError("Mission permission history is invalid")
+        current = next_state
+    return str(current)
+
+
+def _mission_pause_facts(store: object, mission_id: str) -> dict[str, object]:
+    if not callable(getattr(store, "load", None)):
+        raise ServiceError("Mission pause store is invalid")
+    state = store.load()
+    missions = [
+        item for item in state.get("missions", [])
+        if type(item) is dict and item.get("mission_id") == mission_id
+    ]
+    if len(missions) != 1:
+        raise ServiceError("Mission pause target is invalid")
+    mission = missions[0]
+    attempts = [
+        {
+            "attempt_id": item.get("attempt_id"),
+            "state": item.get("state"),
+            "dispatch_key": item.get("dispatch_key"),
+        }
+        for item in state.get("mission_attempts", [])
+        if type(item) is dict
+        and item.get("mission_id") == mission_id
+        and item.get("state") not in {
+            "succeeded", "completed", "failed", "cancelled", "interrupted", "ambiguous"
+        }
+    ]
+    return {
+        "mission_id": mission_id,
+        "status": mission.get("status"),
+        "current_step": mission.get("current_step"),
+        "snapshot_hash": mission.get("snapshot_hash"),
+        "active_attempts": attempts,
+    }
+
+
+def apply_mission_pause_request(
+    store: object,
+    params: object,
+    *,
+    generation: int,
+    now: datetime,
+) -> dict[str, object]:
+    """Production RPC domain handler: preview first, exact confirm second."""
+    if type(params) is not dict or set(params) not in (
+        {"mission_id"},
+        {"mission_id", "preview_id"},
+    ):
+        raise ServiceError("Mission pause request is invalid")
+    mission_id = params.get("mission_id")
+    if type(mission_id) is not str or re.fullmatch(r"mis_[0-9a-f]{12}", mission_id) is None:
+        raise ServiceError("Mission pause request is invalid")
+    facts = _mission_pause_facts(store, mission_id)
+    if facts["status"] != "running":
+        raise ServiceError("Mission pause target is not running")
+    if facts["active_attempts"]:
+        raise ServiceError(
+            "Mission pause requires an idle boundary; active attempt must settle or use force-stop"
+        )
+    preview_id = params.get("preview_id")
+    if preview_id is None:
+        try:
+            return store.record_governance_preview(
+                "mission_pause",
+                facts=facts,
+                generation=generation,
+                now=now,
+            )
+        except (AttributeError, TypeError, ValueError):
+            raise ServiceError("Mission pause preview failed") from None
+    if type(preview_id) is not str:
+        raise ServiceError("Mission pause request is invalid")
+    try:
+        result = store.pause_mission_with_governance_preview(
+            mission_id=mission_id,
+            preview_id=preview_id,
+            facts=facts,
+            generation=generation,
+            now=now,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise ServiceError("Mission pause confirmation failed") from None
+    return result
+
+
+def apply_permission_decision_request(
+    store: object,
+    params: object,
+    *,
+    generation: int,
+    now: datetime,
+) -> dict[str, object]:
+    """Production RPC domain handler for one exact human permission decision."""
+    if type(params) is not dict or set(params) not in (
+        {"permission_id", "decision"},
+        {"permission_id", "decision", "preview_id"},
+    ):
+        raise ServiceError("permission decision request is invalid")
+    permission_id = params.get("permission_id")
+    decision = params.get("decision")
+    if (
+        type(permission_id) is not str
+        or re.fullmatch(r"prm_[a-z0-9]+", permission_id) is None
+        or decision not in {"approved", "denied"}
+        or not callable(getattr(store, "validated_protocol_state", None))
+    ):
+        raise ServiceError("permission decision request is invalid")
+    try:
+        state = store.validated_protocol_state()
+        permissions = [
+            item for item in state.get("permission_requests", [])
+            if type(item) is dict and item.get("permission_id") == permission_id
+        ]
+        if len(permissions) != 1:
+            raise ValueError
+        permission = permissions[0]
+        current = store._derived_protocol_state(
+            state, "permission", permission_id, permission
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise ServiceError("permission decision target is invalid") from None
+    if current != "pending":
+        raise ServiceError("permission decision target is terminal")
+    facts = {
+        "permission_id": permission_id,
+        "session_id": permission.get("session_id"),
+        "turn_id": permission.get("turn_id"),
+        "tool_name": permission.get("tool_name"),
+        "target": permission.get("target"),
+        "risk": permission.get("risk"),
+        "state": current,
+        "decision": decision,
+    }
+    preview_id = params.get("preview_id")
+    if preview_id is None:
+        try:
+            return store.record_governance_preview(
+                "permission_decision",
+                facts=facts,
+                generation=generation,
+                now=now,
+            )
+        except (AttributeError, TypeError, ValueError):
+            raise ServiceError("permission decision preview failed") from None
+    if type(preview_id) is not str:
+        raise ServiceError("permission decision request is invalid")
+    try:
+        return store.decide_permission_with_governance_preview(
+            permission_id=permission_id,
+            decision=decision,
+            preview_id=preview_id,
+            facts=facts,
+            generation=generation,
+            now=now,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise ServiceError("permission decision confirmation failed") from None
+
+
+def _force_stop_facts(store: object) -> dict[str, object]:
+    if not callable(getattr(store, "load", None)):
+        raise ServiceError("force-stop store is invalid")
+    state = store.load()
+    missions = state.get("missions", [])
+    attempts = state.get("mission_attempts", [])
+    if type(missions) is not list or type(attempts) is not list:
+        raise ServiceError("force-stop state is invalid")
+    return {
+        "missions": [
+            {
+                "mission_id": item.get("mission_id"),
+                "status": item.get("status"),
+                "current_step": item.get("current_step"),
+                "snapshot_hash": item.get("snapshot_hash"),
+            }
+            for item in missions
+            if type(item) is dict
+            and item.get("status") not in {"completed", "stopped", "interrupted"}
+        ],
+        "attempts": [
+            {
+                "attempt_id": item.get("attempt_id"),
+                "mission_id": item.get("mission_id"),
+                "state": item.get("state"),
+                "dispatch_key": item.get("dispatch_key"),
+                "admission_claim_id": item.get("admission_claim_id"),
+                "receipt_summary": item.get("receipt_summary"),
+            }
+            for item in attempts
+            if type(item) is dict
+            and item.get("state")
+            not in {"succeeded", "completed", "failed", "cancelled", "interrupted", "ambiguous"}
+        ],
+    }
+
+
+def apply_force_stop_request(
+    store: object,
+    params: object,
+    *,
+    generation: int,
+    now: datetime,
+) -> dict[str, object]:
+    """Production force-stop domain handler with exact preview confirmation."""
+    if type(params) is not dict or set(params) not in (set(), {"preview_id"}):
+        raise ServiceError("force-stop request is invalid")
+    facts = _force_stop_facts(store)
+    preview_id = params.get("preview_id")
+    if preview_id is None:
+        try:
+            return store.record_governance_preview(
+                "force_daemon_stop",
+                facts=facts,
+                generation=generation,
+                now=now,
+            )
+        except (AttributeError, TypeError, ValueError):
+            raise ServiceError("force-stop preview failed") from None
+    if type(preview_id) is not str:
+        raise ServiceError("force-stop request is invalid")
+    try:
+        return store.force_stop_with_governance_preview(
+            preview_id=preview_id,
+            facts=facts,
+            generation=generation,
+            now=now,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise ServiceError("force-stop confirmation failed") from None
+
+
+def apply_mission_state_request(
+    store: object,
+    *,
+    action: str,
+    params: object,
+    generation: int,
+    now: datetime,
+) -> dict[str, object]:
+    """Production exact preview handler for Mission resume/cancel."""
+    if action not in {"mission_resume", "mission_cancel"}:
+        raise ServiceError("Mission governance action is invalid")
+    if type(params) is not dict or set(params) not in (
+        {"mission_id"},
+        {"mission_id", "preview_id"},
+    ):
+        raise ServiceError("Mission governance request is invalid")
+    mission_id = params.get("mission_id")
+    if type(mission_id) is not str or re.fullmatch(r"mis_[0-9a-f]{12}", mission_id) is None:
+        raise ServiceError("Mission governance request is invalid")
+    facts = _mission_pause_facts(store, mission_id)
+    expected = "stopped" if action == "mission_resume" else "running"
+    if facts["status"] != expected or facts["active_attempts"]:
+        raise ServiceError("Mission governance requires an idle boundary")
+    preview_id = params.get("preview_id")
+    if preview_id is None:
+        try:
+            return store.record_governance_preview(
+                action,
+                facts=facts,
+                generation=generation,
+                now=now,
+            )
+        except (AttributeError, TypeError, ValueError):
+            raise ServiceError("Mission governance preview failed") from None
+    if type(preview_id) is not str:
+        raise ServiceError("Mission governance request is invalid")
+    try:
+        return store.transition_mission_with_governance_preview(
+            action=action,
+            mission_id=mission_id,
+            preview_id=preview_id,
+            facts=facts,
+            generation=generation,
+            now=now,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise ServiceError("Mission governance confirmation failed") from None
+
+
+def _worker_ownership_state(state: Mapping[str, object], agent_id: str) -> str:
+    from ..conversation.lifecycle import validate_conversation_history
+
+    collections = {
+        key: state.get(key, [])
+        for key in (
+            "conversation_sessions",
+            "conversation_turns",
+            "conversation_preview_bindings",
+        )
+    }
+    projection = validate_conversation_history(
+        collections, state.get("conversation_state_transitions", [])
+    )
+    return str(projection["ownership_states"].get(agent_id, "agentdeck_owned"))
+
+
+def _worker_ownership_facts(store: object, agent_id: str) -> dict[str, object]:
+    if not callable(getattr(store, "load", None)):
+        raise ServiceError("Worker ownership store is invalid")
+    state = store.load()
+    try:
+        collections = {
+            key: state.get(key, [])
+            for key in (
+                "conversation_sessions",
+                "conversation_turns",
+                "conversation_preview_bindings",
+            )
+        }
+        ownership = _worker_ownership_state(state, agent_id)
+        sessions = collections["conversation_sessions"]
+        if not sessions:
+            raise ValueError
+        conversation_id = sessions[-1]["conversation_id"]
+        protocol = store.validated_protocol_state()
+        current_states = store._validate_protocol_transition_history(protocol)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise ServiceError("Worker ownership facts are invalid") from None
+    session_ids = {
+        item.get("session_id")
+        for item in protocol.get("agent_sessions", [])
+        if type(item) is dict and item.get("agent_id") == agent_id
+    }
+    active_turn_ids = sorted(
+        str(item["turn_id"])
+        for item in protocol.get("protocol_turns", [])
+        if type(item) is dict
+        and item.get("session_id") in session_ids
+        and current_states.get(("turn", item.get("turn_id")), item.get("state"))
+        not in {"completed", "blocked", "failed", "cancelled", "ambiguous"}
+    )
+    pending_permission_ids = sorted(
+        str(item["permission_id"])
+        for item in protocol.get("permission_requests", [])
+        if type(item) is dict
+        and item.get("session_id") in session_ids
+        and current_states.get(
+            ("permission", item.get("permission_id")), item.get("status")
+        )
+        == "pending"
+    )
+    active_attempt_ids = sorted(
+        str(item["attempt_id"])
+        for item in state.get("mission_attempts", [])
+        if type(item) is dict
+        and item.get("agent_id") == agent_id
+        and item.get("state") in {"prepared", "admitting", "submitted", "running"}
+    )
+    safe = not (active_turn_ids or pending_permission_ids or active_attempt_ids)
+    return {
+        "agent_id": agent_id,
+        "conversation_id": conversation_id,
+        "ownership": ownership,
+        "safe_boundary": safe,
+        "reconciled": safe,
+        "active_turn_ids": active_turn_ids,
+        "pending_permission_ids": pending_permission_ids,
+        "active_attempt_ids": active_attempt_ids,
+    }
+
+
+def apply_worker_ownership_request(
+    store: object,
+    *,
+    action: str,
+    params: object,
+    generation: int,
+    now: datetime,
+) -> dict[str, object]:
+    from .governance import governance_transition_gate
+
+    if action not in {"takeover", "return_control"}:
+        raise ServiceError("Worker ownership action is invalid")
+    if type(params) is not dict or set(params) not in (
+        {"agent_id"},
+        {"agent_id", "preview_id"},
+    ):
+        raise ServiceError("Worker ownership request is invalid")
+    agent_id = params.get("agent_id")
+    if type(agent_id) is not str or not agent_id:
+        raise ServiceError("Worker ownership request is invalid")
+    facts = _worker_ownership_facts(store, agent_id)
+    gate = governance_transition_gate(action, facts)
+    if not gate.allowed:
+        raise ServiceError(gate.blocker or "Worker ownership change is blocked")
+    preview_id = params.get("preview_id")
+    if preview_id is None:
+        try:
+            return store.record_governance_preview(
+                action, facts=facts, generation=generation, now=now
+            )
+        except (AttributeError, TypeError, ValueError):
+            raise ServiceError("Worker ownership preview failed") from None
+    if type(preview_id) is not str:
+        raise ServiceError("Worker ownership request is invalid")
+    try:
+        return store.change_worker_ownership_with_governance_preview(
+            action=action,
+            agent_id=agent_id,
+            preview_id=preview_id,
+            facts=facts,
+            generation=generation,
+            now=now,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise ServiceError("Worker ownership confirmation failed") from None
+
+
+def apply_transport_reroute_request(
+    store: object,
+    params: object,
+    *,
+    generation: int,
+    now: datetime,
+) -> dict[str, object]:
+    from .governance import governance_transition_gate
+
+    base = {"mission_id", "step_id", "agent_id", "to_transport"}
+    if type(params) is not dict or set(params) not in (base, base | {"preview_id"}):
+        raise ServiceError("transport reroute request is invalid")
+    mission_id = params.get("mission_id")
+    step_id = params.get("step_id")
+    agent_id = params.get("agent_id")
+    to_transport = params.get("to_transport")
+    if (
+        type(mission_id) is not str
+        or type(step_id) is not str
+        or type(agent_id) is not str
+        or not agent_id
+        or to_transport not in {"acp", "tmux"}
+    ):
+        raise ServiceError("transport reroute request is invalid")
+    state = store.load()
+    missions = [
+        item for item in state.get("missions", [])
+        if type(item) is dict and item.get("mission_id") == mission_id
+    ]
+    if len(missions) != 1:
+        raise ServiceError("transport reroute Mission is invalid")
+    mission = missions[0]
+    snapshot = mission.get("execution_snapshot")
+    mission_snapshot = snapshot.get("mission") if type(snapshot) is dict else None
+    steps = mission_snapshot.get("steps") if type(mission_snapshot) is dict else None
+    workers = snapshot.get("workers") if type(snapshot) is dict else None
+    if type(steps) is not list or type(workers) is not list:
+        raise ServiceError("transport reroute snapshot is invalid")
+    step_matches = [
+        item for item in steps
+        if type(item) is dict
+        and item.get("step_id") == step_id
+        and item.get("agent_id") == agent_id
+    ]
+    worker_matches = [
+        item for item in workers
+        if type(item) is dict and item.get("agent_id") == agent_id
+    ]
+    attempts = [
+        item for item in state.get("mission_attempts", [])
+        if type(item) is dict
+        and item.get("mission_id") == mission_id
+        and item.get("step_id") == step_id
+    ]
+    if len(step_matches) != 1 or len(worker_matches) != 1 or attempts:
+        raise ServiceError("transport reroute cannot modify a frozen attempt")
+    from_transport = worker_matches[0].get("configured_transport")
+    ownership = _worker_ownership_facts(store, agent_id)["ownership"]
+    facts = {
+        "mission_id": mission_id,
+        "step_id": step_id,
+        "agent_id": agent_id,
+        "snapshot_hash": mission.get("snapshot_hash"),
+        "mission_status": mission.get("status"),
+        "current_step": mission.get("current_step"),
+        "ownership": ownership,
+        "attempt_state": "none",
+        "from_transport": from_transport,
+        "to_transport": to_transport,
+    }
+    gate = governance_transition_gate("reroute", facts)
+    if not gate.allowed:
+        raise ServiceError(gate.blocker or "transport reroute is blocked")
+    preview_id = params.get("preview_id")
+    if preview_id is None:
+        try:
+            return store.record_governance_preview(
+                "reroute", facts=facts, generation=generation, now=now
+            )
+        except (AttributeError, TypeError, ValueError):
+            raise ServiceError("transport reroute preview failed") from None
+    if type(preview_id) is not str:
+        raise ServiceError("transport reroute request is invalid")
+    try:
+        return store.record_transport_reroute_with_governance_preview(
+            mission_id=mission_id,
+            step_id=step_id,
+            agent_id=agent_id,
+            to_transport=to_transport,
+            preview_id=preview_id,
+            facts=facts,
+            generation=generation,
+            now=now,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise ServiceError("transport reroute confirmation failed") from None
+
+
 def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
     """Project one admitted Mission from one durable StateStore snapshot."""
     if not callable(getattr(store, "load", None)):
@@ -207,11 +778,31 @@ def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
     ownership_state = "owned"
     if step is not None:
         try:
+            ownership = _worker_ownership_state(state, str(step.get("agent_id")))
+            ownership_state = (
+                "owned" if ownership == "agentdeck_owned" else "conflict"
+            )
+        except (KeyError, TypeError, ValueError):
+            ownership_state = "conflict"
+            worker_ready = False
+        try:
             from ..config import load_config
+            from .governance import effective_transport_for_step
 
             config = load_config(Path(store.root))
             agent = next(item for item in config.agents if item.agent_id == step.get("agent_id"))
-            if agent.transport == "acp":
+            worker = next(
+                item for item in snapshot.get("workers", [])
+                if isinstance(item, dict) and item.get("agent_id") == agent.agent_id
+            )
+            effective_transport = effective_transport_for_step(
+                state,
+                mission_id=mission["mission_id"],
+                step_id=str(step.get("step_id")),
+                agent_id=agent.agent_id,
+                frozen_transport=worker["configured_transport"],
+            )
+            if effective_transport == "acp":
                 command = agent.transport_command[0] if agent.transport_command else ""
                 worker_ready = bool(
                     command
@@ -237,15 +828,6 @@ def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
                     and runtime.get("status") == "running"
                     and isinstance(runtime.get("pane_id"), str)
                 )
-                ownership = next(
-                    (
-                        item.get("state")
-                        for item in project_view.get("conversation", {}).get("ownership", [])
-                        if isinstance(item, dict) and item.get("agent_id") == agent.agent_id
-                    ),
-                    "agentdeck_owned",
-                )
-                ownership_state = "owned" if ownership == "agentdeck_owned" else "conflict"
         except (AttributeError, KeyError, OSError, StopIteration, TypeError, ValueError):
             worker_ready = False
     return SchedulerFacts(
@@ -257,7 +839,7 @@ def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
         attempt_state=attempt_state,
         reply_state=reply_state,
         handoff_state=handoff_state,
-        permission_state="none",
+        permission_state=permission_state_for_attempt(state, current),
         worker_ready=worker_ready,
         next_step_eligible=(
             handoff_state == "recorded" and current_step < len(steps)
@@ -460,15 +1042,24 @@ class DaemonTransitionEffects:
         if decision.kind in {"idle", "await_worker", "wait_human", "wait_ambiguity", "blocked"}:
             return None
         if decision.kind == "prepare_dispatch":
+            from .governance import effective_transport_for_step
+
             mission = self.store.mission_by_id(decision.mission_id)
             snapshot = mission["execution_snapshot"]
             step = next(item for item in snapshot["mission"]["steps"] if item["step_id"] == decision.step_id)
             worker = next(item for item in snapshot["workers"] if item["agent_id"] == step["agent_id"])
+            effective_transport = effective_transport_for_step(
+                self.store.load(),
+                mission_id=decision.mission_id,
+                step_id=decision.step_id,
+                agent_id=step["agent_id"],
+                frozen_transport=worker["configured_transport"],
+            )
             return self._applied(self.store.prepare_mission_attempt(
                 mission_id=decision.mission_id,
                 step_id=decision.step_id,
                 agent_id=step["agent_id"],
-                configured_transport=worker["configured_transport"],
+                configured_transport=effective_transport,
             ))
         if decision.kind == "dispatch_prepared":
             return self.launch_attempt(self.store.mission_attempt_by_id(decision.attempt_id))
@@ -610,6 +1201,9 @@ class ProjectDaemonService:
             tuple[Callback, asyncio.Future[object] | None]
         ] = asyncio.Queue()
         self._worker_tasks: set[asyncio.Task[None]] = set()
+        self._permission_waiters: dict[
+            str, tuple[dict[str, object], asyncio.Future[str]]
+        ] = {}
         self._started = False
         self._closed = False
         self._shutdown = asyncio.Event()
@@ -643,6 +1237,30 @@ class ProjectDaemonService:
         self._wakeup.set()
         return future
 
+    def submit_governed_mutation(
+        self,
+        *,
+        revalidate: Callback,
+        mutate: Callback,
+    ) -> asyncio.Future[object]:
+        """Queue one mutation whose authority is checked at execution time.
+
+        Callers may perform an earlier request-validation pass for useful
+        errors, but only this queue-owned check is authoritative.  This closes
+        the lease/preview/ownership drift window between RPC admission and the
+        durable write.
+        """
+        if not callable(revalidate) or not callable(mutate):
+            raise ServiceError("governed mutation callbacks are invalid")
+
+        async def apply() -> object:
+            authorized = await _call(revalidate)
+            if authorized is not True:
+                raise ServiceError("governed mutation authority is stale")
+            return await _call(mutate)
+
+        return self.submit_mutation(apply)
+
     def start_worker_io(
         self,
         operation: Awaitable[Any],
@@ -671,6 +1289,94 @@ class ProjectDaemonService:
         task = asyncio.create_task(run())
         self._worker_tasks.add(task)
         task.add_done_callback(self._worker_tasks.discard)
+
+    @staticmethod
+    def _permission_wait_authority(value: object) -> dict[str, object]:
+        if type(value) is not dict or set(value) != {
+            "permission_id", "attempt_id", "session_id", "generation"
+        }:
+            raise ServiceError("permission waiter authority is invalid")
+        permission_id = value.get("permission_id")
+        attempt_id = value.get("attempt_id")
+        session_id = value.get("session_id")
+        generation = value.get("generation")
+        if (
+            type(permission_id) is not str
+            or re.fullmatch(r"prm_[a-z0-9]+", permission_id) is None
+            or type(attempt_id) is not str
+            or re.fullmatch(r"mat_[0-9a-f]{12}", attempt_id) is None
+            or type(session_id) is not str
+            or not session_id
+            or type(generation) is not int
+            or generation < 1
+        ):
+            raise ServiceError("permission waiter authority is invalid")
+        return dict(value)
+
+    async def wait_for_permission(
+        self,
+        authority: object,
+        *,
+        read_decision: Callable[[], str],
+    ) -> str:
+        """Wait without blocking the mutation queue for one exact decision."""
+        exact = self._permission_wait_authority(authority)
+        if not self.started or not callable(read_decision):
+            raise ServiceError("permission waiter is unavailable")
+        current = read_decision()
+        if current in {"approved", "denied"}:
+            return current
+        if current != "pending":
+            raise ServiceError("permission waiter state is invalid")
+        permission_id = str(exact["permission_id"])
+        if permission_id in self._permission_waiters:
+            raise ServiceError("permission waiter is already pending")
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        self._permission_waiters[permission_id] = (exact, future)
+        try:
+            # Close the read/register race against a decision queued just before
+            # this coroutine resumed after durable permission creation.
+            current = read_decision()
+            if current in {"approved", "denied"} and not future.done():
+                future.set_result(current)
+            elif current != "pending":
+                raise ServiceError("permission waiter state is invalid")
+            return await future
+        finally:
+            registered = self._permission_waiters.get(permission_id)
+            if registered is not None and registered[1] is future:
+                self._permission_waiters.pop(permission_id, None)
+
+    def resolve_permission_waiter(self, authority: object, decision: str) -> None:
+        exact = self._permission_wait_authority(authority)
+        if decision not in {"approved", "denied"}:
+            raise ServiceError("permission waiter decision is invalid")
+        permission_id = str(exact["permission_id"])
+        registered = self._permission_waiters.get(permission_id)
+        if registered is None:
+            raise ServiceError("permission waiter is not pending")
+        expected, future = registered
+        if expected != exact:
+            raise ServiceError("permission waiter authority drift")
+        if future.done():
+            raise ServiceError("permission waiter is not pending")
+        self._permission_waiters.pop(permission_id, None)
+        future.set_result(decision)
+
+    def notify_permission_decision(self, permission_id: str, decision: str) -> bool:
+        """Wake a live exact waiter after its durable decision commits."""
+        if (
+            type(permission_id) is not str
+            or re.fullmatch(r"prm_[a-z0-9]+", permission_id) is None
+            or decision not in {"approved", "denied"}
+        ):
+            raise ServiceError("permission waiter notification is invalid")
+        registered = self._permission_waiters.get(permission_id)
+        if registered is None:
+            return False
+        authority, _future = registered
+        self.resolve_permission_waiter(authority, decision)
+        return True
 
     async def tick(self) -> SchedulerDecision | None:
         if not self.started:
@@ -753,6 +1459,10 @@ class ProjectDaemonService:
             return
         self._closed = True
         self._wakeup.set()
+        for _authority, future in tuple(self._permission_waiters.values()):
+            if not future.done():
+                future.set_exception(ServiceError("daemon service closed"))
+        self._permission_waiters.clear()
         for task in tuple(self._worker_tasks):
             task.cancel()
         if self._worker_tasks:

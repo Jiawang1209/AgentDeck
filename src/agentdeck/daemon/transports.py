@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import inspect
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Mapping, Protocol
 
 from acp import schema
 
@@ -251,7 +252,7 @@ class _MemoryAcpSink:
 class _ActiveAcpAttempt:
     transport: Any
     session_id: str
-    sink: _MemoryAcpSink
+    sink: Any
     dispatch_key: str
 
 
@@ -266,6 +267,12 @@ class AcpWorkerTransport:
         prompt: str,
         transport_factory: _AcpFactory = AcpTransport,
         request_timeout: float = 30.0,
+        sink: object | None = None,
+        decide: Callable[
+            [dict[str, Any], list[schema.PermissionOption]],
+            PermissionDecision | Awaitable[PermissionDecision],
+        ]
+        | None = None,
     ) -> None:
         if (
             type(argv) is not tuple
@@ -276,8 +283,19 @@ class AcpWorkerTransport:
             or not callable(transport_factory)
             or type(request_timeout) not in {int, float}
             or request_timeout <= 0
+            or (decide is not None and not callable(decide))
         ):
             raise ValueError("invalid ACP Worker transport configuration")
+        selected_sink = _MemoryAcpSink() if sink is None else sink
+        if not all(
+            callable(getattr(selected_sink, name, None))
+            for name in (
+                "append_update",
+                "append_permission",
+                "append_permission_decision",
+            )
+        ) or not isinstance(getattr(selected_sink, "fragments", None), list):
+            raise ValueError("invalid ACP Worker ledger sink")
         resolved = Path(workspace).resolve()
         if not resolved.is_dir():
             raise ValueError("ACP Worker workspace is invalid")
@@ -286,6 +304,8 @@ class AcpWorkerTransport:
         self._prompt = prompt
         self._factory = transport_factory
         self._request_timeout = float(request_timeout)
+        self._sink = selected_sink
+        self._decide = decide
         self._active: dict[str, _ActiveAcpAttempt] = {}
 
     async def admit(self, attempt: Mapping[str, object]) -> SubmittedReceipt:
@@ -294,11 +314,15 @@ class AcpWorkerTransport:
         )
         if attempt_id in self._active:
             raise WorkerTransportError("ACP Worker attempt is already admitted")
-        sink = _MemoryAcpSink()
+        sink = self._sink
         client = AgentDeckAcpClient(
             sink=sink,
-            decide=lambda *_: PermissionDecision.cancelled(
-                "daemon_worker_permission_denied"
+            decide=(
+                self._decide
+                if self._decide is not None
+                else lambda *_: PermissionDecision.cancelled(
+                    "daemon_worker_permission_denied"
+                )
             ),
         )
         transport = self._factory(
@@ -313,11 +337,16 @@ class AcpWorkerTransport:
         ):
             raise WorkerTransportError("ACP Worker transport factory is invalid")
         try:
-            await transport.initialize()
+            initialized = await transport.initialize()
             session = await transport.new_session()
             session_id = getattr(session, "native_session_id", None)
             if type(session_id) is not str or not session_id:
                 raise WorkerTransportError("ACP Worker session is invalid")
+            activate = getattr(sink, "activate", None)
+            if callable(activate):
+                activated = activate(session_id, initialized)
+                if inspect.isawaitable(activated):
+                    await activated
         except Exception as error:
             try:
                 await transport.close()
@@ -349,7 +378,9 @@ class AcpWorkerTransport:
             raise WorkerTransportError("ACP Worker session is not admitted")
         try:
             result = await active.transport.prompt(active.session_id, self._prompt)
-            if active.sink.permission_seen:
+            if bool(getattr(active.sink, "permission_seen", False)) and bool(
+                getattr(active.sink, "fail_on_permission", True)
+            ):
                 raise WorkerTransportError("ACP Worker requested a forbidden permission")
             stop_reason = getattr(result, "stop_reason", None)
             if type(stop_reason) is not str or not stop_reason:
@@ -357,6 +388,11 @@ class AcpWorkerTransport:
             reply = parse_correlated_reply("".join(active.sink.fragments), dispatch_key)
             if reply is None:
                 raise WorkerTransportError("ACP Worker returned no correlated reply")
+            finish = getattr(active.sink, "finish", None)
+            if callable(finish):
+                finished = finish(stop_reason)
+                if inspect.isawaitable(finished):
+                    await finished
             return TransportResult(
                 stop_reason=stop_reason,
                 validated=True,

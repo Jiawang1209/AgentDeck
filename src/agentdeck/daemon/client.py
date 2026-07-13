@@ -43,11 +43,18 @@ CLIENT_METHODS = frozenset(
         "status",
         "subscribe",
         "mission.pause",
+        "mission.resume",
+        "mission.cancel",
         "mission.admit",
+        "permission.decide",
+        "worker.takeover",
+        "worker.return-control",
+        "worker.reroute",
         "controller.acquire",
         "controller.renew",
         "controller.release",
         "daemon.stop",
+        "daemon.force-stop",
     }
 )
 DEFAULT_DAEMON_LOG_CAP_BYTES = 1024 * 1024
