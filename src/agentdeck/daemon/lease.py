@@ -7,9 +7,11 @@ import hmac
 import json
 import math
 import re
+import threading
 from types import MappingProxyType
 from typing import Mapping
 import uuid
+import weakref
 
 
 _CLIENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
@@ -30,6 +32,10 @@ _EVENT_ID = re.compile(r"evt_[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _EVENT_TYPE = re.compile(r"[a-z][a-z0-9_]{0,127}")
 _TRANSITION_FACTORY_TOKEN = object()
 _AUDIT_FACTORY_TOKEN = object()
+_AUTHORIZATION_LOCK = threading.RLock()
+_AUTHORIZED_TRANSITIONS: dict[
+    int, tuple[weakref.ReferenceType[LeaseTransition], str, str]
+] = {}
 
 
 class LeaseError(RuntimeError):
@@ -237,12 +243,80 @@ def _transition(
     previous: ControllerLease | None,
     current: ControllerLease,
     audit_event: LeaseAuditEvent,
+    *,
+    authorization_facts: Mapping[str, object],
 ) -> LeaseTransition:
     transition = LeaseTransition(action, previous, current, audit_event)
     object.__setattr__(
         transition, "_factory_capability", _TRANSITION_FACTORY_TOKEN
     )
+    authorization_json = json.dumps(
+        dict(authorization_facts),
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    fingerprint = _transition_fingerprint(transition, authorization_json)
+    identity = id(transition)
+
+    def discard(reference: weakref.ReferenceType[LeaseTransition]) -> None:
+        with _AUTHORIZATION_LOCK:
+            registered = _AUTHORIZED_TRANSITIONS.get(identity)
+            if registered is not None and registered[0] is reference:
+                _AUTHORIZED_TRANSITIONS.pop(identity, None)
+
+    reference = weakref.ref(transition, discard)
+    with _AUTHORIZATION_LOCK:
+        _AUTHORIZED_TRANSITIONS[identity] = (
+            reference,
+            authorization_json,
+            fingerprint,
+        )
     return transition
+
+
+def _transition_fingerprint(
+    transition: LeaseTransition, authorization_json: str
+) -> str:
+    encoded = json.dumps(
+        {
+            "action": transition.action,
+            "previous": (
+                transition.previous.summary()
+                if transition.previous is not None
+                else None
+            ),
+            "current": (
+                transition.current.summary()
+                if transition.current is not None
+                else None
+            ),
+            "audit_event": transition.audit_event.summary(),
+            "authorization": authorization_json,
+        },
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _transition_is_authorized(transition: LeaseTransition) -> bool:
+    identity = id(transition)
+    with _AUTHORIZATION_LOCK:
+        registered = _AUTHORIZED_TRANSITIONS.get(identity)
+        if registered is None or registered[0]() is not transition:
+            return False
+        _, authorization_json, expected_fingerprint = registered
+        try:
+            actual_fingerprint = _transition_fingerprint(
+                transition, authorization_json
+            )
+        except (AttributeError, LeaseError, TypeError, ValueError):
+            return False
+        return hmac.compare_digest(expected_fingerprint, actual_fingerprint)
 
 
 def _new_lease(
@@ -293,7 +367,13 @@ def grant_controller(
         ttl_seconds=ttl,
         generation=generation,
     )
-    return _transition("grant", previous, lease, _event("granted", lease, current_time))
+    return _transition(
+        "grant",
+        previous,
+        lease,
+        _event("granted", lease, current_time),
+        authorization_facts={"client_id": requester, "kind": "grant"},
+    )
 
 
 def validate_controller(
@@ -343,7 +423,17 @@ def renew_controller(
     renewed = replace(
         current, last_renewed_at=_timestamp(current_time), expires_at=expires_at
     )
-    return _transition("renew", current, renewed, _event("renewed", renewed, current_time))
+    return _transition(
+        "renew",
+        current,
+        renewed,
+        _event("renewed", renewed, current_time),
+        authorization_facts={
+            "generation": generation,
+            "kind": "renew",
+            "lease_id": lease_id,
+        },
+    )
 
 
 def expire_controller(current: ControllerLease, *, now: datetime) -> LeaseTransition:
@@ -354,7 +444,18 @@ def expire_controller(current: ControllerLease, *, now: datetime) -> LeaseTransi
     )
     if current_time < _parse_timestamp(current.expires_at, field="expires_at"):
         raise LeaseError("controller lease has not expired")
-    return _transition("expire", current, current, _event("expired", current, current_time))
+    return _transition(
+        "expire",
+        current,
+        current,
+        _event("expired", current, current_time),
+        authorization_facts={
+            "expired_at": _timestamp(current_time),
+            "generation": current.generation,
+            "kind": "expire",
+            "lease_id": current.lease_id,
+        },
+    )
 
 
 def release_controller(
@@ -370,7 +471,15 @@ def release_controller(
     )
     released = replace(current, expires_at=_timestamp(current_time))
     return _transition(
-        "release", current, released, _event("released", released, current_time)
+        "release",
+        current,
+        released,
+        _event("released", released, current_time),
+        authorization_facts={
+            "generation": generation,
+            "kind": "release",
+            "lease_id": lease_id,
+        },
     )
 
 
@@ -460,7 +569,21 @@ def confirm_takeover(
         generation=current.generation + 1,
     )
     return _transition(
-        "takeover", current, taken, _event("taken_over", taken, current_time)
+        "takeover",
+        current,
+        taken,
+        _event("taken_over", taken, current_time),
+        authorization_facts={
+            "confirmed_by": requester_id,
+            "kind": "takeover",
+            "preview": {
+                "current_generation": confirmation.current_generation,
+                "current_lease_id": confirmation.current_lease_id,
+                "digest": confirmation.digest,
+                "previewed_at": confirmation.previewed_at,
+                "requester": confirmation.requester,
+            },
+        },
     )
 
 
@@ -506,6 +629,7 @@ def validate_lease_transition(
     if (
         not isinstance(transition, LeaseTransition)
         or transition._factory_capability is not _TRANSITION_FACTORY_TOKEN
+        or not _transition_is_authorized(transition)
     ):
         raise LeaseError("invalid controller lease transition")
     previous = controller_lease_from_summary(persisted)

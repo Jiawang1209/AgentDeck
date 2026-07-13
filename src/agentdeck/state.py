@@ -235,9 +235,14 @@ class StateStore:
         initial_event_ids = validate_daemon_event_outbox(initial_outbox)
         validate_lease_transition(initial_state.get("controller_lease"), transition)
         candidate_event_id = transition.audit_event.event_id
-        if (
-            candidate_event_id in initial_event_ids
-            or candidate_event_id in self._daemon_journal_event_ids()
+        if candidate_event_id in initial_event_ids:
+            raise ValueError("duplicate daemon event identity")
+        # Task 4 keeps daemon events in the durable outbox and does not expose a
+        # daemon flush API. A future outbox-to-journal flush must hold this same
+        # mutation lock; this expiry scan does not make arbitrary append_event
+        # calls atomic with lease commits.
+        if transition.action == "expire" and (
+            candidate_event_id in self._daemon_journal_event_ids()
         ):
             raise ValueError("duplicate daemon event identity")
         with self._protocol_mutation_lock():
@@ -246,9 +251,10 @@ class StateStore:
             event_ids = validate_daemon_event_outbox(outbox)
             persisted = state.get("controller_lease")
             validate_lease_transition(persisted, transition)
-            if (
-                candidate_event_id in event_ids
-                or candidate_event_id in self._daemon_journal_event_ids()
+            if candidate_event_id in event_ids:
+                raise ValueError("duplicate daemon event identity")
+            if transition.action == "expire" and (
+                candidate_event_id in self._daemon_journal_event_ids()
             ):
                 raise ValueError("duplicate daemon event identity")
             assert transition.current is not None
@@ -262,17 +268,30 @@ class StateStore:
         if not self.events_path.exists():
             return set()
         event_ids: list[str] = []
-        for line in self.events_path.read_text(encoding="utf-8").splitlines():
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError:
-                raise ValueError("daemon event journal is malformed") from None
-            try:
-                event_ids.append(validate_daemon_event_record(item))
-            except LeaseError:
-                raise ValueError("daemon event journal is malformed") from None
+        def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON key")
+                result[key] = value
+            return result
+
+        def reject_constant(_value: str) -> object:
+            raise ValueError("non-finite JSON number")
+
+        with self.events_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    item = json.loads(
+                        line,
+                        object_pairs_hook=reject_duplicate_keys,
+                        parse_constant=reject_constant,
+                    )
+                    event_ids.append(validate_daemon_event_record(item))
+                except (json.JSONDecodeError, LeaseError, ValueError):
+                    raise ValueError("daemon event journal is malformed") from None
         if len(event_ids) != len(set(event_ids)):
             raise ValueError("duplicate daemon event identity")
         return set(event_ids)

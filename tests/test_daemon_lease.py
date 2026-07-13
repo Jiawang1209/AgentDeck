@@ -42,6 +42,13 @@ def _snapshot(root: Path) -> dict[str, bytes]:
     }
 
 
+def _persisted_expiry(store: StateStore):
+    granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(granted)
+    assert granted.current is not None
+    return expire_controller(granted.current, now=NOW + timedelta(seconds=30))
+
+
 def test_observer_registration_is_frozen_and_has_no_controller_authority() -> None:
     observer = register_observer(client_id="client-observer", now=NOW)
 
@@ -362,6 +369,63 @@ def test_state_store_rejects_publicly_constructed_privileged_transition(
 
     with pytest.raises(LeaseError, match="transition"):
         store.commit_controller_lease(manual)
+
+    assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("action", ["release", "takeover"])
+def test_copying_internal_capability_cannot_authorize_forged_transition(
+    tmp_path: Path, action: str
+) -> None:
+    store = _store(tmp_path)
+    granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(granted)
+    assert granted.current is not None
+    if action == "release":
+        built = release_controller(
+            granted.current,
+            lease_id=granted.current.lease_id,
+            generation=granted.current.generation,
+            now=NOW + timedelta(seconds=1),
+        )
+    else:
+        preview = preview_takeover(
+            granted.current, requester="client-b", now=NOW + timedelta(seconds=1)
+        )
+        built = confirm_takeover(
+            granted.current,
+            preview,
+            requester="client-b",
+            now=NOW + timedelta(seconds=1),
+            ttl_seconds=30,
+        )
+    forged = LeaseTransition(
+        action=built.action,
+        previous=built.previous,
+        current=built.current,
+        audit_event=built.audit_event,
+    )
+    object.__setattr__(
+        forged, "_factory_capability", built._factory_capability
+    )
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(LeaseError, match="transition"):
+        store.commit_controller_lease(forged)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_mutating_authorized_transition_invalidates_its_authorization(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    transition = _persisted_expiry(store)
+    object.__setattr__(transition.audit_event, "event_id", "evt_" + "c" * 24)
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(LeaseError, match="transition"):
+        store.commit_controller_lease(transition)
 
     assert _snapshot(tmp_path) == before
 
@@ -692,8 +756,8 @@ def test_corrupt_event_journal_fails_closed_without_lease_write(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
+    transition = _persisted_expiry(store)
     store.events_path.write_text("{not-json}\n", encoding="utf-8")
-    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
     before = _snapshot(tmp_path)
 
     with pytest.raises(ValueError, match="daemon event journal"):
@@ -716,6 +780,7 @@ def test_structured_malformed_event_journal_is_full_tree_zero_write(
     tmp_path: Path, overrides: dict[str, object]
 ) -> None:
     store = _store(tmp_path)
+    transition = _persisted_expiry(store)
     item: dict[str, object] = {
         "event_id": "evt_conversation",
         "event_type": "conversation_started",
@@ -726,7 +791,6 @@ def test_structured_malformed_event_journal_is_full_tree_zero_write(
     store.events_path.write_text(
         json.dumps(item, allow_nan=True) + "\n", encoding="utf-8"
     )
-    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
     before = _snapshot(tmp_path)
 
     with pytest.raises(ValueError, match="daemon event journal"):
@@ -739,6 +803,7 @@ def test_duplicate_event_journal_identity_is_full_tree_zero_write(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
+    transition = _persisted_expiry(store)
     item = {
         "event_id": "evt_conversation",
         "event_type": "conversation_started",
@@ -747,7 +812,6 @@ def test_duplicate_event_journal_identity_is_full_tree_zero_write(
     }
     line = json.dumps(item) + "\n"
     store.events_path.write_text(line + line, encoding="utf-8")
-    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
     before = _snapshot(tmp_path)
 
     with pytest.raises(ValueError, match="duplicate daemon event identity"):
@@ -760,6 +824,7 @@ def test_legacy_event_identity_and_strict_json_payload_remain_compatible(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
+    transition = _persisted_expiry(store)
     item = {
         "event_id": "evt_conversation",
         "event_type": "conversation_started",
@@ -768,9 +833,97 @@ def test_legacy_event_identity_and_strict_json_payload_remain_compatible(
     }
     store.events_path.write_text(json.dumps(item) + "\n", encoding="utf-8")
 
-    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
-
     assert store.commit_controller_lease(transition)["generation"] == 1
+
+
+@pytest.mark.parametrize("action", ["grant", "renew", "release", "takeover"])
+def test_non_expiry_transitions_do_not_scan_the_full_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    root = tmp_path / action
+    root.mkdir()
+    store = _store(root)
+    if action == "grant":
+        transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    else:
+        granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+        store.commit_controller_lease(granted)
+        assert granted.current is not None
+        if action == "renew":
+            transition = renew_controller(
+                granted.current,
+                lease_id=granted.current.lease_id,
+                generation=granted.current.generation,
+                now=NOW + timedelta(seconds=1),
+                ttl_seconds=30,
+            )
+        elif action == "release":
+            transition = release_controller(
+                granted.current,
+                lease_id=granted.current.lease_id,
+                generation=granted.current.generation,
+                now=NOW + timedelta(seconds=1),
+            )
+        else:
+            preview = preview_takeover(
+                granted.current,
+                requester="client-b",
+                now=NOW + timedelta(seconds=1),
+            )
+            transition = confirm_takeover(
+                granted.current,
+                preview,
+                requester="client-b",
+                now=NOW + timedelta(seconds=1),
+                ttl_seconds=30,
+            )
+    monkeypatch.setattr(
+        store,
+        "_daemon_journal_event_ids",
+        lambda: (_ for _ in ()).throw(AssertionError("unexpected journal scan")),
+    )
+
+    assert store.commit_controller_lease(transition)["generation"] >= 1
+
+
+def test_expiry_scans_journal_before_and_inside_mutation_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    transition = _persisted_expiry(store)
+    scans = 0
+
+    def count_scans() -> set[str]:
+        nonlocal scans
+        scans += 1
+        return set()
+
+    monkeypatch.setattr(store, "_daemon_journal_event_ids", count_scans)
+
+    store.commit_controller_lease(transition)
+
+    assert scans == 2
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"event_id":"evt_a","event_id":"evt_b","event_type":"task_request","created_at":"2026-07-13T10:00:00+00:00","payload":{}}\n',
+        '{"event_id":"evt_a","event_type":"task_request","created_at":"2026-07-13T10:00:00+00:00","payload":{"agent":"a","agent":"b"}}\n',
+    ],
+)
+def test_duplicate_json_keys_in_journal_are_full_tree_zero_write(
+    tmp_path: Path, raw: str
+) -> None:
+    store = _store(tmp_path)
+    transition = _persisted_expiry(store)
+    store.events_path.write_text(raw, encoding="utf-8")
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="daemon event journal"):
+        store.commit_controller_lease(transition)
+
+    assert _snapshot(tmp_path) == before
 
 
 def test_state_store_rejects_malformed_persisted_lease_with_sanitized_error(
