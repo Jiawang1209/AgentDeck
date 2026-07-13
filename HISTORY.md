@@ -4,6 +4,13 @@
 
 ## 2026-07-13
 
+### Select one background Mission transition
+
+- **Pure exhaustive scheduler gate**: added immutable, strict `SchedulerFacts` and `SchedulerDecision` records plus a deterministic `schedule_gate()` that returns exactly one of the eleven approved transition kinds. Mission states reuse the existing durable `MISSION_STATUSES`; attempt states match the Task 7 attempt ledger. Exact fields, scalar types, canonical identities, reply/handoff lineage, unconfirmed-Mission boundaries, and boolean-versus-integer distinctions fail closed with sanitized errors.
+- **Authority-first priority**: snapshot drift/missing authority, missing lineage, Worker ownership conflict, duplicate active attempts, completion conflicts, explicit blockers, invalid replies, denied permissions, terminal steps, and failed attempts cannot advance work. Pending confirmation or permission waits for a human, ambiguous attempts wait for an explicit ambiguity decision, and terminal Missions select no new effect. A completed/succeeded attempt without a reply and an unready pending Worker are visible blockers rather than implicit progress.
+- **One-effect runner boundary**: added a generic `SchedulerEffects` protocol and `run_scheduler_once()` that selects once and calls `apply()` exactly once. It contains no loop, sleep, clock, provider, ACP, tmux, filesystem, persistence, retry, or random behavior; effect exceptions propagate without retry.
+- **TDD evidence**: the initial RED failed collection because `agentdeck.daemon.scheduler` did not exist. Follow-up REDs exposed terminal Mission re-effecting, missing Worker results, unready Workers, active-attempt completion conflicts, incoherent reply/handoff lineage, drift from existing Mission enums, unconfirmed snapshot handling, nondeterministic fact-summary ordering, and under-validated decisions. GREEN is 63 passed for the scheduler suite and 423 passed for the required scheduler/autonomy/agent CLI regression; compileall and `git diff --check` pass.
+
 ### Align Leader control-registry test expectations with Task 6
 
 - Updated the five Leader help/filter assertions that intentionally lock `filters.item_count_before_filter` to the complete control registry. Task 6 added exactly four valid controls—daemon runtime inspect/stop, Mission scheduler inspect, and client session inspect—so the shared test-local baseline is now 128 instead of 124.
