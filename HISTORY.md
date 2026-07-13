@@ -18,6 +18,13 @@
 - **Single active facts**: validation rejects more than one active turn or pending preview per conversation and returns a compact current-state projection without mutating its inputs.
 - **TDD evidence**: the focused lifecycle suite is 10 passed; the final regression also passes compileall for the new package and `git diff --check`.
 
+### Bind M1 confirmations to exact preview execution facts
+
+- **Canonical binding**: added deterministic canonical-JSON SHA-256 execution digests with stable mapping order, strict JSON values, and constant-time comparison against current control-specific facts.
+- **Fail closed**: pending state, timezone-aware expiry, exact digest, and boundary-time checks reject consumed, expired, malformed, or drifted previews without mutating the supplied binding.
+- **Consume once**: successful validation returns a new consumed record with a UTC timestamp; a second consume is rejected. Natural-language classification remains separate and grants no authority by itself.
+- **TDD evidence**: the focused binding suite is 10 passed and runs with the lifecycle regression, compileall, and `git diff --check`.
+
 ### Design the Phase 3 M1 foreground conversation
 
 - **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.
