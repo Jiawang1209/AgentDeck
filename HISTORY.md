@@ -4,6 +4,14 @@
 
 ## 2026-07-13
 
+### Design the Phase 3 M2 authoritative Project Daemon
+
+- **Product outcome**: approved a project-local background coordinator so one explicitly confirmed frozen Mission can continue after the interactive `agentdeck` client disconnects, pause on new authority/risk/ambiguity, and render deterministic recovery when the user returns.
+- **Architecture**: one on-demand single-process Project Daemon per project owns scheduling through versioned Unix-socket RPC, while StateStore/events/ProjectView remain persistent truth; multiple observers are allowed, with one explicit controller lease for mutations.
+- **Worker coordination**: Worker completion is mediated by AgentDeck—ACP or validated tmux completion enters the ledger, AgentDeck creates a compact handoff, and only then activates the next Worker. Workers never observe, authorize, wake, or schedule one another; A2A remains a future boundary for independently governed Agent systems.
+- **Recovery and governance**: one frozen confirmation covers ordinary in-scope steps; new permissions, destructive/external actions, drift, ownership changes, or unknown external outcomes pause. Restart reconciliation never automatically repeats an ambiguous Worker effect.
+- **Delivery**: M2 is split into M2a daemon foundation, M2b recoverable background Mission, and M2c real Codex/Claude ACP/tmux acceptance. The approved design is `docs/superpowers/specs/2026-07-13-agentdeck-project-daemon-design.md`; implementation remains blocked on written-spec review and a separate plan.
+
 ### Complete Phase 3 M1 foreground conversation acceptance
 
 - **Primary experience**: documented bare `agentdeck` as the foreground natural-language entry and retained `leader chat --message` for scripts/debugging; added concise aligned English/Chinese READMEs with explicit M1 versus M2/M3 boundaries.

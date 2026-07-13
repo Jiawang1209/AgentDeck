@@ -71,9 +71,9 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-**Complete Phase 3 M1 foreground conversation verification and hand it to the human for review.** Tasks 1–11 are committed on `codex/phase3-conversation-design`; Task 12 deterministic acceptance is GREEN and the remaining gates are the full regression, disposable live rehearsal, sanitized evidence, final local commit, and human review. The durable spec is `docs/superpowers/specs/2026-07-13-agentdeck-foreground-conversation-design.md`; the execution plan is `docs/superpowers/plans/2026-07-13-agentdeck-foreground-conversation.md`.
+**Review the written Phase 3 M2 Project Daemon design, then write—but do not yet execute—the implementation plan.** M1 is complete, verified, and merged into local `main` at `cd8fd655`. The human approved the full M2 product design: one on-demand authoritative project daemon, frozen-scope background Mission advancement, AgentDeck-mediated Worker completion/handoff, explicit ACP/tmux routing, compact recovery, fail-closed ambiguity, and one controller among multiple observers. The written spec is `docs/superpowers/specs/2026-07-13-agentdeck-project-daemon-design.md`.
 
-M1 composes the existing Leader chat, Mission, approval, workflow, dispatch, ProjectView, ACP, and tmux primitives. It must not add the M2 daemon, durable transcript recovery, global roaming, Workspace Client, automatic install/auth, or unproven native-TUI session attach.
+No M2 production code is authorized before the human reviews and approves the written spec and its separate implementation plan. A2A Client/Server, remote daemon, global roaming, Workspace Client, system notifications, complete transcript persistence, automatic install/auth, Windows IPC, and terminal-emulator work remain out of scope.
 
 The completed natural-language Mission and G-series work below is historical context only. It must not be treated as an active continuation request or redone.
 
@@ -97,9 +97,9 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0, Phase 1, and Phase 2 Tasks 1–12 are complete. Phase 3 M1 Tasks 1–11 are implemented and locally committed. The current worktree adds the final deterministic acceptance, concise bilingual README, roadmap/handoff synchronization, and credential-like Mission provenance redaction discovered by the acceptance RED. M1 is not complete until the full suite and disposable live rehearsal pass and the final Task 12 commit is clean.
+Phase 0, Phase 1, Phase 2, and Phase 3 M1 are complete. M1's final full suite was 1855 passed and 1 skipped; its deterministic and live Claude ACP/PTY evidence is `docs/validation/2026-07-13-phase3-m1-foreground-conversation.md`. Phase 3 M2 now has a human-approved conversational design and a written spec awaiting explicit written-spec review. No daemon production code has started.
 
-The completed Phase 2 diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. It explicitly distinguishes `session/load` history replay from `session/resume` without replay, uses append-only lifecycle transitions rather than rewriting Phase 1 records, and makes non-interactive permission requests fail closed. The approved M1 design may now compose that ACP client with the existing Mission/Worker kernel through explicit transport routing, while preserving tmux compatibility. The project daemon remains M2 and is not authorized in M1.
+The completed Phase 2 diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. M1 composes that ACP client with explicit Leader/Worker transport and foreground conversation contracts while preserving tmux compatibility. M2 is designed to move confirmed Mission advancement into a recoverable project daemon; it must reuse these primitives rather than create a parallel authority.
 
 Historical note: G1–G5 frontdesk, coordination-role, loop, worker-lifecycle, review-gate, release-preview, and natural-language discovery slices were completed before the Phase 0/1 protocol-native work. Their detailed behavior remains in `HISTORY.md` and the contract documents; they are not the current phase or next slice.
 
@@ -122,7 +122,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-Continue only the remaining Phase 3 M1 Task 12 gates from `docs/superpowers/plans/2026-07-13-agentdeck-foreground-conversation.md`. Do not redo Phase 0, Phase 1, Mission, G-series work, Phase 2, or M1 Tasks 1–11. Do not merge/push, auto-install, change authentication, auto-download, start the M2 daemon, add durable transcript recovery, global roaming, or Workspace Client work.
+Review `docs/superpowers/specs/2026-07-13-agentdeck-project-daemon-design.md`. If the human approves the written spec, create the detailed M2 implementation plan using the writing-plans workflow, but do not implement until a new explicit `/goal` chooses an execution mode. Do not redo M1 or earlier phases; do not merge/push, auto-install, change authentication, add A2A, remote execution, global roaming, Workspace Client, full transcript persistence, or terminal-emulator work.
 ```
 
 ## Historical development log — not active
