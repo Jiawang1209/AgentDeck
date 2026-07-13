@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -23,6 +24,56 @@ REPLY_FIELDS = (
     "next_steps",
 )
 REPLY_STATUSES = {"completed", "blocked", "failed"}
+
+
+def _validated_compact_reply(reply: dict[str, Any]) -> dict[str, str]:
+    if type(reply) is not dict:
+        raise ValueError("worker reply must be an object")
+    status = reply.get("status")
+    if status not in REPLY_STATUSES:
+        raise ValueError("invalid workflow reply status")
+    compact = {"status": status}
+    for field in ("summary", "verification", "risks", "next_steps"):
+        value = reply.get(field)
+        if type(value) is not str or not value.strip():
+            raise ValueError(f"worker reply {field} must be a non-empty string")
+        compact[field] = value
+    return compact
+
+
+def validate_compact_worker_outcome(
+    *,
+    reply: dict[str, Any],
+    artifacts: list[dict[str, Any]],
+    trace_ids: list[str],
+) -> dict[str, Any]:
+    """Validate and project a Worker result onto the durable handoff allowlist."""
+    compact: dict[str, Any] = _validated_compact_reply(reply)
+    if type(artifacts) is not list:
+        raise ValueError("worker artifacts must be a list")
+    compact_artifacts: list[dict[str, str]] = []
+    for artifact in artifacts:
+        if type(artifact) is not dict or set(artifact) != {"path", "content_hash"}:
+            raise ValueError("worker artifact evidence is invalid")
+        path = artifact.get("path")
+        content_hash = artifact.get("content_hash")
+        if (
+            type(path) is not str
+            or not path
+            or type(content_hash) is not str
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", content_hash) is None
+        ):
+            raise ValueError("worker artifact evidence is invalid")
+        compact_artifacts.append({"path": path, "content_hash": content_hash})
+    if (
+        type(trace_ids) is not list
+        or any(type(item) is not str or not item for item in trace_ids)
+        or len(trace_ids) != len(set(trace_ids))
+    ):
+        raise ValueError("worker trace ids are invalid")
+    compact["artifacts"] = compact_artifacts
+    compact["trace_ids"] = list(trace_ids)
+    return compact
 
 
 def authorized_steps(plan_record: dict[str, Any]) -> list[dict[str, Any]]:
@@ -80,14 +131,11 @@ def build_compact_handoff(
     reply_id: str,
     artifact_paths: list[str],
 ) -> dict[str, Any]:
+    compact_reply = _validated_compact_reply(reply)
     return {
         "step": step,
         "agent_id": agent_id,
-        "status": reply["status"],
-        "summary": reply["summary"],
-        "verification": reply["verification"],
-        "risks": reply["risks"],
-        "next_steps": reply["next_steps"],
+        **compact_reply,
         "artifact_paths": list(artifact_paths),
         "trace_command": f"agentdeck trace --id {reply_id}",
     }

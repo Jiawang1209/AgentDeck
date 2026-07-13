@@ -4,6 +4,14 @@
 
 ## 2026-07-13
 
+### Supervise exact background Worker transports
+
+- **Exact configured route**: added a bounded `WorkerAttemptSupervisor` that requires the attempt identity, route Agent, configured transport, and effective transport to agree before dispatch. ACP and tmux execute through mutually exclusive callables; readiness, ownership, or route drift fails closed, and failure on either transport never invokes the other as a fallback.
+- **Admission-before-completion durability**: transport admission returns a compact submitted receipt plus a bounded completion awaitable. The supervisor persists that receipt before awaiting any Worker result, so a post-admission failure retains the submitted boundary for later recovery rather than appearing undispatched.
+- **One validated compact outcome**: ACP accepts only a formal completed stop reason and tmux accepts only an already validated structured reply. Both reuse `workflow.validate_compact_worker_outcome()` and produce the same summary/verification/risks/next-steps shape with only artifact path/hash pairs and trace ids; full output, private reasoning, credentials, and unrelated transport data are not projected into the durable outcome.
+- **AgentDeck-mediated handoff gate**: `supervisor_gate()` withholds the next Worker until the prior reply is `validated` and its handoff is `recorded`. Workers gain no direct polling, scheduling, transport-reroute, or peer authorization capability.
+- **TDD evidence**: RED failed collection because `agentdeck.daemon.supervisor` did not exist. GREEN covers route drift, both no-fallback directions, submitted-receipt ordering, equivalent ACP/tmux compact outcomes, formal ACP completion, validated tmux evidence, field allowlisting, and next-Worker gating. The focused supervisor suite is 11 passed.
+
 ### Select one background Mission transition
 
 - **Pure exhaustive scheduler gate**: added immutable, strict `SchedulerFacts` and `SchedulerDecision` records plus a deterministic `schedule_gate()` that returns exactly one of the eleven approved transition kinds. Mission states reuse the existing durable `MISSION_STATUSES`; attempt states match the Task 7 attempt ledger. Exact fields, scalar types, canonical identities, reply/handoff lineage, unconfirmed-Mission boundaries, and boolean-versus-integer distinctions fail closed with sanitized errors.
