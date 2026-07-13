@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import os
 from pathlib import Path
 import socket
 import stat
@@ -11,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import agentdeck.daemon.client as client_module
 import agentdeck.daemon.server as server_module
 from agentdeck import __version__
 from agentdeck.daemon.client import (
@@ -71,6 +74,8 @@ async def _running_server(
     queue_size: int = 8,
     mutation_handler=None,
     lease_validator=None,
+    read_timeout_seconds: float = 1,
+    write_timeout_seconds: float = 1,
 ) -> tuple[object, DaemonServer]:
     owner = _owner(project)
     server = DaemonServer(
@@ -87,6 +92,8 @@ async def _running_server(
         status_provider=lambda: {"mode": "daemon_status", "state": "ready"},
         mutation_handler=mutation_handler,
         lease_validator=lease_validator,
+        read_timeout_seconds=read_timeout_seconds,
+        write_timeout_seconds=write_timeout_seconds,
     )
     await server.start()
     return owner, server
@@ -272,6 +279,10 @@ def test_concurrent_observers_subscribe_and_receive_same_event(short_project: Pa
 
 def test_slow_subscriber_is_dropped_without_blocking_other_clients(short_project: Path) -> None:
     async def exercise() -> None:
+        loop = asyncio.get_running_loop()
+        previous_handler = loop.get_exception_handler()
+        loop_errors: list[dict[str, object]] = []
+        loop.set_exception_handler(lambda _loop, context: loop_errors.append(context))
         owner, server = await _running_server(short_project, queue_size=2)
         try:
             slow = await DaemonClient.connect_verified(
@@ -291,10 +302,114 @@ def test_slow_subscriber_is_dropped_without_blocking_other_clients(short_project
                             {"revision": revision},
                         )
                     )
+                for revision in range(5, 1005):
+                    server.publish_event(
+                        RpcEvent(
+                            f"evt_{revision}",
+                            revision,
+                            "daemon_progress",
+                            {"revision": revision},
+                        )
+                    )
+                assert server.pending_close_task_count <= 1
                 await server.wait_connection_count(1, timeout_seconds=1)
                 assert (await fast.request("status", {}))["state"] == "ready"
             finally:
                 await asyncio.gather(slow.close(), fast.close())
+        finally:
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+            gc.collect()
+            await asyncio.sleep(0)
+            loop.set_exception_handler(previous_handler)
+        assert loop_errors == []
+
+    _run(exercise())
+
+
+def test_silent_client_is_closed_by_finite_handshake_timeout(short_project: Path) -> None:
+    async def exercise() -> None:
+        owner, server = await _running_server(
+            short_project, read_timeout_seconds=0.05
+        )
+        try:
+            reader, writer = await asyncio.open_unix_connection(owner.endpoint.socket_path)
+            assert await asyncio.wait_for(reader.read(), timeout=0.5) == b""
+            assert await server.wait_connection_count(0, timeout_seconds=0.5) == 0
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_server_shutdown_awaits_connection_handlers(short_project: Path) -> None:
+    async def exercise() -> None:
+        owner, server = await _running_server(
+            short_project, read_timeout_seconds=10
+        )
+        reader, writer = await asyncio.open_unix_connection(owner.endpoint.socket_path)
+        try:
+            await server.wait_connection_count(1, timeout_seconds=0.5)
+            await server.close()
+            assert await asyncio.wait_for(reader.read(), timeout=0.5) == b""
+            assert server.active_handler_task_count == 0
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_client_request_deadline_includes_blocked_write_drain(
+    short_project: Path,
+) -> None:
+    async def exercise() -> None:
+        owner, server = await _running_server(short_project)
+        try:
+            client = await DaemonClient.connect_verified(
+                short_project, max_frame_bytes=MAX_FRAME, timeout_seconds=0.05
+            )
+            release = asyncio.Event()
+
+            async def blocked_drain() -> None:
+                await release.wait()
+
+            client._writer.drain = blocked_drain  # type: ignore[method-assign]
+            try:
+                with pytest.raises(DaemonClientError, match="timed out"):
+                    await client.request("status", {})
+            finally:
+                release.set()
+                await client.close()
+        finally:
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_server_write_drain_has_finite_timeout(short_project: Path) -> None:
+    class BlockingWriter:
+        def write(self, payload: bytes) -> None:
+            del payload
+
+        async def drain(self) -> None:
+            await asyncio.sleep(60)
+
+    async def exercise() -> None:
+        owner, server = await _running_server(
+            short_project, write_timeout_seconds=0.05
+        )
+        try:
+            connection = SimpleNamespace(
+                write_lock=asyncio.Lock(), closed=False, writer=BlockingWriter()
+            )
+            with pytest.raises(ConnectionError, match="write timed out"):
+                await server._send_bytes(connection, b"{}\n")
         finally:
             await server.close()
             cleanup_daemon_endpoint(owner)
@@ -423,10 +538,17 @@ def test_connect_or_start_uses_argv_python_and_project_local_logs(
         assert "shell" not in call
         assert call["start_new_session"] is True
         assert Path(call["cwd"]).resolve() == tmp_path.resolve()
-        for key in ("stdout", "stderr"):
-            stream = call[key]
-            assert Path(stream.name).is_relative_to(tmp_path / ".agentdeck" / "runtime")
-            stream.close()
+        assert call["stdout"] is asyncio.subprocess.DEVNULL
+        assert call["stderr"] is asyncio.subprocess.DEVNULL
+        environment = call["env"]
+        runtime = tmp_path / ".agentdeck" / "runtime"
+        assert environment["AGENTDECK_DAEMON_STDOUT_LOG"] == str(
+            runtime / "daemon.stdout.log"
+        )
+        assert environment["AGENTDECK_DAEMON_STDERR_LOG"] == str(
+            runtime / "daemon.stderr.log"
+        )
+        assert int(environment["AGENTDECK_DAEMON_LOG_CAP_BYTES"]) > 0
 
     _run(exercise())
 
@@ -516,6 +638,75 @@ def test_connect_or_start_rejects_log_symlink_without_external_write(
     _run(exercise())
 
 
+def test_spawn_lock_identity_mismatch_closes_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_open = client_module.os.open
+    real_stat = client_module.os.stat
+    captured: list[int] = []
+
+    def tracking_open(path: object, *args: object, **kwargs: object) -> int:
+        descriptor = real_open(path, *args, **kwargs)
+        if path == "daemon.spawn.lock":
+            captured.append(descriptor)
+        return descriptor
+
+    def mismatching_stat(path: object, *args: object, **kwargs: object):
+        value = real_stat(path, *args, **kwargs)
+        if path == "daemon.spawn.lock":
+            return SimpleNamespace(
+                st_mode=value.st_mode,
+                st_dev=value.st_dev,
+                st_ino=value.st_ino + 1,
+            )
+        return value
+
+    monkeypatch.setattr(client_module.os, "open", tracking_open)
+    monkeypatch.setattr(client_module.os, "stat", mismatching_stat)
+    config = SimpleNamespace(
+        daemon=DaemonConfig(start_timeout_seconds=1, max_frame_bytes=MAX_FRAME)
+    )
+
+    with pytest.raises(DaemonUnavailable, match="identity changed"):
+        _run(connect_or_start(tmp_path, config))
+    assert captured
+    for descriptor in captured:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
+def test_healthy_daemon_connect_skips_spawn_lock_and_log_validation(
+    short_project: Path,
+) -> None:
+    async def exercise() -> None:
+        owner, server = await _running_server(short_project)
+        outside = short_project / "outside"
+        outside.write_text("keep", encoding="utf-8")
+        (owner.endpoint.socket_path.parent / "daemon.stdout.log").symlink_to(outside)
+
+        async def never_spawn(*argv: str, **kwargs: object):
+            raise AssertionError((argv, kwargs))
+
+        config = SimpleNamespace(
+            daemon=DaemonConfig(start_timeout_seconds=1, max_frame_bytes=MAX_FRAME)
+        )
+        try:
+            client = await connect_or_start(
+                short_project, config, spawn_factory=never_spawn
+            )
+            await client.close()
+            assert outside.read_text(encoding="utf-8") == "keep"
+            assert not (owner.endpoint.socket_path.parent / "daemon.spawn.lock").exists()
+        finally:
+            (owner.endpoint.socket_path.parent / "daemon.stdout.log").unlink(
+                missing_ok=True
+            )
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
 def test_connect_or_start_reaches_real_fixture_subprocess(short_project: Path) -> None:
     async def exercise() -> None:
         processes: list[asyncio.subprocess.Process] = []
@@ -547,5 +738,103 @@ def test_connect_or_start_reaches_real_fixture_subprocess(short_project: Path) -
             await client.close()
         assert len(processes) == 1
         assert await asyncio.wait_for(processes[0].wait(), timeout=2) == 0
+
+    _run(exercise())
+
+
+def test_concurrent_connect_or_start_spawns_once_and_shares_instance(
+    short_project: Path,
+) -> None:
+    async def exercise() -> None:
+        loop = asyncio.get_running_loop()
+        previous_handler = loop.get_exception_handler()
+        loop_errors: list[dict[str, object]] = []
+        loop.set_exception_handler(lambda _loop, context: loop_errors.append(context))
+        processes: list[asyncio.subprocess.Process] = []
+        spawn_calls = 0
+
+        async def spawn(*argv: str, **kwargs: object):
+            nonlocal spawn_calls
+            del argv
+            spawn_calls += 1
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                str(Path(__file__).parent / "fixtures" / "fake_daemon_server.py"),
+                "--project",
+                str(short_project),
+                "--lifetime",
+                "0.7",
+                **kwargs,
+            )
+            processes.append(process)
+            return process
+
+        config = SimpleNamespace(
+            daemon=DaemonConfig(start_timeout_seconds=2, max_frame_bytes=MAX_FRAME)
+        )
+        try:
+            clients = await asyncio.gather(
+                *(connect_or_start(
+                    short_project, config, spawn_factory=spawn, retry_interval=0.01
+                ) for _ in range(4))
+            )
+            try:
+                assert spawn_calls == 1
+                assert len({client.instance_id for client in clients}) == 1
+            finally:
+                await asyncio.gather(*(client.close() for client in clients))
+            assert await asyncio.wait_for(processes[0].wait(), timeout=2) == 0
+            gc.collect()
+            await asyncio.sleep(0)
+            assert loop_errors == []
+        finally:
+            loop.set_exception_handler(previous_handler)
+
+    _run(exercise())
+
+
+def test_child_rotating_stdio_remains_capped_across_lifetime_and_restart(
+    short_project: Path,
+) -> None:
+    async def exercise() -> None:
+        cap = 4096
+        config = SimpleNamespace(
+            daemon=DaemonConfig(start_timeout_seconds=2, max_frame_bytes=MAX_FRAME)
+        )
+        processes: list[asyncio.subprocess.Process] = []
+
+        async def spawn(*argv: str, **kwargs: object):
+            del argv
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                str(Path(__file__).parent / "fixtures" / "fake_daemon_server.py"),
+                "--project",
+                str(short_project),
+                "--lifetime",
+                "0.2",
+                "--spam-bytes",
+                str(cap * 4),
+                **kwargs,
+            )
+            processes.append(process)
+            return process
+
+        for _ in range(2):
+            client = await connect_or_start(
+                short_project,
+                config,
+                spawn_factory=spawn,
+                retry_interval=0.01,
+                log_cap_bytes=cap,
+            )
+            await client.close()
+            assert await asyncio.wait_for(processes[-1].wait(), timeout=2) == 0
+
+        logs = sorted(
+            (short_project / ".agentdeck" / "runtime").glob("daemon.*.log*")
+        )
+        assert 1 <= len(logs) <= 4
+        assert sum(path.stat().st_size for path in logs) <= cap
+        assert all(not path.is_symlink() for path in logs)
 
     _run(exercise())

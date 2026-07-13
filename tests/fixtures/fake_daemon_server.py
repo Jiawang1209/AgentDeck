@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 from pathlib import Path
+import sys
 
 from agentdeck import __version__
 from agentdeck.daemon.lifecycle import (
     acquire_daemon_ownership,
     cleanup_daemon_endpoint,
 )
+from agentdeck.daemon.client import install_bounded_daemon_stdio_from_env
 from agentdeck.daemon.server import DaemonServer
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
 
@@ -19,7 +21,12 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=Path, required=True)
     parser.add_argument("--lifetime", type=float, default=0.5)
+    parser.add_argument("--spam-bytes", type=int, default=0)
     args = parser.parse_args()
+    install_bounded_daemon_stdio_from_env(args.project)
+    if args.spam_bytes:
+        print("o" * args.spam_bytes, flush=True)
+        print("e" * args.spam_bytes, file=sys.stderr, flush=True)
     owner = acquire_daemon_ownership(
         args.project,
         start_nonce="fake-daemon-server",

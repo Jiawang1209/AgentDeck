@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import re
 import secrets
 import stat
 import sys
+import threading
 from typing import Any
 
 from agentdeck import __version__
@@ -32,6 +34,10 @@ from .protocol import (
 CLIENT_METHODS = frozenset({"handshake", "status", "subscribe", "mission.pause"})
 _METADATA_FIELDS = {"instance_id", "project_root_hash", "start_nonce_hash", "pid"}
 _HASH = re.compile(r"[0-9a-f]{64}")
+DEFAULT_DAEMON_LOG_CAP_BYTES = 1024 * 1024
+_MIN_DAEMON_LOG_CAP_BYTES = 1024
+_MAX_DAEMON_LOG_CAP_BYTES = 64 * 1024 * 1024
+_LOG_NAMES = ("daemon.stdout.log", "daemon.stderr.log")
 
 
 class DaemonClientError(RuntimeError):
@@ -203,18 +209,17 @@ class DaemonClient:
         future: asyncio.Future[dict[str, object]] = loop.create_future()
         self._pending[request_id] = future
         try:
-            payload = encode_request(
-                request,
-                max_bytes=self.max_frame_bytes,
-                allowed_methods=CLIENT_METHODS,
-            )
-            async with self._write_lock:
-                self._writer.write(payload)
-                await self._writer.drain()
             try:
-                return await asyncio.wait_for(
-                    asyncio.shield(future), timeout=self.request_timeout_seconds
-                )
+                async with asyncio.timeout(self.request_timeout_seconds):
+                    payload = encode_request(
+                        request,
+                        max_bytes=self.max_frame_bytes,
+                        allowed_methods=CLIENT_METHODS,
+                    )
+                    async with self._write_lock:
+                        self._writer.write(payload)
+                        await self._writer.drain()
+                    return await asyncio.shield(future)
             except asyncio.TimeoutError:
                 future.cancel()
                 self._expired_request_ids.append(request_id)
@@ -334,58 +339,256 @@ def _read_metadata(path: Path) -> dict[str, object]:
     return value
 
 
-def _open_project_log(root: Path, name: str):
-    if name not in {"daemon.stdout.log", "daemon.stderr.log"}:
-        raise DaemonUnavailable("daemon log name is invalid")
-
-    def secure_opener(_path: str, _flags: int) -> int:
-        directory_flags = (
-            os.O_RDONLY
-            | getattr(os, "O_DIRECTORY", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
-        )
-        root_fd: int | None = None
-        agentdeck_fd: int | None = None
-        runtime_fd: int | None = None
+def _secure_runtime_fd(root: Path) -> int:
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    root_fd: int | None = None
+    agentdeck_fd: int | None = None
+    try:
+        root_fd = os.open(root, directory_flags)
         try:
-            root_fd = os.open(root, directory_flags)
-            for parent_fd, child in ((root_fd, ".agentdeck"),):
-                try:
-                    os.mkdir(child, 0o700, dir_fd=parent_fd)
-                except FileExistsError:
-                    pass
-            agentdeck_fd = os.open(".agentdeck", directory_flags, dir_fd=root_fd)
+            os.mkdir(".agentdeck", 0o700, dir_fd=root_fd)
+        except FileExistsError:
+            pass
+        agentdeck_fd = os.open(".agentdeck", directory_flags, dir_fd=root_fd)
+        try:
+            os.mkdir("runtime", 0o700, dir_fd=agentdeck_fd)
+        except FileExistsError:
+            pass
+        return os.open("runtime", directory_flags, dir_fd=agentdeck_fd)
+    except OSError:
+        raise DaemonUnavailable("daemon runtime symlink is forbidden") from None
+    finally:
+        if agentdeck_fd is not None:
+            os.close(agentdeck_fd)
+        if root_fd is not None:
+            os.close(root_fd)
+
+
+def _validate_log_cap(value: object) -> int:
+    if (
+        type(value) is not int
+        or not _MIN_DAEMON_LOG_CAP_BYTES <= value <= _MAX_DAEMON_LOG_CAP_BYTES
+    ):
+        raise DaemonUnavailable("daemon log cap is invalid")
+    return value
+
+
+def _validate_log_targets(root: Path) -> None:
+    runtime_fd = _secure_runtime_fd(root)
+    try:
+        for name in (*_LOG_NAMES, *(f"{name}.1" for name in _LOG_NAMES)):
             try:
-                os.mkdir("runtime", 0o700, dir_fd=agentdeck_fd)
-            except FileExistsError:
-                pass
-            runtime_fd = os.open("runtime", directory_flags, dir_fd=agentdeck_fd)
+                metadata = os.stat(name, dir_fd=runtime_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise DaemonUnavailable("daemon log symlink is forbidden")
+    finally:
+        os.close(runtime_fd)
+
+
+def _try_spawn_lock(root: Path) -> int | None:
+    runtime_fd = _secure_runtime_fd(root)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            "daemon.spawn.lock",
+            os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=runtime_fd,
+        )
+        held = os.fstat(descriptor)
+        visible = os.stat(
+            "daemon.spawn.lock", dir_fd=runtime_fd, follow_symlinks=False
+        )
+        if not stat.S_ISREG(visible.st_mode) or (held.st_dev, held.st_ino) != (
+            visible.st_dev,
+            visible.st_ino,
+        ):
+            raise DaemonUnavailable("daemon spawn lock identity changed")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(descriptor)
+            return None
+        return descriptor
+    except DaemonUnavailable:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise
+    except OSError:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise DaemonUnavailable("daemon spawn lock is unavailable") from None
+    finally:
+        os.close(runtime_fd)
+
+
+def _release_spawn_lock(descriptor: int) -> None:
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
+class _BoundedRotatingTextWriter:
+    """Two-segment UTF-8 writer with a strict total byte budget."""
+
+    encoding = "utf-8"
+    errors = "strict"
+
+    def __init__(self, root: Path, name: str, budget_bytes: int) -> None:
+        if name not in _LOG_NAMES or budget_bytes < 2:
+            raise DaemonUnavailable("daemon log writer configuration is invalid")
+        self._runtime_fd = _secure_runtime_fd(root)
+        self._name = name
+        self._rotated = f"{name}.1"
+        self._segment_bytes = max(1, budget_bytes // 2)
+        self._lock = threading.Lock()
+        self._closed = False
+        try:
+            self._normalize(self._name)
+            self._normalize(self._rotated)
+        except Exception:
+            os.close(self._runtime_fd)
+            self._closed = True
+            raise
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def writable(self) -> bool:
+        return not self._closed
+
+    def isatty(self) -> bool:
+        return False
+
+    def fileno(self) -> int:
+        raise OSError("bounded daemon log has no stable descriptor")
+
+    def _open(self, name: str, flags: int) -> int:
+        try:
             descriptor = os.open(
                 name,
-                os.O_WRONLY
-                | os.O_CREAT
-                | os.O_TRUNC
-                | getattr(os, "O_NOFOLLOW", 0)
-                | getattr(os, "O_NONBLOCK", 0),
+                flags | getattr(os, "O_NOFOLLOW", 0),
                 0o600,
-                dir_fd=runtime_fd,
+                dir_fd=self._runtime_fd,
             )
-            metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode):
-                os.close(descriptor)
-                raise DaemonUnavailable("daemon log must be a regular file")
-            return descriptor
-        except DaemonUnavailable:
-            raise
         except OSError:
             raise DaemonUnavailable("daemon log symlink is forbidden") from None
-        finally:
-            for descriptor in (runtime_fd, agentdeck_fd, root_fd):
-                if descriptor is not None:
-                    os.close(descriptor)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            os.close(descriptor)
+            raise DaemonUnavailable("daemon log must be a regular file")
+        return descriptor
 
-    path = root / ".agentdeck" / "runtime" / name
-    return open(path, "wb", opener=secure_opener)
+    def _normalize(self, name: str) -> None:
+        try:
+            descriptor = self._open(name, os.O_RDWR)
+        except DaemonUnavailable:
+            try:
+                os.stat(name, dir_fd=self._runtime_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            raise
+        try:
+            if os.fstat(descriptor).st_size > self._segment_bytes:
+                os.ftruncate(descriptor, self._segment_bytes)
+            os.fchmod(descriptor, 0o600)
+        finally:
+            os.close(descriptor)
+
+    def _size(self, name: str) -> int:
+        try:
+            metadata = os.stat(name, dir_fd=self._runtime_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return 0
+        if not stat.S_ISREG(metadata.st_mode):
+            raise DaemonUnavailable("daemon log symlink is forbidden")
+        return metadata.st_size
+
+    def _rotate(self) -> None:
+        try:
+            rotated = os.stat(
+                self._rotated, dir_fd=self._runtime_fd, follow_symlinks=False
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISREG(rotated.st_mode):
+                raise DaemonUnavailable("daemon log symlink is forbidden")
+            os.unlink(self._rotated, dir_fd=self._runtime_fd)
+        try:
+            os.rename(
+                self._name,
+                self._rotated,
+                src_dir_fd=self._runtime_fd,
+                dst_dir_fd=self._runtime_fd,
+            )
+        except FileNotFoundError:
+            pass
+
+    def write(self, value: str) -> int:
+        if type(value) is not str:
+            raise TypeError("daemon log write requires text")
+        payload = value.encode("utf-8")
+        with self._lock:
+            if self._closed:
+                raise ValueError("write to closed daemon log")
+            offset = 0
+            while offset < len(payload):
+                piece = payload[offset : offset + self._segment_bytes]
+                if self._size(self._name) + len(piece) > self._segment_bytes:
+                    self._rotate()
+                descriptor = self._open(
+                    self._name, os.O_WRONLY | os.O_CREAT | os.O_APPEND
+                )
+                try:
+                    os.write(descriptor, piece)
+                    os.fchmod(descriptor, 0o600)
+                finally:
+                    os.close(descriptor)
+                offset += len(piece)
+        return len(value)
+
+    def flush(self) -> None:
+        return None
+
+    def close(self) -> None:
+        with self._lock:
+            if not self._closed:
+                self._closed = True
+                os.close(self._runtime_fd)
+
+
+def install_bounded_daemon_stdio_from_env(root: Path) -> None:
+    canonical = Path(root).expanduser().resolve()
+    runtime = daemon_endpoint(canonical).socket_path.parent
+    expected_stdout = runtime / _LOG_NAMES[0]
+    expected_stderr = runtime / _LOG_NAMES[1]
+    if (
+        os.environ.get("AGENTDECK_DAEMON_STDOUT_LOG") != str(expected_stdout)
+        or os.environ.get("AGENTDECK_DAEMON_STDERR_LOG") != str(expected_stderr)
+    ):
+        raise DaemonUnavailable("daemon log destination is invalid")
+    try:
+        cap = int(os.environ["AGENTDECK_DAEMON_LOG_CAP_BYTES"])
+    except (KeyError, TypeError, ValueError):
+        raise DaemonUnavailable("daemon log cap is invalid") from None
+    cap = _validate_log_cap(cap)
+    _validate_log_targets(canonical)
+    stream_budget = cap // 2
+    sys.stdout = _BoundedRotatingTextWriter(
+        canonical, _LOG_NAMES[0], stream_budget
+    )  # type: ignore[assignment]
+    sys.stderr = _BoundedRotatingTextWriter(
+        canonical, _LOG_NAMES[1], stream_budget
+    )  # type: ignore[assignment]
 
 
 async def connect_or_start(
@@ -394,19 +597,23 @@ async def connect_or_start(
     *,
     spawn_factory: Callable[..., Awaitable[Any]] = asyncio.create_subprocess_exec,
     retry_interval: float = 0.05,
+    log_cap_bytes: int = DEFAULT_DAEMON_LOG_CAP_BYTES,
 ) -> DaemonClient:
     canonical = Path(root).expanduser().resolve()
+    cap = _validate_log_cap(log_cap_bytes)
+    if type(retry_interval) not in {int, float} or retry_interval <= 0:
+        raise DaemonUnavailable("daemon retry interval is invalid")
+    timeout_seconds = config.daemon.start_timeout_seconds
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
     try:
         return await DaemonClient.connect_verified(
             canonical,
             max_frame_bytes=config.daemon.max_frame_bytes,
-            timeout_seconds=config.daemon.start_timeout_seconds,
+            timeout_seconds=min(0.25, timeout_seconds),
         )
     except DaemonUnavailable:
         pass
-
-    stdout = None
-    stderr = None
+    _validate_log_targets(canonical)
     argv = (
         sys.executable,
         "-m",
@@ -416,32 +623,80 @@ async def connect_or_start(
         "--project",
         str(canonical),
     )
-    try:
-        stdout = _open_project_log(canonical, "daemon.stdout.log")
-        stderr = _open_project_log(canonical, "daemon.stderr.log")
-        await spawn_factory(
-            *argv,
-            cwd=str(canonical),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=stdout,
-            stderr=stderr,
-            start_new_session=True,
-        )
-    finally:
-        if stdout is not None:
-            stdout.close()
-        if stderr is not None:
-            stderr.close()
+    environment = dict(os.environ)
+    runtime = daemon_endpoint(canonical).socket_path.parent
+    environment.update(
+        {
+            "AGENTDECK_DAEMON_STDOUT_LOG": str(runtime / _LOG_NAMES[0]),
+            "AGENTDECK_DAEMON_STDERR_LOG": str(runtime / _LOG_NAMES[1]),
+            "AGENTDECK_DAEMON_LOG_CAP_BYTES": str(cap),
+        }
+    )
 
-    deadline = asyncio.get_running_loop().time() + config.daemon.start_timeout_seconds
     while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise DaemonUnavailable("daemon did not become ready")
         try:
             return await DaemonClient.connect_verified(
                 canonical,
                 max_frame_bytes=config.daemon.max_frame_bytes,
-                timeout_seconds=min(1, config.daemon.start_timeout_seconds),
+                timeout_seconds=min(0.25, remaining),
             )
         except DaemonUnavailable:
-            if asyncio.get_running_loop().time() >= deadline:
-                raise DaemonUnavailable("daemon did not become ready") from None
-            await asyncio.sleep(retry_interval)
+            pass
+
+        spawn_lock = _try_spawn_lock(canonical)
+        if spawn_lock is None:
+            await asyncio.sleep(min(float(retry_interval), max(0, remaining)))
+            continue
+        try:
+            # The endpoint may have become ready between the failed connection
+            # and the short-lived spawn election.
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise DaemonUnavailable("daemon did not become ready")
+            try:
+                return await DaemonClient.connect_verified(
+                    canonical,
+                    max_frame_bytes=config.daemon.max_frame_bytes,
+                    timeout_seconds=min(0.25, remaining),
+                )
+            except DaemonUnavailable:
+                pass
+
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise DaemonUnavailable("daemon did not become ready")
+            try:
+                await asyncio.wait_for(
+                    spawn_factory(
+                        *argv,
+                        cwd=str(canonical),
+                        stdin=asyncio.subprocess.DEVNULL,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                        env=environment,
+                        start_new_session=True,
+                    ),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                raise DaemonUnavailable("daemon spawn timed out") from None
+
+            while True:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise DaemonUnavailable("daemon did not become ready")
+                try:
+                    return await DaemonClient.connect_verified(
+                        canonical,
+                        max_frame_bytes=config.daemon.max_frame_bytes,
+                        timeout_seconds=min(0.25, remaining),
+                    )
+                except DaemonUnavailable:
+                    await asyncio.sleep(
+                        min(float(retry_interval), max(0, remaining))
+                    )
+        finally:
+            _release_spawn_lock(spawn_lock)

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
 import inspect
+import math
 import os
 from pathlib import Path
 import socket
@@ -47,6 +48,9 @@ class _Connection:
     compatible: bool = False
     subscribed: bool = False
     closed: bool = False
+    closing: bool = False
+    close_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    close_task: asyncio.Task[None] | None = None
     tasks: set[asyncio.Task[None]] = field(default_factory=set)
 
 
@@ -69,6 +73,8 @@ class DaemonServer:
         lease_validator: LeaseValidator | None = None,
         request_queue_size: int = 128,
         event_queue_size: int = 128,
+        read_timeout_seconds: float = 10,
+        write_timeout_seconds: float = 10,
     ) -> None:
         if type(max_frame_bytes) is not int or max_frame_bytes <= 0:
             raise ValueError("maximum frame size is invalid")
@@ -76,6 +82,12 @@ class DaemonServer:
             raise ValueError("request queue size is invalid")
         if type(event_queue_size) is not int or event_queue_size <= 0:
             raise ValueError("event queue size is invalid")
+        for name, value in (
+            ("read timeout", read_timeout_seconds),
+            ("write timeout", write_timeout_seconds),
+        ):
+            if type(value) not in {int, float} or not math.isfinite(float(value)) or value <= 0:
+                raise ValueError(f"daemon {name} must be a positive finite number")
         methods = frozenset(allowed_methods)
         if not {"handshake", "status"}.issubset(methods):
             raise ValueError("daemon methods must include handshake and status")
@@ -92,13 +104,25 @@ class DaemonServer:
         self.lease_validator = lease_validator
         self.request_queue_size = request_queue_size
         self.event_queue_size = event_queue_size
+        self.read_timeout_seconds = float(read_timeout_seconds)
+        self.write_timeout_seconds = float(write_timeout_seconds)
         self._server: asyncio.AbstractServer | None = None
         self._connections: set[_Connection] = set()
         self._bound_identity: tuple[int, int] | None = None
+        self._close_tasks: set[asyncio.Task[None]] = set()
+        self._handler_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def connection_count(self) -> int:
         return sum(not connection.closed for connection in self._connections)
+
+    @property
+    def pending_close_task_count(self) -> int:
+        return sum(not task.done() for task in self._close_tasks)
+
+    @property
+    def active_handler_task_count(self) -> int:
+        return sum(not task.done() for task in self._handler_tasks)
 
     async def start(self) -> None:
         if self._server is not None:
@@ -136,13 +160,20 @@ class DaemonServer:
         server, self._server = self._server, None
         if server is not None:
             server.close()
+        handler_tasks = tuple(
+            task for task in self._handler_tasks if not task.done()
+        )
+        for task in handler_tasks:
+            task.cancel()
+        if handler_tasks:
+            await asyncio.gather(*handler_tasks, return_exceptions=True)
+        if server is not None:
             await server.wait_closed()
-        connections = list(self._connections)
-        if connections:
-            await asyncio.gather(
-                *(self._close_connection(connection) for connection in connections),
-                return_exceptions=True,
-            )
+        for connection in tuple(self._connections):
+            self._schedule_close(connection)
+        close_tasks = tuple(self._close_tasks)
+        if close_tasks:
+            await asyncio.gather(*close_tasks, return_exceptions=True)
         self._unlink_owned_socket()
 
     def _unlink_owned_socket(self) -> None:
@@ -170,22 +201,35 @@ class DaemonServer:
         # Encoding here validates size before any subscriber state changes.
         encode_event(event, max_bytes=self.max_frame_bytes)
         for connection in tuple(self._connections):
-            if connection.closed or not connection.subscribed:
+            if connection.closed or connection.closing or not connection.subscribed:
                 continue
             try:
                 connection.event_queue.put_nowait(event)
             except asyncio.QueueFull:
-                asyncio.create_task(self._close_connection(connection))
+                self._schedule_close(connection)
+
+    def _schedule_close(self, connection: _Connection) -> None:
+        if connection.closed or connection.closing:
+            return
+        connection.closing = True
+        task = asyncio.create_task(self._close_connection(connection))
+        connection.close_task = task
+        self._close_tasks.add(task)
+        task.add_done_callback(self._close_tasks.discard)
 
     async def _read_frame(self, reader: asyncio.StreamReader) -> bytes:
         try:
-            frame = await reader.readuntil(b"\n")
+            frame = await asyncio.wait_for(
+                reader.readuntil(b"\n"), timeout=self.read_timeout_seconds
+            )
         except asyncio.IncompleteReadError as exc:
             if not exc.partial:
                 raise EOFError from None
             raise RpcProtocolError("incomplete_frame", "frame is incomplete") from None
         except asyncio.LimitOverrunError:
             raise RpcProtocolError("frame_too_large", "frame exceeds maximum size") from None
+        except asyncio.TimeoutError:
+            raise RpcProtocolError("read_timed_out", "frame read timed out") from None
         if len(frame) > self.max_frame_bytes:
             raise RpcProtocolError("frame_too_large", "frame exceeds maximum size")
         return frame
@@ -193,6 +237,9 @@ class DaemonServer:
     async def _handle_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        handler_task = asyncio.current_task()
+        if handler_task is not None:
+            self._handler_tasks.add(handler_task)
         connection = _Connection(
             reader=reader,
             writer=writer,
@@ -230,7 +277,11 @@ class DaemonServer:
         except (EOFError, RpcProtocolError, ConnectionError, BrokenPipeError):
             pass
         finally:
-            await self._close_connection(connection)
+            try:
+                await self._close_connection(connection)
+            finally:
+                if handler_task is not None:
+                    self._handler_tasks.discard(handler_task)
 
     async def _reader_loop(self, connection: _Connection) -> None:
         while not connection.closed:
@@ -357,28 +408,41 @@ class DaemonServer:
         )
 
     async def _send_bytes(self, connection: _Connection, payload: bytes) -> None:
-        async with connection.write_lock:
-            if connection.closed:
-                raise ConnectionError("connection is closed")
-            connection.writer.write(payload)
-            await connection.writer.drain()
+        try:
+            async with asyncio.timeout(self.write_timeout_seconds):
+                async with connection.write_lock:
+                    if connection.closed:
+                        raise ConnectionError("connection is closed")
+                    connection.writer.write(payload)
+                    await connection.writer.drain()
+        except asyncio.TimeoutError:
+            raise ConnectionError("daemon write timed out") from None
 
     async def _close_connection(self, connection: _Connection) -> None:
-        if connection.closed:
-            return
-        connection.closed = True
-        current = asyncio.current_task()
-        tasks = [task for task in connection.tasks if task is not current and not task.done()]
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        connection.writer.close()
-        try:
-            await connection.writer.wait_closed()
-        except (ConnectionError, BrokenPipeError):
-            pass
-        self._connections.discard(connection)
+        async with connection.close_lock:
+            if connection.closed:
+                return
+            connection.closing = True
+            connection.closed = True
+            current = asyncio.current_task()
+            tasks = [
+                task
+                for task in connection.tasks
+                if task is not current
+            ]
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            connection.writer.close()
+            try:
+                await asyncio.wait_for(
+                    connection.writer.wait_closed(), timeout=self.write_timeout_seconds
+                )
+            except (asyncio.TimeoutError, ConnectionError, BrokenPipeError):
+                pass
+            self._connections.discard(connection)
 
 
 class DaemonClientRequestError(RuntimeError):
