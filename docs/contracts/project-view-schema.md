@@ -154,6 +154,12 @@ control is the inspect-only `agentdeck workbench`. Terminal cards expose no
 resume or other dangerous control. ProjectView, workbench, reconnect
 conversation, and bare `agentdeck` validate this contract before printing, so
 an invalid card cannot produce partial JSON.
+`completed_steps` must exactly cover contiguous positions
+`1..progress.completed`; an active step, when present, is exactly the next
+position and stays within `progress.total`.
+Recent results are unique, ordered, and tied to the same completed step/Worker
+lineage. Terminal and no-Mission cards retain no active step and obey the same
+progress consistency rules.
 
 When multiple Missions exist, the latest valid persisted recovery decision
 selects its exact Mission; without one, the latest non-terminal Mission is used

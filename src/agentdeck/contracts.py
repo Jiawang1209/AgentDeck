@@ -1346,7 +1346,6 @@ def contract_index_response(contract_docs_dir: Path) -> dict[str, object]:
 def _migration_example_payloads() -> tuple[dict[str, object], dict[str, object]]:
     preview_id = "mig_111111111111"
     source_hash = "sha256:" + "1" * 64
-    digest = "sha256:" + "2" * 64
     expires_at = "2026-07-14T08:10:00+00:00"
     legacy = [{
         "mission_id": "mis_111111111111",
@@ -1372,6 +1371,13 @@ def _migration_example_payloads() -> tuple[dict[str, object], dict[str, object]]
         },
     ]
     backup_path = f".agentdeck/backups/{preview_id}/state.json"
+    digest = _migration_contract_digest(
+        preview_id=preview_id,
+        source_hash=source_hash,
+        target_changes=changes,
+        legacy_missions=legacy,
+        expires_at=expires_at,
+    )
     confirm_command = (
         "agentdeck project migrate "
         f"--preview-id {preview_id} --source-hash {source_hash} "
@@ -1414,6 +1420,33 @@ def _migration_example_payloads() -> tuple[dict[str, object], dict[str, object]]
         "consumed": True,
     }
     return preview, confirmed
+
+
+_MIGRATION_ADDITIVE_COLLECTION_PATHS = (
+    "mission_attempts", "mission_recovery_evidence", "mission_worker_replies",
+    "mission_handoffs", "mission_permission_bindings", "recovery_decisions",
+)
+_MIGRATION_REQUIRED_PATHS = (
+    "schema_generation", "legacy_mission_migrations", "migration_previews_consumed",
+)
+
+
+def _migration_contract_digest(
+    *, preview_id: object, source_hash: object, target_changes: object,
+    legacy_missions: object, expires_at: object,
+) -> str:
+    facts = {
+        "preview_id": preview_id,
+        "source_hash": source_hash,
+        "target_changes": target_changes,
+        "legacy_missions": legacy_missions,
+        "expires_at": expires_at,
+    }
+    encoded = json.dumps(
+        facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def migration_contract_response(
@@ -1510,14 +1543,45 @@ def validate_migration_contract(payload: object) -> dict[str, object]:
             )
         ):
             errors.append(f"legacy_missions[{index}] controls are invalid")
+    allowed_paths = set(_MIGRATION_ADDITIVE_COLLECTION_PATHS + _MIGRATION_REQUIRED_PATHS)
+    if any(path not in allowed_paths for path in change_paths):
+        errors.append("target_changes contains an unapproved migration path")
+    changes_by_path = {
+        item.get("path"): item.get("value") for item in changes
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
+    expected_path_order = [
+        path for path in _MIGRATION_ADDITIVE_COLLECTION_PATHS if path in changes_by_path
+    ] + list(_MIGRATION_REQUIRED_PATHS)
+    if change_paths != expected_path_order:
+        errors.append("target_changes must use the exact additive path order")
+    for path in _MIGRATION_ADDITIVE_COLLECTION_PATHS:
+        if path in changes_by_path and changes_by_path[path] != []:
+            errors.append(f"target_changes value for {path} must be an empty list")
+    if changes_by_path.get("schema_generation") != "project-daemon-m2b/v1":
+        errors.append("schema_generation migration value is invalid")
+    if changes_by_path.get("legacy_mission_migrations") != legacy:
+        errors.append("legacy_mission_migrations must match legacy_missions")
+    consumed_preview = changes_by_path.get("migration_previews_consumed")
+    if not isinstance(consumed_preview, list) or len(consumed_preview) != 1:
+        errors.append("migration_previews_consumed value is invalid")
+        consumed_entry = None
+    else:
+        consumed_entry = consumed_preview[0]
+    if (
+        not isinstance(consumed_entry, dict)
+        or set(consumed_entry) != {"preview_id", "source_hash", "expires_at"}
+        or consumed_entry.get("preview_id") != preview_id
+        or consumed_entry.get("source_hash") != payload.get("source_hash")
+    ):
+        errors.append("migration_previews_consumed must bind the exact preview")
+        consumed_expiry = None
+    else:
+        consumed_expiry = consumed_entry.get("expires_at")
     if mode == "migration_preview":
         expires_at = payload.get("expires_at")
-        try:
-            expiry = datetime.fromisoformat(expires_at) if isinstance(expires_at, str) else None
-        except ValueError:
-            expiry = None
-        if expiry is None or expiry.tzinfo is None or expiry.utcoffset() is None:
-            errors.append("expires_at must be an aware timestamp")
+        if consumed_expiry != expires_at:
+            errors.append("migration_previews_consumed expiry must match the preview")
         expected_command = (
             "agentdeck project migrate "
             f"--preview-id {preview_id} --source-hash {payload.get('source_hash')} "
@@ -1541,8 +1605,29 @@ def validate_migration_contract(payload: object) -> dict[str, object]:
         ]
         if payload.get("controls") != expected_controls:
             errors.append("controls must match the exact preview and confirmation")
-    elif payload.get("consumed") is not True:
-        errors.append("consumed must be true")
+    else:
+        expires_at = consumed_expiry
+        if payload.get("consumed") is not True:
+            errors.append("consumed must be true")
+    try:
+        expiry = datetime.fromisoformat(expires_at) if isinstance(expires_at, str) else None
+    except ValueError:
+        expiry = None
+    if expiry is None or expiry.tzinfo is None or expiry.utcoffset() is None:
+        errors.append("migration expiry must be an aware timestamp")
+    try:
+        expected_digest = _migration_contract_digest(
+            preview_id=preview_id,
+            source_hash=payload.get("source_hash"),
+            target_changes=changes,
+            legacy_missions=legacy,
+            expires_at=expires_at,
+        )
+    except (TypeError, ValueError, UnicodeEncodeError):
+        errors.append("migration digest facts are invalid")
+    else:
+        if payload.get("digest") != expected_digest:
+            errors.append("digest must match canonical migration facts")
     return {"ok": not errors, "errors": errors}
 
 
@@ -7104,6 +7189,8 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
         completed_by_id[item["step_id"]] = item
     if completed_positions != sorted(set(completed_positions)):
         errors.append("completed_steps positions must be unique and ordered")
+    if completed is not None and completed_positions != list(range(1, completed + 1)):
+        errors.append("completed_steps must exactly cover contiguous completed progress")
     active_step = payload.get("active_step")
     if active_step is not None:
         if (
@@ -7130,6 +7217,7 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
     elif len(recent_results) > 3:
         errors.append("recent_results must contain at most three items")
     recent_attempt_ids: list[str] = []
+    recent_step_positions: list[int] = []
     for index, item in enumerate(recent_results):
         if (
             not isinstance(item, dict)
@@ -7149,6 +7237,8 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
         step = completed_by_id.get(item["step_id"])
         if step is None or step.get("agent_id") != item["agent_id"]:
             errors.append(f"recent_results[{index}] must match a completed step")
+        else:
+            recent_step_positions.append(int(step["position"]))
         for field in ("summary_hash", "verification_hash"):
             if not isinstance(item.get(field), str) or re.fullmatch(
                 r"sha256:[0-9a-f]{64}", str(item.get(field))
@@ -7157,6 +7247,8 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
         recent_attempt_ids.append(item["attempt_id"])
     if len(recent_attempt_ids) != len(set(recent_attempt_ids)):
         errors.append("recent_results attempt ids must be unique")
+    if recent_step_positions != sorted(set(recent_step_positions)):
+        errors.append("recent_results must follow unique completed-step lineage")
     decision = payload.get("decision")
     decision_kind = None
     decision_attempt_id = None

@@ -57,6 +57,66 @@ def test_old_mission_migration_preview_is_zero_write(tmp_path: Path) -> None:
 NOW = datetime(2026, 7, 14, 8, 0, tzinfo=timezone.utc)
 
 
+def _seed_malicious_legacy_mission(root: Path) -> None:
+    _seed_m1_state_without_execution_snapshot(root)
+    store = StateStore.open_existing(root)
+    state = store.load()
+    state["missions"][0]["mission_id"] = "mis_bad;echo-pwn"
+    store.save(state)
+
+
+def test_malicious_legacy_mission_is_rejected_before_preview_or_confirm_writes(
+    tmp_path: Path,
+) -> None:
+    _seed_malicious_legacy_mission(tmp_path)
+    before = _tree_bytes(tmp_path)
+    state_path = tmp_path / ".agentdeck" / "state" / "state.json"
+    source_hash = "sha256:" + hashlib.sha256(state_path.read_bytes()).hexdigest()
+    preview_id = f"mig_{source_hash.removeprefix('sha256:')[:12]}"
+    expiry = NOW + timedelta(minutes=10)
+    legacy = [{
+        "mission_id": "mis_bad;echo-pwn",
+        "mode": "inspect_only",
+        "reason": "complete frozen execution authority is unavailable",
+        "inspect_command": "agentdeck mission status --mission-id mis_bad;echo-pwn",
+        "reconfirm_command": (
+            "agentdeck leader chat --message \"Reconfirm legacy Mission "
+            "mis_bad;echo-pwn as a new Mission preview\""
+        ),
+    }]
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    changes = [
+        {"path": key, "operation": "add", "value": []}
+        for key in state_module._MIGRATION_ADDITIVE_COLLECTIONS
+        if key not in state
+    ]
+    changes.extend([
+        {"path": "schema_generation", "operation": "add", "value": "project-daemon-m2b/v1"},
+        {"path": "legacy_mission_migrations", "operation": "add", "value": legacy},
+        {"path": "migration_previews_consumed", "operation": "add", "value": [{
+            "preview_id": preview_id, "source_hash": source_hash,
+            "expires_at": expiry.isoformat(),
+        }]},
+    ])
+    digest = state_module.canonical_snapshot_hash({
+        "preview_id": preview_id, "source_hash": source_hash,
+        "target_changes": changes, "legacy_missions": legacy,
+        "expires_at": expiry.isoformat(),
+    })
+
+    with pytest.raises(ValueError, match="migration contract validation failed"):
+        state_module.migration_preview(tmp_path, now=NOW)
+    with pytest.raises(ValueError, match="migration contract validation failed"):
+        state_module.confirm_migration(
+            tmp_path, preview_id=preview_id, source_hash=source_hash,
+            digest=digest, expires_at=expiry.isoformat(), confirm=True,
+            now=NOW + timedelta(seconds=1),
+        )
+
+    assert _tree_bytes(tmp_path) == before
+    assert not (tmp_path / ".agentdeck" / "backups").exists()
+
+
 def test_migration_preview_binds_exact_source_changes_backup_and_expiry(
     tmp_path: Path,
 ) -> None:
@@ -448,6 +508,56 @@ def test_migration_contract_is_registered_gui_ready_and_in_workbench(
     assert workbench["contracts_card"]["migration_contract"] == (
         "agentdeck contract migration"
     )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda card: card.update({"digest": "sha256:" + "f" * 64}),
+        lambda card: card["target_changes"].append(
+            {"path": "raw_prompt", "operation": "add", "value": "pwn"}
+        ),
+        lambda card: card["target_changes"][0].update({"value": {"raw": "pwn"}}),
+        lambda card: card.update({
+            "confirm_command": card["confirm_command"].replace("--confirm", "; echo pwn")
+        }),
+    ],
+)
+def test_migration_validator_rejects_digest_path_value_and_command_drift(
+    tmp_path: Path,
+    mutate,
+) -> None:
+    payload = contracts_module.migration_contract_response(
+        tmp_path / "migration-schema.md", include_example=True
+    )["example_preview"]
+    mutate(payload)
+
+    assert contracts_module.validate_migration_contract(payload)["ok"] is False
+
+
+def test_confirmed_contract_is_validated_before_backup_or_state_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    preview = state_module.migration_preview(tmp_path, now=NOW)
+    before = _tree_bytes(tmp_path)
+    original = state_module._require_valid_migration_contract
+
+    def reject_confirmed(payload: dict[str, object]) -> None:
+        if payload.get("mode") == "migration_confirmed":
+            raise ValueError("migration contract validation failed")
+        original(payload)
+
+    monkeypatch.setattr(
+        state_module, "_require_valid_migration_contract", reject_confirmed
+    )
+
+    with pytest.raises(ValueError, match="migration contract validation failed"):
+        _confirm(tmp_path, preview, now=NOW + timedelta(seconds=1))
+
+    assert _tree_bytes(tmp_path) == before
+    assert not (tmp_path / ".agentdeck" / "backups").exists()
 
 
 def test_migration_cli_validates_payload_before_printing(

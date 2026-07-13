@@ -381,6 +381,28 @@ def test_recovery_contract_rejects_dangerous_or_cross_lineage_payloads(
     assert validation["ok"] is False
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda card: card["completed_steps"].pop(1),
+        lambda card: card["progress"].update({"completed": 3}),
+        lambda card: card["completed_steps"][1].update(
+            {"position": 3, "step_id": "step_3"}
+        ),
+        lambda card: card["recent_results"][0].update({"step_id": "step_1"}),
+    ],
+)
+def test_recovery_contract_requires_complete_contiguous_progress_lineage(
+    tmp_path: Path,
+    mutate,
+) -> None:
+    config, store = _seed_waiting_permission_mission(tmp_path)
+    payload = store.project_view(config).mission_recovery
+    mutate(payload)
+
+    assert contracts_module.validate_mission_recovery_contract(payload)["ok"] is False
+
+
 def test_status_and_reconnect_reject_invalid_recovery_without_partial_json(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -178,7 +178,7 @@ def migration_preview(
         f"--preview-id {preview_id} --source-hash {source_hash} "
         f"--digest {digest} --expires-at {expiry.isoformat()} --confirm"
     )
-    return {
+    payload = {
         "schema_version": MIGRATION_SCHEMA_VERSION,
         "mode": "migration_preview",
         "preview_id": preview_id,
@@ -209,6 +209,17 @@ def migration_preview(
             },
         ],
     }
+    _require_valid_migration_contract(payload)
+    return payload
+
+
+def _require_valid_migration_contract(payload: dict[str, object]) -> None:
+    """Apply the public migration contract as a pre-print/pre-mutation gate."""
+    from .contracts import validate_migration_contract
+
+    validation = validate_migration_contract(payload)
+    if validation != {"ok": True, "errors": []}:
+        raise ValueError("migration contract validation failed")
 
 
 _MIGRATION_DIRECTORY_FLAGS = (
@@ -505,6 +516,18 @@ def _confirm_migration_locked(
     proposed_bytes = (
         json.dumps(proposed, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
+    response = {
+        "schema_version": MIGRATION_SCHEMA_VERSION,
+        "mode": "migration_confirmed",
+        "preview_id": preview_id,
+        "source_hash": source_hash,
+        "digest": digest,
+        "backup_path": expected["backup_path"],
+        "legacy_missions": expected["legacy_missions"],
+        "target_changes": expected["target_changes"],
+        "consumed": True,
+    }
+    _require_valid_migration_contract(response)
     _write_migration_backup(root, preview_id, backup_bytes)
     try:
         if store.state_path.read_bytes() != current_source:
@@ -526,17 +549,7 @@ def _confirm_migration_locked(
             except (OSError, ValueError):
                 pass
         raise
-    return {
-        "schema_version": MIGRATION_SCHEMA_VERSION,
-        "mode": "migration_confirmed",
-        "preview_id": preview_id,
-        "source_hash": source_hash,
-        "digest": digest,
-        "backup_path": expected["backup_path"],
-        "legacy_missions": expected["legacy_missions"],
-        "target_changes": expected["target_changes"],
-        "consumed": True,
-    }
+    return response
 
 
 def _compact_daemon_admission(
@@ -8917,20 +8930,31 @@ class StateStore:
         snapshot = mission.get("execution_snapshot")
         snapshot_mission = snapshot.get("mission") if isinstance(snapshot, dict) else None
         raw_steps = snapshot_mission.get("steps") if isinstance(snapshot_mission, dict) else []
-        steps = [
-            {
-                "step_id": item.get("step_id"),
-                "position": item.get("position"),
-                "agent_id": item.get("agent_id"),
-                "role": item.get("role"),
-            }
-            for item in raw_steps
-            if isinstance(item, dict)
-            and isinstance(item.get("step_id"), str)
-            and type(item.get("position")) is int
-            and isinstance(item.get("agent_id"), str)
-            and isinstance(item.get("role"), str)
-        ]
+        steps: list[dict[str, object]] = []
+        for item in raw_steps:
+            expected_position = len(steps) + 1
+            if (
+                not isinstance(item, dict)
+                or item.get("step_id") != f"step_{expected_position}"
+                or item.get("position") != expected_position
+                or not isinstance(item.get("agent_id"), str)
+                or not item.get("agent_id")
+                or not isinstance(item.get("role"), str)
+                or not item.get("role")
+            ):
+                break
+            steps.append(
+                {
+                    "step_id": item["step_id"],
+                    "position": item["position"],
+                    "agent_id": item["agent_id"],
+                    "role": item["role"],
+                }
+            )
+        # Recovery progress only claims the compact frozen step facts that can
+        # be proven. Legacy foreground Missions may have current_step history
+        # without an execution snapshot; do not fabricate their step lineage.
+        completed = min(completed, len(steps))
         completed_steps = copy.deepcopy(steps[:completed])
         active_step = (
             copy.deepcopy(steps[completed])

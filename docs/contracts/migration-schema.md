@@ -28,9 +28,14 @@ list` and advertised by workbench `contracts_card.migration_contract`.
   and new-Mission-preview commands;
 - one inspect control and one exact explicit-user migration control.
 
-The command validates `validate_migration_contract()` before printing. It does
-not create a lock, backup, state record, event, Mission, daemon, provider call,
-tmux read, or terminal input.
+The domain builder and command both validate `validate_migration_contract()`
+before returning or printing. Canonical legacy Mission ids are required before
+any command string is derived, so malformed persisted ids cannot become shell
+text. The digest is recomputed from canonical facts. `target_changes` accepts
+only approved M2b additive paths with exact value schemas; prompt, transcript,
+execution-snapshot, and arbitrary paths are forbidden. The command does not
+create a lock, backup, state record, event, Mission, daemon, provider call, tmux
+read, or terminal input.
 
 ## Exact confirmation
 
@@ -41,6 +46,10 @@ inside that same authority boundary. Backup creation and atomic state
 replacement occur while the lock is held, so an authoritative concurrent writer
 either precedes the locked recheck and makes the preview stale or waits and then
 observes the migrated state; no accepted concurrent update is overwritten.
+The confirmed response is constructed and validated with the same contract
+inside the lock before backup creation or state replacement. Contract failure is
+therefore zero-write; CLI validation remains a final pre-print gate rather than
+the first safety boundary.
 
 The backup path is exactly
 `.agentdeck/backups/<preview_id>/state.json`. Directory traversal uses no-follow
