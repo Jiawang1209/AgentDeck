@@ -4,6 +4,13 @@
 
 ## 2026-07-13
 
+### Define the bounded project daemon RPC protocol
+
+- **Versioned envelopes**: added frozen request, response, and event records for `daemon-rpc/v1`, with strict identifiers, exact fields, recursive JSON-value validation, response success/error invariants, and nonnegative integer event revisions that reject booleans.
+- **Bounded canonical framing**: pure bytes helpers encode stable UTF-8 canonical JSON plus one LF and count that delimiter inside the strictly positive `max_bytes` boundary; decode rejects incomplete/multiple frames, invalid UTF-8/JSON, duplicate keys, non-object documents, non-finite numbers, unknown fields, and invalid nested values with sanitized error codes/messages that never echo input.
+- **Read-only handshake**: request decoding fails closed outside the explicit `handshake`/`status` allowlist. Exact handshake provenance binds request ID, project-root hash, client version, and RPC version; negotiation enables write/capability facts only for exact RPC/project identity, while client version remains required provenance rather than an invented package-version gate.
+- **Scope boundary and TDD evidence**: this slice is pure protocol logic only—no sockets, processes, state/events, leases, clients/server, CLI, ProjectView, providers, ACP, or tmux. Initial RED was the missing protocol module; follow-up REDs caught request-ID revalidation, nested payload mutability, non-UTF-8 surrogate values/keys, and tuple type widening. The focused suite is 48 passed and the daemon/lifecycle/conversation/contracts regression is 583 passed; compileall and `git diff --check` pass.
+
 ### Add compact project daemon lifecycle records
 
 - **Configuration**: added frozen daemon defaults for idle grace, bounded startup, controller lease TTL, and maximum RPC frame size; TOML overrides reject booleans, non-integers, unsafe ranges, malformed daemon sections, and unknown or misspelled keys.
