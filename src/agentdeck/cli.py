@@ -7176,10 +7176,14 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
             await service.wait_for_work(timeout_seconds=0.1)
         return 0
     finally:
-        if service is not None:
-            await service.close()
-        elif server is not None:
-            await server.close()
+        close_error: BaseException | None = None
+        try:
+            if service is not None:
+                await service.close()
+            elif server is not None:
+                await server.close()
+        except BaseException as exc:
+            close_error = exc
         if created_at is not None:
             stopped_at = utc_now()
             with contextlib.suppress(Exception):
@@ -7190,7 +7194,52 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                     "state": "stopped", "created_at": created_at,
                     "updated_at": stopped_at,
                 }, expected_project_root_hash=ownership.project_root_hash)
-        cleanup_daemon_endpoint(ownership)
+        cleanup_error: BaseException | None = None
+        try:
+            cleanup_daemon_endpoint(ownership)
+        except BaseException as exc:
+            cleanup_error = exc
+        if close_error is not None:
+            raise close_error
+        if cleanup_error is not None:
+            raise cleanup_error
+
+
+def _run_daemon_event_loop(
+    operation: Any,
+    *,
+    shutdown_grace_seconds: float = 5.0,
+) -> Any:
+    """Run the daemon process loop without unbounded asyncio teardown."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    main_task = loop.create_task(operation)
+    try:
+        return loop.run_until_complete(main_task)
+    finally:
+        pending = {task for task in asyncio.all_tasks(loop) if not task.done()}
+        for task in pending:
+            task.cancel()
+        if pending:
+            done, _ = loop.run_until_complete(
+                asyncio.wait(pending, timeout=shutdown_grace_seconds)
+            )
+            for task in done:
+                if not task.cancelled():
+                    task.exception()
+        remaining = {task for task in asyncio.all_tasks(loop) if not task.done()}
+        if remaining:
+            print(
+                "daemon shutdown incomplete: "
+                f"pending_task_count={len(remaining)}",
+                file=sys.stderr,
+            )
+            for task in remaining:
+                # The bounded diagnostic above replaces asyncio's noisy,
+                # potentially sensitive pending-task repr at process teardown.
+                task._log_destroy_pending = False
+        asyncio.set_event_loop(None)
+        loop.close()
 
 
 def daemon_serve_command(args: argparse.Namespace) -> int:
@@ -7199,7 +7248,7 @@ def daemon_serve_command(args: argparse.Namespace) -> int:
         config = load_config(root)
         store = StateStore(root)
         install_bounded_daemon_stdio_from_env(root)
-        return asyncio.run(_serve_daemon(root, config, store))
+        return _run_daemon_event_loop(_serve_daemon(root, config, store))
     except Exception as exc:
         print(f"daemon serve failed: {type(exc).__name__}", file=sys.stderr)
         return 1

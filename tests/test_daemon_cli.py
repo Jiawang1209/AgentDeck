@@ -9,6 +9,8 @@ import time
 import tempfile
 import shutil
 import socket
+import subprocess
+import sys
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -455,6 +457,112 @@ def test_force_stop_rpc_reports_cleanup_failure_after_durable_acceptance(
             assert not (root / ".agentdeck" / "runtime" / "daemon.sock").exists()
 
         asyncio.run(case())
+
+
+def test_serve_cleanup_records_stopped_and_unlinks_endpoint_after_close_error(
+    monkeypatch,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="adk-close-error-", dir="/tmp") as directory:
+        root = Path(directory)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        original_close = cli.ProjectDaemonService.close
+
+        async def fail_after_close(service):
+            await original_close(service)
+            raise cli.ServiceError("simulated close failure")
+
+        monkeypatch.setattr(cli.ProjectDaemonService, "close", fail_after_close)
+
+        async def case() -> None:
+            serving = asyncio.create_task(
+                cli._serve_daemon(root, load_config(root), StateStore(root))
+            )
+            client = None
+            for _ in range(100):
+                try:
+                    client = await DaemonClient.connect_verified(
+                        root, timeout_seconds=0.1
+                    )
+                except DaemonUnavailable:
+                    await asyncio.sleep(0.01)
+                else:
+                    break
+            assert client is not None
+            try:
+                for _ in range(100):
+                    if StateStore(root).load()["daemon_runtime"]["state"] == "ready":
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    pytest.fail("daemon did not become ready")
+                lease = await client.request(
+                    "controller.acquire", {"client_id": "close-error-test"}
+                )
+                await client.request(
+                    "daemon.stop",
+                    {
+                        "lease_id": str(lease["lease_id"]),
+                        "generation": int(lease["generation"]),
+                    },
+                    lease_id=str(lease["lease_id"]),
+                    lease_generation=int(lease["generation"]),
+                )
+            finally:
+                await client.close()
+            with pytest.raises(cli.ServiceError, match="simulated close failure"):
+                await serving
+            assert StateStore(root).load()["daemon_runtime"]["state"] == "stopped"
+            runtime = root / ".agentdeck" / "runtime"
+            assert not (runtime / "daemon.sock").exists()
+            assert not (runtime / "daemon.json").exists()
+
+        asyncio.run(case())
+
+
+def test_daemon_event_loop_runner_exits_with_cancel_resistant_task() -> None:
+    script = """
+import asyncio
+import time
+
+from agentdeck.cli import _run_daemon_event_loop
+
+
+async def ignore_cancellation():
+    while True:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            continue
+
+
+async def main():
+    asyncio.create_task(ignore_cancellation(), name="cancel-resistant")
+    await asyncio.sleep(0)
+    return 7
+
+
+started = time.monotonic()
+result = _run_daemon_event_loop(main(), shutdown_grace_seconds=0.05)
+print(f"result={result}")
+print(f"elapsed={time.monotonic() - started:.3f}")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "result=7" in completed.stdout
+    elapsed = float(completed.stdout.split("elapsed=", 1)[1].splitlines()[0])
+    assert elapsed < 0.5
+    assert completed.stderr.strip() == (
+        "daemon shutdown incomplete: pending_task_count=1"
+    )
 
 
 def test_daemon_stop_requires_explicit_lease_options_as_a_pair(
