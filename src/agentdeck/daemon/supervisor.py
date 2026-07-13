@@ -283,8 +283,9 @@ class WorkerAttemptSupervisor:
             raise WorkerAttemptError(f"{label} Worker returned an invalid admission")
         if receipt.dispatch_key != dispatch_key:
             marked = await self._durably_mark_unknown(baseline, receipt)
-            if marked:
-                self._claimed_dispatch_keys.discard(dispatch_key)
+            if not marked:
+                raise WorkerAttemptError("Worker ambiguity persistence failed")
+            self._claimed_dispatch_keys.discard(dispatch_key)
             raise WorkerAttemptError("Worker admission receipt lineage drift")
 
         persisted, _ = await _capture_callback(

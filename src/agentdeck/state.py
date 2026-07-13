@@ -2204,6 +2204,7 @@ class StateStore:
         *,
         attempt_id: str,
         dispatch_key: str,
+        observed_dispatch_key: str | None,
         receipt_summary: str,
         target_state: str,
         reason: str | None,
@@ -2215,6 +2216,14 @@ class StateStore:
             or re.fullmatch(r"dsp_[0-9a-f]{32}", dispatch_key) is None
             or type(receipt_summary) is not str
             or not receipt_summary
+            or (
+                observed_dispatch_key is not None
+                and (
+                    type(observed_dispatch_key) is not str
+                    or re.fullmatch(r"dsp_[0-9a-f]{32}", observed_dispatch_key)
+                    is None
+                )
+            )
         ):
             raise ValueError("mission attempt receipt is invalid")
         if target_state not in {"submitted", "ambiguous"}:
@@ -2263,17 +2272,25 @@ class StateStore:
                 "terminal_reason": reason if target_state == "ambiguous" else None,
             }
             candidate = _validate_mission_attempt_record(candidate)
+            event_payload = {
+                "attempt_id": attempt_id,
+                "mission_id": candidate["mission_id"],
+                "step_id": candidate["step_id"],
+                "dispatch_key": dispatch_key,
+                "reason": reason,
+            }
+            if target_state == "ambiguous":
+                event_payload.update(
+                    {
+                        "expected_dispatch_key": dispatch_key,
+                        "observed_dispatch_key": observed_dispatch_key or dispatch_key,
+                    }
+                )
             event = EventRecord(
                 event_id=new_id("evt"),
                 event_type=f"mission_attempt_{target_state}",
                 created_at=now,
-                payload={
-                    "attempt_id": attempt_id,
-                    "mission_id": candidate["mission_id"],
-                    "step_id": candidate["step_id"],
-                    "dispatch_key": dispatch_key,
-                    "reason": reason,
-                },
+                payload=event_payload,
             )
             outbox = state.setdefault("protocol_event_outbox", [])
             outbox_ids = _validated_protocol_event_outbox_ids(outbox)
@@ -2301,6 +2318,7 @@ class StateStore:
         return self._transition_mission_attempt_receipt(
             attempt_id=attempt_id,
             dispatch_key=dispatch_key,
+            observed_dispatch_key=dispatch_key,
             receipt_summary=receipt_summary,
             target_state="submitted",
             reason=None,
@@ -2311,12 +2329,14 @@ class StateStore:
         *,
         attempt_id: str,
         dispatch_key: str,
+        observed_dispatch_key: str | None = None,
         receipt_summary: str,
         reason: str,
     ) -> dict[str, Any]:
         return self._transition_mission_attempt_receipt(
             attempt_id=attempt_id,
             dispatch_key=dispatch_key,
+            observed_dispatch_key=observed_dispatch_key,
             receipt_summary=receipt_summary,
             target_state="ambiguous",
             reason=reason,

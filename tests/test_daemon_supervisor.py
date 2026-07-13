@@ -463,7 +463,8 @@ def test_persistence_unknown_survives_supervisor_restart_in_state_store(tmp_path
     def mark(candidate, receipt, reason):
         return store.mark_mission_attempt_ambiguous(
             attempt_id=str(candidate["attempt_id"]),
-            dispatch_key=receipt.dispatch_key,
+            dispatch_key=str(candidate["dispatch_key"]),
+            observed_dispatch_key=receipt.dispatch_key,
             receipt_summary=receipt.summary,
             reason=reason,
         )
@@ -497,6 +498,97 @@ def test_persistence_unknown_survives_supervisor_restart_in_state_store(tmp_path
     with pytest.raises(WorkerAttemptError, match="must be prepared"):
         asyncio.run(restarted.execute(persisted, _route()))
     assert calls == ["acp"]
+
+
+def test_receipt_lineage_drift_uses_canonical_key_and_survives_restart(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    calls: list[str] = []
+    expected_dispatch_key = "dsp_" + "1" * 32
+    observed_dispatch_key = "dsp_" + "9" * 32
+    bad_receipt = SubmittedReceipt(
+        receipt_id="rcp_bad_lineage",
+        dispatch_key=observed_dispatch_key,
+        summary="accepted",
+    )
+
+    def authorize(candidate):
+        return store.mission_attempt_by_id(str(candidate["attempt_id"]))
+
+    def mark(candidate, receipt, reason):
+        return store.mark_mission_attempt_ambiguous(
+            attempt_id=str(candidate["attempt_id"]),
+            dispatch_key=str(candidate["dispatch_key"]),
+            observed_dispatch_key=receipt.dispatch_key,
+            receipt_summary=receipt.summary,
+            reason=reason,
+        )
+
+    first = WorkerAttemptSupervisor(
+        authorize_attempt=authorize,
+        persist_submitted=lambda *_: pytest.fail("must not persist mismatched receipt"),
+        mark_attempt_ambiguous=mark,
+        acp_admit=lambda _: calls.append("acp") or bad_receipt,
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=lambda *_: pytest.fail("must not complete"),
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
+    )
+    with pytest.raises(WorkerAttemptError, match="receipt lineage drift"):
+        asyncio.run(first.execute(_attempt(), _route()))
+
+    persisted = store.mission_attempt_by_id("mat_0123456789ab")
+    assert persisted["state"] == "ambiguous"
+    event = store.load()["protocol_event_outbox"][-1]
+    assert event["event_type"] == "mission_attempt_ambiguous"
+    assert event["payload"]["dispatch_key"] == expected_dispatch_key
+    assert event["payload"]["expected_dispatch_key"] == expected_dispatch_key
+    assert event["payload"]["observed_dispatch_key"] == observed_dispatch_key
+
+    restarted = WorkerAttemptSupervisor(
+        authorize_attempt=authorize,
+        persist_submitted=lambda *_: pytest.fail("must not persist"),
+        mark_attempt_ambiguous=mark,
+        acp_admit=lambda _: calls.append("unexpected") or bad_receipt,
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=lambda *_: pytest.fail("must not complete"),
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
+    )
+    with pytest.raises(WorkerAttemptError, match="must be prepared"):
+        asyncio.run(restarted.execute(persisted, _route()))
+    assert calls == ["acp"]
+
+
+def test_receipt_lineage_drift_retains_claim_when_ambiguity_mark_fails() -> None:
+    authority = _Authority()
+    dispatch_key = "dsp_" + "1" * 32
+    bad_receipt = SubmittedReceipt(
+        receipt_id="rcp_bad_lineage",
+        dispatch_key="dsp_" + "9" * 32,
+        summary="accepted",
+    )
+
+    supervisor = WorkerAttemptSupervisor(
+        authorize_attempt=authority.authorize,
+        persist_submitted=lambda *_: pytest.fail("must not persist mismatched receipt"),
+        mark_attempt_ambiguous=lambda *_: (_ for _ in ()).throw(
+            RuntimeError("sensitive ambiguity failure")
+        ),
+        acp_admit=lambda _: bad_receipt,
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=lambda *_: pytest.fail("must not complete"),
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
+    )
+
+    with pytest.raises(WorkerAttemptError) as error:
+        asyncio.run(supervisor.execute(_attempt(), _route()))
+    assert str(error.value) == "Worker ambiguity persistence failed"
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    assert supervisor._claimed_dispatch_keys == {dispatch_key}
 
 
 def test_state_store_submitted_receipt_precedes_complete_callback(tmp_path) -> None:
