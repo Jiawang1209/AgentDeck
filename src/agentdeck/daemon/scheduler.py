@@ -74,6 +74,7 @@ _MISSION_ID = re.compile(r"mis_[0-9a-f]{12}")
 _STEP_ID = re.compile(r"step_[1-9][0-9]*")
 _ATTEMPT_ID = re.compile(r"mat_[0-9a-f]{12}")
 _ACTIVE_ATTEMPT_STATES = frozenset({"prepared", "submitted", "running"})
+_SUCCESSFUL_ATTEMPT_STATES = frozenset({"completed", "succeeded"})
 _TERMINAL_MISSION_STATES = frozenset(
     {"completed", "stopped", "interrupted"}
 )
@@ -270,6 +271,10 @@ class SchedulerDecision:
             self.step_id is None or self.attempt_id is not None
         ):
             raise SchedulerError("invalid scheduler decision")
+        if self.kind == "complete_mission" and (
+            self.step_id is not None or self.attempt_id is not None
+        ):
+            raise SchedulerError("invalid scheduler decision")
         if self.kind in {
             "dispatch_prepared",
             "await_worker",
@@ -337,6 +342,19 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
 
     if facts.blocker is not None:
         return _decision("blocked", facts, blocker=facts.blocker)
+    if (
+        facts.attempt_state in _ACTIVE_ATTEMPT_STATES
+        and (
+            facts.reply_state in {"received", "validated"}
+            or facts.handoff_state != "none"
+            or facts.next_step_eligible
+        )
+    ):
+        return _decision(
+            "blocked",
+            facts,
+            blocker="Worker reply precedes successful terminal attempt",
+        )
     if facts.permission_state == "pending":
         return _decision("wait_human", facts)
     if facts.attempt_state == "ambiguous":
@@ -366,6 +384,32 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
         return _decision("blocked", facts, blocker=facts.blocker or "Worker reply is invalid")
 
     if facts.all_steps_completed:
+        if facts.attempt_id is not None:
+            if (
+                facts.attempt_state in _SUCCESSFUL_ATTEMPT_STATES
+                and facts.reply_state != "validated"
+            ):
+                return _decision(
+                    "blocked",
+                    facts,
+                    blocker="completion has unverified Worker result",
+                )
+            if (
+                facts.attempt_state in _SUCCESSFUL_ATTEMPT_STATES
+                and facts.handoff_state != "recorded"
+            ):
+                return _decision(
+                    "blocked",
+                    facts,
+                    blocker="completion has unrecorded handoff",
+                )
+            return _decision(
+                "blocked", facts, blocker="completion conflicts with current step"
+            )
+        if facts.step_id is not None:
+            return _decision(
+                "blocked", facts, blocker="completion conflicts with current step"
+            )
         return _decision("complete_mission", facts)
     if (
         facts.step_state == "pending"
@@ -377,19 +421,30 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
         return _decision("blocked", facts, blocker="Worker is not ready")
     if facts.attempt_state == "prepared":
         return _decision("dispatch_prepared", facts)
-    if facts.reply_state == "received":
+    if (
+        facts.attempt_state in _SUCCESSFUL_ATTEMPT_STATES
+        and facts.reply_state == "received"
+    ):
         return _decision("validate_reply", facts)
-    if facts.reply_state == "validated" and facts.handoff_state != "recorded":
+    if (
+        facts.attempt_state in _SUCCESSFUL_ATTEMPT_STATES
+        and facts.reply_state == "validated"
+        and facts.handoff_state != "recorded"
+    ):
         return _decision("record_handoff", facts)
     if (
-        facts.reply_state == "validated"
+        facts.attempt_state in _SUCCESSFUL_ATTEMPT_STATES
+        and facts.reply_state == "validated"
         and facts.handoff_state == "recorded"
         and facts.next_step_eligible
     ):
         return _decision("activate_next", facts)
     if facts.attempt_state in {"submitted", "running"}:
         return _decision("await_worker", facts)
-    if facts.attempt_state in {"completed", "succeeded"} and facts.reply_state == "none":
+    if (
+        facts.attempt_state in _SUCCESSFUL_ATTEMPT_STATES
+        and facts.reply_state in {"none", "pending"}
+    ):
         return _decision("blocked", facts, blocker="Worker result is missing")
     return _decision("idle", facts)
 

@@ -70,9 +70,21 @@ def facts(**changes: object) -> SchedulerFacts:
         (facts(attempt_state="prepared"), "dispatch_prepared"),
         (facts(attempt_state="submitted"), "await_worker"),
         (facts(attempt_state="running"), "await_worker"),
-        (facts(reply_state="received"), "validate_reply"),
         (
-            facts(reply_state="validated", handoff_state="pending"),
+            facts(
+                attempt_state="succeeded",
+                active_attempt_count=0,
+                reply_state="received",
+            ),
+            "validate_reply",
+        ),
+        (
+            facts(
+                attempt_state="succeeded",
+                active_attempt_count=0,
+                reply_state="validated",
+                handoff_state="pending",
+            ),
             "record_handoff",
         ),
         (
@@ -422,6 +434,89 @@ def test_completion_cannot_skip_an_active_attempt() -> None:
 
 
 @pytest.mark.parametrize(
+    ("changes", "blocker"),
+    [
+        (
+            {
+                "attempt_state": "succeeded",
+                "active_attempt_count": 0,
+                "reply_state": "none",
+            },
+            "completion has unverified Worker result",
+        ),
+        (
+            {
+                "step_state": "active",
+                "attempt_id": None,
+                "attempt_state": "none",
+                "active_attempt_count": 0,
+            },
+            "completion conflicts with current step",
+        ),
+        (
+            {
+                "attempt_state": "succeeded",
+                "active_attempt_count": 0,
+                "reply_state": "received",
+            },
+            "completion has unverified Worker result",
+        ),
+        (
+            {
+                "attempt_state": "succeeded",
+                "active_attempt_count": 0,
+                "reply_state": "validated",
+                "handoff_state": "pending",
+            },
+            "completion has unrecorded handoff",
+        ),
+        (
+            {
+                "attempt_state": "succeeded",
+                "active_attempt_count": 0,
+                "reply_state": "validated",
+                "handoff_state": "recorded",
+            },
+            "completion conflicts with current step",
+        ),
+    ],
+)
+def test_completion_requires_cleared_verified_step_facts(
+    changes: dict[str, object], blocker: str
+) -> None:
+    decision = schedule_gate(facts(all_steps_completed=True, **changes))
+    assert decision.kind == "blocked"
+    assert decision.blocker == blocker
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"attempt_state": "prepared", "reply_state": "received"},
+        {"attempt_state": "submitted", "reply_state": "received"},
+        {"attempt_state": "running", "reply_state": "received"},
+        {
+            "attempt_state": "submitted",
+            "reply_state": "validated",
+            "handoff_state": "pending",
+        },
+        {
+            "attempt_state": "running",
+            "reply_state": "validated",
+            "handoff_state": "recorded",
+            "next_step_eligible": True,
+        },
+    ],
+)
+def test_nonterminal_attempt_cannot_advance_reply_or_handoff(
+    changes: dict[str, object],
+) -> None:
+    decision = schedule_gate(facts(**changes))
+    assert decision.kind == "blocked"
+    assert decision.blocker == "Worker reply precedes successful terminal attempt"
+
+
+@pytest.mark.parametrize(
     "changes",
     [
         {
@@ -443,7 +538,11 @@ def test_scheduler_rejects_incoherent_reply_and_handoff_facts(
 
 
 def test_scheduler_is_deterministic() -> None:
-    scheduler_facts = facts(reply_state="received")
+    scheduler_facts = facts(
+        attempt_state="succeeded",
+        active_attempt_count=0,
+        reply_state="received",
+    )
     assert {schedule_gate(scheduler_facts) for _ in range(100)} == {
         SchedulerDecision(
             kind="validate_reply",
@@ -492,3 +591,7 @@ def test_scheduler_decision_rejects_unknown_kind_and_incoherent_blocker() -> Non
         SchedulerDecision("complete_mission", None, None, None, None)
     with pytest.raises(SchedulerError, match="invalid scheduler decision"):
         SchedulerDecision("await_worker", MISSION_ID, None, ATTEMPT_ID, None)
+    with pytest.raises(SchedulerError, match="invalid scheduler decision"):
+        SchedulerDecision(
+            "complete_mission", MISSION_ID, STEP_ID, ATTEMPT_ID, None
+        )
