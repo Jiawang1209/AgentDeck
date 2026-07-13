@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping
 from .config import CONFIG_DIR, ensure_project_layout, project_root
 from .conversation.lifecycle import validate_conversation_history
 from .conversation.models import ConversationMutation
+from .daemon.lifecycle import validate_daemon_record
 from .mission import (
     MISSION_SCHEMA_VERSION,
     MISSION_STATUSES,
@@ -187,6 +188,7 @@ class StateStore:
                 "conversation_preview_bindings": [],
                 "conversation_state_transitions": [],
                 "conversation_event_outbox": [],
+                "daemon_runtime": None,
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -199,6 +201,21 @@ class StateStore:
     def append_event(self, event: EventRecord) -> None:
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
+
+    def record_daemon_state(
+        self,
+        record: Mapping[str, object],
+        *,
+        expected_project_root_hash: str,
+    ) -> dict[str, object]:
+        validated = validate_daemon_record(record)
+        if validated["project_root_hash"] != expected_project_root_hash:
+            raise ValueError("project identity mismatch")
+        with self._protocol_mutation_lock():
+            state = self.load()
+            state["daemon_runtime"] = dict(validated)
+            self._atomic_save(state)
+        return dict(validated)
 
     def _atomic_save(self, state: dict[str, Any]) -> None:
         temporary = self.state_path.with_name(

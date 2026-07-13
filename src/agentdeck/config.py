@@ -3,11 +3,25 @@ from __future__ import annotations
 from pathlib import Path
 import tomllib
 
-from .models import AgentSpec, AutonomousPolicy, LeaderConfig, ProjectConfig, RuntimeConfig
+from .models import (
+    AgentSpec,
+    AutonomousPolicy,
+    DaemonConfig,
+    LeaderConfig,
+    ProjectConfig,
+    RuntimeConfig,
+)
 
 
 CONFIG_DIR = ".agentdeck"
 CONFIG_FILE = "config.toml"
+
+_DAEMON_CONFIG_BOUNDS = {
+    "idle_grace_seconds": (1, 86_400),
+    "start_timeout_seconds": (1, 300),
+    "controller_ttl_seconds": (1, 3_600),
+    "max_frame_bytes": (1_024, 16 * 1_024 * 1_024),
+}
 
 
 DEFAULT_CONFIG = """[project]
@@ -138,6 +152,23 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         session_name=runtime_raw.get("session_name", "agentdeck"),
         socket_name=runtime_raw.get("socket_name", f"agentdeck-{base.name}"),
     )
+    daemon_raw = raw.get("daemon", {})
+    if type(daemon_raw) is not dict:
+        raise ValueError("invalid daemon configuration")
+    daemon = DaemonConfig(
+        idle_grace_seconds=_daemon_config_value(
+            daemon_raw, "idle_grace_seconds", DaemonConfig.idle_grace_seconds
+        ),
+        start_timeout_seconds=_daemon_config_value(
+            daemon_raw, "start_timeout_seconds", DaemonConfig.start_timeout_seconds
+        ),
+        controller_ttl_seconds=_daemon_config_value(
+            daemon_raw, "controller_ttl_seconds", DaemonConfig.controller_ttl_seconds
+        ),
+        max_frame_bytes=_daemon_config_value(
+            daemon_raw, "max_frame_bytes", DaemonConfig.max_frame_bytes
+        ),
+    )
     agents = tuple(_agent_spec(item) for item in agents_raw)
     autonomous_raw = raw.get("autonomous", {})
     allowed = autonomous_raw.get("allowed_agents", []) if isinstance(autonomous_raw, dict) else []
@@ -157,9 +188,20 @@ def load_config(root: Path | None = None) -> ProjectConfig:
         leader=leader,
         agents=agents,
         runtime=runtime,
+        daemon=daemon,
         autonomous=autonomous,
         skills=skills,
     )
+
+
+def _daemon_config_value(raw: dict[str, object], name: str, default: int) -> int:
+    value = raw.get(name, default)
+    minimum, maximum = _DAEMON_CONFIG_BOUNDS[name]
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ValueError(
+            f"daemon {name} must be an integer between {minimum} and {maximum}"
+        )
+    return value
 
 
 def _agent_spec(item: dict[str, object]) -> AgentSpec:

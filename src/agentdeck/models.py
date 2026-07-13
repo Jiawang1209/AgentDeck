@@ -37,6 +37,14 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
+class DaemonConfig:
+    idle_grace_seconds: int = 600
+    start_timeout_seconds: int = 10
+    controller_ttl_seconds: int = 30
+    max_frame_bytes: int = 1024 * 1024
+
+
+@dataclass(frozen=True)
 class LeaderConfig:
     agent_id: str = "leader"
     provider: str = "deepseek"
@@ -60,6 +68,7 @@ class ProjectConfig:
     leader: LeaderConfig
     agents: tuple[AgentSpec, ...]
     runtime: RuntimeConfig
+    daemon: DaemonConfig = DaemonConfig()
     autonomous: AutonomousPolicy = AutonomousPolicy()
     skills: dict[str, Any] = field(default_factory=dict)
 
