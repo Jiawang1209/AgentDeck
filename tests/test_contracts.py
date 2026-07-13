@@ -704,6 +704,9 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "agent-runtime-schema.md",
         "protocol-runtime-schema.md",
         "acp-runtime-schema.md",
+        "conversation-runtime-schema.md",
+        "leader-backend-schema.md",
+        "worker-transport-schema.md",
         "leader-chat-schema.md",
         "leader-status-schema.md",
         "leader-actions-schema.md",
@@ -725,7 +728,7 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
     assert payload["contract_docs_dir"] == str(tmp_path)
     assert payload["response_fields"] == list(CONTRACT_INDEX_RESPONSE_FIELDS)
     assert payload["contract_item_fields"] == list(CONTRACT_INDEX_ITEM_FIELDS)
-    assert payload["count"] == 31
+    assert payload["count"] == 34
     assert len(payload["contracts"]) == payload["count"]
     assert [item["name"] for item in payload["contracts"]] == [
         "project-view",
@@ -749,6 +752,9 @@ def test_contract_index_response_is_reusable_without_cli(tmp_path: Path) -> None
         "agent-runtime",
         "protocol-runtime",
         "acp-runtime",
+        "conversation-runtime",
+        "leader-backend",
+        "worker-transport",
         "leader-chat",
         "leader-status",
         "leader-actions",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
 
@@ -167,6 +168,24 @@ CONTRACT_INDEX_SPECS = (
         "agentdeck contract acp-runtime",
         "agentdeck contract acp-runtime --example",
         "acp-runtime-schema.md",
+    ),
+    (
+        "conversation-runtime",
+        "agentdeck contract conversation-runtime",
+        "agentdeck contract conversation-runtime --example",
+        "conversation-runtime-schema.md",
+    ),
+    (
+        "leader-backend",
+        "agentdeck contract leader-backend",
+        "agentdeck contract leader-backend --example",
+        "leader-backend-schema.md",
+    ),
+    (
+        "worker-transport",
+        "agentdeck contract worker-transport",
+        "agentdeck contract worker-transport --example",
+        "worker-transport-schema.md",
     ),
     (
         "leader-chat",
@@ -16213,3 +16232,380 @@ def protocol_runtime_example() -> dict[str, object]:
             {"kind": "inspect", "label": "Inspect protocol runtime contract", "command": "agentdeck contract protocol-runtime", "safety": "inspect", "enabled": True, "blocker": None},
         ],
     }
+
+
+CONVERSATION_RUNTIME_CONTRACT_VERSION = "conversation-runtime/v1"
+LEADER_BACKEND_CONTRACT_VERSION = "leader-backend/v1"
+WORKER_TRANSPORT_CONTRACT_VERSION = "worker-transport/v1"
+
+M1_CONTROL_FIELDS = ("kind", "label", "command", "safety", "enabled", "blocker")
+CONVERSATION_RUNTIME_RESPONSE_FIELDS = (
+    "schema_version",
+    "contract_version",
+    "mode",
+    "conversation_id",
+    "state",
+    "active_turn",
+    "pending_preview",
+    "leader_backend",
+    "ownership",
+    "cancellation",
+    "controls",
+    "blockers",
+)
+LEADER_BACKEND_RESPONSE_FIELDS = (
+    "schema_version",
+    "contract_version",
+    "mode",
+    "backend_kind",
+    "identity",
+    "readiness",
+    "transport",
+    "capabilities",
+    "fallback",
+    "controls",
+    "blockers",
+)
+WORKER_TRANSPORT_RESPONSE_FIELDS = (
+    "schema_version",
+    "contract_version",
+    "mode",
+    "agent_id",
+    "configured_transport",
+    "effective_transport",
+    "readiness",
+    "capabilities",
+    "fallback",
+    "live_mirror",
+    "ownership",
+    "controls",
+    "blockers",
+)
+
+
+def _m1_control(
+    kind: str,
+    label: str,
+    command: str,
+    safety: str,
+    *,
+    enabled: bool,
+    blocker: str | None,
+) -> dict[str, object]:
+    return {
+        "kind": kind,
+        "label": label,
+        "command": command,
+        "safety": safety,
+        "enabled": enabled,
+        "blocker": blocker,
+    }
+
+
+def conversation_runtime_example() -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "contract_version": CONVERSATION_RUNTIME_CONTRACT_VERSION,
+        "mode": "conversation_runtime",
+        "conversation_id": "cvs_example",
+        "state": "busy",
+        "active_turn": {"turn_id": "cvt_example", "state": "waiting_leader"},
+        "pending_preview": None,
+        "leader_backend": {
+            "backend_kind": "api",
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "transport": "http",
+        },
+        "ownership": [],
+        "cancellation": {"available": True, "scope": "active_turn"},
+        "controls": [
+            _m1_control(
+                "cancel_turn",
+                "Cancel active turn",
+                "Ctrl-C",
+                "explicit_user",
+                enabled=True,
+                blocker=None,
+            ),
+            _m1_control(
+                "inspect",
+                "Inspect status",
+                "agentdeck status",
+                "inspect",
+                enabled=True,
+                blocker=None,
+            ),
+        ],
+        "blockers": [],
+    }
+
+
+def leader_backend_example() -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "contract_version": LEADER_BACKEND_CONTRACT_VERSION,
+        "mode": "leader_backend",
+        "backend_kind": "agent_cli",
+        "identity": {
+            "provider": "claude-cli",
+            "model": "claude-sonnet",
+            "command": ["claude-agent-acp"],
+        },
+        "readiness": "ready",
+        "transport": "acp",
+        "capabilities": ["initialize", "new_session", "prompt", "cancel"],
+        "fallback": {"automatic": False, "transport": None},
+        "controls": [
+            _m1_control(
+                "inspect",
+                "Inspect Leader backend",
+                "agentdeck contract leader-backend",
+                "inspect",
+                enabled=True,
+                blocker=None,
+            ),
+            _m1_control(
+                "assign",
+                "Assign Leader",
+                "agentdeck leader assign --provider claude-cli --transport acp --confirm",
+                "explicit_user",
+                enabled=True,
+                blocker=None,
+            ),
+        ],
+        "blockers": [],
+    }
+
+
+def worker_transport_example() -> dict[str, object]:
+    return {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "contract_version": WORKER_TRANSPORT_CONTRACT_VERSION,
+        "mode": "worker_transport",
+        "agent_id": "reviewer",
+        "configured_transport": "acp",
+        "effective_transport": "acp",
+        "readiness": "ready",
+        "capabilities": {
+            "structured_sessions": True,
+            "streaming_updates": True,
+            "permission_requests": True,
+            "observable_terminal": False,
+        },
+        "fallback": {
+            "available": True,
+            "transport": "tmux",
+            "requires_confirmation": True,
+            "blocker": "explicit reroute required",
+        },
+        "live_mirror": {
+            "available": True,
+            "read_only": True,
+            "attach_command": "tmux attach -t agentdeck",
+        },
+        "ownership": {"state": "agentdeck_owned", "prompt_allowed": True},
+        "controls": [
+            _m1_control(
+                "takeover",
+                "Take over Worker",
+                "agentdeck takeover --agent reviewer --confirm",
+                "explicit_user",
+                enabled=True,
+                blocker=None,
+            ),
+            _m1_control(
+                "inspect",
+                "Open live mirror",
+                "tmux attach -t agentdeck",
+                "inspect",
+                enabled=True,
+                blocker=None,
+            ),
+        ],
+        "blockers": [],
+    }
+
+
+def _required_contract_fields(
+    payload: object, fields: tuple[str, ...], label: str
+) -> tuple[list[str], dict[str, object] | None]:
+    if not isinstance(payload, dict):
+        return [f"{label} must be an object"], None
+    errors = [f"missing {label} field: {field}" for field in fields if field not in payload]
+    errors.extend(
+        f"{label} has unexpected field: {field}"
+        for field in sorted(set(payload) - set(fields))
+    )
+    return errors, payload
+
+
+def _validate_m1_controls(
+    errors: list[str], payload: dict[str, object], label: str
+) -> None:
+    controls = payload.get("controls")
+    if not isinstance(controls, list):
+        errors.append(f"{label}.controls must be a list")
+        return
+    for index, control in enumerate(controls):
+        if not isinstance(control, dict):
+            errors.append(f"{label}.controls[{index}] must be an object")
+            continue
+        for field in M1_CONTROL_FIELDS:
+            if field not in control:
+                errors.append(f"missing {label}.controls[{index}] field: {field}")
+        if control.get("enabled") is True and control.get("blocker") is not None:
+            errors.append(f"{label} enabled control cannot have blocker")
+
+
+def validate_conversation_runtime_contract(payload: object) -> dict[str, object]:
+    errors, item = _required_contract_fields(
+        payload, CONVERSATION_RUNTIME_RESPONSE_FIELDS, "conversation_runtime"
+    )
+    if item is None:
+        return {"ok": False, "errors": errors}
+    if item.get("schema_version") != PROJECT_VIEW_SCHEMA_VERSION:
+        errors.append("conversation_runtime.schema_version is invalid")
+    if item.get("contract_version") != CONVERSATION_RUNTIME_CONTRACT_VERSION:
+        errors.append("conversation_runtime.contract_version is invalid")
+    if item.get("mode") != "conversation_runtime":
+        errors.append("conversation_runtime.mode is invalid")
+    active_turn = item.get("active_turn")
+    if item.get("state") in {"created", "ready", "waiting_confirmation", "closing", "closed"} and active_turn is not None:
+        errors.append("conversation_runtime.state is inconsistent with active_turn")
+    _validate_m1_controls(errors, item, "conversation_runtime")
+    controls = item.get("controls")
+    if isinstance(controls, list) and any(
+        isinstance(control, dict)
+        and control.get("enabled") is True
+        and control.get("kind") in {"execute", "cancel_turn"}
+        and control.get("safety") == "inspect"
+        for control in controls
+    ):
+        errors.append("conversation_runtime controls cannot enable execute as inspect")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_leader_backend_contract(payload: object) -> dict[str, object]:
+    errors, item = _required_contract_fields(
+        payload, LEADER_BACKEND_RESPONSE_FIELDS, "leader_backend"
+    )
+    if item is None:
+        return {"ok": False, "errors": errors}
+    if item.get("schema_version") != PROJECT_VIEW_SCHEMA_VERSION:
+        errors.append("leader_backend.schema_version is invalid")
+    if item.get("contract_version") != LEADER_BACKEND_CONTRACT_VERSION:
+        errors.append("leader_backend.contract_version is invalid")
+    if item.get("mode") != "leader_backend":
+        errors.append("leader_backend.mode is invalid")
+    blockers = item.get("blockers")
+    if item.get("readiness") == "ready" and isinstance(blockers, list) and blockers:
+        errors.append("leader_backend ready state cannot have blockers")
+    fallback = item.get("fallback")
+    if isinstance(fallback, dict) and fallback.get("automatic") is not False:
+        errors.append("leader_backend automatic fallback is forbidden")
+    _validate_m1_controls(errors, item, "leader_backend")
+    return {"ok": not errors, "errors": errors}
+
+
+def validate_worker_transport_contract(payload: object) -> dict[str, object]:
+    errors, item = _required_contract_fields(
+        payload, WORKER_TRANSPORT_RESPONSE_FIELDS, "worker_transport"
+    )
+    if item is None:
+        return {"ok": False, "errors": errors}
+    if item.get("schema_version") != PROJECT_VIEW_SCHEMA_VERSION:
+        errors.append("worker_transport.schema_version is invalid")
+    if item.get("contract_version") != WORKER_TRANSPORT_CONTRACT_VERSION:
+        errors.append("worker_transport.contract_version is invalid")
+    if item.get("mode") != "worker_transport":
+        errors.append("worker_transport.mode is invalid")
+    if item.get("configured_transport") != item.get("effective_transport"):
+        errors.append("worker_transport effective transport cannot silently differ")
+    _validate_m1_controls(errors, item, "worker_transport")
+    controls = item.get("controls")
+    if isinstance(controls, list) and any(
+        isinstance(control, dict)
+        and control.get("kind") in {"takeover", "return_control"}
+        and control.get("enabled") is True
+        and control.get("safety") != "explicit_user"
+        for control in controls
+    ):
+        errors.append("worker_transport takeover must require explicit_user safety")
+    mirror = item.get("live_mirror")
+    if isinstance(mirror, dict) and mirror.get("available") is True and mirror.get("read_only") is not True:
+        errors.append("worker_transport live mirror must be read-only")
+    return {"ok": not errors, "errors": errors}
+
+
+def _m1_contract_response(
+    *,
+    contract_path: Path,
+    contract_version: str,
+    response_fields: tuple[str, ...],
+    example_factory: Callable[[], dict[str, object]],
+    validator: Callable[[object], dict[str, object]],
+    include_example: bool,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "contract_version": contract_version,
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "response_fields": list(response_fields),
+        "control_fields": list(M1_CONTROL_FIELDS),
+    }
+    if include_example:
+        example = example_factory()
+        validation = validator(example)
+        if not validation["ok"]:
+            raise ValueError(f"{contract_version} example validation failed")
+        payload.update(
+            {
+                "example": True,
+                "example_response_fields": list(example),
+                "example_control_fields": list(example["controls"][0]),
+                "example_validation": validation,
+                "example_payload": example,
+            }
+        )
+    return payload
+
+
+def conversation_runtime_contract_response(
+    contract_path: Path, include_example: bool = False
+) -> dict[str, object]:
+    return _m1_contract_response(
+        contract_path=contract_path,
+        contract_version=CONVERSATION_RUNTIME_CONTRACT_VERSION,
+        response_fields=CONVERSATION_RUNTIME_RESPONSE_FIELDS,
+        example_factory=conversation_runtime_example,
+        validator=validate_conversation_runtime_contract,
+        include_example=include_example,
+    )
+
+
+def leader_backend_contract_response(
+    contract_path: Path, include_example: bool = False
+) -> dict[str, object]:
+    return _m1_contract_response(
+        contract_path=contract_path,
+        contract_version=LEADER_BACKEND_CONTRACT_VERSION,
+        response_fields=LEADER_BACKEND_RESPONSE_FIELDS,
+        example_factory=leader_backend_example,
+        validator=validate_leader_backend_contract,
+        include_example=include_example,
+    )
+
+
+def worker_transport_contract_response(
+    contract_path: Path, include_example: bool = False
+) -> dict[str, object]:
+    return _m1_contract_response(
+        contract_path=contract_path,
+        contract_version=WORKER_TRANSPORT_CONTRACT_VERSION,
+        response_fields=WORKER_TRANSPORT_RESPONSE_FIELDS,
+        example_factory=worker_transport_example,
+        validator=validate_worker_transport_contract,
+        include_example=include_example,
+    )

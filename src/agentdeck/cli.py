@@ -43,12 +43,14 @@ from .contracts import (
     contract_index_response,
     control_registry_item_id,
     continue_contract_response,
+    conversation_runtime_contract_response,
     controls_contract_response,
     demo_contract_response,
     doctor_contract_response,
     events_contract_response,
     inbox_contract_response,
     leader_actions_contract_response,
+    leader_backend_contract_response,
     leader_action_contract_response,
     leader_chat_action_card,
     leader_chat_capability_card,
@@ -111,6 +113,7 @@ from .contracts import (
     validate_workflow_run_contract,
     validate_workflow_status_contract,
     workflow_contract_response,
+    worker_transport_contract_response,
 )
 from .autonomy import run_loop_gate, select_auto_approvals
 from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, AgentSpec, EventRecord, ProjectConfig, new_id, utc_now
@@ -5461,6 +5464,27 @@ def contract_protocol_runtime_command(args: argparse.Namespace) -> int:
 def contract_acp_runtime_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "acp-runtime-schema.md"
     payload = acp_runtime_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_conversation_runtime_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "conversation-runtime-schema.md"
+    payload = conversation_runtime_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_leader_backend_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "leader-backend-schema.md"
+    payload = leader_backend_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_worker_transport_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "worker-transport-schema.md"
+    payload = worker_transport_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -16126,6 +16150,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--example", action="store_true", help="Include a sanitized fake ACP preflight example"
     )
     contract_acp_runtime.set_defaults(func=contract_acp_runtime_command)
+    contract_conversation_runtime = contract_subparsers.add_parser(
+        "conversation-runtime", help="Show foreground conversation runtime contract metadata"
+    )
+    contract_conversation_runtime.add_argument(
+        "--example", action="store_true", help="Include a GUI-ready conversation runtime example"
+    )
+    contract_conversation_runtime.set_defaults(func=contract_conversation_runtime_command)
+    contract_leader_backend = contract_subparsers.add_parser(
+        "leader-backend", help="Show Leader backend contract metadata"
+    )
+    contract_leader_backend.add_argument(
+        "--example", action="store_true", help="Include a GUI-ready Leader backend example"
+    )
+    contract_leader_backend.set_defaults(func=contract_leader_backend_command)
+    contract_worker_transport = contract_subparsers.add_parser(
+        "worker-transport", help="Show Worker transport contract metadata"
+    )
+    contract_worker_transport.add_argument(
+        "--example", action="store_true", help="Include a GUI-ready Worker transport example"
+    )
+    contract_worker_transport.set_defaults(func=contract_worker_transport_command)
     contract_leader_chat = contract_subparsers.add_parser(
         "leader-chat",
         help="Show Leader chat response contract discovery metadata",

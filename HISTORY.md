@@ -32,6 +32,14 @@
 - **ProjectView**: added a compact additive-v1 `conversation` summary with counts, latest derived states, pending-preview metadata, ownership, outbox count, and blockers. It excludes transcript/prompt content and is validated/documented in the ProjectView contract.
 - **TDD evidence**: conversation state, binding/lifecycle, protocol, Mission, and contract regressions are 698 passed; compileall and `git diff --check` pass.
 
+### Publish the three Phase 3 M1 discovery contracts
+
+- **Conversation runtime**: added `conversation-runtime/v1` lifecycle, active-turn, pending-preview, Leader, ownership, cancellation, blocker, and control discovery with strict example validation.
+- **Leader backend**: added `leader-backend/v1` for explicit API/Agent-CLI identity, readiness, transport, capabilities, blockers, and setup/use/assign controls; automatic fallback is contract-invalid.
+- **Worker transport**: added `worker-transport/v1` for exact configured/effective transport, readiness/capabilities, explicit reroute facts, read-only tmux mirror, single-writer ownership, and explicit takeover controls; silent transport change is invalid.
+- **Discovery and safety**: registered all three in the contract index and CLI, added durable schema documents, rejected missing/unknown fields and unsafe enabled controls, and updated frozen contract lists/counts.
+- **TDD evidence**: focused/registry contract tests are 497 passed; the broader contract + CLI regression is 848 passed; compileall and `git diff --check` pass.
+
 ### Design the Phase 3 M1 foreground conversation
 
 - **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.

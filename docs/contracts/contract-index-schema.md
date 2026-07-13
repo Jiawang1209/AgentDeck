@@ -2,6 +2,8 @@
 
 `agentdeck contract list` is the read-only discovery index for GUI, TUI, natural-language, and automation clients that need to find AgentDeck's machine-readable contract commands without hard-coding every subcommand.
 
+The M1 foreground-conversation slice adds `conversation-runtime`, `leader-backend`, and `worker-transport` to this index.
+
 It does not read `.agentdeck/` state, does not inspect tmux panes, does not call any Leader provider, and does not mutate the project.
 
 ## Command
@@ -53,6 +55,9 @@ The index currently lists these contract names in order:
 - `agent-runtime`
 - `protocol-runtime`
 - `acp-runtime`
+- `conversation-runtime`
+- `leader-backend`
+- `worker-transport`
 - `leader-chat`
 - `leader-status`
 - `leader-actions`
@@ -67,6 +72,8 @@ The index currently lists these contract names in order:
 `protocol-runtime` is discoverable through `agentdeck contract protocol-runtime [--example]`; its live read-only projection is `agentdeck protocol status`, and its durable schema is `docs/contracts/protocol-runtime-schema.md`.
 
 `acp-runtime` is discoverable through `agentdeck contract acp-runtime [--example]`; its live read-only preflight is `agentdeck protocol acp preflight --agent <agent_id>`, and its durable schema is `docs/contracts/acp-runtime-schema.md`.
+
+The three M1 contracts are discovery/validation surfaces. They describe current conversation lifecycle, explicit Leader backend identity, and Worker transport/ownership facts without executing controls or authorizing fallback.
 
 The contract/example and preflight are not proof of real-adapter acceptance. The explicit human-run gate and current blocker procedure are in `docs/validation/phase2-acp-live-acceptance-sop.md`.
 
