@@ -18,6 +18,21 @@ def test_tmux_backend_declares_fallback_capabilities() -> None:
     assert capabilities.permission_requests is False
 
 
+def test_tmux_doctor_reports_compact_timeout_failure(monkeypatch) -> None:
+    monkeypatch.setattr(tmux.shutil, "which", lambda _name: "/fake/tmux")
+    monkeypatch.setattr(
+        tmux.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            tmux.subprocess.TimeoutExpired(["/fake/tmux", "-V"], 5.0)
+        ),
+    )
+
+    assert tmux.TmuxBackend().doctor() == tmux.RuntimeDoctorResult(
+        ok=False, detail="tmux command timed out"
+    )
+
+
 def test_every_tmux_subprocess_call_has_one_bounded_timeout(monkeypatch) -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
 

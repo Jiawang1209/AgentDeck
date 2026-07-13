@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import asyncio
+import subprocess
 
 import pytest
 
@@ -1397,6 +1398,82 @@ def test_tmux_return_control_revalidates_project_pane_runtime(
     assert result["ownership"] == "agentdeck_owned"
     assert len(probes) == 4
     assert all(pane_id == "%7" for _socket, pane_id in probes)
+
+
+def test_tmux_return_timeout_persists_unverifiable_reconciliation(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = StateStore(tmp_path)
+    write_default_config(tmp_path)
+    store.bind_agent(
+        AgentRuntimeBinding(
+            agent_id="planner",
+            pane_id="%7",
+            session_name="agentdeck",
+            cwd=str(tmp_path),
+            status="running",
+        )
+    )
+    monkeypatch.setattr(
+        "agentdeck.runtime.tmux.TmuxBackend.pane_exists",
+        lambda *_args: True,
+    )
+    state = store.load()
+    state["conversation_sessions"] = [{
+        "conversation_id": "cvs_session1", "created_at": NOW.isoformat()
+    }]
+    state["conversation_state_transitions"] = [
+        {
+            "transition_id": "cst_created", "conversation_id": "cvs_session1",
+            "entity_type": "conversation", "entity_id": "cvs_session1",
+            "from_state": None, "to_state": "created", "reason": "started",
+            "created_at": NOW.isoformat(),
+        },
+        {
+            "transition_id": "cst_ready", "conversation_id": "cvs_session1",
+            "entity_type": "conversation", "entity_id": "cvs_session1",
+            "from_state": "created", "to_state": "ready", "reason": "ready",
+            "created_at": NOW.isoformat(),
+        },
+    ]
+    store.save(state)
+    target = {"agent_id": "planner"}
+    preview = apply_worker_ownership_request(
+        store, action="takeover", params=target, generation=9, now=NOW
+    )
+    apply_worker_ownership_request(
+        store,
+        action="takeover",
+        params={**target, "preview_id": preview["preview_id"]},
+        generation=9,
+        now=NOW,
+    )
+
+    timeout = subprocess.TimeoutExpired(["tmux", "display-message"], 5.0)
+    monkeypatch.setattr(
+        "agentdeck.runtime.tmux.TmuxBackend.pane_exists",
+        lambda *_args: (_ for _ in ()).throw(timeout),
+    )
+    with pytest.raises(ServiceError, match="reconciliation is ambiguous"):
+        apply_worker_ownership_request(
+            store,
+            action="return_control",
+            params={
+                **target,
+                "reported_changes": {"summary": "no changes", "paths": []},
+            },
+            generation=9,
+            now=NOW,
+        )
+
+    persisted = store.load()
+    assert persisted["worker_takeover_baselines"][0]["state"] == "active"
+    decision = persisted["worker_reconciliation_decisions"][-1]
+    assert decision["status"] == "ambiguous"
+    assert decision["blocker"] == (
+        "Worker reconciliation tmux runtime evidence is unverifiable"
+    )
+    assert "display-message" not in repr(decision)
 
 
 def test_production_reroute_applies_only_before_attempt_creation(tmp_path) -> None:

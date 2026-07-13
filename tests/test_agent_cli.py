@@ -5,6 +5,7 @@ import asyncio
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -5223,6 +5224,36 @@ def test_doctor_reports_configured_leader_ready_when_env_is_set(tmp_path, monkey
     assert payload["deepseek"]["ok"] is True
     assert payload["deepseek"]["command_path"] is None
     assert exit_code == (0 if payload["tmux"]["ok"] else 1)
+
+
+def test_doctor_tmux_timeout_still_returns_valid_compact_json(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    prepare_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "agentdeck.runtime.tmux.shutil.which",
+        lambda name: "/secret/tmux" if name == "tmux" else None,
+    )
+    monkeypatch.setattr(
+        "agentdeck.runtime.tmux.subprocess.run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(["/secret/tmux", "-V"], 5.0)
+        ),
+    )
+
+    exit_code = cli.main(["doctor"])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 1
+    assert payload["ok"] is False
+    assert payload["tmux"] == {
+        "ok": False,
+        "detail": "tmux command timed out",
+    }
+    assert captured.err == ""
+    assert "Traceback" not in captured.out
+    assert "/secret/tmux" not in captured.out
 
 
 def test_doctor_configured_leader_never_exposes_real_provider_key(

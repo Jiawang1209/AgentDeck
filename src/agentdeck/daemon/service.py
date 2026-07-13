@@ -16,6 +16,7 @@ import math
 from pathlib import Path
 import re
 import shutil
+import subprocess
 from typing import Any, Protocol
 
 from .scheduler import SchedulerDecision, SchedulerFacts, schedule_gate
@@ -684,7 +685,13 @@ def _worker_reconciliation_snapshot(
             pane_exists = TmuxBackend().pane_exists(
                 config.runtime, str(binding["pane_id"])
             )
-        except (OSError, RuntimeError, TypeError, ValueError):
+        except (
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            subprocess.TimeoutExpired,
+        ):
             pane_exists = False
         if not pane_exists:
             raise ServiceError("Worker reconciliation tmux runtime evidence is unverifiable")

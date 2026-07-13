@@ -24,13 +24,16 @@ class TmuxBackend:
         tmux_path = shutil.which("tmux")
         if not tmux_path:
             return RuntimeDoctorResult(ok=False, detail="tmux not found on PATH")
-        version = subprocess.run(
-            [tmux_path, "-V"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=TMUX_COMMAND_TIMEOUT_SECONDS,
-        )
+        try:
+            version = subprocess.run(
+                [tmux_path, "-V"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=TMUX_COMMAND_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            return RuntimeDoctorResult(ok=False, detail="tmux command timed out")
         detail = version.stdout.strip() or version.stderr.strip() or tmux_path
         return RuntimeDoctorResult(ok=version.returncode == 0, detail=detail)
 
