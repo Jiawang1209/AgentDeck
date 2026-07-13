@@ -8,10 +8,12 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import traceback
 from typing import Mapping
 
 import pytest
 
+import agentdeck.daemon.lifecycle as lifecycle
 from agentdeck.daemon.lifecycle import (
     DaemonEndpoint,
     DaemonIdentityError,
@@ -65,7 +67,7 @@ def _contend_for_daemon(
         results.put((ownership.role, ownership.instance_id, None))
         ownership.release()
     except Exception as exc:  # pragma: no cover - emitted to the parent assertion
-        results.put(("error", "", f"{type(exc).__name__}: {exc}"))
+        results.put(("error", "", f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"))
 
 
 def _run_two_start_contenders(project: Path) -> list[tuple[str, str, str | None]]:
@@ -91,7 +93,8 @@ def _run_two_start_contenders(project: Path) -> list[tuple[str, str, str | None]
         for process in processes:
             if process.is_alive():
                 process.terminate()
-            process.join(timeout=5)
+            if process.pid is not None:
+                process.join(timeout=5)
         results.close()
         results.join_thread()
 
@@ -110,6 +113,28 @@ def _metadata(
         "start_nonce_hash": nonce_hash,
         "pid": pid,
     }
+
+
+def _swap_runtime_after_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    project: Path,
+    outside: Path,
+) -> Path:
+    runtime = project / ".agentdeck" / "runtime"
+    parked = project / ".agentdeck" / "runtime-parked"
+    original = lifecycle._reject_endpoint_symlinks
+    swapped = False
+
+    def swap_after_validation(endpoint: object) -> None:
+        nonlocal swapped
+        original(endpoint)
+        if not swapped:
+            swapped = True
+            runtime.rename(parked)
+            runtime.symlink_to(outside, target_is_directory=True)
+
+    monkeypatch.setattr(lifecycle, "_reject_endpoint_symlinks", swap_after_validation)
+    return parked
 
 
 def test_project_endpoint_uses_canonical_project_root(tmp_path: Path) -> None:
@@ -395,6 +420,151 @@ def test_endpoint_symlink_is_rejected_without_write_or_delete(
     assert outside.read_text(encoding="utf-8") == "do-not-touch"
     assert endpoint_link.is_symlink()
     assert not (runtime / "daemon.lock").exists()
+
+
+def test_runtime_swap_after_validation_cannot_write_outside_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    runtime = project / ".agentdeck" / "runtime"
+    runtime.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    parked = _swap_runtime_after_validation(monkeypatch, project, outside)
+
+    with pytest.raises(DaemonIdentityError, match="runtime"):
+        acquire_daemon_ownership(
+            project,
+            start_nonce="owner-nonce",
+            health_probe=lambda metadata: metadata,
+        )
+
+    assert list(outside.iterdir()) == []
+    assert parked.is_dir()
+
+
+def test_runtime_swap_after_validation_cannot_reconcile_outside_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    runtime = project / ".agentdeck" / "runtime"
+    runtime.mkdir(parents=True)
+    _atomic_json(runtime / "daemon.json", _metadata(project, pid=999_999_999))
+    (runtime / "daemon.sock").write_text("old", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_metadata = _metadata(project, pid=999_999_999)
+    _atomic_json(outside / "daemon.json", outside_metadata)
+    (outside / "daemon.sock").write_text("outside", encoding="utf-8")
+    _swap_runtime_after_validation(monkeypatch, project, outside)
+
+    with pytest.raises(DaemonIdentityError, match="runtime"):
+        reconcile_endpoint(
+            project,
+            expected_project_hash=project_root_hash(project),
+            health_probe=lambda metadata: None,
+        )
+
+    assert json.loads((outside / "daemon.json").read_text(encoding="utf-8")) == outside_metadata
+    assert (outside / "daemon.sock").read_text(encoding="utf-8") == "outside"
+
+
+def test_runtime_swap_after_validation_cannot_cleanup_outside_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    owner = acquire_daemon_ownership(
+        project,
+        start_nonce="owner-nonce",
+        health_probe=lambda metadata: metadata,
+    )
+    owner.endpoint.socket_path.write_text("old", encoding="utf-8")
+    metadata = json.loads(owner.endpoint.metadata_path.read_text(encoding="utf-8"))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _atomic_json(outside / "daemon.json", metadata)
+    (outside / "daemon.sock").write_text("outside", encoding="utf-8")
+    _swap_runtime_after_validation(monkeypatch, project, outside)
+
+    assert not cleanup_daemon_endpoint(owner)
+    assert json.loads((outside / "daemon.json").read_text(encoding="utf-8")) == metadata
+    assert (outside / "daemon.sock").read_text(encoding="utf-8") == "outside"
+
+
+def test_lock_fd_is_closed_when_fdopen_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    real_open = lifecycle.os.open
+    captured: list[int] = []
+
+    def tracking_open(path: object, *args: object, **kwargs: object) -> int:
+        descriptor = real_open(path, *args, **kwargs)
+        if Path(path).name == "daemon.lock":
+            captured.append(descriptor)
+        return descriptor
+
+    def failing_fdopen(*args: object, **kwargs: object) -> object:
+        raise OSError("fdopen failed")
+
+    monkeypatch.setattr(lifecycle.os, "open", tracking_open)
+    monkeypatch.setattr(lifecycle.os, "fdopen", failing_fdopen)
+
+    with pytest.raises(OSError, match="fdopen failed"):
+        acquire_daemon_ownership(
+            project,
+            start_nonce="owner-nonce",
+            health_probe=lambda metadata: metadata,
+        )
+
+    assert captured
+    for descriptor in captured:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
+def test_lock_fd_is_closed_when_initial_flock_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    real_open = lifecycle.os.open
+    real_fdopen = lifecycle.os.fdopen
+    captured: list[int] = []
+    retained_streams: list[object] = []
+
+    def tracking_open(path: object, *args: object, **kwargs: object) -> int:
+        descriptor = real_open(path, *args, **kwargs)
+        if Path(path).name == "daemon.lock":
+            captured.append(descriptor)
+        return descriptor
+
+    def retaining_fdopen(*args: object, **kwargs: object) -> object:
+        stream = real_fdopen(*args, **kwargs)
+        retained_streams.append(stream)
+        return stream
+
+    def failing_flock(descriptor: int, operation: int) -> None:
+        del descriptor, operation
+        raise OSError("flock failed")
+
+    monkeypatch.setattr(lifecycle.os, "open", tracking_open)
+    monkeypatch.setattr(lifecycle.os, "fdopen", retaining_fdopen)
+    monkeypatch.setattr(lifecycle.fcntl, "flock", failing_flock)
+
+    with pytest.raises(OSError, match="flock failed"):
+        acquire_daemon_ownership(
+            project,
+            start_nonce="owner-nonce",
+            health_probe=lambda metadata: metadata,
+        )
+
+    assert captured
+    for descriptor in captured:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
 
 
 @pytest.mark.parametrize(
