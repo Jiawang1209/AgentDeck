@@ -4,6 +4,14 @@
 
 ## 2026-07-13
 
+### Enforce one verified project daemon instance
+
+- **Canonical project endpoint**: added project-root canonicalization and a project-scoped runtime endpoint for daemon metadata, Unix socket, and startup lock, so symlink aliases resolve to one identity and one endpoint.
+- **Verified ownership election**: nonblocking `fcntl` startup locking elects one owner while followers accept only an independently healthy proof matching the exact project hash, instance id, start-nonce hash, and PID. Compact metadata is written with fsync plus atomic replacement and never stores the raw nonce.
+- **Conservative stale cleanup**: endpoint reconciliation occurs only while holding the startup lock, removes dead-owner artifacts without signaling any process, and leaves live but unverified processes and files untouched. Shutdown cleanup removes metadata/socket only when the on-disk identity still belongs to the exact lock-owning instance.
+- **Task-driven lifetime gate**: pure keepalive and normal-stop gates cover connected clients, active Missions and Workers, pending approvals/permissions/replies/recovery/ambiguity/decisions, durable outbox work, recovery, safe shutdown, and in-flight atomic writes.
+- **TDD evidence**: the initial RED was the missing process-lifecycle APIs; follow-up REDs covered recovery-decision and atomic-write stop facts. The real two-process election test passes in five consecutive focused runs (24 passed each), the combined daemon lifecycle/protocol/process regression is 123 passed, and compileall plus `git diff --check` pass.
+
 ### Define the bounded project daemon RPC protocol
 
 - **Versioned envelopes**: added frozen request, response, and event records for `daemon-rpc/v1`, with strict identifiers, exact fields, recursive JSON-value validation, response success/error invariants, and nonnegative integer event revisions that reject booleans.
