@@ -192,9 +192,18 @@ class SchedulerFacts:
                 or self.attempt_id is not None
                 or self.step_state != "none"
                 or self.attempt_state != "none"
+                or self.reply_state != "none"
+                or self.handoff_state != "none"
+                or self.permission_state != "none"
+                or self.next_step_eligible
+                or self.all_steps_completed
+                or self.snapshot_state == "drift"
+                or self.lineage_state != "valid"
+                or self.ownership_state != "owned"
                 or self.active_attempt_count != 0
+                or self.blocker is not None
             ):
-                raise SchedulerError("invalid scheduler facts: idle Mission identity")
+                raise SchedulerError("invalid scheduler facts: idle Mission facts")
             return
         if self.mission_id is None:
             raise SchedulerError("invalid scheduler facts: mission identity")
@@ -280,6 +289,7 @@ class SchedulerDecision:
             "await_worker",
             "validate_reply",
             "record_handoff",
+            "activate_next",
             "wait_ambiguity",
         } and self.attempt_id is None:
             raise SchedulerError("invalid scheduler decision")
@@ -355,10 +365,20 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
             facts,
             blocker="Worker reply precedes successful terminal attempt",
         )
-    if facts.permission_state == "pending":
-        return _decision("wait_human", facts)
-    if facts.attempt_state == "ambiguous":
-        return _decision("wait_ambiguity", facts)
+    if (
+        facts.mission_state in _TERMINAL_MISSION_STATES
+        and facts.permission_state == "pending"
+    ):
+        return _decision(
+            "blocked", facts, blocker="terminal Mission has pending permission"
+        )
+    if (
+        facts.mission_state in _TERMINAL_MISSION_STATES
+        and facts.attempt_state == "ambiguous"
+    ):
+        return _decision(
+            "blocked", facts, blocker="terminal Mission retains ambiguous attempt"
+        )
     if facts.permission_state in {"denied", "expired"}:
         reason = (
             "permission denied"
@@ -366,8 +386,6 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
             else "permission expired"
         )
         return _decision("blocked", facts, blocker=reason)
-    if facts.mission_state in _TERMINAL_MISSION_STATES:
-        return _decision("idle", facts)
     if facts.step_state in {"failed", "blocked"}:
         return _decision(
             "blocked",
@@ -382,6 +400,18 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
         )
     if facts.reply_state == "invalid":
         return _decision("blocked", facts, blocker=facts.blocker or "Worker reply is invalid")
+    if facts.mission_state == "completed" and (
+        facts.step_id is not None or facts.attempt_id is not None
+    ):
+        return _decision(
+            "blocked", facts, blocker="terminal Mission retains current lineage"
+        )
+    if facts.mission_state in _TERMINAL_MISSION_STATES:
+        return _decision("idle", facts)
+    if facts.permission_state == "pending":
+        return _decision("wait_human", facts)
+    if facts.attempt_state == "ambiguous":
+        return _decision("wait_ambiguity", facts)
 
     if facts.all_steps_completed:
         if facts.attempt_id is not None:
@@ -420,6 +450,10 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
     if facts.step_state == "pending" and facts.attempt_state == "none":
         return _decision("blocked", facts, blocker="Worker is not ready")
     if facts.attempt_state == "prepared":
+        if not facts.worker_ready:
+            return _decision(
+                "blocked", facts, blocker="Worker is not ready at dispatch"
+            )
         return _decision("dispatch_prepared", facts)
     if (
         facts.attempt_state in _SUCCESSFUL_ATTEMPT_STATES
@@ -446,7 +480,19 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
         and facts.reply_state in {"none", "pending"}
     ):
         return _decision("blocked", facts, blocker="Worker result is missing")
-    return _decision("idle", facts)
+    if facts.step_state == "active" and facts.attempt_state == "none":
+        return _decision(
+            "blocked", facts, blocker="active Mission step has no attempt"
+        )
+    if (
+        facts.attempt_state in _SUCCESSFUL_ATTEMPT_STATES
+        and facts.reply_state == "validated"
+        and facts.handoff_state == "recorded"
+    ):
+        return _decision(
+            "blocked", facts, blocker="successful attempt has no next transition"
+        )
+    return _decision("blocked", facts, blocker="incomplete active Mission facts")
 
 
 EffectResult = TypeVar("EffectResult")

@@ -180,6 +180,63 @@ def test_integrity_failures_take_priority_over_waiting_states() -> None:
     assert decision.blocker == "frozen snapshot drift"
 
 
+@pytest.mark.parametrize(
+    ("changes", "blocker"),
+    [
+        (
+            {
+                "attempt_state": "ambiguous",
+                "active_attempt_count": 0,
+                "permission_state": "denied",
+            },
+            "permission denied",
+        ),
+        (
+            {
+                "attempt_state": "ambiguous",
+                "active_attempt_count": 0,
+                "reply_state": "invalid",
+            },
+            "Worker reply is invalid",
+        ),
+        (
+            {
+                "attempt_state": "ambiguous",
+                "active_attempt_count": 0,
+                "step_state": "failed",
+            },
+            "Mission step is failed",
+        ),
+        (
+            {
+                "mission_state": "completed",
+                "step_id": None,
+                "step_state": "none",
+                "attempt_id": None,
+                "attempt_state": "none",
+                "active_attempt_count": 0,
+                "permission_state": "pending",
+            },
+            "terminal Mission has pending permission",
+        ),
+        (
+            {
+                "mission_state": "completed",
+                "attempt_state": "ambiguous",
+                "active_attempt_count": 0,
+            },
+            "terminal Mission retains ambiguous attempt",
+        ),
+    ],
+)
+def test_hard_failure_and_terminal_consistency_precede_waits(
+    changes: dict[str, object], blocker: str
+) -> None:
+    decision = schedule_gate(facts(**changes))
+    assert decision.kind == "blocked"
+    assert decision.blocker == blocker
+
+
 def test_scheduler_decision_carries_exact_lineage() -> None:
     decision = schedule_gate(facts(attempt_state="prepared"))
     assert decision == SchedulerDecision(
@@ -377,6 +434,30 @@ def test_unconfirmed_mission_rejects_step_or_attempt_facts() -> None:
         facts(mission_state="pending_confirmation")
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"permission_state": "pending"},
+        {"blocker": "unexpected work"},
+        {"all_steps_completed": True},
+    ],
+)
+def test_idle_mission_requires_complete_no_work_facts(
+    changes: dict[str, object],
+) -> None:
+    with pytest.raises(SchedulerError, match="idle Mission facts"):
+        facts(
+            mission_state="idle",
+            mission_id=None,
+            step_id=None,
+            step_state="none",
+            attempt_id=None,
+            attempt_state="none",
+            active_attempt_count=0,
+            **changes,
+        )
+
+
 def test_scheduler_rejects_ids_with_wrong_shape() -> None:
     for field, value in (
         ("mission_id", "../mission"),
@@ -405,6 +486,20 @@ def test_terminal_mission_has_no_next_transition(mission_state: str) -> None:
     assert decision.mission_id == MISSION_ID
 
 
+def test_completed_mission_cannot_retain_current_lineage() -> None:
+    decision = schedule_gate(
+        facts(
+            mission_state="completed",
+            attempt_state="succeeded",
+            active_attempt_count=0,
+            reply_state="validated",
+            handoff_state="recorded",
+        )
+    )
+    assert decision.kind == "blocked"
+    assert decision.blocker == "terminal Mission retains current lineage"
+
+
 def test_success_without_a_reply_fails_closed() -> None:
     decision = schedule_gate(
         facts(attempt_state="succeeded", active_attempt_count=0)
@@ -425,6 +520,12 @@ def test_unready_worker_fails_closed_before_preparation() -> None:
     )
     assert decision.kind == "blocked"
     assert decision.blocker == "Worker is not ready"
+
+
+def test_prepared_attempt_rechecks_worker_readiness_before_dispatch() -> None:
+    decision = schedule_gate(facts(attempt_state="prepared", worker_ready=False))
+    assert decision.kind == "blocked"
+    assert decision.blocker == "Worker is not ready at dispatch"
 
 
 def test_completion_cannot_skip_an_active_attempt() -> None:
@@ -517,6 +618,38 @@ def test_nonterminal_attempt_cannot_advance_reply_or_handoff(
 
 
 @pytest.mark.parametrize(
+    ("changes", "blocker"),
+    [
+        (
+            {
+                "attempt_id": None,
+                "attempt_state": "none",
+                "active_attempt_count": 0,
+            },
+            "active Mission step has no attempt",
+        ),
+        (
+            {
+                "attempt_state": "succeeded",
+                "active_attempt_count": 0,
+                "reply_state": "validated",
+                "handoff_state": "recorded",
+                "next_step_eligible": False,
+                "all_steps_completed": False,
+            },
+            "successful attempt has no next transition",
+        ),
+    ],
+)
+def test_active_mission_incomplete_facts_never_fall_through_to_idle(
+    changes: dict[str, object], blocker: str
+) -> None:
+    decision = schedule_gate(facts(**changes))
+    assert decision.kind == "blocked"
+    assert decision.blocker == blocker
+
+
+@pytest.mark.parametrize(
     "changes",
     [
         {
@@ -595,3 +728,5 @@ def test_scheduler_decision_rejects_unknown_kind_and_incoherent_blocker() -> Non
         SchedulerDecision(
             "complete_mission", MISSION_ID, STEP_ID, ATTEMPT_ID, None
         )
+    with pytest.raises(SchedulerError, match="invalid scheduler decision"):
+        SchedulerDecision("activate_next", MISSION_ID, None, None, None)
