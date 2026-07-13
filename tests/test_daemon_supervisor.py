@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from copy import deepcopy
 
 import pytest
@@ -1346,6 +1347,267 @@ def test_claim_lifecycle_allows_claimed_submitted_ambiguous_sequence(tmp_path) -
         "mission_attempt_submitted",
         "mission_attempt_ambiguous",
     ]
+
+
+@pytest.mark.parametrize(
+    "overlap_stage", ["claimed", "released", "submitted", "ambiguous"]
+)
+def test_claim_lifecycle_accepts_identical_journal_outbox_replay_overlap(
+    tmp_path, overlap_stage: str
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+    )
+    claim_id = str(claimed["admission_claim_id"])
+    if overlap_stage == "released":
+        store.release_mission_attempt_admission(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=claim_id,
+        )
+    elif overlap_stage in {"submitted", "ambiguous"}:
+        store.record_mission_attempt_submitted(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=claim_id,
+            receipt_summary="accepted",
+        )
+        if overlap_stage == "ambiguous":
+            store.mark_mission_attempt_ambiguous(
+                attempt_id="mat_0123456789ab",
+                dispatch_key="dsp_" + "1" * 32,
+                expected_claim_id=claim_id,
+                observed_dispatch_key="dsp_" + "1" * 32,
+                receipt_summary="accepted",
+                reason="receipt_persistence_unknown",
+            )
+
+    state = store.load()
+    store.events_path.write_text(
+        "".join(
+            json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n"
+            for item in state["protocol_event_outbox"]
+        ),
+        encoding="utf-8",
+    )
+
+    if overlap_stage == "claimed":
+        released = store.release_mission_attempt_admission(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=claim_id,
+        )
+        assert released["state"] == "prepared"
+    elif overlap_stage == "released":
+        reclaimed = store.claim_mission_attempt_admission(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+        )
+        assert reclaimed["state"] == "admitting"
+    elif overlap_stage == "submitted":
+        ambiguous = store.mark_mission_attempt_ambiguous(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=claim_id,
+            observed_dispatch_key="dsp_" + "1" * 32,
+            receipt_summary="accepted",
+            reason="receipt_persistence_unknown",
+        )
+        assert ambiguous["state"] == "ambiguous"
+    else:
+        state["mission_attempts"].append(
+            _attempt(
+                attempt_id="mat_abcdefabcdef",
+                mission_id="mis_abcdefabcdef",
+                dispatch_key="dsp_" + "2" * 32,
+            )
+        )
+        store.save(state)
+        next_claim = store.claim_mission_attempt_admission(
+            attempt_id="mat_abcdefabcdef",
+            dispatch_key="dsp_" + "2" * 32,
+        )
+        assert next_claim["state"] == "admitting"
+
+
+def test_claim_lifecycle_rejects_conflicting_journal_outbox_replay_overlap(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+    )
+    claim_id = str(claimed["admission_claim_id"])
+    state = store.load()
+    conflicting = deepcopy(state["protocol_event_outbox"][0])
+    conflicting["payload"]["mission_id"] = "mis_abcdefabcdef"
+    store.events_path.write_text(
+        json.dumps(conflicting, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    before_state = store.load()
+    before_events = store.events_path.read_bytes()
+
+    with pytest.raises(ValueError, match="replay conflict"):
+        store.release_mission_attempt_admission(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=claim_id,
+        )
+    assert store.load() == before_state
+    assert store.events_path.read_bytes() == before_events
+
+
+def test_admission_ambiguity_cannot_follow_submitted_even_with_fixed_summary(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+    )
+    claim_id = str(claimed["admission_claim_id"])
+    store.record_mission_attempt_submitted(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=claim_id,
+        receipt_summary="admission outcome unknown",
+    )
+    before_state = store.load()
+    before_events = (
+        store.events_path.read_bytes() if store.events_path.exists() else None
+    )
+
+    with pytest.raises(ValueError, match="transition"):
+        store.mark_mission_attempt_admission_ambiguous(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=claim_id,
+            reason="admission_outcome_unknown",
+        )
+    assert store.load() == before_state
+    assert (
+        store.events_path.read_bytes() if store.events_path.exists() else None
+    ) == before_events
+
+
+def test_history_replay_rejects_admission_ambiguity_after_submitted(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+    )
+    claim_id = str(claimed["admission_claim_id"])
+    store.record_mission_attempt_submitted(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=claim_id,
+        receipt_summary="admission outcome unknown",
+    )
+    state = store.load()
+    state["mission_attempts"][0].update(
+        {
+            "state": "ambiguous",
+            "blocker": "admission_outcome_unknown",
+            "terminal_reason": "admission_outcome_unknown",
+        }
+    )
+    state["mission_attempts"].append(
+        _attempt(
+            attempt_id="mat_abcdefabcdef",
+            mission_id="mis_abcdefabcdef",
+            dispatch_key="dsp_" + "2" * 32,
+        )
+    )
+    state["protocol_event_outbox"].append(
+        {
+            "event_id": "evt_abcdefabcdef",
+            "event_type": "mission_attempt_ambiguous",
+            "created_at": "2026-07-13T00:00:03+00:00",
+            "payload": {
+                "attempt_id": "mat_0123456789ab",
+                "mission_id": "mis_0123456789ab",
+                "step_id": "step_1",
+                "dispatch_key": "dsp_" + "1" * 32,
+                "admission_claim_id": claim_id,
+                "reason": "admission_outcome_unknown",
+                "expected_dispatch_key": "dsp_" + "1" * 32,
+                "observed_dispatch_key": None,
+            },
+        }
+    )
+    store.save(state)
+    before = store.load()
+
+    with pytest.raises(ValueError, match="admission claim history"):
+        store.claim_mission_attempt_admission(
+            attempt_id="mat_abcdefabcdef",
+            dispatch_key="dsp_" + "2" * 32,
+        )
+    assert store.load() == before
+
+
+@pytest.mark.parametrize(
+    ("source_stage", "reason"),
+    [
+        ("claimed", "admission_outcome_unknown"),
+        ("claimed", "receipt_persistence_unknown"),
+        ("submitted", "receipt_persistence_unknown"),
+    ],
+)
+def test_claim_lifecycle_allows_reason_specific_ambiguity_stages(
+    tmp_path, source_stage: str, reason: str
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+    )
+    claim_id = str(claimed["admission_claim_id"])
+    receipt_summary = "accepted"
+    if source_stage == "submitted":
+        store.record_mission_attempt_submitted(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=claim_id,
+            receipt_summary=receipt_summary,
+        )
+
+    if reason == "admission_outcome_unknown":
+        ambiguous = store.mark_mission_attempt_admission_ambiguous(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=claim_id,
+            reason=reason,
+        )
+    else:
+        ambiguous = store.mark_mission_attempt_ambiguous(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=claim_id,
+            observed_dispatch_key="dsp_" + "1" * 32,
+            receipt_summary=receipt_summary,
+            reason=reason,
+        )
+    assert ambiguous["state"] == "ambiguous"
 
 
 def test_submitted_reread_rejects_forged_claim_generation_before_complete() -> None:

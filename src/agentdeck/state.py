@@ -392,7 +392,12 @@ def _validate_mission_admission_claim_history(
         else:
             reason = payload.get("reason")
             observed_dispatch_key = payload.get("observed_dispatch_key")
-            if prior_stage not in {"claimed", "submitted"} or (
+            allowed_prior_stages = (
+                {"claimed"}
+                if reason == "admission_outcome_unknown"
+                else {"claimed", "submitted"}
+            )
+            if prior_stage not in allowed_prior_stages or (
                 reason == "receipt_persistence_unknown"
                 and (
                     type(observed_dispatch_key) is not str
@@ -2486,12 +2491,35 @@ class StateStore:
         _validated_protocol_event_outbox_ids(outbox)
         records: list[object] = []
         self._strict_protocol_journal_event_ids()
+        journal_records_by_id: dict[str, dict[str, Any]] = {}
         if self.events_path.exists():
             for line in self.events_path.read_text(encoding="utf-8").splitlines():
                 if line.strip():
-                    records.append(json.loads(line))
+                    record = json.loads(line)
+                    records.append(record)
+                    journal_records_by_id[record["event_id"]] = record
         if type(outbox) is list:
-            records.extend(outbox)
+            for record in outbox:
+                durable = journal_records_by_id.get(record["event_id"])
+                if durable is None:
+                    records.append(record)
+                    continue
+                durable_canonical = json.dumps(
+                    durable,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                pending_canonical = json.dumps(
+                    record,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                if durable_canonical != pending_canonical:
+                    raise ValueError("protocol event replay conflict")
         return _validate_mission_admission_claim_history(records, attempts)
 
     def claim_mission_attempt_admission(
@@ -2603,11 +2631,10 @@ class StateStore:
                 ):
                     return persisted
                 raise ValueError("mission attempt receipt conflict")
-            allowed_states = (
-                {"admitting"}
-                if target_state == "submitted"
-                else {"admitting", "submitted"}
-            )
+            if target_state == "submitted" or reason == "admission_outcome_unknown":
+                allowed_states = {"admitting"}
+            else:
+                allowed_states = {"admitting", "submitted"}
             if persisted["state"] not in allowed_states:
                 raise ValueError("mission attempt receipt transition is invalid")
             if (
