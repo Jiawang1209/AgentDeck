@@ -52,7 +52,11 @@ daemon revalidates the exact Mission attempt, ACP session/turn, permission
 binding, frozen project/action scope, permission policy, and runtime ownership.
 An out-of-scope target, unsupported tool kind, human-owned Worker, stale turn,
 or mismatched `acp` attempt / `acp-adapter` session is denied without granting
-the effect. The resulting gate decision is durably auditable.
+the effect. An allowed decision first atomically consumes the exact
+permission/tool-call/effect tuple; only then may the daemon return ACP
+`allow_once`. Exact replay returns `permission_consumed` without another write
+or authorization, conflicting lineage fails closed, and failure before the
+atomic commit grants nothing. The resulting gate decision is durably auditable.
 
 `worker.takeover` records a bounded baseline for the exact controller
 generation: ACP session/turn lineage, artifact lineage, and a content-hashed
@@ -63,6 +67,18 @@ session/artifact lineage, a safe boundary, and an execution-time rescan matching
 the preview. Missing reports, drift, escaping symlinks, changed authority, or a
 replayed preview fail closed. Successful return consumes the active baseline;
 the report and reconciliation remain durable audit facts.
+
+The baseline cannot be created from empty or unverifiable runtime facts. An ACP
+Worker must be present in project configuration and have one exact ready
+`acp-adapter` AgentSession matching provider, project workspace, native session
+identity and required capabilities, with no active turn. A tmux Worker must
+have the exact running project binding and pass a read-only `pane_exists` probe
+through the same project's configured socket and session. These facts are
+revalidated for both preview and confirmation. Any projection, gate, or
+confirmation failure keeps the baseline active and atomically records an exact
+ambiguous reconciliation decision plus conversation/recovery audit facts.
+ProjectView conversation blockers and scheduler facts surface that blocker;
+only a later fully verified return resolves it.
 
 Startup recovery is transport-derived. A tmux attempt with a durable submitted
 receipt may remain observable and wait for its Worker. An ACP attempt in

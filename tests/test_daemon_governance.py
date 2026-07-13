@@ -5,6 +5,7 @@ import asyncio
 
 import pytest
 
+from agentdeck.config import load_config, write_default_config
 from agentdeck.conversation.bindings import PreviewBindingError
 from agentdeck.daemon.governance import (
     GovernanceError,
@@ -27,10 +28,32 @@ from agentdeck.daemon.service import (
     ServiceError,
     permission_state_for_attempt,
 )
+from agentdeck.models import AgentRuntimeBinding
 from agentdeck.state import StateStore
+from agentdeck.runtime.protocol import TransportCapabilities
 
 
 NOW = datetime(2026, 7, 14, 2, 0, tzinfo=timezone.utc)
+
+
+def _seed_acp_worker_runtime(
+    store: StateStore, root, *, agent_id: str = "worker-a"
+) -> None:
+    (root / ".agentdeck" / "config.toml").write_text(
+        f'''[project]\nname = "test"\n\n[leader]\nagent_id = "leader"\nprovider = "fake"\nmodel = "fake"\napproval_mode = "confirm"\n\n[[agents]]\nagent_id = "{agent_id}"\nrole = "implementation"\nprovider = "codex"\ncommand = "codex"\nworkspace_mode = "shared"\nrole_prompt = "implement"\ntransport = "acp"\ntransport_command = ["fake-agent-acp"]\n\n[runtime]\nbackend = "tmux"\nsession_name = "agentdeck"\nsocket_name = "agentdeck-test"\n''',
+        encoding="utf-8",
+    )
+    session = store.record_agent_session(
+        agent_id,
+        "codex",
+        "acp-adapter",
+        "native-worker",
+        str(root),
+        TransportCapabilities(True, True, True, True, True, False),
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "created", "ready", "ready", {}
+    )
 
 
 def _effect(**updates: object) -> dict[str, object]:
@@ -757,6 +780,7 @@ def test_production_mission_control_actions_are_exact_bound(
 
 def test_production_takeover_and_return_control_are_preview_bound(tmp_path) -> None:
     store = StateStore(tmp_path)
+    _seed_acp_worker_runtime(store, tmp_path)
     state = store.load()
     state["conversation_sessions"] = [{
         "conversation_id": "cvs_session1",
@@ -845,6 +869,7 @@ def test_return_control_requires_exact_human_change_report_and_execution_rescan(
     tmp_path,
 ) -> None:
     store = StateStore(tmp_path)
+    _seed_acp_worker_runtime(store, tmp_path)
     state = store.load()
     state["conversation_sessions"] = [{
         "conversation_id": "cvs_session1", "created_at": NOW.isoformat()
@@ -933,6 +958,142 @@ def test_return_control_requires_exact_human_change_report_and_execution_rescan(
     )
     assert result["ownership"] == "agentdeck_owned"
     assert store.load()["worker_takeover_baselines"][0]["state"] == "reconciled"
+
+
+def test_return_control_runtime_drift_persists_ambiguous_blocker(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    _seed_acp_worker_runtime(store, tmp_path)
+    state = store.load()
+    state["conversation_sessions"] = [{
+        "conversation_id": "cvs_session1", "created_at": NOW.isoformat()
+    }]
+    state["conversation_state_transitions"] = [
+        {
+            "transition_id": "cst_created", "conversation_id": "cvs_session1",
+            "entity_type": "conversation", "entity_id": "cvs_session1",
+            "from_state": None, "to_state": "created", "reason": "started",
+            "created_at": NOW.isoformat(),
+        },
+        {
+            "transition_id": "cst_ready", "conversation_id": "cvs_session1",
+            "entity_type": "conversation", "entity_id": "cvs_session1",
+            "from_state": "created", "to_state": "ready", "reason": "ready",
+            "created_at": NOW.isoformat(),
+        },
+    ]
+    store.save(state)
+    target = {"agent_id": "worker-a"}
+    preview = apply_worker_ownership_request(
+        store, action="takeover", params=target, generation=8, now=NOW
+    )
+    apply_worker_ownership_request(
+        store,
+        action="takeover",
+        params={**target, "preview_id": preview["preview_id"]},
+        generation=8,
+        now=NOW,
+    )
+    state = store.load()
+    state["agent_sessions"][0]["workspace"] = str(tmp_path.parent)
+    store.save(state)
+
+    with pytest.raises(ServiceError, match="reconciliation"):
+        apply_worker_ownership_request(
+            store,
+            action="return_control",
+            params={
+                **target,
+                "reported_changes": {"summary": "no changes", "paths": []},
+            },
+            generation=8,
+            now=NOW,
+        )
+    persisted = store.load()
+    assert persisted["worker_takeover_baselines"][0]["state"] == "active"
+    decision = persisted["worker_reconciliation_decisions"][-1]
+    assert decision["status"] == "ambiguous"
+    assert decision["agent_id"] == "worker-a"
+    assert decision["baseline_id"] == persisted["worker_takeover_baselines"][0]["baseline_id"]
+    assert "runtime" in decision["blocker"]
+    view = store.project_view(load_config(tmp_path))
+    assert any("worker reconciliation ambiguous" in item for item in view.conversation["blockers"])
+
+
+def test_tmux_return_control_revalidates_project_pane_runtime(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = StateStore(tmp_path)
+    write_default_config(tmp_path)
+    store.bind_agent(
+        AgentRuntimeBinding(
+            agent_id="planner",
+            pane_id="%7",
+            session_name="agentdeck",
+            cwd=str(tmp_path),
+            status="running",
+        )
+    )
+    probes: list[tuple[str, str]] = []
+
+    def pane_exists(_self, config, pane_id: str) -> bool:
+        probes.append((config.socket_name, pane_id))
+        return pane_id == "%7" and config.session_name == "agentdeck"
+
+    monkeypatch.setattr(
+        "agentdeck.runtime.tmux.TmuxBackend.pane_exists", pane_exists
+    )
+    state = store.load()
+    state["conversation_sessions"] = [{
+        "conversation_id": "cvs_session1", "created_at": NOW.isoformat()
+    }]
+    state["conversation_state_transitions"] = [
+        {
+            "transition_id": "cst_created", "conversation_id": "cvs_session1",
+            "entity_type": "conversation", "entity_id": "cvs_session1",
+            "from_state": None, "to_state": "created", "reason": "started",
+            "created_at": NOW.isoformat(),
+        },
+        {
+            "transition_id": "cst_ready", "conversation_id": "cvs_session1",
+            "entity_type": "conversation", "entity_id": "cvs_session1",
+            "from_state": "created", "to_state": "ready", "reason": "ready",
+            "created_at": NOW.isoformat(),
+        },
+    ]
+    store.save(state)
+    target = {"agent_id": "planner"}
+    preview = apply_worker_ownership_request(
+        store, action="takeover", params=target, generation=9, now=NOW
+    )
+    apply_worker_ownership_request(
+        store,
+        action="takeover",
+        params={**target, "preview_id": preview["preview_id"]},
+        generation=9,
+        now=NOW,
+    )
+    report = {"summary": "no changes", "paths": []}
+    preview = apply_worker_ownership_request(
+        store,
+        action="return_control",
+        params={**target, "reported_changes": report},
+        generation=9,
+        now=NOW,
+    )
+    result = apply_worker_ownership_request(
+        store,
+        action="return_control",
+        params={
+            **target,
+            "reported_changes": report,
+            "preview_id": preview["preview_id"],
+        },
+        generation=9,
+        now=NOW,
+    )
+    assert result["ownership"] == "agentdeck_owned"
+    assert len(probes) == 4
+    assert all(pane_id == "%7" for _socket, pane_id in probes)
 
 
 def test_production_reroute_applies_only_before_attempt_creation(tmp_path) -> None:

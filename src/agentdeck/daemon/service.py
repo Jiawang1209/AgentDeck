@@ -544,7 +544,18 @@ def _bounded_worktree_snapshot(root: Path) -> dict[str, object]:
 def _worker_reconciliation_snapshot(
     store: object, state: Mapping[str, object], agent_id: str
 ) -> dict[str, object]:
+    from ..config import load_config
+    from ..runtime.tmux import TmuxBackend
+
     root = Path(store.root).resolve()
+    try:
+        config = load_config(root)
+        configured = [item for item in config.agents if item.agent_id == agent_id]
+    except (OSError, TypeError, ValueError):
+        raise ServiceError("Worker reconciliation runtime evidence is unverifiable") from None
+    if len(configured) != 1:
+        raise ServiceError("Worker reconciliation runtime evidence is missing")
+    agent = configured[0]
     protocol = store.validated_protocol_state()
     current_states = store._validate_protocol_transition_history(protocol)
     sessions = sorted(
@@ -580,6 +591,76 @@ def _worker_reconciliation_snapshot(
         ),
         key=lambda item: str(item["turn_id"]),
     )
+    runtime_evidence: dict[str, object]
+    if agent.transport == "acp":
+        active_sessions = [item for item in sessions if item["state"] == "ready"]
+        if len(active_sessions) != 1 or any(
+            item["state"] not in {"ready", "disconnected", "stopped", "failed"}
+            for item in sessions
+        ):
+            raise ServiceError("Worker reconciliation ACP session evidence is missing")
+        raw_session = next(
+            item for item in protocol.get("agent_sessions", [])
+            if type(item) is dict
+            and item.get("session_id") == active_sessions[0]["session_id"]
+        )
+        caps = raw_session.get("capabilities")
+        if (
+            active_sessions[0]["provider"] != agent.provider
+            or active_sessions[0]["transport"] != "acp-adapter"
+            or Path(str(active_sessions[0]["workspace"])).resolve(strict=False) != root
+            or type(raw_session.get("native_session_id")) is not str
+            or type(caps) is not dict
+            or any(
+                caps.get(name) is not True
+                for name in (
+                    "structured_sessions", "streaming_updates",
+                    "structured_tools", "permission_requests",
+                )
+            )
+            or caps.get("observable_terminal") is not False
+            or any(
+                item["state"]
+                not in {"completed", "blocked", "failed", "cancelled", "ambiguous"}
+                for item in turns
+            )
+        ):
+            raise ServiceError("Worker reconciliation ACP runtime evidence mismatches")
+        runtime_evidence = {
+            "transport": "acp",
+            "session_id": active_sessions[0]["session_id"],
+            "native_session_id": raw_session["native_session_id"],
+            "state": active_sessions[0]["state"],
+        }
+    elif agent.transport == "tmux":
+        binding = state.get("agents", {}).get(agent_id) if type(state.get("agents")) is dict else None
+        if (
+            type(binding) is not dict
+            or binding.get("agent_id") != agent_id
+            or binding.get("status") != "running"
+            or type(binding.get("pane_id")) is not str
+            or not binding["pane_id"]
+            or binding.get("session_name") != config.runtime.session_name
+            or type(binding.get("cwd")) is not str
+            or Path(binding["cwd"]).resolve(strict=False) != root
+        ):
+            raise ServiceError("Worker reconciliation tmux runtime evidence is missing")
+        try:
+            pane_exists = TmuxBackend().pane_exists(
+                config.runtime, str(binding["pane_id"])
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            pane_exists = False
+        if not pane_exists:
+            raise ServiceError("Worker reconciliation tmux runtime evidence is unverifiable")
+        runtime_evidence = {
+            "transport": "tmux",
+            "pane_id": binding["pane_id"],
+            "session_name": binding["session_name"],
+            "cwd": str(root),
+        }
+    else:
+        raise ServiceError("Worker reconciliation configured transport is invalid")
     artifacts = sorted(
         (
             {
@@ -599,6 +680,10 @@ def _worker_reconciliation_snapshot(
     )
     worktree = _bounded_worktree_snapshot(root)
     return {
+        "runtime_transport": agent.transport,
+        "runtime_evidence_digest": hashlib.sha256(
+            repr(sorted(runtime_evidence.items())).encode()
+        ).hexdigest(),
         "session_digest": hashlib.sha256(repr((sessions, turns)).encode()).hexdigest(),
         "artifact_digest": hashlib.sha256(repr(artifacts).encode()).hexdigest(),
         "worktree_digest": worktree["digest"],
@@ -707,6 +792,9 @@ def _worker_ownership_facts(
         reconciled = bool(
             safe
             and report_valid
+            and reconciliation["runtime_transport"] == baseline.get("runtime_transport")
+            and reconciliation["runtime_evidence_digest"]
+            == baseline.get("runtime_evidence_digest")
             and reconciliation["session_digest"] == baseline.get("session_digest")
             and reconciliation["artifact_digest"] == baseline.get("artifact_digest")
         )
@@ -749,13 +837,61 @@ def apply_worker_ownership_request(
         raise ServiceError("Worker ownership request is invalid")
     if reported_changes is not None and type(reported_changes) is not dict:
         raise ServiceError("Worker ownership request is invalid")
-    facts = _worker_ownership_facts(
-        store,
-        agent_id,
-        reported_changes=reported_changes,  # type: ignore[arg-type]
-    )
+    def persist_ambiguity(blocker: str, evidence: dict[str, object]) -> None:
+        try:
+            store.record_worker_reconciliation_ambiguity(
+                agent_id=agent_id,
+                generation=generation,
+                blocker=blocker,
+                evidence=evidence,
+                now=now,
+            )
+        except (AttributeError, KeyError, OSError, TypeError, ValueError):
+            raise ServiceError(
+                "Worker return reconciliation ambiguity could not be persisted"
+            ) from None
+
+    try:
+        facts = _worker_ownership_facts(
+            store,
+            agent_id,
+            reported_changes=reported_changes,  # type: ignore[arg-type]
+        )
+    except ServiceError as exc:
+        if action == "return_control":
+            persist_ambiguity(
+                str(exc),
+                {
+                    "stage": "runtime_projection",
+                    "reported_changes_hash": hashlib.sha256(
+                        repr(reported_changes).encode()
+                    ).hexdigest(),
+                },
+            )
+            raise ServiceError("Worker return reconciliation is ambiguous") from None
+        raise
     gate = governance_transition_gate(action, facts)
     if not gate.allowed:
+        if action == "return_control" and facts.get("ownership") == "human_owned":
+            persist_ambiguity(
+                gate.blocker or "Worker reconciliation evidence mismatches",
+                {
+                    "stage": "reconciliation_gate",
+                    "baseline_id": facts.get("baseline_id"),
+                    "runtime_evidence_digest": facts.get("reconciliation", {}).get(
+                        "runtime_evidence_digest"
+                    ) if type(facts.get("reconciliation")) is dict else None,
+                    "session_digest": facts.get("reconciliation", {}).get(
+                        "session_digest"
+                    ) if type(facts.get("reconciliation")) is dict else None,
+                    "artifact_digest": facts.get("reconciliation", {}).get(
+                        "artifact_digest"
+                    ) if type(facts.get("reconciliation")) is dict else None,
+                    "worktree_digest": facts.get("reconciliation", {}).get(
+                        "worktree_digest"
+                    ) if type(facts.get("reconciliation")) is dict else None,
+                },
+            )
         raise ServiceError(gate.blocker or "Worker ownership change is blocked")
     preview_id = params.get("preview_id")
     if preview_id is None:
@@ -777,6 +913,15 @@ def apply_worker_ownership_request(
             now=now,
         )
     except (AttributeError, KeyError, TypeError, ValueError):
+        if action == "return_control":
+            persist_ambiguity(
+                "Worker return confirmation evidence drifted",
+                {
+                    "stage": "confirmation",
+                    "preview_id": preview_id,
+                    "baseline_id": facts.get("baseline_id"),
+                },
+            )
         raise ServiceError("Worker ownership confirmation failed") from None
 
 
@@ -837,7 +982,10 @@ def apply_transport_reroute_request(
     if len(step_matches) != 1 or len(worker_matches) != 1 or attempts:
         raise ServiceError("transport reroute cannot modify a frozen attempt")
     from_transport = worker_matches[0].get("configured_transport")
-    ownership = _worker_ownership_facts(store, agent_id)["ownership"]
+    try:
+        ownership = _worker_ownership_state(state, agent_id)
+    except (KeyError, TypeError, ValueError):
+        raise ServiceError("transport reroute ownership is invalid") from None
     facts = {
         "mission_id": mission_id,
         "step_id": step_id,
@@ -957,6 +1105,23 @@ def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
         if type(reason) is not str or not reason:
             raise ServiceError("scheduler recovery decision is invalid")
         recovery_blocker = reason
+    reconciliation_blocker = None
+    if step is not None:
+        reconciliation_matches = [
+            item for item in state.get("worker_reconciliation_decisions", [])
+            if isinstance(item, dict)
+            and item.get("agent_id") == step.get("agent_id")
+            and item.get("status") == "ambiguous"
+        ]
+        if reconciliation_matches:
+            latest = sorted(
+                reconciliation_matches,
+                key=lambda item: (str(item.get("created_at")), str(item.get("decision_id"))),
+            )[-1]
+            blocker = latest.get("blocker")
+            if type(blocker) is not str or not blocker:
+                raise ServiceError("scheduler reconciliation decision is invalid")
+            reconciliation_blocker = blocker
     replies = [
         item for item in state.get("mission_worker_replies", [])
         if isinstance(item, dict) and current is not None
@@ -1049,7 +1214,11 @@ def scheduler_facts_from_store(store: object) -> SchedulerFacts | None:
         lineage_state="valid",
         ownership_state=ownership_state,
         active_attempt_count=len(active),
-        blocker=recovery_blocker or mission["daemon_admission"].get("blocker"),
+        blocker=(
+            reconciliation_blocker
+            or recovery_blocker
+            or mission["daemon_admission"].get("blocker")
+        ),
     )
 
 

@@ -1353,6 +1353,8 @@ def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
             ) is True
             decision = await decision_task
             assert decision.option_id == "allow"
+            replay = await sink.decide(pending, options)
+            assert replay.reason == "governance_blocked:permission_consumed"
         finally:
             await service.close()
             await pumping
@@ -1462,6 +1464,63 @@ def test_approved_acp_permission_still_requires_real_effect_gates(
         if item["event_type"] == "mission_acp_effect_authorized"
     ]
     assert events[-1]["payload"]["allowed"] is allowed
+    if allowed:
+        before_retry = store.state_path.read_bytes()
+        replay = authorize_mission_acp_effect(
+            store,
+            attempt_id=ATTEMPT_ID,
+            permission_id=pending["permission"]["permission_id"],
+        )
+        assert replay["allowed"] is False
+        assert replay["gate"] == "permission_consumed"
+        assert store.state_path.read_bytes() == before_retry
+        assert len(store.load()["mission_acp_effect_consumptions"]) == 1
+
+
+def test_acp_effect_consumption_save_failure_never_authorizes(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    capabilities = TransportCapabilities(True, True, True, True, True, False)
+    session = store.record_agent_session(
+        "worker", "codex", "acp-adapter", "native", str(tmp_path), capabilities
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "created", "ready", "ready", {}
+    )
+    store.record_protocol_transition(
+        "session", session["session_id"], "ready", "busy", "prompt", {}
+    )
+    dispatch_key = store.load()["mission_attempts"][0]["dispatch_key"]
+    turn = store.record_protocol_turn(session["session_id"], dispatch_key)
+    store.record_protocol_transition(
+        "turn", turn["turn_id"], "created", "submitted", "submitted", {}
+    )
+    pending = store.record_mission_acp_permission_pending(
+        attempt_id=ATTEMPT_ID,
+        session_id=session["session_id"],
+        turn_id=turn["turn_id"],
+        sequence=0,
+        tool_name="edit",
+        target="src/app.py",
+        risk="project_write",
+        tool_call_id="call-1",
+    )
+    permission_id = pending["permission"]["permission_id"]
+    store.record_protocol_transition(
+        "permission", permission_id, "pending", "approved", "human", {}
+    )
+    before = store.state_path.read_bytes()
+
+    def fail_save(_state: dict[str, object]) -> None:
+        raise OSError("simulated consumption crash")
+
+    store._atomic_save = fail_save  # type: ignore[method-assign]
+    with pytest.raises(OSError, match="consumption crash"):
+        store.authorize_mission_acp_effect(
+            attempt_id=ATTEMPT_ID, permission_id=permission_id
+        )
+    assert store.state_path.read_bytes() == before
+    assert store.load().get("mission_acp_effect_consumptions", []) == []
 
 
 @pytest.mark.parametrize("forged_status", ["approved", "denied", "expired"])
@@ -1948,3 +2007,33 @@ def test_scheduler_preserves_persisted_acp_restart_ambiguity_after_approval(
     assert projected is not None
     assert projected.permission_state == "none"
     assert projected.blocker == "ACP Worker connection was lost across daemon restart"
+
+
+def test_scheduler_surfaces_worker_reconciliation_ambiguity(tmp_path: Path) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    mission = state["missions"][0]
+    mission["current_step"] = 0
+    mission["daemon_admission"] = {
+        "state": "admitted",
+        "snapshot_hash": mission["snapshot_hash"],
+        "blocker": None,
+        "recovery_command": None,
+        "updated_at": "2026-07-13T01:01:00+00:00",
+    }
+    state["worker_reconciliation_decisions"] = [{
+        "decision_id": "wrd_123456789abc",
+        "agent_id": "worker",
+        "baseline_id": "wob_123456789abc",
+        "generation": 4,
+        "status": "ambiguous",
+        "blocker": "Worker reconciliation ACP runtime evidence mismatches",
+        "evidence_hash": "sha256:" + "1" * 64,
+        "created_at": "2026-07-13T01:02:00+00:00",
+    }]
+    store.save(state)
+
+    projected = scheduler_facts_from_store(store)
+    assert projected is not None
+    assert projected.blocker == "Worker reconciliation ACP runtime evidence mismatches"

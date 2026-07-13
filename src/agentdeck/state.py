@@ -1435,6 +1435,8 @@ class StateStore:
                 "governance_previews": [],
                 "mission_transport_reroutes": [],
                 "worker_takeover_baselines": [],
+                "worker_reconciliation_decisions": [],
+                "mission_acp_effect_consumptions": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -2074,8 +2076,8 @@ class StateStore:
             }
             reconciliation = current_facts["reconciliation"]
             if type(reconciliation) is not dict or set(reconciliation) != {
-                "session_digest", "artifact_digest", "worktree_digest",
-                "worktree_manifest",
+                "runtime_transport", "runtime_evidence_digest", "session_digest",
+                "artifact_digest", "worktree_digest", "worktree_manifest",
             }:
                 raise ValueError("Worker reconciliation facts are invalid")
             baselines = state.setdefault("worker_takeover_baselines", [])
@@ -2174,6 +2176,15 @@ class StateStore:
                 active_baselines[0]["reported_changes"] = copy.deepcopy(
                     current_facts["reported_changes"]
                 )
+                for item in state.setdefault("worker_reconciliation_decisions", []):
+                    if (
+                        type(item) is dict
+                        and item.get("agent_id") == agent_id
+                        and item.get("baseline_id") == current_facts["baseline_id"]
+                        and item.get("status") == "ambiguous"
+                    ):
+                        item["status"] = "resolved"
+                        item["resolved_at"] = created_at
             event = EventRecord.create(
                 "worker_ownership_changed",
                 {
@@ -2206,6 +2217,89 @@ class StateStore:
                     else current_facts["baseline_id"]
                 ),
             }
+
+    def record_worker_reconciliation_ambiguity(
+        self,
+        *,
+        agent_id: str,
+        generation: int,
+        blocker: str,
+        evidence: Mapping[str, object],
+        now: datetime,
+    ) -> dict[str, object]:
+        """Persist one exact fail-closed return-control classification."""
+        if (
+            type(agent_id) is not str
+            or not agent_id
+            or type(generation) is not int
+            or generation < 1
+            or type(blocker) is not str
+            or not blocker.strip()
+            or len(blocker.encode("utf-8")) > 512
+            or type(evidence) is not dict
+        ):
+            raise ValueError("Worker reconciliation ambiguity is invalid")
+        evidence_hash = canonical_snapshot_hash(dict(evidence))
+        with self._protocol_mutation_lock():
+            state = self.load()
+            baselines = [
+                item for item in state.setdefault("worker_takeover_baselines", [])
+                if type(item) is dict
+                and item.get("agent_id") == agent_id
+                and item.get("state") == "active"
+            ]
+            if len(baselines) != 1 or baselines[0].get("generation") != generation:
+                raise ValueError("Worker reconciliation baseline is invalid")
+            baseline_id = baselines[0].get("baseline_id")
+            decisions = state.setdefault("worker_reconciliation_decisions", [])
+            if type(decisions) is not list or any(
+                type(item) is not dict for item in decisions
+            ):
+                raise ValueError("Worker reconciliation decisions are invalid")
+            exact = [
+                item for item in decisions
+                if item.get("agent_id") == agent_id
+                and item.get("baseline_id") == baseline_id
+                and item.get("generation") == generation
+                and item.get("blocker") == blocker
+                and item.get("evidence_hash") == evidence_hash
+                and item.get("status") == "ambiguous"
+            ]
+            if exact:
+                if len(exact) != 1:
+                    raise ValueError("Worker reconciliation decisions are invalid")
+                return copy.deepcopy(exact[0])
+            created_at = now.astimezone(timezone.utc).isoformat()
+            record = {
+                "decision_id": new_id("wrd"),
+                "agent_id": agent_id,
+                "baseline_id": baseline_id,
+                "generation": generation,
+                "status": "ambiguous",
+                "blocker": blocker,
+                "evidence_hash": evidence_hash,
+                "created_at": created_at,
+            }
+            decisions.append(record)
+            event = EventRecord.create(
+                "worker_reconciliation_ambiguous",
+                {
+                    "decision_id": record["decision_id"],
+                    "agent_id": agent_id,
+                    "baseline_id": baseline_id,
+                    "generation": generation,
+                    "blocker": blocker,
+                    "evidence_hash": evidence_hash,
+                },
+            )
+            state.setdefault("conversation_event_outbox", []).append(asdict(event))
+            self._append_recovery_audit_locked(
+                state,
+                "worker_reconciliation_ambiguous",
+                dict(event.payload),
+            )
+            self._atomic_save(state)
+            return copy.deepcopy(record)
 
     def record_transport_reroute_with_governance_preview(
         self,
@@ -3455,16 +3549,75 @@ class StateStore:
                 ),
                 "effective_transport": attempt["configured_transport"],
             }
+            effect_hash = canonical_snapshot_hash(effect)
+            consumptions = state.setdefault("mission_acp_effect_consumptions", [])
+            if type(consumptions) is not list or any(
+                type(item) is not dict for item in consumptions
+            ):
+                raise ValueError("ACP effect consumption ledger is invalid")
+            consumed = [
+                item for item in consumptions
+                if item.get("permission_id") == permission_id
+            ]
+            if consumed:
+                if (
+                    len(consumed) != 1
+                    or consumed[0].get("attempt_id") != attempt_id
+                    or consumed[0].get("tool_call_id")
+                    != next(
+                        (
+                            item.get("payload", {}).get("tool_call_id")
+                            for item in state.setdefault("transport_updates", [])
+                            if type(item) is dict
+                            and item.get("kind") == "permission_request"
+                            and item.get("payload", {}).get("permission_id")
+                            == permission_id
+                        ),
+                        None,
+                    )
+                    or consumed[0].get("effect_hash") != effect_hash
+                    or consumed[0].get("state") != "consumed"
+                ):
+                    raise ValueError("ACP effect consumption lineage is invalid")
+                return {
+                    "allowed": False,
+                    "gate": "permission_consumed",
+                    "blocker": "ACP allow-once permission was already consumed",
+                    "effect": effect,
+                }
             decision = authorize_effect(
                 effect, snapshot=frozen, policy=policy, runtime=runtime
             )
+            if decision.allowed:
+                updates = [
+                    item for item in state.setdefault("transport_updates", [])
+                    if type(item) is dict
+                    and item.get("kind") == "permission_request"
+                    and item.get("payload", {}).get("permission_id") == permission_id
+                ]
+                if len(updates) != 1:
+                    raise ValueError("ACP effect tool-call lineage is invalid")
+                tool_call_id = updates[0].get("payload", {}).get("tool_call_id")
+                if type(tool_call_id) is not str or not tool_call_id:
+                    raise ValueError("ACP effect tool-call lineage is invalid")
+                consumptions.append(
+                    {
+                        "consumption_id": new_id("aec"),
+                        "attempt_id": attempt_id,
+                        "permission_id": permission_id,
+                        "tool_call_id": tool_call_id,
+                        "effect_hash": effect_hash,
+                        "state": "consumed",
+                        "created_at": utc_now(),
+                    }
+                )
             event_payload = {
                 "attempt_id": attempt_id,
                 "permission_id": permission_id,
                 "allowed": decision.allowed,
                 "gate": decision.gate,
                 "blocker": decision.blocker,
-                "effect_hash": canonical_snapshot_hash(effect),
+                "effect_hash": effect_hash,
             }
             self._append_recovery_audit_locked(
                 state, "mission_acp_effect_authorized", event_payload
@@ -8054,6 +8207,24 @@ class StateStore:
         ]
         outbox = state.get("conversation_event_outbox", [])
         outbox_count = len(outbox) if isinstance(outbox, list) else 0
+        reconciliation_decisions = state.get("worker_reconciliation_decisions", [])
+        if type(reconciliation_decisions) is not list or any(
+            type(item) is not dict for item in reconciliation_decisions
+        ):
+            raise ValueError("worker reconciliation decisions are invalid")
+        ambiguous_workers = sorted(
+            {
+                str(item.get("agent_id"))
+                for item in reconciliation_decisions
+                if item.get("status") == "ambiguous"
+                and type(item.get("agent_id")) is str
+            }
+        )
+        blockers = ["conversation event outbox pending"] if outbox_count else []
+        blockers.extend(
+            f"worker reconciliation ambiguous: {agent_id}"
+            for agent_id in ambiguous_workers
+        )
         return {
             "session_count": len(sessions),
             "turn_count": len(turns),
@@ -8068,7 +8239,7 @@ class StateStore:
             "pending_preview": pending_preview,
             "ownership": ownership,
             "outbox_count": outbox_count,
-            "blockers": ["conversation event outbox pending"] if outbox_count else [],
+            "blockers": blockers,
         }
 
     def project_view(self, config: ProjectConfig) -> ProjectView:
