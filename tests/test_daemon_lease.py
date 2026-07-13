@@ -364,6 +364,90 @@ def test_invalid_transition_is_full_tree_zero_write(tmp_path: Path) -> None:
     assert _snapshot(tmp_path) == before
 
 
+def test_forged_first_grant_timestamp_mismatch_is_full_tree_zero_write(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    valid = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    assert valid.current is not None
+    forged = replace(
+        valid,
+        current=replace(
+            valid.current,
+            issued_at="2026-07-13T10:00:01+00:00",
+            last_renewed_at="2026-07-13T10:00:01+00:00",
+            expires_at="2026-07-13T10:00:31+00:00",
+        ),
+    )
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(LeaseError, match="transition"):
+        store.commit_controller_lease(forged)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_forged_renewal_cannot_revive_expired_persisted_lease(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(granted)
+    assert granted.current is not None
+    valid = renew_controller(
+        granted.current,
+        lease_id=granted.current.lease_id,
+        generation=granted.current.generation,
+        now=NOW + timedelta(seconds=10),
+        ttl_seconds=30,
+    )
+    assert valid.current is not None
+    forged_at = "2026-07-13T10:00:31+00:00"
+    forged = replace(
+        valid,
+        current=replace(
+            valid.current,
+            last_renewed_at=forged_at,
+            expires_at="2026-07-13T10:01:01+00:00",
+        ),
+        audit_event=replace(valid.audit_event, created_at=forged_at),
+    )
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(LeaseError, match="transition"):
+        store.commit_controller_lease(forged)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_forged_release_cannot_release_an_already_expired_persisted_lease(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    granted = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    store.commit_controller_lease(granted)
+    assert granted.current is not None
+    valid = release_controller(
+        granted.current,
+        lease_id=granted.current.lease_id,
+        generation=granted.current.generation,
+        now=NOW + timedelta(seconds=5),
+    )
+    assert valid.current is not None
+    forged_at = "2026-07-13T10:00:30+00:00"
+    forged = replace(
+        valid,
+        current=replace(valid.current, expires_at=forged_at),
+        audit_event=replace(valid.audit_event, created_at=forged_at),
+    )
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(LeaseError, match="transition"):
+        store.commit_controller_lease(forged)
+
+    assert _snapshot(tmp_path) == before
+
+
 def test_forged_backward_renewal_is_rejected_without_writing(tmp_path: Path) -> None:
     store = _store(tmp_path)
     first = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)

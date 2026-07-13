@@ -452,7 +452,14 @@ def validate_lease_transition(
         raise LeaseError("invalid controller lease audit event")
 
     if previous is None:
-        valid_edge = transition.action == "grant" and current.generation == 1
+        valid_edge = (
+            transition.action == "grant"
+            and current.generation == 1
+            and current.issued_at == event.created_at
+            and current.last_renewed_at == event.created_at
+            and _parse_timestamp(current.expires_at, field="expires_at")
+            > event_time
+        )
     elif transition.action == "renew":
         valid_edge = (
             current.lease_id == previous.lease_id
@@ -462,6 +469,8 @@ def validate_lease_transition(
             and current.last_renewed_at == event.created_at
             and event_time
             >= _parse_timestamp(previous.last_renewed_at, field="last_renewed_at")
+            and event_time
+            < _parse_timestamp(previous.expires_at, field="expires_at")
             and _parse_timestamp(current.expires_at, field="expires_at") > event_time
         )
     elif transition.action == "expire":
@@ -478,6 +487,8 @@ def validate_lease_transition(
             and current.expires_at == event.created_at
             and event_time
             >= _parse_timestamp(previous.last_renewed_at, field="last_renewed_at")
+            and event_time
+            < _parse_timestamp(previous.expires_at, field="expires_at")
         )
     elif transition.action in {"grant", "takeover"}:
         valid_edge = (
