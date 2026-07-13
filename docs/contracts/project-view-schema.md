@@ -144,6 +144,17 @@ summaries, verification text, artifact contents, native trace ids, prompts,
 credentials, and full conversation text are excluded. Invalid recovery,
 attempt, or reply records are ignored rather than projected.
 
+The validator requires exact field sets and scalar types throughout the card.
+`decision` is exactly `{kind, attempt_id, controls}` and its kind must match the
+classification: `resumable -> resume`, `waiting_human -> permission|inspect`,
+`ambiguous|blocked -> inspect`, and `terminal -> none`. Mission, attempt, and
+step lineage must agree with the compact step/result facts. Controls and trace
+commands are derived exactly from those canonical ids; the only workspace
+control is the inspect-only `agentdeck workbench`. Terminal cards expose no
+resume or other dangerous control. ProjectView, workbench, reconnect
+conversation, and bare `agentdeck` validate this contract before printing, so
+an invalid card cannot produce partial JSON.
+
 When multiple Missions exist, the latest valid persisted recovery decision
 selects its exact Mission; without one, the latest non-terminal Mission is used
 before a terminal fallback. `classification` remains one of the deterministic
@@ -159,7 +170,11 @@ marks snapshot-incomplete historical Missions `inspect_only`; it performs zero
 writes. `agentdeck project migrate ... --confirm` accepts only that exact,
 unexpired, unchanged preview, writes a project-local sanitized backup of the
 affected additive paths' prior absence before atomically replacing state, and records only
-additive M2b metadata. It never backs up runtime credentials or external files,
+additive M2b metadata. Exact source revalidation, backup installation, and the
+state replacement occur under the protocol mutation lock. Backup directories
+are opened relative to the project with no-follow semantics, the final backup
+and parent directories are fsynced, and rollback replacement fsyncs the state
+parent. It never backs up runtime credentials or external files,
 never upgrades old history into apparent frozen authority, and reconfirmation
 starts through a new Mission preview. Drift, replay, expiry, backup failure, and
 state-save failure leave the original state in place; a rollback-success path

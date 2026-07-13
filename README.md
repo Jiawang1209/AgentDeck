@@ -19,6 +19,12 @@ agentdeck
 
 Running bare `agentdeck` in a terminal now opens the Phase 3 M1 foreground conversation. In an uninitialized directory it first shows an exact project-setup preview. In a project it can use the configured API-backed LLM or Agent CLI as Leader, turn an open request into a frozen Mission preview, and execute only after natural-language confirmation of that exact preview.
 
+When a project has a background Mission recovery fact, bare `agentdeck` first
+prints the validated ProjectView `mission_recovery` card and then enters the
+normal conversation UI. A project with no Mission to recover remains quiet.
+This reconnect rendering is deterministic and does not call an LLM, inspect
+tmux, write state, or reconstruct a transcript.
+
 ```text
 You       › Let Codex implement this and Claude review it.
 AgentDeck › Mission preview: 2 Workers, approval required.
@@ -50,6 +56,8 @@ agentdeck events --limit 20
 agentdeck contract conversation-runtime --example
 agentdeck contract leader-backend --example
 agentdeck contract worker-transport --example
+agentdeck contract migration --example
+agentdeck project migration-preview
 ```
 
 ## Safety boundary
@@ -59,6 +67,12 @@ Natural language is never execution authority. AgentDeck binds confirmation to e
 Phase 3 M2a now provides the verified one-per-project daemon foundation, `agentdeck daemon status/start/stop/logs`, and compact ProjectView/workbench discovery contracts. `daemon status` is strictly zero-write and reports durable state as last-known/unverified without connecting to the socket. Offline ProjectView derives `controller_present` from a strictly parsed, active-namespace, currently unexpired lease; an expired, terminal, naive, or malformed lease never appears active and the check writes nothing. The daemon's own idle loop reloads keepalive facts on every poll: connected clients keep it ready, non-client Mission/Worker/approval/permission/reply/decision/recovery/outbox/shutdown/write work keeps it busy, and idle grace starts only when no reason remains. A monotonic in-process activity generation advances on every accepted connection and every protocol-valid request, so even a client that connects and closes entirely between polls restarts a full grace window; close itself does not double-count. `agentdeck daemon stop --confirm` opens a verified client, uses the sole lease-exempt `controller.acquire` bootstrap RPC to obtain a temporary controller when needed, then sends a lease-gated stop RPC; callers that already hold the controller may instead add `--lease-id <lease_id> --lease-generation <generation>`. The daemon durably flushes grant/renew/release/expiry audit events, derives `controller_present` from the current unexpired lease, and revalidates the controller lease, endpoint/durable identity, other clients, and keepalive work. If a temporary-controller stop is rejected, the client invokes lease-gated `controller.release` before reporting the blocker; explicit user-provided credentials are never auto-released. Accepted stop still releases before acknowledgement and exits only after response drain. It never exposes lease credentials through ProjectView or workbench and never sends a client-side process signal. M2a does not yet advance Missions in the background: the scheduler surface is explicitly inactive until frozen execution snapshots, deterministic scheduling, supervision, and recovery land in M2b. Full transcript recovery, global project roaming, a Desktop/IDE Workspace Client, automatic adapter installation/authentication, and native same-session TUI attachment also remain future work.
 
 Task 12 update: background Mission scheduling is now active for daemon-admitted frozen Missions. Resume uses a controller-lease-bound two-call preview/confirm flow and never falls back to the foreground runner; incomplete frozen authority is inspect-only. Accepted stop/force-stop now signals shutdown immediately after the durable release/stop commit, independently of acknowledgement delivery. A daemon ACP prompt may bind and consume multiple sequential permissions, and closing its process persists the AgentSession as disconnected.
+
+Task 13 adds deterministic reconnect and `migration/v1`. Migration preview is
+strictly read-only; only its exact expiring confirmation may acquire the existing
+mutation lock, create a no-follow project-local sanitized backup, and atomically
+install additive state. Historical snapshot-incomplete Missions remain
+inspect-only and require a new Mission confirmation for new authority.
 
 ## Architecture
 

@@ -61,6 +61,11 @@ def reconnect_conversation(
     recovery = project_view.get("mission_recovery")
     if not isinstance(recovery, dict):
         raise ValueError("ProjectView mission recovery summary is invalid")
+    from ..contracts import validate_mission_recovery_contract
+
+    validation = validate_mission_recovery_contract(recovery)
+    if not validation["ok"]:
+        raise ValueError("mission recovery contract validation failed")
     return ConversationResponse("mission_recovery", recovery)
 
 

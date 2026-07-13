@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
@@ -20,7 +21,7 @@ from .mission import (
     workbench_mission_card,
     validate_mission_plan,
 )
-from .models import PROJECT_VIEW_SCHEMA_VERSION
+from .models import MIGRATION_SCHEMA_VERSION, PROJECT_VIEW_SCHEMA_VERSION
 from .state import leader_backend_identity
 from .runtime.protocol import PROTOCOL_TRANSITION_EDGES, TRANSPORT_KINDS, TransportCapabilities
 
@@ -121,6 +122,12 @@ CONTRACT_INDEX_SPECS = (
         "agentdeck contract mission",
         "agentdeck contract mission --example",
         "mission-schema.md",
+    ),
+    (
+        "migration",
+        "agentdeck contract migration",
+        "agentdeck contract migration --example",
+        "migration-schema.md",
     ),
     (
         "demo",
@@ -367,8 +374,23 @@ MISSION_RECOVERY_RESULT_FIELDS = (
     "attempt_id", "step_id", "agent_id", "state", "summary_hash",
     "verification_hash", "artifact_count",
 )
-MISSION_RECOVERY_DECISION_FIELDS = ("kind", "controls")
+MISSION_RECOVERY_DECISION_FIELDS = ("kind", "attempt_id", "controls")
 MISSION_RECOVERY_CONTROL_FIELDS = DAEMON_CONTROL_FIELDS
+
+MIGRATION_PREVIEW_RESPONSE_FIELDS = (
+    "schema_version", "mode", "preview_id", "source_hash", "target_changes",
+    "legacy_missions", "backup_path", "expires_at", "digest", "consume_once",
+    "confirm_command", "controls",
+)
+MIGRATION_CONFIRMED_RESPONSE_FIELDS = (
+    "schema_version", "mode", "preview_id", "source_hash", "digest",
+    "backup_path", "legacy_missions", "target_changes", "consumed",
+)
+MIGRATION_TARGET_CHANGE_FIELDS = ("path", "operation", "value")
+MIGRATION_LEGACY_MISSION_FIELDS = (
+    "mission_id", "mode", "reason", "inspect_command", "reconfirm_command",
+)
+MIGRATION_CONTROL_FIELDS = DAEMON_CONTROL_FIELDS
 
 PROJECT_VIEW_AGENT_SESSIONS_FIELDS = ("count", "by_state", "items")
 PROJECT_VIEW_AGENT_SESSION_ITEM_FIELDS = (
@@ -1321,6 +1343,209 @@ def contract_index_response(contract_docs_dir: Path) -> dict[str, object]:
     }
 
 
+def _migration_example_payloads() -> tuple[dict[str, object], dict[str, object]]:
+    preview_id = "mig_111111111111"
+    source_hash = "sha256:" + "1" * 64
+    digest = "sha256:" + "2" * 64
+    expires_at = "2026-07-14T08:10:00+00:00"
+    legacy = [{
+        "mission_id": "mis_111111111111",
+        "mode": "inspect_only",
+        "reason": "complete frozen execution authority is unavailable",
+        "inspect_command": "agentdeck mission status --mission-id mis_111111111111",
+        "reconfirm_command": (
+            "agentdeck leader chat --message \"Reconfirm legacy Mission "
+            "mis_111111111111 as a new Mission preview\""
+        ),
+    }]
+    changes = [
+        {"path": "schema_generation", "operation": "add", "value": "project-daemon-m2b/v1"},
+        {"path": "legacy_mission_migrations", "operation": "add", "value": deepcopy(legacy)},
+        {
+            "path": "migration_previews_consumed",
+            "operation": "add",
+            "value": [{
+                "preview_id": preview_id,
+                "source_hash": source_hash,
+                "expires_at": expires_at,
+            }],
+        },
+    ]
+    backup_path = f".agentdeck/backups/{preview_id}/state.json"
+    confirm_command = (
+        "agentdeck project migrate "
+        f"--preview-id {preview_id} --source-hash {source_hash} "
+        f"--digest {digest} --expires-at {expires_at} --confirm"
+    )
+    preview = {
+        "schema_version": MIGRATION_SCHEMA_VERSION,
+        "mode": "migration_preview",
+        "preview_id": preview_id,
+        "source_hash": source_hash,
+        "target_changes": changes,
+        "legacy_missions": legacy,
+        "backup_path": backup_path,
+        "expires_at": expires_at,
+        "digest": digest,
+        "consume_once": True,
+        "confirm_command": confirm_command,
+        "controls": [
+            {
+                "kind": "inspect", "label": "Inspect migration preview",
+                "command": "agentdeck project migration-preview", "safety": "inspect",
+                "enabled": True, "blocker": None,
+            },
+            {
+                "kind": "migrate", "label": "Confirm additive migration",
+                "command": confirm_command, "safety": "explicit_user",
+                "enabled": True, "blocker": None,
+            },
+        ],
+    }
+    confirmed = {
+        "schema_version": MIGRATION_SCHEMA_VERSION,
+        "mode": "migration_confirmed",
+        "preview_id": preview_id,
+        "source_hash": source_hash,
+        "digest": digest,
+        "backup_path": backup_path,
+        "legacy_missions": deepcopy(legacy),
+        "target_changes": deepcopy(changes),
+        "consumed": True,
+    }
+    return preview, confirmed
+
+
+def migration_contract_response(
+    contract_path: Path, *, include_example: bool = False
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": MIGRATION_SCHEMA_VERSION,
+        "preview_command": "agentdeck project migration-preview",
+        "contract_command": "agentdeck contract migration",
+        "contract_path": str(contract_path),
+        "contract_exists": contract_path.exists(),
+        "preview_response_fields": list(MIGRATION_PREVIEW_RESPONSE_FIELDS),
+        "confirmed_response_fields": list(MIGRATION_CONFIRMED_RESPONSE_FIELDS),
+        "target_change_fields": list(MIGRATION_TARGET_CHANGE_FIELDS),
+        "legacy_mission_fields": list(MIGRATION_LEGACY_MISSION_FIELDS),
+        "control_fields": list(MIGRATION_CONTROL_FIELDS),
+    }
+    if include_example:
+        preview, confirmed = _migration_example_payloads()
+        payload.update(
+            {
+                "example": True,
+                "example_preview": preview,
+                "example_confirmed": confirmed,
+            }
+        )
+    return payload
+
+
+def validate_migration_contract(payload: object) -> dict[str, object]:
+    errors: list[str] = []
+    if not isinstance(payload, dict):
+        return {"ok": False, "errors": ["migration response must be an object"]}
+    mode = payload.get("mode")
+    expected_fields = (
+        MIGRATION_PREVIEW_RESPONSE_FIELDS
+        if mode == "migration_preview"
+        else MIGRATION_CONFIRMED_RESPONSE_FIELDS
+        if mode == "migration_confirmed"
+        else ()
+    )
+    if not expected_fields or set(payload) != set(expected_fields):
+        return {"ok": False, "errors": ["migration response fields are invalid"]}
+    if payload.get("schema_version") != MIGRATION_SCHEMA_VERSION:
+        errors.append("schema_version must be migration/v1")
+    preview_id = payload.get("preview_id")
+    if type(preview_id) is not str or re.fullmatch(r"mig_[0-9a-f]{12}", preview_id) is None:
+        errors.append("preview_id is invalid")
+    for field in ("source_hash", "digest"):
+        value = payload.get(field)
+        if type(value) is not str or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None:
+            errors.append(f"{field} is invalid")
+    if isinstance(preview_id, str) and payload.get("backup_path") != (
+        f".agentdeck/backups/{preview_id}/state.json"
+    ):
+        errors.append("backup_path must be the exact project-local path")
+    changes = payload.get("target_changes")
+    change_paths: list[str] = []
+    if not isinstance(changes, list) or not changes:
+        errors.append("target_changes must be a non-empty list")
+        changes = []
+    for index, item in enumerate(changes):
+        if (
+            not isinstance(item, dict)
+            or set(item) != set(MIGRATION_TARGET_CHANGE_FIELDS)
+            or item.get("operation") != "add"
+            or type(item.get("path")) is not str
+            or re.fullmatch(r"[a-z][a-z0-9_]*", item["path"]) is None
+        ):
+            errors.append(f"target_changes[{index}] is invalid")
+            continue
+        change_paths.append(item["path"])
+    if len(change_paths) != len(set(change_paths)):
+        errors.append("target_changes paths must be unique")
+    legacy = payload.get("legacy_missions")
+    if not isinstance(legacy, list):
+        errors.append("legacy_missions must be a list")
+        legacy = []
+    for index, item in enumerate(legacy):
+        if not isinstance(item, dict) or set(item) != set(MIGRATION_LEGACY_MISSION_FIELDS):
+            errors.append(f"legacy_missions[{index}] is invalid")
+            continue
+        mission_id = item.get("mission_id")
+        if type(mission_id) is not str or re.fullmatch(r"mis_[0-9a-f]{12}", mission_id) is None:
+            errors.append(f"legacy_missions[{index}].mission_id is invalid")
+            continue
+        if (
+            item.get("mode") != "inspect_only"
+            or item.get("reason") != "complete frozen execution authority is unavailable"
+            or item.get("inspect_command") != f"agentdeck mission status --mission-id {mission_id}"
+            or item.get("reconfirm_command") != (
+                "agentdeck leader chat --message "
+                f'"Reconfirm legacy Mission {mission_id} as a new Mission preview"'
+            )
+        ):
+            errors.append(f"legacy_missions[{index}] controls are invalid")
+    if mode == "migration_preview":
+        expires_at = payload.get("expires_at")
+        try:
+            expiry = datetime.fromisoformat(expires_at) if isinstance(expires_at, str) else None
+        except ValueError:
+            expiry = None
+        if expiry is None or expiry.tzinfo is None or expiry.utcoffset() is None:
+            errors.append("expires_at must be an aware timestamp")
+        expected_command = (
+            "agentdeck project migrate "
+            f"--preview-id {preview_id} --source-hash {payload.get('source_hash')} "
+            f"--digest {payload.get('digest')} --expires-at {expires_at} --confirm"
+        )
+        if payload.get("consume_once") is not True:
+            errors.append("consume_once must be true")
+        if payload.get("confirm_command") != expected_command:
+            errors.append("confirm_command must bind the exact preview")
+        expected_controls = [
+            {
+                "kind": "inspect", "label": "Inspect migration preview",
+                "command": "agentdeck project migration-preview", "safety": "inspect",
+                "enabled": True, "blocker": None,
+            },
+            {
+                "kind": "migrate", "label": "Confirm additive migration",
+                "command": expected_command, "safety": "explicit_user",
+                "enabled": True, "blocker": None,
+            },
+        ]
+        if payload.get("controls") != expected_controls:
+            errors.append("controls must match the exact preview and confirmation")
+    elif payload.get("consumed") is not True:
+        errors.append("consumed must be true")
+    return {"ok": not errors, "errors": errors}
+
+
 DOCTOR_RESPONSE_FIELDS = (
     "ok",
     "doctor_command",
@@ -2215,6 +2440,7 @@ WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "daemon_runtime_contract",
     "mission_scheduler_contract",
     "client_session_contract",
+    "migration_contract",
 )
 
 WORKBENCH_CHANGE_SUMMARY_FIELDS = (
@@ -6815,23 +7041,6 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     return {"ok": not errors, "errors": errors}
 
 
-def _validate_mission_recovery_control(
-    errors: list[str], prefix: str, value: object
-) -> None:
-    if not isinstance(value, dict) or set(value) != set(MISSION_RECOVERY_CONTROL_FIELDS):
-        errors.append(f"{prefix} must match the compact control contract")
-        return
-    if value.get("safety") not in {"inspect", "explicit_user"}:
-        errors.append(f"{prefix}.safety must be inspect or explicit_user")
-    if type(value.get("enabled")) is not bool:
-        errors.append(f"{prefix}.enabled must be a boolean")
-    if value.get("enabled") is False and not value.get("blocker"):
-        errors.append(f"{prefix} disabled control requires blocker")
-    command = value.get("command")
-    if not isinstance(command, str) or not command.startswith("agentdeck "):
-        errors.append(f"{prefix}.command must be an agentdeck command")
-
-
 def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
     errors: list[str] = []
     if not isinstance(payload, dict) or set(payload) != set(PROJECT_VIEW_MISSION_RECOVERY_FIELDS):
@@ -6841,11 +7050,22 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
         }
     if payload.get("mode") != "mission_recovery":
         errors.append("mode must be mission_recovery")
-    if payload.get("classification") not in {
+    mission_id = payload.get("mission_id")
+    if mission_id is not None and (
+        type(mission_id) is not str
+        or re.fullmatch(r"mis_[0-9a-f]{12}", mission_id) is None
+    ):
+        errors.append("mission_id must be canonical or null")
+    classification = payload.get("classification")
+    if classification not in {
         "resumable", "waiting_human", "ambiguous", "blocked", "terminal"
     }:
         errors.append("classification is invalid")
+    wait_reason = payload.get("wait_reason")
+    if type(wait_reason) is not str or not wait_reason.strip() or len(wait_reason) > 240:
+        errors.append("wait_reason must be a compact non-empty string")
     progress = payload.get("progress")
+    completed = total = None
     if not isinstance(progress, dict) or set(progress) != {"completed", "total"}:
         errors.append("progress must contain completed and total")
     elif (
@@ -6855,51 +7075,172 @@ def validate_mission_recovery_contract(payload: object) -> dict[str, object]:
         or progress["total"] < progress["completed"]
     ):
         errors.append("progress values are invalid")
-    for field in ("completed_steps", "recent_results", "trace_commands"):
-        if not isinstance(payload.get(field), list):
-            errors.append(f"{field} must be a list")
-    for index, item in enumerate(payload.get("completed_steps", [])):
-        if not isinstance(item, dict) or set(item) != set(MISSION_RECOVERY_STEP_FIELDS):
+    else:
+        completed = progress["completed"]
+        total = progress["total"]
+    completed_steps = payload.get("completed_steps")
+    if not isinstance(completed_steps, list):
+        errors.append("completed_steps must be a list")
+        completed_steps = []
+    completed_by_id: dict[str, dict[str, object]] = {}
+    completed_positions: list[int] = []
+    for index, item in enumerate(completed_steps):
+        if (
+            not isinstance(item, dict)
+            or set(item) != set(MISSION_RECOVERY_STEP_FIELDS)
+            or type(item.get("position")) is not int
+            or item["position"] < 1
+            or item.get("step_id") != f"step_{item['position']}"
+            or type(item.get("agent_id")) is not str
+            or not item["agent_id"]
+            or type(item.get("role")) is not str
+            or not item["role"]
+        ):
             errors.append(f"completed_steps[{index}] is invalid")
+            continue
+        if completed is not None and item["position"] > completed:
+            errors.append(f"completed_steps[{index}] exceeds progress")
+        completed_positions.append(item["position"])
+        completed_by_id[item["step_id"]] = item
+    if completed_positions != sorted(set(completed_positions)):
+        errors.append("completed_steps positions must be unique and ordered")
     active_step = payload.get("active_step")
-    if active_step is not None and (
-        not isinstance(active_step, dict)
-        or set(active_step) != set(MISSION_RECOVERY_STEP_FIELDS)
-    ):
-        errors.append("active_step is invalid")
-    for index, item in enumerate(payload.get("recent_results", [])):
-        if not isinstance(item, dict) or set(item) != set(MISSION_RECOVERY_RESULT_FIELDS):
+    if active_step is not None:
+        if (
+            not isinstance(active_step, dict)
+            or set(active_step) != set(MISSION_RECOVERY_STEP_FIELDS)
+            or type(active_step.get("position")) is not int
+            or active_step.get("step_id") != f"step_{active_step.get('position')}"
+            or type(active_step.get("agent_id")) is not str
+            or not active_step.get("agent_id")
+            or type(active_step.get("role")) is not str
+            or not active_step.get("role")
+            or completed is None
+            or active_step.get("position") != completed + 1
+            or total is None
+            or active_step.get("position") > total
+        ):
+            errors.append("active_step is invalid")
+    if classification == "terminal" and active_step is not None:
+        errors.append("terminal recovery cannot expose an active step")
+    recent_results = payload.get("recent_results")
+    if not isinstance(recent_results, list):
+        errors.append("recent_results must be a list")
+        recent_results = []
+    elif len(recent_results) > 3:
+        errors.append("recent_results must contain at most three items")
+    recent_attempt_ids: list[str] = []
+    for index, item in enumerate(recent_results):
+        if (
+            not isinstance(item, dict)
+            or set(item) != set(MISSION_RECOVERY_RESULT_FIELDS)
+            or type(item.get("attempt_id")) is not str
+            or re.fullmatch(r"mat_[0-9a-f]{12}", item["attempt_id"]) is None
+            or type(item.get("step_id")) is not str
+            or type(item.get("agent_id")) is not str
+            or not item["agent_id"]
+            or type(item.get("artifact_count")) is not int
+            or item["artifact_count"] < 0
+        ):
             errors.append(f"recent_results[{index}] is invalid")
             continue
         if item.get("state") != "validated":
             errors.append(f"recent_results[{index}].state must be validated")
+        step = completed_by_id.get(item["step_id"])
+        if step is None or step.get("agent_id") != item["agent_id"]:
+            errors.append(f"recent_results[{index}] must match a completed step")
         for field in ("summary_hash", "verification_hash"):
             if not isinstance(item.get(field), str) or re.fullmatch(
                 r"sha256:[0-9a-f]{64}", str(item.get(field))
             ) is None:
                 errors.append(f"recent_results[{index}].{field} is invalid")
+        recent_attempt_ids.append(item["attempt_id"])
+    if len(recent_attempt_ids) != len(set(recent_attempt_ids)):
+        errors.append("recent_results attempt ids must be unique")
     decision = payload.get("decision")
+    decision_kind = None
+    decision_attempt_id = None
+    decision_controls: object = None
     if not isinstance(decision, dict) or set(decision) != set(MISSION_RECOVERY_DECISION_FIELDS):
         errors.append("decision is invalid")
     else:
-        if decision.get("kind") not in {"none", "resume", "permission", "inspect"}:
+        decision_kind = decision.get("kind")
+        decision_attempt_id = decision.get("attempt_id")
+        decision_controls = decision.get("controls")
+        if decision_kind not in {"none", "resume", "permission", "inspect"}:
             errors.append("decision.kind is invalid")
-        controls = decision.get("controls")
-        if not isinstance(controls, list):
+        if decision_attempt_id is not None and (
+            type(decision_attempt_id) is not str
+            or re.fullmatch(r"mat_[0-9a-f]{12}", decision_attempt_id) is None
+        ):
+            errors.append("decision.attempt_id must be canonical or null")
+        if not isinstance(decision_controls, list):
             errors.append("decision.controls must be a list")
-        else:
-            for index, control in enumerate(controls):
-                _validate_mission_recovery_control(
-                    errors, f"decision.controls[{index}]", control
-                )
-    for index, command in enumerate(payload.get("trace_commands", [])):
-        if not isinstance(command, str) or re.fullmatch(
-            r"agentdeck trace --id mat_[0-9a-f]{12}", command
-        ) is None:
-            errors.append(f"trace_commands[{index}] is invalid")
-    _validate_mission_recovery_control(
-        errors, "workspace_control", payload.get("workspace_control")
-    )
+    allowed_decisions = {
+        "resumable": {"resume"},
+        "waiting_human": {"permission", "inspect"},
+        "ambiguous": {"inspect"},
+        "blocked": {"inspect"},
+        "terminal": {"none"},
+    }
+    if classification in allowed_decisions and decision_kind not in allowed_decisions[classification]:
+        errors.append("classification and decision.kind are inconsistent")
+    if decision_kind == "permission" and (
+        decision_attempt_id is None
+        or not isinstance(wait_reason, str)
+        or "permission" not in wait_reason.lower()
+    ):
+        errors.append("permission decision requires matching wait evidence")
+    expected_controls: list[dict[str, object]] = []
+    if isinstance(mission_id, str) and decision_kind == "permission" and isinstance(decision_attempt_id, str):
+        expected_controls = [{
+            "kind": "permission_preview", "label": "Preview pending permission",
+            "command": f"agentdeck daemon permission-preview --mission-id {mission_id} --attempt-id {decision_attempt_id}",
+            "safety": "inspect", "enabled": True, "blocker": None,
+        }]
+    elif isinstance(mission_id, str) and decision_kind == "resume":
+        expected_controls = [{
+            "kind": "resume_preview", "label": "Preview Mission resume",
+            "command": f"agentdeck mission resume --mission-id {mission_id} --confirm",
+            "safety": "explicit_user", "enabled": True, "blocker": None,
+        }]
+    elif isinstance(mission_id, str) and decision_kind == "inspect":
+        expected_controls = [{
+            "kind": "inspect", "label": "Inspect Mission recovery",
+            "command": f"agentdeck mission status --mission-id {mission_id}",
+            "safety": "inspect", "enabled": True, "blocker": None,
+        }]
+    if isinstance(decision_controls, list) and decision_controls != expected_controls:
+        errors.append("decision.controls must match the exact recovery decision")
+    trace_commands = payload.get("trace_commands")
+    if not isinstance(trace_commands, list):
+        errors.append("trace_commands must be a list")
+        trace_commands = []
+    expected_attempt_ids = list(recent_attempt_ids)
+    if isinstance(decision_attempt_id, str) and decision_attempt_id not in expected_attempt_ids:
+        expected_attempt_ids.append(decision_attempt_id)
+    expected_traces = [f"agentdeck trace --id {item}" for item in expected_attempt_ids]
+    if trace_commands != expected_traces:
+        errors.append("trace_commands must match exact recovery attempt lineage")
+    expected_workspace = {
+        "kind": "inspect", "label": "Open workbench",
+        "command": "agentdeck workbench", "safety": "inspect",
+        "enabled": True, "blocker": None,
+    }
+    if payload.get("workspace_control") != expected_workspace:
+        errors.append("workspace_control must be the exact read-only workbench control")
+    if mission_id is None and (
+        classification != "terminal"
+        or completed != 0
+        or total != 0
+        or completed_steps
+        or recent_results
+        or active_step is not None
+        or decision_kind != "none"
+        or decision_attempt_id is not None
+        or trace_commands
+    ):
+        errors.append("empty recovery must be the exact terminal no-Mission card")
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     for forbidden in ("/Users/", "/home/", "raw_prompt", "full_transcript", "content_snapshot"):
         if forbidden in encoded:
@@ -11967,7 +12308,7 @@ def project_view_example() -> dict[str, object]:
             "recent_results": [],
             "active_step": None,
             "wait_reason": "no Mission requires recovery",
-            "decision": {"kind": "none", "controls": []},
+            "decision": {"kind": "none", "attempt_id": None, "controls": []},
             "trace_commands": [],
             "workspace_control": {
                 "kind": "inspect", "label": "Open workbench",
@@ -15305,6 +15646,7 @@ def workbench_example() -> dict[str, object]:
             "daemon_runtime_contract": "agentdeck contract daemon-runtime",
             "mission_scheduler_contract": "agentdeck contract mission-scheduler",
             "client_session_contract": "agentdeck contract client-session",
+            "migration_contract": "agentdeck contract migration",
         },
         "control_mode_card": {
             "mode": "control_mode",

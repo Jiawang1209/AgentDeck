@@ -40,7 +40,7 @@ from .mission import (
     mission_status_transition_allowed,
 )
 from .mission_authority import canonical_workflow_plan_hash
-from .models import PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
+from .models import MIGRATION_SCHEMA_VERSION, PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
 from .runtime.protocol import (
     AGENT_SESSION_STATES,
     PERMISSION_STATES,
@@ -179,6 +179,7 @@ def migration_preview(
         f"--digest {digest} --expires-at {expiry.isoformat()} --confirm"
     )
     return {
+        "schema_version": MIGRATION_SCHEMA_VERSION,
         "mode": "migration_preview",
         "preview_id": preview_id,
         "source_hash": source_hash,
@@ -210,51 +211,138 @@ def migration_preview(
     }
 
 
-def _write_migration_backup(path: Path, source: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        raise ValueError("migration backup already exists")
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+_MIGRATION_DIRECTORY_FLAGS = (
+    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+)
+
+
+def _open_migration_directory(parent_fd: int, name: str) -> int:
+    try:
+        descriptor = os.open(name, _MIGRATION_DIRECTORY_FLAGS, dir_fd=parent_fd)
+    except OSError as exc:
+        raise ValueError("migration backup symlink or non-directory is forbidden") from exc
+    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise ValueError("migration backup path must be a directory")
+    return descriptor
+
+
+def _write_migration_backup(root: Path, preview_id: str, source: bytes) -> Path:
+    if re.fullmatch(r"mig_[0-9a-f]{12}", preview_id) is None:
+        raise ValueError("migration backup preview id is invalid")
+    root_fd = os.open(root, _MIGRATION_DIRECTORY_FLAGS)
+    agentdeck_fd: int | None = None
+    backups_fd: int | None = None
+    preview_fd: int | None = None
+    backups_created = False
+    preview_created = False
+    temporary = f".state.json.{os.getpid()}.tmp"
     installed = False
     try:
-        with temporary.open("xb") as handle:
+        agentdeck_fd = _open_migration_directory(root_fd, ".agentdeck")
+        try:
+            os.mkdir("backups", 0o700, dir_fd=agentdeck_fd)
+            backups_created = True
+            os.fsync(agentdeck_fd)
+        except FileExistsError:
+            pass
+        backups_fd = _open_migration_directory(agentdeck_fd, "backups")
+        try:
+            os.mkdir(preview_id, 0o700, dir_fd=backups_fd)
+            preview_created = True
+            os.fsync(backups_fd)
+        except FileExistsError:
+            try:
+                metadata = os.stat(preview_id, dir_fd=backups_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise ValueError("migration backup directory is unavailable") from exc
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                raise ValueError("migration backup symlink or non-directory is forbidden")
+            raise ValueError("migration backup already exists")
+        preview_fd = _open_migration_directory(backups_fd, preview_id)
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=preview_fd,
+        )
+        with os.fdopen(descriptor, "wb", closefd=True) as handle:
             handle.write(source)
             handle.flush()
             os.fsync(handle.fileno())
+        os.replace(
+            temporary,
+            "state.json",
+            src_dir_fd=preview_fd,
+            dst_dir_fd=preview_fd,
+        )
+        installed = True
+        final_fd = os.open(
+            "state.json", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=preview_fd,
+        )
         try:
-            os.link(temporary, path)
-            installed = True
-        except FileExistsError:
-            raise ValueError("migration backup already exists") from None
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
+            os.fsync(final_fd)
         finally:
-            os.close(directory_fd)
+            os.close(final_fd)
+        os.fsync(preview_fd)
+        return root / ".agentdeck" / "backups" / preview_id / "state.json"
     except BaseException:
-        if installed:
-            _remove_migration_backup(path)
+        if preview_fd is not None:
+            for name in (temporary, "state.json" if installed else None):
+                if name is None:
+                    continue
+                try:
+                    os.unlink(name, dir_fd=preview_fd)
+                except FileNotFoundError:
+                    pass
+            try:
+                os.fsync(preview_fd)
+            except OSError:
+                pass
+        if preview_created and backups_fd is not None:
+            try:
+                os.rmdir(preview_id, dir_fd=backups_fd)
+                os.fsync(backups_fd)
+            except OSError:
+                pass
+        if backups_created and agentdeck_fd is not None:
+            try:
+                os.rmdir("backups", dir_fd=agentdeck_fd)
+                os.fsync(agentdeck_fd)
+            except OSError:
+                pass
         raise
     finally:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
+        for descriptor in (preview_fd, backups_fd, agentdeck_fd, root_fd):
+            if descriptor is not None:
+                os.close(descriptor)
 
 
-def _remove_migration_backup(path: Path) -> None:
+def _remove_migration_backup(root: Path, preview_id: str) -> None:
+    root_fd = os.open(root, _MIGRATION_DIRECTORY_FLAGS)
+    agentdeck_fd: int | None = None
+    backups_fd: int | None = None
+    preview_fd: int | None = None
     try:
-        path.unlink()
-    except FileNotFoundError:
-        return
-    project_dir = path.parent.parent.parent
-    for directory in (path.parent, path.parent.parent):
+        agentdeck_fd = _open_migration_directory(root_fd, ".agentdeck")
+        backups_fd = _open_migration_directory(agentdeck_fd, "backups")
+        preview_fd = _open_migration_directory(backups_fd, preview_id)
+        os.unlink("state.json", dir_fd=preview_fd)
+        os.fsync(preview_fd)
+        os.close(preview_fd)
+        preview_fd = None
+        os.rmdir(preview_id, dir_fd=backups_fd)
+        os.fsync(backups_fd)
         try:
-            directory.rmdir()
+            os.rmdir("backups", dir_fd=agentdeck_fd)
+            os.fsync(agentdeck_fd)
         except OSError:
-            break
-        if directory.parent == project_dir:
-            break
+            pass
+    finally:
+        for descriptor in (preview_fd, backups_fd, agentdeck_fd, root_fd):
+            if descriptor is not None:
+                os.close(descriptor)
 
 
 def _atomic_restore_migration_source(path: Path, source: bytes) -> None:
@@ -265,6 +353,11 @@ def _atomic_restore_migration_source(path: Path, source: bytes) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        directory_fd = os.open(path.parent, _MIGRATION_DIRECTORY_FLAGS)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         try:
             temporary.unlink()
@@ -295,7 +388,69 @@ def confirm_migration(
     expiry = expiry.astimezone(timezone.utc)
     if current_time >= expiry:
         raise ValueError("migration preview expired")
-    store = StateStore.open_existing(root.resolve())
+    canonical_root = root.resolve()
+    _preflight_migration_confirmation(
+        canonical_root,
+        preview_id=preview_id,
+        source_hash=source_hash,
+        digest=digest,
+        expiry=expiry,
+    )
+    store = StateStore.open_existing(canonical_root)
+    with store._protocol_mutation_lock():
+        return _confirm_migration_locked(
+            store,
+            root=root.resolve(),
+            preview_id=preview_id,
+            source_hash=source_hash,
+            digest=digest,
+            expiry=expiry,
+        )
+
+
+def _preflight_migration_confirmation(
+    root: Path,
+    *,
+    preview_id: str,
+    source_hash: str,
+    digest: str,
+    expiry: datetime,
+) -> None:
+    """Reject already-stale or replayed confirmation before lock-file creation."""
+    store = StateStore.open_existing(root)
+    source = store.state_path.read_bytes()
+    state = json.loads(source.decode("utf-8"))
+    if not isinstance(state, dict):
+        raise ValueError("migration source state is invalid")
+    consumed = state.get("migration_previews_consumed", [])
+    if isinstance(consumed, list) and any(
+        isinstance(item, dict) and item.get("preview_id") == preview_id
+        for item in consumed
+    ):
+        raise ValueError("migration preview already consumed")
+    if "sha256:" + hashlib.sha256(source).hexdigest() != source_hash:
+        raise ValueError("migration source facts drifted")
+    expected = migration_preview(
+        root,
+        now=expiry - timedelta(seconds=600),
+        expires_at=expiry,
+    )
+    if expected["preview_id"] != preview_id:
+        raise ValueError("unknown migration preview")
+    if expected["digest"] != digest:
+        raise ValueError("migration preview digest mismatch")
+
+
+def _confirm_migration_locked(
+    store: "StateStore",
+    *,
+    root: Path,
+    preview_id: str,
+    source_hash: str,
+    digest: str,
+    expiry: datetime,
+) -> dict[str, object]:
+    """Apply one exact migration while the protocol mutation lock is held."""
     current_source = store.state_path.read_bytes()
     current_state = json.loads(current_source.decode("utf-8"))
     if not isinstance(current_state, dict):
@@ -310,7 +465,7 @@ def confirm_migration(
     if current_hash != source_hash:
         raise ValueError("migration source facts drifted")
     expected = migration_preview(
-        root.resolve(),
+        root,
         now=expiry - timedelta(seconds=600),
         expires_at=expiry,
     )
@@ -330,7 +485,6 @@ def confirm_migration(
         ):
             raise ValueError("migration is not additive")
         proposed[path] = copy.deepcopy(change.get("value"))
-    backup_path = root.resolve() / str(expected["backup_path"])
     backup_bytes = (
         json.dumps(
             {
@@ -351,20 +505,29 @@ def confirm_migration(
     proposed_bytes = (
         json.dumps(proposed, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
-    _write_migration_backup(backup_path, backup_bytes)
+    _write_migration_backup(root, preview_id, backup_bytes)
     try:
         if store.state_path.read_bytes() != current_source:
             raise ValueError("migration source facts drifted")
         store._atomic_save(proposed)
+        state_directory_fd = os.open(store.state_path.parent, _MIGRATION_DIRECTORY_FLAGS)
+        try:
+            os.fsync(state_directory_fd)
+        finally:
+            os.close(state_directory_fd)
     except BaseException:
         installed = store.state_path.read_bytes()
         if installed == proposed_bytes:
             _atomic_restore_migration_source(store.state_path, current_source)
             installed = store.state_path.read_bytes()
         if installed == current_source:
-            _remove_migration_backup(backup_path)
+            try:
+                _remove_migration_backup(root, preview_id)
+            except (OSError, ValueError):
+                pass
         raise
     return {
+        "schema_version": MIGRATION_SCHEMA_VERSION,
         "mode": "migration_confirmed",
         "preview_id": preview_id,
         "source_hash": source_hash,
@@ -8692,7 +8855,7 @@ class StateStore:
                 "recent_results": [],
                 "active_step": None,
                 "wait_reason": "no Mission requires recovery",
-                "decision": {"kind": "none", "controls": []},
+                "decision": {"kind": "none", "attempt_id": None, "controls": []},
                 "trace_commands": [],
                 "workspace_control": {
                     "kind": "inspect",
@@ -8873,7 +9036,11 @@ class StateStore:
             "recent_results": recent_results,
             "active_step": active_step,
             "wait_reason": reason,
-            "decision": {"kind": decision_kind, "controls": decision_controls},
+            "decision": {
+                "kind": decision_kind,
+                "attempt_id": attempt_id if isinstance(attempt_id, str) else None,
+                "controls": decision_controls,
+            },
             "trace_commands": trace_commands,
             "workspace_control": {
                 "kind": "inspect",

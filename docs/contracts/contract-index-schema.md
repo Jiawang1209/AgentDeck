@@ -47,6 +47,7 @@ The index currently lists these contract names in order:
 - `run-loop-all`
 - `workflow`
 - `mission`
+- `migration`
 - `demo`
 - `plans`
 - `release`
@@ -77,6 +78,10 @@ The index currently lists these contract names in order:
 `acp-runtime` is discoverable through `agentdeck contract acp-runtime [--example]`; its live read-only preflight is `agentdeck protocol acp preflight --agent <agent_id>`, and its durable schema is `docs/contracts/acp-runtime-schema.md`.
 
 The three M1 contracts are discovery/validation surfaces. They describe current conversation lifecycle, explicit Leader backend identity, and Worker transport/ownership facts without executing controls or authorizing fallback.
+
+`migration` is discoverable through `agentdeck contract migration [--example]`.
+It describes the read-only existing-project preview and exact confirmed migration
+responses documented in `docs/contracts/migration-schema.md`.
 
 The contract/example and preflight are not proof of real-adapter acceptance. The explicit human-run gate and current blocker procedure are in `docs/validation/phase2-acp-live-acceptance-sop.md`.
 

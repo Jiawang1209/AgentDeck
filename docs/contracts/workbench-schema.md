@@ -1031,7 +1031,8 @@ The card reuses `validate_leader_summary_contract()`. It only aggregates existin
   "artifacts_contract": "agentdeck contract artifacts",
   "daemon_runtime_contract": "agentdeck contract daemon-runtime",
   "mission_scheduler_contract": "agentdeck contract mission-scheduler",
-  "client_session_contract": "agentdeck contract client-session"
+  "client_session_contract": "agentdeck contract client-session",
+  "migration_contract": "agentdeck contract migration"
 }
 ```
 

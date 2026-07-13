@@ -4,12 +4,16 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
+import stat
+import threading
 
 import pytest
 
 from agentdeck.config import write_default_config
 from agentdeck import state as state_module
 from agentdeck import cli
+from agentdeck import contracts as contracts_module
 from agentdeck.state import StateStore
 
 
@@ -17,7 +21,7 @@ def _tree_bytes(root: Path) -> dict[str, bytes]:
     return {
         str(path.relative_to(root)): path.read_bytes()
         for path in sorted(root.rglob("*"))
-        if path.is_file()
+        if path.is_file() and path.name != "protocol-mutation.lock"
     }
 
 
@@ -202,6 +206,156 @@ def test_existing_backup_is_never_overwritten_and_state_stays_unchanged(
     assert _tree_bytes(tmp_path) == before
 
 
+def test_migration_confirmation_holds_authoritative_lock_without_lost_update(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    preview = state_module.migration_preview(tmp_path, now=NOW)
+    backup_started = threading.Event()
+    writer_done = threading.Event()
+    original_write = state_module._write_migration_backup
+
+    def authoritative_writer() -> None:
+        writer = StateStore.open_existing(tmp_path)
+        assert backup_started.wait(timeout=2)
+        with writer._protocol_mutation_lock():
+            state = writer.load()
+            state["concurrent_authoritative_write"] = "preserved"
+            writer._atomic_save(state)
+        writer_done.set()
+
+    writer = threading.Thread(target=authoritative_writer, daemon=True)
+    writer.start()
+
+    def paused_backup(*args, **kwargs) -> None:
+        backup_started.set()
+        assert not writer_done.wait(timeout=0.2), (
+            "authoritative writer must block until migration state commits"
+        )
+        original_write(*args, **kwargs)
+
+    monkeypatch.setattr(state_module, "_write_migration_backup", paused_backup)
+
+    _confirm(tmp_path, preview, now=NOW + timedelta(seconds=1))
+    writer.join(timeout=2)
+
+    assert not writer.is_alive()
+    assert writer_done.is_set()
+    state = StateStore.open_existing(tmp_path).load()
+    assert state["schema_generation"] == "project-daemon-m2b/v1"
+    assert state["concurrent_authoritative_write"] == "preserved"
+
+
+@pytest.mark.parametrize("symlink_level", ["backups", "preview"])
+def test_migration_backup_rejects_symlink_escape_without_external_write(
+    tmp_path: Path,
+    symlink_level: str,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    preview = state_module.migration_preview(tmp_path, now=NOW)
+    state_path = tmp_path / ".agentdeck" / "state" / "state.json"
+    before_state = state_path.read_bytes()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    backups = tmp_path / ".agentdeck" / "backups"
+    if symlink_level == "backups":
+        backups.symlink_to(outside, target_is_directory=True)
+    else:
+        backups.mkdir()
+        (backups / str(preview["preview_id"])).symlink_to(
+            outside, target_is_directory=True
+        )
+
+    with pytest.raises(ValueError, match="backup.*symlink|backup.*directory"):
+        _confirm(tmp_path, preview, now=NOW + timedelta(seconds=1))
+
+    assert state_path.read_bytes() == before_state
+    assert list(outside.iterdir()) == []
+
+
+def test_rollback_replace_fsyncs_state_parent_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    preview = state_module.migration_preview(tmp_path, now=NOW)
+    original_save = StateStore._atomic_save
+    original_replace = os.replace
+    original_fsync = os.fsync
+    rollback_replaced = False
+    rollback_parent_fsynced = False
+
+    def replace_then_fail(store: StateStore, state: dict[str, object]) -> None:
+        original_save(store, state)
+        raise OSError("post replace failure")
+
+    def tracking_replace(src, dst, *args, **kwargs) -> None:
+        nonlocal rollback_replaced
+        original_replace(src, dst, *args, **kwargs)
+        if "migration-rollback" in os.fspath(src):
+            rollback_replaced = True
+
+    def tracking_fsync(fd: int) -> None:
+        nonlocal rollback_parent_fsynced
+        if rollback_replaced and stat.S_ISDIR(os.fstat(fd).st_mode):
+            rollback_parent_fsynced = True
+        original_fsync(fd)
+
+    monkeypatch.setattr(StateStore, "_atomic_save", replace_then_fail)
+    monkeypatch.setattr(state_module.os, "replace", tracking_replace)
+    monkeypatch.setattr(state_module.os, "fsync", tracking_fsync)
+
+    with pytest.raises(OSError, match="post replace failure"):
+        _confirm(tmp_path, preview, now=NOW + timedelta(seconds=1))
+
+    assert rollback_replaced is True
+    assert rollback_parent_fsynced is True
+
+
+def test_successful_migration_fsyncs_backup_and_state_after_each_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    preview = state_module.migration_preview(tmp_path, now=NOW)
+    original_replace = os.replace
+    original_fsync = os.fsync
+    phase: str | None = None
+    durable = {
+        "backup_file": False,
+        "backup_parent": False,
+        "state_parent": False,
+    }
+
+    def tracking_replace(src, dst, *args, **kwargs) -> None:
+        nonlocal phase
+        original_replace(src, dst, *args, **kwargs)
+        if kwargs.get("dst_dir_fd") is not None and dst == "state.json":
+            phase = "backup"
+        elif Path(os.fspath(dst)).name == "state.json":
+            phase = "state"
+
+    def tracking_fsync(fd: int) -> None:
+        mode = os.fstat(fd).st_mode
+        if phase == "backup":
+            durable["backup_parent" if stat.S_ISDIR(mode) else "backup_file"] = True
+        elif phase == "state" and stat.S_ISDIR(mode):
+            durable["state_parent"] = True
+        original_fsync(fd)
+
+    monkeypatch.setattr(state_module.os, "replace", tracking_replace)
+    monkeypatch.setattr(state_module.os, "fsync", tracking_fsync)
+
+    _confirm(tmp_path, preview, now=NOW + timedelta(seconds=1))
+
+    assert durable == {
+        "backup_file": True,
+        "backup_parent": True,
+        "state_parent": True,
+    }
+
+
 def test_post_replace_save_failure_rolls_back_state_before_removing_backup(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -259,3 +413,70 @@ def test_project_view_and_workbench_contracts_discover_mission_recovery_card(
     assert workbench_contract["example_workbench"]["mission_recovery_card"] == (
         workbench_contract["example_workbench"]["project_view"]["mission_recovery"]
     )
+
+
+def test_migration_contract_is_registered_gui_ready_and_in_workbench(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    monkeypatch.setattr(cli, "project_root", lambda: tmp_path)
+
+    assert cli.main(["contract", "migration", "--example"]) == 0
+    discovery = json.loads(capsys.readouterr().out)
+    assert discovery["schema_version"] == "migration/v1"
+    assert "source_hash" in discovery["preview_response_fields"]
+    assert "consumed" in discovery["confirmed_response_fields"]
+    assert contracts_module.validate_migration_contract(
+        discovery["example_preview"]
+    ) == {"ok": True, "errors": []}
+    assert contracts_module.validate_migration_contract(
+        discovery["example_confirmed"]
+    ) == {"ok": True, "errors": []}
+
+    assert cli.main(["contract", "list"]) == 0
+    index = json.loads(capsys.readouterr().out)
+    assert any(item["name"] == "migration" for item in index["contracts"])
+
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["missions"] = []
+    store.save(state)
+    assert cli.main(["workbench"]) == 0
+    workbench = json.loads(capsys.readouterr().out)
+    assert workbench["contracts_card"]["migration_contract"] == (
+        "agentdeck contract migration"
+    )
+
+
+def test_migration_cli_validates_payload_before_printing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _seed_m1_state_without_execution_snapshot(tmp_path)
+    monkeypatch.setattr(cli, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "migration_preview", lambda _root: {"mode": "migration_preview"})
+
+    assert cli.main(["project", "migration-preview"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Migration contract validation failed" in captured.err
+
+    monkeypatch.setattr(
+        cli,
+        "confirm_migration",
+        lambda *_args, **_kwargs: {"mode": "migration_confirmed"},
+    )
+    assert cli.main(
+        [
+            "project", "migrate", "--preview-id", "mig_111111111111",
+            "--source-hash", "sha256:" + "1" * 64,
+            "--digest", "sha256:" + "2" * 64,
+            "--expires-at", "2026-07-14T08:10:00+00:00", "--confirm",
+        ]
+    ) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Migration contract validation failed" in captured.err

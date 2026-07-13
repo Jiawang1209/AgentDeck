@@ -7,6 +7,7 @@ from uuid import uuid4
 
 
 PROJECT_VIEW_SCHEMA_VERSION = "project-view/v1"
+MIGRATION_SCHEMA_VERSION = "migration/v1"
 
 
 def utc_now() -> str:

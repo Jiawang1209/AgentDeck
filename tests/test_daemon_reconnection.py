@@ -6,12 +6,22 @@ import json
 import pytest
 
 from agentdeck.config import load_config, write_default_config
+from agentdeck import cli
+from agentdeck import contracts as contracts_module
 from agentdeck.conversation import session as session_module
 from agentdeck.conversation.leader_gateway import LeaderGateway
 from agentdeck.state import StateStore
 
 
 MISSION_ID = "mis_131313131313"
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
 
 
 def _seed_waiting_permission_mission(root: Path) -> tuple[object, StateStore]:
@@ -137,6 +147,77 @@ def test_reconnection_summary_requires_no_llm(tmp_path: Path, monkeypatch) -> No
     assert response.kind == "mission_recovery"
     assert response.payload["progress"] == {"completed": 4, "total": 6}
     assert response.payload["decision"]["kind"] == "permission"
+
+
+def test_bare_cli_renders_same_source_recovery_before_entering_ui(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, store = _seed_waiting_permission_mission(tmp_path)
+    before = _tree_bytes(tmp_path)
+    calls: list[str] = []
+
+    async def no_daemon_start(*_args, **_kwargs) -> None:
+        calls.append("daemon")
+
+    original_print = cli._print_json
+
+    def tracking_print(payload: object) -> None:
+        calls.append("recovery")
+        original_print(payload)
+
+    class FakeUI:
+        def __init__(self, _session: object) -> None:
+            calls.append("ui")
+
+        def run(self) -> int:
+            calls.append("run")
+            return 0
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "_start_daemon", no_daemon_start)
+    monkeypatch.setattr(cli, "_print_json", tracking_print)
+    monkeypatch.setattr(cli, "TerminalConversationUI", FakeUI)
+    monkeypatch.setattr(cli, "_foreground_conversation_session", lambda: object())
+
+    assert cli.main([]) == 0
+
+    rendered = json.loads(capsys.readouterr().out)
+    assert rendered == store.project_view(config).mission_recovery
+    assert rendered["classification"] == "waiting_human"
+    assert calls == ["recovery", "daemon", "ui", "run"]
+    assert _tree_bytes(tmp_path) == before
+
+
+def test_bare_cli_without_recovery_preserves_quiet_ui_startup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / ".git").mkdir()
+    write_default_config(tmp_path)
+    StateStore(tmp_path).save(StateStore(tmp_path).load())
+
+    async def no_daemon_start(*_args, **_kwargs) -> None:
+        return None
+
+    class FakeUI:
+        def __init__(self, _session: object) -> None:
+            pass
+
+        def run(self) -> int:
+            return 0
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "_start_daemon", no_daemon_start)
+    monkeypatch.setattr(cli, "TerminalConversationUI", FakeUI)
+    monkeypatch.setattr(cli, "_foreground_conversation_session", lambda: object())
+
+    assert cli.main([]) == 0
+    assert capsys.readouterr().out == ""
 
 
 def test_recovery_card_is_compact_same_source_and_zero_write(tmp_path: Path) -> None:
@@ -268,3 +349,58 @@ def test_recovery_card_ignores_invalid_recovery_record_without_leaking_reason(
 
     assert payload["wait_reason"] == "Worker permission is pending"
     assert "SECRET" not in json.dumps(payload, sort_keys=True)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda card: card["decision"]["controls"][0].update(
+            {
+                "kind": "force_stop",
+                "command": "agentdeck daemon force-stop --confirm",
+                "safety": "explicit_user",
+            }
+        ),
+        lambda card: card.update({"classification": "terminal"}),
+        lambda card: card["trace_commands"].append(
+            "agentdeck trace --id mat_ffffffffffff"
+        ),
+        lambda card: card["active_step"].update({"position": 6}),
+    ],
+)
+def test_recovery_contract_rejects_dangerous_or_cross_lineage_payloads(
+    tmp_path: Path,
+    mutate,
+) -> None:
+    config, store = _seed_waiting_permission_mission(tmp_path)
+    payload = store.project_view(config).mission_recovery
+    mutate(payload)
+
+    validation = contracts_module.validate_mission_recovery_contract(payload)
+
+    assert validation["ok"] is False
+
+
+def test_status_and_reconnect_reject_invalid_recovery_without_partial_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, store = _seed_waiting_permission_mission(tmp_path)
+    original = StateStore._mission_recovery_summary
+
+    def invalid_summary(state: dict[str, object]) -> dict[str, object]:
+        payload = original(state)
+        payload["workspace_control"]["command"] = "agentdeck daemon force-stop --confirm"
+        return payload
+
+    monkeypatch.setattr(StateStore, "_mission_recovery_summary", staticmethod(invalid_summary))
+    monkeypatch.setattr(cli, "project_root", lambda: tmp_path)
+
+    assert cli.main(["status"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "ProjectView contract validation failed" in captured.err
+
+    with pytest.raises(ValueError, match="mission recovery contract validation failed"):
+        session_module.reconnect_conversation(tmp_path, config=config, store=store)

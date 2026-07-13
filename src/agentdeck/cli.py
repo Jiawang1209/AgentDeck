@@ -72,6 +72,7 @@ from .contracts import (
     loop_contract_response,
     release_contract_response,
     memory_contract_response,
+    migration_contract_response,
     mission_contract_response,
     plan_board_contract_response,
     project_view_contract_response,
@@ -107,6 +108,7 @@ from .contracts import (
     validate_leader_review_contract,
     validate_leader_summary_contract,
     validate_loop_once_contract,
+    validate_migration_contract,
     validate_mission_preview_contract,
     validate_mission_run_contract,
     validate_mission_status_contract,
@@ -1102,6 +1104,12 @@ def project_migration_preview_command(_args: argparse.Namespace) -> int:
     except (OSError, TypeError, ValueError) as exc:
         print(f"migration preview failed: {exc}", file=sys.stderr)
         return 1
+    validation = validate_migration_contract(payload)
+    if not validation["ok"]:
+        print("Migration contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
+        return 1
     _print_json(payload)
     return 0
 
@@ -1124,6 +1132,12 @@ def project_migrate_command(args: argparse.Namespace) -> int:
         )
     except (OSError, TypeError, ValueError) as exc:
         print(f"migration confirmation failed: {exc}", file=sys.stderr)
+        return 1
+    validation = validate_migration_contract(payload)
+    if not validation["ok"]:
+        print("Migration contract validation failed", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"- {error}", file=sys.stderr)
         return 1
     _print_json(payload)
     return 0
@@ -5224,6 +5238,7 @@ def _workbench_contracts_card() -> dict[str, object]:
         "daemon_runtime_contract": "agentdeck contract daemon-runtime",
         "mission_scheduler_contract": "agentdeck contract mission-scheduler",
         "client_session_contract": "agentdeck contract client-session",
+        "migration_contract": "agentdeck contract migration",
     }
 
 
@@ -7324,6 +7339,13 @@ def daemon_serve_command(args: argparse.Namespace) -> int:
 def contract_conversation_runtime_command(args: argparse.Namespace) -> int:
     contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "conversation-runtime-schema.md"
     payload = conversation_runtime_contract_response(contract_path, include_example=args.example)
+    _print_json(payload)
+    return 0
+
+
+def contract_migration_command(args: argparse.Namespace) -> int:
+    contract_path = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "migration-schema.md"
+    payload = migration_contract_response(contract_path, include_example=args.example)
     _print_json(payload)
     return 0
 
@@ -18080,6 +18102,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_project_view.add_argument("--example", action="store_true", help="Include a GUI-ready ProjectView example")
     contract_project_view.set_defaults(func=contract_project_view_command)
+    contract_migration = contract_subparsers.add_parser(
+        "migration", help="Show existing-project migration contract metadata"
+    )
+    contract_migration.add_argument(
+        "--example", action="store_true", help="Include GUI-ready migration examples"
+    )
+    contract_migration.set_defaults(func=contract_migration_command)
     for contract_name, help_text, handler in (
         ("daemon-runtime", "Show project daemon runtime contract metadata", contract_daemon_runtime_command),
         ("mission-scheduler", "Show Mission scheduler contract metadata", contract_mission_scheduler_command),
@@ -18572,6 +18601,16 @@ def main(argv: list[str] | None = None) -> int:
         except FileNotFoundError:
             config = None
         if config is not None:
+            store = StateStore.open_existing(root)
+            project_view = _project_view_payload_or_error(config, store)
+            if project_view is None:
+                return 1
+            mission_recovery = project_view.get("mission_recovery")
+            if (
+                isinstance(mission_recovery, dict)
+                and mission_recovery.get("mission_id") is not None
+            ):
+                _print_json(mission_recovery)
             try:
                 asyncio.run(_start_daemon(Path(config.root), config))
             except DaemonUnavailable as exc:

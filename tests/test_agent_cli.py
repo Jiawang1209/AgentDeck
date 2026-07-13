@@ -6117,8 +6117,9 @@ def test_contract_list_discovers_all_gui_contracts(capsys) -> None:
         "run-loop",
         "run-loop-all",
         "workflow",
-        "mission",
-        "demo",
+            "mission",
+            "migration",
+            "demo",
         "plans",
         "release",
         "workbench",
@@ -7802,8 +7803,9 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "artifacts_contract",
         "daemon_runtime_contract",
         "mission_scheduler_contract",
-        "client_session_contract",
-    ]
+            "client_session_contract",
+            "migration_contract",
+        ]
     assert payload["change_summary_fields"] == [
         "since_event_id",
         "latest_event_id",
@@ -9367,8 +9369,9 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "artifacts_contract": "agentdeck contract artifacts",
         "daemon_runtime_contract": "agentdeck contract daemon-runtime",
         "mission_scheduler_contract": "agentdeck contract mission-scheduler",
-        "client_session_contract": "agentdeck contract client-session",
-        }
+            "client_session_contract": "agentdeck contract client-session",
+            "migration_contract": "agentdeck contract migration",
+            }
     assert payload["control_mode_card"] == {
         "mode": "control_mode",
         "title": "Control mode",
