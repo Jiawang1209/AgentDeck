@@ -6,12 +6,11 @@ import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 import fcntl
-import json
 import math
 import os
 from pathlib import Path
-import re
 import secrets
+import socket
 import stat
 import sys
 import threading
@@ -20,7 +19,12 @@ from typing import Any
 from agentdeck import __version__
 from agentdeck.models import PROJECT_VIEW_SCHEMA_VERSION
 
-from .lifecycle import daemon_endpoint, project_root_hash
+from .lifecycle import (
+    DaemonIdentityError,
+    bind_daemon_endpoint,
+    daemon_endpoint,
+    project_root_hash,
+)
 from .protocol import (
     DAEMON_RPC_PROTOCOL_VERSION,
     RpcEvent,
@@ -33,8 +37,6 @@ from .protocol import (
 
 
 CLIENT_METHODS = frozenset({"handshake", "status", "subscribe", "mission.pause"})
-_METADATA_FIELDS = {"instance_id", "project_root_hash", "start_nonce_hash", "pid"}
-_HASH = re.compile(r"[0-9a-f]{64}")
 DEFAULT_DAEMON_LOG_CAP_BYTES = 1024 * 1024
 _MIN_DAEMON_LOG_CAP_BYTES = 1024
 _MAX_DAEMON_LOG_CAP_BYTES = 64 * 1024 * 1024
@@ -107,6 +109,8 @@ class DaemonClient:
         self._events: asyncio.Queue[RpcEvent] = asyncio.Queue(128)
         self._expired_request_ids: deque[str] = deque(maxlen=128)
         self._closed = False
+        self._terminal_error: DaemonClientError | None = None
+        self._terminal_event = asyncio.Event()
         self._reader_task = asyncio.create_task(self._reader_loop())
 
     @classmethod
@@ -119,21 +123,56 @@ class DaemonClient:
     ) -> "DaemonClient":
         _validate_timeout(timeout_seconds)
         deadline = asyncio.get_running_loop().time() + float(timeout_seconds)
-        endpoint = daemon_endpoint(root)
-        metadata = _read_metadata(endpoint.metadata_path)
-        if metadata["project_root_hash"] != project_root_hash(root):
-            raise DaemonUnavailable("daemon project identity is unverified")
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            raise DaemonUnavailable("daemon identity is unverified")
-        return await cls.connect(
-            endpoint.socket_path,
-            expected_project_root_hash=str(metadata["project_root_hash"]),
-            expected_start_nonce_hash=str(metadata["start_nonce_hash"]),
-            expected_instance_id=str(metadata["instance_id"]),
-            max_frame_bytes=max_frame_bytes,
-            timeout_seconds=remaining,
-        )
+        binding = None
+        connected_socket: socket.socket | None = None
+        client: DaemonClient | None = None
+        try:
+            binding = bind_daemon_endpoint(root)
+            metadata = binding.read_metadata()
+            if metadata is None or metadata["project_root_hash"] != project_root_hash(root):
+                raise DaemonUnavailable("daemon project identity is unverified")
+            socket_identity = binding.socket_identity()
+            connected_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            connected_socket.setblocking(False)
+            await asyncio.wait_for(
+                asyncio.get_running_loop().sock_connect(
+                    connected_socket, str(binding.endpoint.socket_path)
+                ),
+                timeout=_connect_remaining(deadline),
+            )
+            binding.assert_socket_identity(socket_identity)
+            client = await cls.connect(
+                binding.endpoint.socket_path,
+                expected_project_root_hash=str(metadata["project_root_hash"]),
+                expected_start_nonce_hash=str(metadata["start_nonce_hash"]),
+                expected_instance_id=str(metadata["instance_id"]),
+                max_frame_bytes=max_frame_bytes,
+                timeout_seconds=_connect_remaining(deadline),
+                _connected_socket=connected_socket,
+            )
+            connected_socket = None
+            binding.assert_socket_identity(socket_identity)
+            return client
+        except asyncio.CancelledError:
+            if client is not None:
+                await client.close()
+            raise
+        except (
+            DaemonIdentityError,
+            DaemonClientError,
+            FileNotFoundError,
+            ConnectionError,
+            OSError,
+            asyncio.TimeoutError,
+        ):
+            if client is not None:
+                await client.close()
+            raise DaemonUnavailable("daemon identity is unverified") from None
+        finally:
+            if connected_socket is not None:
+                connected_socket.close()
+            if binding is not None:
+                binding.close()
 
     @classmethod
     async def connect(
@@ -146,6 +185,7 @@ class DaemonClient:
         protocol_version: str = DAEMON_RPC_PROTOCOL_VERSION,
         max_frame_bytes: int = 1024 * 1024,
         timeout_seconds: float = 10,
+        _connected_socket: socket.socket | None = None,
     ) -> "DaemonClient":
         _validate_timeout(timeout_seconds)
         deadline = asyncio.get_running_loop().time() + float(timeout_seconds)
@@ -153,7 +193,9 @@ class DaemonClient:
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(
-                    str(endpoint), limit=max_frame_bytes + 1
+                    None if _connected_socket is not None else str(endpoint),
+                    sock=_connected_socket,
+                    limit=max_frame_bytes + 1,
                 ),
                 timeout=_connect_remaining(deadline),
             )
@@ -239,6 +281,8 @@ class DaemonClient:
         lease_id: str | None = None,
         lease_generation: int | None = None,
     ) -> dict[str, object]:
+        if self._terminal_error is not None:
+            raise DaemonClientError(str(self._terminal_error))
         if self._closed:
             raise DaemonClientError("daemon client is closed")
         if method not in CLIENT_METHODS or method == "handshake":
@@ -257,6 +301,7 @@ class DaemonClient:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[dict[str, object]] = loop.create_future()
         self._pending[request_id] = future
+        sent = False
         try:
             try:
                 async with asyncio.timeout(self.request_timeout_seconds):
@@ -267,6 +312,7 @@ class DaemonClient:
                     )
                     async with self._write_lock:
                         self._writer.write(payload)
+                        sent = True
                         await self._writer.drain()
                     return await asyncio.shield(future)
             except asyncio.TimeoutError:
@@ -275,6 +321,8 @@ class DaemonClient:
                 raise DaemonClientError("daemon request timed out") from None
         except asyncio.CancelledError:
             future.cancel()
+            if sent:
+                self._expired_request_ids.append(request_id)
             raise
         except (ConnectionError, RpcProtocolError):
             raise DaemonClientError("daemon request failed") from None
@@ -287,10 +335,31 @@ class DaemonClient:
             raise DaemonClientError("daemon subscription failed")
 
     async def next_event(self, *, timeout_seconds: float | None = None) -> RpcEvent:
+        if self._terminal_error is not None:
+            raise DaemonClientError(str(self._terminal_error))
+
+        async def wait() -> RpcEvent:
+            event_task = asyncio.create_task(self._events.get())
+            terminal_task = asyncio.create_task(self._terminal_event.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    {event_task, terminal_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if terminal_task in done and self._terminal_error is not None:
+                    event_task.cancel()
+                    await asyncio.gather(event_task, return_exceptions=True)
+                    raise DaemonClientError(str(self._terminal_error))
+                return event_task.result()
+            finally:
+                for task in (event_task, terminal_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(event_task, terminal_task, return_exceptions=True)
+
         try:
             if timeout_seconds is None:
-                return await self._events.get()
-            return await asyncio.wait_for(self._events.get(), timeout=timeout_seconds)
+                return await wait()
+            return await asyncio.wait_for(wait(), timeout=timeout_seconds)
         except asyncio.TimeoutError:
             raise DaemonClientError("daemon event wait timed out") from None
 
@@ -321,28 +390,35 @@ class DaemonClient:
                     assert response.error is not None
                     future.set_exception(DaemonClientError(str(response.error["message"])))
         except asyncio.CancelledError:
-            raise
+            return
         except (EOFError, ConnectionError, RpcProtocolError, DaemonClientError):
             failure = DaemonClientError("daemon connection closed")
         finally:
             if failure is not None:
-                for future in tuple(self._pending.values()):
-                    if not future.done():
-                        future.set_exception(failure)
+                self._mark_terminal(failure)
 
-    async def close(self) -> None:
-        if self._closed:
+    def _mark_terminal(self, error: DaemonClientError) -> None:
+        if self._terminal_error is not None:
             return
+        self._terminal_error = error
         self._closed = True
+        self._terminal_event.set()
         for future in tuple(self._pending.values()):
             if not future.done():
-                future.set_exception(DaemonClientError("daemon client is closed"))
-        self._reader_task.cancel()
-        await asyncio.gather(self._reader_task, return_exceptions=True)
+                future.set_exception(DaemonClientError(str(error)))
         self._writer.close()
+
+    async def close(self) -> None:
+        if self._terminal_error is None:
+            self._mark_terminal(DaemonClientError("daemon client is closed"))
+        if not self._reader_task.done():
+            self._reader_task.cancel()
+            await asyncio.gather(self._reader_task, return_exceptions=True)
         try:
-            await self._writer.wait_closed()
-        except (ConnectionError, BrokenPipeError):
+            await asyncio.wait_for(
+                self._writer.wait_closed(), timeout=self.request_timeout_seconds
+            )
+        except (asyncio.TimeoutError, ConnectionError, BrokenPipeError):
             pass
 
 
@@ -365,27 +441,6 @@ async def _read_frame(
     if len(frame) > max_frame_bytes:
         raise RpcProtocolError("frame_too_large", "frame exceeds maximum size")
     return frame
-
-
-def _read_metadata(path: Path) -> dict[str, object]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, UnicodeError, json.JSONDecodeError, RecursionError):
-        raise DaemonUnavailable("daemon metadata is unavailable") from None
-    if (
-        type(value) is not dict
-        or set(value) != _METADATA_FIELDS
-        or type(value["instance_id"]) is not str
-        or not value["instance_id"].strip()
-        or type(value["project_root_hash"]) is not str
-        or _HASH.fullmatch(value["project_root_hash"]) is None
-        or type(value["start_nonce_hash"]) is not str
-        or _HASH.fullmatch(value["start_nonce_hash"]) is None
-        or type(value["pid"]) is not int
-        or value["pid"] <= 0
-    ):
-        raise DaemonUnavailable("daemon metadata is invalid")
-    return value
 
 
 def _secure_runtime_fd(root: Path) -> int:

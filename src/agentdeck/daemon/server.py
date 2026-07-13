@@ -7,11 +7,10 @@ from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
 import inspect
 import math
-import os
 from pathlib import Path
 import socket
-import stat
 
+from .lifecycle import DaemonEndpointBinding, DaemonIdentityError, bind_daemon_endpoint
 from .lease import LeaseError
 from .protocol import (
     DAEMON_RPC_PROTOCOL_VERSION,
@@ -75,6 +74,7 @@ class DaemonServer:
         event_queue_size: int = 128,
         read_timeout_seconds: float = 10,
         write_timeout_seconds: float = 10,
+        mutation_drain_timeout_seconds: float = 0.25,
     ) -> None:
         if type(max_frame_bytes) is not int or max_frame_bytes <= 0:
             raise ValueError("maximum frame size is invalid")
@@ -85,6 +85,7 @@ class DaemonServer:
         for name, value in (
             ("read timeout", read_timeout_seconds),
             ("write timeout", write_timeout_seconds),
+            ("mutation drain timeout", mutation_drain_timeout_seconds),
         ):
             if type(value) not in {int, float} or not math.isfinite(float(value)) or value <= 0:
                 raise ValueError(f"daemon {name} must be a positive finite number")
@@ -106,11 +107,14 @@ class DaemonServer:
         self.event_queue_size = event_queue_size
         self.read_timeout_seconds = float(read_timeout_seconds)
         self.write_timeout_seconds = float(write_timeout_seconds)
+        self.mutation_drain_timeout_seconds = float(mutation_drain_timeout_seconds)
         self._server: asyncio.AbstractServer | None = None
         self._connections: set[_Connection] = set()
         self._bound_identity: tuple[int, int] | None = None
+        self._endpoint_binding: DaemonEndpointBinding | None = None
         self._close_tasks: set[asyncio.Task[None]] = set()
         self._handler_tasks: set[asyncio.Task[None]] = set()
+        self._mutation_tasks: set[asyncio.Task[dict[str, object]]] = set()
 
     @property
     def connection_count(self) -> int:
@@ -124,37 +128,53 @@ class DaemonServer:
     def active_handler_task_count(self) -> int:
         return sum(not task.done() for task in self._handler_tasks)
 
+    @property
+    def active_mutation_task_count(self) -> int:
+        return sum(not task.done() for task in self._mutation_tasks)
+
     async def start(self) -> None:
         if self._server is not None:
             return
-        self.endpoint.parent.mkdir(parents=True, exist_ok=True)
-        if self.endpoint.exists() or self.endpoint.is_symlink():
-            raise DaemonServerError("daemon endpoint already exists")
+        binding: DaemonEndpointBinding | None = None
+        bound_identity: tuple[int, int] | None = None
         listener: socket.socket | None = None
         try:
+            root = self.endpoint.parents[2]
+            binding = bind_daemon_endpoint(root)
+            if binding.endpoint.socket_path != self.endpoint:
+                raise DaemonServerError("daemon endpoint escaped project runtime")
+            binding.assert_socket_absent()
             listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             listener.setblocking(False)
             listener.bind(str(self.endpoint))
-            metadata = self.endpoint.lstat()
-            if not stat.S_ISSOCK(metadata.st_mode):
-                raise DaemonServerError("daemon endpoint is not a socket")
-            self._bound_identity = (metadata.st_dev, metadata.st_ino)
-            os.chmod(self.endpoint, 0o600)
+            bound_identity = binding.held_socket_identity()
+            binding.assert_socket_identity(bound_identity)
+            binding.chmod_socket(bound_identity, 0o600)
             self._server = await asyncio.start_unix_server(
                 self._handle_connection,
                 sock=listener,
                 limit=self.max_frame_bytes + 1,
             )
             listener = None
+            binding.assert_socket_identity(bound_identity)
+            self._bound_identity = bound_identity
+            self._endpoint_binding = binding
+            binding = None
+        except DaemonIdentityError as exc:
+            raise DaemonServerError("daemon endpoint identity is unverified") from exc
         except Exception:
+            raise
+        finally:
             if listener is not None:
                 listener.close()
-            if self._server is not None:
+            if binding is not None:
+                if bound_identity is not None:
+                    binding.unlink_socket_if_identity(bound_identity)
+                binding.close()
+            if self._endpoint_binding is None and self._server is not None:
                 self._server.close()
                 await self._server.wait_closed()
                 self._server = None
-            self._unlink_owned_socket()
-            raise
 
     async def close(self) -> None:
         server, self._server = self._server, None
@@ -174,18 +194,32 @@ class DaemonServer:
         close_tasks = tuple(self._close_tasks)
         if close_tasks:
             await asyncio.gather(*close_tasks, return_exceptions=True)
+        await self._drain_mutations(self.mutation_drain_timeout_seconds)
         self._unlink_owned_socket()
+
+    async def _drain_mutations(self, timeout_seconds: float) -> None:
+        tasks = tuple(task for task in self._mutation_tasks if not task.done())
+        if tasks:
+            await asyncio.wait(tasks, timeout=timeout_seconds)
+
+    async def wait_for_mutations(self, *, timeout_seconds: float) -> None:
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        while self.active_mutation_task_count:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise DaemonServerError("daemon mutation drain timed out")
+            await self._drain_mutations(remaining)
 
     def _unlink_owned_socket(self) -> None:
         identity, self._bound_identity = self._bound_identity, None
-        if identity is None:
+        binding, self._endpoint_binding = self._endpoint_binding, None
+        if binding is None:
             return
         try:
-            metadata = self.endpoint.lstat()
-        except FileNotFoundError:
-            return
-        if stat.S_ISSOCK(metadata.st_mode) and (metadata.st_dev, metadata.st_ino) == identity:
-            self.endpoint.unlink()
+            if identity is not None:
+                binding.unlink_socket_if_identity(identity)
+        finally:
+            binding.close()
 
     async def wait_connection_count(
         self, expected: int, *, timeout_seconds: float
@@ -393,7 +427,25 @@ class DaemonServer:
             raise DaemonClientRequestError("controller lease required", "lease_required") from None
         if self.mutation_handler is None:
             raise DaemonClientRequestError("mutation handler is unavailable", "unavailable")
-        value = self.mutation_handler(request.method, params)
+        task = asyncio.create_task(self._run_mutation_handler(request.method, params))
+        self._mutation_tasks.add(task)
+        task.add_done_callback(self._mutation_finished)
+        return await asyncio.shield(task)
+
+    def _mutation_finished(self, task: asyncio.Task[dict[str, object]]) -> None:
+        self._mutation_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except Exception:
+            pass
+
+    async def _run_mutation_handler(
+        self, method: str, params: dict[str, object]
+    ) -> dict[str, object]:
+        assert self.mutation_handler is not None
+        value = self.mutation_handler(method, params)
         if inspect.isawaitable(value):
             value = await value
         if not isinstance(value, Mapping):

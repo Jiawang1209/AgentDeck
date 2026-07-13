@@ -5,8 +5,12 @@ import math
 import multiprocessing
 import os
 from pathlib import Path
+import socket
+import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from typing import Mapping
@@ -19,6 +23,7 @@ from agentdeck.daemon.lifecycle import (
     DaemonIdentityError,
     DaemonOwnership,
     acquire_daemon_ownership,
+    bind_daemon_endpoint,
     can_stop_daemon,
     cleanup_daemon_endpoint,
     daemon_endpoint,
@@ -26,6 +31,70 @@ from agentdeck.daemon.lifecycle import (
     project_root_hash,
     reconcile_endpoint,
 )
+
+
+def test_endpoint_binding_rejects_metadata_and_socket_symlinks(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    endpoint = daemon_endpoint(project)
+    endpoint.metadata_path.parent.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.write_text("external", encoding="utf-8")
+
+    endpoint.metadata_path.symlink_to(outside)
+    with pytest.raises(DaemonIdentityError, match="symlink"):
+        bind_daemon_endpoint(project)
+    endpoint.metadata_path.unlink()
+
+    endpoint.socket_path.symlink_to(outside)
+    with pytest.raises(DaemonIdentityError, match="symlink"):
+        bind_daemon_endpoint(project)
+
+
+def test_endpoint_binding_detects_visible_runtime_replacement(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    binding = bind_daemon_endpoint(project)
+    runtime = binding.endpoint.socket_path.parent
+    parked = runtime.with_name("runtime-parked")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        runtime.rename(parked)
+        runtime.symlink_to(outside, target_is_directory=True)
+
+        with pytest.raises(DaemonIdentityError, match="binding changed"):
+            binding.assert_runtime_identity()
+    finally:
+        binding.close()
+
+
+def test_endpoint_binding_chmod_never_targets_replacement_runtime() -> None:
+    project = Path(tempfile.mkdtemp(prefix="ad-bind-", dir="/tmp")).resolve()
+    binding = bind_daemon_endpoint(project)
+    runtime = binding.endpoint.socket_path.parent
+    held_socket = socket.socket(socket.AF_UNIX)
+    held_socket.bind(str(binding.endpoint.socket_path))
+    identity = binding.socket_identity()
+    parked = runtime.with_name("runtime-parked")
+    outside = project.with_name(project.name + "-outside")
+    outside.mkdir()
+    outside_socket = outside / "daemon.sock"
+    outside_socket.write_text("external", encoding="utf-8")
+    outside_socket.chmod(0o644)
+    try:
+        runtime.rename(parked)
+        runtime.symlink_to(outside, target_is_directory=True)
+
+        with pytest.raises(DaemonIdentityError, match="binding changed"):
+            binding.chmod_socket(identity, 0o600)
+        assert stat.S_IMODE(outside_socket.stat().st_mode) == 0o644
+        assert outside_socket.read_text(encoding="utf-8") == "external"
+    finally:
+        held_socket.close()
+        binding.close()
+        shutil.rmtree(project, ignore_errors=True)
+        shutil.rmtree(outside, ignore_errors=True)
 
 
 def _atomic_json(path: Path, value: Mapping[str, object]) -> None:

@@ -65,6 +65,113 @@ class _BoundEndpoint:
             os.close(self.runtime_fd)
 
 
+_ENDPOINT_BINDING_FACTORY_TOKEN = object()
+
+
+@dataclass(frozen=True, init=False)
+class DaemonEndpointBinding:
+    """Held, no-follow capability for one project runtime directory."""
+
+    endpoint: DaemonEndpoint
+    _bound: _BoundEndpoint = field(repr=False, compare=False)
+
+    def __init__(
+        self,
+        *,
+        _factory_token: object | None = None,
+        _bound: _BoundEndpoint | None = None,
+    ) -> None:
+        if _factory_token is not _ENDPOINT_BINDING_FACTORY_TOKEN or _bound is None:
+            raise TypeError("DaemonEndpointBinding cannot be constructed directly")
+        object.__setattr__(self, "endpoint", _bound.endpoint)
+        object.__setattr__(self, "_bound", _bound)
+
+    def assert_runtime_identity(self) -> None:
+        _assert_runtime_binding(self._bound)
+        _reject_endpoint_symlinks(self._bound)
+
+    def read_metadata(self) -> dict[str, object] | None:
+        return _read_endpoint_metadata(self._bound)
+
+    def assert_socket_absent(self) -> None:
+        self.assert_runtime_identity()
+        try:
+            os.stat(
+                "daemon.sock",
+                dir_fd=self._bound.runtime_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return
+        raise DaemonIdentityError("daemon endpoint already exists")
+
+    def held_socket_identity(self) -> tuple[int, int]:
+        try:
+            metadata = os.stat(
+                "daemon.sock",
+                dir_fd=self._bound.runtime_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError as exc:
+            raise DaemonIdentityError("daemon socket is unavailable") from exc
+        if not stat.S_ISSOCK(metadata.st_mode):
+            raise DaemonIdentityError("daemon endpoint is not a socket")
+        return metadata.st_dev, metadata.st_ino
+
+    def socket_identity(self) -> tuple[int, int]:
+        self.assert_runtime_identity()
+        identity = self.held_socket_identity()
+        self.assert_runtime_identity()
+        return identity
+
+    def assert_socket_identity(self, identity: tuple[int, int]) -> None:
+        if self.socket_identity() != identity:
+            raise DaemonIdentityError("daemon socket identity changed")
+
+    def chmod_socket(self, identity: tuple[int, int], mode: int) -> None:
+        self.assert_socket_identity(identity)
+        os.chmod(
+            "daemon.sock",
+            mode,
+            dir_fd=self._bound.runtime_fd,
+            follow_symlinks=False,
+        )
+        self.assert_socket_identity(identity)
+
+    def unlink_socket_if_identity(self, identity: tuple[int, int]) -> bool:
+        if self._bound.closed:
+            return False
+        try:
+            metadata = os.stat(
+                "daemon.sock",
+                dir_fd=self._bound.runtime_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return False
+        if not stat.S_ISSOCK(metadata.st_mode) or (
+            metadata.st_dev,
+            metadata.st_ino,
+        ) != identity:
+            return False
+        os.unlink("daemon.sock", dir_fd=self._bound.runtime_fd)
+        return True
+
+    def close(self) -> None:
+        self._bound.close()
+
+    def __enter__(self) -> DaemonEndpointBinding:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
+
+
 HealthProbe = Callable[[Mapping[str, object]], Mapping[str, object] | None]
 
 
@@ -312,6 +419,15 @@ def _prepare_endpoint(root: Path) -> _BoundEndpoint:
     except Exception:
         bound.close()
         raise
+
+
+def bind_daemon_endpoint(root: Path) -> DaemonEndpointBinding:
+    """Bind endpoint operations to the verified runtime directory inode."""
+
+    return DaemonEndpointBinding(
+        _factory_token=_ENDPOINT_BINDING_FACTORY_TOKEN,
+        _bound=_prepare_endpoint(root),
+    )
 
 
 def _validate_endpoint_metadata(value: object) -> dict[str, object]:

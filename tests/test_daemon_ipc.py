@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 import agentdeck.daemon.client as client_module
+import agentdeck.daemon.lifecycle as lifecycle_module
 import agentdeck.daemon.server as server_module
 from agentdeck import __version__
 from agentdeck.daemon.client import (
@@ -130,6 +131,74 @@ def test_verified_client_handshake_status_and_request_correlation(short_project:
             finally:
                 await client.close()
         finally:
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_verified_client_rejects_metadata_symlink(short_project: Path) -> None:
+    async def exercise() -> None:
+        owner, server = await _running_server(short_project)
+        metadata = owner.endpoint.metadata_path
+        original = metadata.read_bytes()
+        outside = short_project / "outside-metadata.json"
+        outside.write_bytes(original)
+        metadata.unlink()
+        metadata.symlink_to(outside)
+        try:
+            with pytest.raises(DaemonUnavailable):
+                await DaemonClient.connect_verified(
+                    short_project,
+                    max_frame_bytes=MAX_FRAME,
+                    timeout_seconds=1,
+                )
+        finally:
+            metadata.unlink(missing_ok=True)
+            metadata.write_bytes(original)
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_verified_client_rejects_runtime_swap_during_connect(
+    short_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        owner, server = await _running_server(short_project)
+        runtime = owner.endpoint.socket_path.parent
+        parked = runtime.with_name("runtime-parked")
+        outside = short_project / "outside-runtime"
+        outside.mkdir()
+        original = lifecycle_module.DaemonEndpointBinding.assert_socket_identity
+        swapped = False
+
+        def swap_then_assert(binding: object, identity: tuple[int, int]) -> None:
+            nonlocal swapped
+            if not swapped:
+                swapped = True
+                runtime.rename(parked)
+                runtime.symlink_to(outside, target_is_directory=True)
+            original(binding, identity)
+
+        monkeypatch.setattr(
+            lifecycle_module.DaemonEndpointBinding,
+            "assert_socket_identity",
+            swap_then_assert,
+        )
+        try:
+            with pytest.raises(DaemonUnavailable):
+                await DaemonClient.connect_verified(
+                    short_project,
+                    max_frame_bytes=MAX_FRAME,
+                    timeout_seconds=1,
+                )
+            assert swapped is True
+        finally:
+            if runtime.is_symlink():
+                runtime.unlink()
+                parked.rename(runtime)
             await server.close()
             cleanup_daemon_endpoint(owner)
 
@@ -288,6 +357,153 @@ def test_observer_mutation_requires_current_lease_before_handler(short_project: 
                 await client.close()
         finally:
             await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_client_eof_does_not_cancel_lease_validated_mutation(
+    short_project: Path,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = asyncio.Event()
+
+    async def mutate(method: str, params: dict[str, object]) -> dict[str, object]:
+        del method, params
+        started.set()
+        await release.wait()
+        completed.set()
+        return {"completed": True}
+
+    async def exercise() -> None:
+        owner, server = await _running_server(
+            short_project,
+            mutation_handler=mutate,
+            lease_validator=lambda lease_id, generation: None,
+        )
+        client = await DaemonClient.connect_verified(
+            short_project, max_frame_bytes=MAX_FRAME
+        )
+        request = asyncio.create_task(
+            client.request(
+                "mission.pause", {}, lease_id="lse_current", lease_generation=1
+            )
+        )
+        try:
+            await asyncio.wait_for(started.wait(), timeout=0.5)
+            await client.close()
+            release.set()
+            await asyncio.wait_for(completed.wait(), timeout=0.5)
+            result = await asyncio.gather(request, return_exceptions=True)
+            assert isinstance(result[0], DaemonClientError)
+            await server.wait_for_mutations(timeout_seconds=0.5)
+            assert server.active_mutation_task_count == 0
+        finally:
+            release.set()
+            await asyncio.gather(request, return_exceptions=True)
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_sent_request_cancellation_tombstones_late_response(
+    short_project: Path,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def mutate(method: str, params: dict[str, object]) -> dict[str, object]:
+        del method, params
+        started.set()
+        await release.wait()
+        return {"late": True}
+
+    async def exercise() -> None:
+        owner, server = await _running_server(
+            short_project,
+            mutation_handler=mutate,
+            lease_validator=lambda lease_id, generation: None,
+        )
+        try:
+            client = await DaemonClient.connect_verified(
+                short_project, max_frame_bytes=MAX_FRAME
+            )
+            try:
+                request = asyncio.create_task(
+                    client.request(
+                        "mission.pause",
+                        {},
+                        lease_id="lse_current",
+                        lease_generation=1,
+                    )
+                )
+                await asyncio.wait_for(started.wait(), timeout=0.5)
+                request.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await request
+                release.set()
+                await server.wait_for_mutations(timeout_seconds=0.5)
+                await asyncio.sleep(0)
+                assert (await client.request("status", {}))["state"] == "ready"
+            finally:
+                await client.close()
+        finally:
+            release.set()
+            await server.close()
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_reader_eof_atomically_fails_pending_and_unbounded_event_waiters(
+    short_project: Path,
+) -> None:
+    status_release = asyncio.Event()
+    status_calls = 0
+
+    async def status() -> dict[str, object]:
+        nonlocal status_calls
+        status_calls += 1
+        if status_calls > 1:
+            await status_release.wait()
+        return {"mode": "daemon_status", "state": "ready"}
+
+    async def exercise() -> None:
+        owner = _owner(short_project)
+        server = DaemonServer(
+            endpoint=owner.endpoint.socket_path,
+            instance_id=owner.instance_id,
+            project_root_hash=owner.project_root_hash,
+            start_nonce_hash=owner.start_nonce_hash,
+            daemon_version=__version__,
+            project_view_schema_version=PROJECT_VIEW_SCHEMA_VERSION,
+            max_frame_bytes=MAX_FRAME,
+            allowed_methods=METHODS,
+            status_provider=status,
+        )
+        await server.start()
+        client = await DaemonClient.connect_verified(
+            short_project, max_frame_bytes=MAX_FRAME
+        )
+        pending = asyncio.create_task(client.request("status", {}))
+        event_wait = asyncio.create_task(client.next_event())
+        try:
+            while status_calls < 2:
+                await asyncio.sleep(0)
+            await server.close()
+            results = await asyncio.wait_for(
+                asyncio.gather(pending, event_wait, return_exceptions=True), timeout=0.5
+            )
+            assert all(isinstance(item, DaemonClientError) for item in results)
+            started = asyncio.get_running_loop().time()
+            with pytest.raises(DaemonClientError, match="connection closed"):
+                await client.request("status", {})
+            assert asyncio.get_running_loop().time() - started < 0.02
+        finally:
+            status_release.set()
+            await client.close()
             cleanup_daemon_endpoint(owner)
 
     _run(exercise())
@@ -591,6 +807,61 @@ def test_server_prebinds_socket_instead_of_delegating_path_replacement(
             await server.close()
             attacker.close()
             owner.endpoint.socket_path.unlink(missing_ok=True)
+            cleanup_daemon_endpoint(owner)
+
+    _run(exercise())
+
+
+def test_server_bind_runtime_swap_never_chmods_or_unlinks_external_file(
+    short_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        owner = _owner(short_project)
+        runtime = owner.endpoint.socket_path.parent
+        parked = runtime.with_name("runtime-parked")
+        outside = short_project / "outside-runtime"
+        outside.mkdir()
+        outside_socket = outside / "daemon.sock"
+        outside_socket.write_text("external", encoding="utf-8")
+        outside_socket.chmod(0o644)
+        original = lifecycle_module.DaemonEndpointBinding.assert_socket_identity
+        swapped = False
+
+        def swap_then_assert(binding: object, identity: tuple[int, int]) -> None:
+            nonlocal swapped
+            if not swapped:
+                swapped = True
+                runtime.rename(parked)
+                runtime.symlink_to(outside, target_is_directory=True)
+            original(binding, identity)
+
+        monkeypatch.setattr(
+            lifecycle_module.DaemonEndpointBinding,
+            "assert_socket_identity",
+            swap_then_assert,
+        )
+        server = DaemonServer(
+            endpoint=owner.endpoint.socket_path,
+            instance_id=owner.instance_id,
+            project_root_hash=owner.project_root_hash,
+            start_nonce_hash=owner.start_nonce_hash,
+            daemon_version=__version__,
+            project_view_schema_version=PROJECT_VIEW_SCHEMA_VERSION,
+            max_frame_bytes=MAX_FRAME,
+            allowed_methods=METHODS,
+            status_provider=lambda: {"mode": "daemon_status"},
+        )
+        try:
+            with pytest.raises(Exception):
+                await server.start()
+            assert swapped is True
+            assert outside_socket.read_text(encoding="utf-8") == "external"
+            assert stat.S_IMODE(outside_socket.stat().st_mode) == 0o644
+        finally:
+            await server.close()
+            if runtime.is_symlink():
+                runtime.unlink()
+                parked.rename(runtime)
             cleanup_daemon_endpoint(owner)
 
     _run(exercise())
