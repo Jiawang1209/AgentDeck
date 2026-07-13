@@ -1460,6 +1460,7 @@ class StateStore:
         generation: int,
         now: datetime,
         ttl_seconds: float = 300,
+        controller_authority: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         """Durably record an exact-bound governance preview without acting."""
         from .daemon.governance import build_governance_preview
@@ -1474,8 +1475,39 @@ class StateStore:
                 ttl_seconds=ttl_seconds,
             ),
         }
+        if controller_authority is not None:
+            lease_id = controller_authority.get("lease_id")
+            client_id = controller_authority.get("client_id")
+            daemon_instance_id = controller_authority.get("daemon_instance_id")
+            if (
+                type(lease_id) is not str
+                or type(client_id) is not str
+                or type(daemon_instance_id) is not str
+                or controller_authority.get("generation") != generation
+            ):
+                raise ValueError("governance controller authority is invalid")
+            candidate["controller_lineage"] = {
+                "client_id": client_id,
+                "daemon_instance_id": daemon_instance_id,
+                "generation": generation,
+                "lease_id_hash": hashlib.sha256(lease_id.encode("utf-8")).hexdigest(),
+            }
         with self._protocol_mutation_lock():
             state = self.load()
+            if controller_authority is not None:
+                current = state.get("controller_lease")
+                runtime = state.get("daemon_runtime")
+                if (
+                    type(current) is not dict
+                    or type(runtime) is not dict
+                    or current.get("lease_id") != controller_authority.get("lease_id")
+                    or current.get("client_id") != controller_authority.get("client_id")
+                    or current.get("generation") != generation
+                    or runtime.get("instance_id")
+                    != controller_authority.get("daemon_instance_id")
+                    or not controller_lease_is_active(current, now=now)
+                ):
+                    raise ValueError("governance controller authority drift")
             previews = state.setdefault("governance_previews", [])
             if type(previews) is not list or any(
                 type(item) is not dict for item in previews
@@ -1892,6 +1924,7 @@ class StateStore:
         facts: Mapping[str, object],
         generation: int,
         now: datetime,
+        current_authority: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         """Atomically resume or cancel an idle-boundary Mission."""
         from .conversation.bindings import PreviewBindingError
@@ -1941,11 +1974,23 @@ class StateStore:
             ]
             if len(preview_matches) != 1:
                 raise KeyError(preview_id)
+            preview_record = preview_matches[0]
+            if current_authority is not None:
+                self._validate_mission_controller_lineage_locked(
+                    state,
+                    preview_record,
+                    current_authority=current_authority,
+                    now=now,
+                )
             consumed = consume_governance_preview(
-                preview_matches[0],
+                preview_record,
                 action=action,
                 facts=current_facts,
-                generation=generation,
+                generation=(
+                    int(preview_record["generation"])
+                    if current_authority is not None
+                    else generation
+                ),
                 now=now,
             )
             if not mission_status_transition_allowed(source, target):
@@ -1982,6 +2027,95 @@ class StateStore:
                 "state": target,
                 "preview_id": preview_id,
             }
+
+    def _validate_mission_controller_lineage_locked(
+        self,
+        state: dict[str, Any],
+        preview: Mapping[str, object],
+        *,
+        current_authority: Mapping[str, object],
+        now: datetime,
+    ) -> None:
+        """Validate resume/cancel controller succession under the mutation lock."""
+        from .daemon.lease import controller_lease_is_active
+
+        lineage = preview.get("controller_lineage")
+        current = state.get("controller_lease")
+        runtime = state.get("daemon_runtime")
+        if (
+            type(lineage) is not dict
+            or type(current) is not dict
+            or type(runtime) is not dict
+            or current_authority.get("lease_id") != current.get("lease_id")
+            or current_authority.get("client_id") != current.get("client_id")
+            or current_authority.get("generation") != current.get("generation")
+            or not controller_lease_is_active(current, now=now)
+            or runtime.get("instance_id") != lineage.get("daemon_instance_id")
+            or current_authority.get("daemon_instance_id")
+            != lineage.get("daemon_instance_id")
+            or current.get("client_id") != lineage.get("client_id")
+            or current.get("generation") != lineage.get("generation", 0) + 1
+        ):
+            raise ValueError("Mission governance controller lineage drift")
+        terminal = self._controller_lease_terminal_state_locked(
+            state,
+            lease_id_hash=lineage.get("lease_id_hash"),
+            generation=lineage.get("generation"),
+            client_id=lineage.get("client_id"),
+        )
+        if terminal != "released":
+            raise ValueError("Mission governance predecessor was not released")
+
+    def _controller_lease_terminal_state_locked(
+        self,
+        state: dict[str, Any],
+        *,
+        lease_id_hash: object,
+        generation: object,
+        client_id: object,
+    ) -> str | None:
+        """Read terminal evidence without recursively acquiring the mutation lock."""
+        if (
+            type(lease_id_hash) is not str
+            or type(generation) is not int
+            or type(client_id) is not str
+        ):
+            raise ValueError("controller lineage identity is invalid")
+        outbox = state.setdefault("daemon_event_outbox", [])
+        validate_daemon_event_outbox(outbox)
+        records: list[dict[str, Any]] = []
+        if self.events_path.exists():
+            for line in self.events_path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    record = json.loads(line)
+                    validate_daemon_event_record(record)
+                    records.append(record)
+        durable_ids = {record["event_id"] for record in records}
+        records.extend(
+            record for record in outbox
+            if type(record) is dict and record.get("event_id") not in durable_ids
+        )
+        matched: list[str] = []
+        for record in records:
+            payload = record.get("payload")
+            lease_id = payload.get("lease_id") if type(payload) is dict else None
+            if (
+                record.get("event_type")
+                in {"controller_lease_released", "controller_lease_expired"}
+                and type(lease_id) is str
+                and hashlib.sha256(lease_id.encode("utf-8")).hexdigest()
+                == lease_id_hash
+                and payload.get("generation") == generation
+                and payload.get("client_id") == client_id
+            ):
+                matched.append(
+                    str(record["event_type"]).removeprefix("controller_lease_")
+                )
+        if "released" in matched:
+            return "released"
+        if "expired" in matched:
+            return "expired"
+        return None
 
     def change_worker_ownership_with_governance_preview(
         self,

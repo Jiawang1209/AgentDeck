@@ -14,7 +14,12 @@ import pytest
 
 from agentdeck.config import load_config, write_default_config
 import agentdeck.daemon.client as daemon_client_module
-from agentdeck.daemon.client import DaemonClient, admit_confirmed_mission, connect_or_start
+from agentdeck.daemon.client import (
+    DaemonClient,
+    admit_confirmed_mission,
+    connect_or_start,
+    govern_mission,
+)
 from agentdeck.daemon.lifecycle import (
     daemon_endpoint,
     project_root_hash,
@@ -299,4 +304,81 @@ def test_real_daemon_cleanup_runs_after_early_post_admission_failure() -> None:
         assert not endpoint.metadata_path.exists()
         assert daemon_client_module._detached_reaper_count() == 0
     finally:
+        shutil.rmtree(parent, ignore_errors=True)
+
+
+def test_real_daemon_mission_resume_preview_confirm_uses_released_successor() -> None:
+    parent = Path(tempfile.mkdtemp(prefix="agentdeck-m2-govern-", dir="/tmp"))
+    root = parent.resolve() / "repo"
+    pid: int | None = None
+    try:
+        root.mkdir(parents=True)
+        (root / ".git").mkdir()
+        write_default_config(root)
+        config_path = root / ".agentdeck" / "config.toml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                'provider = "deepseek"', 'provider = "fake"', 1
+            ).replace('model = "deepseek-chat"', 'model = "fake-plan"', 1),
+            encoding="utf-8",
+        )
+        config = load_config(root)
+        store = StateStore(root)
+        preview = create_mission_preview(
+            config=config, store=store, provider=TwoWorkerProvider(),
+            user_message="让 Codex 和 Claude 严格串行完成两步审阅，共2轮",
+            timeout_seconds=30,
+        )
+        confirmed = confirm_mission_for_daemon(
+            config=config, store=store, mission_id=preview["mission_id"]
+        )
+        store.admit_mission_execution(
+            str(preview["mission_id"]), snapshot_hash=str(confirmed["snapshot_hash"])
+        )
+        state = store.load()
+        state["missions"][0]["status"] = "stopped"
+        state["missions"][0]["stop_reason"] = "test_idle_boundary"
+        store.save(state)
+
+        async def run() -> tuple[dict[str, object], dict[str, object]]:
+            client = await connect_or_start(root, config)
+            await client.close()
+            first = await govern_mission(
+                root, config, mission_id=str(preview["mission_id"]), action="resume"
+            )
+            second = await govern_mission(
+                root, config, mission_id=str(preview["mission_id"]), action="resume",
+                preview_id=str(first["preview_id"]),
+            )
+            return first, second
+
+        first, second = asyncio.run(run())
+        metadata = json.loads(
+            daemon_endpoint(root).metadata_path.read_text(encoding="utf-8")
+        )
+        pid = int(metadata["pid"])
+        assert first["generation"] == 1
+        assert second["state"] == "running"
+        persisted = store.load()
+        exact_preview = next(
+            item for item in persisted["governance_previews"]
+            if item["preview_id"] == first["preview_id"]
+        )
+        assert exact_preview["state"] == "consumed"
+        events = [
+            json.loads(line)
+            for line in store.events_path.read_text(encoding="utf-8").splitlines()
+        ]
+        released = [
+            item for item in events
+            if item["event_type"] == "controller_lease_released"
+        ]
+        assert [item["payload"]["generation"] for item in released] == [1, 2]
+        assert persisted["controller_lease"]["generation"] == 2
+    finally:
+        if pid is None:
+            pid = _discover_daemon_pid(root)
+        if pid is not None:
+            _stop_and_await_daemon(root, pid, force_terminate=True)
+        assert daemon_client_module._detached_reaper_count() == 0
         shutil.rmtree(parent, ignore_errors=True)

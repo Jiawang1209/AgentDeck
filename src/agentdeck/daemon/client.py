@@ -6,6 +6,7 @@ import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 import fcntl
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -1023,9 +1024,12 @@ async def govern_mission(
     lease_id: str | None = None
     generation: int | None = None
     try:
+        logical_identity = hashlib.sha256(
+            f"{Path(root).resolve()}\0{mission_id}\0{action}".encode("utf-8")
+        ).hexdigest()[:24]
         acquired = await client.request(
             "controller.acquire",
-            {"client_id": f"client_mission_governance_{secrets.token_hex(12)}"},
+            {"client_id": f"client_mission_governance_{logical_identity}"},
         )
         lease_id = acquired.get("lease_id")
         generation = acquired.get("generation")

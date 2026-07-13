@@ -346,3 +346,72 @@ def test_acp_transport_can_delegate_permission_to_daemon_ledger(tmp_path: Path) 
     assert len(ledger.decisions) == 1
     assert ledger.disconnects == ["transport_closed"]
     assert created[0].calls[-1] == "close"
+
+
+@pytest.mark.parametrize("cancel_stage", ["initialize", "new_session", "activate"])
+def test_acp_admit_cancellation_closes_and_disconnects_existing_session(
+    tmp_path: Path, cancel_stage: str,
+) -> None:
+    reached = asyncio.Event()
+    transport_calls: list[str] = []
+    disconnects: list[str] = []
+
+    class BlockingTransport:
+        async def initialize(self):
+            transport_calls.append("initialize")
+            if cancel_stage == "initialize":
+                reached.set()
+                await asyncio.Event().wait()
+            return object()
+
+        async def new_session(self):
+            transport_calls.append("new_session")
+            if cancel_stage == "new_session":
+                reached.set()
+                await asyncio.Event().wait()
+            return SimpleNamespace(native_session_id="native-cancelled")
+
+        async def prompt(self, *_args):
+            raise AssertionError("prompt must not run")
+
+        async def close(self):
+            transport_calls.append("close")
+
+    class Sink:
+        fragments: list[str] = []
+
+        async def append_update(self, *_args):
+            return None
+
+        async def append_permission(self, *_args):
+            return None
+
+        async def append_permission_decision(self, *_args):
+            return None
+
+        async def activate(self, *_args):
+            if cancel_stage == "activate":
+                reached.set()
+                await asyncio.Event().wait()
+
+        async def disconnect(self, reason: str):
+            disconnects.append(reason)
+
+    worker = AcpWorkerTransport(
+        argv=("fake-agent-acp",), workspace=tmp_path, prompt="prompt",
+        transport_factory=lambda *_args, **_kwargs: BlockingTransport(),
+        sink=Sink(),
+    )
+
+    async def case() -> None:
+        task = asyncio.create_task(worker.admit(_attempt("acp")))
+        await reached.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(case())
+    assert transport_calls[-1] == "close"
+    assert disconnects == (
+        ["admission_cancelled"] if cancel_stage == "activate" else []
+    )

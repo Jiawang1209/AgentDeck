@@ -324,6 +324,20 @@ def test_daemon_shutdown_signal_is_bound_to_durable_commit_not_rpc_ack() -> None
     asyncio.run(case())
 
 
+def test_force_stop_signals_shutdown_even_when_post_stop_lease_release_fails() -> None:
+    async def case() -> None:
+        stop_event = asyncio.Event()
+        with pytest.raises(OSError, match="lease release failed"):
+            cli._commit_daemon_shutdown(
+                lambda: (_ for _ in ()).throw(OSError("lease release failed")),
+                stop_event,
+                shutdown_on_failure=True,
+            )
+        assert stop_event.is_set()
+
+    asyncio.run(case())
+
+
 def test_daemon_stop_requires_explicit_lease_options_as_a_pair(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

@@ -26,6 +26,7 @@ from agentdeck.daemon.service import (
     authorize_mission_acp_effect,
 )
 from agentdeck.cli import _DaemonAcpWorkerSink
+from agentdeck.daemon.transports import AcpWorkerTransport
 from agentdeck.models import AgentSpec
 from agentdeck.runtime.protocol import TransportCapabilities
 from agentdeck.state import StateStore, canonical_snapshot_hash
@@ -1447,6 +1448,105 @@ def test_daemon_acp_permission_waits_durably_for_exact_human_decision(
             await pumping
 
     asyncio.run(case())
+
+
+def test_service_close_persists_busy_acp_disconnect_before_restart_recovery(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+
+    class Server:
+        async def start(self) -> None:
+            calls.append("server:start")
+
+        async def close(self) -> None:
+            calls.append("server:close")
+
+    async def case() -> str:
+        store = StateStore(tmp_path)
+        _seed_missions(store)
+        service = ProjectDaemonService(
+            server=Server(), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        sink = _DaemonAcpWorkerSink(
+            service=service, store=store,
+            attempt=store.load()["mission_attempts"][0],
+            agent=AgentSpec(
+                agent_id="worker", role="implementation", provider="codex",
+                command="codex", role_prompt="implement", transport="acp",
+                transport_command=("fake-agent-acp",),
+            ),
+            workspace=tmp_path,
+        )
+        activated = asyncio.Event()
+
+        class BlockingTransport:
+            async def initialize(self):
+                calls.append("transport:initialize")
+                return SimpleNamespace(
+                    capabilities=TransportCapabilities(
+                        True, True, True, True, True, False
+                    ),
+                    protocol_version="1", agent_identity="fake",
+                )
+
+            async def new_session(self):
+                calls.append("transport:new-session")
+                return SimpleNamespace(native_session_id="native-shutdown")
+
+            async def prompt(self, *_args):
+                calls.append("transport:prompt")
+                await asyncio.Event().wait()
+
+            async def close(self):
+                calls.append("transport:close")
+
+        worker_transport = AcpWorkerTransport(
+            argv=("fake-agent-acp",), workspace=tmp_path, prompt="work",
+            transport_factory=lambda *_args, **_kwargs: BlockingTransport(),
+            sink=sink,
+        )
+        attempt = store.load()["mission_attempts"][0]
+
+        async def worker() -> None:
+            receipt = await worker_transport.admit(attempt)
+            activated.set()
+            await worker_transport.complete(attempt, receipt)
+
+        service.start_worker_io(worker(), on_completion=lambda _result: None)
+        for _ in range(20):
+            await service.tick()
+            await asyncio.sleep(0)
+            if activated.is_set():
+                break
+        await asyncio.wait_for(activated.wait(), timeout=0.2)
+        session_id = str(sink.session_id)
+        await service.close()
+        assert calls == [
+            "server:start", "transport:initialize", "transport:new-session",
+            "transport:prompt", "transport:close", "server:close",
+        ]
+        return session_id
+
+    session_id = asyncio.run(case())
+    store = StateStore(tmp_path)
+    protocol = store.validated_protocol_state()
+    session = next(
+        item for item in protocol["agent_sessions"]
+        if item["session_id"] == session_id
+    )
+    assert store._derived_protocol_state(
+        protocol, "session", session_id, session
+    ) == "disconnected"
+    result = reconcile_startup(store, enable_scheduler=lambda: None)
+    assert result[0]["classification"] == "ambiguous"
+    restarted = store.validated_protocol_state()
+    assert store._derived_protocol_state(
+        restarted, "session", session_id, session
+    ) == "disconnected"
 
 
 @pytest.mark.parametrize(

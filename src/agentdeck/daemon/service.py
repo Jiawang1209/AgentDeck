@@ -483,6 +483,7 @@ def apply_mission_state_request(
     params: object,
     generation: int,
     now: datetime,
+    current_authority: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Production exact preview handler for Mission resume/cancel."""
     if action not in {"mission_resume", "mission_cancel"}:
@@ -507,6 +508,7 @@ def apply_mission_state_request(
                 facts=facts,
                 generation=generation,
                 now=now,
+                controller_authority=current_authority,
             )
         except (AttributeError, TypeError, ValueError):
             raise ServiceError("Mission governance preview failed") from None
@@ -520,6 +522,7 @@ def apply_mission_state_request(
             facts=facts,
             generation=generation,
             now=now,
+            current_authority=current_authority,
         )
     except (AttributeError, KeyError, TypeError, ValueError):
         raise ServiceError("Mission governance confirmation failed") from None
@@ -1596,24 +1599,25 @@ class ProjectDaemonService:
         self._load_scheduler_facts = load_scheduler_facts
         self._apply_transition = apply_transition
         self._queue: asyncio.Queue[
-            tuple[Callback, asyncio.Future[object] | None]
+            tuple[str, Callback, asyncio.Future[object] | None]
         ] = asyncio.Queue()
         self._worker_tasks: set[asyncio.Task[None]] = set()
         self._permission_waiters: dict[
             str, tuple[dict[str, object], asyncio.Future[str]]
         ] = {}
         self._started = False
-        self._closed = False
+        self._lifecycle_state = "open"
+        self._close_task: asyncio.Task[None] | None = None
         self._shutdown = asyncio.Event()
         self._wakeup = asyncio.Event()
         self._scheduler_due = False
 
     @property
     def started(self) -> bool:
-        return self._started and not self._closed
+        return self._started and self._lifecycle_state == "open"
 
     async def start(self) -> None:
-        if self._closed:
+        if self._lifecycle_state != "open":
             raise ServiceError("daemon service is closed")
         if self._started:
             return
@@ -1631,7 +1635,24 @@ class ProjectDaemonService:
         if not self.started or not callable(callback):
             raise ServiceError("daemon service is not accepting mutations")
         future = asyncio.get_running_loop().create_future()
-        self._queue.put_nowait((callback, future))
+        self._queue.put_nowait(("external", callback, future))
+        self._wakeup.set()
+        return future
+
+    def submit_worker_cleanup(self, callback: Callback) -> asyncio.Future[object]:
+        """Queue cleanup only from a registered Worker task, including while closing."""
+        task = asyncio.current_task()
+        if (
+            self._lifecycle_state not in {"open", "closing"}
+            or not callable(callback)
+            or (
+                self._lifecycle_state == "closing"
+                and (task is None or task not in self._worker_tasks)
+            )
+        ):
+            raise ServiceError("daemon Worker cleanup is unavailable")
+        future = asyncio.get_running_loop().create_future()
+        self._queue.put_nowait(("worker_cleanup", callback, future))
         self._wakeup.set()
         return future
 
@@ -1681,7 +1702,7 @@ class ProjectDaemonService:
                 callback: Callback = lambda: (_ for _ in ()).throw(exc)
             else:
                 callback = lambda: on_completion(result)
-            self._queue.put_nowait((callback, None))
+            self._queue.put_nowait(("external", callback, None))
             self._wakeup.set()
 
         task = asyncio.create_task(run())
@@ -1800,7 +1821,7 @@ class ProjectDaemonService:
                     self._wakeup.set()
                 return decision
         try:
-            callback, future = self._queue.get_nowait()
+            _kind, callback, future = self._queue.get_nowait()
         except asyncio.QueueEmpty:
             return await schedule_once()
         if not self._queue.empty():
@@ -1858,22 +1879,58 @@ class ProjectDaemonService:
             await self.close()
 
     async def close(self) -> None:
-        if self._closed:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close_once())
+        await asyncio.shield(self._close_task)
+
+    async def _close_once(self) -> None:
+        if self._lifecycle_state == "closed":
             return
-        self._closed = True
+        self._lifecycle_state = "closing"
         self._wakeup.set()
+        failures: list[BaseException] = []
         for _authority, future in tuple(self._permission_waiters.values()):
             if not future.done():
                 future.set_exception(ServiceError("daemon service closed"))
         self._permission_waiters.clear()
-        for task in tuple(self._worker_tasks):
+        workers = tuple(self._worker_tasks)
+        for task in workers:
             task.cancel()
-        if self._worker_tasks:
-            await asyncio.gather(*tuple(self._worker_tasks), return_exceptions=True)
+        while any(not task.done() for task in workers):
+            await self._drain_shutdown_queue(failures)
+            await asyncio.sleep(0)
+        if workers:
+            await asyncio.gather(*workers, return_exceptions=True)
+        await self._drain_shutdown_queue(failures)
+        server_error: BaseException | None = None
+        try:
+            if self._started:
+                await self.server.close()
+        except BaseException as exc:
+            server_error = exc
+        finally:
+            self._started = False
+            self._lifecycle_state = "closed"
+        if failures:
+            raise ServiceError("daemon shutdown cleanup failed") from failures[0]
+        if server_error is not None:
+            raise ServiceError("daemon server shutdown failed") from server_error
+
+    async def _drain_shutdown_queue(
+        self, failures: list[BaseException]
+    ) -> None:
         while not self._queue.empty():
-            _callback, future = self._queue.get_nowait()
-            if future is not None and not future.done():
-                future.set_exception(ServiceError("daemon service closed"))
-        if self._started:
-            await self.server.close()
-        self._started = False
+            kind, callback, future = self._queue.get_nowait()
+            if kind != "worker_cleanup":
+                if future is not None and not future.done():
+                    future.set_exception(ServiceError("daemon service closed"))
+                continue
+            try:
+                result = await _call(callback)
+            except BaseException as exc:
+                failures.append(exc)
+                if future is not None and not future.done():
+                    future.set_exception(exc)
+            else:
+                if future is not None and not future.done():
+                    future.set_result(result)

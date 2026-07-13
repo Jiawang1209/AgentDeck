@@ -1656,21 +1656,46 @@ class _DaemonAcpWorkerSink:
 
     async def disconnect(self, reason: str) -> None:
         """Persist the daemon-owned ACP process boundary after transport close."""
-        if self.session_id is None or self.session_state == "disconnected":
+        if self.session_id is None:
             return
-        if self.session_state not in {"busy", "ready"}:
-            raise ServiceError("daemon ACP disconnect lineage is invalid")
-        session_from = self.session_state
-        await self._mutate(
-            lambda: self.store.record_protocol_transition(
-                "session",
-                self.session_id,
-                session_from,
-                "disconnected",
-                f"daemon_transport_closed:{reason}",
-                {},
+        session_id = self.session_id
+
+        def persist() -> None:
+            state = self.store.validated_protocol_state()
+            matches = [
+                item for item in state.get("agent_sessions", [])
+                if type(item) is dict and item.get("session_id") == session_id
+            ]
+            if len(matches) != 1:
+                raise ServiceError("daemon ACP disconnect lineage is invalid")
+            current = self.store._derived_protocol_state(
+                state, "session", session_id, matches[0]
             )
-        )
+            if current == "disconnected":
+                return
+            if current not in {"busy", "ready"}:
+                raise ServiceError("daemon ACP disconnect lineage is invalid")
+            try:
+                self.store.record_protocol_transition(
+                    "session", session_id, current, "disconnected",
+                    f"daemon_transport_closed:{reason}", {},
+                )
+            except ValueError:
+                latest = self.store.validated_protocol_state()
+                latest_record = next(
+                    (
+                        item for item in latest.get("agent_sessions", [])
+                        if type(item) is dict and item.get("session_id") == session_id
+                    ),
+                    None,
+                )
+                if latest_record is not None and self.store._derived_protocol_state(
+                    latest, "session", session_id, latest_record
+                ) == "disconnected":
+                    return
+                raise
+
+        await self.service.submit_worker_cleanup(persist)
         self.session_state = "disconnected"
 
 
@@ -6377,13 +6402,24 @@ def _validate_daemon_stop_gate(
         raise DaemonClientRequestError("daemon has active keepalive work", "stop_blocked")
 
 
-def _commit_daemon_shutdown(commit: Any, stop_event: asyncio.Event) -> object:
+def _commit_daemon_shutdown(
+    commit: Any,
+    stop_event: asyncio.Event,
+    *,
+    shutdown_on_failure: bool = False,
+) -> object:
     """Signal process shutdown only after the durable stop commit succeeds."""
     if not callable(commit) or not isinstance(stop_event, asyncio.Event):
         raise TypeError("daemon shutdown commit boundary is invalid")
-    result = commit()
-    stop_event.set()
-    return result
+    try:
+        result = commit()
+    except BaseException:
+        if shutdown_on_failure:
+            stop_event.set()
+        raise
+    else:
+        stop_event.set()
+        return result
 
 
 async def _request_daemon_stop(
@@ -6667,12 +6703,21 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                         ) from None
                 if method in {"mission.resume", "mission.cancel"}:
                     try:
+                        current = controller_lease_from_summary(
+                            store.load().get("controller_lease")
+                        )
+                        if current is None:
+                            raise LeaseError("controller lease required")
                         return apply_mission_state_request(
                             store,
                             action=method.replace(".", "_"),
                             params=params,
                             generation=generation,
                             now=now,
+                            current_authority={
+                                **current.summary(),
+                                "daemon_instance_id": ownership.instance_id,
+                            },
                         )
                     except ServiceError as exc:
                         raise DaemonClientRequestError(
@@ -6823,7 +6868,8 @@ async def _serve_daemon(root: Path, config: ProjectConfig, store: StateStore) ->
                             now=now,
                         )
                         _commit_daemon_shutdown(
-                            lambda: commit_and_flush(transition), stop_event
+                            lambda: commit_and_flush(transition), stop_event,
+                            shutdown_on_failure=True,
                         )
                     return result
             except LeaseError as exc:

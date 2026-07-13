@@ -16,6 +16,7 @@ from agentdeck.daemon.governance import (
     governance_transition_gate,
     effective_transport_for_step,
 )
+from agentdeck.daemon.lease import grant_controller, release_controller
 from agentdeck.daemon.scheduler import SchedulerFacts
 from agentdeck.daemon.service import (
     apply_force_stop_request,
@@ -849,6 +850,120 @@ def test_production_mission_control_actions_are_exact_bound(
     )
     assert result["state"] == final
     assert store.mission_by_id("mis_0123456789ab")["status"] == final
+
+
+def test_mission_resume_confirm_requires_released_predecessor_and_next_lease(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["missions"] = [_admitted_mission(tmp_path, status="stopped")]
+    state["daemon_runtime"] = {"instance_id": "dmn_instance_a"}
+    store.save(state)
+    first = grant_controller(
+        client_id="mission-controller", now=NOW, ttl_seconds=60
+    )
+    first_lease = first.current
+    assert first_lease is not None
+    store.commit_controller_lease(first)
+    authority_one = {
+        **first_lease.summary(), "daemon_instance_id": "dmn_instance_a",
+    }
+    preview = apply_mission_state_request(
+        store, action="mission_resume",
+        params={"mission_id": "mis_0123456789ab"}, generation=1, now=NOW,
+        current_authority=authority_one,
+    )
+    released = release_controller(
+        first_lease, lease_id=first_lease.lease_id, generation=1,
+        now=NOW + timedelta(seconds=1),
+    )
+    store.commit_controller_lease(released)
+    second = grant_controller(
+        client_id="mission-controller", now=NOW + timedelta(seconds=2),
+        ttl_seconds=60, previous=released.current,
+    )
+    second_lease = second.current
+    assert second_lease is not None
+    store.commit_controller_lease(second)
+
+    result = apply_mission_state_request(
+        store, action="mission_resume",
+        params={
+            "mission_id": "mis_0123456789ab",
+            "preview_id": preview["preview_id"],
+        },
+        generation=2, now=NOW + timedelta(seconds=3),
+        current_authority={
+            **second_lease.summary(), "daemon_instance_id": "dmn_instance_a",
+        },
+    )
+
+    assert result["state"] == "running"
+    persisted = store.load()
+    assert next(
+        item for item in persisted["governance_previews"]
+        if item["preview_id"] == preview["preview_id"]
+    )["state"] == "consumed"
+
+
+@pytest.mark.parametrize(
+    ("next_client", "next_instance"),
+    [("intervening-controller", "dmn_instance_a"),
+     ("mission-controller", "dmn_instance_b")],
+)
+def test_mission_resume_confirm_rejects_intervening_controller_or_restart(
+    tmp_path, next_client: str, next_instance: str,
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["missions"] = [_admitted_mission(tmp_path, status="stopped")]
+    state["daemon_runtime"] = {"instance_id": "dmn_instance_a"}
+    store.save(state)
+    first = grant_controller(
+        client_id="mission-controller", now=NOW, ttl_seconds=60
+    )
+    first_lease = first.current
+    assert first_lease is not None
+    store.commit_controller_lease(first)
+    preview = apply_mission_state_request(
+        store, action="mission_resume",
+        params={"mission_id": "mis_0123456789ab"}, generation=1, now=NOW,
+        current_authority={
+            **first_lease.summary(), "daemon_instance_id": "dmn_instance_a",
+        },
+    )
+    released = release_controller(
+        first_lease, lease_id=first_lease.lease_id, generation=1,
+        now=NOW + timedelta(seconds=1),
+    )
+    store.commit_controller_lease(released)
+    second = grant_controller(
+        client_id=next_client, now=NOW + timedelta(seconds=2), ttl_seconds=60,
+        previous=released.current,
+    )
+    second_lease = second.current
+    assert second_lease is not None
+    store.commit_controller_lease(second)
+    if next_instance != "dmn_instance_a":
+        restarted = store.load()
+        restarted["daemon_runtime"] = {"instance_id": next_instance}
+        store.save(restarted)
+    before = store.load()
+
+    with pytest.raises(ServiceError, match="confirmation failed"):
+        apply_mission_state_request(
+            store, action="mission_resume",
+            params={
+                "mission_id": "mis_0123456789ab",
+                "preview_id": preview["preview_id"],
+            },
+            generation=2, now=NOW + timedelta(seconds=3),
+            current_authority={
+                **second_lease.summary(), "daemon_instance_id": next_instance,
+            },
+        )
+    assert store.load() == before
 
 
 def test_production_takeover_and_return_control_are_preview_bound(tmp_path) -> None:

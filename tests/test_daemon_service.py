@@ -218,6 +218,111 @@ def test_mutations_and_worker_completions_share_one_service_owned_queue() -> Non
     asyncio.run(_case_mutations_and_worker_completions_share_one_service_owned_queue())
 
 
+def test_close_pumps_registered_worker_cleanup_before_server_close() -> None:
+    calls: list[str] = []
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer(calls), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+
+        async def worker() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await service.submit_worker_cleanup(
+                    lambda: calls.append("cleanup:persisted")
+                )
+
+        service.start_worker_io(worker(), on_completion=lambda _value: None)
+        await asyncio.sleep(0)
+        queued_external = service.submit_mutation(
+            lambda: calls.append("external:must-not-run")
+        )
+        await service.close()
+
+        assert calls == ["server:start", "cleanup:persisted", "server:close"]
+        with pytest.raises(ServiceError, match="service closed"):
+            await queued_external
+        with pytest.raises(ServiceError, match="not accepting mutations"):
+            service.submit_mutation(lambda: None)
+        assert service.active_worker_task_count == 0
+
+    asyncio.run(case())
+
+
+def test_concurrent_close_shares_cleanup_failure_and_still_closes_server() -> None:
+    calls: list[str] = []
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer(calls), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+
+        async def worker() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await service.submit_worker_cleanup(
+                    lambda: (_ for _ in ()).throw(OSError("save failed"))
+                )
+
+        service.start_worker_io(worker(), on_completion=lambda _value: None)
+        await asyncio.sleep(0)
+        results = await asyncio.gather(
+            service.close(), service.close(), return_exceptions=True
+        )
+
+        assert [type(item) for item in results] == [ServiceError, ServiceError]
+        assert [str(item) for item in results] == [
+            "daemon shutdown cleanup failed", "daemon shutdown cleanup failed"
+        ]
+        assert calls == ["server:start", "server:close"]
+        assert service.active_worker_task_count == 0
+
+    asyncio.run(case())
+
+
+def test_cancelled_first_close_waiter_does_not_cancel_shared_shutdown() -> None:
+    calls: list[str] = []
+    close_started: asyncio.Event
+    release_close: asyncio.Event
+
+    class BlockingServer(FakeServer):
+        async def close(self) -> None:
+            calls.append("server:closing")
+            close_started.set()
+            await release_close.wait()
+            calls.append("server:closed")
+
+    async def case() -> None:
+        nonlocal close_started, release_close
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+        service = ProjectDaemonService(
+            server=BlockingServer(calls), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        first = asyncio.create_task(service.close())
+        await close_started.wait()
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        release_close.set()
+        await service.close()
+        assert calls == ["server:start", "server:closing", "server:closed"]
+
+    asyncio.run(case())
+
+
 def test_self_replenishing_callback_queue_cannot_starve_scheduler() -> None:
     calls: list[str] = []
 
@@ -716,6 +821,47 @@ def test_mission_governance_client_uses_controller_and_exact_preview() -> None:
     )
     assert calls[-2][0] == "controller.release"
     assert calls[-1][0] == "close"
+
+
+def test_mission_governance_client_reuses_deterministic_logical_identity() -> None:
+    acquired_client_ids: list[str] = []
+
+    class Client:
+        async def request(
+            self, method, params, *, lease_id=None, lease_generation=None
+        ):
+            del lease_id, lease_generation
+            if method == "controller.acquire":
+                acquired_client_ids.append(params["client_id"])
+                return {
+                    "lease_id": "lse_" + str(len(acquired_client_ids)) * 24,
+                    "generation": len(acquired_client_ids),
+                }
+            if method == "mission.resume":
+                return {"state": "pending"}
+            return {"released": True}
+
+        async def close(self):
+            return None
+
+    async def connect(*_args, **_kwargs):
+        return Client()
+
+    async def run() -> None:
+        for preview_id in (None, "gov_0123456789ab"):
+            await govern_mission(
+                Path("/tmp/project"), object(), mission_id=MISSION_ID,
+                action="resume", preview_id=preview_id, connect_factory=connect,
+            )
+        await govern_mission(
+            Path("/tmp/project"), object(), mission_id="mis_0123456789ac",
+            action="resume", connect_factory=connect,
+        )
+
+    asyncio.run(run())
+    assert acquired_client_ids[0] == acquired_client_ids[1]
+    assert acquired_client_ids[2] != acquired_client_ids[0]
+    assert acquired_client_ids[0].startswith("client_mission_governance_")
 
 
 def test_previous_handoff_resolves_exact_frozen_predecessor() -> None:

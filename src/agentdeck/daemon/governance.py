@@ -247,6 +247,8 @@ def consume_governance_preview(
         expected_fields.add("preview_id")
     if preview.get("state") == "consumed":
         expected_fields.add("consumed_at")
+    if "controller_lineage" in preview:
+        expected_fields.add("controller_lineage")
     if set(preview) != expected_fields:
         raise PreviewBindingError("preview fields are invalid")
     digest = preview.get("execution_digest")

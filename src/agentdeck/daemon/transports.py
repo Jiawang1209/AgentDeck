@@ -336,6 +336,7 @@ class AcpWorkerTransport:
             for name in ("initialize", "new_session", "prompt", "close")
         ):
             raise WorkerTransportError("ACP Worker transport factory is invalid")
+        session_id: str | None = None
         try:
             initialized = await transport.initialize()
             session = await transport.new_session()
@@ -347,6 +348,22 @@ class AcpWorkerTransport:
                 activated = activate(session_id, initialized)
                 if inspect.isawaitable(activated):
                     await activated
+        except asyncio.CancelledError:
+            close_task = asyncio.create_task(transport.close())
+            try:
+                await asyncio.wait_for(close_task, timeout=self._request_timeout)
+            except Exception:
+                pass
+            if session_id is not None:
+                disconnect = getattr(sink, "disconnect", None)
+                if callable(disconnect):
+                    try:
+                        disconnected = disconnect("admission_cancelled")
+                        if inspect.isawaitable(disconnected):
+                            await disconnected
+                    except Exception:
+                        pass
+            raise
         except Exception as error:
             try:
                 await transport.close()
