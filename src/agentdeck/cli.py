@@ -88,12 +88,14 @@ from .contracts import (
     validate_approval_dispatch_ready_contract,
     validate_artifacts_contract,
     validate_continue_contract,
+    validate_conversation_runtime_contract,
     validate_control_registry_card_contract,
     validate_demo_golden_contract,
     validate_inbox_contract,
     validate_leader_actions_contract,
     validate_leader_action_contract,
     validate_leader_chat_contract,
+    validate_leader_backend_contract,
     validate_learning_review_contract,
     validate_leader_review_contract,
     validate_leader_summary_contract,
@@ -109,6 +111,7 @@ from .contracts import (
     validate_run_start_contract,
     validate_trace_contract,
     validate_workbench_contract,
+    validate_worker_transport_contract,
     validate_workflow_preview_contract,
     validate_workflow_run_contract,
     validate_workflow_status_contract,
@@ -140,6 +143,8 @@ from .runtime.acp_mapping import (
 from .tui import TuiModel, run_tui
 from .conversation.session import ConversationSession
 from .conversation.terminal_ui import TerminalConversationUI
+from .conversation.leader_gateway import LeaderGateway
+from .conversation.transports import WorkerRuntimeFacts, WorkerTransportRouter, ownership_gate
 from .skills import browse_skill_source, discover_skills, find_skill, import_project_skill, preview_project_skill_import, resolve_skill_dependencies
 from .state import StateStore, agentdeck_dir, leader_backend_identity, leader_provider_backend, leader_provider_transport
 from .workflow import authorized_steps, run_sequential_workflow, workflow_plan_hash
@@ -2300,6 +2305,171 @@ def _active_queue_source(project_view: dict[str, object]) -> str:
     return source if source in ("leader_action", "inbox", "approval", "provider_health", "runtime", "reply") else "none"
 
 
+def _conversation_runtime_card(project_view: dict[str, object]) -> dict[str, object]:
+    summary = project_view.get("conversation")
+    summary = summary if isinstance(summary, dict) else {}
+    latest_turn_state = summary.get("latest_turn_state")
+    active_turn = None
+    if latest_turn_state in {
+        "created", "routing", "waiting_leader", "presenting_preview", "executing"
+    }:
+        active_turn = {
+            "turn_id": summary.get("latest_turn_id"),
+            "state": latest_turn_state,
+        }
+    state = summary.get("latest_conversation_state") or "closed"
+    payload = {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "contract_version": "conversation-runtime/v1",
+        "mode": "conversation_runtime",
+        "conversation_id": summary.get("latest_conversation_id"),
+        "state": state,
+        "active_turn": active_turn,
+        "pending_preview": summary.get("pending_preview"),
+        "leader_backend": project_view.get("leader", {}).get("leader_backend") if isinstance(project_view.get("leader"), dict) else None,
+        "ownership": summary.get("ownership", []),
+        "cancellation": {
+            "available": active_turn is not None,
+            "scope": "active_turn" if active_turn is not None else None,
+        },
+        "controls": [
+            _control(
+                kind="inspect",
+                label="Inspect conversation status",
+                command="agentdeck status",
+                safety="inspect",
+            )
+        ],
+        "blockers": list(summary.get("blockers", [])) if isinstance(summary.get("blockers"), list) else [],
+    }
+    validation = validate_conversation_runtime_contract(payload)
+    if not validation["ok"]:
+        raise ValueError("conversation runtime card contract validation failed")
+    return payload
+
+
+def _leader_backend_card(config: ProjectConfig) -> dict[str, object]:
+    status = LeaderGateway().describe(config.leader)
+    payload = {
+        "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+        "contract_version": "leader-backend/v1",
+        "mode": "leader_backend",
+        "backend_kind": status.backend_kind,
+        "identity": {"provider": status.provider, "model": status.model},
+        "readiness": status.readiness,
+        "transport": status.transport,
+        "capabilities": list(status.capabilities),
+        "fallback": dict(status.fallback),
+        "controls": [
+            _control(
+                kind="inspect",
+                label="Inspect Leader backend contract",
+                command="agentdeck contract leader-backend",
+                safety="inspect",
+            )
+        ],
+        "blockers": list(status.blockers),
+    }
+    validation = validate_leader_backend_contract(payload)
+    if not validation["ok"]:
+        raise ValueError("leader backend card contract validation failed")
+    return payload
+
+
+def _worker_transport_card(
+    project_view: dict[str, object], config: ProjectConfig
+) -> dict[str, object]:
+    sessions = project_view.get("agent_sessions", {})
+    session_items = sessions.get("items", []) if isinstance(sessions, dict) else []
+    turns = project_view.get("protocol_turns", {})
+    turn_items = turns.get("items", []) if isinstance(turns, dict) else []
+    permissions = project_view.get("permission_requests", {})
+    permission_items = permissions.get("items", []) if isinstance(permissions, dict) else []
+    agents = project_view.get("agents", [])
+    runtime_by_agent = {
+        item.get("agent_id"): item.get("runtime", {})
+        for item in agents
+        if isinstance(item, dict)
+    } if isinstance(agents, list) else {}
+    ownership_items = project_view.get("conversation", {}).get("ownership", []) if isinstance(project_view.get("conversation"), dict) else []
+    ownership_by_agent = {
+        item.get("agent_id"): item.get("state")
+        for item in ownership_items
+        if isinstance(item, dict)
+    }
+    items: list[dict[str, object]] = []
+    for agent in config.agents:
+        session = next(
+            (item for item in reversed(session_items) if isinstance(item, dict) and item.get("agent_id") == agent.agent_id),
+            {},
+        )
+        session_id = session.get("session_id") if isinstance(session, dict) else None
+        runtime = runtime_by_agent.get(agent.agent_id, {})
+        runtime = runtime if isinstance(runtime, dict) else {}
+        capabilities = session.get("capabilities", {}) if isinstance(session, dict) else {}
+        capabilities = capabilities if isinstance(capabilities, dict) else {}
+        facts = WorkerRuntimeFacts(
+            session_state=(
+                str(session.get("state"))
+                if session
+                else ("ready" if agent.transport == "tmux" and runtime.get("status") == "running" else "disconnected")
+            ),
+            runtime_status=str(runtime.get("status") or "configured"),
+            pane_id=runtime.get("pane_id") if isinstance(runtime.get("pane_id"), str) else None,
+            active_turn=any(
+                isinstance(item, dict)
+                and item.get("session_id") == session_id
+                and item.get("state") not in {"completed", "blocked", "failed", "cancelled", "ambiguous"}
+                for item in turn_items
+            ),
+            pending_permission=any(
+                isinstance(item, dict)
+                and item.get("session_id") == session_id
+                and item.get("status") == "pending"
+                for item in permission_items
+            ),
+            workflow_running=False,
+            ownership=str(ownership_by_agent.get(agent.agent_id) or "agentdeck_owned"),
+            acp_capabilities={key: bool(value) for key, value in capabilities.items()},
+            tmux_session=config.runtime.session_name,
+        )
+        route = WorkerTransportRouter().describe(agent, facts)
+        gate = ownership_gate(facts, target="human_owned")
+        payload = {
+            "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
+            "contract_version": "worker-transport/v1",
+            "mode": "worker_transport",
+            "agent_id": agent.agent_id,
+            "configured_transport": route.configured_transport,
+            "effective_transport": route.effective_transport,
+            "readiness": "ready" if route.ready else "blocked",
+            "capabilities": dict(facts.acp_capabilities),
+            "fallback": dict(route.fallback),
+            "live_mirror": dict(route.live_mirror),
+            "ownership": {
+                "state": route.ownership,
+                "prompt_allowed": route.automation_allowed,
+            },
+            "controls": [
+                *[dict(control) for control in route.mirror_controls],
+                _control(
+                    kind="takeover",
+                    label="Take over Worker",
+                    command=f"agentdeck takeover --agent {agent.agent_id} --confirm",
+                    safety="explicit_user",
+                    enabled=gate.allowed,
+                    blocker=gate.blocker,
+                ),
+            ],
+            "blockers": [route.blocker] if route.blocker else [],
+        }
+        validation = validate_worker_transport_contract(payload)
+        if not validation["ok"]:
+            raise ValueError("worker transport card contract validation failed")
+        items.append(payload)
+    return {"count": len(items), "items": items}
+
+
 def _workbench_snapshot_payload(
     project_view: dict[str, object], store: StateStore, since_event_id: str | None = None
 ) -> dict[str, object]:
@@ -2314,6 +2484,9 @@ def _workbench_snapshot_payload(
     runtime_card = _workbench_runtime_card(project_view)
     agent_ready_card = _agent_ready_card_payload(project_view)
     config = load_config(store.root)
+    conversation_runtime_card = _conversation_runtime_card(project_view)
+    leader_backend_card = _leader_backend_card(config)
+    worker_transport_card = _worker_transport_card(project_view, config)
     mission_card = _workbench_mission_card(project_view, config, store)
     terminal_session_card = _workbench_terminal_session_card(config, runtime_card)
     role_card = _workbench_role_card(project_view)
@@ -2344,6 +2517,9 @@ def _workbench_snapshot_payload(
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view": project_view,
         "leader_actions": project_view.get("leader_actions"),
+        "conversation_runtime_card": conversation_runtime_card,
+        "leader_backend_card": leader_backend_card,
+        "worker_transport_card": worker_transport_card,
         "leader_card": leader_card,
         "mission_card": mission_card,
         "provider_health": provider_health,
@@ -3000,6 +3176,24 @@ def _workbench_control_registry(payload: dict[str, object]) -> list[dict[str, ob
         _append_workbench_control_registry_items(
             registry, scope="acp_runtime", card="contracts_card", agent_id=None, controls=acp_controls,
         )
+    conversation_card = payload.get("conversation_runtime_card") if isinstance(payload.get("conversation_runtime_card"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry, scope="conversation_runtime", card="conversation_runtime_card",
+        agent_id="leader", controls=conversation_card.get("controls"),
+    )
+    leader_backend_card = payload.get("leader_backend_card") if isinstance(payload.get("leader_backend_card"), dict) else {}
+    _append_workbench_control_registry_items(
+        registry, scope="leader_backend", card="leader_backend_card",
+        agent_id="leader", controls=leader_backend_card.get("controls"),
+    )
+    worker_transport_card = payload.get("worker_transport_card") if isinstance(payload.get("worker_transport_card"), dict) else {}
+    worker_items = worker_transport_card.get("items") if isinstance(worker_transport_card.get("items"), list) else []
+    for worker in worker_items:
+        if isinstance(worker, dict):
+            _append_workbench_control_registry_items(
+                registry, scope="worker_transport", card="worker_transport_card",
+                agent_id=worker.get("agent_id"), controls=worker.get("controls"),
+            )
     return registry
 
 
@@ -4463,6 +4657,9 @@ def _workbench_contracts_card() -> dict[str, object]:
         "learning_review_contract": "agentdeck contract learning-review",
         "agent_runtime_contract": "agentdeck contract agent-runtime",
         "acp_runtime_contract": "agentdeck contract acp-runtime",
+        "conversation_runtime_contract": "agentdeck contract conversation-runtime",
+        "leader_backend_contract": "agentdeck contract leader-backend",
+        "worker_transport_contract": "agentdeck contract worker-transport",
         "leader_chat_contract": "agentdeck contract leader-chat",
         "leader_review_contract": "agentdeck contract leader-review",
         "leader_summary_contract": "agentdeck contract leader-summary",

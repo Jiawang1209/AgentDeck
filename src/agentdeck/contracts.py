@@ -1645,6 +1645,9 @@ WORKBENCH_SNAPSHOT_FIELDS = (
     "schema_version",
     "project_view",
     "leader_actions",
+    "conversation_runtime_card",
+    "leader_backend_card",
+    "worker_transport_card",
     "leader_card",
     "mission_card",
     "provider_health",
@@ -2134,6 +2137,9 @@ WORKBENCH_CONTRACTS_CARD_FIELDS = (
     "learning_review_contract",
     "agent_runtime_contract",
     "acp_runtime_contract",
+    "conversation_runtime_contract",
+    "leader_backend_contract",
+    "worker_transport_contract",
     "leader_chat_contract",
     "leader_review_contract",
     "leader_summary_contract",
@@ -6215,6 +6221,9 @@ def workbench_contract_payload(contract_path: Path) -> dict[str, object]:
         "contract_path": str(contract_path),
         "contract_exists": contract_path.exists(),
         "snapshot_fields": list(WORKBENCH_SNAPSHOT_FIELDS),
+        "conversation_runtime_card_fields": list(CONVERSATION_RUNTIME_RESPONSE_FIELDS),
+        "leader_backend_card_fields": list(LEADER_BACKEND_RESPONSE_FIELDS),
+        "worker_transport_item_fields": list(WORKER_TRANSPORT_RESPONSE_FIELDS),
         "leader_card_fields": list(WORKBENCH_LEADER_CARD_FIELDS),
         "mission_card_fields": list(WORKBENCH_MISSION_CARD_FIELDS),
         "coordination_role_fields": list(PROJECT_VIEW_COORDINATION_ROLE_FIELDS),
@@ -9128,6 +9137,37 @@ def validate_leader_chat_contract(payload: dict[str, object]) -> dict[str, objec
             errors.append("leader_actions must match project_view.leader_actions")
     elif "project_view" in payload:
         errors.append("project_view must be an object")
+    conversation_runtime_card = payload.get("conversation_runtime_card")
+    if isinstance(conversation_runtime_card, dict):
+        validation = validate_conversation_runtime_contract(conversation_runtime_card)
+        errors.extend(
+            f"conversation_runtime_card: {error}" for error in validation["errors"]
+        )
+    elif "conversation_runtime_card" in payload:
+        errors.append("conversation_runtime_card must be an object")
+    leader_backend_card = payload.get("leader_backend_card")
+    if isinstance(leader_backend_card, dict):
+        validation = validate_leader_backend_contract(leader_backend_card)
+        errors.extend(f"leader_backend_card: {error}" for error in validation["errors"])
+    elif "leader_backend_card" in payload:
+        errors.append("leader_backend_card must be an object")
+    worker_transport_card = payload.get("worker_transport_card")
+    if isinstance(worker_transport_card, dict):
+        items = worker_transport_card.get("items")
+        count = worker_transport_card.get("count")
+        if not isinstance(items, list):
+            errors.append("worker_transport_card.items must be a list")
+        else:
+            if count != len(items):
+                errors.append("worker_transport_card.count must match items")
+            for index, item in enumerate(items):
+                validation = validate_worker_transport_contract(item)
+                errors.extend(
+                    f"worker_transport_card.items[{index}]: {error}"
+                    for error in validation["errors"]
+                )
+    elif "worker_transport_card" in payload:
+        errors.append("worker_transport_card must be an object")
     explanation = payload.get("leader_explanation")
     if isinstance(explanation, dict):
         for field in LEADER_CHAT_EXPLANATION_FIELDS:
@@ -13514,6 +13554,24 @@ def workbench_control_registry(payload: dict[str, object]) -> list[dict[str, obj
         _append_control_registry_items(
             registry, scope="acp_runtime", card="contracts_card", agent_id=None, controls=acp_controls,
         )
+    conversation_card = payload.get("conversation_runtime_card") if isinstance(payload.get("conversation_runtime_card"), dict) else {}
+    _append_control_registry_items(
+        registry, scope="conversation_runtime", card="conversation_runtime_card",
+        agent_id="leader", controls=conversation_card.get("controls"),
+    )
+    leader_backend_card = payload.get("leader_backend_card") if isinstance(payload.get("leader_backend_card"), dict) else {}
+    _append_control_registry_items(
+        registry, scope="leader_backend", card="leader_backend_card",
+        agent_id="leader", controls=leader_backend_card.get("controls"),
+    )
+    worker_transport_card = payload.get("worker_transport_card") if isinstance(payload.get("worker_transport_card"), dict) else {}
+    worker_items = worker_transport_card.get("items") if isinstance(worker_transport_card.get("items"), list) else []
+    for worker in worker_items:
+        if isinstance(worker, dict):
+            _append_control_registry_items(
+                registry, scope="worker_transport", card="worker_transport_card",
+                agent_id=worker.get("agent_id"), controls=worker.get("controls"),
+            )
     return registry
 
 
@@ -13921,6 +13979,12 @@ def workbench_example() -> dict[str, object]:
         "schema_version": PROJECT_VIEW_SCHEMA_VERSION,
         "project_view": project_view,
         "leader_actions": project_view["leader_actions"],
+        "conversation_runtime_card": conversation_runtime_example(),
+        "leader_backend_card": leader_backend_example(),
+        "worker_transport_card": {
+            "count": 1,
+            "items": [worker_transport_example()],
+        },
         "leader_card": {
             "agent_id": "leader",
             "provider": "fake",
@@ -14937,6 +15001,9 @@ def workbench_example() -> dict[str, object]:
             "learning_review_contract": "agentdeck contract learning-review",
             "agent_runtime_contract": "agentdeck contract agent-runtime",
             "acp_runtime_contract": "agentdeck contract acp-runtime",
+            "conversation_runtime_contract": "agentdeck contract conversation-runtime",
+            "leader_backend_contract": "agentdeck contract leader-backend",
+            "worker_transport_contract": "agentdeck contract worker-transport",
             "leader_chat_contract": "agentdeck contract leader-chat",
             "leader_review_contract": "agentdeck contract leader-review",
             "leader_summary_contract": "agentdeck contract leader-summary",

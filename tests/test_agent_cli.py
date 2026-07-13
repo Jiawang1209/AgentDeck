@@ -7384,10 +7384,13 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "mode",
         "schema_version",
         "project_view",
-            "leader_actions",
-            "leader_card",
-            "mission_card",
-            "provider_health",
+        "leader_actions",
+        "conversation_runtime_card",
+        "leader_backend_card",
+        "worker_transport_card",
+        "leader_card",
+        "mission_card",
+        "provider_health",
         "runtime_card",
         "agent_ready_card",
         "terminal_session_card",
@@ -7739,9 +7742,12 @@ def test_contract_workbench_discovers_schema_for_gui_clients(capsys) -> None:
         "skills_contract",
         "memory_contract",
         "learning_review_contract",
-        "agent_runtime_contract",
-        "acp_runtime_contract",
-        "leader_chat_contract",
+            "agent_runtime_contract",
+            "acp_runtime_contract",
+            "conversation_runtime_contract",
+            "leader_backend_contract",
+            "worker_transport_contract",
+            "leader_chat_contract",
         "leader_review_contract",
         "leader_summary_contract",
         "project_view_contract",
@@ -9296,6 +9302,9 @@ def test_workbench_embeds_operator_runtime_ledger_and_active_inbox_cards_without
         "workbench_contract": "agentdeck contract workbench",
         "agent_runtime_contract": "agentdeck contract agent-runtime",
         "acp_runtime_contract": "agentdeck contract acp-runtime",
+        "conversation_runtime_contract": "agentdeck contract conversation-runtime",
+        "leader_backend_contract": "agentdeck contract leader-backend",
+        "worker_transport_contract": "agentdeck contract worker-transport",
         "controls_contract": "agentdeck contract controls",
         "skills_contract": "agentdeck contract skills",
         "memory_contract": "agentdeck contract memory",
@@ -10084,7 +10093,7 @@ def test_controls_filters_by_scope_and_enabled_without_mutating_state(tmp_path, 
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 113,
+        "item_count_before_filter": 124,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -10220,7 +10229,7 @@ def test_controls_surfaces_terminal_session_select_pane_controls_when_filtered(
         "control_id": None,
         "enabled_only": True,
         "active_filter_keys": ["scope", "enabled_only"],
-        "item_count_before_filter": 112,
+        "item_count_before_filter": 123,
     }
     assert [item["kind"] for item in payload["items"]] == [
         "attach_session",
@@ -10263,7 +10272,7 @@ def test_controls_filters_by_query_without_mutating_state(tmp_path, monkeypatch,
         "control_id": None,
         "enabled_only": False,
         "active_filter_keys": ["query"],
-        "item_count_before_filter": 113,
+        "item_count_before_filter": 124,
     }
     assert payload["item_count"] == len(payload["items"])
     assert payload["group_count"] == len(payload["groups"])
@@ -10302,7 +10311,7 @@ def test_controls_filters_by_control_id_without_mutating_state(tmp_path, monkeyp
         "control_id": control_id,
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 113,
+        "item_count_before_filter": 124,
     }
     assert payload["item_count"] == 1
     assert payload["items"] == [selected_item]
@@ -10335,7 +10344,7 @@ def test_controls_reports_unmatched_control_id_selection_without_mutating_state(
         "control_id": "missing:control",
         "enabled_only": False,
         "active_filter_keys": ["control_id"],
-        "item_count_before_filter": 113,
+        "item_count_before_filter": 124,
     }
     assert payload["item_count"] == 0
     assert payload["items"] == []
@@ -10374,7 +10383,7 @@ def test_controls_reports_filtered_out_control_id_selection_without_mutating_sta
         "control_id": disabled_item["control_id"],
         "enabled_only": True,
         "active_filter_keys": ["control_id", "enabled_only"],
-        "item_count_before_filter": 113,
+        "item_count_before_filter": 124,
     }
     assert payload["items"] == []
     assert payload["groups"] == []

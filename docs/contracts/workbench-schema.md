@@ -31,6 +31,9 @@ The contract command returns:
   "leader_card_fields": [],
   "provider_health_fields": [],
   "runtime_card_fields": [],
+  "conversation_runtime_card_fields": [],
+  "leader_backend_card_fields": [],
+  "worker_transport_item_fields": [],
   "agent_ready_card_fields": [],
   "terminal_session_card_fields": [],
   "terminal_session_control_fields": [],
@@ -123,6 +126,8 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `leader_card` is derived from `project_view.leader`.
 `provider_health` is derived from `project_view.leader.provider` and local environment availability.
 `runtime_card` is derived from `project_view.runtime_backend` and `project_view.agents[]`.
+
+`conversation_runtime_card` is derived from `project_view.conversation` and validated as `conversation-runtime/v1`. `leader_backend_card` describes the exact configured API/Agent-CLI backend and readiness through `leader-backend/v1`. `worker_transport_card.items[]` derives each configured Worker's exact transport/readiness, explicit fallback facts, read-only tmux mirror, and ownership controls and validates every item as `worker-transport/v1`. Rendering these cards is read-only: it does not call a Leader/provider, start an ACP process, inspect/capture tmux, change ownership, flush outboxes, or execute a control.
 `agent_ready_card` reuses the `agentdeck agent ready` response shape, is derived from the same `runtime_card`, and must pass the agent runtime ready card validator. Its `controls[]` expose readiness inspect, startup/dispatch next action, and runtime refresh commands for GUI clients.
 `terminal_session_card` is derived from the same `runtime_card` and project tmux config so GUI/TUI clients can render a project terminal strip without calling each agent terminal command.
 `role_card` is derived from `project_view.agents[]` role configuration.
@@ -142,7 +147,7 @@ Use `agentdeck contract workbench --example` to include a stable GUI-ready snaps
 `memory_suggestions_card` is derived from pending `memory_suggestions[]`; it exposes count, pending_count, items, `apply_preview_command_template`, item-level `apply_preview` / `apply_memory` controls, and inspect controls for `agentdeck memory suggestions` and `agentdeck status`. Rendering the card is read-only: it must not create or modify `.agentdeck/memory/*.md` or inject memory into prompts. Only a separate explicit `agentdeck memory apply --suggestion-id <id> --confirm` command may write long-term memory.
 `leader_summary_card` is `null` until the latest plan's local Leader review returns `next_action=summarize`; then it reuses `agentdeck leader summary --plan-id <id>` and must pass `validate_leader_summary_contract()`.
 `learning_review_card` is `null` under the same gate (latest plan review `next_action=summarize`); then it reuses the `agentdeck learn review --plan-id <id>` response shape and must pass `validate_learning_review_contract()`. It is the read-only Hermes-style learning reviewer: it surfaces suggested `agentdeck skills suggest ... --source learn-review` and `agentdeck memory suggest ... --source learn-review` follow-up commands (its `summary` / `suggest_skill` / `suggest_memory` controls enter `control_registry[]` under `scope=learning_review`), but rendering the workbench never writes `skill_suggestions[]` / `memory_suggestions[]`, calls a provider, or creates/loads skills — the explicit suggestion commands remain the only write path into the pending queues.
-`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Skill Registry, memory suggestion/apply, ACP runtime preflight, Leader chat, and Leader review contracts. The flattened registry adds an `acp_runtime` group: enabled inspect entries for protocol status and ACP contract discovery, a disabled preflight template until a concrete ACP agent identity is supplied, and disabled `explicit_user` run/load/resume templates until their concrete identities, prompt/capability requirements, readiness, and confirmation are present. These controls are render metadata, not authorization tokens.
+`contracts_card` is the stable pointer to contract discovery surfaces and the local contract index schema, including the run start, Skill Registry, memory suggestion/apply, ACP runtime preflight, Leader chat, Leader review, conversation runtime, Leader backend, and Worker transport contracts. The flattened registry adds an `acp_runtime` group: enabled inspect entries for protocol status and ACP contract discovery, a disabled preflight template until a concrete ACP agent identity is supplied, and disabled `explicit_user` run/load/resume templates until their concrete identities, prompt/capability requirements, readiness, and confirmation are present. It also indexes the three M1 cards under `conversation_runtime`, `leader_backend`, and `worker_transport`. These controls are render metadata, not authorization tokens.
 `recovery` must equal `project_view.recovery`.
 `continue_card` must pass `validate_continue_contract()`.
 `run_progress_card` is `null` when there is no plan; otherwise it reuses the latest plan's `agentdeck run --plan-id <id>` response shape and must pass `validate_run_start_contract()`. Its `leader_backend` field is the same normalized logical Leader identity card stored with the plan; it is not a tmux pane binding or execution permission.

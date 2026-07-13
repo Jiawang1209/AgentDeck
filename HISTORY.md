@@ -4,6 +4,13 @@
 
 ## 2026-07-13
 
+### Surface foreground conversation truth in ProjectView and Workbench
+
+- **Observation cards**: Workbench now derives validated `conversation_runtime_card`, `leader_backend_card`, and per-Worker `worker_transport_card` payloads from compact ProjectView/configuration facts without calling a provider, starting ACP, inspecting tmux, changing ownership, or writing state.
+- **GUI discovery**: the Workbench contract metadata, contract pointers, validator, example fixture, and command palette expose the three Phase 3 contracts and their read-only/explicit controls; new controls append after the established registry so existing stable ordering is preserved.
+- **Contract documentation**: documented the new card fields, provenance, safety boundary, and discovery scopes in the Workbench schema; ProjectView remains compact and transcript-free.
+- **TDD evidence**: the focused observation suite is 4 passed and the contracts/dashboard/Leader/CLI regression is 1027 passed; compileall and `git diff --check` pass.
+
 ### Plan the Phase 3 M1 foreground conversation implementation
 
 - **Plan**: added a strict 12-task TDD implementation sequence for conversation lifecycle, exact preview binding, atomic compact persistence/outbox, contracts, shared Mission preview creation, explicit Leader backends, deterministic routing/setup, ACP/tmux Worker routing and takeover, bounded session/UI, ProjectView/workbench integration, and acceptance.
