@@ -10,9 +10,11 @@ import os
 from pathlib import Path
 import shlex
 import shutil
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .config import CONFIG_DIR, ensure_project_layout, project_root
+from .conversation.lifecycle import validate_conversation_history
+from .conversation.models import ConversationMutation
 from .mission import (
     MISSION_SCHEMA_VERSION,
     MISSION_STATUSES,
@@ -180,6 +182,11 @@ class StateStore:
                 "permission_requests": [],
                 "protocol_state_transitions": [],
                 "protocol_event_outbox": [],
+                "conversation_sessions": [],
+                "conversation_turns": [],
+                "conversation_preview_bindings": [],
+                "conversation_state_transitions": [],
+                "conversation_event_outbox": [],
             }
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
@@ -192,6 +199,140 @@ class StateStore:
     def append_event(self, event: EventRecord) -> None:
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
+
+    def _atomic_save(self, state: dict[str, Any]) -> None:
+        temporary = self.state_path.with_name(
+            f".{self.state_path.name}.{os.getpid()}.tmp"
+        )
+        encoded = (
+            json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        try:
+            with temporary.open("wb") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.state_path)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+
+    @staticmethod
+    def _conversation_collections(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        result: dict[str, list[dict[str, Any]]] = {}
+        for key in (
+            "conversation_sessions",
+            "conversation_turns",
+            "conversation_preview_bindings",
+        ):
+            value = state.setdefault(key, [])
+            if type(value) is not list:
+                raise TypeError(f"{key} must be a list")
+            result[key] = value
+        transitions = state.setdefault("conversation_state_transitions", [])
+        if type(transitions) is not list:
+            raise TypeError("conversation_state_transitions must be a list")
+        outbox = state.setdefault("conversation_event_outbox", [])
+        if type(outbox) is not list:
+            raise TypeError("conversation_event_outbox must be a list")
+        return result
+
+    def _apply_conversation_mutation(
+        self, state: dict[str, Any], mutation: ConversationMutation
+    ) -> dict[str, Any]:
+        if not isinstance(mutation, ConversationMutation):
+            raise TypeError("mutation must be a ConversationMutation")
+        proposed = copy.deepcopy(state)
+        self._conversation_collections(proposed)
+        allowed = {
+            "conversation_sessions",
+            "conversation_turns",
+            "conversation_preview_bindings",
+            "conversation_state_transitions",
+        }
+        for collection, records in mutation.append_records.items():
+            if collection not in allowed:
+                raise ValueError(f"conversation mutation collection is not allowed: {collection}")
+            if not isinstance(records, tuple) or any(
+                not isinstance(record, Mapping) for record in records
+            ):
+                raise TypeError("conversation mutation records must be tuples of mappings")
+            proposed.setdefault(collection, []).extend(copy.deepcopy(list(records)))
+        event_ids = [event.event_id for event in mutation.events]
+        if len(event_ids) != len(set(event_ids)):
+            raise ValueError("duplicate conversation event identity")
+        existing_outbox_ids = {
+            item.get("event_id")
+            for item in proposed["conversation_event_outbox"]
+            if isinstance(item, dict)
+        }
+        if any(event_id in existing_outbox_ids for event_id in event_ids):
+            raise ValueError("duplicate conversation event identity")
+        proposed["conversation_event_outbox"].extend(
+            asdict(event) for event in mutation.events
+        )
+        validate_conversation_history(
+            self._conversation_collections(proposed),
+            proposed["conversation_state_transitions"],
+        )
+        return proposed
+
+    def _flush_conversation_event_outbox_locked(
+        self, state: dict[str, Any] | None = None
+    ) -> int:
+        state = state if state is not None else self.load()
+        self._conversation_collections(state)
+        outbox = state["conversation_event_outbox"]
+        if not outbox:
+            return 0
+        existing_ids = self._protocol_event_ids()
+        appended = 0
+        for item in outbox:
+            if not isinstance(item, dict):
+                raise TypeError("conversation event outbox items must be objects")
+            event_id = item.get("event_id")
+            if event_id in existing_ids:
+                continue
+            event = EventRecord(**item)
+            self.append_event(event)
+            existing_ids.add(event.event_id)
+            appended += 1
+        state["conversation_event_outbox"] = []
+        self._atomic_save(state)
+        return appended
+
+    def flush_conversation_event_outbox(self) -> int:
+        with self._protocol_mutation_lock():
+            return self._flush_conversation_event_outbox_locked()
+
+    def commit_conversation_mutation(
+        self, mutation: ConversationMutation
+    ) -> dict[str, object]:
+        # Reject malformed/history-invalid batches before creating the lock file.
+        self._apply_conversation_mutation(self.load(), mutation)
+        event_ids = {event.event_id for event in mutation.events}
+        if event_ids & self._protocol_event_ids():
+            raise ValueError("duplicate conversation event identity")
+        with self._protocol_mutation_lock():
+            proposed = self._apply_conversation_mutation(self.load(), mutation)
+            if event_ids & self._protocol_event_ids():
+                raise ValueError("duplicate conversation event identity")
+            self._atomic_save(proposed)
+            try:
+                flushed = self._flush_conversation_event_outbox_locked(proposed)
+            except OSError:
+                return {
+                    "committed": True,
+                    "events_flushed": 0,
+                    "outbox_blocked": True,
+                }
+        return {
+            "committed": True,
+            "events_flushed": flushed,
+            "outbox_blocked": False,
+        }
 
     @staticmethod
     def _unique_protocol_record(
@@ -2912,6 +3053,73 @@ class StateStore:
             by_scope[scope] = by_scope.get(scope, 0) + 1
         return {"count": len(items), "by_scope": by_scope, "items": items}
 
+    @staticmethod
+    def _conversation_summary(state: dict[str, Any]) -> dict[str, Any]:
+        collections = {
+            key: state.get(key, [])
+            for key in (
+                "conversation_sessions",
+                "conversation_turns",
+                "conversation_preview_bindings",
+            )
+        }
+        transitions = state.get("conversation_state_transitions", [])
+        projection = validate_conversation_history(collections, transitions)
+        sessions = collections["conversation_sessions"]
+        turns = collections["conversation_turns"]
+        previews = collections["conversation_preview_bindings"]
+        latest_session = sessions[-1] if sessions else None
+        latest_turn = turns[-1] if turns else None
+        latest_conversation_id = (
+            latest_session.get("conversation_id")
+            if isinstance(latest_session, dict)
+            else None
+        )
+        latest_turn_id = (
+            latest_turn.get("turn_id") if isinstance(latest_turn, dict) else None
+        )
+        pending_preview_id = (
+            projection["pending_preview_by_conversation"].get(latest_conversation_id)
+            if latest_conversation_id is not None
+            else None
+        )
+        pending_preview = next(
+            (
+                {
+                    "preview_id": item.get("preview_id"),
+                    "preview_kind": item.get("preview_kind"),
+                    "expires_at": item.get("expires_at"),
+                }
+                for item in previews
+                if isinstance(item, dict) and item.get("preview_id") == pending_preview_id
+            ),
+            None,
+        )
+        ownership = [
+            {"agent_id": agent_id, "state": ownership_state}
+            for agent_id, ownership_state in sorted(
+                projection["ownership_states"].items()
+            )
+        ]
+        outbox = state.get("conversation_event_outbox", [])
+        outbox_count = len(outbox) if isinstance(outbox, list) else 0
+        return {
+            "session_count": len(sessions),
+            "turn_count": len(turns),
+            "preview_count": len(previews),
+            "transition_count": len(transitions),
+            "latest_conversation_id": latest_conversation_id,
+            "latest_conversation_state": projection["conversation_states"].get(
+                latest_conversation_id
+            ),
+            "latest_turn_id": latest_turn_id,
+            "latest_turn_state": projection["turn_states"].get(latest_turn_id),
+            "pending_preview": pending_preview,
+            "ownership": ownership,
+            "outbox_count": outbox_count,
+            "blockers": ["conversation event outbox pending"] if outbox_count else [],
+        }
+
     def project_view(self, config: ProjectConfig) -> ProjectView:
         state = self.load()
         # Preserve source-row validation precedence before cross-record lineage
@@ -2995,6 +3203,7 @@ class StateStore:
             transport_updates=transport_updates,
             permission_requests=permission_requests,
             protocol_state_transitions=protocol_state_transitions,
+            conversation=self._conversation_summary(state),
             inbox=self._inbox_summary(state.get("inbox", {})),
             recovery=self._recovery_summary(state, config),
         )

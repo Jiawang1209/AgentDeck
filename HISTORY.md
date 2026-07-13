@@ -25,6 +25,13 @@
 - **Consume once**: successful validation returns a new consumed record with a UTC timestamp; a second consume is rejected. Natural-language classification remains separate and grants no authority by itself.
 - **TDD evidence**: the focused binding suite is 10 passed and runs with the lifecycle regression, compileall, and `git diff --check`.
 
+### Persist compact M1 conversation truth and recoverable audit outbox
+
+- **One state commit**: added immutable `ConversationMutation` batches that append compact conversation base records, lifecycle transitions, and pending audit events after complete-history validation; malformed history and duplicate event identities are rejected before any lock/file write, then revalidated under the shared state-mutation lock.
+- **Durability boundary**: valid batches use fsync plus atomic `state.json` replacement. `events.jsonl` delivery remains a separately recoverable, event-idempotent outbox operation; delivery failure returns an explicit blocker and never repeats committed domain records or claims cross-file atomicity.
+- **ProjectView**: added a compact additive-v1 `conversation` summary with counts, latest derived states, pending-preview metadata, ownership, outbox count, and blockers. It excludes transcript/prompt content and is validated/documented in the ProjectView contract.
+- **TDD evidence**: conversation state, binding/lifecycle, protocol, Mission, and contract regressions are 698 passed; compileall and `git diff --check` pass.
+
 ### Design the Phase 3 M1 foreground conversation
 
 - **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.

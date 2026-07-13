@@ -287,6 +287,7 @@ PROJECT_VIEW_TOP_LEVEL_FIELDS = (
     "transport_updates",
     "permission_requests",
     "protocol_state_transitions",
+    "conversation",
     "inbox",
     "recovery",
 )
@@ -312,6 +313,20 @@ PROJECT_VIEW_PROTOCOL_STATE_TRANSITIONS_FIELDS = ("count", "by_entity_type", "it
 PROJECT_VIEW_PROTOCOL_STATE_TRANSITION_ITEM_FIELDS = (
     "transition_id", "entity_type", "entity_id", "from_state", "to_state",
     "reason", "created_at",
+)
+PROJECT_VIEW_CONVERSATION_FIELDS = (
+    "session_count",
+    "turn_count",
+    "preview_count",
+    "transition_count",
+    "latest_conversation_id",
+    "latest_conversation_state",
+    "latest_turn_id",
+    "latest_turn_state",
+    "pending_preview",
+    "ownership",
+    "outbox_count",
+    "blockers",
 )
 
 PROTOCOL_RUNTIME_CONTRACT_VERSION = "protocol-runtime/v1"
@@ -6655,12 +6670,45 @@ def validate_project_view_contract(payload: dict[str, object]) -> dict[str, obje
     _validate_project_view_skill_items(errors, payload)
     _validate_project_view_memory_items(errors, payload)
     _validate_project_view_protocol_summaries(errors, payload)
+    _validate_project_view_conversation(errors, payload)
     _validate_project_view_summary_items(errors, payload, "messages", PROJECT_VIEW_MESSAGE_ITEM_FIELDS, "message")
     _validate_project_view_summary_items(errors, payload, "jobs", PROJECT_VIEW_JOB_ITEM_FIELDS, "job")
     _validate_project_view_summary_items(errors, payload, "replies", PROJECT_VIEW_REPLY_ITEM_FIELDS, "reply")
     _validate_project_view_summary_items(errors, payload, "artifacts", PROJECT_VIEW_ARTIFACT_ITEM_FIELDS, "artifact")
     _validate_project_view_summary_items(errors, payload, "releases", PROJECT_VIEW_RELEASE_ITEM_FIELDS, "release")
     return {"ok": not errors, "errors": errors}
+
+
+def _validate_project_view_conversation(
+    errors: list[str], payload: dict[str, object]
+) -> None:
+    conversation = payload.get("conversation")
+    if not isinstance(conversation, dict):
+        if "conversation" in payload:
+            errors.append("conversation must be an object")
+        return
+    for field in PROJECT_VIEW_CONVERSATION_FIELDS:
+        if field not in conversation:
+            errors.append(f"missing conversation field: {field}")
+    for field in ("session_count", "turn_count", "preview_count", "transition_count", "outbox_count"):
+        if field in conversation and (
+            type(conversation[field]) is not int or conversation[field] < 0
+        ):
+            errors.append(f"conversation.{field} must be a non-negative integer")
+    for field in ("latest_conversation_id", "latest_turn_id"):
+        value = conversation.get(field)
+        if value is not None and (not isinstance(value, str) or not value):
+            errors.append(f"conversation.{field} must be a string or null")
+    for field in ("latest_conversation_state", "latest_turn_state"):
+        value = conversation.get(field)
+        if value is not None and (not isinstance(value, str) or not value):
+            errors.append(f"conversation.{field} must be a string or null")
+    pending = conversation.get("pending_preview")
+    if pending is not None and not isinstance(pending, dict):
+        errors.append("conversation.pending_preview must be an object or null")
+    for field in ("ownership", "blockers"):
+        if field in conversation and not isinstance(conversation[field], list):
+            errors.append(f"conversation.{field} must be a list")
 
 
 def _validate_project_view_protocol_summaries(
@@ -12088,6 +12136,20 @@ def project_view_example() -> dict[str, object]:
                     "created_at": "2026-07-04T00:00:04+00:00",
                 },
             ],
+        },
+        "conversation": {
+            "session_count": 0,
+            "turn_count": 0,
+            "preview_count": 0,
+            "transition_count": 0,
+            "latest_conversation_id": None,
+            "latest_conversation_state": None,
+            "latest_turn_id": None,
+            "latest_turn_state": None,
+            "pending_preview": None,
+            "ownership": [],
+            "outbox_count": 0,
+            "blockers": [],
         },
         "inbox": {"total": 0, "by_agent": {}, "by_status": {}, "heads": {}},
         "recovery": {

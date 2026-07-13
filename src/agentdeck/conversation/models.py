@@ -1,12 +1,26 @@
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from ..models import EventRecord
 
 
 MAX_CONTEXT_TURNS = 24
 MAX_CONTEXT_BYTES = 128 * 1024
 
 EntityType = Literal["conversation", "turn", "preview", "ownership"]
+
+
+@dataclass(frozen=True)
+class ConversationMutation:
+    """A validated append-only state batch plus its recoverable audit events."""
+
+    append_records: Mapping[str, tuple[Mapping[str, Any], ...]] = field(
+        default_factory=dict
+    )
+    events: tuple[EventRecord, ...] = ()
 
 CONVERSATION_EDGES = {
     "created": frozenset({"ready"}),

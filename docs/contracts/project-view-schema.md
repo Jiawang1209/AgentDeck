@@ -2,7 +2,7 @@
 
 `missions.items[].mission_id` values must be unique. Duplicate ids are invalid split-brain state: ProjectView validation returns a stable field-only error, and workbench/status refuse to print a partial snapshot rather than silently selecting one duplicate.
 
-`agentdeck status` is the canonical read-only ProjectView for CLI, natural-language Leader chat, recovery tooling, and future GUI clients.
+`agentdeck status` is the canonical read-only ProjectView for CLI, natural-language Leader chat, recovery tooling, and future GUI clients. The additive M1 `conversation` summary is compact lifecycle truth only; it never contains a transcript or raw prompt/response text.
 
 GUI clients should consume ProjectView first. They should not scan `.agentdeck/state/state.json`, parse tmux panes, or infer workflow state from command strings when ProjectView already exposes the same fact.
 
@@ -88,6 +88,7 @@ Leader chat responses are covered by `docs/contracts/leader-chat-schema.md` and 
   "transport_updates": {},
   "permission_requests": {},
   "protocol_state_transitions": {},
+  "conversation": {},
   "inbox": {},
   "recovery": {}
 }
@@ -100,6 +101,12 @@ All ProjectView fields are read-only summaries. Commands that mutate state, send
 ProjectView exposes compact `agent_sessions`, `protocol_turns`, `transport_updates`, `permission_requests`, and `protocol_state_transitions` summaries. The transition summary contains `count`, `by_entity_type`, and the stable latest 20 items ordered by `created_at` then `transition_id`. Each item is restricted to `transition_id`, `entity_type`, `entity_id`, `from_state`, `to_state`, `reason`, and `created_at`; persisted `details`, native credentials, update payloads, permission options, and targets are never projected.
 
 Before projection, the complete transition history is validated in O(n), including identities, entity references, ordering-dependent `from_state` continuity, legal edges, and duplicate rejection. Session `state`, turn `state`, and permission `status` in their base summaries are derived from the immutable base row plus the full validated transition history. Only these compact copies change; ProjectView rendering performs no writes. Legacy state with no transitions retains its base state/status. This additive contract remains `project-view/v1` under the repository's existing additive-v1 compatibility policy.
+
+## Foreground conversation summary
+
+`conversation` exposes `session_count`, `turn_count`, `preview_count`, `transition_count`, latest conversation/turn ids and derived states, one compact `pending_preview`, per-Agent `ownership`, `outbox_count`, and `blockers`. Current states come only from the validated append-only `conversation_state_transitions[]` history. A pending preview contains only `preview_id`, `preview_kind`, and `expires_at`; execution digests and full preview content are not projected here.
+
+The summary is read-only. Rendering ProjectView never creates a conversation, consumes a preview, flushes the event outbox, calls a Leader, invokes ACP, reads a tmux pane, or sends terminal input. Full user/Leader text stays outside durable M1 conversation records.
 
 `leader` includes the configured Leader identity and `leader_backend`, a normalized logical Leader identity for the current provider/model. This lets GUI and natural-language shells render fake/API-backed/CLI-backed Leader provenance before any plan exists. It is not a tmux pane binding, provider readiness proof, dispatch permission, or execution authorization.
 
