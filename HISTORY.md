@@ -4,6 +4,12 @@
 
 ## 2026-07-13
 
+### Make the locked StateStore the sole Mission execution authority
+
+- **Fresh lock-bound derivation**: moved canonical execution-policy, Worker, Skill/Memory provenance, snapshot, and dispatch-key derivation into dependency-light `state.py` helpers that both the public Mission wrappers and StateStore reuse. `freeze_mission_execution()` now accepts no caller snapshot or cached plan; while holding the protocol mutation lock it freshly reloads state, plan, project config, policy, and Worker transport facts, builds the only accepted snapshot, validates it, and atomically persists it with its event.
+- **No cached attempt authority**: `prepare_mission_attempt()` accepts no caller snapshot, plan, or dispatch key. Inside the same mutation lock it validates the persisted snapshot/hash, freshly reloads config and policy, rebuilds the snapshot from authoritative sources, checks exact equality, revalidates step lineage/Worker/transport, and derives the deterministic dispatch key itself before creating the attempt id and timestamps. The compatibility wrapper deliberately ignores its caller `config`; changing only an outer cached object cannot authorize or block a write.
+- **Review-fix TDD evidence**: new REDs proved a rehashed forged snapshot could reach the old freeze boundary, a config/transport/policy change between outer validation and the locked read was invisible, and a caller-supplied well-formed fake dispatch key was accepted. GREEN removes all three parameters from the StateStore write APIs and proves forged snapshot/key calls and fresh worker/transport/policy drift are zero-write. The focused suite is 21 passed and the required Mission/conversation/workflow regression is 100 passed; compileall and `git diff --check` pass.
+
 ### Freeze daemon Mission execution authority
 
 - **Compact confirmation snapshot**: added a daemon-only confirmation path that freezes the canonical Mission/plan identity, ordered step identities and prompt hashes, project-scope hash, fixed action classes, compact Skill provenance, exact Worker role/configured-transport/capability provenance, policy, and bounded limits. Raw user/step prompts, goal/summary text, transport argv, secret-bearing commands, full Skill/Memory content, native session ids, pane history, and raw project paths are not persisted. Mission, policy, and complete execution hashes use one strict bounded canonical JSON encoder; malformed, oversized, non-JSON, surrogate, boolean-as-integer, or forbidden nested facts fail closed.
