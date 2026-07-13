@@ -96,6 +96,20 @@ def _receipt() -> SubmittedReceipt:
     )
 
 
+def _claim_store_attempt(store: StateStore, candidate: dict[str, object]):
+    return store.claim_mission_attempt_admission(
+        attempt_id=str(candidate["attempt_id"]),
+        dispatch_key=str(candidate["dispatch_key"]),
+    )
+
+
+def _release_store_attempt(store: StateStore, candidate: dict[str, object]):
+    return store.release_mission_attempt_admission(
+        attempt_id=str(candidate["attempt_id"]),
+        dispatch_key=str(candidate["dispatch_key"]),
+    )
+
+
 def _completion(result: TransportResult | Exception):
     async def complete(_attempt, _receipt) -> TransportResult:
         if isinstance(result, Exception):
@@ -113,6 +127,30 @@ class _Authority:
     def authorize(self, candidate: dict[str, object]) -> dict[str, object]:
         self.authorize_calls += 1
         assert candidate["attempt_id"] == self.current["attempt_id"]
+        return deepcopy(self.current)
+
+    def claim(self, candidate: dict[str, object]) -> dict[str, object]:
+        assert candidate == self.current
+        if self.current["state"] != "prepared":
+            raise ValueError("already claimed")
+        self.current.update(
+            {
+                "state": "admitting",
+                "updated_at": "2026-07-13T00:00:01+00:00",
+            }
+        )
+        return deepcopy(self.current)
+
+    def release(self, candidate: dict[str, object]) -> dict[str, object]:
+        assert candidate["attempt_id"] == self.current["attempt_id"]
+        if self.current["state"] != "admitting":
+            raise ValueError("not claimed")
+        self.current.update(
+            {
+                "state": "prepared",
+                "updated_at": self.current["created_at"],
+            }
+        )
         return deepcopy(self.current)
 
     async def persist(
@@ -140,6 +178,8 @@ def _supervisor(
 ) -> WorkerAttemptSupervisor:
     return WorkerAttemptSupervisor(
         authorize_attempt=authority.authorize,
+        claim_admission=authority.claim,
+        release_admission=authority.release,
         persist_submitted=authority.persist,
         mark_attempt_ambiguous=mark_ambiguous or (lambda *_: None),
         acp_admit=acp_admit or (lambda _: _receipt()),
@@ -166,6 +206,8 @@ def test_complete_callback_is_not_called_until_async_receipt_persistence_finishe
 
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=authority.authorize,
+        claim_admission=authority.claim,
+        release_admission=authority.release,
         persist_submitted=persist,
         mark_attempt_ambiguous=lambda *_: None,
         acp_admit=lambda _: _receipt(),
@@ -233,6 +275,8 @@ def test_persistence_failure_never_starts_completion_and_is_sanitized() -> None:
 
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=authority.authorize,
+        claim_admission=authority.claim,
+        release_admission=authority.release,
         persist_submitted=persist,
         mark_attempt_ambiguous=mark_ambiguous,
         acp_admit=lambda _: _receipt(),
@@ -273,6 +317,8 @@ def test_external_callback_failures_have_no_sensitive_exception_context(
 
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=authorize,
+        claim_admission=authority.claim,
+        release_admission=authority.release,
         persist_submitted=authority.persist,
         mark_attempt_ambiguous=lambda *_: None,
         acp_admit=admit,
@@ -299,6 +345,8 @@ def test_callback_mutation_cannot_change_frozen_attempt_transport_authority() ->
 
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=mutate_and_forge,
+        claim_admission=authority.claim,
+        release_admission=authority.release,
         persist_submitted=authority.persist,
         mark_attempt_ambiguous=lambda *_: None,
         acp_admit=lambda _: calls.append("acp") or _receipt(),
@@ -406,7 +454,8 @@ def test_pre_admission_failure_releases_claim_for_prepared_retry() -> None:
 
     assert result.status == "completed"
     assert calls == ["acp", "acp"]
-    assert supervisor._claimed_dispatch_keys == set()
+    assert supervisor._halted is False
+    assert not hasattr(supervisor, "_claimed_dispatch_keys")
 
 
 def test_unknown_persistence_marks_durable_ambiguity_and_blocks_new_supervisor() -> None:
@@ -429,6 +478,8 @@ def test_unknown_persistence_marks_durable_ambiguity_and_blocks_new_supervisor()
 
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=authority.authorize,
+        claim_admission=authority.claim,
+        release_admission=authority.release,
         persist_submitted=unknown,
         mark_attempt_ambiguous=mark_ambiguous,
         acp_admit=lambda _: calls.append("acp") or _receipt(),
@@ -440,7 +491,8 @@ def test_unknown_persistence_marks_durable_ambiguity_and_blocks_new_supervisor()
     with pytest.raises(WorkerAttemptError, match="persistence failed"):
         asyncio.run(supervisor.execute(_attempt(), _route()))
     assert calls == ["acp"]
-    assert supervisor._claimed_dispatch_keys == set()
+    assert supervisor._halted is False
+    assert not hasattr(supervisor, "_claimed_dispatch_keys")
     restarted = _supervisor(
         authority,
         acp_admit=lambda _: calls.append("unexpected") or _receipt(),
@@ -471,6 +523,8 @@ def test_persistence_unknown_survives_supervisor_restart_in_state_store(tmp_path
 
     first = WorkerAttemptSupervisor(
         authorize_attempt=authorize,
+        claim_admission=lambda candidate: _claim_store_attempt(store, candidate),
+        release_admission=lambda candidate: _release_store_attempt(store, candidate),
         persist_submitted=lambda *_: (_ for _ in ()).throw(RuntimeError("unknown")),
         mark_attempt_ambiguous=mark,
         acp_admit=lambda _: calls.append("acp") or _receipt(),
@@ -488,6 +542,8 @@ def test_persistence_unknown_survives_supervisor_restart_in_state_store(tmp_path
 
     restarted = WorkerAttemptSupervisor(
         authorize_attempt=authorize,
+        claim_admission=lambda *_: pytest.fail("must not claim"),
+        release_admission=lambda *_: pytest.fail("must not release"),
         persist_submitted=lambda *_: pytest.fail("must not persist"),
         mark_attempt_ambiguous=mark,
         acp_admit=lambda _: calls.append("unexpected") or _receipt(),
@@ -530,6 +586,8 @@ def test_receipt_lineage_drift_uses_canonical_key_and_survives_restart(
 
     first = WorkerAttemptSupervisor(
         authorize_attempt=authorize,
+        claim_admission=lambda candidate: _claim_store_attempt(store, candidate),
+        release_admission=lambda candidate: _release_store_attempt(store, candidate),
         persist_submitted=lambda *_: pytest.fail("must not persist mismatched receipt"),
         mark_attempt_ambiguous=mark,
         acp_admit=lambda _: calls.append("acp") or bad_receipt,
@@ -550,6 +608,8 @@ def test_receipt_lineage_drift_uses_canonical_key_and_survives_restart(
 
     restarted = WorkerAttemptSupervisor(
         authorize_attempt=authorize,
+        claim_admission=lambda *_: pytest.fail("must not claim"),
+        release_admission=lambda *_: pytest.fail("must not release"),
         persist_submitted=lambda *_: pytest.fail("must not persist"),
         mark_attempt_ambiguous=mark,
         acp_admit=lambda _: calls.append("unexpected") or bad_receipt,
@@ -562,9 +622,8 @@ def test_receipt_lineage_drift_uses_canonical_key_and_survives_restart(
     assert calls == ["acp"]
 
 
-def test_receipt_lineage_drift_retains_claim_when_ambiguity_mark_fails() -> None:
+def test_ambiguity_failure_halts_supervisor_without_unbounded_claims() -> None:
     authority = _Authority()
-    dispatch_key = "dsp_" + "1" * 32
     bad_receipt = SubmittedReceipt(
         receipt_id="rcp_bad_lineage",
         dispatch_key="dsp_" + "9" * 32,
@@ -573,6 +632,8 @@ def test_receipt_lineage_drift_retains_claim_when_ambiguity_mark_fails() -> None
 
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=authority.authorize,
+        claim_admission=authority.claim,
+        release_admission=authority.release,
         persist_submitted=lambda *_: pytest.fail("must not persist mismatched receipt"),
         mark_attempt_ambiguous=lambda *_: (_ for _ in ()).throw(
             RuntimeError("sensitive ambiguity failure")
@@ -588,7 +649,21 @@ def test_receipt_lineage_drift_retains_claim_when_ambiguity_mark_fails() -> None
     assert str(error.value) == "Worker ambiguity persistence failed"
     assert error.value.__cause__ is None
     assert error.value.__context__ is None
-    assert supervisor._claimed_dispatch_keys == {dispatch_key}
+    assert supervisor._halted is True
+
+    with pytest.raises(WorkerAttemptError) as halted:
+        asyncio.run(
+            supervisor.execute(
+                _attempt(
+                    attempt_id="mat_abcdefabcdef",
+                    mission_id="mis_abcdefabcdef",
+                    dispatch_key="dsp_" + "8" * 32,
+                ),
+                _route(),
+            )
+        )
+    assert str(halted.value) == "Worker supervisor is halted"
+    assert not hasattr(supervisor, "_claimed_dispatch_keys")
 
 
 def test_state_store_submitted_receipt_precedes_complete_callback(tmp_path) -> None:
@@ -609,13 +684,17 @@ def test_state_store_submitted_receipt_precedes_complete_callback(tmp_path) -> N
         )
 
     async def complete(candidate, _receipt):
+        assert candidate == store.mission_attempt_by_id(str(candidate["attempt_id"]))
+        assert candidate["receipt_summary"] == "accepted"
         observed_states.append(
-            store.mission_attempt_by_id(str(candidate["attempt_id"]))["state"]
+            str(candidate["state"])
         )
         return _result()
 
     supervisor = WorkerAttemptSupervisor(
         authorize_attempt=authorize,
+        claim_admission=lambda candidate: _claim_store_attempt(store, candidate),
+        release_admission=lambda candidate: _release_store_attempt(store, candidate),
         persist_submitted=persist,
         mark_attempt_ambiguous=lambda *_: pytest.fail("must not mark ambiguous"),
         acp_admit=lambda _: _receipt(),
@@ -628,6 +707,241 @@ def test_state_store_submitted_receipt_precedes_complete_callback(tmp_path) -> N
     assert result.status == "completed"
     assert observed_states == ["submitted"]
     assert store.load()["protocol_event_outbox"][-1]["event_type"] == "mission_attempt_submitted"
+
+
+def test_two_supervisors_share_one_atomic_state_store_admission_claim(tmp_path) -> None:
+    async def scenario() -> None:
+        store = StateStore(tmp_path)
+        state = store.load()
+        state["mission_attempts"] = [_attempt()]
+        store.save(state)
+        authorize_count = 0
+        both_authorized = asyncio.Event()
+        release_admit = asyncio.Event()
+        admit_calls: list[str] = []
+        complete_calls: list[str] = []
+
+        async def authorize(candidate):
+            nonlocal authorize_count
+            current = store.mission_attempt_by_id(str(candidate["attempt_id"]))
+            authorize_count += 1
+            if authorize_count == 2:
+                both_authorized.set()
+            await both_authorized.wait()
+            return current
+
+        def claim(candidate):
+            return store.claim_mission_attempt_admission(
+                attempt_id=str(candidate["attempt_id"]),
+                dispatch_key=str(candidate["dispatch_key"]),
+            )
+
+        def release(candidate):
+            return store.release_mission_attempt_admission(
+                attempt_id=str(candidate["attempt_id"]),
+                dispatch_key=str(candidate["dispatch_key"]),
+            )
+
+        def persist(candidate, receipt):
+            return store.record_mission_attempt_submitted(
+                attempt_id=str(candidate["attempt_id"]),
+                dispatch_key=str(candidate["dispatch_key"]),
+                receipt_summary=receipt.summary,
+            )
+
+        async def admit(_candidate):
+            admit_calls.append("acp")
+            await release_admit.wait()
+            return _receipt()
+
+        async def complete(candidate, _receipt):
+            complete_calls.append(str(candidate["state"]))
+            return _result()
+
+        def build() -> WorkerAttemptSupervisor:
+            return WorkerAttemptSupervisor(
+                authorize_attempt=authorize,
+                claim_admission=claim,
+                release_admission=release,
+                persist_submitted=persist,
+                mark_attempt_ambiguous=lambda *_: pytest.fail("must not mark"),
+                acp_admit=admit,
+                tmux_admit=lambda _: pytest.fail("tmux must not run"),
+                acp_complete=complete,
+                tmux_complete=lambda *_: pytest.fail("tmux must not run"),
+            )
+
+        first_task = asyncio.create_task(build().execute(_attempt(), _route()))
+        second_task = asyncio.create_task(build().execute(_attempt(), _route()))
+        await both_authorized.wait()
+        await asyncio.sleep(0)
+        release_admit.set()
+        results = await asyncio.gather(first_task, second_task, return_exceptions=True)
+
+        assert admit_calls == ["acp"]
+        assert complete_calls == ["submitted"]
+        assert sum(isinstance(item, WorkerAttemptError) for item in results) == 1
+        assert sum(not isinstance(item, BaseException) for item in results) == 1
+        assert store.mission_attempt_by_id("mat_0123456789ab")["state"] == "submitted"
+
+    asyncio.run(scenario())
+
+
+def test_admission_claim_must_be_reread_as_durable_before_external_call() -> None:
+    authority = _Authority()
+    external_calls: list[str] = []
+
+    def forged_claim(_candidate):
+        return _attempt(
+            state="admitting",
+            updated_at="2026-07-13T00:00:01+00:00",
+        )
+
+    supervisor = WorkerAttemptSupervisor(
+        authorize_attempt=authority.authorize,
+        claim_admission=forged_claim,
+        release_admission=authority.release,
+        persist_submitted=authority.persist,
+        mark_attempt_ambiguous=lambda *_: pytest.fail("must not mark"),
+        acp_admit=lambda _: external_calls.append("acp") or _receipt(),
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=lambda *_: pytest.fail("must not complete"),
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
+    )
+
+    with pytest.raises(WorkerAttemptError, match="admission claim failed"):
+        asyncio.run(supervisor.execute(_attempt(), _route()))
+    assert external_calls == []
+    assert authority.current["state"] == "prepared"
+
+
+def test_definite_pre_admission_failure_atomically_releases_durable_claim(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+
+    supervisor = WorkerAttemptSupervisor(
+        authorize_attempt=lambda candidate: store.mission_attempt_by_id(
+            str(candidate["attempt_id"])
+        ),
+        claim_admission=lambda candidate: store.claim_mission_attempt_admission(
+            attempt_id=str(candidate["attempt_id"]),
+            dispatch_key=str(candidate["dispatch_key"]),
+        ),
+        release_admission=lambda candidate: store.release_mission_attempt_admission(
+            attempt_id=str(candidate["attempt_id"]),
+            dispatch_key=str(candidate["dispatch_key"]),
+        ),
+        persist_submitted=lambda *_: pytest.fail("must not persist"),
+        mark_attempt_ambiguous=lambda *_: pytest.fail("must not mark"),
+        acp_admit=lambda _: (_ for _ in ()).throw(RuntimeError("definite failure")),
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=lambda *_: pytest.fail("must not complete"),
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
+    )
+
+    with pytest.raises(WorkerAttemptError, match="failed before admission"):
+        asyncio.run(supervisor.execute(_attempt(), _route()))
+    assert store.mission_attempt_by_id("mat_0123456789ab")["state"] == "prepared"
+    assert [
+        item["event_type"] for item in store.load()["protocol_event_outbox"][-2:]
+    ] == ["mission_attempt_admission_claimed", "mission_attempt_admission_released"]
+
+
+def test_unknown_admission_outcome_retains_durable_admitting_fact(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+
+    supervisor = WorkerAttemptSupervisor(
+        authorize_attempt=lambda candidate: store.mission_attempt_by_id(
+            str(candidate["attempt_id"])
+        ),
+        claim_admission=lambda candidate: _claim_store_attempt(store, candidate),
+        release_admission=lambda candidate: _release_store_attempt(store, candidate),
+        persist_submitted=lambda *_: pytest.fail("must not persist"),
+        mark_attempt_ambiguous=lambda *_: pytest.fail("must not mark"),
+        acp_admit=lambda _: object(),
+        tmux_admit=lambda _: pytest.fail("tmux must not run"),
+        acp_complete=lambda *_: pytest.fail("must not complete"),
+        tmux_complete=lambda *_: pytest.fail("tmux must not run"),
+    )
+
+    with pytest.raises(WorkerAttemptError, match="invalid admission"):
+        asyncio.run(supervisor.execute(_attempt(), _route()))
+    assert supervisor._halted is True
+    assert store.mission_attempt_by_id("mat_0123456789ab")["state"] == "admitting"
+    assert store.load()["protocol_event_outbox"][-1]["event_type"] == (
+        "mission_attempt_admission_claimed"
+    )
+
+
+def test_submitted_receipt_cannot_bypass_durable_admission_claim(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    before = store.load()
+
+    with pytest.raises(ValueError, match="receipt transition is invalid"):
+        store.record_mission_attempt_submitted(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            receipt_summary="accepted",
+        )
+    assert store.load() == before
+
+
+@pytest.mark.parametrize(
+    "transition", ["claim", "release", "submitted", "ambiguous"]
+)
+def test_attempt_transitions_reject_duplicate_global_dispatch_lineage(
+    tmp_path, transition: str
+) -> None:
+    store = StateStore(tmp_path)
+    duplicate = _attempt(
+        attempt_id="mat_abcdefabcdef",
+        mission_id="mis_abcdefabcdef",
+    )
+    state = store.load()
+    state["mission_attempts"] = [_attempt(), duplicate]
+    if transition == "release":
+        for item in state["mission_attempts"]:
+            item["state"] = "admitting"
+            item["updated_at"] = "2026-07-13T00:00:01+00:00"
+    store.save(state)
+    before = store.load()
+
+    with pytest.raises(ValueError, match="duplicate mission attempt dispatch key"):
+        if transition == "claim":
+            store.claim_mission_attempt_admission(
+                attempt_id="mat_0123456789ab",
+                dispatch_key="dsp_" + "1" * 32,
+            )
+        elif transition == "release":
+            store.release_mission_attempt_admission(
+                attempt_id="mat_0123456789ab",
+                dispatch_key="dsp_" + "1" * 32,
+            )
+        elif transition == "submitted":
+            store.record_mission_attempt_submitted(
+                attempt_id="mat_0123456789ab",
+                dispatch_key="dsp_" + "1" * 32,
+                receipt_summary="accepted",
+            )
+        else:
+            store.mark_mission_attempt_ambiguous(
+                attempt_id="mat_0123456789ab",
+                dispatch_key="dsp_" + "1" * 32,
+                observed_dispatch_key="dsp_" + "9" * 32,
+                receipt_summary="accepted",
+                reason="receipt_persistence_unknown",
+            )
+    assert store.load() == before
 
 
 def test_concurrent_same_dispatch_uses_one_transport_and_releases_claim() -> None:
@@ -645,6 +959,8 @@ def test_concurrent_same_dispatch_uses_one_transport_and_releases_claim() -> Non
 
         supervisor = WorkerAttemptSupervisor(
             authorize_attempt=authority.authorize,
+            claim_admission=authority.claim,
+            release_admission=authority.release,
             persist_submitted=persist,
             mark_attempt_ambiguous=lambda *_: None,
             acp_admit=admit,
@@ -661,7 +977,8 @@ def test_concurrent_same_dispatch_uses_one_transport_and_releases_claim() -> Non
         assert calls == ["acp"]
         assert sum(isinstance(item, WorkerAttemptError) for item in results) == 1
         assert sum(not isinstance(item, BaseException) for item in results) == 1
-        assert supervisor._claimed_dispatch_keys == set()
+        assert supervisor._halted is False
+        assert not hasattr(supervisor, "_claimed_dispatch_keys")
 
     asyncio.run(scenario())
 
@@ -882,6 +1199,8 @@ def test_worker_b_cannot_start_before_validated_handoff_is_recorded(
 ) -> None:
     decision = supervisor_gate(
         {
+            "attempt_state": "succeeded",
+            "result_status": "completed",
             "reply_state": reply_state,
             "handoff_state": handoff_state,
             "next_worker": "reviewer",
@@ -893,9 +1212,51 @@ def test_worker_b_cannot_start_before_validated_handoff_is_recorded(
 def test_worker_b_starts_only_after_agentdeck_validates_and_records_worker_a() -> None:
     decision = supervisor_gate(
         {
+            "attempt_state": "succeeded",
+            "result_status": "completed",
             "reply_state": "validated",
             "handoff_state": "recorded",
             "next_worker": "reviewer",
         }
     )
     assert decision.next_worker == "reviewer"
+
+
+@pytest.mark.parametrize(
+    ("attempt_state", "result_status"),
+    [
+        ("failed", "completed"),
+        ("cancelled", "completed"),
+        ("interrupted", "completed"),
+        ("ambiguous", "completed"),
+        ("completed", "failed"),
+        ("succeeded", "blocked"),
+    ],
+)
+def test_supervisor_gate_rejects_non_success_attempt_or_result(
+    attempt_state: str, result_status: str
+) -> None:
+    decision = supervisor_gate(
+        {
+            "attempt_state": attempt_state,
+            "result_status": result_status,
+            "reply_state": "validated",
+            "handoff_state": "recorded",
+            "next_worker": "reviewer",
+        }
+    )
+    assert decision.next_worker is None
+
+
+def test_supervisor_gate_rejects_unknown_fact_fields() -> None:
+    decision = supervisor_gate(
+        {
+            "attempt_state": "succeeded",
+            "result_status": "completed",
+            "reply_state": "validated",
+            "handoff_state": "recorded",
+            "next_worker": "reviewer",
+            "validated": True,
+        }
+    )
+    assert decision.next_worker is None

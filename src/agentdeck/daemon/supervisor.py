@@ -11,6 +11,7 @@ from ..conversation.transports import WorkerRoute
 from ..runtime.acp_mapping import map_stop_reason
 from ..state import validate_mission_attempt_record
 from ..workflow import CanonicalArtifact, CanonicalHandoff, build_canonical_handoff
+from .scheduler import is_successful_attempt_result
 
 
 class WorkerAttemptError(RuntimeError):
@@ -60,6 +61,12 @@ AuthorizeAttempt = Callable[
 ]
 PersistSubmitted = Callable[
     [MissionAttempt, SubmittedReceipt], None | Awaitable[None]
+]
+ClaimAdmission = Callable[
+    [MissionAttempt], Mapping[str, object] | Awaitable[Mapping[str, object]]
+]
+ReleaseAdmission = Callable[
+    [MissionAttempt], Mapping[str, object] | Awaitable[Mapping[str, object]]
 ]
 MarkAttemptAmbiguous = Callable[
     [MissionAttempt, SubmittedReceipt, str], None | Awaitable[None]
@@ -186,6 +193,8 @@ class WorkerAttemptSupervisor:
         self,
         *,
         authorize_attempt: AuthorizeAttempt,
+        claim_admission: ClaimAdmission,
+        release_admission: ReleaseAdmission,
         persist_submitted: PersistSubmitted,
         mark_attempt_ambiguous: MarkAttemptAmbiguous,
         acp_admit: AdmitTransport,
@@ -195,6 +204,8 @@ class WorkerAttemptSupervisor:
     ) -> None:
         for callback in (
             authorize_attempt,
+            claim_admission,
+            release_admission,
             persist_submitted,
             mark_attempt_ambiguous,
             acp_admit,
@@ -205,13 +216,15 @@ class WorkerAttemptSupervisor:
             if not callable(callback):
                 raise TypeError("Worker supervisor callback must be callable")
         self._authorize_attempt = authorize_attempt
+        self._claim_admission = claim_admission
+        self._release_admission = release_admission
         self._persist_submitted = persist_submitted
         self._mark_attempt_ambiguous = mark_attempt_ambiguous
         self._acp_admit = acp_admit
         self._tmux_admit = tmux_admit
         self._acp_complete = acp_complete
         self._tmux_complete = tmux_complete
-        self._claimed_dispatch_keys: set[str] = set()
+        self._halted = False
 
     async def _current_attempt(
         self, baseline: MissionAttempt
@@ -245,9 +258,25 @@ class WorkerAttemptSupervisor:
             and ambiguous["terminal_reason"] == "receipt_persistence_unknown"
         )
 
+    async def _durably_release_admission(
+        self, baseline: MissionAttempt, claimed: MissionAttempt
+    ) -> bool:
+        released, _ = await _capture_callback(
+            self._release_admission, copy.deepcopy(claimed)
+        )
+        if not released:
+            return False
+        authority_ok, prepared = await self._current_attempt(baseline)
+        return bool(authority_ok and prepared == baseline)
+
+    def _halt(self) -> None:
+        self._halted = True
+
     async def execute(
         self, attempt_record: Mapping[str, object], route: WorkerRoute
     ) -> AttemptOutcome:
+        if self._halted:
+            raise WorkerAttemptError("Worker supervisor is halted")
         baseline = _validated_attempt(attempt_record)
         if not baseline:
             raise WorkerAttemptError("Worker attempt record is invalid")
@@ -265,34 +294,52 @@ class WorkerAttemptSupervisor:
             raise WorkerAttemptError("Worker attempt authority check failed")
         if not _same_attempt_authority(baseline, current):
             raise WorkerAttemptError("Worker attempt authority drift")
-        if current["state"] in {"submitted", "running"}:
+        if current["state"] in {"admitting", "submitted", "running"}:
             raise WorkerAttemptError("Worker attempt is already submitted")
         if current["state"] != "prepared" or current != baseline:
             raise WorkerAttemptError("Worker attempt authority drift")
-        if dispatch_key in self._claimed_dispatch_keys:
-            raise WorkerAttemptError("Worker attempt is already submitted")
-        self._claimed_dispatch_keys.add(dispatch_key)
+
+        claimed_ok, raw_claimed = await _capture_callback(
+            self._claim_admission, copy.deepcopy(baseline)
+        )
+        claimed = _validated_attempt(raw_claimed) if claimed_ok else {}
+        if not (
+            claimed
+            and _same_attempt_authority(baseline, claimed)
+            and claimed["state"] == "admitting"
+            and claimed["receipt_summary"] is None
+            and claimed["blocker"] is None
+            and claimed["terminal_reason"] is None
+        ):
+            raise WorkerAttemptError("Worker admission claim failed")
+        claim_authority_ok, durable_claimed = await self._current_attempt(baseline)
+        if not claim_authority_ok or durable_claimed != claimed:
+            raise WorkerAttemptError("Worker admission claim failed")
+        claimed = durable_claimed
 
         admit = self._acp_admit if transport == "acp" else self._tmux_admit
         admitted, receipt = await _capture_callback(admit, copy.deepcopy(baseline))
         if not admitted:
-            self._claimed_dispatch_keys.discard(dispatch_key)
+            if not await self._durably_release_admission(baseline, claimed):
+                self._halt()
+                raise WorkerAttemptError("Worker admission claim release failed")
             raise WorkerAttemptError(f"{label} Worker failed before admission")
         if not isinstance(receipt, SubmittedReceipt):
-            self._claimed_dispatch_keys.discard(dispatch_key)
+            self._halt()
             raise WorkerAttemptError(f"{label} Worker returned an invalid admission")
         if receipt.dispatch_key != dispatch_key:
             marked = await self._durably_mark_unknown(baseline, receipt)
             if not marked:
+                self._halt()
                 raise WorkerAttemptError("Worker ambiguity persistence failed")
-            self._claimed_dispatch_keys.discard(dispatch_key)
             raise WorkerAttemptError("Worker admission receipt lineage drift")
 
         persisted, _ = await _capture_callback(
             self._persist_submitted,
-            copy.deepcopy(baseline),
+            copy.deepcopy(claimed),
             copy.deepcopy(receipt),
         )
+        submitted: MissionAttempt = {}
         if persisted:
             authority_ok, submitted = await self._current_attempt(baseline)
             persisted = bool(
@@ -304,15 +351,14 @@ class WorkerAttemptSupervisor:
         if not persisted:
             marked = await self._durably_mark_unknown(baseline, receipt)
             if marked:
-                self._claimed_dispatch_keys.discard(dispatch_key)
                 raise WorkerAttemptError("Worker submitted receipt persistence failed")
+            self._halt()
             raise WorkerAttemptError("Worker ambiguity persistence failed")
-        self._claimed_dispatch_keys.discard(dispatch_key)
 
         complete = self._acp_complete if transport == "acp" else self._tmux_complete
         completed, raw_result = await _capture_callback(
             complete,
-            copy.deepcopy(baseline),
+            copy.deepcopy(submitted),
             copy.deepcopy(receipt),
         )
         if not completed:
@@ -351,8 +397,17 @@ class WorkerAttemptSupervisor:
 
 def supervisor_gate(ledger: Mapping[str, object]) -> SupervisorGateDecision:
     """Allow the next Worker only after AgentDeck-owned validation and handoff."""
-    if not isinstance(ledger, Mapping):
-        raise TypeError("supervisor ledger facts must be a mapping")
+    expected_fields = {
+        "attempt_state",
+        "result_status",
+        "reply_state",
+        "handoff_state",
+        "next_worker",
+    }
+    if type(ledger) is not dict or set(ledger) != expected_fields:
+        return SupervisorGateDecision(None, "Worker ledger facts are invalid")
+    attempt_state = ledger["attempt_state"]
+    result_status = ledger["result_status"]
     reply_state = ledger.get("reply_state")
     handoff_state = ledger.get("handoff_state")
     next_worker = ledger.get("next_worker")
@@ -364,6 +419,8 @@ def supervisor_gate(ledger: Mapping[str, object]) -> SupervisorGateDecision:
         return SupervisorGateDecision(None, "Worker handoff lacks validated reply")
     if reply_state != "validated" or handoff_state != "recorded":
         return SupervisorGateDecision(None, "Worker completion handoff is not ready")
+    if not is_successful_attempt_result(attempt_state, result_status):
+        return SupervisorGateDecision(None, "Worker attempt result is not successful")
     if type(next_worker) is not str or not next_worker:
         return SupervisorGateDecision(None, "Next Worker identity is invalid")
     return SupervisorGateDecision(next_worker, None)

@@ -19,6 +19,7 @@ ATTEMPT_STATES = frozenset(
     {
         "none",
         "prepared",
+        "admitting",
         "submitted",
         "running",
         "completed",
@@ -73,11 +74,23 @@ _FACT_FIELDS = (
 _MISSION_ID = re.compile(r"mis_[0-9a-f]{12}")
 _STEP_ID = re.compile(r"step_[1-9][0-9]*")
 _ATTEMPT_ID = re.compile(r"mat_[0-9a-f]{12}")
-_ACTIVE_ATTEMPT_STATES = frozenset({"prepared", "submitted", "running"})
+_ACTIVE_ATTEMPT_STATES = frozenset(
+    {"prepared", "admitting", "submitted", "running"}
+)
 _SUCCESSFUL_ATTEMPT_STATES = frozenset({"completed", "succeeded"})
 _TERMINAL_MISSION_STATES = frozenset(
     {"completed", "stopped", "interrupted"}
 )
+
+
+def is_successful_attempt_result(attempt_state: object, result_status: object) -> bool:
+    """Return the Task 8 success fence shared by downstream handoff gates."""
+    return (
+        type(attempt_state) is str
+        and attempt_state in _SUCCESSFUL_ATTEMPT_STATES
+        and type(result_status) is str
+        and result_status == "completed"
+    )
 
 
 class SchedulerError(ValueError):
@@ -97,6 +110,7 @@ StepState = Literal["none", "pending", "active", "completed", "failed", "blocked
 AttemptState = Literal[
     "none",
     "prepared",
+    "admitting",
     "submitted",
     "running",
     "completed",
@@ -473,7 +487,7 @@ def schedule_gate(facts: SchedulerFacts) -> SchedulerDecision:
         and facts.next_step_eligible
     ):
         return _decision("activate_next", facts)
-    if facts.attempt_state in {"submitted", "running"}:
+    if facts.attempt_state in {"admitting", "submitted", "running"}:
         return _decision("await_worker", facts)
     if (
         facts.attempt_state in _SUCCESSFUL_ATTEMPT_STATES

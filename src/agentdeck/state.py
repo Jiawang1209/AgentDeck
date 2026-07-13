@@ -94,6 +94,7 @@ _MISSION_ATTEMPT_FIELDS = frozenset(
 _MISSION_ATTEMPT_STATES = frozenset(
     {
         "prepared",
+        "admitting",
         "submitted",
         "running",
         "completed",
@@ -104,7 +105,9 @@ _MISSION_ATTEMPT_STATES = frozenset(
         "ambiguous",
     }
 )
-_MISSION_ATTEMPT_ACTIVE_STATES = frozenset({"prepared", "submitted", "running"})
+_MISSION_ATTEMPT_ACTIVE_STATES = frozenset(
+    {"prepared", "admitting", "submitted", "running"}
+)
 _MISSION_ATTEMPT_RETRYABLE_STATES = frozenset({"failed"})
 
 
@@ -262,6 +265,14 @@ def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
 def validate_mission_attempt_record(value: object) -> dict[str, Any]:
     """Validate the exact durable Task 7 Mission attempt record."""
     return _validate_mission_attempt_record(value)
+
+
+def _require_unique_mission_attempt_dispatch_keys(
+    attempts: list[dict[str, Any]],
+) -> None:
+    dispatch_keys = [item["dispatch_key"] for item in attempts]
+    if len(dispatch_keys) != len(set(dispatch_keys)):
+        raise ValueError("duplicate mission attempt dispatch key")
 
 
 def validate_execution_snapshot(value: object) -> dict[str, Any]:
@@ -2199,6 +2210,99 @@ class StateStore:
             raise ValueError("duplicate mission attempt identity")
         return matches[0]
 
+    def _transition_mission_attempt_admission(
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        target_state: str,
+    ) -> dict[str, Any]:
+        if (
+            type(attempt_id) is not str
+            or re.fullmatch(r"mat_[0-9a-f]{12}", attempt_id) is None
+            or type(dispatch_key) is not str
+            or re.fullmatch(r"dsp_[0-9a-f]{32}", dispatch_key) is None
+            or target_state not in {"admitting", "prepared"}
+        ):
+            raise ValueError("mission attempt admission transition is invalid")
+        with self._protocol_mutation_lock():
+            state = self.load()
+            attempts = state.get("mission_attempts", [])
+            if type(attempts) is not list:
+                raise ValueError("mission attempt state invalid")
+            validated = [_validate_mission_attempt_record(item) for item in attempts]
+            _require_unique_mission_attempt_dispatch_keys(validated)
+            matches = [item for item in validated if item["attempt_id"] == attempt_id]
+            if len(matches) != 1:
+                if not matches:
+                    raise KeyError(attempt_id)
+                raise ValueError("duplicate mission attempt identity")
+            persisted = matches[0]
+            if persisted["dispatch_key"] != dispatch_key:
+                raise ValueError("mission attempt admission lineage drift")
+            source_state = "prepared" if target_state == "admitting" else "admitting"
+            if persisted["state"] != source_state:
+                raise ValueError("mission attempt admission transition is invalid")
+            now = utc_now()
+            candidate = _validate_mission_attempt_record(
+                {
+                    **persisted,
+                    "state": target_state,
+                    "updated_at": (
+                        now if target_state == "admitting" else persisted["created_at"]
+                    ),
+                }
+            )
+            event_name = "claimed" if target_state == "admitting" else "released"
+            event = EventRecord(
+                event_id=new_id("evt"),
+                event_type=f"mission_attempt_admission_{event_name}",
+                created_at=now,
+                payload={
+                    "attempt_id": attempt_id,
+                    "mission_id": candidate["mission_id"],
+                    "step_id": candidate["step_id"],
+                    "dispatch_key": dispatch_key,
+                },
+            )
+            outbox = state.setdefault("protocol_event_outbox", [])
+            outbox_ids = _validated_protocol_event_outbox_ids(outbox)
+            journal_ids = self._strict_protocol_journal_event_ids()
+            event_summary = asdict(event)
+            try:
+                event_id = validate_daemon_event_record(event_summary)
+            except LeaseError:
+                raise ValueError("protocol event record is invalid") from None
+            if event_id in outbox_ids or event_id in journal_ids:
+                raise ValueError("duplicate protocol event identity")
+            index = next(
+                index
+                for index, item in enumerate(attempts)
+                if type(item) is dict and item.get("attempt_id") == attempt_id
+            )
+            attempts[index] = candidate
+            outbox.append(event_summary)
+            self._atomic_save(state)
+            return copy.deepcopy(candidate)
+
+    def claim_mission_attempt_admission(
+        self, *, attempt_id: str, dispatch_key: str
+    ) -> dict[str, Any]:
+        return self._transition_mission_attempt_admission(
+            attempt_id=attempt_id,
+            dispatch_key=dispatch_key,
+            target_state="admitting",
+        )
+
+    def release_mission_attempt_admission(
+        self, *, attempt_id: str, dispatch_key: str
+    ) -> dict[str, Any]:
+        return self._transition_mission_attempt_admission(
+            attempt_id=attempt_id,
+            dispatch_key=dispatch_key,
+            target_state="prepared",
+        )
+
     def _transition_mission_attempt_receipt(
         self,
         *,
@@ -2236,6 +2340,7 @@ class StateStore:
             if type(attempts) is not list:
                 raise ValueError("mission attempt state invalid")
             validated = [_validate_mission_attempt_record(item) for item in attempts]
+            _require_unique_mission_attempt_dispatch_keys(validated)
             matches = [item for item in validated if item["attempt_id"] == attempt_id]
             if len(matches) != 1:
                 if not matches:
@@ -2253,7 +2358,11 @@ class StateStore:
                 ):
                     return persisted
                 raise ValueError("mission attempt receipt conflict")
-            allowed_states = {"prepared"} if target_state == "submitted" else {"prepared", "submitted"}
+            allowed_states = (
+                {"admitting"}
+                if target_state == "submitted"
+                else {"prepared", "admitting", "submitted"}
+            )
             if persisted["state"] not in allowed_states:
                 raise ValueError("mission attempt receipt transition is invalid")
             if (
