@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timedelta, timezone
+import json
 import math
 from pathlib import Path
 
@@ -699,6 +700,77 @@ def test_corrupt_event_journal_fails_closed_without_lease_write(
         store.commit_controller_lease(transition)
 
     assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"event_id": "invalid event id"},
+        {"event_type": "Invalid Event Type"},
+        {"created_at": "2026-07-13T10:00:00"},
+        {"created_at": "not-a-time"},
+        {"payload": {"value": math.nan}},
+    ],
+)
+def test_structured_malformed_event_journal_is_full_tree_zero_write(
+    tmp_path: Path, overrides: dict[str, object]
+) -> None:
+    store = _store(tmp_path)
+    item: dict[str, object] = {
+        "event_id": "evt_conversation",
+        "event_type": "conversation_started",
+        "created_at": "2026-07-13T10:00:00+00:00",
+        "payload": {"conversation_id": "c1"},
+    }
+    item.update(overrides)
+    store.events_path.write_text(
+        json.dumps(item, allow_nan=True) + "\n", encoding="utf-8"
+    )
+    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="daemon event journal"):
+        store.commit_controller_lease(transition)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_duplicate_event_journal_identity_is_full_tree_zero_write(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    item = {
+        "event_id": "evt_conversation",
+        "event_type": "conversation_started",
+        "created_at": "2026-07-13T10:00:00+00:00",
+        "payload": {},
+    }
+    line = json.dumps(item) + "\n"
+    store.events_path.write_text(line + line, encoding="utf-8")
+    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="duplicate daemon event identity"):
+        store.commit_controller_lease(transition)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_legacy_event_identity_and_strict_json_payload_remain_compatible(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    item = {
+        "event_id": "evt_conversation",
+        "event_type": "conversation_started",
+        "created_at": "2026-07-13T10:00:00+00:00",
+        "payload": {"nested": [1, True, None, {"name": "worker"}]},
+    }
+    store.events_path.write_text(json.dumps(item) + "\n", encoding="utf-8")
+
+    transition = grant_controller(client_id="client-a", now=NOW, ttl_seconds=30)
+
+    assert store.commit_controller_lease(transition)["generation"] == 1
 
 
 def test_state_store_rejects_malformed_persisted_lease_with_sanitized_error(

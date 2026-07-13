@@ -18,6 +18,8 @@ from .conversation.models import ConversationMutation
 from .daemon.lifecycle import validate_daemon_record
 from .daemon.lease import (
     LeaseTransition,
+    LeaseError,
+    validate_daemon_event_record,
     validate_daemon_event_outbox,
     validate_lease_transition,
 )
@@ -259,7 +261,7 @@ class StateStore:
     def _daemon_journal_event_ids(self) -> set[str]:
         if not self.events_path.exists():
             return set()
-        event_ids: set[str] = set()
+        event_ids: list[str] = []
         for line in self.events_path.read_text(encoding="utf-8").splitlines():
             if not line:
                 continue
@@ -267,18 +269,13 @@ class StateStore:
                 item = json.loads(line)
             except json.JSONDecodeError:
                 raise ValueError("daemon event journal is malformed") from None
-            if (
-                type(item) is not dict
-                or set(item) != {"event_id", "event_type", "created_at", "payload"}
-                or type(item["event_id"]) is not str
-                or not item["event_id"]
-                or type(item["event_type"]) is not str
-                or type(item["created_at"]) is not str
-                or type(item["payload"]) is not dict
-            ):
-                raise ValueError("daemon event journal is malformed")
-            event_ids.add(item["event_id"])
-        return event_ids
+            try:
+                event_ids.append(validate_daemon_event_record(item))
+            except LeaseError:
+                raise ValueError("daemon event journal is malformed") from None
+        if len(event_ids) != len(set(event_ids)):
+            raise ValueError("duplicate daemon event identity")
+        return set(event_ids)
 
     def _atomic_save(self, state: dict[str, Any]) -> None:
         temporary = self.state_path.with_name(

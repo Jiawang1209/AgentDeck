@@ -26,6 +26,8 @@ _LEASE_FIELDS = frozenset(
     }
 )
 _EVENT_FIELDS = frozenset({"event_id", "event_type", "created_at", "payload"})
+_EVENT_ID = re.compile(r"evt_[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+_EVENT_TYPE = re.compile(r"[a-z][a-z0-9_]{0,127}")
 _TRANSITION_FACTORY_TOKEN = object()
 _AUDIT_FACTORY_TOKEN = object()
 
@@ -110,7 +112,11 @@ class LeaseTransition:
 def _freeze_json(value: object, *, depth: int = 0) -> object:
     if depth > 32:
         raise LeaseError("invalid daemon event outbox")
-    if value is None or type(value) in {str, bool, int}:
+    if value is None or type(value) in {bool, int}:
+        return value
+    if type(value) is str:
+        if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
+            raise LeaseError("invalid daemon event outbox")
         return value
     if type(value) is float:
         if not math.isfinite(value):
@@ -119,7 +125,11 @@ def _freeze_json(value: object, *, depth: int = 0) -> object:
     if type(value) is list:
         return tuple(_freeze_json(item, depth=depth + 1) for item in value)
     if type(value) is dict:
-        if any(type(key) is not str for key in value):
+        if any(
+            type(key) is not str
+            or any(0xD800 <= ord(character) <= 0xDFFF for character in key)
+            for key in value
+        ):
             raise LeaseError("invalid daemon event outbox")
         return MappingProxyType(
             {
@@ -595,26 +605,33 @@ def validate_daemon_event_outbox(value: object) -> set[str]:
         raise TypeError("daemon_event_outbox must be a list")
     event_ids: list[str] = []
     for item in value:
-        if type(item) is not dict or set(item) != _EVENT_FIELDS:
-            raise LeaseError("invalid daemon event outbox item")
-        event_id = item["event_id"]
-        event_type = item["event_type"]
-        created_at = item["created_at"]
-        payload = item["payload"]
-        if (
-            type(event_id) is not str
-            or re.fullmatch(r"evt_[0-9a-f]{12,64}", event_id) is None
-            or type(event_type) is not str
-            or re.fullmatch(r"[a-z][a-z0-9_]{0,127}", event_type) is None
-            or type(payload) is not dict
-        ):
-            raise LeaseError("invalid daemon event outbox item")
         try:
-            _parse_timestamp(created_at, field="daemon event created_at")
-            _freeze_json(payload)
+            event_ids.append(validate_daemon_event_record(item))
         except LeaseError:
             raise LeaseError("invalid daemon event outbox item") from None
-        event_ids.append(event_id)
     if len(event_ids) != len(set(event_ids)):
         raise ValueError("duplicate daemon event identity")
     return set(event_ids)
+
+
+def validate_daemon_event_record(value: object) -> str:
+    if type(value) is not dict or set(value) != _EVENT_FIELDS:
+        raise LeaseError("invalid daemon event record")
+    event_id = value["event_id"]
+    event_type = value["event_type"]
+    created_at = value["created_at"]
+    payload = value["payload"]
+    if (
+        type(event_id) is not str
+        or _EVENT_ID.fullmatch(event_id) is None
+        or type(event_type) is not str
+        or _EVENT_TYPE.fullmatch(event_type) is None
+        or type(payload) is not dict
+    ):
+        raise LeaseError("invalid daemon event record")
+    try:
+        _parse_timestamp(created_at, field="daemon event created_at")
+        _freeze_json(payload)
+    except LeaseError:
+        raise LeaseError("invalid daemon event record") from None
+    return event_id
