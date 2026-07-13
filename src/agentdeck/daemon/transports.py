@@ -1,0 +1,384 @@
+"""State-free Worker transport adapters for the authoritative project daemon.
+
+The adapters perform external I/O only.  They never import or mutate the
+StateStore, and they deliberately provide no cross-transport fallback.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Mapping, Protocol
+
+from acp import schema
+
+from ..models import AgentSpec, RuntimeConfig
+from ..runtime.acp import AcpTransport
+from ..runtime.acp_client import AgentDeckAcpClient, PermissionDecision
+from ..runtime.acp_mapping import ensure_turn_within_bounds
+from ..runtime.tmux import TmuxBackend
+from ..workflow import build_workflow_prompt, parse_correlated_reply
+from .supervisor import SubmittedReceipt, TransportResult
+
+
+class WorkerTransportError(RuntimeError):
+    """One configured Worker transport could not complete its bounded I/O."""
+
+
+class _TmuxIo(Protocol):
+    def send_input(self, config: RuntimeConfig, pane_id: str, text: str) -> None: ...
+
+    def capture_output(
+        self, config: RuntimeConfig, pane_id: str, lines: int = 200
+    ) -> str: ...
+
+
+def _attempt_authority(
+    attempt: Mapping[str, object], *, expected_transport: str
+) -> tuple[str, str, str]:
+    if not isinstance(attempt, Mapping):
+        raise WorkerTransportError("Worker attempt authority is invalid")
+    attempt_id = attempt.get("attempt_id")
+    agent_id = attempt.get("agent_id")
+    dispatch_key = attempt.get("dispatch_key")
+    if (
+        type(attempt_id) is not str
+        or not attempt_id
+        or type(agent_id) is not str
+        or not agent_id
+        or attempt.get("configured_transport") != expected_transport
+        or type(dispatch_key) is not str
+        or not dispatch_key.startswith("dsp_")
+        or len(dispatch_key) != 36
+    ):
+        raise WorkerTransportError("Worker attempt authority is invalid")
+    return attempt_id, agent_id, dispatch_key
+
+
+def _validate_receipt(
+    attempt: Mapping[str, object], receipt: SubmittedReceipt, *, transport: str
+) -> tuple[str, str]:
+    attempt_id, _agent_id, dispatch_key = _attempt_authority(
+        attempt, expected_transport=transport
+    )
+    if not isinstance(receipt, SubmittedReceipt) or receipt.dispatch_key != dispatch_key:
+        raise WorkerTransportError("Worker receipt lineage drift")
+    return attempt_id, dispatch_key
+
+
+def build_worker_prompt(
+    attempt: Mapping[str, object],
+    agent: AgentSpec,
+    *,
+    task: str,
+    previous_handoff: dict[str, Any] | None = None,
+) -> str:
+    """Build one canonical prompt from explicit attempt and Agent configuration."""
+    if not isinstance(agent, AgentSpec):
+        raise WorkerTransportError("Worker Agent configuration is invalid")
+    _attempt_id, agent_id, dispatch_key = _attempt_authority(
+        attempt, expected_transport=agent.transport
+    )
+    if (
+        agent.agent_id != agent_id
+        or type(task) is not str
+        or not task.strip()
+        or (previous_handoff is not None and type(previous_handoff) is not dict)
+    ):
+        raise WorkerTransportError("Worker prompt authority drift")
+    return build_workflow_prompt(
+        role=agent.role,
+        role_prompt=agent.role_prompt,
+        task=task,
+        handoff_token=dispatch_key,
+        previous_handoff=previous_handoff,
+    )
+
+
+class TmuxWorkerTransport:
+    """One configured tmux pane with bounded correlated-reply polling."""
+
+    def __init__(
+        self,
+        *,
+        config: RuntimeConfig,
+        pane_id: str,
+        prompt: str,
+        backend: _TmuxIo | None = None,
+        max_polls: int = 30,
+        poll_interval_seconds: float = 1.0,
+        capture_lines: int = 200,
+    ) -> None:
+        if (
+            not isinstance(config, RuntimeConfig)
+            or type(pane_id) is not str
+            or not pane_id
+            or type(prompt) is not str
+            or not prompt
+            or type(max_polls) is not int
+            or max_polls <= 0
+            or type(poll_interval_seconds) not in {int, float}
+            or poll_interval_seconds < 0
+            or type(capture_lines) is not int
+            or capture_lines <= 0
+        ):
+            raise ValueError("invalid tmux Worker transport configuration")
+        selected = TmuxBackend() if backend is None else backend
+        if not callable(getattr(selected, "send_input", None)) or not callable(
+            getattr(selected, "capture_output", None)
+        ):
+            raise TypeError("tmux Worker backend is invalid")
+        self._config = config
+        self._pane_id = pane_id
+        self._prompt = prompt
+        self._backend = selected
+        self._max_polls = max_polls
+        self._poll_interval_seconds = float(poll_interval_seconds)
+        self._capture_lines = capture_lines
+
+    async def admit(self, attempt: Mapping[str, object]) -> SubmittedReceipt:
+        attempt_id, _agent_id, dispatch_key = _attempt_authority(
+            attempt, expected_transport="tmux"
+        )
+        try:
+            await asyncio.to_thread(
+                self._backend.send_input,
+                self._config,
+                self._pane_id,
+                self._prompt,
+            )
+        except Exception as error:
+            raise WorkerTransportError("tmux Worker admission failed") from error
+        return SubmittedReceipt(
+            receipt_id=f"tmux:{attempt_id}:{self._pane_id}",
+            dispatch_key=dispatch_key,
+            summary="tmux input submitted",
+        )
+
+    async def complete(
+        self, attempt: Mapping[str, object], receipt: SubmittedReceipt
+    ) -> TransportResult:
+        _attempt_id, dispatch_key = _validate_receipt(
+            attempt, receipt, transport="tmux"
+        )
+        for poll in range(self._max_polls):
+            try:
+                output = await asyncio.to_thread(
+                    self._backend.capture_output,
+                    self._config,
+                    self._pane_id,
+                    self._capture_lines,
+                )
+            except Exception as error:
+                raise WorkerTransportError("tmux Worker capture failed") from error
+            if type(output) is not str:
+                raise WorkerTransportError("tmux Worker capture is invalid")
+            reply = parse_correlated_reply(output, dispatch_key)
+            if reply is not None:
+                return TransportResult(
+                    stop_reason="structured_reply",
+                    validated=True,
+                    reply={
+                        key: reply[key]
+                        for key in (
+                            "handoff_token",
+                            "status",
+                            "summary",
+                            "verification",
+                            "risks",
+                            "next_steps",
+                        )
+                    },
+                )
+            if poll + 1 < self._max_polls:
+                await asyncio.sleep(self._poll_interval_seconds)
+        raise WorkerTransportError("tmux Worker bounded poll exhausted")
+
+
+class _AcpFactory(Protocol):
+    def __call__(
+        self,
+        argv: tuple[str, ...],
+        workspace: str | Path,
+        client: object,
+        *,
+        request_timeout: float,
+    ) -> object: ...
+
+
+class _MemoryAcpSink:
+    """Bounded process memory only; never a durable ledger or authorization."""
+
+    def __init__(self) -> None:
+        self.fragments: list[str] = []
+        self.payload_bytes = 0
+        self.permission_seen = False
+        self.permission_decisions: list[PermissionDecision] = []
+
+    async def append_update(
+        self, _session_id: str, kind: str, payload: dict[str, Any]
+    ) -> object:
+        content = payload.get("content") if type(payload) is dict else None
+        text = content.get("text") if isinstance(content, dict) else None
+        if kind != "text" or payload.get("role") != "agent" or type(text) is not str:
+            raise WorkerTransportError("ACP Worker emitted an unsupported update")
+        prospective_bytes = self.payload_bytes + len(text.encode("utf-8"))
+        ensure_turn_within_bounds(prospective_bytes, len(self.fragments) + 1)
+        self.fragments.append(text)
+        self.payload_bytes = prospective_bytes
+        return {"kind": kind}
+
+    async def append_permission(
+        self,
+        _session_id: str,
+        summary: dict[str, Any],
+        _options: list[schema.PermissionOption],
+    ) -> object:
+        self.permission_seen = True
+        return {"status": "denied", "summary": summary}
+
+    async def append_permission_decision(
+        self,
+        _session_id: str,
+        _tool_call_id: str,
+        decision: PermissionDecision,
+    ) -> None:
+        self.permission_decisions.append(decision)
+
+
+@dataclass
+class _ActiveAcpAttempt:
+    transport: Any
+    session_id: str
+    sink: _MemoryAcpSink
+    dispatch_key: str
+
+
+class AcpWorkerTransport:
+    """One ACP process/session lifecycle with an in-memory fail-closed Client."""
+
+    def __init__(
+        self,
+        *,
+        argv: tuple[str, ...],
+        workspace: str | Path,
+        prompt: str,
+        transport_factory: _AcpFactory = AcpTransport,
+        request_timeout: float = 30.0,
+    ) -> None:
+        if (
+            type(argv) is not tuple
+            or not argv
+            or any(type(item) is not str or not item for item in argv)
+            or type(prompt) is not str
+            or not prompt
+            or not callable(transport_factory)
+            or type(request_timeout) not in {int, float}
+            or request_timeout <= 0
+        ):
+            raise ValueError("invalid ACP Worker transport configuration")
+        resolved = Path(workspace).resolve()
+        if not resolved.is_dir():
+            raise ValueError("ACP Worker workspace is invalid")
+        self._argv = argv
+        self._workspace = resolved
+        self._prompt = prompt
+        self._factory = transport_factory
+        self._request_timeout = float(request_timeout)
+        self._active: dict[str, _ActiveAcpAttempt] = {}
+
+    async def admit(self, attempt: Mapping[str, object]) -> SubmittedReceipt:
+        attempt_id, _agent_id, dispatch_key = _attempt_authority(
+            attempt, expected_transport="acp"
+        )
+        if attempt_id in self._active:
+            raise WorkerTransportError("ACP Worker attempt is already admitted")
+        sink = _MemoryAcpSink()
+        client = AgentDeckAcpClient(
+            sink=sink,
+            decide=lambda *_: PermissionDecision.cancelled(
+                "daemon_worker_permission_denied"
+            ),
+        )
+        transport = self._factory(
+            self._argv,
+            self._workspace,
+            client,
+            request_timeout=self._request_timeout,
+        )
+        if not all(
+            callable(getattr(transport, name, None))
+            for name in ("initialize", "new_session", "prompt", "close")
+        ):
+            raise WorkerTransportError("ACP Worker transport factory is invalid")
+        try:
+            await transport.initialize()
+            session = await transport.new_session()
+            session_id = getattr(session, "native_session_id", None)
+            if type(session_id) is not str or not session_id:
+                raise WorkerTransportError("ACP Worker session is invalid")
+        except Exception as error:
+            try:
+                await transport.close()
+            except Exception:
+                pass
+            if isinstance(error, WorkerTransportError):
+                raise
+            raise WorkerTransportError("ACP Worker admission failed") from error
+        self._active[attempt_id] = _ActiveAcpAttempt(
+            transport=transport,
+            session_id=session_id,
+            sink=sink,
+            dispatch_key=dispatch_key,
+        )
+        return SubmittedReceipt(
+            receipt_id=f"acp:{attempt_id}:{session_id}",
+            dispatch_key=dispatch_key,
+            summary="ACP session admitted",
+        )
+
+    async def complete(
+        self, attempt: Mapping[str, object], receipt: SubmittedReceipt
+    ) -> TransportResult:
+        attempt_id, dispatch_key = _validate_receipt(
+            attempt, receipt, transport="acp"
+        )
+        active = self._active.get(attempt_id)
+        if active is None or active.dispatch_key != dispatch_key:
+            raise WorkerTransportError("ACP Worker session is not admitted")
+        try:
+            result = await active.transport.prompt(active.session_id, self._prompt)
+            if active.sink.permission_seen:
+                raise WorkerTransportError("ACP Worker requested a forbidden permission")
+            stop_reason = getattr(result, "stop_reason", None)
+            if type(stop_reason) is not str or not stop_reason:
+                raise WorkerTransportError("ACP Worker result is invalid")
+            reply = parse_correlated_reply("".join(active.sink.fragments), dispatch_key)
+            if reply is None:
+                raise WorkerTransportError("ACP Worker returned no correlated reply")
+            return TransportResult(
+                stop_reason=stop_reason,
+                validated=True,
+                reply={
+                    key: reply[key]
+                    for key in (
+                        "handoff_token",
+                        "status",
+                        "summary",
+                        "verification",
+                        "risks",
+                        "next_steps",
+                    )
+                },
+            )
+        except WorkerTransportError:
+            raise
+        except Exception as error:
+            raise WorkerTransportError("ACP Worker completion failed") from error
+        finally:
+            self._active.pop(attempt_id, None)
+            try:
+                await active.transport.close()
+            except Exception:
+                pass
