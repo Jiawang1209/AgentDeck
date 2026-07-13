@@ -514,6 +514,12 @@ def _ownership_holds_startup_lock(ownership: DaemonOwnership) -> bool:
     except OSError:
         return False
     try:
+        check_stat = os.fstat(check_fd)
+        if (check_stat.st_dev, check_stat.st_ino) != (
+            held_stat.st_dev,
+            held_stat.st_ino,
+        ):
+            return False
         try:
             fcntl.flock(check_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -640,9 +646,13 @@ def acquire_daemon_ownership(
                     start_nonce_hash=str(existing["start_nonce_hash"]),
                     pid=int(existing["pid"]),
                 )
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-                lock_file.close()
-                bound.close()
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                finally:
+                    try:
+                        lock_file.close()
+                    finally:
+                        bound.close()
                 return ownership
             if _process_exists(int(existing["pid"])):
                 raise DaemonIdentityError("existing process is not a verified daemon")
@@ -674,10 +684,12 @@ def acquire_daemon_ownership(
             bound_endpoint=bound,
         )
     except Exception:
-        try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        finally:
-            lock_file.close()
+        if not lock_file.closed:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            finally:
+                lock_file.close()
+        if not bound.closed:
             bound.close()
         raise
 
@@ -727,7 +739,10 @@ def reconcile_endpoint(
 
 
 def cleanup_daemon_endpoint(ownership: DaemonOwnership) -> bool:
-    if ownership.role != "owner" or not _ownership_holds_startup_lock(ownership):
+    if ownership.role != "owner":
+        return False
+    if not _ownership_holds_startup_lock(ownership):
+        ownership.release()
         return False
     expected = {
         "instance_id": ownership.instance_id,

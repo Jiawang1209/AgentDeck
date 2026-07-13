@@ -327,6 +327,99 @@ def test_cleanup_matching_owner_removes_metadata_and_socket(tmp_path: Path) -> N
     assert owner.endpoint.lock_path.exists()
 
 
+def test_cleanup_rejects_lock_inode_replaced_between_stat_and_second_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    owner = acquire_daemon_ownership(
+        project,
+        start_nonce="owner-nonce",
+        health_probe=lambda metadata: metadata,
+    )
+    owner.endpoint.socket_path.write_text("owned", encoding="utf-8")
+    real_open = lifecycle.os.open
+    real_flock = lifecycle.fcntl.flock
+    replacement_lock_fd: int | None = None
+    replaced = False
+
+    def replace_before_second_open(
+        path: object, flags: int, *args: object, **kwargs: object
+    ) -> int:
+        nonlocal replacement_lock_fd, replaced
+        if (
+            not replaced
+            and Path(path).name == "daemon.lock"
+            and not flags & os.O_CREAT
+        ):
+            replaced = True
+            owner.endpoint.lock_path.unlink()
+            replacement_lock_fd = real_open(
+                owner.endpoint.lock_path,
+                os.O_RDWR | os.O_CREAT,
+                0o600,
+            )
+            real_flock(replacement_lock_fd, lifecycle.fcntl.LOCK_EX)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(lifecycle.os, "open", replace_before_second_open)
+    try:
+        assert not cleanup_daemon_endpoint(owner)
+        assert owner.endpoint.metadata_path.exists()
+        assert owner.endpoint.socket_path.exists()
+        assert owner._capability.released
+    finally:
+        if replacement_lock_fd is not None:
+            real_flock(replacement_lock_fd, lifecycle.fcntl.LOCK_UN)
+            os.close(replacement_lock_fd)
+
+
+def test_existing_healthy_unlock_failure_closes_fds_without_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    original_owner = acquire_daemon_ownership(
+        project,
+        start_nonce="owner-nonce",
+        health_probe=lambda metadata: metadata,
+    )
+    proof = original_owner.health_proof()
+    original_owner.release()
+
+    real_flock = lifecycle.fcntl.flock
+    real_fdopen = lifecycle.os.fdopen
+    retained_streams: list[object] = []
+    unlock_attempts = 0
+
+    def retaining_fdopen(*args: object, **kwargs: object) -> object:
+        stream = real_fdopen(*args, **kwargs)
+        retained_streams.append(stream)
+        return stream
+
+    def fail_unlock_once(descriptor: int, operation: int) -> None:
+        nonlocal unlock_attempts
+        if operation == lifecycle.fcntl.LOCK_UN:
+            unlock_attempts += 1
+            if unlock_attempts == 1:
+                raise OSError("unlock failed")
+        real_flock(descriptor, operation)
+
+    monkeypatch.setattr(lifecycle.os, "fdopen", retaining_fdopen)
+    monkeypatch.setattr(lifecycle.fcntl, "flock", fail_unlock_once)
+
+    with pytest.raises(OSError, match="unlock failed"):
+        acquire_daemon_ownership(
+            project,
+            start_nonce="new-nonce",
+            health_probe=lambda metadata: proof,
+        )
+
+    assert unlock_attempts == 1
+    assert retained_streams
+    assert all(getattr(stream, "closed") for stream in retained_streams)
+
+
 def test_forged_owner_cannot_remove_live_owner_endpoint(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
