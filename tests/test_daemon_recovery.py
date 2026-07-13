@@ -658,6 +658,30 @@ def test_startup_rejects_post_admission_attempt_with_cleared_claim(tmp_path: Pat
     assert store.load().get("recovery_decisions", []) == []
 
 
+def test_startup_rejects_two_submitted_claim_generations_for_one_attempt(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    _seed_missions(store)
+    state = store.load()
+    claim_b = "adm_" + "b" * 12
+    state["mission_attempts"][0]["admission_claim_id"] = claim_b
+    base = {
+        "attempt_id": ATTEMPT_ID,
+        "mission_id": MISSION_ID,
+        "step_id": "step_1",
+        "dispatch_key": "dsp_" + "d" * 32,
+        "admission_claim_id": claim_b,
+    }
+    state["protocol_event_outbox"].extend([
+        {"event_id": "evt_" + "b" * 24, "event_type": "mission_attempt_admission_claimed", "created_at": "2026-07-13T01:02:00+00:00", "payload": dict(base)},
+        {"event_id": "evt_" + "c" * 24, "event_type": "mission_attempt_submitted", "created_at": "2026-07-13T01:03:00+00:00", "payload": {**base, "reason": None}},
+    ])
+    store.save(state)
+    with pytest.raises(RecoveryError, match="durable recovery evidence"):
+        reconcile_startup(store, enable_scheduler=lambda: pytest.fail("enabled"))
+
+
 def test_startup_rejects_terminal_mission_with_submitted_attempt(tmp_path: Path) -> None:
     store = StateStore(tmp_path)
     _seed_missions(store)

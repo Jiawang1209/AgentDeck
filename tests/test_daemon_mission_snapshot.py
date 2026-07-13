@@ -667,6 +667,58 @@ def test_dispatch_key_is_deterministic_and_duplicate_active_attempt_is_zero_writ
     )
 
 
+def test_pre_dispatch_stop_is_audited_and_recovery_valid(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    attempt = prepare_attempt(config=config, store=store, mission_id=preview["mission_id"], step_id="step_1", agent_id="planner", configured_transport="acp")
+    stopped = store.interrupt_prepared_mission_attempt(
+        attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"],
+        target_state="interrupted", reason="human stop",
+    )
+    assert stopped["state"] == "interrupted"
+    assert stopped["admission_claim_id"] is None and stopped["receipt_summary"] is None
+    assert store.load()["protocol_event_outbox"][-1]["event_type"] == "mission_attempt_pre_dispatch_stopped"
+    store.load_recovery_snapshot()
+
+
+def test_forged_pre_dispatch_stop_without_audit_is_rejected(tmp_path, monkeypatch) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    prepare_attempt(config=config, store=store, mission_id=preview["mission_id"], step_id="step_1", agent_id="planner", configured_transport="acp")
+    state = store.load()
+    state["mission_attempts"][0].update({"state": "cancelled", "terminal_reason": "forged"})
+    store.save(state)
+    before = _tree_bytes(root)
+    with pytest.raises(ValueError, match="mission admission claim history"):
+        store.load_recovery_snapshot()
+    assert _tree_bytes(root) == before
+
+
+@pytest.mark.parametrize("stage", ["admitting", "submitted"])
+def test_pre_dispatch_stop_rejects_effect_boundary_states(tmp_path, monkeypatch, stage) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    attempt = prepare_attempt(config=config, store=store, mission_id=preview["mission_id"], step_id="step_1", agent_id="planner", configured_transport="acp")
+    claimed = store.claim_mission_attempt_admission(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"])
+    if stage == "submitted":
+        store.record_mission_attempt_submitted(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"], expected_claim_id=claimed["admission_claim_id"], receipt_summary="admitted")
+    before = _tree_bytes(root)
+    with pytest.raises(ValueError, match="pre-dispatch stop"):
+        store.interrupt_prepared_mission_attempt(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"], target_state="cancelled", reason="too late")
+    assert _tree_bytes(root) == before
+
+
+def test_released_claim_can_be_reclaimed_and_submitted(tmp_path, monkeypatch) -> None:
+    _root, config, store, preview = _seed(tmp_path, monkeypatch)
+    confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])
+    attempt = prepare_attempt(config=config, store=store, mission_id=preview["mission_id"], step_id="step_1", agent_id="planner", configured_transport="acp")
+    first = store.claim_mission_attempt_admission(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"])
+    store.release_mission_attempt_admission(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"], expected_claim_id=first["admission_claim_id"])
+    second = store.claim_mission_attempt_admission(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"])
+    store.record_mission_attempt_submitted(attempt_id=attempt["attempt_id"], dispatch_key=attempt["dispatch_key"], expected_claim_id=second["admission_claim_id"], receipt_summary="admitted")
+    store.load_recovery_snapshot()
+
+
 def test_failed_attempt_retries_once_when_frozen_limit_is_one(tmp_path, monkeypatch) -> None:
     _root, config, store, preview = _seed(tmp_path, monkeypatch, retry_limit=1)
     confirm_mission_for_daemon(config=config, store=store, mission_id=preview["mission_id"])

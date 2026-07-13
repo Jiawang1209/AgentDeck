@@ -330,7 +330,16 @@ def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
         raise ValueError("mission attempt state invalid")
     if value["state"] == "prepared" and value["admission_claim_id"] is not None:
         raise ValueError("mission attempt state invalid")
-    if value["state"] != "prepared" and value["admission_claim_id"] is None:
+    pre_dispatch_stopped = (
+        value["state"] in {"cancelled", "interrupted"}
+        and value["admission_claim_id"] is None
+        and value["receipt_summary"] is None
+    )
+    if (
+        value["state"] != "prepared"
+        and not pre_dispatch_stopped
+        and value["admission_claim_id"] is None
+    ):
         raise ValueError("mission attempt state invalid")
     for field in ("receipt_summary", "blocker", "terminal_reason"):
         item = value.get(field)
@@ -349,6 +358,7 @@ def _validate_mission_attempt_record(value: object) -> dict[str, Any]:
             "ambiguous",
         }
         and value["receipt_summary"] is None
+        and not pre_dispatch_stopped
     ):
         raise ValueError("mission attempt state invalid")
     return copy.deepcopy(value)
@@ -519,6 +529,9 @@ _MISSION_CLAIM_EVENT_FIELDS = {
         "observed_dispatch_key",
     },
 }
+_PRE_DISPATCH_STOP_EVENT_FIELDS = {
+    "attempt_id", "mission_id", "step_id", "dispatch_key", "state", "reason"
+}
 
 
 def _validate_mission_admission_claim_history(
@@ -526,6 +539,12 @@ def _validate_mission_admission_claim_history(
 ) -> dict[str, tuple[str, str]]:
     lineage: dict[str, tuple[str, str]] = {}
     stages: dict[str, str] = {}
+    attempt_by_lineage = {
+        (item["attempt_id"], item["dispatch_key"]): item for item in attempts
+    }
+    attempt_claims: dict[tuple[str, str], list[str]] = {}
+    externally_closed: set[tuple[str, str]] = set()
+    pre_dispatch_stops: dict[tuple[str, str], str] = {}
     for record in records:
         if type(record) is not dict:
             raise ValueError("mission admission claim history is invalid")
@@ -534,6 +553,26 @@ def _validate_mission_admission_claim_history(
         except LeaseError:
             raise ValueError("mission admission claim history is invalid") from None
         event_type = record.get("event_type")
+        if event_type == "mission_attempt_pre_dispatch_stopped":
+            payload = record.get("payload")
+            if type(payload) is not dict or set(payload) != _PRE_DISPATCH_STOP_EVENT_FIELDS:
+                raise ValueError("mission admission claim history is invalid")
+            attempt_id = payload.get("attempt_id")
+            dispatch_key = payload.get("dispatch_key")
+            key = (attempt_id, dispatch_key)
+            attempt = attempt_by_lineage.get(key)
+            if (
+                attempt is None
+                or payload.get("mission_id") != attempt["mission_id"]
+                or payload.get("step_id") != attempt["step_id"]
+                or payload.get("state") not in {"cancelled", "interrupted"}
+                or type(payload.get("reason")) is not str
+                or not payload["reason"]
+                or key in pre_dispatch_stops
+            ):
+                raise ValueError("mission admission claim history is invalid")
+            pre_dispatch_stops[key] = payload["state"]
+            continue
         required_fields = _MISSION_CLAIM_EVENT_FIELDS.get(event_type)
         if required_fields is None:
             continue
@@ -558,12 +597,25 @@ def _validate_mission_admission_claim_history(
         ):
             raise ValueError("mission admission claim history is invalid")
         claim_lineage = (attempt_id, dispatch_key)
+        persisted_attempt = attempt_by_lineage.get(claim_lineage)
+        if (
+            persisted_attempt is None
+            or persisted_attempt["mission_id"] != mission_id
+            or persisted_attempt["step_id"] != step_id
+        ):
+            raise ValueError("mission admission claim history is invalid")
         if claim_id in lineage and lineage[claim_id] != claim_lineage:
             raise ValueError("mission admission claim history is invalid")
         prior_stage = stages.get(claim_id)
         if event_type == "mission_attempt_admission_claimed":
-            if prior_stage is not None:
+            prior_claims = attempt_claims.setdefault(claim_lineage, [])
+            if (
+                prior_stage is not None
+                or claim_lineage in externally_closed
+                or (prior_claims and stages.get(prior_claims[-1]) != "released")
+            ):
                 raise ValueError("mission admission claim history is invalid")
+            prior_claims.append(claim_id)
             next_stage = "claimed"
         elif event_type == "mission_attempt_admission_released":
             if prior_stage != "claimed":
@@ -573,6 +625,7 @@ def _validate_mission_admission_claim_history(
             if prior_stage != "claimed" or payload.get("reason") is not None:
                 raise ValueError("mission admission claim history is invalid")
             next_stage = "submitted"
+            externally_closed.add(claim_lineage)
         else:
             reason = payload.get("reason")
             observed_dispatch_key = payload.get("observed_dispatch_key")
@@ -597,14 +650,23 @@ def _validate_mission_admission_claim_history(
             } or payload.get("expected_dispatch_key") != dispatch_key:
                 raise ValueError("mission admission claim history is invalid")
             next_stage = "ambiguous"
+            externally_closed.add(claim_lineage)
         lineage[claim_id] = claim_lineage
         stages[claim_id] = next_stage
 
     for attempt in attempts:
         claim_id = attempt["admission_claim_id"]
+        attempt_key = (attempt["attempt_id"], attempt["dispatch_key"])
+        if claim_id is None and attempt["state"] in {"cancelled", "interrupted"}:
+            if pre_dispatch_stops.get(attempt_key) != attempt["state"]:
+                raise ValueError("mission admission claim history is invalid")
+            continue
         if claim_id is None:
             continue
         if lineage.get(claim_id) != (attempt["attempt_id"], attempt["dispatch_key"]):
+            raise ValueError("mission admission claim history is invalid")
+        claims = attempt_claims.get(attempt_key, [])
+        if not claims or claims[-1] != claim_id:
             raise ValueError("mission admission claim history is invalid")
         expected_stage = {
             "admitting": "claimed",
@@ -3394,6 +3456,85 @@ class StateStore:
             )
             attempts[index] = candidate
             outbox.append(event_summary)
+            self._atomic_save(state)
+            return copy.deepcopy(candidate)
+
+    def interrupt_prepared_mission_attempt(
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        target_state: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        if (
+            type(attempt_id) is not str
+            or re.fullmatch(r"mat_[0-9a-f]{12}", attempt_id) is None
+            or type(dispatch_key) is not str
+            or re.fullmatch(r"dsp_[0-9a-f]{32}", dispatch_key) is None
+            or target_state not in {"cancelled", "interrupted"}
+            or type(reason) is not str
+            or not reason.strip()
+        ):
+            raise ValueError("mission attempt pre-dispatch stop is invalid")
+        with self._protocol_mutation_lock():
+            state = self.load()
+            attempts_raw = state.get("mission_attempts", [])
+            if type(attempts_raw) is not list:
+                raise ValueError("mission attempt state invalid")
+            attempts = [_validate_mission_attempt_record(item) for item in attempts_raw]
+            _require_unique_mission_attempt_lineage(attempts)
+            outbox = state.setdefault("protocol_event_outbox", [])
+            self._protocol_admission_claim_history(outbox, attempts)
+            matches = [item for item in attempts if item["attempt_id"] == attempt_id]
+            if len(matches) != 1:
+                raise KeyError(attempt_id)
+            persisted = matches[0]
+            if (
+                persisted["dispatch_key"] != dispatch_key
+                or persisted["state"] != "prepared"
+                or persisted["admission_claim_id"] is not None
+                or persisted["receipt_summary"] is not None
+            ):
+                raise ValueError("mission attempt pre-dispatch stop is invalid")
+            now = utc_now()
+            candidate = _validate_mission_attempt_record(
+                {
+                    **persisted,
+                    "state": target_state,
+                    "updated_at": now,
+                    "terminal_reason": reason,
+                }
+            )
+            event = asdict(
+                EventRecord(
+                    event_id=new_id("evt"),
+                    event_type="mission_attempt_pre_dispatch_stopped",
+                    created_at=now,
+                    payload={
+                        "attempt_id": attempt_id,
+                        "mission_id": candidate["mission_id"],
+                        "step_id": candidate["step_id"],
+                        "dispatch_key": dispatch_key,
+                        "state": target_state,
+                        "reason": reason,
+                    },
+                )
+            )
+            candidate_attempts = [
+                candidate if item["attempt_id"] == attempt_id else item
+                for item in attempts
+            ]
+            self._protocol_admission_claim_history(
+                [*outbox, event], candidate_attempts
+            )
+            index = next(
+                index
+                for index, item in enumerate(attempts_raw)
+                if item.get("attempt_id") == attempt_id
+            )
+            attempts_raw[index] = candidate
+            outbox.append(event)
             self._atomic_save(state)
             return copy.deepcopy(candidate)
 
