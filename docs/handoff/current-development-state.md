@@ -1,6 +1,6 @@
 # AgentDeck Current Development State
 
-Updated: 2026-07-12
+Updated: 2026-07-13
 
 ## Natural-language Mission Phase 0 baseline — accepted
 
@@ -71,9 +71,9 @@ Lane guidance: this supports the **end-to-end golden demo first**. Remote skill 
 
 ## Active Goal
 
-**Phase 2 ACP vertical slice complete.** Tasks 1–12 are complete, the real opt-in gate passed against the human-installed and already-authenticated `@agentclientprotocol/claude-agent-acp@0.58.1`, and the sanitized PASS report is `docs/validation/phase2-claude-agent-acp-vertical-slice.md`. Fresh full verification and independent final review passed. The next action is a human integration decision; do not merge or push without explicit instruction. Do not install adapters, change authentication, use `npx`/`npm`/`pip`, or auto-download anything during normal AgentDeck operation or verification.
+**Phase 3 M1 foreground conversation design.** The human approved the layered ConversationSession design and its exact confirmation, Leader, ACP/tmux dual-plane, persistence, contract, failure, testing, and live-acceptance boundaries. The durable spec is `docs/superpowers/specs/2026-07-13-agentdeck-foreground-conversation-design.md`. Current work is design self-review and then a separately human-approved implementation plan; production code is not yet authorized.
 
-The design is foreground-only and keeps tmux as the default backend. It does not authorize adapter/SDK installation, real Agent execution, automatic protocol emission from existing dispatch, a project daemon, the default interactive REPL, global roaming, state migration, Workspace Client work, or a multi-agent ACP Mission.
+M1 composes the existing Leader chat, Mission, approval, workflow, dispatch, ProjectView, ACP, and tmux primitives. It must not add the M2 daemon, durable transcript recovery, global roaming, Workspace Client, automatic install/auth, or unproven native-TUI session attach.
 
 The completed natural-language Mission and G-series work below is historical context only. It must not be treated as an active continuation request or redone.
 
@@ -97,9 +97,9 @@ conda run -n agentdeck pytest -q
 
 ## Current Phase
 
-Phase 0, Phase 1, and Phase 2 Tasks 1–12 are complete. Deterministic fake-Agent conformance and the real Claude ACP acceptance both pass; release documentation, fresh full verification, and independent final review are complete. The branch is ready for the human's integration decision and remains unmerged/unpushed.
+Phase 0, Phase 1, and Phase 2 Tasks 1–12 are complete. Phase 3 M1 has an approved conversational architecture now being frozen into a spec and implementation plan. No M1 production code has been written yet.
 
-The implemented diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. It explicitly distinguishes `session/load` history replay from `session/resume` without replay, uses append-only lifecycle transitions rather than rewriting Phase 1 records, and makes non-interactive permission requests fail closed. Preserve tmux as the active default backend; do not route dispatch/Mission/workflow through ACP or add a daemon.
+The completed Phase 2 diagnostic slice covers one real Agent's initialize, session create/load, prompt, streamed update, permission bridge, completion, disconnect, and resume behavior. It explicitly distinguishes `session/load` history replay from `session/resume` without replay, uses append-only lifecycle transitions rather than rewriting Phase 1 records, and makes non-interactive permission requests fail closed. The approved M1 design may now compose that ACP client with the existing Mission/Worker kernel through explicit transport routing, while preserving tmux compatibility. The project daemon remains M2 and is not authorized in M1.
 
 Historical note: G1–G5 frontdesk, coordination-role, loop, worker-lifecycle, review-gate, release-preview, and natural-language discovery slices were completed before the Phase 0/1 protocol-native work. Their detailed behavior remains in `HISTORY.md` and the contract documents; they are not the current phase or next slice.
 
@@ -122,7 +122,7 @@ Please continue AgentDeck development from this repository.
 Read CLAUDE.md, AGENT.md, the top of HISTORY.md, docs/roadmap/ultimate-goal-roadmap.md, and docs/handoff/current-development-state.md first.
 Use conda activate agentdeck or conda run -n agentdeck for commands.
 Every development iteration must update HISTORY.md, run verification, and commit locally.
-STOP after reading current state. Do not redo Phase 0, Phase 1, Mission, G-series work, or Phase 2 Tasks 1–12. The real ACP gate, release verification, independent review, and sanitized PASS report are complete. Await a human integration or next-product-slice decision; do not merge/push, auto-install, change authentication, use `npx`/`npm`/`pip`, auto-download, route dispatch/Mission/workflow through ACP, or expand into daemon/default-REPL/global-roaming/Workspace-Client work without explicit approval.
+Continue only Phase 3 M1 from `docs/superpowers/specs/2026-07-13-agentdeck-foreground-conversation-design.md`. Do not redo Phase 0, Phase 1, Mission, G-series work, or Phase 2 Tasks 1–12. M1 production code still requires its separately written plan and explicit human approval. Do not merge/push, auto-install, change authentication, auto-download, start the M2 daemon, add durable transcript recovery, global roaming, or Workspace Client work.
 ```
 
 ## Historical development log — not active

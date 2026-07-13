@@ -2,6 +2,16 @@
 
 本文件记录 AgentDeck 每一次开发内容。约束：每次新增功能、文档规则、项目骨架、运行环境或用户可见行为变化，都必须同步更新本文件，并在同一次 commit 中提交。
 
+## 2026-07-13
+
+### Design the Phase 3 M1 foreground conversation
+
+- **Direction**: approved a layered vertical slice in which `agentdeck` opens `TerminalConversationUI` + `ConversationSession`, reuses the existing leader-chat intent/contracts, selects an API LLM or Agent CLI through `LeaderGateway`, and sends only validated Mission previews into the existing approval/workflow/dispatch kernel.
+- **Protocol and visibility**: ACP is the structured Agent communication/control plane; tmux remains the read-only live mirror, legacy transport, debugging, and governed human-takeover plane. ProjectView/ledger remain authoritative and every session is single-writer.
+- **Safety**: natural-language confirmation consumes only the current exact preview binding; no silent Leader/model/transport fallback, auto-install, auto-login, credential access, duplicate orchestration system, or durable full transcript is allowed.
+- **Compatibility**: Claude ACP remains the validated baseline; Hermes foreground ACP requires conformance and excludes its incompatible resume semantics; Codex has no native OpenAI ACP command and may use only an explicitly configured ACP adapter or clearly identified CLI fallback.
+- **Deliverable**: added `docs/superpowers/specs/2026-07-13-agentdeck-foreground-conversation-design.md`. This is design only; production implementation still requires a separately written and human-approved plan.
+
 ## 2026-07-12
 
 ### Complete the ACP vertical slice phase
