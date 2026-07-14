@@ -609,7 +609,7 @@ def test_tmux_capture_timeout_persists_failed_completion() -> None:
     asyncio.run(case())
 
 
-def test_acp_worker_stays_admitting_until_prompt_result_is_atomically_persisted() -> None:
+def test_acp_worker_persists_submitted_receipt_before_prompt_starts() -> None:
     calls: list[str] = []
     prompt_release: asyncio.Event
     attempt = {
@@ -632,13 +632,21 @@ def test_acp_worker_stays_admitting_until_prompt_result_is_atomically_persisted(
 
         def record_acp_mission_attempt_completion(self, **kwargs):
             del kwargs
-            assert self.durable_state == "admitting"
+            assert self.durable_state == "submitted"
             self.durable_state = "succeeded"
-            calls.append("persist:acp-combined")
+            calls.append("persist:acp-completion")
             return {}
 
         def record_mission_attempt_submitted(self, **kwargs):
-            raise AssertionError("ACP must not persist a standalone submitted fence")
+            assert kwargs["expected_claim_id"] == "adm_0123456789ab"
+            assert self.durable_state == "admitting"
+            self.durable_state = "submitted"
+            calls.append("persist:submitted")
+            return {
+                **attempt,
+                "state": "submitted",
+                "admission_claim_id": "adm_0123456789ab",
+            }
 
         def record_mission_attempt_result(self, **kwargs):
             raise AssertionError("ACP must use the combined durable mutation")
@@ -680,19 +688,21 @@ def test_acp_worker_stays_admitting_until_prompt_result_is_atomically_persisted(
         coordinator.launch(attempt)
         for _ in range(10):
             await asyncio.sleep(0)
+            await service.tick()
             if "io:prompt-started" in calls:
                 break
-        assert store.durable_state == "admitting"
-        assert "persist:acp-combined" not in calls
+        assert store.durable_state == "submitted"
+        assert calls.index("persist:submitted") < calls.index("io:prompt-started")
+        assert "persist:acp-completion" not in calls
 
         prompt_release.set()
         for _ in range(10):
             await asyncio.sleep(0)
             await service.tick()
-            if "persist:acp-combined" in calls:
+            if "persist:acp-completion" in calls:
                 break
         assert store.durable_state == "succeeded"
-        assert calls[-1] == "persist:acp-combined"
+        assert calls[-1] == "persist:acp-completion"
         await service.close()
 
     asyncio.run(case())
@@ -715,6 +725,20 @@ def test_acp_cleanup_failure_cannot_persist_succeeded_reply(tmp_path: Path) -> N
                     "admission_claim_id": "adm_0123456789ab"}
 
         def mark_mission_attempt_admission_ambiguous(self, **_kwargs):
+            raise AssertionError("completion failure is not admission ambiguity")
+
+        def record_mission_attempt_submitted(self, **_kwargs):
+            assert self.attempt_state == "admitting"
+            self.attempt_state = "submitted"
+            return {
+                **attempt,
+                "state": "submitted",
+                "admission_claim_id": "adm_0123456789ab",
+            }
+
+        def mark_acp_mission_attempt_completion_ambiguous(self, **kwargs):
+            assert self.attempt_state == "submitted"
+            assert kwargs["completion_stage"] == "cleanup"
             self.attempt_state = "ambiguous"
 
         def record_acp_mission_attempt_completion(self, **_kwargs):
@@ -780,6 +804,94 @@ def test_acp_cleanup_failure_cannot_persist_succeeded_reply(tmp_path: Path) -> N
     asyncio.run(case())
 
 
+@pytest.mark.parametrize(
+    "reported_stage, expected_stage",
+    [
+        ("prompt", "prompt"),
+        ("update", "update"),
+        ("parse", "parse"),
+        ("finish", "finish"),
+        ("cleanup", "cleanup"),
+        ("/private/invalid", "prompt"),
+    ],
+)
+def test_acp_coordinator_records_submitted_completion_stage_as_ambiguity(
+    reported_stage: str, expected_stage: str
+) -> None:
+    attempt = {
+        "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,
+        "step_id": "step_1", "agent_id": "planner", "configured_transport": "acp",
+        "dispatch_key": "dsp_" + "a" * 32, "state": "prepared",
+    }
+
+    class Store:
+        state = "prepared"
+        recorded_stage: str | None = None
+
+        def claim_mission_attempt_admission(self, **_kwargs):
+            self.state = "admitting"
+            return {
+                **attempt, "state": "admitting",
+                "admission_claim_id": "adm_0123456789ab",
+            }
+
+        def record_mission_attempt_submitted(self, **_kwargs):
+            assert self.state == "admitting"
+            self.state = "submitted"
+            return {
+                **attempt, "state": "submitted",
+                "admission_claim_id": "adm_0123456789ab",
+            }
+
+        def mark_mission_attempt_admission_ambiguous(self, **_kwargs):
+            raise AssertionError("completion must not become admission ambiguity")
+
+        def mark_acp_mission_attempt_completion_ambiguous(self, **kwargs):
+            assert self.state == "submitted"
+            self.recorded_stage = kwargs["completion_stage"]
+            self.state = "ambiguous"
+
+    store = Store()
+
+    class CompletionFailure(RuntimeError):
+        completion_stage = reported_stage
+
+    class Transport:
+        calls = 0
+
+        async def admit(self, claimed):
+            self.calls += 1
+            return SubmittedReceipt("receipt-1", claimed["dispatch_key"], "session-created")
+
+        async def complete(self, _submitted, _receipt):
+            self.calls += 1
+            raise CompletionFailure("command /private/project --token secret")
+
+    transport = Transport()
+
+    async def case() -> None:
+        service = ProjectDaemonService(
+            server=FakeServer([]), reconcile_all=lambda: None,
+            flush_safe_outboxes=lambda: None, load_scheduler_facts=lambda: None,
+            apply_transition=lambda _decision: None,
+        )
+        await service.start()
+        DaemonWorkerCoordinator(
+            service=service, store=store, transport_for=lambda _attempt: transport
+        ).launch(attempt)
+        for _ in range(20):
+            await asyncio.sleep(0)
+            await service.tick()
+            if store.state == "ambiguous":
+                break
+        assert store.state == "ambiguous"
+        assert store.recorded_stage == expected_stage
+        assert transport.calls == 2
+        await service.close()
+
+    asyncio.run(case())
+
+
 def test_acp_shutdown_while_prompt_is_in_flight_leaves_durable_admission_claim() -> None:
     prompt_started: asyncio.Event
     never_returns: asyncio.Event
@@ -801,6 +913,17 @@ def test_acp_shutdown_while_prompt_is_in_flight_leaves_durable_admission_claim()
         def record_acp_mission_attempt_completion(self, **kwargs):
             del kwargs
             self.durable_state = "succeeded"
+
+        def record_mission_attempt_submitted(self, **kwargs):
+            del kwargs
+            assert self.durable_state == "admitting"
+            self.durable_state = "submitted"
+            return {
+                "attempt_id": "mat_0123456789ab", "mission_id": MISSION_ID,
+                "step_id": "step_1", "agent_id": "planner",
+                "configured_transport": "acp", "dispatch_key": "dsp_" + "b" * 32,
+                "state": "submitted", "admission_claim_id": "adm_0123456789ab",
+            }
 
     store = Store()
 
@@ -835,9 +958,14 @@ def test_acp_shutdown_while_prompt_is_in_flight_leaves_durable_admission_claim()
             "step_id": "step_1", "agent_id": "planner", "configured_transport": "acp",
             "dispatch_key": "dsp_" + "b" * 32, "state": "prepared",
         })
-        await asyncio.wait_for(prompt_started.wait(), timeout=0.2)
+        for _ in range(20):
+            await asyncio.sleep(0)
+            await service.tick()
+            if prompt_started.is_set():
+                break
+        assert prompt_started.is_set()
         await service.close()
-        assert store.durable_state == "admitting"
+        assert store.durable_state == "submitted"
         assert prompt_cancelled.is_set()
         assert service.active_worker_task_count == 0
 

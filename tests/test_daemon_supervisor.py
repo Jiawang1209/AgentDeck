@@ -64,6 +64,15 @@ def _route(transport: str = "acp", **overrides: object) -> WorkerRoute:
     return WorkerRoute(**values)
 
 
+def _submit_acp(store: StateStore, claimed: dict[str, object]) -> dict[str, object]:
+    return store.record_mission_attempt_submitted(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=str(claimed["admission_claim_id"]),
+        receipt_summary="session-created",
+    )
+
+
 def _reply(token: str | None = None) -> dict[str, object]:
     return {
         "handoff_token": token or "dsp_" + "1" * 32,
@@ -1292,6 +1301,7 @@ def test_claim_lifecycle_history_corruption_is_zero_write(
         attempt_id="mat_0123456789ab",
         dispatch_key="dsp_" + "1" * 32,
     )
+    _submit_acp(store, claimed)
     claim_id = str(claimed["admission_claim_id"])
     state = store.load()
     if corruption == "missing_claim":
@@ -1371,6 +1381,7 @@ def test_acp_completion_persists_receipt_result_and_reply_with_one_atomic_save(
         attempt_id="mat_0123456789ab",
         dispatch_key="dsp_" + "1" * 32,
     )
+    _submit_acp(store, claimed)
     save_calls = 0
     original_save = store._atomic_save
 
@@ -1414,6 +1425,7 @@ def test_failed_acp_completion_is_one_terminal_save_without_reply(tmp_path) -> N
     claimed = store.claim_mission_attempt_admission(
         attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
     )
+    _submit_acp(store, claimed)
     result = store.record_acp_mission_attempt_completion(
         attempt_id="mat_0123456789ab",
         dispatch_key="dsp_" + "1" * 32,
@@ -1434,6 +1446,74 @@ def test_failed_acp_completion_is_one_terminal_save_without_reply(tmp_path) -> N
     ]
 
 
+@pytest.mark.parametrize(
+    "completion_stage", ["prompt", "update", "parse", "finish", "cleanup"]
+)
+def test_submitted_acp_completion_failure_is_stage_specific_ambiguity(
+    tmp_path, completion_stage: str
+) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
+    )
+    _submit_acp(store, claimed)
+    submitted = store.record_mission_attempt_submitted(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=str(claimed["admission_claim_id"]),
+        receipt_summary="session-created",
+    )
+
+    result = store.mark_acp_mission_attempt_completion_ambiguous(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=str(claimed["admission_claim_id"]),
+        receipt_summary=str(submitted["receipt_summary"]),
+        completion_stage=completion_stage,
+    )
+
+    expected = f"acp_completion_{completion_stage}_outcome_unknown"
+    assert result["state"] == "ambiguous"
+    assert result["blocker"] == expected
+    assert result["terminal_reason"] == expected
+    assert result["receipt_summary"] == "session-created"
+    persisted = store.load()
+    assert persisted["mission_worker_replies"] == []
+    assert persisted["protocol_event_outbox"][-1]["payload"]["reason"] == expected
+    assert "session-created" not in persisted["protocol_event_outbox"][-1]["payload"]
+
+
+def test_acp_completion_ambiguity_rejects_unknown_stage_without_writing(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    state = store.load()
+    state["mission_attempts"] = [_attempt()]
+    store.save(state)
+    claimed = store.claim_mission_attempt_admission(
+        attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
+    )
+    store.record_mission_attempt_submitted(
+        attempt_id="mat_0123456789ab",
+        dispatch_key="dsp_" + "1" * 32,
+        expected_claim_id=str(claimed["admission_claim_id"]),
+        receipt_summary="session-created",
+    )
+    before = store.state_path.read_bytes()
+
+    with pytest.raises(ValueError, match="completion stage"):
+        store.mark_acp_mission_attempt_completion_ambiguous(
+            attempt_id="mat_0123456789ab",
+            dispatch_key="dsp_" + "1" * 32,
+            expected_claim_id=str(claimed["admission_claim_id"]),
+            receipt_summary="session-created",
+            completion_stage="/private/tmp/secret",
+        )
+
+    assert store.state_path.read_bytes() == before
+
+
 def test_structured_blocked_acp_completion_preserves_canonical_reply(tmp_path) -> None:
     store = StateStore(tmp_path)
     state = store.load()
@@ -1442,6 +1522,7 @@ def test_structured_blocked_acp_completion_preserves_canonical_reply(tmp_path) -
     claimed = store.claim_mission_attempt_admission(
         attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
     )
+    _submit_acp(store, claimed)
     canonical = _canonical_handoff()
     canonical["status"] = "blocked"
     canonical["summary"] = "blocked by missing input"
@@ -1528,9 +1609,10 @@ def test_acp_completion_wrong_claim_is_zero_write(tmp_path) -> None:
     state = store.load()
     state["mission_attempts"] = [_attempt()]
     store.save(state)
-    store.claim_mission_attempt_admission(
+    claimed = store.claim_mission_attempt_admission(
         attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
     )
+    _submit_acp(store, claimed)
     before = store.state_path.read_bytes()
     with pytest.raises(ValueError, match="authority"):
         store.record_acp_mission_attempt_completion(
@@ -1555,6 +1637,7 @@ def test_identical_acp_completion_retry_is_idempotent_and_adds_no_events(
     claimed = store.claim_mission_attempt_admission(
         attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
     )
+    _submit_acp(store, claimed)
     arguments = {
         "attempt_id": "mat_0123456789ab",
         "dispatch_key": "dsp_" + "1" * 32,
@@ -1582,6 +1665,7 @@ def test_identical_acp_completion_retry_remains_idempotent_after_reply_validatio
     claimed = store.claim_mission_attempt_admission(
         attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
     )
+    _submit_acp(store, claimed)
     arguments = {
         "attempt_id": "mat_0123456789ab",
         "dispatch_key": "dsp_" + "1" * 32,
@@ -1627,6 +1711,7 @@ def test_conflicting_acp_completion_retry_is_zero_write(tmp_path) -> None:
     claimed = store.claim_mission_attempt_admission(
         attempt_id="mat_0123456789ab", dispatch_key="dsp_" + "1" * 32,
     )
+    _submit_acp(store, claimed)
     store.record_acp_mission_attempt_completion(
         attempt_id="mat_0123456789ab",
         dispatch_key="dsp_" + "1" * 32,

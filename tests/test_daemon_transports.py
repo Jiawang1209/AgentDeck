@@ -14,6 +14,7 @@ from agentdeck.daemon.transports import (
     AcpWorkerTransport,
     TmuxWorkerTransport,
     WorkerTransportError,
+    _AcpUpdateError,
     _MemoryAcpSink,
     build_worker_prompt,
 )
@@ -394,11 +395,75 @@ def test_acp_permission_is_denied_and_completion_fails_closed(tmp_path: Path) ->
 
     async def run() -> None:
         receipt = await transport.admit(_attempt("acp"))
-        with pytest.raises(WorkerTransportError, match="forbidden permission"):
+        with pytest.raises(WorkerTransportError, match="update failed") as raised:
             await transport.complete(_attempt("acp"), receipt)
+        assert getattr(raised.value, "completion_stage", None) == "update"
 
     asyncio.run(run())
     assert created[0].calls[-1] == "close"
+
+
+@pytest.mark.parametrize(
+    "completion_stage", ["prompt", "update", "parse", "finish", "cleanup"]
+)
+def test_acp_completion_errors_expose_only_a_sanitized_stage(
+    tmp_path: Path, completion_stage: str
+) -> None:
+    class Sink:
+        fragments = [] if completion_stage == "parse" else [_reply()]
+        permission_seen = False
+
+        async def append_update(self, *_args):
+            raise _AcpUpdateError("private update payload")
+
+        async def append_permission(self, *_args): return None
+        async def append_permission_decision(self, *_args): return None
+        async def activate(self, *_args): return None
+
+        async def finish(self, *_args):
+            if completion_stage == "finish":
+                raise OSError("/private/project/secret")
+
+        async def disconnect(self, *_args): return None
+
+    sink = Sink()
+
+    class Transport:
+        async def initialize(self): return object()
+
+        async def new_session(self):
+            return SimpleNamespace(native_session_id="native-staged-failure")
+
+        async def prompt(self, session_id: str, _text: str):
+            if completion_stage == "prompt":
+                raise WorkerTransportError("command --token private")
+            if completion_stage == "update":
+                await sink.append_update(session_id, "progress", {})
+            return SimpleNamespace(stop_reason="end_turn")
+
+        async def close(self):
+            if completion_stage == "cleanup":
+                raise OSError("/private/adapter/path")
+
+    worker = AcpWorkerTransport(
+        argv=("fake-agent-acp",),
+        workspace=tmp_path,
+        prompt="prompt",
+        transport_factory=lambda *_args, **_kwargs: Transport(),
+        sink=sink,
+    )
+
+    async def run() -> None:
+        receipt = await worker.admit(_attempt("acp"))
+        with pytest.raises(WorkerTransportError) as raised:
+            await worker.complete(_attempt("acp"), receipt)
+        assert getattr(raised.value, "completion_stage", None) == completion_stage
+        rendered = str(raised.value)
+        assert "private" not in rendered
+        assert "token" not in rendered
+        assert "/" not in rendered
+
+    asyncio.run(run())
 
 
 def test_acp_transport_can_delegate_permission_to_daemon_ledger(tmp_path: Path) -> None:

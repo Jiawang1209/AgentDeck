@@ -1339,6 +1339,20 @@ _MISSION_CLAIM_EVENT_FIELDS = {
 _PRE_DISPATCH_STOP_EVENT_FIELDS = {
     "attempt_id", "mission_id", "step_id", "dispatch_key", "state", "reason"
 }
+_ACP_COMPLETION_STAGES = {"prompt", "update", "parse", "finish", "cleanup"}
+
+
+def _acp_completion_ambiguity_reason(stage: object) -> str:
+    if type(stage) is not str or stage not in _ACP_COMPLETION_STAGES:
+        raise ValueError("ACP completion stage is invalid")
+    return f"acp_completion_{stage}_outcome_unknown"
+
+
+def _is_acp_completion_ambiguity_reason(reason: object) -> bool:
+    return type(reason) is str and reason in {
+        _acp_completion_ambiguity_reason(stage)
+        for stage in _ACP_COMPLETION_STAGES
+    }
 
 
 def _validate_mission_admission_claim_history(
@@ -1444,6 +1458,8 @@ def _validate_mission_admission_claim_history(
             allowed_prior_stages = (
                 {"claimed"}
                 if reason == "admission_outcome_unknown"
+                else {"submitted"}
+                if _is_acp_completion_ambiguity_reason(reason)
                 else {"claimed", "submitted"}
             )
             if prior_stage not in allowed_prior_stages or (
@@ -1459,11 +1475,19 @@ def _validate_mission_admission_claim_history(
             ) or (
                 reason == "admission_outcome_unknown"
                 and observed_dispatch_key is not None
-            ) or reason not in {
-                "receipt_persistence_unknown",
-                "admission_outcome_unknown",
-                "force_daemon_stop_outcome_unknown",
-            } or payload.get("expected_dispatch_key") != dispatch_key:
+            ) or (
+                _is_acp_completion_ambiguity_reason(reason)
+                and observed_dispatch_key != dispatch_key
+            ) or (
+                reason not in {
+                    "receipt_persistence_unknown",
+                    "admission_outcome_unknown",
+                    "force_daemon_stop_outcome_unknown",
+                }
+                and not _is_acp_completion_ambiguity_reason(reason)
+            ) or (
+                payload.get("expected_dispatch_key") != dispatch_key
+            ):
                 raise ValueError("mission admission claim history is invalid")
             next_stage = "ambiguous"
             externally_closed.add(claim_lineage)
@@ -6353,7 +6377,7 @@ class StateStore:
         if target_state == "ambiguous" and reason not in {
             "receipt_persistence_unknown",
             "admission_outcome_unknown",
-        }:
+        } and not _is_acp_completion_ambiguity_reason(reason):
             raise ValueError("mission attempt ambiguity reason is invalid")
         if (
             target_state == "submitted"
@@ -6375,6 +6399,12 @@ class StateStore:
             )
         ):
             raise ValueError("mission attempt admission ambiguity evidence is invalid")
+        if (
+            target_state == "ambiguous"
+            and _is_acp_completion_ambiguity_reason(reason)
+            and observed_dispatch_key != dispatch_key
+        ):
+            raise ValueError("mission attempt completion ambiguity evidence is invalid")
         with self._protocol_mutation_lock():
             state = self.load()
             attempts = state.get("mission_attempts", [])
@@ -6405,6 +6435,8 @@ class StateStore:
                 raise ValueError("mission attempt receipt conflict")
             if target_state == "submitted" or reason == "admission_outcome_unknown":
                 allowed_states = {"admitting"}
+            elif _is_acp_completion_ambiguity_reason(reason):
+                allowed_states = {"submitted"}
             else:
                 allowed_states = {"admitting", "submitted"}
             if persisted["state"] not in allowed_states:
@@ -6490,6 +6522,26 @@ class StateStore:
             reason=None,
         )
 
+    def mark_acp_mission_attempt_completion_ambiguous(
+        self,
+        *,
+        attempt_id: str,
+        dispatch_key: str,
+        expected_claim_id: str,
+        receipt_summary: str,
+        completion_stage: str,
+    ) -> dict[str, Any]:
+        reason = _acp_completion_ambiguity_reason(completion_stage)
+        return self._transition_mission_attempt_receipt(
+            attempt_id=attempt_id,
+            dispatch_key=dispatch_key,
+            expected_claim_id=expected_claim_id,
+            observed_dispatch_key=dispatch_key,
+            receipt_summary=receipt_summary,
+            target_state="ambiguous",
+            reason=reason,
+        )
+
     def record_mission_attempt_result(
         self,
         *,
@@ -6552,13 +6604,7 @@ class StateStore:
         summary: str,
         canonical_handoff: object | None = None,
     ) -> dict[str, object]:
-        """Commit an ACP session receipt and its prompt result as one fence.
-
-        ACP session creation alone is not durable Worker submission evidence:
-        the same process still has to obtain the prompt result.  Keeping the
-        attempt ``admitting`` until both values exist prevents recovery from
-        waiting forever on a result that can no longer arrive after a crash.
-        """
+        """Atomically commit one already-submitted ACP result and compact reply."""
         from .daemon.recovery import validate_mission_reply_evidence_record
 
         if (
@@ -6616,7 +6662,7 @@ class StateStore:
             ]
             expected_state = "succeeded" if succeeded else "failed"
             expected_summary = f"{receipt_summary}; result: {summary}"
-            if persisted["state"] != "admitting":
+            if persisted["state"] != "submitted":
                 reply_matches = (
                     len(attempt_replies) == 1
                     and attempt_replies[0]["dispatch_key"] == dispatch_key
@@ -6640,6 +6686,8 @@ class StateStore:
                         "receipt_summary": receipt_summary,
                     }
                 raise ValueError("ACP mission attempt completion conflict")
+            if persisted["receipt_summary"] != receipt_summary:
+                raise ValueError("ACP mission attempt completion conflict")
             now = utc_now()
             candidate = _validate_mission_attempt_record(
                 {
@@ -6651,38 +6699,6 @@ class StateStore:
                     "blocker": None if succeeded else "worker_failed",
                 }
             )
-            submitted_event = asdict(
-                EventRecord(
-                    event_id=new_id("evt"),
-                    event_type="mission_attempt_submitted",
-                    created_at=now,
-                    payload={
-                        "attempt_id": attempt_id,
-                        "mission_id": candidate["mission_id"],
-                        "step_id": candidate["step_id"],
-                        "dispatch_key": dispatch_key,
-                        "admission_claim_id": expected_claim_id,
-                        "reason": None,
-                    },
-                )
-            )
-            try:
-                submitted_event_id = validate_daemon_event_record(submitted_event)
-            except LeaseError:
-                raise ValueError("protocol event record is invalid") from None
-            if (
-                submitted_event_id in _validated_protocol_event_outbox_ids(outbox)
-                or submitted_event_id in self._strict_protocol_journal_event_ids()
-            ):
-                raise ValueError("duplicate protocol event identity")
-            candidate_attempts = [
-                candidate if item["attempt_id"] == attempt_id else item
-                for item in attempts
-            ]
-            self._protocol_admission_claim_history(
-                [*outbox, submitted_event], candidate_attempts
-            )
-
             reply: dict[str, object] | None = None
             if attempt_replies:
                 raise ValueError("duplicate durable recovery reply evidence")
@@ -6704,7 +6720,6 @@ class StateStore:
                 if type(item) is dict and item.get("attempt_id") == attempt_id
             )
             attempts_raw[index] = candidate
-            outbox.append(submitted_event)
             self._append_recovery_audit_locked(
                 state,
                 "mission_attempt_result_recorded",
@@ -9618,6 +9633,7 @@ AUTHORITATIVE_STATE_MUTATION_METHODS = (
     "mark_agent_stale",
     "mark_agent_stopped",
     "mark_approval_dispatched",
+    "mark_acp_mission_attempt_completion_ambiguous",
     "mark_mission_attempt_admission_ambiguous",
     "mark_mission_attempt_ambiguous",
     "pause_mission_with_governance_preview",

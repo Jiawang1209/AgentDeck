@@ -1422,51 +1422,111 @@ class DaemonWorkerCoordinator:
         self.refresh_recovery()
 
         if claimed["configured_transport"] == "acp":
-            async def execute_acp() -> tuple[bool, object]:
+            async def admit_acp() -> tuple[bool, object]:
                 try:
-                    receipt = await transport.admit(dict(claimed))
-                    result = await transport.complete(dict(claimed), receipt)
-                    return True, (receipt, result)
+                    return True, await transport.admit(dict(claimed))
                 except Exception as exc:
                     return False, exc
 
-            def acp_completed(outcome: tuple[bool, object]) -> None:
+            def acp_admission_completed(outcome: tuple[bool, object]) -> None:
                 ok, value = outcome
-                if not ok or not isinstance(value, tuple) or len(value) != 2:
+                if not ok or not isinstance(value, SubmittedReceipt):
                     self.store.mark_mission_attempt_admission_ambiguous(
                         attempt_id=claimed["attempt_id"], dispatch_key=claimed["dispatch_key"],
                         expected_claim_id=claimed["admission_claim_id"], reason="admission_outcome_unknown",
                     )
                     return
-                receipt, result = value
-                if not isinstance(receipt, SubmittedReceipt) or receipt.dispatch_key != claimed["dispatch_key"]:
-                    self.store.mark_mission_attempt_admission_ambiguous(
+                receipt = value
+                if receipt.dispatch_key != claimed["dispatch_key"]:
+                    self.store.mark_mission_attempt_ambiguous(
                         attempt_id=claimed["attempt_id"], dispatch_key=claimed["dispatch_key"],
-                        expected_claim_id=claimed["admission_claim_id"], reason="admission_outcome_unknown",
+                        expected_claim_id=claimed["admission_claim_id"],
+                        observed_dispatch_key=receipt.dispatch_key,
+                        receipt_summary=receipt.summary,
+                        reason="receipt_persistence_unknown",
                     )
                     return
-                canonical = _canonical_transport_result(
-                    result,
-                    dispatch_key=str(claimed["dispatch_key"]),
-                    transport="acp",
-                )
-                succeeded = canonical is not None and canonical["status"] == "completed"
-                result_summary = (
-                    str(result.reply.get("summary") or "Worker completed")
-                    if isinstance(result, TransportResult)
-                    else "Worker transport failed"
-                )
-                self.store.record_acp_mission_attempt_completion(
-                    attempt_id=claimed["attempt_id"], dispatch_key=claimed["dispatch_key"],
-                    expected_claim_id=claimed["admission_claim_id"],
-                    receipt_summary=receipt.summary,
-                    succeeded=succeeded,
-                    summary=result_summary if canonical is not None else "Worker transport failed",
-                    canonical_handoff=canonical,
-                )
+                try:
+                    submitted = self.store.record_mission_attempt_submitted(
+                        attempt_id=claimed["attempt_id"],
+                        dispatch_key=claimed["dispatch_key"],
+                        expected_claim_id=claimed["admission_claim_id"],
+                        receipt_summary=receipt.summary,
+                    )
+                except Exception:
+                    self.store.mark_mission_attempt_ambiguous(
+                        attempt_id=claimed["attempt_id"],
+                        dispatch_key=claimed["dispatch_key"],
+                        expected_claim_id=claimed["admission_claim_id"],
+                        observed_dispatch_key=receipt.dispatch_key,
+                        receipt_summary=receipt.summary,
+                        reason="receipt_persistence_unknown",
+                    )
+                    return
                 self.refresh_recovery()
 
-            self.service.start_worker_io(execute_acp(), on_completion=acp_completed)
+                async def complete_acp() -> tuple[bool, object]:
+                    try:
+                        return True, await transport.complete(dict(submitted), receipt)
+                    except Exception as exc:
+                        return False, exc
+
+                def acp_completion_completed(
+                    completion_outcome: tuple[bool, object],
+                ) -> None:
+                    completed, result = completion_outcome
+                    if not completed:
+                        stage = getattr(result, "completion_stage", "prompt")
+                        if stage not in {"prompt", "update", "parse", "finish", "cleanup"}:
+                            stage = "prompt"
+                        self.store.mark_acp_mission_attempt_completion_ambiguous(
+                            attempt_id=claimed["attempt_id"],
+                            dispatch_key=claimed["dispatch_key"],
+                            expected_claim_id=claimed["admission_claim_id"],
+                            receipt_summary=receipt.summary,
+                            completion_stage=stage,
+                        )
+                        self.refresh_recovery()
+                        return
+                    canonical = _canonical_transport_result(
+                        result,
+                        dispatch_key=str(claimed["dispatch_key"]),
+                        transport="acp",
+                    )
+                    if canonical is None:
+                        self.store.mark_acp_mission_attempt_completion_ambiguous(
+                            attempt_id=claimed["attempt_id"],
+                            dispatch_key=claimed["dispatch_key"],
+                            expected_claim_id=claimed["admission_claim_id"],
+                            receipt_summary=receipt.summary,
+                            completion_stage="parse",
+                        )
+                        self.refresh_recovery()
+                        return
+                    succeeded = canonical["status"] == "completed"
+                    summary = (
+                        str(result.reply.get("summary") or "Worker completed")
+                        if isinstance(result, TransportResult)
+                        else "Worker completed"
+                    )
+                    self.store.record_acp_mission_attempt_completion(
+                        attempt_id=claimed["attempt_id"],
+                        dispatch_key=claimed["dispatch_key"],
+                        expected_claim_id=claimed["admission_claim_id"],
+                        receipt_summary=receipt.summary,
+                        succeeded=succeeded,
+                        summary=summary,
+                        canonical_handoff=canonical,
+                    )
+                    self.refresh_recovery()
+
+                self.service.start_worker_io(
+                    complete_acp(), on_completion=acp_completion_completed
+                )
+
+            self.service.start_worker_io(
+                admit_acp(), on_completion=acp_admission_completed
+            )
             return
 
         async def admit() -> tuple[bool, object]:

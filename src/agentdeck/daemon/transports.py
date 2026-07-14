@@ -29,6 +29,22 @@ class WorkerTransportError(RuntimeError):
     """One configured Worker transport could not complete its bounded I/O."""
 
 
+class WorkerCompletionStageError(WorkerTransportError):
+    """A credential-free completion failure at one fixed lifecycle stage."""
+
+    _STAGES = {"prompt", "update", "parse", "finish", "cleanup"}
+
+    def __init__(self, completion_stage: str) -> None:
+        if completion_stage not in self._STAGES:
+            raise ValueError("invalid Worker completion stage")
+        self.completion_stage = completion_stage
+        super().__init__(f"ACP Worker {completion_stage} failed")
+
+
+class _AcpUpdateError(WorkerTransportError):
+    pass
+
+
 @dataclass(frozen=True)
 class _CleanupResult:
     close: str
@@ -240,7 +256,7 @@ class _MemoryAcpSink:
             or kind not in UPDATE_KINDS
             or type(payload) is not dict
         ):
-            raise WorkerTransportError("ACP Worker emitted an unsupported update")
+            raise _AcpUpdateError("ACP Worker emitted an unsupported update")
         try:
             encoded = json.dumps(
                 payload,
@@ -250,7 +266,7 @@ class _MemoryAcpSink:
                 allow_nan=False,
             ).encode("utf-8")
         except (TypeError, ValueError, UnicodeError):
-            raise WorkerTransportError("ACP Worker emitted an unsupported update") from None
+            raise _AcpUpdateError("ACP Worker emitted an unsupported update") from None
         prospective_bytes = self.payload_bytes + len(encoded)
         ensure_turn_within_bounds(prospective_bytes, self.update_count + 1)
         if kind == "text":
@@ -261,7 +277,7 @@ class _MemoryAcpSink:
                 or content.get("type") != "text"
                 or type(text) is not str
             ):
-                raise WorkerTransportError("ACP Worker emitted an unsupported update")
+                raise _AcpUpdateError("ACP Worker emitted an unsupported update")
             if payload["role"] == "agent":
                 self.fragments.append(text)
         self.payload_bytes = prospective_bytes
@@ -548,39 +564,21 @@ class AcpWorkerTransport:
         active = self._active.get(attempt_id)
         if active is None or active.dispatch_key != dispatch_key:
             raise WorkerTransportError("ACP Worker session is not admitted")
+
+        async def fail(stage: str, error: BaseException) -> None:
+            cleanup = await self._close_then_disconnect(
+                active.transport,
+                active.sink,
+                session_id=active.session_id,
+                success_reason="transport_closed",
+                failure_reason="transport_close_failed",
+            )
+            selected_stage = stage if cleanup.completed else "cleanup"
+            raise WorkerCompletionStageError(selected_stage) from error
+
         try:
             try:
                 result = await active.transport.prompt(active.session_id, self._prompt)
-                if bool(getattr(active.sink, "permission_seen", False)) and bool(
-                    getattr(active.sink, "fail_on_permission", True)
-                ):
-                    raise WorkerTransportError("ACP Worker requested a forbidden permission")
-                stop_reason = getattr(result, "stop_reason", None)
-                if type(stop_reason) is not str or not stop_reason:
-                    raise WorkerTransportError("ACP Worker result is invalid")
-                reply = parse_correlated_reply("".join(active.sink.fragments), dispatch_key)
-                if reply is None:
-                    raise WorkerTransportError("ACP Worker returned no correlated reply")
-                finish = getattr(active.sink, "finish", None)
-                if callable(finish):
-                    finished = finish(stop_reason)
-                    if inspect.isawaitable(finished):
-                        await finished
-                completed = TransportResult(
-                    stop_reason=stop_reason,
-                    validated=True,
-                    reply={
-                        key: reply[key]
-                        for key in (
-                            "handoff_token",
-                            "status",
-                            "summary",
-                            "verification",
-                            "risks",
-                            "next_steps",
-                        )
-                    },
-                )
             except asyncio.CancelledError:
                 await self._close_then_disconnect(
                     active.transport, active.sink, session_id=active.session_id,
@@ -588,27 +586,74 @@ class AcpWorkerTransport:
                     failure_reason="transport_close_failed",
                 )
                 raise
-            except WorkerTransportError:
-                await self._close_then_disconnect(
-                    active.transport, active.sink, session_id=active.session_id,
-                    success_reason="transport_closed",
-                    failure_reason="transport_close_failed",
-                )
-                raise
             except Exception as error:
-                await self._close_then_disconnect(
-                    active.transport, active.sink, session_id=active.session_id,
-                    success_reason="transport_closed",
-                    failure_reason="transport_close_failed",
+                current: BaseException | None = error
+                stage = "prompt"
+                while current is not None:
+                    if isinstance(current, _AcpUpdateError):
+                        stage = "update"
+                        break
+                    current = current.__cause__ or current.__context__
+                await fail(stage, error)
+
+            if bool(getattr(active.sink, "permission_seen", False)) and bool(
+                getattr(active.sink, "fail_on_permission", True)
+            ):
+                await fail(
+                    "update",
+                    WorkerTransportError("ACP Worker permission update rejected"),
                 )
-                raise WorkerTransportError("ACP Worker completion failed") from error
+
+            stop_reason = getattr(result, "stop_reason", None)
+            if type(stop_reason) is not str or not stop_reason:
+                await fail("parse", WorkerTransportError("ACP Worker result is invalid"))
+            reply = parse_correlated_reply("".join(active.sink.fragments), dispatch_key)
+            if reply is None:
+                await fail(
+                    "parse",
+                    WorkerTransportError("ACP Worker returned no correlated reply"),
+                )
+
+            finish = getattr(active.sink, "finish", None)
+            if callable(finish):
+                try:
+                    finished = finish(stop_reason)
+                    if inspect.isawaitable(finished):
+                        await finished
+                except asyncio.CancelledError:
+                    await self._close_then_disconnect(
+                        active.transport,
+                        active.sink,
+                        session_id=active.session_id,
+                        success_reason="transport_closed",
+                        failure_reason="transport_close_failed",
+                    )
+                    raise
+                except Exception as error:
+                    await fail("finish", error)
+
+            completed = TransportResult(
+                stop_reason=stop_reason,
+                validated=True,
+                reply={
+                    key: reply[key]
+                    for key in (
+                        "handoff_token",
+                        "status",
+                        "summary",
+                        "verification",
+                        "risks",
+                        "next_steps",
+                    )
+                },
+            )
             cleanup = await self._close_then_disconnect(
                 active.transport, active.sink, session_id=active.session_id,
                 success_reason="transport_closed",
                 failure_reason="transport_close_failed",
             )
             if not cleanup.completed:
-                raise WorkerTransportError("ACP Worker cleanup failed")
+                raise WorkerCompletionStageError("cleanup")
             return completed
         finally:
             self._active.pop(attempt_id, None)
