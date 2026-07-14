@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import inspect
+import json
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
@@ -18,6 +19,7 @@ from ..models import AgentSpec, RuntimeConfig
 from ..runtime.acp import AcpTransport
 from ..runtime.acp_client import AgentDeckAcpClient, PermissionDecision
 from ..runtime.acp_mapping import ensure_turn_within_bounds
+from ..runtime.protocol import UPDATE_KINDS
 from ..runtime.tmux import TmuxBackend
 from ..workflow import build_workflow_prompt, parse_correlated_reply
 from .supervisor import SubmittedReceipt, TransportResult
@@ -226,20 +228,44 @@ class _MemoryAcpSink:
     def __init__(self) -> None:
         self.fragments: list[str] = []
         self.payload_bytes = 0
+        self.update_count = 0
         self.permission_seen = False
         self.permission_decisions: list[PermissionDecision] = []
 
     async def append_update(
         self, _session_id: str, kind: str, payload: dict[str, Any]
     ) -> object:
-        content = payload.get("content") if type(payload) is dict else None
-        text = content.get("text") if isinstance(content, dict) else None
-        if kind != "text" or payload.get("role") != "agent" or type(text) is not str:
+        if (
+            type(kind) is not str
+            or kind not in UPDATE_KINDS
+            or type(payload) is not dict
+        ):
             raise WorkerTransportError("ACP Worker emitted an unsupported update")
-        prospective_bytes = self.payload_bytes + len(text.encode("utf-8"))
-        ensure_turn_within_bounds(prospective_bytes, len(self.fragments) + 1)
-        self.fragments.append(text)
+        try:
+            encoded = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError):
+            raise WorkerTransportError("ACP Worker emitted an unsupported update") from None
+        prospective_bytes = self.payload_bytes + len(encoded)
+        ensure_turn_within_bounds(prospective_bytes, self.update_count + 1)
+        if kind == "text":
+            content = payload.get("content")
+            text = content.get("text") if type(content) is dict else None
+            if (
+                payload.get("role") not in {"agent", "user", "thought"}
+                or content.get("type") != "text"
+                or type(text) is not str
+            ):
+                raise WorkerTransportError("ACP Worker emitted an unsupported update")
+            if payload["role"] == "agent":
+                self.fragments.append(text)
         self.payload_bytes = prospective_bytes
+        self.update_count += 1
         return {"kind": kind}
 
     async def append_permission(

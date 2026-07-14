@@ -14,8 +14,10 @@ from agentdeck.daemon.transports import (
     AcpWorkerTransport,
     TmuxWorkerTransport,
     WorkerTransportError,
+    _MemoryAcpSink,
     build_worker_prompt,
 )
+from agentdeck.runtime.acp_mapping import MAX_ACP_UPDATES_PER_TURN
 from agentdeck.models import AgentSpec, RuntimeConfig
 
 
@@ -228,7 +230,7 @@ class FakeAcpTransport:
         await self.client._sink.append_update(  # type: ignore[attr-defined]
             session_id,
             "text",
-            {"role": "agent", "content": {"text": _reply()}},
+            {"role": "agent", "content": {"type": "text", "text": _reply()}},
         )
         return SimpleNamespace(stop_reason="end_turn", outcome="completed")
 
@@ -283,6 +285,96 @@ def test_acp_transport_uses_initialize_session_and_prompt_without_state_sink(
             "next_steps": "review",
         },
     )
+
+
+def test_default_acp_sink_accepts_structured_updates_and_collects_only_agent_text(
+    tmp_path: Path,
+) -> None:
+    class StructuredUpdateTransport(FakeAcpTransport):
+        async def prompt(self, session_id: str, text: str) -> object:
+            self.calls.append(("prompt", session_id, text))
+            sink = self.client._sink  # type: ignore[attr-defined]
+            await sink.append_update(
+                session_id,
+                "progress",
+                {"session_update": "plan", "entries": []},
+            )
+            await sink.append_update(
+                session_id,
+                "tool_call",
+                {"tool_call_id": "call-1", "kind": "read"},
+            )
+            await sink.append_update(
+                session_id,
+                "artifact",
+                {
+                    "tool_call_id": "call-1",
+                    "artifacts": [{"type": "resource", "uri": "file:///tmp/result"}],
+                },
+            )
+            await sink.append_update(
+                session_id,
+                "tool_result",
+                {"tool_call_id": "call-1", "status": "completed"},
+            )
+            await sink.append_update(
+                session_id,
+                "text",
+                {"role": "thought", "content": {"type": "text", "text": "private"}},
+            )
+            await sink.append_update(
+                session_id,
+                "text",
+                {"role": "agent", "content": {"type": "text", "text": _reply()}},
+            )
+            return SimpleNamespace(stop_reason="end_turn", outcome="completed")
+
+    transport = AcpWorkerTransport(
+        argv=("fake-agent-acp",),
+        workspace=tmp_path,
+        prompt="ACP worker prompt",
+        transport_factory=lambda *args, **kwargs: StructuredUpdateTransport(
+            *args, **kwargs
+        ),
+    )
+
+    async def run() -> TransportResult:
+        receipt = await transport.admit(_attempt("acp"))
+        return await transport.complete(_attempt("acp"), receipt)
+
+    result = asyncio.run(run())
+
+    assert result.validated is True
+    assert result.reply["summary"] == "implementation finished"
+
+
+def test_default_acp_sink_counts_non_text_updates_and_rejects_malformed_input() -> None:
+    async def run() -> None:
+        sink = _MemoryAcpSink()
+        for index in range(MAX_ACP_UPDATES_PER_TURN):
+            await sink.append_update(
+                "native-worker-1",
+                "progress",
+                {"session_update": "usage_update", "used": index, "size": 256},
+            )
+        with pytest.raises(ValueError, match="turn updates exceed"):
+            await sink.append_update(
+                "native-worker-1",
+                "tool_result",
+                {"tool_call_id": "call-1", "status": "completed"},
+            )
+        with pytest.raises(WorkerTransportError, match="unsupported update"):
+            await _MemoryAcpSink().append_update(
+                "native-worker-1", "unknown", {"value": "ignored"}
+            )
+        with pytest.raises(WorkerTransportError, match="unsupported update"):
+            await _MemoryAcpSink().append_update(
+                "native-worker-1",
+                "text",
+                {"role": "agent", "content": {"text": "missing discriminator"}},
+            )
+
+    asyncio.run(run())
 
 
 def test_acp_permission_is_denied_and_completion_fails_closed(tmp_path: Path) -> None:
