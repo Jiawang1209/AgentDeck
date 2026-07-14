@@ -531,10 +531,11 @@ def test_protocol_mutation_directory_guard_prevents_post_proof_lock_split(
 
     assert not first.is_alive()
     assert not second.is_alive()
-    assert errors == []
-    assert [item["message"] for item in store.load()["chat_turns"][-2:]] == [
-        "first-writer",
-        "second-writer",
+    assert len(errors) == 1
+    assert isinstance(errors[0], ValueError)
+    assert "protocol mutation lock changed" in str(errors[0])
+    assert [item["message"] for item in store.load()["chat_turns"]] == [
+        "second-writer"
     ]
 
 
@@ -1372,7 +1373,7 @@ def test_rollback_replace_fsyncs_state_parent_directory(
     def tracking_replace(src, dst, *args, **kwargs) -> None:
         nonlocal rollback_replaced
         original_replace(src, dst, *args, **kwargs)
-        if "migration-rollback" in os.fspath(src):
+        if "migration-rollback" in os.fspath(src) or ".rollback-state.json." in os.fspath(src):
             rollback_replaced = True
 
     def tracking_fsync(fd: int) -> None:

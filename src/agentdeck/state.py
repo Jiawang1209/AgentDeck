@@ -535,6 +535,210 @@ def _persistent_state(state: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+def _encoded_state(state: Mapping[str, object]) -> bytes:
+    return (
+        json.dumps(
+            _persistent_state(state),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _open_retained_regular_at(
+    directory_fd: int,
+    name: str,
+    *,
+    error: str = "state mutation target is unsafe",
+) -> int | None:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(name, flags, dir_fd=directory_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError(error) from exc
+    try:
+        _verify_regular_file_at(
+            directory_fd,
+            name,
+            descriptor,
+            error=error,
+        )
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _read_retained_bytes(
+    descriptor: int,
+    *,
+    max_bytes: int | None = None,
+    limit_error: str = "state mutation target exceeds size limit",
+) -> bytes:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = os.read(descriptor, 64 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+        total += len(chunk)
+        if max_bytes is not None and total > max_bytes:
+            raise ValueError(limit_error)
+
+
+def _named_regular_snapshot_at(
+    directory_fd: int,
+    name: str,
+    *,
+    max_bytes: int | None = None,
+    limit_error: str = "state mutation target exceeds size limit",
+) -> tuple[bytes, tuple[int, int]] | None:
+    descriptor = _open_retained_regular_at(directory_fd, name)
+    if descriptor is None:
+        return None
+    try:
+        opened = os.fstat(descriptor)
+        return _read_retained_bytes(
+            descriptor,
+            max_bytes=max_bytes,
+            limit_error=limit_error,
+        ), (opened.st_dev, opened.st_ino)
+    finally:
+        os.close(descriptor)
+
+
+def _restore_displaced_file_if_exact_unlocked(
+    directory_fd: int,
+    name: str,
+    *,
+    installed: bytes,
+    displaced_fd: int | None,
+    max_bytes: int | None = None,
+    limit_error: str = "state mutation target exceeds size limit",
+) -> bool:
+    """Restore displaced bytes only while the named file is still our exact install."""
+    current = _named_regular_snapshot_at(
+        directory_fd,
+        name,
+        max_bytes=max_bytes,
+        limit_error=limit_error,
+    )
+    if current is None or current[0] != installed:
+        return False
+    expected_identity = current[1]
+    if displaced_fd is None:
+        latest = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if (latest.st_dev, latest.st_ino) != expected_identity:
+            return False
+        os.unlink(name, dir_fd=directory_fd)
+        os.fsync(directory_fd)
+        return True
+    restore = _read_retained_bytes(
+        displaced_fd,
+        max_bytes=max_bytes,
+        limit_error=limit_error,
+    )
+    temporary = f".rollback-{name}.{os.getpid()}.{new_id('tmp')}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(temporary, flags, 0o600, dir_fd=directory_fd)
+        view = memoryview(restore)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("state mutation rollback made no progress")
+            view = view[written:]
+        os.fsync(descriptor)
+        latest = _named_regular_snapshot_at(
+            directory_fd,
+            name,
+            max_bytes=max_bytes,
+            limit_error=limit_error,
+        )
+        if latest is None or latest[0] != installed or latest[1] != expected_identity:
+            return False
+        os.replace(
+            temporary,
+            name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        os.fsync(directory_fd)
+        return True
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+
+
+def _restore_displaced_file_if_exact(
+    directory_fd: int,
+    name: str,
+    *,
+    installed: bytes,
+    displaced_fd: int | None,
+    held_lock_identity: tuple[int, int],
+    max_bytes: int | None = None,
+    limit_error: str = "state mutation target exceeds size limit",
+) -> bool:
+    """Serialize rollback with a replacement legacy writer, then restore by CAS."""
+    replacement_fd: int | None = None
+    replacement_locked = False
+    try:
+        try:
+            named_lock = os.stat(
+                "protocol-mutation.lock",
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            raise ValueError(
+                "protocol mutation lock changed during state mutation"
+            ) from exc
+        named_identity = (named_lock.st_dev, named_lock.st_ino)
+        if named_identity != held_lock_identity:
+            replacement_fd = _open_retained_regular_at(
+                directory_fd,
+                "protocol-mutation.lock",
+                error="protocol mutation lock changed during state mutation",
+            )
+            if replacement_fd is None:
+                raise ValueError("protocol mutation lock changed during state mutation")
+            fcntl.flock(replacement_fd, fcntl.LOCK_EX)
+            replacement_locked = True
+            _verify_regular_file_at(
+                directory_fd,
+                "protocol-mutation.lock",
+                replacement_fd,
+                error="protocol mutation lock changed during state mutation",
+            )
+        return _restore_displaced_file_if_exact_unlocked(
+            directory_fd,
+            name,
+            installed=installed,
+            displaced_fd=displaced_fd,
+            max_bytes=max_bytes,
+            limit_error=limit_error,
+        )
+    finally:
+        if replacement_fd is not None:
+            try:
+                if replacement_locked:
+                    fcntl.flock(replacement_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(replacement_fd)
+
+
 def _atomic_save_state_at(state_fd: int, state: dict[str, object]) -> None:
     temporary = f".state.json.{os.getpid()}.{new_id('tmp')}.tmp"
     flags = (
@@ -543,14 +747,7 @@ def _atomic_save_state_at(state_fd: int, state: dict[str, object]) -> None:
     descriptor: int | None = None
     try:
         descriptor = os.open(temporary, flags, 0o600, dir_fd=state_fd)
-        encoded = (
-            json.dumps(
-                _persistent_state(state),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ) + "\n"
-        ).encode("utf-8")
+        encoded = _encoded_state(state)
         with os.fdopen(descriptor, "wb", closefd=False) as handle:
             handle.write(encoded)
             handle.flush()
@@ -904,9 +1101,6 @@ def _confirm_migration_locked(
         )
         + "\n"
     ).encode("utf-8")
-    proposed_bytes = (
-        json.dumps(proposed, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
     response = {
         "schema_version": MIGRATION_SCHEMA_VERSION,
         "mode": "migration_confirmed",
@@ -925,13 +1119,9 @@ def _confirm_migration_locked(
         _verify_project_state_anchor(root, deck_fd, state_fd)
         if _read_state_bytes_at(state_fd) != current_source:
             raise ValueError("migration source facts drifted")
-        _atomic_save_state_at(state_fd, proposed)
-        _verify_project_state_anchor(root, deck_fd, state_fd)
+        store._atomic_save(proposed)
     except BaseException:
         installed = _read_state_bytes_at(state_fd)
-        if installed == proposed_bytes:
-            _atomic_restore_migration_source_at(state_fd, current_source)
-            installed = _read_state_bytes_at(state_fd)
         if installed == current_source:
             try:
                 _remove_migration_backup(root, preview_id, deck_fd=deck_fd)
@@ -2485,15 +2675,76 @@ class StateStore:
             raise RuntimeError("state mutation anchor is not held")
         anchored = entry["anchored"]
         root_fd = entry["root_fd"]
+        lock_fd = entry["lock_fd"]
         assert isinstance(anchored, tuple)
         assert isinstance(root_fd, int)
+        assert isinstance(lock_fd, int)
         _verify_mutation_anchor(self.root.resolve(), root_fd, anchored)
+        _verify_regular_file_at(
+            int(anchored[1]),
+            "protocol-mutation.lock",
+            lock_fd,
+            error="protocol mutation lock changed during state mutation",
+        )
         return int(anchored[0]), int(anchored[1])
 
     def _append_event_bytes_locked(self, encoded: bytes) -> None:
         _deck_fd, state_fd = self._verify_current_mutation_anchor()
-        _append_event_journal_at(state_fd, encoded)
-        self._verify_current_mutation_anchor()
+        entry = _state_lock_entries()[str(self.root.resolve())]
+        lock_fd = entry["lock_fd"]
+        assert isinstance(lock_fd, int)
+        held_lock = os.fstat(lock_fd)
+        held_lock_identity = (held_lock.st_dev, held_lock.st_ino)
+        displaced_fd = _open_retained_regular_at(
+            state_fd,
+            "events.jsonl",
+            error="event journal is unsafe",
+        )
+        displaced_identity = (
+            None
+            if displaced_fd is None
+            else (os.fstat(displaced_fd).st_dev, os.fstat(displaced_fd).st_ino)
+        )
+        source = (
+            b""
+            if displaced_fd is None
+            else _read_retained_bytes(
+                displaced_fd,
+                max_bytes=_EVENT_JOURNAL_MAX_BYTES,
+                limit_error="event journal exceeds size limit",
+            )
+        )
+        installed = source + encoded
+        try:
+            try:
+                self._verify_current_mutation_anchor()
+                _append_event_journal_at(state_fd, encoded)
+                self._verify_current_mutation_anchor()
+            except BaseException:
+                current = _named_regular_snapshot_at(
+                    state_fd,
+                    "events.jsonl",
+                    max_bytes=_EVENT_JOURNAL_MAX_BYTES,
+                    limit_error="event journal exceeds size limit",
+                )
+                if (
+                    current is not None
+                    and current[0] == installed
+                    and current[1] != displaced_identity
+                ):
+                    _restore_displaced_file_if_exact(
+                        state_fd,
+                        "events.jsonl",
+                        installed=installed,
+                        displaced_fd=displaced_fd,
+                        held_lock_identity=held_lock_identity,
+                        max_bytes=_EVENT_JOURNAL_MAX_BYTES,
+                        limit_error="event journal exceeds size limit",
+                    )
+                raise
+        finally:
+            if displaced_fd is not None:
+                os.close(displaced_fd)
 
     def append_event(self, event: EventRecord) -> None:
         encoded = (
@@ -3786,11 +4037,60 @@ class StateStore:
                 self._atomic_save(state)
             return
         _deck_fd, state_fd = self._verify_current_mutation_anchor()
-        _atomic_save_state_at(state_fd, state)
-        self._verify_current_mutation_anchor()
-        installed = _read_state_bytes_at(state_fd)
-        assert installed is not None
-        self._verify_current_mutation_anchor()
+        entry = _state_lock_entries()[str(self.root.resolve())]
+        lock_fd = entry["lock_fd"]
+        assert isinstance(lock_fd, int)
+        held_lock = os.fstat(lock_fd)
+        held_lock_identity = (held_lock.st_dev, held_lock.st_ino)
+        displaced_fd = _open_retained_regular_at(
+            state_fd,
+            "state.json",
+            error="migration state file is unsafe",
+        )
+        displaced_identity = (
+            None
+            if displaced_fd is None
+            else (os.fstat(displaced_fd).st_dev, os.fstat(displaced_fd).st_ino)
+        )
+        displaced_source = (
+            None if displaced_fd is None else _read_retained_bytes(displaced_fd)
+        )
+        expected_install = _encoded_state(state)
+        try:
+            try:
+                self._verify_current_mutation_anchor()
+                current_source = _named_regular_snapshot_at(state_fd, "state.json")
+                if displaced_fd is None:
+                    if current_source is not None:
+                        raise ValueError("state source facts drifted")
+                elif current_source != (displaced_source, displaced_identity):
+                    raise ValueError("state source facts drifted")
+                _atomic_save_state_at(state_fd, state)
+                self._verify_current_mutation_anchor()
+                installed = _read_state_bytes_at(state_fd)
+                assert installed is not None
+                if installed != expected_install:
+                    self._verify_current_mutation_anchor()
+                    raise ValueError("state changed during atomic save")
+                self._verify_current_mutation_anchor()
+            except BaseException:
+                current = _named_regular_snapshot_at(state_fd, "state.json")
+                if (
+                    current is not None
+                    and current[0] == expected_install
+                    and current[1] != displaced_identity
+                ):
+                    _restore_displaced_file_if_exact(
+                        state_fd,
+                        "state.json",
+                        installed=expected_install,
+                        displaced_fd=displaced_fd,
+                        held_lock_identity=held_lock_identity,
+                    )
+                raise
+        finally:
+            if displaced_fd is not None:
+                os.close(displaced_fd)
         self._remember_loaded_state(
             state,
             "sha256:" + hashlib.sha256(installed).hexdigest(),
