@@ -494,3 +494,92 @@ def test_gateway_rejects_invalid_frozen_authority_before_backend_boundary(
         "attempt_count": 0,
         "constraint_mode": "prompt_only",
     }
+
+
+def test_gateway_rejects_invalid_derived_authority_before_backend_boundary(
+    tmp_path: Path,
+) -> None:
+    config, _store = _project(tmp_path)
+    config = replace(
+        config,
+        leader=replace(config.leader, provider="codex-cli", model="gpt-test"),
+        agents=(config.agents[0],),
+    )
+    calls = {"which": 0, "probe": 0, "factory": 0, "plan": 0}
+
+    class NeverProvider:
+        name = "codex-cli"
+
+        def plan(self, _request):
+            calls["plan"] += 1
+            raise AssertionError("invalid derived authority must not reach plan")
+
+    def which(_name):
+        calls["which"] += 1
+        return "/safe/executable"
+
+    def probe(_name):
+        calls["probe"] += 1
+        return True, None
+
+    def factory(_name):
+        calls["factory"] += 1
+        return NeverProvider()
+
+    with pytest.raises(LeaderGatewayError) as raised:
+        LeaderGateway(
+            provider_factory=factory,
+            which=which,
+            leader_cli_probe=probe,
+        ).generate_mission(
+            LeaderRequest(config, "mission", "task", 180, None, None, None),
+            CancellationToken(),
+        )
+
+    assert calls == {"which": 0, "probe": 0, "factory": 0, "plan": 0}
+    assert leader_gateway_diagnostics(raised.value) == {
+        "stage": "schema",
+        "diagnostic_code": "authority_invalid",
+        "attempt_count": 0,
+        "constraint_mode": "prompt_only",
+    }
+
+
+def test_gateway_keeps_valid_legacy_derived_authority(
+    tmp_path: Path,
+) -> None:
+    config, _store = _project(tmp_path)
+    config = replace(
+        config,
+        agents=tuple(
+            agent
+            for agent in config.agents
+            if agent.agent_id in {"planner", "reviewer"}
+        ),
+    )
+    calls = 0
+
+    class LegacyProvider:
+        name = "fake"
+        constraint_mode = "local"
+
+        def plan(self, _request):
+            nonlocal calls
+            calls += 1
+            return _plan()
+
+    candidate = LeaderGateway(
+        provider_factory=lambda _name: LegacyProvider(),
+    ).generate_mission(
+        LeaderRequest(config, "mission", "task", 180, None, None, None),
+        CancellationToken(),
+    )
+
+    assert calls == 1
+    assert candidate.selected_agent_ids is None
+    assert candidate.step_count is None
+    assert candidate.leader_generation["selected_agent_ids"] == [
+        "planner",
+        "reviewer",
+    ]
+    assert candidate.leader_generation["step_count"] == 2

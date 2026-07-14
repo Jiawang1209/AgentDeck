@@ -308,29 +308,28 @@ class LeaderGateway:
     ) -> LeaderMissionCandidate:
         if cancel.cancelled:
             raise LeaderGatewayError("cancelled")
-        if request.selected_agent_ids is not None or request.step_count is not None:
-            invalid_authority = False
-            try:
-                leader_plan_authority(
-                    LeaderPlanRequest(
-                        task=request.planning_task,
-                        config=request.config,
-                        model=request.config.leader.model,
-                        skill_context=request.skill_context,
-                        selected_agent_ids=request.selected_agent_ids,
-                        step_count=request.step_count,
-                        timeout_seconds=request.timeout_seconds,
-                    )
+        invalid_authority = False
+        try:
+            leader_plan_authority(
+                LeaderPlanRequest(
+                    task=request.planning_task,
+                    config=request.config,
+                    model=request.config.leader.model,
+                    skill_context=request.skill_context,
+                    selected_agent_ids=request.selected_agent_ids,
+                    step_count=request.step_count,
+                    timeout_seconds=request.timeout_seconds,
                 )
-            except ProviderPlanValidationError:
-                invalid_authority = True
-            if invalid_authority:
-                raise LeaderGatewayError(
-                    "schema",
-                    "authority_invalid",
-                    attempt_count=0,
-                    constraint_mode="prompt_only",
-                ) from None
+            )
+        except ProviderPlanValidationError:
+            invalid_authority = True
+        if invalid_authority:
+            raise LeaderGatewayError(
+                "schema",
+                "authority_invalid",
+                attempt_count=0,
+                constraint_mode="prompt_only",
+            ) from None
         status = self.describe(request.config.leader)
         if status.readiness != "ready":
             raise LeaderGatewayError("backend_blocked")
