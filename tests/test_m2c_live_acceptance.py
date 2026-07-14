@@ -2308,6 +2308,43 @@ def _run_live_acceptance() -> dict[str, object]:
 def _run_live_acceptance_in_project(
     paths: dict[str, _ExecutableSeal], parent: Path
 ) -> dict[str, object]:
+    try:
+        return _run_live_acceptance_in_project_guarded(paths, parent)
+    except _LiveHarnessFailure as exc:
+        cleanup_failed = False
+        if parent.exists():
+            try:
+                shutil.rmtree(parent)
+            except OSError:
+                cleanup_failed = True
+        if cleanup_failed or parent.exists():
+            exc.add_note(
+                json.dumps(
+                    {
+                        "stage": "live_setup_cleanup",
+                        "codes": ["live_setup_cleanup_failed"],
+                    },
+                    sort_keys=True,
+                )
+            )
+        raise
+    except Exception:
+        cleanup_failed = False
+        if parent.exists():
+            try:
+                shutil.rmtree(parent)
+            except OSError:
+                cleanup_failed = True
+        raise _live_failure(
+            "live_setup_cleanup_failed"
+            if cleanup_failed or parent.exists()
+            else "live_setup_failed"
+        ) from None
+
+
+def _run_live_acceptance_in_project_guarded(
+    paths: dict[str, _ExecutableSeal], parent: Path
+) -> dict[str, object]:
     source_paths = paths
     root = parent / "repo"
     root.mkdir(mode=0o700)
@@ -3556,6 +3593,80 @@ def test_controlled_launcher_rejects_source_replacement_before_invocation(
     assert completed.stdout == b""
     assert not replacement_marker.exists()
     assert wrapper.mode == 0o500
+
+
+@pytest.mark.parametrize("failure_index", [0, 2])
+def test_live_setup_launcher_failure_removes_entire_parent(
+    tmp_path, monkeypatch, failure_index,
+) -> None:
+    parent = tmp_path / f"agentdeck-m2c-live-{failure_index}"
+    parent.mkdir(mode=0o700)
+    source_bin = tmp_path / f"source-bin-{failure_index}"
+    source_bin.mkdir(mode=0o700)
+    paths: dict[str, _ExecutableSeal] = {}
+    for name, _env_name, _help, _version in TOOL_SPECS:
+        executable = source_bin / name
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o700)
+        seal = _seal_executable(str(executable))
+        assert seal is not None
+        paths[name] = seal
+    real_writer = _write_controlled_launcher
+    calls = 0
+
+    def fail_at_index(name, source, destination):
+        nonlocal calls
+        current = calls
+        calls += 1
+        if current == failure_index:
+            raise _live_failure("launcher_setup_blocked")
+        return real_writer(name, source, destination)
+
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_write_controlled_launcher",
+        fail_at_index,
+    )
+
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _run_live_acceptance_in_project(paths, parent)
+
+    assert "launcher_setup_blocked" in str(error.value)
+    assert not parent.exists()
+
+
+def test_live_setup_cleanup_failure_keeps_original_blocker_compact(
+    tmp_path, monkeypatch,
+) -> None:
+    parent = tmp_path / "agentdeck-m2c-live-cleanup-failure"
+    parent.mkdir(mode=0o700)
+    executable = tmp_path / "codex"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o700)
+    seal = _seal_executable(str(executable))
+    assert seal is not None
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_write_controlled_launcher",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            _live_failure("launcher_setup_blocked")
+        ),
+    )
+    monkeypatch.setattr(
+        shutil,
+        "rmtree",
+        lambda _path: (_ for _ in ()).throw(OSError("SECRET cleanup path")),
+    )
+
+    with pytest.raises(_LiveHarnessFailure) as error:
+        _run_live_acceptance_in_project(
+            {name: seal for name, _env, _help, _version in TOOL_SPECS},
+            parent,
+        )
+
+    assert "launcher_setup_blocked" in str(error.value)
+    assert "live_setup_cleanup_failed" in repr(error.value.__notes__)
+    assert "SECRET" not in repr(error.value.__notes__)
 
 
 @pytest.mark.skipif(

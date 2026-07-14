@@ -4,6 +4,13 @@
 
 ## 2026-07-15
 
+### Close M2c pre-guard setup cleanup
+
+- **Setup-total cleanup**: `_run_live_acceptance_in_project()` now owns a parent-scoped outer cleanup boundary before the first repo, tmux-temp, runtime-bin, or launcher write. A first or mid-sequence controlled-launcher failure removes the entire disposable parent instead of bypassing the later live resource guard.
+- **Blocker preservation**: `_LiveHarnessFailure` remains the primary error. If parent removal also fails, the harness adds only a fixed compact `live_setup_cleanup_failed` note; it never replaces the original blocker or includes the raw cleanup exception/path.
+- **Strict TDD evidence**: parameterized first/mid-launcher failures and a cleanup-failure case were RED with retained parents/missing notes, then GREEN after the outer boundary was added. No live provider run was attempted; Task 11 evidence and M2c status remain unchanged.
+- **Verification**: the default M2c harness passes `31` tests with the live node skipped; the full suite passes `3340` tests with two skips. `python -m compileall -q src tests`, `git diff --check`, the three-file scope gate, and post-test orphan scan pass in the `agentdeck` environment.
+
 ### Enforce M2c probe and executable scopes
 
 - **No guessed signals**: probe and PTY setup now preflight exact kernel-birth support and never fall back to `killpg(process.pid, ...)` after sealing failure. A fast-exited child is reaped without a signal; a still-live but unsealable child returns fixed `probe_scope_unverified` with zero guessed signals.

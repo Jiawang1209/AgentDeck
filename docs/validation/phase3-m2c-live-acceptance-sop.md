@@ -159,6 +159,11 @@ process spawn, setup, and cleanup are all enclosed by collect-all failure
 guards that seal the exact new-session process group plus leader birth identity,
 enumerate group members, and apply bounded group TERM/KILL even if the leader
 has already exited. Tracked groups participate in final derived residual counts.
+The parent-scoped setup guard begins before the first `repo`, tmux temporary,
+runtime-bin, or controlled-launcher write. A first or mid-sequence launcher
+failure removes the entire disposable parent while preserving the original
+fixed blocker. If that removal itself fails, the original blocker remains
+primary and receives only a compact fixed `live_setup_cleanup_failed` note.
 Each drain call also has explicit byte, chunk, duration, and overall-deadline
 budgets, so a continuous writer must yield control to timeout/process checks.
 Process fingerprints use Linux `/proc/<pid>/stat` start ticks or macOS
@@ -190,6 +195,5 @@ conda run --no-capture-output -n agentdeck \
   pytest tests/test_m2c_live_acceptance.py -q
 ```
 
-Expected portable result: twenty-two portable contract/helper tests pass and exactly
-one live test skips. A printed `ready=false` payload remains an honest setup
-result, not M2c PASS.
+Expected portable result: `31 passed, 1 skipped`. A printed `ready=false`
+payload remains an honest setup result, not M2c PASS.
