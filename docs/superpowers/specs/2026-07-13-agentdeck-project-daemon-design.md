@@ -1,8 +1,8 @@
 # AgentDeck Phase 3 M2 Project Daemon Design
 
-**Date:** 2026-07-13  
-**Status:** Approved design, awaiting written-spec review  
-**Milestone:** Phase 3 M2 (`M2a → M2b → M2c`)  
+**Date:** 2026-07-13
+**Status:** Implemented and validated
+**Milestone:** Phase 3 M2 (`M2a → M2b → M2c`)
 **Depends on:** Phase 3 M1 foreground conversation at commit `cd8fd655`
 
 ## 1. Purpose

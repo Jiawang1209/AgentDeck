@@ -1,5 +1,11 @@
 # Phase 3 M2 Project Daemon Validation
 
+Date: 2026-07-14
+
+## Verdict
+
+**Deterministic M2 acceptance: PASS. Real Codex/Claude end-to-end rehearsal: PASS.**
+
 ## tmux startup/readiness correction
 
 The production daemon acceptance now begins with no pre-created Worker panes.
@@ -14,11 +20,21 @@ durable claimed/ambiguous start and a second invocation cannot spawn again;
 Claude first-run trust is classified as `setup_required` with zero `send_input`;
 and command/task drift fails before transport construction.
 
-Date: 2026-07-14
+## ACP receipt/stage correction
 
-## Verdict
+Official adapters may emit progress, tool-call, tool-result, artifact, thought,
+and user updates before the correlated agent reply. The bounded daemon sink now
+accepts those protocol kinds, counts every canonical payload against the shared
+turn ceilings, and retains only agent text in process memory for reply parsing.
+Unknown or malformed updates remain fail-closed.
 
-**Deterministic M2 acceptance: PASS. Real end-to-end Leader rehearsal: BLOCKED.**
+ACP session admission now commits its submitted receipt before prompt I/O. A
+lost daemon therefore cannot replay the external effect. Prompt, streamed
+update, reply parse, sink finish, or cleanup failure changes the submitted
+attempt to a hard ambiguity with only the fixed blocker
+`acp_completion_<stage>_outcome_unknown`; exception, command, path, and payload
+text are excluded. Runtime invocation/instruction identity and the raw task are
+rehashed against the confirmed execution snapshot before transport creation.
 
 The committed acceptance uses a bare `agentdeck` PTY to create a natural-language
 two-Worker Mission preview and confirm that exact preview into a real project
@@ -61,32 +77,51 @@ first cleanup-stage failure.
 
 - Crash/acceptance focused group, repeated twice: `12 passed` in each run.
 - Acceptance/crash/recovery regression: `127 passed`.
-- Daemon suite: `899 passed`.
-- Full suite: `2778 passed, 1 skipped`.
+- Final daemon suite after startup/readiness and terminal-ambiguity closure:
+  `946 passed`.
+- Final full suite: `2827 passed, 1 skipped` in `103.12s`.
 - Compileall and `git diff --check`: PASS.
 
-## Real component evidence and blocker
+## Real component evidence
 
 Existing installations were inspected without installation or authentication
 changes: Claude Agent ACP `0.58.1`, Node `22.23.0`, Codex CLI `0.131.0`, and
-Claude CLI `2.1.208`. The already authenticated real Claude ACP foreground
-vertical slice passed (`1 passed in 22.20s`).
+Claude CLI `2.1.208`; tmux was `3.6a`. The rehearsal used only those already
+installed and authenticated components.
 
-A fresh disposable M2 project selected a ready CLI Leader and explicit
-`acp -> tmux` Workers. Codex CLI with the configured `gpt-5.6-sol` model was
-rejected because that model requires a newer CLI; no upgrade was performed.
-Codex CLI with `gpt-5.4` and Claude CLI with `opus` were both callable, but their
-plan output did not satisfy AgentDeck's strict Mission JSON contract, producing
-the sanitized blocker `mission preview provider failed`. Therefore the real
-Leader-to-Mission rehearsal is not a PASS.
+The passing fresh project ran commit `42b60d78`. Bare `agentdeck` used Codex CLI
+with explicit model `gpt-5.5` as Leader and produced one strict two-step
+`planner -> reviewer` Mission with no preview blocker. Natural-language
+confirmation consumed that exact preview once, froze and admitted execution
+snapshot
+`sha256:fbadfade1b857071ceb8f2722e19833141d5ed12fded4da2546690030d0621ef`,
+then the initial client disconnected while the project daemon continued.
 
-A transport-only fallback used a deterministic frozen plan while preserving the
-ready Claude CLI configuration. Real Claude ACP completed and its compact
-handoff was recorded before real Codex tmux was submitted. Codex tmux did not
-produce a correlated structured reply within the bounded rehearsal window, so
-the run was stopped and recorded as blocked rather than retried or reported as
-successful. All disposable daemon, adapter, tmux, and project resources were
-removed; no process or `/tmp/agentdeck-m2-live-*` directory remained.
+Worker A used the real Claude ACP adapter. Two permission requests each passed
+the controller-bound preview/confirm path exactly once. Claude completed, its
+reply was validated, and its compact handoff was recorded before any Worker B
+startup effect. Only then did the daemon persist one tmux start claim, spawn the
+frozen Codex reviewer, persist its submitted receipt, validate its correlated
+reply and handoff, and complete the Mission. Sanitized event positions prove
+the order: Worker A reply validation `85`, Worker A recorded handoff `89`,
+Worker B start claim `93`, spawn receipt `94`, submitted receipt `100`, Worker B
+reply validation `106`, Mission completion `114`.
+
+Both project-local file effects were checked byte-for-byte before hashing: each
+was exactly 24 bytes. Their SHA-256 values were
+`2e21abe776bcb49f15e63bf477046bf0b4185dfbbeab88ed07a14858abb43a81`
+and `d87e8f0b39830a70be9441db3daa0e232456ea73446e86b3be03d1b9d352267e`.
+ProjectView, workbench, daemon, scheduler, ledger, execution-snapshot and
+event-order checks all passed. A new bare client reconnected to the same daemon
+instance after the first client had gone away.
+
+One preliminary fresh project was rejected before confirmation with the
+sanitized configuration blocker `worker executable does not match provider:
+planner`; it created no Worker effect and was fully removed before the passing
+run. The passing run ended through exact `daemon.force-stop` preview/confirm;
+the daemon PID exited, endpoint metadata and socket were removed, the exact
+project tmux socket was killed, the disposable directory was deleted, and the
+suffix-scoped process audit was empty. No unknown Worker effect was retried.
 
 No transcript, raw prompt/tool I/O, credentials, authentication data,
 environment dump, opaque native session id, or absolute home path is included

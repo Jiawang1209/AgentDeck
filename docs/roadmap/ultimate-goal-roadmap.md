@@ -14,9 +14,12 @@ M2 project-local daemon 已实现：确认后的 frozen Mission 由单项目 aut
 daemon 在客户端断开后继续推进；AgentDeck 通过显式 ACP/tmux transport 调度，
 在前序 compact handoff 持久化后才启动下一 Worker，并在 permission、歧义、
 ownership、drift 与 safety 边界暂停。bare `agentdeck` 可确定性重连，已有项目
-通过显式 migration preview/confirm 迁移。九点 crash matrix 和 deterministic
-product acceptance 通过；真实 CLI Leader/Worker rehearsal 的 blocker 如实记录于
-`docs/validation/2026-07-13-phase3-m2-project-daemon.md`，未宣称 live PASS。
+通过显式 migration preview/confirm 迁移。九点 crash matrix、deterministic
+product acceptance 与真实 CLI Leader/Worker rehearsal 均通过，证据记录于
+`docs/validation/2026-07-13-phase3-m2-project-daemon.md`。最终实机演练使用 Codex
+CLI Leader、Claude ACP Worker A 与 Codex tmux Worker B，验证断开后继续执行、
+两次精确权限确认、compact handoff 先于后继启动、Mission 完成、重连与清理，
+结论为 live PASS。
 
 完整 transcript 恢复、A2A、remote daemon、global roaming、Workspace Client、
 通知、自动 install/auth 与原生同会话 TUI attach 仍是后续独立里程碑。
