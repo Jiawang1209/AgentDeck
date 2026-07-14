@@ -44,7 +44,17 @@ from .mission import (
     mission_status_transition_allowed,
 )
 from .mission_authority import canonical_workflow_plan_hash
-from .models import MIGRATION_SCHEMA_VERSION, PROJECT_VIEW_SCHEMA_VERSION, AgentRuntimeBinding, EventRecord, ProjectConfig, ProjectView, new_id, utc_now
+from .models import (
+    MIGRATION_SCHEMA_VERSION,
+    PROJECT_VIEW_SCHEMA_VERSION,
+    AgentRuntimeBinding,
+    AgentSpec,
+    EventRecord,
+    ProjectConfig,
+    ProjectView,
+    new_id,
+    utc_now,
+)
 from .runtime.protocol import (
     AGENT_SESSION_STATES,
     PERMISSION_STATES,
@@ -1025,6 +1035,19 @@ def canonical_snapshot_hash(value: object) -> str:
     return f"sha256:{hashlib.sha256(_canonical_snapshot_bytes(value)).hexdigest()}"
 
 
+def worker_runtime_identity_hash(agent: AgentSpec) -> str:
+    """Freeze executable/instruction identity without persisting raw invocation data."""
+    if not isinstance(agent, AgentSpec):
+        raise TypeError("Worker runtime identity requires AgentSpec")
+    return canonical_snapshot_hash(
+        {
+            "command": agent.command,
+            "transport_command": list(agent.transport_command),
+            "role_prompt": agent.role_prompt,
+        }
+    )
+
+
 def _is_force_stop_terminal_ambiguity(
     mission: Mapping[str, object],
     attempts: Iterable[Mapping[str, object]],
@@ -1577,12 +1600,17 @@ def validate_execution_snapshot(value: object) -> dict[str, Any]:
                 "workspace_mode",
                 "configured_transport",
                 "capability_provenance",
+                "runtime_identity_hash",
             }
             or any(
                 type(worker.get(field)) is not str or not worker[field]
                 for field in ("agent_id", "role", "provider", "workspace_mode")
             )
             or worker.get("configured_transport") not in {"acp", "tmux"}
+            or type(worker.get("runtime_identity_hash")) is not str
+            or re.fullmatch(
+                r"sha256:[0-9a-f]{64}", worker["runtime_identity_hash"]
+            ) is None
         ):
             raise ValueError("execution snapshot workers are invalid")
         provenance = worker.get("capability_provenance")
@@ -1868,6 +1896,7 @@ def build_execution_snapshot_authority(
                 "provider": agent.provider,
                 "workspace_mode": agent.workspace_mode,
                 "configured_transport": agent.transport,
+                "runtime_identity_hash": worker_runtime_identity_hash(agent),
                 "capability_provenance": {
                     "source": "project_config",
                     "transport": agent.transport,

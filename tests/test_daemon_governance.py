@@ -57,6 +57,7 @@ def _admitted_mission(root, *, status: str) -> dict[str, object]:
         {
             "agent_id": agent_id, "role": role, "provider": provider,
             "workspace_mode": "shared", "configured_transport": transport,
+            "runtime_identity_hash": digest,
             "capability_provenance": {
                 "source": "project_config", "transport": transport,
                 "adapter_configuration": "present" if transport == "acp" else "not_applicable",

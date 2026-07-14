@@ -207,6 +207,7 @@ def frozen_snapshot(
             "provider": "codex",
             "workspace_mode": "shared",
             "configured_transport": "acp",
+            "runtime_identity_hash": digest,
             "capability_provenance": {
                 "source": "project_config",
                 "transport": "acp",
@@ -219,6 +220,7 @@ def frozen_snapshot(
             "provider": "claude",
             "workspace_mode": "shared",
             "configured_transport": "tmux",
+            "runtime_identity_hash": digest,
             "capability_provenance": {
                 "source": "project_config",
                 "transport": "tmux",

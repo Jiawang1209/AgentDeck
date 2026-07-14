@@ -22,7 +22,7 @@ from agentdeck.mission_orchestration import (
     prepare_attempt,
 )
 from agentdeck.providers import LeaderPlanRequest
-from agentdeck.state import MissionStateError, StateStore
+from agentdeck.state import MissionStateError, StateStore, worker_runtime_identity_hash
 
 
 MESSAGE = "让 Codex 和 Claude 严格串行完成两步审阅，共2轮"
@@ -154,6 +154,45 @@ def _set_attempt_post_admission(
             },
         ]
     )
+
+
+def test_worker_runtime_identity_is_hashed_into_frozen_authority(
+    tmp_path, monkeypatch
+) -> None:
+    root, config, store, preview = _seed(tmp_path, monkeypatch)
+    mission = store.mission_by_id(preview["mission_id"])
+    snapshot = build_execution_snapshot(
+        config, mission, store.plan_by_id(preview["plan_id"]),
+        state_module.execution_policy_snapshot(config),
+    )
+    workers = {item["agent_id"]: item for item in snapshot["workers"]}
+    assert workers["planner"]["runtime_identity_hash"] == worker_runtime_identity_hash(
+        next(item for item in config.agents if item.agent_id == "planner")
+    )
+    persisted = json.dumps(snapshot, sort_keys=True)
+    assert '"--token"' not in persisted
+    assert "SECRET" not in persisted
+    assert "你是 AgentDeck 的规划 Agent" not in persisted
+
+
+def test_confirmation_rejects_worker_command_drift_after_preview(
+    tmp_path, monkeypatch
+) -> None:
+    root, _config, store, preview = _seed(tmp_path, monkeypatch)
+    path = root / ".agentdeck" / "config.toml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            'command = "codex"', 'command = "changed-worker-command"', 1
+        ),
+        encoding="utf-8",
+    )
+    before = _tree_bytes(root)
+    with pytest.raises(MissionStateError, match="execution authority drift"):
+        store.freeze_mission_execution(
+            preview["mission_id"],
+            confirmed_at=store.mission_by_id(preview["mission_id"])["created_at"],
+        )
+    assert _tree_bytes(root) == before
 
 
 @pytest.mark.parametrize("drift", ["task", "order", "add", "remove"])
