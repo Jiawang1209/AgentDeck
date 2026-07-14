@@ -319,6 +319,95 @@ def _read_state_bytes_at(state_fd: int, *, missing_ok: bool = False) -> bytes | 
         os.close(descriptor)
 
 
+def _verify_regular_file_at(
+    directory_fd: int,
+    name: str,
+    descriptor: int,
+    *,
+    error: str,
+) -> None:
+    """Prove an opened file is still the named regular file in its anchor."""
+    opened = os.fstat(descriptor)
+    try:
+        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except OSError as exc:
+        raise ValueError(error) from exc
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or not stat.S_ISREG(current.st_mode)
+        or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
+    ):
+        raise ValueError(error)
+
+
+def _read_event_journal_at(state_fd: int) -> bytes | None:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open("events.jsonl", flags, dir_fd=state_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError("event journal is unsafe") from exc
+    try:
+        _verify_regular_file_at(
+            state_fd,
+            "events.jsonl",
+            descriptor,
+            error="event journal is unsafe",
+        )
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        _verify_regular_file_at(
+            state_fd,
+            "events.jsonl",
+            descriptor,
+            error="event journal changed during read",
+        )
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _append_event_journal_at(state_fd: int, payload: bytes) -> None:
+    flags = (
+        os.O_WRONLY
+        | os.O_APPEND
+        | os.O_CREAT
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open("events.jsonl", flags, 0o600, dir_fd=state_fd)
+    except OSError as exc:
+        raise ValueError("event journal is unsafe") from exc
+    try:
+        _verify_regular_file_at(
+            state_fd,
+            "events.jsonl",
+            descriptor,
+            error="event journal is unsafe",
+        )
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("event journal append made no progress")
+            view = view[written:]
+        os.fsync(descriptor)
+        _verify_regular_file_at(
+            state_fd,
+            "events.jsonl",
+            descriptor,
+            error="event journal changed during append",
+        )
+        os.fsync(state_fd)
+    finally:
+        os.close(descriptor)
+
+
 def _verify_project_state_anchor(root: Path, deck_fd: int, state_fd: int) -> None:
     """Fail if either anchored directory was replaced after it was opened."""
     with _secure_project_state_directory(root) as (current_deck_fd, current_state_fd):
@@ -932,12 +1021,12 @@ class MissionStateError(ValueError):
 
 
 def _strict_event_journal_ids(
-    path: Path,
+    source: bytes | None,
     *,
     malformed_error: str,
     duplicate_error: str,
 ) -> set[str]:
-    if not path.exists():
+    if source is None:
         return set()
     event_ids: list[str] = []
 
@@ -954,19 +1043,22 @@ def _strict_event_journal_ids(
     def reject_constant(_value: str) -> object:
         raise ValueError("non-finite JSON number")
 
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            try:
-                item = json.loads(
-                    line,
-                    object_pairs_hook=reject_duplicate_keys,
-                    parse_constant=reject_constant,
-                )
-                event_ids.append(validate_daemon_event_record(item))
-            except (json.JSONDecodeError, LeaseError, ValueError):
-                raise ValueError(malformed_error) from None
+    try:
+        lines = source.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        raise ValueError(malformed_error) from None
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(
+                line,
+                object_pairs_hook=reject_duplicate_keys,
+                parse_constant=reject_constant,
+            )
+            event_ids.append(validate_daemon_event_record(item))
+        except (json.JSONDecodeError, LeaseError, ValueError):
+            raise ValueError(malformed_error) from None
     if len(event_ids) != len(set(event_ids)):
         raise ValueError(duplicate_error)
     return set(event_ids)
@@ -2280,9 +2372,36 @@ class StateStore:
                 state, "sha256:" + hashlib.sha256(installed).hexdigest()
             )
 
+    def _event_journal_source(self) -> bytes | None:
+        key = str(self.root.resolve())
+        entry = _state_lock_entries().get(key)
+        if entry is not None:
+            anchored = entry["anchored"]
+            assert isinstance(anchored, tuple)
+            _verify_project_state_anchor(self.root.resolve(), *anchored)
+            source = _read_event_journal_at(int(anchored[1]))
+            _verify_project_state_anchor(self.root.resolve(), *anchored)
+            return source
+        try:
+            with _secure_project_state_directory(self.root.resolve()) as anchored:
+                source = _read_event_journal_at(anchored[1])
+                _verify_project_state_anchor(self.root.resolve(), *anchored)
+                return source
+        except ValueError:
+            try:
+                (self.deck_dir / "state").lstat()
+            except FileNotFoundError:
+                return None
+            raise
+
     def append_event(self, event: EventRecord) -> None:
-        with self.events_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n")
+        encoded = (
+            json.dumps(asdict(event), ensure_ascii=False, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        with self._protocol_mutation_lock() as anchored:
+            _verify_project_state_anchor(self.root.resolve(), *anchored)
+            _append_event_journal_at(anchored[1], encoded)
+            _verify_project_state_anchor(self.root.resolve(), *anchored)
 
     def record_governance_preview(
         self,
@@ -2933,8 +3052,9 @@ class StateStore:
         outbox = state.setdefault("daemon_event_outbox", [])
         validate_daemon_event_outbox(outbox)
         records: list[dict[str, Any]] = []
-        if self.events_path.exists():
-            for line in self.events_path.read_text(encoding="utf-8").splitlines():
+        journal = self._event_journal_source()
+        if journal is not None:
+            for line in journal.decode("utf-8").splitlines():
                 if line.strip():
                     record = json.loads(line)
                     validate_daemon_event_record(record)
@@ -3484,7 +3604,7 @@ class StateStore:
 
     def _daemon_journal_event_ids(self) -> set[str]:
         return _strict_event_journal_ids(
-            self.events_path,
+            self._event_journal_source(),
             malformed_error="daemon event journal is malformed",
             duplicate_error="duplicate daemon event identity",
         )
@@ -3501,8 +3621,9 @@ class StateStore:
             validate_daemon_event_outbox(outbox)
             journal_ids = self._daemon_journal_event_ids()
             records: list[dict[str, Any]] = []
-            if self.events_path.exists():
-                for line in self.events_path.read_text(encoding="utf-8").splitlines():
+            journal = self._event_journal_source()
+            if journal is not None:
+                for line in journal.decode("utf-8").splitlines():
                     if line.strip():
                         record = json.loads(line)
                         validate_daemon_event_record(record)
@@ -3529,7 +3650,7 @@ class StateStore:
 
     def _strict_protocol_journal_event_ids(self) -> set[str]:
         return _strict_event_journal_ids(
-            self.events_path,
+            self._event_journal_source(),
             malformed_error="protocol event journal is malformed",
             duplicate_error="duplicate protocol event identity",
         )
@@ -3546,21 +3667,14 @@ class StateStore:
                 if validate_daemon_event_record(item) not in durable_ids
             ]
             if pending:
-                journal_existed = self.events_path.exists()
-                with self.events_path.open("a", encoding="utf-8") as handle:
-                    for item in pending:
-                        handle.write(
-                            json.dumps(item, ensure_ascii=False, sort_keys=True)
-                            + "\n"
-                        )
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                if not journal_existed:
-                    directory_fd = os.open(self.events_path.parent, os.O_RDONLY)
-                    try:
-                        os.fsync(directory_fd)
-                    finally:
-                        os.close(directory_fd)
+                entry = _state_lock_entries()[str(self.root.resolve())]
+                anchored = entry["anchored"]
+                assert isinstance(anchored, tuple)
+                encoded = "".join(
+                    json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n"
+                    for item in pending
+                ).encode("utf-8")
+                _append_event_journal_at(int(anchored[1]), encoded)
             state["daemon_event_outbox"] = []
             self._atomic_save(state)
             return {
@@ -3805,7 +3919,27 @@ class StateStore:
                     )
             except OSError as exc:
                 raise ValueError("protocol mutation lock is unsafe") from exc
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            try:
+                _verify_regular_file_at(
+                    state_fd,
+                    "protocol-mutation.lock",
+                    lock_fd,
+                    error="protocol mutation lock is unsafe",
+                )
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                _verify_regular_file_at(
+                    state_fd,
+                    "protocol-mutation.lock",
+                    lock_fd,
+                    error="protocol mutation lock changed after acquisition",
+                )
+                _verify_project_state_anchor(self.root.resolve(), _deck_fd, state_fd)
+            except BaseException:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+                raise
             entries[key] = {"depth": 1, "anchored": anchored, "lock_fd": lock_fd}
             try:
                 yield anchored
@@ -3818,9 +3952,14 @@ class StateStore:
 
     def _protocol_event_ids(self) -> set[str]:
         event_ids: set[str] = set()
-        if not self.events_path.exists():
+        journal = self._event_journal_source()
+        if journal is None:
             return event_ids
-        for line in self.events_path.read_text(encoding="utf-8").splitlines():
+        try:
+            lines = journal.decode("utf-8").splitlines()
+        except UnicodeDecodeError:
+            return event_ids
+        for line in lines:
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
@@ -6438,8 +6577,9 @@ class StateStore:
         records: list[object] = []
         self._strict_protocol_journal_event_ids()
         journal_records_by_id: dict[str, dict[str, Any]] = {}
-        if self.events_path.exists():
-            for line in self.events_path.read_text(encoding="utf-8").splitlines():
+        journal = self._event_journal_source()
+        if journal is not None:
+            for line in journal.decode("utf-8").splitlines():
                 if line.strip():
                     record = json.loads(line)
                     records.append(record)
@@ -7427,11 +7567,12 @@ class StateStore:
         return events[-limit:]
 
     def all_events(self) -> list[dict[str, Any]]:
-        if not self.events_path.exists():
+        journal = self._event_journal_source()
+        if journal is None:
             return []
         return [
             json.loads(line)
-            for line in self.events_path.read_text(encoding="utf-8").splitlines()
+            for line in journal.decode("utf-8").splitlines()
             if line.strip()
         ]
 

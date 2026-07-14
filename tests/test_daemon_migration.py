@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import copy, deepcopy
+from dataclasses import asdict
 from pathlib import Path
 import ast
 from datetime import datetime, timedelta, timezone
@@ -22,6 +23,7 @@ from agentdeck.config import write_default_config
 from agentdeck import state as state_module
 from agentdeck import cli
 from agentdeck import contracts as contracts_module
+from agentdeck.models import EventRecord
 from agentdeck.state import StateStore
 
 
@@ -264,6 +266,118 @@ def test_default_constructor_rejects_non_directory_or_non_regular_layout_nodes(
 
     with pytest.raises(ValueError, match="project layout"):
         StateStore(tmp_path)
+
+
+def test_event_journal_read_and_append_reject_symlink_without_external_io(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path)
+    journal = tmp_path / ".agentdeck" / "state" / "events.jsonl"
+    outside = tmp_path / "outside-events.jsonl"
+    outside.write_text('{"sentinel": true}\n', encoding="utf-8")
+    journal.unlink()
+    journal.symlink_to(outside)
+    before = outside.read_bytes()
+
+    with pytest.raises(ValueError, match="event journal is unsafe"):
+        store.all_events()
+    with pytest.raises(ValueError, match="event journal is unsafe"):
+        store.append_event(EventRecord.create("must_not_escape", {}))
+
+    assert outside.read_bytes() == before
+
+
+def test_event_journal_replacement_between_open_and_append_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path)
+    journal = tmp_path / ".agentdeck" / "state" / "events.jsonl"
+    detached = tmp_path / "detached-events.jsonl"
+    original_verify = state_module._verify_regular_file_at
+    replaced = False
+
+    def replace_before_verify(
+        directory_fd: int,
+        name: str,
+        descriptor: int,
+        *,
+        error: str,
+    ) -> None:
+        nonlocal replaced
+        if name == "events.jsonl" and not replaced:
+            journal.rename(detached)
+            journal.write_bytes(b"")
+            replaced = True
+        original_verify(directory_fd, name, descriptor, error=error)
+
+    monkeypatch.setattr(
+        state_module, "_verify_regular_file_at", replace_before_verify
+    )
+
+    with pytest.raises(ValueError, match="event journal is unsafe"):
+        store.append_event(EventRecord.create("must_not_reach_detached_inode", {}))
+
+    assert detached.read_bytes() == b""
+    assert journal.read_bytes() == b""
+
+
+@pytest.mark.parametrize(
+    ("outbox_name", "flush_name"),
+    [
+        ("daemon_event_outbox", "flush_daemon_event_outbox"),
+        ("conversation_event_outbox", "flush_conversation_event_outbox"),
+        ("protocol_event_outbox", "flush_protocol_event_outbox"),
+    ],
+)
+def test_event_outbox_flush_rejects_symlink_and_preserves_pending_records(
+    tmp_path: Path,
+    outbox_name: str,
+    flush_name: str,
+) -> None:
+    store = StateStore(tmp_path)
+    event = EventRecord.create("pending_secure_flush", {"source": outbox_name})
+    state = store.load()
+    state[outbox_name] = [asdict(event)]
+    store.save(state)
+    journal = tmp_path / ".agentdeck" / "state" / "events.jsonl"
+    outside = tmp_path / "outside-events.jsonl"
+    outside.write_text('{"sentinel": true}\n', encoding="utf-8")
+    journal.unlink()
+    journal.symlink_to(outside)
+    before = outside.read_bytes()
+
+    with pytest.raises(ValueError, match="event journal is unsafe"):
+        getattr(store, flush_name)()
+
+    assert outside.read_bytes() == before
+    assert store.load()[outbox_name] == [asdict(event)]
+
+
+def test_protocol_mutation_lock_replacement_after_flock_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path)
+    lock_path = tmp_path / ".agentdeck" / "state" / "protocol-mutation.lock"
+    original_flock = state_module.fcntl.flock
+    replaced_lock = tmp_path / "detached-protocol-mutation.lock"
+    replaced = False
+
+    def replace_after_lock(fd: int, operation: int) -> None:
+        nonlocal replaced
+        original_flock(fd, operation)
+        if operation == fcntl.LOCK_EX and not replaced:
+            lock_path.rename(replaced_lock)
+            lock_path.write_bytes(b"replacement")
+            replaced = True
+
+    monkeypatch.setattr(state_module.fcntl, "flock", replace_after_lock)
+
+    with pytest.raises(ValueError, match="protocol mutation lock changed"):
+        store.record_chat_turn("status", "must not commit", None, None)
+
+    assert store.load()["chat_turns"] == []
 
 
 def test_legacy_state_lock_inode_blocks_new_authoritative_writer(
